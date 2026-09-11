@@ -113,7 +113,7 @@ router.get("/catalog", view, async (req, res) => {
     const warehouseWhere = branch
       ? and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true), branch)
       : and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true));
-    const [items, warehouses, templates, bomTemplates, routings, units, accountingSettings, accounts] = await Promise.all([
+    const [items, warehouses, templates, bomTemplates, routings, units, accountingSettings, accounts, wasteAccounts] = await Promise.all([
       db.select({
         id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr,
         nameEn: itemsTable.nameEn, itemNature: itemsTable.itemNature,
@@ -184,6 +184,25 @@ router.get("/catalog", view, async (req, res) => {
         ))
         .orderBy(asc(accountsTable.code))
         .limit(2000),
+      // Waste is posted as a manufacturing expense. Keep the asset and
+      // expense lookups separate so the existing account contract remains
+      // clear to callers of the compact catalog.
+      db.select({
+        id: accountsTable.id,
+        code: accountsTable.code,
+        nameAr: accountsTable.nameAr,
+        nameEn: accountsTable.nameEn,
+        accountType: accountsTable.accountType,
+        isPosting: accountsTable.isPosting,
+      }).from(accountsTable)
+        .where(and(
+          eq(accountsTable.companyId, cid),
+          eq(accountsTable.isActive, true),
+          eq(accountsTable.isPosting, true),
+          eq(accountsTable.accountType, "expense"),
+        ))
+        .orderBy(asc(accountsTable.code))
+        .limit(2000),
     ]);
     const routingIds = routings.map((routing) => routing.id);
     const routingProductIds = [...new Set<number>(
@@ -249,7 +268,7 @@ router.get("/catalog", view, async (req, res) => {
       units,
       accounting: {
         settings: accountingSettings[0] ?? null,
-        accounts,
+        accounts: [...accounts, ...wasteAccounts],
       },
     });
   } catch (e: any) {
@@ -458,17 +477,20 @@ router.put("/setup/accounting", edit, async (req, res) => {
     "defaultWipAccountId",
     "defaultRawInventoryAccountId",
     "defaultFinishedGoodsAccountId",
+    "defaultWasteAccountId",
   ] as const;
   const values: Record<(typeof keys)[number], number | null> = {
     defaultWipAccountId: null,
     defaultRawInventoryAccountId: null,
     defaultFinishedGoodsAccountId: null,
+    defaultWasteAccountId: null,
   };
   try {
     const [current] = await db.select({
       defaultWipAccountId: manufacturingSettingsTable.defaultWipAccountId,
       defaultRawInventoryAccountId: manufacturingSettingsTable.defaultRawInventoryAccountId,
       defaultFinishedGoodsAccountId: manufacturingSettingsTable.defaultFinishedGoodsAccountId,
+      defaultWasteAccountId: manufacturingSettingsTable.defaultWasteAccountId,
     }).from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
     const requestedIds = new Set<number>();
@@ -505,9 +527,13 @@ router.put("/setup/accounting", edit, async (req, res) => {
         .map((row) => row.id));
       for (const id of requestedIds) {
         const row = rows.find((candidate) => candidate.id === id);
-        if (!validIds.has(id) || row?.accountType !== "asset") {
+        const wasteId = values.defaultWasteAccountId;
+        const expectedType = wasteId === id ? "expense" : "asset";
+        if (!validIds.has(id) || row?.accountType !== expectedType) {
           return void res.status(400).json({
-            error: "اختر حسابات أصول قابلة للترحيل ونشطة من دليل حسابات الشركة",
+            error: expectedType === "expense"
+              ? "اختر حساب هالك مصروفاً نشطاً وقابلاً للترحيل من دليل حسابات الشركة"
+              : "اختر حسابات أصول قابلة للترحيل ونشطة من دليل حسابات الشركة",
           });
         }
       }
@@ -626,7 +652,8 @@ router.post("/orders/:id/status", simpleStatusPermission, simpleStatusPostingRig
   // wizard's idempotent order id while preserving the frozen values once stock
   // has been issued.
   const target = String(req.body?.status ?? "");
-  if (target === "approved" || target === "in_production") {
+  if (target === "approved" || target === "in_production" ||
+      target === "quality_check" || target === "completed") {
     const cid = companyId(req, res);
     if (!cid) return;
     const id = Number(req.params.id);
@@ -637,6 +664,7 @@ router.post("/orders/:id/status", simpleStatusPermission, simpleStatusPostingRig
       wipAccountId: productionOrdersTable.wipAccountId,
       rawInventoryAccountId: productionOrdersTable.rawInventoryAccountId,
       finishedGoodsAccountId: productionOrdersTable.finishedGoodsAccountId,
+      wasteAccountId: productionOrdersTable.wasteAccountId,
     }).from(productionOrdersTable).where(and(
       eq(productionOrdersTable.id, id),
       eq(productionOrdersTable.companyId, cid),
@@ -646,11 +674,13 @@ router.post("/orders/:id/status", simpleStatusPermission, simpleStatusPostingRig
       if ("deny" in branchResult) {
         return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
       }
-      if (order.status === "draft" || order.status === "approved") {
+      if (order.status === "draft" || order.status === "approved" ||
+          order.status === "in_production" || order.status === "quality_check") {
         const [settings] = await db.select({
           wipAccountId: manufacturingSettingsTable.defaultWipAccountId,
           rawInventoryAccountId: manufacturingSettingsTable.defaultRawInventoryAccountId,
           finishedGoodsAccountId: manufacturingSettingsTable.defaultFinishedGoodsAccountId,
+          wasteAccountId: manufacturingSettingsTable.defaultWasteAccountId,
         }).from(manufacturingSettingsTable)
           .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
         const updates: Record<string, unknown> = {};
@@ -667,11 +697,14 @@ router.post("/orders/:id/status", simpleStatusPermission, simpleStatusPostingRig
         if (settings?.finishedGoodsAccountId) {
           updates.finishedGoodsAccountId = sql`coalesce(${productionOrdersTable.finishedGoodsAccountId}, ${settings.finishedGoodsAccountId})`;
         }
+        if (settings?.wasteAccountId) {
+          updates.wasteAccountId = sql`coalesce(${productionOrdersTable.wasteAccountId}, ${settings.wasteAccountId})`;
+        }
         if (Object.keys(updates).length) {
           const updateConditions: any[] = [
             eq(productionOrdersTable.id, id),
             eq(productionOrdersTable.companyId, cid),
-            inArray(productionOrdersTable.status, ["draft", "approved"]),
+            inArray(productionOrdersTable.status, ["draft", "approved", "in_production", "quality_check"]),
           ];
           if (branchResult.cond) updateConditions.push(branchResult.cond);
           await db.update(productionOrdersTable).set({

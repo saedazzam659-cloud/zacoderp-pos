@@ -15,9 +15,9 @@ function statusLabel(status: string) {
 
 function nextStatus(status: string): string | null {
   return ({
-    draft: "approved", approved: "in_production", in_production: "completed",
-    paused: "in_production", quality_check: "completed",
-  } as Record<string, string>)[status] ?? null;
+    draft: "approved", approved: "in_production", in_production: "quality_check",
+    paused: "in_production", quality_check: null,
+  } as Record<string, string | null>)[status] ?? null;
 }
 
 function formatMoney(value: unknown) {
@@ -99,6 +99,14 @@ export function SimpleOrderList({
                   <Play className="ml-2 h-4 w-4" />
                   {statusLabel(nextStatus(selectedOrder.status)!)}
                 </Button>
+              )}
+              {selectedOrder.status === "quality_check" && (
+                <Link href={`/simple-manufacturing/orders/${selectedOrder.id}`}>
+                  <Button disabled={busy || !canPost} className="bg-emerald-600 hover:bg-emerald-700">
+                    <Play className="ml-2 h-4 w-4" />
+                    فتح شاشة الإقفال
+                  </Button>
+                </Link>
               )}
               {selectedOrder.status === "in_production" && (
                 <Button variant="outline" disabled={busy || !canPost} onClick={() => onChangeStatus(selectedOrder, "paused")}>

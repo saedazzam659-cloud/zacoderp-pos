@@ -288,6 +288,33 @@ async function validateAccount(cid: number, id: number | null | undefined) {
   return id;
 }
 
+// Manufacturing waste is a debit to an expense account. Keep this stricter
+// than the generic tenant-ownership check so an inactive, summary, or
+// balance-sheet account can never be selected as its completion counterpart.
+async function validateExpenseAccount(cid: number, id: number | null | undefined) {
+  if (id === null || id === undefined) return null;
+  if (!Number.isInteger(id) || id <= 0) {
+    const err: any = new Error("حساب الهالك/الفروق غير صحيح");
+    err.status = 400;
+    throw err;
+  }
+  const [a] = await db
+    .select({
+      id: accountsTable.id,
+      accountType: accountsTable.accountType,
+      isActive: accountsTable.isActive,
+      isPosting: accountsTable.isPosting,
+    })
+    .from(accountsTable)
+    .where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid)));
+  if (!a || !a.isActive || !a.isPosting || a.accountType !== "expense") {
+    const err: any = new Error(`حساب الهالك/الفروق رقم ${id} يجب أن يكون حساب مصروف مرحّل ونشط في نفس الشركة`);
+    err.status = 400;
+    throw err;
+  }
+  return id;
+}
+
 // A manual actual cost credits an existing chart counterpart account. Unlike
 // the compact manufacturing defaults, this may be any active posting account
 // (expense, liability, accrual, etc.); it must still be tenant-owned and
@@ -4825,7 +4852,7 @@ export async function productionWizardHandler(req: any, res: any) {
         laborAccountId: await validateAccount(cid, wc?.defaultLaborAccountId ?? mfg?.defaultLaborAccountId ?? null),
         overheadAccountId: await validateAccount(cid, wc?.defaultOverheadAccountId ?? mfg?.defaultOverheadAccountId ?? null),
         varianceAccountId: await validateAccount(cid, mfg?.defaultVarianceAccountId ?? null),
-        wasteAccountId: await validateAccount(cid, mfg?.defaultWasteAccountId ?? null),
+        wasteAccountId: await validateExpenseAccount(cid, mfg?.defaultWasteAccountId ?? null),
         notes: b.notes || null,
         meta: { wizardVersion: 1, wizardRequestHash: requestHash, costPeriod: period,
            costPolicy: sanitizeCostPolicy(b.costPolicy),
@@ -5016,7 +5043,7 @@ router.post("/orders", async (req, res) => {
             laborAccountId: await validateAccount(cid, b.laborAccountId ? Number(b.laborAccountId) : (wc?.defaultLaborAccountId ?? mfg?.defaultLaborAccountId ?? null)),
             overheadAccountId: await validateAccount(cid, b.overheadAccountId ? Number(b.overheadAccountId) : (wc?.defaultOverheadAccountId ?? mfg?.defaultOverheadAccountId ?? null)),
             varianceAccountId: await validateAccount(cid, b.varianceAccountId ? Number(b.varianceAccountId) : (mfg?.defaultVarianceAccountId ?? null)),
-            wasteAccountId: await validateAccount(cid, b.wasteAccountId ? Number(b.wasteAccountId) : (mfg?.defaultWasteAccountId ?? null)),
+            wasteAccountId: await validateExpenseAccount(cid, b.wasteAccountId ? Number(b.wasteAccountId) : (mfg?.defaultWasteAccountId ?? null)),
             notes: b.notes || null,
             meta: b.meta && typeof b.meta === "object" ? b.meta : {},
             createdBy: req.authUser!.id,
@@ -5329,7 +5356,7 @@ router.patch("/orders/:id", async (req, res) => {
     if (b.varianceAccountId !== undefined)
       updates.varianceAccountId = await validateAccount(cid, b.varianceAccountId ? Number(b.varianceAccountId) : null);
     if (b.wasteAccountId !== undefined)
-      updates.wasteAccountId = await validateAccount(cid, b.wasteAccountId ? Number(b.wasteAccountId) : null);
+      updates.wasteAccountId = await validateExpenseAccount(cid, b.wasteAccountId ? Number(b.wasteAccountId) : null);
     if (b.notes !== undefined) updates.notes = b.notes || null;
     if (b.meta !== undefined && typeof b.meta === "object") {
       if ((existingOrder.meta as any)?.wizardVersion)
@@ -6843,7 +6870,7 @@ router.put("/manufacturing-settings", async (req, res) => {
       defaultLaborAccountId: await validateAccount(cid, numOrNull(b.defaultLaborAccountId)),
       defaultOverheadAccountId: await validateAccount(cid, numOrNull(b.defaultOverheadAccountId)),
       defaultVarianceAccountId: await validateAccount(cid, numOrNull(b.defaultVarianceAccountId)),
-      defaultWasteAccountId: await validateAccount(cid, numOrNull(b.defaultWasteAccountId)),
+      defaultWasteAccountId: await validateExpenseAccount(cid, numOrNull(b.defaultWasteAccountId)),
       updatedAt: new Date(),
     };
     // True upsert keyed on the unique companyId index, so concurrent first
@@ -6859,7 +6886,7 @@ router.put("/manufacturing-settings", async (req, res) => {
       .returning();
     res.json(row);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 

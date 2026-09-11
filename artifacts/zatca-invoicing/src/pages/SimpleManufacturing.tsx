@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 export default function SimpleManufacturing() {
   const { token, user, actingCompanyId } = useAuth();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   const emptyCatalog = (): Catalog => ({ items: [], warehouses: [], templates: [], routings: [] });
   const [catalog, setCatalog] = useState<Catalog>(() => emptyCatalog());
@@ -175,6 +177,10 @@ export default function SimpleManufacturing() {
       method: "POST", body: JSON.stringify({ status: target }),
     });
     setSelectedOrder(row);
+    // Quality approval and completion are separate lifecycle steps. Open the
+    // shared detail screen after sending an order to QA so completion can only
+    // happen through its produced/waste quantity form.
+    if (target === "quality_check") navigate(`/simple-manufacturing/orders/${order.id}`);
   }, `تم تحديث الحالة`);
 
   const deleteDraft = (order: Order) => mutate(async () => {
@@ -342,6 +348,7 @@ export default function SimpleManufacturing() {
     defaultWipAccountId: number | null;
     defaultRawInventoryAccountId: number | null;
     defaultFinishedGoodsAccountId: number | null;
+    defaultWasteAccountId: number | null;
   }) => {
     return mutate(() => request("/api/simple-manufacturing/setup/accounting", {
       method: "PUT",

@@ -35,6 +35,7 @@ export function SimpleWizard({
     defaultWipAccountId: number | null;
     defaultRawInventoryAccountId: number | null;
     defaultFinishedGoodsAccountId: number | null;
+    defaultWasteAccountId: number | null;
   }) => Promise<unknown>;
   onSubmit: (mode: "draft" | "execute", payload: any) => Promise<void>;
   onCancel: () => void;
@@ -71,6 +72,7 @@ export function SimpleWizard({
     defaultWipAccountId: "",
     defaultRawInventoryAccountId: "",
     defaultFinishedGoodsAccountId: "",
+    defaultWasteAccountId: "",
   });
 
   // Inline BOM creation
@@ -95,6 +97,7 @@ export function SimpleWizard({
       defaultWipAccountId: settings.defaultWipAccountId ? String(settings.defaultWipAccountId) : "",
       defaultRawInventoryAccountId: settings.defaultRawInventoryAccountId ? String(settings.defaultRawInventoryAccountId) : "",
       defaultFinishedGoodsAccountId: settings.defaultFinishedGoodsAccountId ? String(settings.defaultFinishedGoodsAccountId) : "",
+      defaultWasteAccountId: settings.defaultWasteAccountId ? String(settings.defaultWasteAccountId) : "",
     });
   }, [catalog.accounting?.settings]);
 
@@ -338,7 +341,8 @@ export function SimpleWizard({
     const accountingChanged = mode === "execute" && (
       String(configuredSettings?.defaultWipAccountId ?? "") !== accountSettings.defaultWipAccountId ||
       String(configuredSettings?.defaultRawInventoryAccountId ?? "") !== accountSettings.defaultRawInventoryAccountId ||
-      String(configuredSettings?.defaultFinishedGoodsAccountId ?? "") !== accountSettings.defaultFinishedGoodsAccountId
+      String(configuredSettings?.defaultFinishedGoodsAccountId ?? "") !== accountSettings.defaultFinishedGoodsAccountId ||
+      String(configuredSettings?.defaultWasteAccountId ?? "") !== accountSettings.defaultWasteAccountId
     );
     if (accountingChanged) {
       try {
@@ -346,6 +350,7 @@ export function SimpleWizard({
           defaultWipAccountId: accountSettings.defaultWipAccountId ? Number(accountSettings.defaultWipAccountId) : null,
           defaultRawInventoryAccountId: accountSettings.defaultRawInventoryAccountId ? Number(accountSettings.defaultRawInventoryAccountId) : null,
           defaultFinishedGoodsAccountId: accountSettings.defaultFinishedGoodsAccountId ? Number(accountSettings.defaultFinishedGoodsAccountId) : null,
+          defaultWasteAccountId: accountSettings.defaultWasteAccountId ? Number(accountSettings.defaultWasteAccountId) : null,
         });
       } catch {
         setTab("resources");
@@ -409,6 +414,8 @@ export function SimpleWizard({
       defaultRawInventoryAccountId: Number(accountSettings.defaultRawInventoryAccountId),
       defaultFinishedGoodsAccountId: accountSettings.defaultFinishedGoodsAccountId
         ? Number(accountSettings.defaultFinishedGoodsAccountId) : null,
+      defaultWasteAccountId: accountSettings.defaultWasteAccountId
+        ? Number(accountSettings.defaultWasteAccountId) : null,
     });
   };
 
@@ -471,6 +478,8 @@ export function SimpleWizard({
   const postingAccounts = (catalog.accounting?.accounts ?? []);
   const accountingAccounts = postingAccounts
     .filter(account => account.accountType === "asset");
+  const wasteAccounts = postingAccounts
+    .filter(account => account.accountType === "expense");
   const hasRequiredAccounting =
     !!accountSettings.defaultWipAccountId && !!accountSettings.defaultRawInventoryAccountId;
 
@@ -736,8 +745,8 @@ export function SimpleWizard({
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base text-amber-900">إعداد حسابات ترحيل التصنيع</CardTitle>
                   <CardDescription className="text-amber-800">
-                     تُستخدم حسابات أصول الشركة الموجودة والقابلة للترحيل فقط؛ لا ينشئ هذا النموذج حسابات تلقائياً.
-                     حفظ المسودة لا يرحّل قيداً ولا يحتاج حساب WIP، لكن يلزم حفظ حساب إنتاج تحت التشغيل وحساب مخزون الخامات قبل بدء الإنتاج.
+                     تُستخدم حسابات الشركة الموجودة والقابلة للترحيل فقط؛ لا ينشئ هذا النموذج حسابات تلقائياً.
+                     حفظ المسودة لا يرحّل قيداً ولا يحتاج حساب WIP، لكن يلزم حفظ حساب إنتاج تحت التشغيل وحساب مخزون الخامات قبل بدء الإنتاج. حساب الإنتاج التام مطلوب عند الإقفال، وحساب الهالك مطلوب فقط إذا أدخلت كمية هالك موجبة.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-3 space-y-4">
@@ -746,22 +755,31 @@ export function SimpleWizard({
                       لا توجد حسابات ترحيل نشطة في دليل حسابات الشركة. أضف حسابات قابلة للترحيل من دليل الحسابات ثم عد إلى هنا.
                     </div>
                   ) : (
-                    <div className="grid md:grid-cols-3 gap-4">
+                    <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
                       {[
                         {
                           key: "defaultWipAccountId" as const,
                            label: "إنتاج تحت التشغيل (WIP) — أصل WIP",
                           required: true,
+                          accounts: accountingAccounts,
                         },
                         {
                           key: "defaultRawInventoryAccountId" as const,
                            label: "مخزون الخامات — أصل المواد الخام",
                           required: true,
+                          accounts: accountingAccounts,
                         },
                         {
                           key: "defaultFinishedGoodsAccountId" as const,
-                           label: "مخزون الإنتاج التام — أصل المنتج (اختياري)",
+                           label: "مخزون الإنتاج التام — أصل المنتج (مطلوب قبل الإقفال)",
                           required: false,
+                          accounts: accountingAccounts,
+                        },
+                        {
+                          key: "defaultWasteAccountId" as const,
+                          label: "حساب الهالك/الفروق — مصروف (اختياري)",
+                          required: false,
+                          accounts: wasteAccounts,
                         },
                       ].map(field => (
                         <div key={field.key} className="space-y-2">
@@ -773,7 +791,7 @@ export function SimpleWizard({
                              searchPlaceholder="ابحث بالرمز أو اسم الحساب..."
                              items={[
                                { value: "", label: "اختر حساباً من دليل الشركة..." },
-                               ...accountingAccounts.map(account => ({
+                               ...(field.accounts ?? accountingAccounts).map(account => ({
                                  value: String(account.id),
                                  code: account.code,
                                  label: account.nameAr,
@@ -787,8 +805,10 @@ export function SimpleWizard({
                            />
                            <p className="text-[11px] text-slate-500">
                              {accountSettings[field.key]
-                               ? `المحدد: ${accountingAccounts.find(account => String(account.id) === accountSettings[field.key])?.code ?? `#${accountSettings[field.key]}`}`
-                               : "اختر حساباً موجوداً من دليل الشركة؛ لا يتم إنشاء حساب جديد هنا."}
+                                ? `المحدد: ${(field.accounts ?? accountingAccounts).find(account => String(account.id) === accountSettings[field.key])?.code ?? `#${accountSettings[field.key]}`}`
+                                : field.key === "defaultWasteAccountId"
+                                  ? "اختر حساب مصروف نشطاً وقابلاً للترحيل عند تسجيل هالك موجب."
+                                  : "اختر حساباً موجوداً من دليل الشركة؛ لا يتم إنشاء حساب جديد هنا."}
                            </p>
                         </div>
                       ))}

@@ -253,6 +253,7 @@ export default function ProductionOrderDetail() {
   const orderId = Number(id);
   const simpleFacade = location.startsWith("/simple-manufacturing");
   const routePrefix = simpleFacade ? "/simple-manufacturing" : "/production";
+  const listRoute = simpleFacade ? routePrefix : `${routePrefix}/orders`;
   const apiPrefix = `${API}/api${routePrefix}`;
   const { t } = useTranslation();
   const { token } = useAuth() as any;
@@ -871,7 +872,7 @@ export default function ProductionOrderDetail() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
-          <Link href={`${routePrefix}/orders`}>
+          <Link href={listRoute}>
             <Button variant="outline" size="icon" data-testid="btn-back">
               <ArrowLeft className="h-4 w-4" />
             </Button>
@@ -1022,7 +1023,7 @@ export default function ProductionOrderDetail() {
               </div>
               <p className="text-xs text-slate-500 mt-2">
                 عند الضغط على «إكمال»، توزَّع تكلفة WIP الإجمالية ({Number(order.actualCost).toLocaleString("en-US")})
-                على الكمية المنتَجة والهالك تناسبيًا.
+                على الكمية المنتَجة والهالك تناسبيًا. الكميتان بوحدات الناتج الفعلية ({order.unitCode}) وليستا نسباً مئوية.
               </p>
             </div>
           )}

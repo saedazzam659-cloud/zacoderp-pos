@@ -942,6 +942,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/production/cost-rollup"        module="production"     component={CostRollup} />}
             {!isSuperAdmin && <PermRoute path="/production/approvals"          module="production"     component={PendingApprovals} />}
             {!isSuperAdmin && <PermRoute path="/production/kpis"               module="production"     component={ManufacturingKpis} />}
+            {!isSuperAdmin && <PermRoute path="/simple-manufacturing/orders" module="simple_manufacturing" component={() => <Redirect to="/simple-manufacturing" />} />}
             {!isSuperAdmin && <PermRoute path="/simple-manufacturing/orders/:id" module="simple_manufacturing" component={ProductionOrderDetail} />}
             {!isSuperAdmin && <PermRoute path="/simple-manufacturing"           module="simple_manufacturing" component={SimpleManufacturing} />}
 

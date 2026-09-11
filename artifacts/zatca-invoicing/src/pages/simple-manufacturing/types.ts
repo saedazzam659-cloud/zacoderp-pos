@@ -54,6 +54,7 @@ export type Catalog = {
       defaultWipAccountId?: number | null;
       defaultRawInventoryAccountId?: number | null;
       defaultFinishedGoodsAccountId?: number | null;
+      defaultWasteAccountId?: number | null;
     } | null;
     accounts: Array<{
       id: number;
