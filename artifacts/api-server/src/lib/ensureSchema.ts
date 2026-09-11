@@ -666,6 +666,12 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     );
     CREATE INDEX IF NOT EXISTS packaging_spec_tests_version_idx
       ON packaging_specification_tests(version_id);` },
+  { label: "packaging logistics, EPR, and guarded artwork metadata",
+    sql: `ALTER TABLE packaging_specification_versions
+      ADD COLUMN IF NOT EXISTS pallet_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS container_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS epr_declarations JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS artwork_archive_refs JSONB NOT NULL DEFAULT '[]'::jsonb` },
   { label: "sales_line_production_cost_attributions",
     sql: `CREATE TABLE IF NOT EXISTS sales_line_production_cost_attributions (
       id SERIAL PRIMARY KEY,
@@ -766,6 +772,52 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     DROP TRIGGER IF EXISTS production_cost_allocations_no_mutation ON production_cost_allocations;
     CREATE TRIGGER production_cost_allocations_no_mutation BEFORE UPDATE OR DELETE ON production_cost_allocations
       FOR EACH ROW EXECUTE FUNCTION reject_production_cost_allocation_mutation();` },
+  { label: "production overhead closure workflow",
+    sql: `CREATE TABLE IF NOT EXISTS production_overhead_closures (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      correction_date DATE NOT NULL,
+      source_key TEXT NOT NULL,
+      variance_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      status TEXT NOT NULL DEFAULT 'draft',
+      journal_entry_id INTEGER,
+      reversal_journal_entry_id INTEGER,
+      actual_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+      applied_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+      variance_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+      source_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      posted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      posted_at TIMESTAMP,
+      reversed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reversed_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS production_overhead_closures_source_key_uniq
+      ON production_overhead_closures(company_id, source_key);
+    CREATE INDEX IF NOT EXISTS production_overhead_closures_period_idx
+      ON production_overhead_closures(company_id, period_start, period_end);
+    CREATE OR REPLACE FUNCTION reject_production_overhead_closure_snapshot_mutation() RETURNS trigger AS $$
+    BEGIN
+      IF NEW.source_snapshot IS DISTINCT FROM OLD.source_snapshot
+         OR NEW.actual_amount IS DISTINCT FROM OLD.actual_amount
+         OR NEW.applied_amount IS DISTINCT FROM OLD.applied_amount
+         OR NEW.variance_amount IS DISTINCT FROM OLD.variance_amount
+         OR NEW.source_key IS DISTINCT FROM OLD.source_key
+         OR NEW.period_start IS DISTINCT FROM OLD.period_start
+         OR NEW.period_end IS DISTINCT FROM OLD.period_end
+      THEN RAISE EXCEPTION 'production overhead closure snapshot is immutable'; END IF;
+      RETURN NEW;
+    END; $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS production_overhead_closures_snapshot_no_mutation
+      ON production_overhead_closures;
+    CREATE TRIGGER production_overhead_closures_snapshot_no_mutation
+      BEFORE UPDATE ON production_overhead_closures
+      FOR EACH ROW EXECUTE FUNCTION reject_production_overhead_closure_snapshot_mutation();` },
   { label: "production wizard retry key",
     sql: `ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS wizard_request_id TEXT;
           CREATE UNIQUE INDEX IF NOT EXISTS prod_orders_wizard_request_uniq

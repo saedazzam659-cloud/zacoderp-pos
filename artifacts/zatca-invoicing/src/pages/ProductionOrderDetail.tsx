@@ -19,6 +19,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
+import { JournalScanArchive } from "@/components/JournalScanArchive";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
 import { DateField } from "@/components/ui/date-field";
 
@@ -111,6 +112,77 @@ type WorkCenterRef = {
   isActive: boolean;
 };
 type SupplierRef = { id: number; code?: string | null; nameAr?: string | null; name?: string | null };
+type PackagingTransportMetadata = {
+  type: string;
+  dimensionUnit: string;
+  length: string;
+  width: string;
+  height: string;
+  capacityUnits: string;
+  capacityUnit: string;
+  maxGrossWeight: string;
+  weightUnit: string;
+  stackLimit: string;
+};
+type PackagingEprDeclaration = {
+  material: string;
+  scheme: string;
+  massGrams: string;
+  recycledContentPct: string;
+  recyclablePct: string;
+  declarationRef: string;
+  notes: string;
+};
+type PackagingMetadata = {
+  palletMetadata: PackagingTransportMetadata;
+  containerMetadata: PackagingTransportMetadata;
+  eprDeclarations: PackagingEprDeclaration[];
+  artworkArchiveIds: number[];
+};
+type PackagingArchiveFile = {
+  id: number;
+  filename: string;
+  contentType?: string | null;
+  bytes?: number | null;
+  createdAt: string;
+};
+
+function packagingTransportMetadata(value: any): PackagingTransportMetadata {
+  const v = value && typeof value === "object" ? value : {};
+  return {
+    type: String(v.type ?? ""),
+    dimensionUnit: String(v.dimensionUnit ?? "mm"),
+    length: v.length == null ? "" : String(v.length),
+    width: v.width == null ? "" : String(v.width),
+    height: v.height == null ? "" : String(v.height),
+    capacityUnits: v.capacityUnits == null ? "" : String(v.capacityUnits),
+    capacityUnit: String(v.capacityUnit ?? "PCE"),
+    maxGrossWeight: v.maxGrossWeight == null ? "" : String(v.maxGrossWeight),
+    weightUnit: String(v.weightUnit ?? "kg"),
+    stackLimit: v.stackLimit == null ? "" : String(v.stackLimit),
+  };
+}
+
+function packagingMetadataFromVersion(version: any): PackagingMetadata {
+  const refs = Array.isArray(version?.artworkArchiveRefs) ? version.artworkArchiveRefs : [];
+  const declarations = Array.isArray(version?.eprDeclarations) ? version.eprDeclarations : [];
+  return {
+    palletMetadata: packagingTransportMetadata(version?.palletMetadata),
+    containerMetadata: packagingTransportMetadata(version?.containerMetadata),
+    eprDeclarations: declarations.map((entry: any) => ({
+      material: String(entry?.material ?? ""),
+      scheme: String(entry?.scheme ?? ""),
+      massGrams: entry?.massGrams == null ? "" : String(entry.massGrams),
+      recycledContentPct: entry?.recycledContentPct == null ? "" : String(entry.recycledContentPct),
+      recyclablePct: entry?.recyclablePct == null ? "" : String(entry.recyclablePct),
+      declarationRef: String(entry?.declarationRef ?? ""),
+      notes: String(entry?.notes ?? ""),
+    })),
+    artworkArchiveIds: refs
+      .map((entry: any) => Number(entry?.archiveId))
+      .filter((id: number) => Number.isInteger(id) && id > 0),
+  };
+}
 
 // Status → list of allowed transitions, each rendered as a coloured action
 // button. Mirrors the server-side PRODUCTION_STATUS_TRANSITIONS map. Keep the
@@ -190,6 +262,9 @@ export default function ProductionOrderDetail() {
   const [commercialLifecycle, setCommercialLifecycle] = useState<any[]>([]);
   const [packagingSpecs, setPackagingSpecs] = useState<any[]>([]);
   const [packagingBusy, setPackagingBusy] = useState(false);
+  const [packagingMetadata, setPackagingMetadata] = useState<Record<number, PackagingMetadata>>({});
+  const [packagingArchiveFiles, setPackagingArchiveFiles] = useState<Record<number, PackagingArchiveFile[]>>({});
+  const [packagingMetadataBusy, setPackagingMetadataBusy] = useState<number | null>(null);
   const [packagingForm, setPackagingForm] = useState({
     code: "", name: "", primaryMaterial: "", testType: "drop_test",
   });
@@ -265,7 +340,34 @@ export default function ProductionOrderDetail() {
           `${API}/api/production/packaging/specifications?productItemId=${j.order.productItemId}`,
           { headers },
         );
-        if (packagingResponse.ok) setPackagingSpecs(await packagingResponse.json());
+        if (packagingResponse.ok) {
+          const specs = await packagingResponse.json();
+          setPackagingSpecs(Array.isArray(specs) ? specs : []);
+          const metadataByVersion: Record<number, PackagingMetadata> = {};
+          const archiveByVersion: Record<number, PackagingArchiveFile[]> = {};
+          const versions = (Array.isArray(specs) ? specs : [])
+            .flatMap((spec: any) => Array.isArray(spec?.versions) ? spec.versions : []);
+          for (const version of versions) {
+            metadataByVersion[version.id] = packagingMetadataFromVersion(version);
+          }
+          if (versions.length) {
+            const archiveResults = await Promise.all(versions.map(async (version: any) => {
+              try {
+                const archiveResponse = await fetch(
+                  `${API}/api/document-archives?screenKey=packaging_specifications&docKey=${encodeURIComponent(`packaging:${version.id}`)}`,
+                  { headers },
+                );
+                const files = archiveResponse.ok ? await archiveResponse.json() : [];
+                return [version.id, (Array.isArray(files) ? files : []) as PackagingArchiveFile[]] as const;
+              } catch {
+                return [version.id, [] as PackagingArchiveFile[]] as const;
+              }
+            }));
+            for (const [versionId, files] of archiveResults) archiveByVersion[versionId] = files;
+          }
+          setPackagingMetadata(metadataByVersion);
+          setPackagingArchiveFiles(archiveByVersion);
+        }
       }
     } catch (e: any) {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
@@ -561,6 +663,36 @@ export default function ProductionOrderDetail() {
     } catch (e: any) {
       toast({ title: "تعذر اعتماد إصدار التعبئة", description: e.message, variant: "destructive" });
     } finally { setPackagingBusy(false); }
+  }
+
+  function updatePackagingMetadata(versionId: number, patch: Partial<PackagingMetadata>) {
+    setPackagingMetadata((current) => ({
+      ...current,
+      [versionId]: {
+        ...(current[versionId] ?? packagingMetadataFromVersion({})),
+        ...patch,
+      },
+    }));
+  }
+
+  async function savePackagingMetadata(versionId: number) {
+    const metadata = packagingMetadata[versionId];
+    if (!metadata) return;
+    setPackagingMetadataBusy(versionId);
+    try {
+      await packagingRequest(`/packaging/versions/${versionId}/packaging-metadata`, "PATCH", {
+        palletMetadata: metadata.palletMetadata,
+        containerMetadata: metadata.containerMetadata,
+        eprDeclarations: metadata.eprDeclarations,
+        artworkArchiveIds: metadata.artworkArchiveIds,
+      });
+      toast({ title: "تم حفظ أبعاد وسعة وبيانات البيئة للتعبئة" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر حفظ بيانات التعبئة", description: e.message, variant: "destructive" });
+    } finally {
+      setPackagingMetadataBusy(null);
+    }
   }
 
   async function renewCertificate(lifecycleId: string) {
@@ -1206,15 +1338,125 @@ export default function ProductionOrderDetail() {
                       onClick={() => void addPackagingVersion(spec.id)}>إصدار جديد</Button>
                   </div>
                 </div>
-                {(spec.versions ?? []).map((version: any) => <div key={version.id} className="p-3 grid md:grid-cols-[1fr_auto_auto] gap-3 items-center">
-                  <div><b>الإصدار {version.versionNo}</b> <span className="text-xs text-slate-500">({version.status})</span>
-                    <p className="text-xs text-slate-500">{version.primaryMaterial || "مادة غير محددة"} • اختبارات: {(version.tests ?? []).length}</p>
-                  </div>
-                  <Button type="button" size="sm" variant="outline" disabled={packagingBusy || version.status === "approved"}
-                    onClick={() => void addPackagingTest(version.id)}>تسجيل اختبار ناجح</Button>
-                  <Button type="button" size="sm" disabled={packagingBusy || version.status === "approved"}
-                    onClick={() => void approvePackagingVersion(version.id)}>اعتماد الإصدار</Button>
-                </div>)}
+                {(spec.versions ?? []).map((version: any) => {
+                  const metadata = packagingMetadata[version.id] ?? packagingMetadataFromVersion(version);
+                  const archiveFiles = packagingArchiveFiles[version.id] ?? [];
+                  const locked = version.status === "approved" || version.status === "retired";
+                  return (
+                    <div key={version.id} className="p-3 grid md:grid-cols-[1fr_auto_auto] gap-3 items-center">
+                      <div><b>الإصدار {version.versionNo}</b> <span className="text-xs text-slate-500">({version.status})</span>
+                        <p className="text-xs text-slate-500">{version.primaryMaterial || "مادة غير محددة"} • اختبارات: {(version.tests ?? []).length}</p>
+                      </div>
+                      <Button type="button" size="sm" variant="outline" disabled={packagingBusy || locked}
+                        onClick={() => void addPackagingTest(version.id)}>تسجيل اختبار ناجح</Button>
+                      <Button type="button" size="sm" disabled={packagingBusy || locked}
+                        onClick={() => void approvePackagingVersion(version.id)}>اعتماد الإصدار</Button>
+
+                      <div className="md:col-span-3 rounded-lg border bg-slate-50/70 dark:bg-slate-950/30 p-3 space-y-3">
+                        <div className="text-xs text-slate-600 dark:text-slate-300">
+                          بيانات الطبلية والحاوية والإقرار البيئي جزء من لقطة هذا الإصدار، ولا تُعدّل بعد الاعتماد.
+                        </div>
+                        <div className="grid lg:grid-cols-2 gap-3">
+                          <PackagingTransportFields
+                            title="بيانات الطبلية"
+                            value={metadata.palletMetadata}
+                            disabled={locked}
+                            onChange={(patch) => updatePackagingMetadata(version.id, {
+                              palletMetadata: { ...metadata.palletMetadata, ...patch },
+                            })}
+                          />
+                          <PackagingTransportFields
+                            title="بيانات الحاوية"
+                            value={metadata.containerMetadata}
+                            disabled={locked}
+                            onChange={(patch) => updatePackagingMetadata(version.id, {
+                              containerMetadata: { ...metadata.containerMetadata, ...patch },
+                            })}
+                          />
+                        </div>
+
+                        <div className="rounded-md border p-3 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">إقرارات EPR البيئية والمواد</div>
+                            <Button type="button" size="sm" variant="outline" disabled={locked || metadata.eprDeclarations.length >= 50}
+                              onClick={() => updatePackagingMetadata(version.id, {
+                                eprDeclarations: [...metadata.eprDeclarations, {
+                                  material: "", scheme: "", massGrams: "", recycledContentPct: "",
+                                  recyclablePct: "", declarationRef: "", notes: "",
+                                }],
+                              })}>إضافة مادة</Button>
+                          </div>
+                          {metadata.eprDeclarations.length === 0 && <div className="text-xs text-muted-foreground">لا توجد إقرارات مادية لهذا الإصدار.</div>}
+                          {metadata.eprDeclarations.map((entry, index) => (
+                            <div key={`${version.id}-epr-${index}`} className="grid md:grid-cols-4 gap-2 rounded border p-2">
+                              {([
+                                ["material", "المادة"],
+                                ["scheme", "النظام/البلد"],
+                                ["massGrams", "الوزن (غرام)", "number"],
+                                ["recycledContentPct", "محتوى معاد %", "number"],
+                                ["recyclablePct", "قابلية التدوير %", "number"],
+                                ["declarationRef", "مرجع الإقرار"],
+                                ["notes", "ملاحظات"],
+                              ] as const).map(([key, label, type]) => (
+                                <div key={key}>
+                                  <Label className="text-[11px]">{label}</Label>
+                                  <Input type={type ?? "text"} min={type === "number" ? 0 : undefined} step={type === "number" ? "any" : undefined}
+                                    value={entry[key]} disabled={locked}
+                                    onChange={(event) => {
+                                      const declarations = metadata.eprDeclarations.map((item, itemIndex) =>
+                                        itemIndex === index ? { ...item, [key]: event.target.value } : item,
+                                      );
+                                      updatePackagingMetadata(version.id, { eprDeclarations: declarations });
+                                    }} />
+                                </div>
+                              ))}
+                              <div className="flex items-end">
+                                <Button type="button" size="sm" variant="ghost" className="text-destructive"
+                                  disabled={locked}
+                                  onClick={() => updatePackagingMetadata(version.id, {
+                                    eprDeclarations: metadata.eprDeclarations.filter((_, itemIndex) => itemIndex !== index),
+                                  })}>حذف</Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="rounded-md border p-3 space-y-2">
+                          <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">أرشيف artwork المحمي</div>
+                          <JournalScanArchive
+                            jeKey={`packaging:${version.id}`}
+                            screenKey="packaging_specifications"
+                            readOnly={locked}
+                          />
+                          {archiveFiles.length === 0
+                            ? <div className="text-xs text-muted-foreground">ارفع الملفات في الأرشيف السحابي ثم ستظهر هنا لاختيارها كمرجع. الملفات المحلية لا تُسجّل كمرجع خادمي.</div>
+                            : <div className="grid md:grid-cols-2 gap-2">
+                              {archiveFiles.map((file) => (
+                                <label key={file.id} className="flex items-center gap-2 rounded border p-2 text-xs">
+                                  <input type="checkbox" disabled={locked}
+                                    checked={metadata.artworkArchiveIds.includes(file.id)}
+                                    onChange={(event) => updatePackagingMetadata(version.id, {
+                                      artworkArchiveIds: event.target.checked
+                                        ? [...metadata.artworkArchiveIds, file.id]
+                                        : metadata.artworkArchiveIds.filter((id) => id !== file.id),
+                                    })} />
+                                  <span className="truncate">{file.filename}</span>
+                                  <span className="text-muted-foreground" dir="ltr">#{file.id}</span>
+                                </label>
+                              ))}
+                            </div>}
+                        </div>
+
+                        <div className="flex justify-end">
+                          <Button type="button" size="sm" disabled={locked || packagingMetadataBusy === version.id}
+                            onClick={() => void savePackagingMetadata(version.id)}>
+                            {packagingMetadataBusy === version.id ? "جاري الحفظ…" : "حفظ بيانات العبوة"}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>)}
             </TabsContent>}
           </Tabs>
@@ -1237,6 +1479,70 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
     <div>
       <div className="text-xs text-slate-500">{label}</div>
       <div className="text-base font-semibold mt-0.5">{value}</div>
+    </div>
+  );
+}
+
+function PackagingTransportFields({
+  title,
+  value,
+  disabled,
+  onChange,
+}: {
+  title: string;
+  value: PackagingTransportMetadata;
+  disabled: boolean;
+  onChange: (patch: Partial<PackagingTransportMetadata>) => void;
+}) {
+  const field = (key: keyof PackagingTransportMetadata, label: string, type = "text") => (
+    <div>
+      <Label className="text-[11px]">{label}</Label>
+      <Input
+        type={type}
+        min={type === "number" ? 0 : undefined}
+        step={type === "number" ? "any" : undefined}
+        value={value[key]}
+        disabled={disabled}
+        onChange={(event) => onChange({ [key]: event.target.value } as Partial<PackagingTransportMetadata>)}
+      />
+    </div>
+  );
+  return (
+    <div className="rounded-md border p-3 space-y-2">
+      <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{title}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        {field("type", "النوع")}
+        {field("length", "الطول", "number")}
+        {field("width", "العرض", "number")}
+        {field("height", "الارتفاع", "number")}
+        <div>
+          <Label className="text-[11px]">وحدة الأبعاد</Label>
+          <select
+            className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+            value={value.dimensionUnit}
+            disabled={disabled}
+            onChange={(event) => onChange({ dimensionUnit: event.target.value })}
+          >
+            <option value="mm">mm</option><option value="cm">cm</option>
+            <option value="m">m</option><option value="in">in</option>
+          </select>
+        </div>
+        {field("capacityUnits", "السعة بالوحدات", "number")}
+        {field("capacityUnit", "وحدة السعة")}
+        {field("maxGrossWeight", "الوزن الإجمالي الأقصى", "number")}
+        <div>
+          <Label className="text-[11px]">وحدة الوزن</Label>
+          <select
+            className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+            value={value.weightUnit}
+            disabled={disabled}
+            onChange={(event) => onChange({ weightUnit: event.target.value })}
+          >
+            <option value="kg">kg</option><option value="g">g</option><option value="lb">lb</option>
+          </select>
+        </div>
+        {field("stackLimit", "حد التكديس", "number")}
+      </div>
     </div>
   );
 }

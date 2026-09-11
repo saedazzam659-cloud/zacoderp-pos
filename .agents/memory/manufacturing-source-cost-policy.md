@@ -38,3 +38,17 @@ not stale snapshots left by unpost/repost.
 **Why:** Free units affect stock and COGS even when they contribute no revenue.
 Without the source-invoice lock, concurrent returns could each pass a stale
 remaining-quantity check and over-return the invoice.
+
+Period-close overhead correction is a separate immutable lifecycle over the
+existing actual-vs-applied report. A draft snapshots only posted
+manufacturing-overhead sources, their applied allocation totals, and the
+original posted debit accounts. Posting reclassifies the residual to a
+tenant-selected variance account through the shared production journal helper
+(so period guards, audit fields, numbering, and posting status remain
+consistent); it never books another source expense. The `(company, sourceKey)`
+close key and transaction advisory lock make creation idempotent. Reversal
+inverts the exact journal lines and preserves the original journal posting
+state.
+
+**Why:** A close must not recompute or duplicate payroll, depreciation, or
+prepaid source costs after their owning modules have posted them.

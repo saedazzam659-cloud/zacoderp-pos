@@ -57,6 +57,10 @@ export default function CostRollup() {
   const [branches, setBranches] = useState<any[]>([]);
   const [aggregate, setAggregate] = useState<any>(null);
   const [profitability, setProfitability] = useState<any>(null);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [overheadClosure, setOverheadClosure] = useState<any>(null);
+  const [closureVarianceAccountId, setClosureVarianceAccountId] = useState("");
+  const [closureBusy, setClosureBusy] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
 
   const headers = useMemo(() => ({
@@ -73,6 +77,14 @@ export default function CostRollup() {
         setItems(Array.isArray(d) ? d : d?.items ?? []);
       }
     })();
+  }, [token, headers]);
+
+  useEffect(() => {
+    if (!token) return;
+    void fetch(`${API}/api/accounts?limit=5000`, { headers })
+      .then((r) => r.ok ? r.json() : [])
+      .then((j) => setAccounts(Array.isArray(j) ? j : j?.rows ?? j?.accounts ?? []))
+      .catch(() => setAccounts([]));
   }, [token, headers]);
 
   useEffect(() => {
@@ -114,20 +126,74 @@ export default function CostRollup() {
   const loadReports = useCallback(async () => {
     setReportLoading(true);
     try {
-      const [costs,sales]=await Promise.all([
+      const [costs,sales,closures]=await Promise.all([
         fetch(`${API}/api/production/reports/costs?${reportQuery}`,{headers}),
         fetch(`${API}/api/production/reports/realized-product-profitability?${reportQuery}`,{headers}),
+        fetch(`${API}/api/production/overhead-closures?period=${encodeURIComponent(from.slice(0, 7))}${branchId ? `&branchId=${encodeURIComponent(branchId)}` : ""}`,{headers}),
       ]);
       const cj=await costs.json(); const sj=await sales.json();
+      const oj=closures.ok ? await closures.json() : null;
       if(!costs.ok) throw new Error(cj.error||"تعذر تحميل تقرير التكلفة");
       if(!sales.ok) throw new Error(sj.error||"تعذر تحميل المبيعات المحققة");
       setAggregate(cj); setProfitability(sj);
+      setOverheadClosure(oj?.rows?.[0] ?? null);
     } catch(e:any) {
       toast({title:"تعذر تحميل تقارير التصنيع",description:e.message,variant:"destructive"});
     } finally { setReportLoading(false); }
-  },[headers,reportQuery,toast]);
+  },[headers,reportQuery,from,branchId,toast]);
 
   useEffect(()=>{ if(token) void loadReports(); },[token,loadReports]);
+
+  async function createOverheadClosure() {
+    if (from.slice(0, 7) !== to.slice(0, 7)) {
+      toast({ title: "الفترة غير مكتملة", description: "يجب أن يقع تاريخا التقرير في نفس الشهر لإغلاق المصروفات العامة.", variant: "destructive" });
+      return;
+    }
+    const accountId = Number(closureVarianceAccountId);
+    if (!Number.isInteger(accountId) || accountId <= 0) {
+      toast({ title: "حساب الفروقات مطلوب", description: "اختر حساب فروقات التصنيع قبل إنشاء المسودة.", variant: "destructive" });
+      return;
+    }
+    setClosureBusy(true);
+    try {
+      const r = await fetch(`${API}/api/production/overhead-closures`, {
+        method: "POST", headers,
+        body: JSON.stringify({
+          period: from.slice(0, 7),
+          branchId: branchId || null,
+          varianceAccountId: accountId,
+          correctionDate: to,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setOverheadClosure(j);
+      toast({ title: j.idempotent ? "المسودة موجودة بالفعل" : "أُنشئت مسودة إغلاق المصروفات" });
+    } catch (e: any) {
+      toast({ title: "تعذر إنشاء مسودة الإغلاق", description: e.message, variant: "destructive" });
+    } finally {
+      setClosureBusy(false);
+    }
+  }
+
+  async function changeOverheadClosure(action: "post" | "reverse") {
+    if (!overheadClosure?.id) return;
+    setClosureBusy(true);
+    try {
+      const r = await fetch(`${API}/api/production/overhead-closures/${overheadClosure.id}/${action}`, {
+        method: "POST", headers,
+        body: action === "reverse" ? JSON.stringify({ reversalDate: to }) : JSON.stringify({}),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setOverheadClosure(j.closure ? { ...j.closure, journalStatus: j.journalStatus } : overheadClosure);
+      toast({ title: action === "post" ? "تم ترحيل إغلاق المصروفات" : "تم عكس إغلاق المصروفات" });
+    } catch (e: any) {
+      toast({ title: "تعذر تحديث دورة الإغلاق", description: e.message, variant: "destructive" });
+    } finally {
+      setClosureBusy(false);
+    }
+  }
 
   function exportCsv(kind:"costs"|"sales") {
     const quote=(v:unknown)=>`"${String(v??"").replaceAll('"','""')}"`;
@@ -453,6 +519,70 @@ export default function CostRollup() {
                    x.underAppliedAmount, x.overAppliedAmount, x.variance,
                  ])}/>
              </CardContent></Card>
+            <Card className="border-indigo-200">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">إغلاق الفترة وترحيل فرق المصروفات العامة</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-slate-500">
+                  ينشئ النظام لقطة غير قابلة للتعديل للمصادر المرحّلة، ثم يعيد تصنيف الفرق فقط بين حسابات المصروف المصدر وحساب الفروقات. لا ينشئ مصروفاً ثانياً ولا يعيد توزيع لقطات المصدر.
+                </p>
+                {!overheadClosure && (
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="min-w-72">
+                      <Label>حساب فروقات التصنيع</Label>
+                      <select
+                        value={closureVarianceAccountId}
+                        onChange={(e) => setClosureVarianceAccountId(e.target.value)}
+                        className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                      >
+                        <option value="">اختر الحساب</option>
+                        {accounts.map((a: any) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code ? `${a.code} — ` : ""}{a.nameAr || a.nameEn || `#${a.id}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <Button onClick={createOverheadClosure} disabled={closureBusy || reportLoading}>
+                      {closureBusy ? "جاري الحفظ..." : "إنشاء مسودة الإغلاق"}
+                    </Button>
+                  </div>
+                )}
+                {overheadClosure && (
+                  <div className="rounded-lg border bg-slate-50 p-3 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={overheadClosure.status === "posted" ? "default" : overheadClosure.status === "reversed" ? "secondary" : "outline"}>
+                        {overheadClosure.status === "draft" ? "مسودة" : overheadClosure.status === "posted" ? "مرحّل" : "معكوس"}
+                      </Badge>
+                      <span className="text-sm font-mono">#{overheadClosure.id}</span>
+                      <span className="text-sm">الفترة {overheadClosure.periodStart} — {overheadClosure.periodEnd}</span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-sm">
+                      <div className="rounded border bg-white p-2"><div className="text-[11px] text-slate-500">الفعلي</div><b className="font-mono">{fmtMoney(Number(overheadClosure.actualAmount))}</b></div>
+                      <div className="rounded border bg-white p-2"><div className="text-[11px] text-slate-500">المطبق</div><b className="font-mono">{fmtMoney(Number(overheadClosure.appliedAmount))}</b></div>
+                      <div className="rounded border bg-white p-2"><div className="text-[11px] text-slate-500">فرق الإغلاق</div><b className="font-mono">{fmtMoney(Number(overheadClosure.varianceAmount))}</b></div>
+                      <div className="rounded border bg-white p-2"><div className="text-[11px] text-slate-500">القيد</div><b className="font-mono">{overheadClosure.journalEntryId ?? "—"}</b>{overheadClosure.journalStatus && <div className="text-[10px] text-slate-500">{overheadClosure.journalStatus === "posted" ? "مرحّل محاسبياً" : "مسودة محاسبية"}</div>}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {overheadClosure.status === "draft" && (
+                        <Button onClick={() => void changeOverheadClosure("post")} disabled={closureBusy}>
+                          {closureBusy ? "جاري الترحيل..." : "ترحيل قيد الإغلاق"}
+                        </Button>
+                      )}
+                      {overheadClosure.status === "posted" && (
+                        <Button variant="outline" onClick={() => void changeOverheadClosure("reverse")} disabled={closureBusy}>
+                          {closureBusy ? "جاري العكس..." : "عكس قيد الإغلاق"}
+                        </Button>
+                      )}
+                      {overheadClosure.status === "posted" && (
+                        <span className="text-xs text-slate-500 self-center">العكس يعيد استخدام حالة القيد الأصلية ويمر عبر حارس الفترة.</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
         </TabsContent>
         <TabsContent value="sales" className="space-y-4">
           <ReportFilters from={from} to={to} branchId={branchId} branches={branches}

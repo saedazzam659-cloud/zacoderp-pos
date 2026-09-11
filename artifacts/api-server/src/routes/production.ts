@@ -13,6 +13,7 @@ import {
   productionResourcesTable,
   productionEventsTable,
   productionCostAllocationsTable,
+  productionOverheadClosuresTable,
   packagingSpecificationsTable,
   packagingSpecificationVersionsTable,
   packagingSpecificationApprovalsTable,
@@ -2066,6 +2067,794 @@ commercialLifecycleRouter.patch("/orders/:id/commercial-lifecycle/:lifecycleId",
   } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
 });
 
+// ──────────────────────────────────────────────────────────────────────────
+// ACTUAL VS APPLIED OVERHEAD PERIOD CLOSE
+//
+// A close is first captured as an immutable draft from the same posted source
+// documents and allocation snapshots used by the report. Posting then moves
+// only the residual between those source expense accounts and the selected
+// variance account. It never books another source expense, and the close and
+// its journal are serialized as one lifecycle.
+// ──────────────────────────────────────────────────────────────────────────
+// amount is signed: positive under-applied (credit source account), negative
+// over-applied (debit source account).
+type OverheadClosureAccountLine = {
+  accountId: number;
+  amount: number;
+  costCenter?: string | null;
+};
+type OverheadClosureSource = {
+  sourceType: string;
+  sourceRecordId: number;
+  sourceJournalId: number;
+  sourceAmount: number;
+  appliedAmount: number;
+  variance: number;
+  sourceReference: string;
+  accountLines: OverheadClosureAccountLine[];
+};
+
+const OVERHEAD_CLOSURE_MUTATION_LOCK = "production_overhead_closure_mutation";
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function closurePeriod(period: string): { start: string; end: string } | null {
+  if (!/^\d{4}-\d{2}$/.test(period)) return null;
+  const [year, month] = period.split("-").map(Number);
+  if (month < 1 || month > 12) return null;
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    start: `${period}-01`,
+    end: `${period}-${String(last).padStart(2, "0")}`,
+  };
+}
+
+function closureSourceMeta(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+async function lockOverheadClosureMutation(tx: any, cid: number): Promise<void> {
+  // Allocation snapshots and period-close snapshots must have one lock order.
+  // A tenant-wide lock is intentional here: a close is a source-pool boundary,
+  // not an order-local operation, and source rows can be shared by branches.
+  await tx.execute(sql`select pg_advisory_xact_lock(
+    ${cid}, hashtext(${OVERHEAD_CLOSURE_MUTATION_LOCK})
+  )`);
+}
+
+function overheadSourceKey(sourceType: unknown, sourceRecordId: unknown): string {
+  return `${String(sourceType)}:${Number(sourceRecordId)}`;
+}
+
+function closureSnapshotSourceKeys(value: unknown): Set<string> {
+  const keys = new Set<string>();
+  for (const source of closureSnapshotLines(value)) {
+    const key = overheadSourceKey(source.sourceType, source.sourceRecordId);
+    if (source.sourceType && Number.isInteger(Number(source.sourceRecordId)) &&
+        Number(source.sourceRecordId) > 0) {
+      keys.add(key);
+    }
+  }
+  return keys;
+}
+
+async function assertSourceNotFrozenByOverheadClosure(
+  tx: any,
+  cid: number,
+  sourceType: string,
+  sourceRecordId: number,
+): Promise<void> {
+  const rows = await tx.select({
+    id: productionOverheadClosuresTable.id,
+    sourceSnapshot: productionOverheadClosuresTable.sourceSnapshot,
+  }).from(productionOverheadClosuresTable)
+    .where(eq(productionOverheadClosuresTable.companyId, cid));
+  const key = overheadSourceKey(sourceType, sourceRecordId);
+  const frozen = rows.find((row: any) => closureSnapshotSourceKeys(row.sourceSnapshot).has(key));
+  if (frozen) {
+    throw Object.assign(
+      new Error(`مصدر التكلفة ${key} مجمّد ضمن إغلاق الفترة رقم ${frozen.id} ولا يمكن إضافة توزيع جديد بعد الإغلاق`),
+      { status: 409 },
+    );
+  }
+}
+
+async function buildOverheadClosureSnapshot(
+  q: any,
+  cid: number,
+  period: string,
+  req: any,
+  requestedBranchId?: number | null,
+): Promise<{
+  periodStart: string;
+  periodEnd: string;
+  sources: OverheadClosureSource[];
+  actualAmount: number;
+  appliedAmount: number;
+  varianceAmount: number;
+}> {
+  const range = closurePeriod(period);
+  if (!range) throw Object.assign(new Error("الفترة مطلوبة بصيغة YYYY-MM"), { status: 400 });
+  const branchResult = effectiveBranchCondition(
+    req,
+    productionOrdersTable.branchId,
+    requestedBranchId ?? undefined,
+  );
+  if ("deny" in branchResult)
+    throw Object.assign(new Error("لا يمكنك العمل على هذا الفرع"), { status: 403 });
+
+  const sourceRows = await loadPostedCostSources(q, cid, period, req, requestedBranchId);
+  if (!sourceRows.length) {
+    throw Object.assign(new Error("لا توجد مصادر تصنيع عامة مرحّلة ضمن هذه الفترة"), { status: 409 });
+  }
+  const sourceJournalIds = [...new Set(sourceRows.map((source) =>
+    Number(closureSourceMeta(source.meta).sourceJournalId),
+  ).filter((id) => Number.isInteger(id) && id > 0))];
+  if (sourceJournalIds.length) {
+    await q.select({ id: journalEntriesTable.id })
+      .from(journalEntriesTable)
+      .where(and(
+        eq(journalEntriesTable.companyId, cid),
+        inArray(journalEntriesTable.id, sourceJournalIds),
+      ))
+      .for("update");
+  }
+  const allocationRows = await q.select({
+    allocationId: productionCostAllocationsTable.id,
+    sourceType: productionCostAllocationsTable.sourceType,
+    sourceRecordId: productionCostAllocationsTable.sourceRecordId,
+    allocatedAmount: productionCostAllocationsTable.allocatedAmount,
+    issueJournalId: productionOrdersTable.issueJournalEntryId,
+    issueStatus: journalEntriesTable.status,
+    costTreatment: sql<string>`coalesce(
+      ${productionCostAllocationsTable.snapshotMeta}->>'costTreatment', ''
+    )`,
+  }).from(productionCostAllocationsTable)
+    .innerJoin(productionOrdersTable, and(
+      eq(productionOrdersTable.id, productionCostAllocationsTable.orderId),
+      eq(productionOrdersTable.companyId, cid),
+    ))
+    // An allocation is "applied" for this close only after the production
+    // issue JE has posted the source debit reclassification into WIP. We use a
+    // left join so a pending allocation is visible and can freeze the close
+    // rather than being silently omitted from its snapshot.
+    .leftJoin(journalEntriesTable, and(
+      eq(journalEntriesTable.id, productionOrdersTable.issueJournalEntryId),
+      eq(journalEntriesTable.companyId, cid),
+    ))
+    .where(and(
+      eq(productionCostAllocationsTable.companyId, cid),
+      eq(productionCostAllocationsTable.periodStart, range.start),
+      eq(productionCostAllocationsTable.periodEnd, range.end),
+      sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
+      branchResult.cond,
+    ));
+  const allocationIds = allocationRows.map((row: any) => Number(row.allocationId))
+    .filter((id: number) => Number.isInteger(id) && id > 0);
+  if (allocationIds.length) {
+    // Lock the nullable-independent allocation rows themselves. Applying
+    // FOR UPDATE to the left-joined journal query would make PostgreSQL try
+    // to lock its nullable side and fail with "cannot lock rows in the
+    // nullable side of an outer join".
+    await q.select({ id: productionCostAllocationsTable.id })
+      .from(productionCostAllocationsTable)
+      .where(and(
+        eq(productionCostAllocationsTable.companyId, cid),
+        inArray(productionCostAllocationsTable.id, allocationIds),
+      ))
+      .for("update");
+  }
+  if (allocationRows.some((row: any) =>
+    row.issueJournalId == null || row.issueStatus !== "posted",
+  )) {
+    throw Object.assign(
+      new Error("لا يمكن إغلاق الفترة: توجد توزيعات تكلفة لم تُعد تصنيفها إلى WIP بقيد مرحّل"),
+      { status: 409 },
+    );
+  }
+  const appliedBySource = new Map<string, {
+    amount: number;
+    treatments: Set<string>;
+  }>();
+  for (const row of allocationRows) {
+    const key = overheadSourceKey(row.sourceType, row.sourceRecordId);
+    const current = appliedBySource.get(key) ?? { amount: 0, treatments: new Set<string>() };
+    current.amount = round2(current.amount + num(row.allocatedAmount));
+    current.treatments.add(String(row.costTreatment ?? ""));
+    appliedBySource.set(key, current);
+  }
+
+  const journalIds = sourceJournalIds;
+  const sourceLines = journalIds.length
+    ? await q.select({
+        journalId: journalEntryLinesTable.entryId,
+        accountId: journalEntryLinesTable.accountId,
+        debit: journalEntryLinesTable.debit,
+        costCenter: journalEntryLinesTable.costCenter,
+      }).from(journalEntryLinesTable)
+        .innerJoin(journalEntriesTable, and(
+          eq(journalEntriesTable.id, journalEntryLinesTable.entryId),
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.status, "posted"),
+        )).where(and(
+          inArray(journalEntryLinesTable.entryId, journalIds),
+          sql`${journalEntryLinesTable.debit} > 0`,
+        )).for("share")
+    : [];
+  const linesByJournal = new Map<number, Array<{
+    accountId: number;
+    debit: number;
+    costCenter: string | null;
+  }>>();
+  for (const line of sourceLines) {
+    if (!line.accountId) continue;
+    const rows = linesByJournal.get(Number(line.journalId)) ?? [];
+    rows.push({
+      accountId: line.accountId,
+      debit: num(line.debit),
+      costCenter: line.costCenter ?? null,
+    });
+    linesByJournal.set(Number(line.journalId), rows);
+  }
+
+  const sources: OverheadClosureSource[] = [];
+  for (const source of sourceRows.filter((candidate) =>
+    appliedBySource.has(overheadSourceKey(candidate.sourceType, candidate.sourceRecordId)),
+  )) {
+    const key = overheadSourceKey(source.sourceType, source.sourceRecordId);
+    const applied = appliedBySource.get(key)!;
+    // A source pool that was split between manufacturing overhead and another
+    // analytical treatment cannot be assigned a signed residual safely: the
+    // source journal does not identify which debit belongs to each treatment.
+    // Refuse the close instead of posting a plausible-looking fake correction.
+    if (applied.treatments.size !== 1 || !applied.treatments.has("manufacturing_overhead")) {
+      throw Object.assign(
+        new Error(`لا يمكن إغلاق المصدر ${key}: توزيعاته المرحّلة ليست مصروفاً صناعياً غير مباشر حصراً`),
+        { status: 409 },
+      );
+    }
+    const actualAmount = round2(source.sourceAmount);
+    const appliedAmount = applied.amount;
+    const variance = round2(actualAmount - appliedAmount);
+    if (Math.abs(variance) < 0.01) continue;
+    const sourceJournalId = Number(closureSourceMeta(source.meta).sourceJournalId);
+    const sourceJournalLines = linesByJournal.get(sourceJournalId) ?? [];
+    if (!sourceJournalId || !sourceJournalLines.length) {
+      throw Object.assign(
+        new Error(`لا يمكن إغلاق المصدر ${key}: القيد الأصلي المرحّل أو حساب المصروف غير متاح`),
+        { status: 409 },
+      );
+    }
+    const totalDebit = sourceJournalLines.reduce((sum, line) => sum + line.debit, 0);
+    if (!(totalDebit > 0)) {
+      throw Object.assign(new Error(`لا يمكن إغلاق المصدر ${key}: لا توجد حركة مدين قابلة للتسوية`), { status: 409 });
+    }
+    if (actualAmount > round2(totalDebit) + 0.005) {
+      throw Object.assign(
+        new Error(`لا يمكن إغلاق المصدر ${key}: مبلغ المصدر المؤهل يتجاوز إجمالي مدين القيد الأصلي`),
+        { status: 409 },
+      );
+    }
+    let allocated = 0;
+    const accountLines = sourceJournalLines.map((line, index) => {
+      const magnitude = index === sourceJournalLines.length - 1
+        ? round2(Math.abs(variance) - allocated)
+        : round2(Math.abs(variance) * line.debit / totalDebit);
+      allocated = round2(allocated + magnitude);
+      return {
+        accountId: line.accountId,
+        // Positive = under-applied (credit source expense), negative =
+        // over-applied (debit source expense).
+        amount: variance > 0 ? magnitude : -magnitude,
+        costCenter: line.costCenter,
+      };
+    }).filter((line) => Math.abs(line.amount) > 0);
+    sources.push({
+      sourceType: source.sourceType,
+      sourceRecordId: source.sourceRecordId,
+      sourceJournalId,
+      sourceAmount: actualAmount,
+      appliedAmount,
+      variance,
+      sourceReference: `${source.sourceType}:${source.sourceRecordId}`,
+      accountLines,
+    });
+  }
+  const actualAmount = round2(sources.reduce((sum, source) => sum + source.sourceAmount, 0));
+  const appliedAmount = round2(sources.reduce((sum, source) => sum + source.appliedAmount, 0));
+  const varianceAmount = round2(actualAmount - appliedAmount);
+  if (Math.abs(varianceAmount) < 0.01 || !sources.length) {
+    throw Object.assign(new Error("لا يوجد انحراف فعلي يحتاج إلى قيد إغلاق"), { status: 409 });
+  }
+  return { periodStart: range.start, periodEnd: range.end, sources, actualAmount, appliedAmount, varianceAmount };
+}
+
+function closureSourceKey(cid: number, period: string, branchId: number | null): string {
+  return `production_overhead_closure:${cid}:${branchId ?? 0}:${period}`;
+}
+
+function closureSnapshotLines(snapshot: unknown): OverheadClosureSource[] {
+  return Array.isArray(snapshot) ? snapshot as OverheadClosureSource[] : [];
+}
+
+function closureSourceFingerprint(sources: OverheadClosureSource[]): string {
+  return JSON.stringify(sources.map((source) => ({
+    key: overheadSourceKey(source.sourceType, source.sourceRecordId),
+    sourceJournalId: Number(source.sourceJournalId),
+    sourceAmount: round2(num(source.sourceAmount)),
+    appliedAmount: round2(num(source.appliedAmount)),
+    variance: round2(num(source.variance)),
+    accountLines: (Array.isArray(source.accountLines) ? source.accountLines : [])
+      .map((line) => ({
+        accountId: Number(line.accountId),
+        amount: round2(num(line.amount)),
+        costCenter: line.costCenter ?? null,
+      }))
+      .sort((a, b) =>
+        `${a.accountId}:${a.costCenter ?? ""}:${a.amount}`
+          .localeCompare(`${b.accountId}:${b.costCenter ?? ""}:${b.amount}`)),
+  })).sort((a, b) => a.key.localeCompare(b.key)));
+}
+
+async function lockOverheadSourceJournals(
+  tx: any,
+  cid: number,
+  sources: OverheadClosureSource[],
+): Promise<void> {
+  const journalIds = [...new Set(sources.map((source) => Number(source.sourceJournalId))
+    .filter((id) => Number.isInteger(id) && id > 0))];
+  if (!journalIds.length) return;
+  await tx.select({ id: journalEntriesTable.id })
+    .from(journalEntriesTable)
+    .where(and(
+      eq(journalEntriesTable.companyId, cid),
+      inArray(journalEntriesTable.id, journalIds),
+    ))
+    .for("update");
+}
+
+async function assertOverheadClosureSnapshotCurrent(
+  tx: any,
+  cid: number,
+  closure: any,
+  req: any,
+): Promise<void> {
+  const expected = closureSnapshotLines(closure.sourceSnapshot);
+  if (!expected.length) {
+    throw Object.assign(new Error("لقطة إغلاق المصروفات غير صالحة"), { status: 409 });
+  }
+  // Lock source journals before rebuilding the snapshot. Owner-module unpost
+  // paths also lock their journal/run rows, so a close either sees the old
+  // posted source or the committed later reversal and rejects as stale.
+  await lockOverheadSourceJournals(tx, cid, expected);
+  let current: Awaited<ReturnType<typeof buildOverheadClosureSnapshot>>;
+  try {
+    current = await buildOverheadClosureSnapshot(
+      tx, cid, String(closure.periodStart).slice(0, 7), req, closure.branchId,
+    );
+  } catch (error: any) {
+    throw Object.assign(
+      new Error(`لقطة إغلاق المصروفات أصبحت قديمة: ${error?.message ?? "تغير مصدر أو توزيع مرحّل"}`),
+      { status: 409 },
+    );
+  }
+  if (closureSourceFingerprint(expected) !== closureSourceFingerprint(current.sources) ||
+      Math.abs(round2(num(closure.actualAmount)) - current.actualAmount) > 0.005 ||
+      Math.abs(round2(num(closure.appliedAmount)) - current.appliedAmount) > 0.005 ||
+      Math.abs(round2(num(closure.varianceAmount)) - current.varianceAmount) > 0.005) {
+    throw Object.assign(
+      new Error("لقطة إغلاق المصروفات أصبحت قديمة بسبب مصدر أو توزيع جديد؛ أنشئ إغلاقاً جديداً"),
+      { status: 409 },
+    );
+  }
+}
+
+async function assertNoOverlappingOverheadClosureSources(
+  tx: any,
+  cid: number,
+  sourceKey: string,
+  sources: OverheadClosureSource[],
+): Promise<void> {
+  const wanted = new Set(sources.map((source) =>
+    overheadSourceKey(source.sourceType, source.sourceRecordId),
+  ));
+  const existing = await tx.select({
+    id: productionOverheadClosuresTable.id,
+    sourceKey: productionOverheadClosuresTable.sourceKey,
+    sourceSnapshot: productionOverheadClosuresTable.sourceSnapshot,
+  }).from(productionOverheadClosuresTable)
+    .where(eq(productionOverheadClosuresTable.companyId, cid));
+  for (const row of existing) {
+    if (row.sourceKey === sourceKey) continue;
+    const overlap = [...closureSnapshotSourceKeys(row.sourceSnapshot)]
+      .find((key) => wanted.has(key));
+    if (overlap) {
+      throw Object.assign(
+        new Error(`المصدر ${overlap} مجمّد مسبقاً في إغلاق الفترة رقم ${row.id} ولا يمكن تكرار التسوية`),
+        { status: 409 },
+      );
+    }
+  }
+}
+
+function closureActionPermission(action: "create" | "post" | "unpost") {
+  return requirePermission("production", action);
+}
+
+router.get("/overhead-closures", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const period = String(req.query.period ?? "");
+    const range = closurePeriod(period);
+    if (!range) return void res.status(400).json({ error: "الفترة مطلوبة بصيغة YYYY-MM" });
+    const requestedBranchId = req.query.branchId == null || req.query.branchId === ""
+      ? undefined : Number(req.query.branchId);
+    if (requestedBranchId !== undefined && !Number.isInteger(requestedBranchId))
+      return void res.status(400).json({ error: "الفرع غير صحيح" });
+    const branchResult = effectiveBranchCondition(
+      req, productionOverheadClosuresTable.branchId, requestedBranchId,
+    );
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const conditions: any[] = [
+      eq(productionOverheadClosuresTable.companyId, cid),
+      eq(productionOverheadClosuresTable.periodStart, range.start),
+      eq(productionOverheadClosuresTable.periodEnd, range.end),
+    ];
+    if (branchResult.cond) conditions.push(branchResult.cond);
+    const rows = await db.select().from(productionOverheadClosuresTable)
+      .where(and(...conditions)).orderBy(desc(productionOverheadClosuresTable.createdAt));
+    const journalIds = rows.flatMap((row) =>
+      [row.journalEntryId, row.reversalJournalEntryId].filter(
+        (id): id is number => Number.isInteger(id),
+      ),
+    );
+    const journals = journalIds.length
+      ? await db.select({ id: journalEntriesTable.id, status: journalEntriesTable.status })
+        .from(journalEntriesTable)
+        .where(and(eq(journalEntriesTable.companyId, cid), inArray(journalEntriesTable.id, journalIds)))
+      : [];
+    const journalStatus = new Map(journals.map((journal) => [journal.id, journal.status]));
+    res.json({
+      period,
+      rows: rows.map((row) => ({
+        ...row,
+        journalStatus: row.journalEntryId ? journalStatus.get(row.journalEntryId) ?? null : null,
+        reversalJournalStatus: row.reversalJournalEntryId
+          ? journalStatus.get(row.reversalJournalEntryId) ?? null : null,
+      })),
+    });
+  } catch (e: any) {
+    res.status(e.status ?? 500).json({ error: e.message });
+  }
+});
+
+router.post("/overhead-closures", closureActionPermission("create"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const period = String(req.body?.period ?? "");
+    const range = closurePeriod(period);
+    if (!range) return void res.status(400).json({ error: "الفترة مطلوبة بصيغة YYYY-MM" });
+    const requestedStart = req.body?.periodStart ?? req.body?.from;
+    const requestedEnd = req.body?.periodEnd ?? req.body?.to;
+    // Owning source documents and their approved allocation denominators are
+    // monthly.  Accepting a partial month would book the whole source pool
+    // against a date fragment and make two fragments double-book the source.
+    // Reject it explicitly until a source-level daily split exists.
+    if ((requestedStart != null && String(requestedStart) !== range.start) ||
+        (requestedEnd != null && String(requestedEnd) !== range.end)) {
+      return void res.status(409).json({
+        error: "إغلاق المصروفات العامة متاح للشهر الكامل فقط؛ لا يمكن تسوية جزء من شهر دون لقطة مصدر يومية",
+      });
+    }
+    const requestedBranchId = req.body?.branchId == null || req.body.branchId === ""
+      ? null : Number(req.body.branchId);
+    if (requestedBranchId !== null && !Number.isInteger(requestedBranchId))
+      return void res.status(400).json({ error: "الفرع غير صحيح" });
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, requestedBranchId ?? undefined);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const correctionDate = String(req.body?.correctionDate || range.end);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(correctionDate))
+      return void res.status(400).json({ error: "تاريخ قيد الإغلاق غير صحيح" });
+    const varianceAccountId = Number(req.body?.varianceAccountId);
+    if (!Number.isInteger(varianceAccountId) || varianceAccountId <= 0)
+      return void res.status(400).json({ error: "حساب فروقات التصنيع مطلوب" });
+    const [varianceAccount] = await db.select({ id: accountsTable.id }).from(accountsTable)
+      .where(and(eq(accountsTable.id, varianceAccountId), eq(accountsTable.companyId, cid))).limit(1);
+    if (!varianceAccount) return void res.status(400).json({ error: "حساب الفروقات لا ينتمي إلى هذه الشركة" });
+    const sourceKey = closureSourceKey(cid, period, requestedBranchId);
+    const closure = await db.transaction(async (tx) => {
+      await lockOverheadClosureMutation(tx, cid);
+      const [existing] = await tx.select().from(productionOverheadClosuresTable)
+        .where(and(eq(productionOverheadClosuresTable.companyId, cid),
+          eq(productionOverheadClosuresTable.sourceKey, sourceKey))).limit(1);
+      if (existing) {
+        if (existing.varianceAccountId !== varianceAccountId) {
+          throw Object.assign(
+            new Error("توجد مسودة/تسوية لهذه الفترة بحساب فروقات مختلف"),
+            { status: 409 },
+          );
+        }
+        return { row: existing, created: false };
+      }
+      const snapshot = await buildOverheadClosureSnapshot(
+        tx, cid, period, req, requestedBranchId,
+      );
+      if (snapshot.sources.some((source) =>
+        source.accountLines.some((line) => line.accountId === varianceAccountId),
+      )) {
+        throw Object.assign(
+          new Error("حساب فروقات التصنيع يجب أن يختلف عن حسابات المصروف المصدر"),
+          { status: 409 },
+        );
+      }
+      await assertNoOverlappingOverheadClosureSources(
+        tx, cid, sourceKey, snapshot.sources,
+      );
+      const [row] = await tx.insert(productionOverheadClosuresTable).values({
+        companyId: cid,
+        branchId: requestedBranchId,
+        periodStart: snapshot.periodStart,
+        periodEnd: snapshot.periodEnd,
+        correctionDate,
+        sourceKey,
+        varianceAccountId,
+        status: "draft",
+        actualAmount: snapshot.actualAmount.toFixed(2),
+        appliedAmount: snapshot.appliedAmount.toFixed(2),
+        varianceAmount: snapshot.varianceAmount.toFixed(2),
+        sourceSnapshot: snapshot.sources as any,
+        createdBy: req.authUser!.id,
+      }).returning();
+      await writeEvent(cid, null, "overhead_closure_draft_created", {
+        closureId: row.id, period, branchId: requestedBranchId,
+        actualAmount: snapshot.actualAmount, appliedAmount: snapshot.appliedAmount,
+        varianceAmount: snapshot.varianceAmount, sourceKey,
+      }, req.authUser!.id, false, tx);
+      return { row, created: true };
+    });
+    res.status(closure.created ? 201 : 200).json({ ...closure.row, idempotent: !closure.created });
+  } catch (e: any) {
+    res.status(e.status ?? 500).json({ error: e.message });
+  }
+});
+
+router.post("/overhead-closures/:id/post",
+  closureActionPermission("post"), requirePostRight("production"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const result = await db.transaction(async (tx) => {
+      await lockOverheadClosureMutation(tx, cid);
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${id})`);
+      const [closure] = await tx.select().from(productionOverheadClosuresTable).where(and(
+        eq(productionOverheadClosuresTable.id, id),
+        eq(productionOverheadClosuresTable.companyId, cid),
+      )).limit(1);
+      if (!closure || !rowInScope(req, closure.branchId))
+        throw Object.assign(new Error("تسوية المصروفات الصناعية غير موجودة"), { status: 404 });
+      if (closure.status === "posted") {
+        if (!closure.journalEntryId) {
+          throw Object.assign(new Error("تسوية مرحّلة بلا قيد محاسبي؛ يلزم إصلاح السجل قبل إعادة المحاولة"), { status: 409 });
+        }
+        const [journal] = await tx.select({
+          id: journalEntriesTable.id,
+          status: journalEntriesTable.status,
+          entryType: journalEntriesTable.entryType,
+        }).from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, closure.journalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1);
+        if (!journal || journal.entryType !== "production_overhead_closure" ||
+            journal.status !== "posted") {
+          throw Object.assign(new Error("قيد تسوية المصروفات غير موجود أو غير صالح"), { status: 409 });
+        }
+        return { closure, idempotent: true, journalStatus: journal?.status ?? null };
+      }
+      if (closure.status === "reversed")
+        throw Object.assign(new Error("لا يمكن ترحيل تسوية تم عكسها"), { status: 409 });
+      if (closure.journalEntryId)
+        throw Object.assign(new Error("مسودة الإغلاق مرتبطة بقيد غير مكتمل؛ لا يمكن إنشاء قيد ثانٍ"), { status: 409 });
+      const variance = num(closure.varianceAmount);
+      if (Math.abs(variance) < 0.01)
+        throw Object.assign(new Error("لا يوجد انحراف قابل للترحيل"), { status: 409 });
+      const sourceLines = closureSnapshotLines(closure.sourceSnapshot);
+      await assertOverheadClosureSnapshotCurrent(tx, cid, closure, req);
+      // Keep the sign per source account. A period may contain both
+      // under-applied and over-applied sources; aggregating only absolute
+      // amounts would create an unbalanced journal in that case.
+      const accountTotals = new Map<string, {
+        accountId: number;
+        costCenter: string | null;
+        amount: number;
+      }>();
+      const sourceAccountIds = new Set<number>();
+      for (const source of sourceLines) {
+        for (const line of source.accountLines ?? []) {
+          const amount = num(line.amount);
+          const accountId = Number(line.accountId);
+          if (!Number.isInteger(accountId) || amount === 0) continue;
+          sourceAccountIds.add(accountId);
+          const costCenter = line.costCenter ?? null;
+          const key = `${accountId}:${costCenter ?? ""}`;
+          const current = accountTotals.get(key);
+          accountTotals.set(key, {
+            accountId,
+            costCenter,
+            amount: round2((current?.amount ?? 0) + amount),
+          });
+        }
+      }
+      if (!accountTotals.size || sourceAccountIds.has(closure.varianceAccountId))
+        throw Object.assign(new Error("حساب فروقات التصنيع يجب أن يختلف عن حسابات المصروف المصدر"), { status: 409 });
+      const sourceKeys = new Set(sourceLines.map((source) =>
+        `${source.sourceType}:${source.sourceRecordId}`,
+      ));
+      if (sourceKeys.size !== sourceLines.length)
+        throw Object.assign(new Error("لقطة الإغلاق تحتوي على مصادر مكررة"), { status: 409 });
+      const lines: JLine[] = [];
+      for (const entry of accountTotals.values()) {
+        if (Math.abs(entry.amount) < 0.01) continue;
+        lines.push({
+          accountId: entry.accountId,
+          debit: entry.amount < 0 ? Math.abs(entry.amount) : 0,
+          credit: entry.amount > 0 ? entry.amount : 0,
+          description: `تسوية مصروف تصنيع عام — ${closure.periodStart}`,
+          costCenter: entry.costCenter,
+        });
+      }
+      if (!lines.length)
+        throw Object.assign(new Error("لا توجد حسابات مصدر صالحة لترحيل فرق الإغلاق"), { status: 409 });
+      lines.push({
+        accountId: closure.varianceAccountId,
+        debit: variance > 0 ? Math.abs(variance) : 0,
+        credit: variance > 0 ? 0 : Math.abs(variance),
+        description: `فروقات تطبيق المصروفات الصناعية — ${closure.periodStart}`,
+      });
+      const journalId = await createJournalEntry({
+        companyId: cid,
+        branchId: closure.branchId,
+        date: closure.correctionDate,
+        description: `إغلاق فروقات المصروفات الصناعية (${closure.periodStart} — ${closure.periodEnd})`,
+        entryType: "production_overhead_closure",
+        // This endpoint is an explicit manual post, not an auto-post
+        // document-creation path. A user who passed the post-right guard must
+        // never receive a closure marked "posted" with a hidden draft JE.
+        status: "posted",
+        audit: { req },
+        lines,
+        dx: tx,
+      });
+      await tx.update(productionOverheadClosuresTable).set({
+        status: "posted",
+        journalEntryId: journalId,
+        postedBy: req.authUser!.id,
+        postedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(and(
+        eq(productionOverheadClosuresTable.id, id),
+        eq(productionOverheadClosuresTable.companyId, cid),
+      ));
+      await writeEvent(cid, null, "overhead_closure_posted", {
+        closureId: id, journalEntryId: journalId, varianceAmount: variance,
+      }, req.authUser!.id, false, tx);
+      const [journal] = await tx.select({ status: journalEntriesTable.status })
+        .from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, journalId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1);
+      return { closure: { ...closure, status: "posted", journalEntryId: journalId }, idempotent: false,
+        journalStatus: journal?.status ?? null };
+    });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e.status ?? 500).json({ error: e.message });
+  }
+});
+
+router.post("/overhead-closures/:id/reverse",
+  closureActionPermission("unpost"), requireUnpostRight("production"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const reversalDate = String(req.body?.reversalDate || new Date().toISOString().slice(0, 10));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(reversalDate))
+      return void res.status(400).json({ error: "تاريخ عكس القيد غير صحيح" });
+    const result = await db.transaction(async (tx) => {
+      await lockOverheadClosureMutation(tx, cid);
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${id})`);
+      const [closure] = await tx.select().from(productionOverheadClosuresTable).where(and(
+        eq(productionOverheadClosuresTable.id, id),
+        eq(productionOverheadClosuresTable.companyId, cid),
+      )).limit(1);
+      if (!closure || !rowInScope(req, closure.branchId))
+        throw Object.assign(new Error("تسوية المصروفات الصناعية غير موجودة"), { status: 404 });
+      if (closure.status === "reversed") {
+        if (!closure.reversalJournalEntryId) {
+          throw Object.assign(new Error("تسوية معكوسة بلا قيد عكسي؛ يلزم إصلاح السجل قبل إعادة المحاولة"), { status: 409 });
+        }
+        const [journal] = await tx.select({
+          id: journalEntriesTable.id,
+          status: journalEntriesTable.status,
+          entryType: journalEntriesTable.entryType,
+        }).from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, closure.reversalJournalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1);
+        const [original] = closure.journalEntryId
+          ? await tx.select({
+            status: journalEntriesTable.status,
+            entryType: journalEntriesTable.entryType,
+          }).from(journalEntriesTable).where(and(
+            eq(journalEntriesTable.id, closure.journalEntryId),
+            eq(journalEntriesTable.companyId, cid),
+          )).limit(1)
+          : [];
+        if (!journal || journal.entryType !== "production_overhead_closure_reversal" ||
+            !original || original.entryType !== "production_overhead_closure" ||
+            journal.status !== original.status) {
+          throw Object.assign(new Error("قيد عكس تسوية المصروفات غير موجود أو غير صالح"), { status: 409 });
+        }
+        return { closure, idempotent: true, journalStatus: journal?.status ?? null };
+      }
+      if (closure.status !== "posted" || !closure.journalEntryId)
+        throw Object.assign(new Error("لا يمكن عكس تسوية غير مرحّلة"), { status: 409 });
+      const [original] = await tx.select().from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.id, closure.journalEntryId),
+        eq(journalEntriesTable.companyId, cid),
+      )).limit(1);
+      if (!original) throw Object.assign(new Error("القيد الأصلي للتسوية غير موجود"), { status: 409 });
+      if (original.entryType !== "production_overhead_closure")
+        throw Object.assign(new Error("القيد الأصلي للتسوية غير صالح"), { status: 409 });
+      await assertOverheadClosureSnapshotCurrent(tx, cid, closure, req);
+      const originalLines = await tx.select().from(journalEntryLinesTable)
+        .where(eq(journalEntryLinesTable.entryId, original.id))
+        .orderBy(asc(journalEntryLinesTable.sortOrder));
+      const journalId = await createJournalEntry({
+        companyId: cid,
+        branchId: closure.branchId,
+        date: reversalDate,
+        description: `عكس إغلاق فروقات المصروفات الصناعية — ${closure.periodStart}`,
+        entryType: "production_overhead_closure_reversal",
+        status: original.status,
+        audit: { req },
+        lines: originalLines.map((line) => ({
+          accountId: line.accountId,
+          debit: num(line.credit),
+          credit: num(line.debit),
+          description: `عكس قيد إغلاق المصروفات الصناعية — ${closure.periodStart}`,
+          costCenter: line.costCenter,
+        })),
+        dx: tx,
+      });
+      await tx.update(productionOverheadClosuresTable).set({
+        status: "reversed",
+        reversalJournalEntryId: journalId,
+        reversedBy: req.authUser!.id,
+        reversedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(and(
+        eq(productionOverheadClosuresTable.id, id),
+        eq(productionOverheadClosuresTable.companyId, cid),
+      ));
+      await writeEvent(cid, null, "overhead_closure_reversed", {
+        closureId: id, journalEntryId: closure.journalEntryId, reversalJournalEntryId: journalId,
+      }, req.authUser!.id, false, tx);
+      const [journal] = await tx.select({ status: journalEntriesTable.status })
+        .from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, journalId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1);
+      return { closure: { ...closure, status: "reversed", reversalJournalEntryId: journalId },
+        idempotent: false, journalStatus: journal?.status ?? null };
+    });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e.status ?? 500).json({ error: e.message });
+  }
+});
+
 // Aggregate manufacturing reports. Sales and returns are attributed to a
 // production order only through the immutable stamped stock movement snapshot;
 // legacy lines without that proof remain unavailable rather than falling back
@@ -2100,6 +2889,14 @@ router.get("/reports/costs", async (req, res) => {
         .innerJoin(productionOrdersTable, and(
           eq(productionOrdersTable.id, productionCostAllocationsTable.orderId),
           eq(productionOrdersTable.companyId, cid)))
+        // Only allocations whose production issue JE is posted have moved the
+        // already-posted source cost into WIP. Draft order allocations must
+        // remain available capacity, not "applied" accounting.
+        .innerJoin(journalEntriesTable, and(
+          eq(journalEntriesTable.id, productionOrdersTable.issueJournalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.status, "posted"),
+        ))
         .where(and(
           orderWhere,
           eq(productionCostAllocationsTable.companyId, cid),
@@ -2130,6 +2927,11 @@ router.get("/reports/costs", async (req, res) => {
         .innerJoin(productionOrdersTable, and(
           eq(productionOrdersTable.id, productionCostAllocationsTable.orderId),
           eq(productionOrdersTable.companyId, cid)))
+        .innerJoin(journalEntriesTable, and(
+          eq(journalEntriesTable.id, productionOrdersTable.issueJournalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.status, "posted"),
+        ))
         .where(and(
           orderWhere,
           eq(productionCostAllocationsTable.companyId, cid),
@@ -2596,6 +3398,7 @@ export async function productionWizardHandler(req: any, res: any) {
     }) ?? `PRD-${Date.now().toString(36)}`;
 
     const result = await db.transaction(async (tx) => {
+      if (requested.length) await lockOverheadClosureMutation(tx, cid);
       const sources = requested.length ? await loadPostedCostSources(tx, cid, period, req, branchId) : [];
       const sourceMap = new Map(sources.map((s) => [`${s.sourceType}:${s.sourceRecordId}`, s]));
       let payrollCost = 0, indirectCost = 0;
@@ -2642,6 +3445,9 @@ export async function productionWizardHandler(req: any, res: any) {
           throw Object.assign(new Error(`قيد المصدر لا يحتوي حساب مصروف مدين صالح لإعادة التصنيف: ${source.label}`), { status: 409 });
         }
         await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${key}))`);
+        await assertSourceNotFrozenByOverheadClosure(
+          tx, cid, source.sourceType, source.sourceRecordId,
+        );
         const [used] = await tx.select({
           amount: sql<string>`coalesce(sum(${productionCostAllocationsTable.allocatedAmount}), 0)`,
         }).from(productionCostAllocationsTable)

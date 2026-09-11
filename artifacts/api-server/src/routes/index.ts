@@ -83,6 +83,7 @@ import adminIndustriesRouter from "./adminIndustries";
 import adminDataCopyRouter from "./admin-data-copy";
 import companyCloningRouter from "./companyCloning";
 import productionRouter from "./production";
+import packagingRouter from "./packaging";
 import simpleManufacturingRouter from "./simple-manufacturing";
 import safetyRouter from "./safety";
 import faceAttendanceRouter from "./faceAttendance";
@@ -272,6 +273,9 @@ router.use("/cash-analytics",     cashAnalyticsRouter);
 router.use("/bank-reconciliation", bankReconciliationRouter);
 router.use("/ai",                 aiRouter);
 router.use("/ocr",                ocrRouter);
+// Additive logistics/EPR/artwork metadata for the existing versioned
+// packaging workflow. Kept in its own router to avoid changing production.ts.
+router.use("/production/packaging", packagingRouter);
 router.use("/production",         productionRouter);
 // Separate compact manufacturing facade. It has its own default-OFF company
 // gate and never exposes the advanced production router when that gate is off.

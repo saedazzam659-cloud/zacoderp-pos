@@ -324,6 +324,13 @@ export const packagingSpecificationVersionsTable = pgTable(
     dimensions: jsonb("dimensions").$type<Record<string, unknown>>().notNull().default({}),
     materialLines: jsonb("material_lines").$type<Array<Record<string, unknown>>>().notNull().default([]),
     artworkRefs: jsonb("artwork_refs").$type<Array<Record<string, unknown>>>().notNull().default([]),
+    // Additive logistics/environmental snapshot metadata. These fields are
+    // deliberately on the version row so approved packaging evidence stays
+    // tied to the exact specification consumed by production.
+    palletMetadata: jsonb("pallet_metadata").$type<Record<string, unknown>>().notNull().default({}),
+    containerMetadata: jsonb("container_metadata").$type<Record<string, unknown>>().notNull().default({}),
+    eprDeclarations: jsonb("epr_declarations").$type<Array<Record<string, unknown>>>().notNull().default([]),
+    artworkArchiveRefs: jsonb("artwork_archive_refs").$type<Array<Record<string, unknown>>>().notNull().default([]),
     notes: text("notes"),
     createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -428,6 +435,50 @@ export const salesLineProductionCostAttributionsTable = pgTable(
 
 export type SalesLineProductionCostAttribution =
   typeof salesLineProductionCostAttributionsTable.$inferSelect;
+
+// Immutable period-close snapshots for actual-vs-applied manufacturing
+// overhead.  The source documents remain owned by payroll/assets/prepaids;
+// this record only captures the residual and the source expense accounts used
+// by the one balancing correction journal.
+export const productionOverheadClosuresTable = pgTable(
+  "production_overhead_closures",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branchesTable.id, { onDelete: "set null" }),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    correctionDate: date("correction_date").notNull(),
+    sourceKey: text("source_key").notNull(),
+    varianceAccountId: integer("variance_account_id").notNull().references(() => accountsTable.id),
+    status: text("status").notNull().default("draft"), // draft | posted | reversed
+    journalEntryId: integer("journal_entry_id"),
+    reversalJournalEntryId: integer("reversal_journal_entry_id"),
+    actualAmount: numeric("actual_amount", { precision: 18, scale: 2 }).notNull().default("0"),
+    appliedAmount: numeric("applied_amount", { precision: 18, scale: 2 }).notNull().default("0"),
+    varianceAmount: numeric("variance_amount", { precision: 18, scale: 2 }).notNull().default("0"),
+    sourceSnapshot: jsonb("source_snapshot")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    postedBy: integer("posted_by").references(() => usersTable.id, { onDelete: "set null" }),
+    postedAt: timestamp("posted_at"),
+    reversedBy: integer("reversed_by").references(() => usersTable.id, { onDelete: "set null" }),
+    reversedAt: timestamp("reversed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    sourceKeyUnique: uniqueIndex("production_overhead_closures_source_key_uniq")
+      .on(t.companyId, t.sourceKey),
+    byPeriod: index("production_overhead_closures_period_idx")
+      .on(t.companyId, t.periodStart, t.periodEnd),
+  }),
+);
+
+export type ProductionOverheadClosure =
+  typeof productionOverheadClosuresTable.$inferSelect;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Zod insert/select schemas
