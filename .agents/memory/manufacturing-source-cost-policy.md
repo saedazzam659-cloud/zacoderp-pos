@@ -4,6 +4,16 @@ description: Single-screen wizard and accounting ownership of allocated manufact
 ---
 Use one invoice-style tabbed manufacturing form over the existing core, not a separate execution engine. Source linkage configuration belongs in existing assets, payroll, and prepaid-expense screens.
 
+Smart Manufacturing keeps existing route and permission identities; only the displayed module name changes.
+
+**Why:** The user requested a rename and richer execution without duplicate modules or broken existing links.
+
+Actual stage drivers reconcile against immutable planned source allocations through delta-only accounting. Purchase industrial sources must use posting-time base-currency amounts and resolved expense accounts, not mutable line mappings.
+
+**Why:** Recomputing purchase values ignores discounts/FX/account routing; overwriting planned allocations loses traceability and risks double capitalization.
+
+**How to apply:** Freeze posted facts, include unreversed driver deltas in capacity and closure calculations, and reverse those deltas exactly.
+
 Simple manufacturing must remain independently activatable, default OFF at company level, with separate user grants. Its shared-core API access must be limited to explicitly supported operations, never a blanket alternative permission for advanced production.
 
 **Why:** Small companies must use the compact module without activating or exposing advanced production screens.

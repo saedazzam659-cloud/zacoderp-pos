@@ -164,6 +164,12 @@ export const purchaseInvoiceLinesTable = pgTable("purchase_invoice_lines", {
   deferredCostCenters:  jsonb("deferred_cost_centers"),
   // Back-link to the auto-created accounting_adjustments row (set on /post).
   deferredAdjustmentId: integer("deferred_adjustment_id"),
+  // Optional actual industrial-cost source tag. It deliberately belongs to a
+  // purchased line (not a payment or a production order), preserving one stable
+  // source identity for monthly actual-cost collection.
+  // { costType, factoryId (branches.id / cost plant), costCenter, period,
+  //   allocationDriver }. Validation is enforced by purchasing routes.
+  industrialCost:       jsonb("industrial_cost"),
 });
 
 // ─── Purchase Orders (operational only — NO finance side-effects) ──────────
@@ -285,6 +291,9 @@ export const purchaseReturnLinesTable = pgTable("purchase_return_lines", {
   // OPTIONAL per-line cost-center CODE (Odoo-style analytic distribution).
   // JE/reporting only — never enters ZATCA XML/QR. Empty ⇒ header costCenter.
   costCenter:  text("cost_center"),
+  // Mirrors purchase_invoice_lines. A tagged approved return is a negative
+  // industrial-cost source line, never a new payment-cost source.
+  industrialCost: jsonb("industrial_cost"),
   notes:       text("notes"),
 });
 

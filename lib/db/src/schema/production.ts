@@ -289,6 +289,39 @@ export const productionCostAllocationsTable = pgTable(
 
 export type ProductionCostAllocation = typeof productionCostAllocationsTable.$inferSelect;
 
+// Delta-only reconciliation of an immutable planned source allocation once
+// execution drivers are final. The base allocation is never edited.
+export const productionDriverReconciliationsTable = pgTable(
+  "production_driver_reconciliations",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    orderId: integer("order_id").notNull().references(() => productionOrdersTable.id, { onDelete: "restrict" }),
+    sourceType: text("source_type").notNull(),
+    sourceRecordId: integer("source_record_id").notNull(),
+    baseAllocationId: integer("base_allocation_id").notNull().references(() => productionCostAllocationsTable.id, { onDelete: "restrict" }),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    driverMethod: text("driver_method").notNull(),
+    plannedNumerator: numeric("planned_numerator", { precision: 18, scale: 4 }).notNull(),
+    actualNumerator: numeric("actual_numerator", { precision: 18, scale: 4 }).notNull(),
+    denominatorOrRate: numeric("denominator_or_rate", { precision: 18, scale: 4 }).notNull(),
+    sourceAmount: numeric("source_amount", { precision: 18, scale: 2 }).notNull(),
+    baseAllocatedAmount: numeric("base_allocated_amount", { precision: 18, scale: 2 }).notNull(),
+    reconciledAmount: numeric("reconciled_amount", { precision: 18, scale: 2 }).notNull(),
+    deltaAmount: numeric("delta_amount", { precision: 18, scale: 2 }).notNull(),
+    journalEntryId: integer("journal_entry_id"),
+    reversalJournalEntryId: integer("reversal_journal_entry_id"),
+    snapshotMeta: jsonb("snapshot_meta").$type<Record<string, unknown>>().notNull().default({}),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    dedup: uniqueIndex("prod_driver_reconcile_order_source_uniq").on(t.orderId, t.sourceType, t.sourceRecordId),
+    bySource: index("prod_driver_reconcile_source_idx").on(t.companyId, t.sourceType, t.sourceRecordId),
+  }),
+);
+
 // Reusable packaging master data. Specifications are versioned rather than
 // edited in place so an approved artwork/dimension/material snapshot can be
 // tied to the production period that consumed it.
@@ -455,6 +488,10 @@ export const productionOverheadClosuresTable = pgTable(
     status: text("status").notNull().default("draft"), // draft | posted | reversed
     journalEntryId: integer("journal_entry_id"),
     reversalJournalEntryId: integer("reversal_journal_entry_id"),
+    // Set when a reversed close is intentionally reopened. Keeping this
+    // immutable link prevents the new draft/post cycle from erasing the
+    // original settlement trace.
+    reopenedJournalEntryId: integer("reopened_journal_entry_id"),
     actualAmount: numeric("actual_amount", { precision: 18, scale: 2 }).notNull().default("0"),
     appliedAmount: numeric("applied_amount", { precision: 18, scale: 2 }).notNull().default("0"),
     varianceAmount: numeric("variance_amount", { precision: 18, scale: 2 }).notNull().default("0"),
@@ -890,6 +927,19 @@ export const productionOrderStagesTable = pgTable(
     wasteQty: numeric("waste_qty", { precision: 14, scale: 4 })
       .notNull()
       .default("0"),
+    // Actual execution data belongs to the order-stage snapshot, never to the
+    // reusable routing template. Duration is an allocation driver only; it is
+    // not an independently posted stage expense.
+    actualDurationMinutes: integer("actual_duration_minutes")
+      .notNull()
+      .default(0),
+    resourceId: integer("resource_id").references(
+      () => productionResourcesTable.id,
+      { onDelete: "set null" },
+    ),
+    wasteReason: text("waste_reason"),
+    wasteType: text("waste_type"),
+    wasteClassification: text("waste_classification"), // normal | abnormal
     operatorUserId: integer("operator_user_id").references(
       () => usersTable.id,
       { onDelete: "set null" },
@@ -1145,6 +1195,9 @@ export const productionWasteRecordsTable = pgTable(
       { onDelete: "set null" },
     ),
     wasteType: text("waste_type").notNull(), // ProductionWasteType
+    // Accounting treatment is deliberately distinct from the operational
+    // root-cause type above (burn, break, quality, ...).
+    wasteClassification: text("waste_classification").notNull().default("normal"),
     reason: text("reason"),                  // free-form root cause
     qty: numeric("qty", { precision: 14, scale: 4 }).notNull().default("0"),
     unitCode: text("unit_code").notNull().default("PCE"),

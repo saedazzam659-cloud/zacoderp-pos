@@ -51,6 +51,7 @@ import { safeLogoSrc } from "@/lib/export";
 import PurchasePrintModal from "./PurchasePrintModal";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import IndustrialCostsTab, { type IndustrialCostDraft } from "./IndustrialCostsTab";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -74,6 +75,7 @@ interface ReturnLine {
   // OPTIONAL per-line cost-center CODE (Odoo-style analytic distribution).
   // Empty ⇒ falls back to the HEADER costCenter at JE time (unchanged behavior).
   costCenter: string;
+  industrialCost: IndustrialCostDraft | null;
 }
 
 function newLine(): ReturnLine {
@@ -81,7 +83,7 @@ function newLine(): ReturnLine {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
     qty: "1", freeQty: "0", unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0",
-    notes: "", costCenter: "",
+    notes: "", costCenter: "", industrialCost: null,
   };
 }
 
@@ -131,7 +133,7 @@ export default function PurchaseReturns() {
   // let the items grid grow ~2 rows taller in its place.
   const hideQuickAdd = !!(user?.company as any)?.hideQuickAddBar;
   const [viewMode, setViewMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "details">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "industrialCosts" | "details">("basic");
 
   const seqPeek = useNextSequenceNumber("purchase_return", showForm && editingId == null, undefined, form.branchId, form.paymentType);
   useEffect(() => {
@@ -460,6 +462,14 @@ export default function PurchaseReturns() {
         lineTotal:   String(l.lineTotal ?? "0"),
         notes:       l.notes ?? "",
         costCenter:  l.costCenter ?? "",
+        industrialCost: l.industrialCost ? {
+          costType: String(l.industrialCost.costType ?? ""),
+          factoryId: String(l.industrialCost.factoryId ?? ""),
+          costCenter: String(l.industrialCost.costCenter ?? ""),
+          period: String(l.industrialCost.period ?? ""),
+          allocationDriver: String(l.industrialCost.allocationDriver ?? ""),
+          sourcePurchaseLineId: l.industrialCost.sourcePurchaseLineId ? String(l.industrialCost.sourcePurchaseLineId) : undefined,
+        } : null,
       })) : (useTabbedLayout ? [] : [newLine()]));
       setShowForm(true);
       return true;
@@ -548,6 +558,14 @@ export default function PurchaseReturns() {
         lineTotal:   String(l.lineTotal ?? "0"),
         notes:       l.notes ?? "",
         costCenter:  l.costCenter ?? "",
+        industrialCost: l.industrialCost ? {
+          costType: String(l.industrialCost.costType ?? ""),
+          factoryId: String(l.industrialCost.factoryId ?? ""),
+          costCenter: String(l.industrialCost.costCenter ?? ""),
+          period: String(l.industrialCost.period ?? ""),
+          allocationDriver: String(l.industrialCost.allocationDriver ?? ""),
+          sourcePurchaseLineId: l.industrialCost.sourcePurchaseLineId ? String(l.industrialCost.sourcePurchaseLineId) : undefined,
+        } : null,
       })) : (useTabbedLayout ? [] : [newLine()]));
       setShowForm(true);
       toast({ title: tr("toasts.duplicated") });
@@ -646,6 +664,15 @@ export default function PurchaseReturns() {
           notes:       l.notes ?? "",
           // Carry the source invoice line's cost center onto the return line.
           costCenter:  l.costCenter ?? "",
+          // A return reverses the same source category, plant, period and driver.
+          industrialCost: l.industrialCost ? {
+            costType: String(l.industrialCost.costType ?? ""),
+            factoryId: String(l.industrialCost.factoryId ?? ""),
+            costCenter: String(l.industrialCost.costCenter ?? ""),
+            period: String(l.industrialCost.period ?? ""),
+            allocationDriver: String(l.industrialCost.allocationDriver ?? ""),
+            sourcePurchaseLineId: l.id ? String(l.id) : undefined,
+          } : null,
         })));
       }
       if (opts.openForm) setShowForm(true);
@@ -1607,6 +1634,9 @@ ${sections}
               <TabsTrigger value="items" className={`h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground ${basicFieldsValid ? "" : "opacity-50"}`}>
                 <ListOrdered className="h-3.5 w-3.5" />{tr("linesTitle")}
               </TabsTrigger>
+              <TabsTrigger value="industrialCosts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <TrendingUp className="h-3.5 w-3.5" />التكاليف الصناعية
+              </TabsTrigger>
               <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <Info className="h-3.5 w-3.5" />التفاصيل
               </TabsTrigger>
@@ -2181,6 +2211,18 @@ ${sections}
             )}
             </fieldset>
             </TabsContent>
+
+            {useTabbedLayout && (
+            <TabsContent value="industrialCosts" className="mt-0">
+              <IndustrialCostsTab
+                lines={lines}
+                branches={branches as any[]}
+                costCenters={costCentersList as any[]}
+                disabled={viewMode || currentRet?.status === "posted"}
+                onChange={(lineId, industrialCost) => setLines(prev => prev.map(line => line._id === lineId ? { ...line, industrialCost } : line))}
+              />
+            </TabsContent>
+            )}
 
             {useTabbedLayout && (
             <TabsContent value="details" className="mt-0">

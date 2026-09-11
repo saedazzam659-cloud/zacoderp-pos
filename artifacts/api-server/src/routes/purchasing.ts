@@ -46,6 +46,15 @@ import { normalizePeriodicity, parseCcSplit, installmentsBetween, runDueAdjustme
 import { logger } from "../lib/logger.js";
 import { isPrimaryKeyCollision, postgresErrorField, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
 import { itemNamesWithSupplierDescription, purchaseSupplierDescription } from "../lib/journalLineDescriptions.js";
+import {
+  assertIndustrialCostPeriodsWritable,
+  assertIndustrialCostTagsOwned,
+  assertIndustrialReturnSourceLinks,
+  calculateIndustrialPostedBaseAmount,
+  industrialCostWithSourceFacts,
+  readIndustrialCostSourceFacts,
+  normalizeIndustrialCostTag,
+} from "../lib/industrialPurchaseCosts.js";
 
 function purchasingWriteError(error: any, documentName: string): { status: number; message: string } {
   const code = String(postgresErrorField(error, "code") ?? "");
@@ -231,6 +240,9 @@ async function assertPurchaseWriteReferences(
       );
     }
   }
+  // Industrial actual costs are optional, but when a source line is tagged its
+  // plant and cost-center must be active masters of this same tenant.
+  await assertIndustrialCostTagsOwned(executor, cid, lines);
 }
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
@@ -1538,6 +1550,7 @@ router.post("/purchase-invoices", async (req, res) => {
           weight: String(l.weight || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || resolvedRate),
+           discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
           lineTotal: String(l.lineTotal || "0"),
           expenseShare: String(l.expenseShare || "0"),
           finalCost: String(l.finalCost || "0"),
@@ -1549,6 +1562,7 @@ router.post("/purchase-invoices", async (req, res) => {
           expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
           notes: l.notes || null,
           ...deferredLineFields(l),
+           industrialCost: normalizeIndustrialCostTag(l.industrialCost),
         }))
       );
     }
@@ -1586,6 +1600,10 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
+    await assertPurchaseWriteReferences(cid, {
+      supplierId, branchId, cashBoxId, bankAccountId, lcId, taxId,
+      headerCostCenter: costCenter, lines,
+    });
     // حارس ما بعد السداد: لا يجوز أن يصبح صافي الفاتورة أقل من المسدَّد عليها.
     try {
       const newTotalBase = (parseFloat(String(totalAmount)) || 0) * (parseFloat(String(exchangeRate)) || 1);
@@ -1648,6 +1666,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             weight: String(l.weight || "0"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || resolvedRate),
+            discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
             lineTotal: String(l.lineTotal || "0"),
             expenseShare: String(l.expenseShare || "0"),
             finalCost: String(l.finalCost || "0"),
@@ -1659,6 +1678,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
             notes: l.notes || null,
             ...deferredLineFields(l),
+             industrialCost: normalizeIndustrialCostTag(l.industrialCost),
           }))
         );
         // Re-attach the surviving deferred-adjustment links: for each old
@@ -1716,6 +1736,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
     const lines = await db.select().from(purchaseInvoiceLinesTable)
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
+    await assertIndustrialCostPeriodsWritable(cid, lines);
 
     // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
     {
@@ -1782,6 +1803,24 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
       const r = groupRoutingForItem(l.itemId);
       return !!r && (r.type === "fixed_asset" || r.type === "expense" || r.type === "deferred_expense");
     };
+    // Reject a tagged inventory/asset/deferred line BEFORE stock or journal
+    // mutation. Industrial actuals may only be real non-stock expense debits:
+    // an item service, or an item-group explicitly routed to an expense account.
+    const industrialSourceAccountByLine = new Map<number, number>();
+    for (const line of lines) {
+      if (!normalizeIndustrialCostTag((line as any).industrialCost)) continue;
+      const group = groupRoutingForItem(line.itemId);
+      const sourceAccountId = group?.type === "expense"
+        ? group.accountId
+        : (!group && isServiceLine(line) ? costAccById.get(line.itemId!) : null);
+      if (!sourceAccountId) {
+        throw Object.assign(
+          new Error(`سطر التكلفة الصناعية "${line.itemName ?? line.id}" يجب أن يكون خدمة أو صنف فئة مصروف مع حساب تكلفة فعلي`),
+          { status: 400 },
+        );
+      }
+      industrialSourceAccountByLine.set(line.id, sourceAccountId);
+    }
 
     // ── مصروف يوزع على فترات: pre-validate deferred lines BEFORE any stock
     // mutation. A line in a deferred_expense category MUST carry a valid
@@ -2096,6 +2135,34 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
           if (lastKey) inventoryDebitByWh[lastKey] += drift;
         }
       }
+    }
+    // Industrial actuals are only non-stock expenses. Freeze the exact
+    // posting-time debit basis and account, not a mutable catalog/warehouse
+    // mapping or a re-derived commercial line amount. `inventoryDebit` already
+    // contains document discounts and loaded costs; the same ratio used by the
+    // JE therefore allocates both correctly to each immutable source line.
+    const industrialFx = Number(inv.exchangeRate || "1") || 1;
+    for (const line of lines) {
+      const tag = normalizeIndustrialCostTag((line as any).industrialCost);
+      if (!tag) continue;
+      const sourceAccountId = industrialSourceAccountByLine.get(line.id)!;
+      const grossSourceCost = Number(line.finalCost || line.lineTotal || 0);
+      const netBaseAmount = calculateIndustrialPostedBaseAmount({
+        linePostingBasis: grossSourceCost,
+        totalPostingBasis: allCostTotal,
+        documentPostingBasis: inventoryDebit,
+        exchangeRate: industrialFx,
+      });
+      const frozen = industrialCostWithSourceFacts(tag, {
+        netBaseAmount,
+        sourceAccountId,
+        quantity: Number(line.qty || 0),
+        sourceCurrency: inv.currencyCode || "SAR",
+        exchangeRate: industrialFx,
+      });
+      await (db.update(purchaseInvoiceLinesTable) as any).set({ industrialCost: frozen })
+        .where(and(eq(purchaseInvoiceLinesTable.id, line.id), eq(purchaseInvoiceLinesTable.companyId, cid)));
+      (line as any).industrialCost = frozen;
     }
     const servicePortionTotal = Object.values(serviceDebitByAccount).reduce((s, v) => s + v, 0)
                               + Object.values(groupNoStockDebitByAccount).reduce((s, v) => s + v, 0)
@@ -2429,6 +2496,9 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
+    const industrialLines = await db.select().from(purchaseInvoiceLinesTable)
+      .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
+    await assertIndustrialCostPeriodsWritable(cid, industrialLines);
 
     // ── Fixed-asset linkage guard: an invoice that spawned a LIVE fixed-asset
     // card cannot be unposted (the asset's cost basis would point at a void
@@ -2807,6 +2877,7 @@ router.post("/purchase-orders", async (req, res) => {
           weight: String(l.weight || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+          discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
           vatRate: String(l.vatRate || resolvedRate),
           lineTotal: String(l.lineTotal || "0"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
@@ -2872,6 +2943,7 @@ router.put("/purchase-orders/:id", async (req, res) => {
             weight: String(l.weight || "0"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+            discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
             vatRate: String(l.vatRate || resolvedRate),
             lineTotal: String(l.lineTotal || "0"),
             warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
@@ -3180,6 +3252,7 @@ router.post("/purchase-returns", async (req, res) => {
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
+    await assertIndustrialReturnSourceLinks(db, cid, invoiceId, lines);
     // Central sequence engine is authoritative when an active sequence
     // exists for "purchase_return"; otherwise fall back to client-supplied
     // value or null. Server allocation is atomic so concurrent submits
@@ -3262,6 +3335,7 @@ router.post("/purchase-returns", async (req, res) => {
           lineTotal: String(l.lineTotal || "0"),
           // OPTIONAL per-line cost-center CODE — JE/reporting only.
           costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
+           industrialCost: normalizeIndustrialCostTag(l.industrialCost),
           notes: l.notes || null,
         }))
       );
@@ -3293,6 +3367,10 @@ router.put("/purchase-returns/:id", async (req, res) => {
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
+    await assertPurchaseWriteReferences(cid, {
+      supplierId, branchId, cashBoxId, bankAccountId, taxId, invoiceId, lines,
+    });
+    await assertIndustrialReturnSourceLinks(db, cid, invoiceId, lines);
     // docNumber is intentionally omitted — once assigned, it is immutable.
     const [ret] = await db.update(purchaseReturnsTable).set({
       branchId: branchId ? Number(branchId) : null,
@@ -3338,6 +3416,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
             lineTotal: String(l.lineTotal || "0"),
             // OPTIONAL per-line cost-center CODE — JE/reporting only.
             costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
+             industrialCost: normalizeIndustrialCostTag(l.industrialCost),
             notes: l.notes || null,
           }))
         );
@@ -3380,6 +3459,8 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     const lines = await db.select().from(purchaseReturnLinesTable)
       .where(eq(purchaseReturnLinesTable.returnId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
+    await assertIndustrialCostPeriodsWritable(cid, lines);
+    await assertIndustrialReturnSourceLinks(db, cid, ret.invoiceId, lines);
 
     // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
     {
@@ -3777,6 +3858,69 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
       }
     }
 
+    // A tagged return reverses the immutable original industrial expense, not
+    // today's item/warehouse mapping or the commercial refund price. Cap both
+    // physical quantity and base-currency source value against all previously
+    // posted returns for the same original line before this return is posted.
+    const taggedReturns = lines.map((line) => ({ line, tag: normalizeIndustrialCostTag((line as any).industrialCost) }))
+      .filter((row) => row.tag) as { line: any; tag: NonNullable<ReturnType<typeof normalizeIndustrialCostTag>> }[];
+    if (taggedReturns.length) {
+      const originalIds = [...new Set(taggedReturns.map((row) => row.tag.sourcePurchaseLineId!))];
+      await db.transaction(async (tx) => {
+      // Serialize capacity checks on the original immutable source lines.
+      await tx.execute(sql`SELECT id FROM purchase_invoice_lines WHERE id IN ${originalIds} FOR UPDATE`);
+      const originals = await tx.select().from(purchaseInvoiceLinesTable).where(and(
+        eq(purchaseInvoiceLinesTable.companyId, cid),
+        inArray(purchaseInvoiceLinesTable.id, originalIds),
+      ));
+      const originalById = new Map(originals.map((line) => [line.id, line]));
+      const postedReturns = await tx.select({ line: purchaseReturnLinesTable })
+        .from(purchaseReturnLinesTable)
+        .innerJoin(purchaseReturnsTable, eq(purchaseReturnLinesTable.returnId, purchaseReturnsTable.id))
+        .where(and(
+          eq(purchaseReturnsTable.companyId, cid),
+          eq(purchaseReturnsTable.invoiceId, ret.invoiceId!),
+          eq(purchaseReturnsTable.status, "posted"),
+          sql`${purchaseReturnsTable.id} <> ${id}`,
+        ));
+      const used = new Map<number, { qty: number; amount: number }>();
+      for (const { line } of postedReturns) {
+        const priorTag = normalizeIndustrialCostTag((line as any).industrialCost);
+        const priorFacts = readIndustrialCostSourceFacts((line as any).industrialCost);
+        if (!priorTag?.sourcePurchaseLineId || !priorFacts) continue;
+        const current = used.get(priorTag.sourcePurchaseLineId) ?? { qty: 0, amount: 0 };
+        current.qty += Number(line.qty || 0);
+        current.amount += priorFacts.netBaseAmount;
+        used.set(priorTag.sourcePurchaseLineId, current);
+      }
+      for (const { line, tag } of taggedReturns) {
+        const source = originalById.get(tag.sourcePurchaseLineId!);
+        const originalFacts = source ? readIndustrialCostSourceFacts((source as any).industrialCost) : null;
+        if (!source || !originalFacts || originalFacts.quantity <= 0) {
+          throw Object.assign(new Error("مصدر مرتجع التكلفة الصناعية لا يملك لقطة أصلية صالحة"), { status: 409 });
+        }
+        const returnedQty = Number(line.qty || 0);
+        const returnBaseAmount = Math.round((originalFacts.netBaseAmount * returnedQty / originalFacts.quantity) * 100) / 100;
+        const prior = used.get(tag.sourcePurchaseLineId!) ?? { qty: 0, amount: 0 };
+        if (prior.qty + returnedQty > originalFacts.quantity + 0.0001
+          || prior.amount + returnBaseAmount > originalFacts.netBaseAmount + 0.01) {
+          throw Object.assign(new Error(`كمية أو قيمة المرتجع الصناعي تتجاوز مصدر الفاتورة #${tag.sourcePurchaseLineId}`), { status: 409 });
+        }
+        const frozen = industrialCostWithSourceFacts(tag, {
+          netBaseAmount: returnBaseAmount,
+          sourceAccountId: originalFacts.sourceAccountId,
+          quantity: returnedQty,
+          sourceCurrency: ret.currencyCode || "SAR",
+          exchangeRate: Number(ret.exchangeRate || "1") || 1,
+        });
+        await (tx.update(purchaseReturnLinesTable) as any).set({ industrialCost: frozen })
+          .where(and(eq(purchaseReturnLinesTable.id, line.id), eq(purchaseReturnLinesTable.companyId, cid)));
+        line.industrialCost = frozen;
+        used.set(tag.sourcePurchaseLineId!, { qty: prior.qty + returnedQty, amount: prior.amount + returnBaseAmount });
+      }
+      });
+    }
+
     const desc = `قيد مرتجع مشتريات رقم ${ret.docNumber || ret.id}`;
     const journalId = await createJournalEntry({
       companyId:    cid,
@@ -3878,6 +4022,9 @@ router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), asy
       ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
+    const industrialLines = await db.select().from(purchaseReturnLinesTable)
+      .where(eq(purchaseReturnLinesTable.returnId, id));
+    await assertIndustrialCostPeriodsWritable(cid, industrialLines);
 
     // Reverse stock movements (returns reduce stock; unposting adds it back)
     const ledger = await db.select().from(stockLedgerTable)

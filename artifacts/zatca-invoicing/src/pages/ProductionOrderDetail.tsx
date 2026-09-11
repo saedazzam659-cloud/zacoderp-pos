@@ -22,6 +22,8 @@ import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
 import { DateField } from "@/components/ui/date-field";
+import { ProductionStageExecution } from "@/components/ProductionStageExecution";
+import { ProductionCostTrace } from "@/components/ProductionCostTrace";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -1003,7 +1005,7 @@ export default function ProductionOrderDetail() {
                   />
                 </div>
                 <div>
-                  <Label className="text-xs">الهالك (تكلفته تذهب لحساب الهالك/الفروق)</Label>
+                  <Label className="text-xs">الهالك (هالك الأمر غير المصنف، يرحل للمصروف)</Label>
                   <Input
                     type="number" step="0.01"
                     value={completion.wasteQty}
@@ -1036,6 +1038,9 @@ export default function ProductionOrderDetail() {
               <TabsTrigger value="events" data-testid="tab-events">
                 <Activity className="h-4 w-4 me-1" /> {t("production.eventsTab")}
               </TabsTrigger>
+              <TabsTrigger value="stages" data-testid="tab-stages">
+                <PlayCircle className="h-4 w-4 me-1" /> مراحل التنفيذ
+              </TabsTrigger>
               <TabsTrigger value="quality" data-testid="tab-quality">
                 <ClipboardCheck className="h-4 w-4 me-1" /> مراقبة الجودة
               </TabsTrigger>
@@ -1048,7 +1053,7 @@ export default function ProductionOrderDetail() {
                 )}
               </TabsTrigger>
               <TabsTrigger value="cost-analysis" data-testid="tab-cost-analysis">
-                <Calculator className="h-4 w-4 me-1" /> لماذا هذه التكلفة؟
+                <Calculator className="h-4 w-4 me-1" /> تتبع التكاليف
               </TabsTrigger>
               <TabsTrigger value="commercial-lifecycle" data-testid="tab-commercial-lifecycle">
                 <ClipboardCheck className="h-4 w-4 me-1" /> الشهادات / Royalty / الضمان
@@ -1254,6 +1259,18 @@ export default function ProductionOrderDetail() {
                 ))}
               </div>
             </TabsContent>
+            <TabsContent value="stages" className="space-y-3">
+              <ProductionStageExecution 
+                orderId={orderId} 
+                orderStatus={order.status} 
+                plannedQty={order.plannedQty} 
+                token={token ?? ""} 
+                apiBase={apiPrefix}
+                permissionKey={simpleFacade ? "simple_manufacturing" : "production"}
+                isSimple={simpleFacade}
+                onReload={load}
+              />
+            </TabsContent>
             <TabsContent value="quality">
               <div className="rounded-lg border bg-white dark:bg-slate-900 p-4 text-center space-y-3">
                 <ClipboardCheck className="h-10 w-10 mx-auto text-emerald-600 opacity-70" />
@@ -1282,64 +1299,12 @@ export default function ProductionOrderDetail() {
               />
             </TabsContent>
             <TabsContent value="cost-analysis" className="space-y-3">
-              {!costDrilldown ? <div className="p-8 text-center text-slate-500">لا تتوفر بيانات تحليل التكلفة.</div> : <>
-                 {(() => {
-                   // The compact facade now returns the canonical production
-                   // drilldown envelope. Keep this consumer defensive for
-                   // older saved orders/partial responses: missing financial
-                   // evidence is shown as unavailable, never as a fabricated
-                   // zero and never dereferenced as an absent object.
-                   const trace = costDrilldown?.trace && typeof costDrilldown.trace === "object"
-                     ? costDrilldown.trace : {};
-                   const materials = Array.isArray(trace.materials) ? trace.materials : [];
-                   const labor = trace.labor && typeof trace.labor === "object" ? trace.labor : null;
-                   const overhead = trace.overhead && typeof trace.overhead === "object" ? trace.overhead : null;
-                   const waste = Array.isArray(trace.waste) ? trace.waste : [];
-                   const quality = trace.quality && typeof trace.quality === "object" ? trace.quality : null;
-                   const qualityChecks = quality?.checks == null ? null : Number(quality.checks);
-                   const qualityFailed = quality?.failed == null ? null : Number(quality.failed);
-                   const totalKnownAmounts = (rows: any[]) => rows.length > 0 &&
-                     rows.every((row) => row?.amount != null && Number.isFinite(Number(row.amount)))
-                     ? rows.reduce((sum:number, row:any) => sum + Number(row.amount), 0)
-                     : null;
-                   const countDetail = (source: unknown, label: string) => source == null
-                     ? "بيانات المصدر غير متاحة"
-                     : `${Array.isArray(source) ? source.length : 0} ${label}`;
-                   return (
-                     <>
-                       <div className="grid md:grid-cols-4 gap-2">
-                         <StatCard label="التكلفة الفعلية" value={costDrilldown.totals?.actual}/>
-                         <StatCard label="التكلفة القياسية" value={costDrilldown.totals?.standard}/>
-                         <StatCard label="الانحراف" value={costDrilldown.totals?.variance}/>
-                         <StatCard label="هامش محاكاة بسعر البيع المثبّت عند الإنشاء" value={costDrilldown.totals?.simulatedGrossManufacturingMargin}/>
-                       </div>
-                       <div className="rounded-lg border bg-white dark:bg-slate-900 divide-y text-sm">
-                         <DrillRow label="المواد والتغليف من BOM"
-                           value={totalKnownAmounts(materials)}
-                           detail={`${materials.length} سطر — كل سطر مرتبط بصنف المصدر`}/>
-                         <DrillRow label="العمالة" value={labor?.amount}
-                           detail={countDetail(labor?.source, "لقطة رواتب مُرحّلة")}/>
-                         <DrillRow label="التكاليف غير المباشرة / الشهادات" value={overhead?.amount}
-                           detail={countDetail(overhead?.source, "لقطة مصدر غير قابلة للتعديل")}/>
-                         <DrillRow label="الهالك"
-                           value={totalKnownAmounts(waste)}
-                           detail={`${waste.length} سجل تفصيلي`}/>
-                         <DrillRow label="الجودة وإعادة التشغيل" value={null}
-                           detail={qualityChecks != null && qualityFailed != null &&
-                             Number.isFinite(qualityChecks) && Number.isFinite(qualityFailed)
-                             ? `${qualityChecks} فحص، ${qualityFailed} فاشل — بلا قيد مكرر`
-                             : "بيانات الجودة غير متاحة — بلا مبلغ محاسبي مُفترض"}/>
-                       </div>
-                     </>
-                   );
-                 })()}
-                <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3 text-xs">
-                  التتبع: مستند المصدر ← لقطة التوزيع ← المرحلة ← أمر التصنيع ← المنتج.
-                   Royalty والضمان والتكلفة الاقتصادية تظهر كطبقات تحليل وفق السياسة؛ الاستحقاق المالي
-                   لا يُنشأ إلا من شاشة دورة الحياة وبأساس مبيعات مرحّل أو تقدير ضمان معتمد.
-                  هامش المحاكاة ليس إيراداً محققاً؛ يعتمد لقطة سعر الصنف وقت إنشاء الأمر، ولا يتغير بتعديل السعر لاحقاً.
-                </div>
-              </>}
+              <ProductionCostTrace 
+                orderId={orderId} 
+                costDrilldown={costDrilldown} 
+                orderStatus={order?.status || ""} 
+                token={token ?? ""} 
+              />
             </TabsContent>
             <TabsContent value="commercial-lifecycle" className="space-y-4">
               <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">

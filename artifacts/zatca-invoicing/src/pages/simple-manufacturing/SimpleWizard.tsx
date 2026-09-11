@@ -729,8 +729,7 @@ export function SimpleWizard({
                       </div>
                       <div className="font-semibold text-slate-800">{s.nameAr}</div>
                       <div className="text-xs text-slate-500 mt-1 flex items-center gap-4">
-                        <span>المدة المتوقعة: {s.expectedDurationMinutes || 0} دقيقة</span>
-                        <span>تكلفة إضافية: {s.expectedCost || 0}</span>
+                        <span>المدة (محرك التكلفة): {s.expectedDurationMinutes || 0} دقيقة</span>
                       </div>
                     </div>
                   ))}
@@ -903,7 +902,7 @@ export function SimpleWizard({
               </div>
               {!canPost && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                  لا تملك صلاحية ترحيل التصنيع المبسط؛ ستظل بيانات المصادر للقراءة فقط.
+                  لا تملك صلاحية ترحيل التصنيع الذكي؛ ستظل بيانات المصادر للقراءة فقط.
                 </div>
               )}
               <div className="grid gap-5 lg:grid-cols-3">

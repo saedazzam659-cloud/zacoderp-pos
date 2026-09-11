@@ -36,6 +36,7 @@ import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
 import PurchaseInvoicePaymentsTab from "@/pages/purchasing/PurchaseInvoicePaymentsTab";
 import { DateField } from "@/components/ui/date-field";
 import PurchaseInvoiceDetails from "./PurchaseInvoiceDetails";
+import IndustrialCostsTab, { type IndustrialCostDraft } from "./IndustrialCostsTab";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -70,6 +71,9 @@ interface InvoiceLine {
   deferredEndDate: string;
   deferredPeriodicity: string; // monthly | quarterly | semiannual | annual
   deferredCostCenters: { costCenterId: string; pct: string }[];
+  // Optional actual-cost source tag. Kept per purchased line so source identity
+  // remains stable for industrial monthly actual-cost collection.
+  industrialCost: IndustrialCostDraft | null;
 }
 
 function newLine(): InvoiceLine {
@@ -80,6 +84,7 @@ function newLine(): InvoiceLine {
     lineTotal: "0", expenseShare: "0", finalCost: "0", batchNumber: "", expiryDate: "", notes: "",
     costCenter: "",
     deferredStartDate: "", deferredEndDate: "", deferredPeriodicity: "monthly", deferredCostCenters: [],
+    industrialCost: null,
   };
 }
 
@@ -149,7 +154,7 @@ export default function PurchaseInvoiceForm() {
   // Company-wide UX flag (الإعدادات العامة): hide the quick add-item bar and
   // let the items grid grow ~2 rows taller in its place.
   const hideQuickAdd = !!_co?.hideQuickAddBar;
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "debitNote" | "creditNote" | "payments" | "returns" | "archive" | "details" | "deferred">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "industrialCosts" | "debitNote" | "creditNote" | "payments" | "returns" | "archive" | "details" | "deferred">("basic");
   // مصروف يوزع على فترات — سطر الحوار المفتوح لتحرير خطة التوزيع
   const [deferredDialogLineId, setDeferredDialogLineId] = useState<string | null>(null);
   useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
@@ -511,6 +516,13 @@ export default function PurchaseInvoiceForm() {
       deferredCostCenters: Array.isArray(l.deferredCostCenters)
         ? l.deferredCostCenters.map((c: any) => ({ costCenterId: String(c.costCenterId ?? ""), pct: String(c.pct ?? "") }))
         : [],
+      industrialCost: l.industrialCost ? {
+        costType: String(l.industrialCost.costType ?? ""),
+        factoryId: String(l.industrialCost.factoryId ?? ""),
+        costCenter: String(l.industrialCost.costCenter ?? ""),
+        period: String(l.industrialCost.period ?? ""),
+        allocationDriver: String(l.industrialCost.allocationDriver ?? ""),
+      } : null,
     })) : (useTabbedLayout ? [] : [newLine()]));
   }, [existing]);
 
@@ -574,6 +586,13 @@ export default function PurchaseInvoiceForm() {
           deferredCostCenters: Array.isArray(l.deferredCostCenters)
             ? l.deferredCostCenters.map((c: any) => ({ costCenterId: String(c.costCenterId ?? ""), pct: String(c.pct ?? "") }))
             : [],
+          industrialCost: l.industrialCost ? {
+            costType: String(l.industrialCost.costType ?? ""),
+            factoryId: String(l.industrialCost.factoryId ?? ""),
+            costCenter: String(l.industrialCost.costCenter ?? ""),
+            period: String(l.industrialCost.period ?? ""),
+            allocationDriver: String(l.industrialCost.allocationDriver ?? ""),
+          } : null,
         })) : (useTabbedLayout ? [] : [newLine()]));
         toast({ title: tr("duplicated") });
         const url = new URL(window.location.href);
@@ -1289,6 +1308,9 @@ export default function PurchaseInvoiceForm() {
                   </TabsTrigger>
                   <TabsTrigger value="items" className={`h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground ${basicFieldsValid ? "" : "opacity-50"}`}>
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                  </TabsTrigger>
+                  <TabsTrigger value="industrialCosts" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <TrendingUp className="h-3.5 w-3.5" />التكاليف الصناعية
                   </TabsTrigger>
                   {/* Linked-ops tabs stay VISIBLE on a new invoice but disabled
                       until it is saved (they need a persisted invoice id). */}
@@ -2043,6 +2065,17 @@ export default function PurchaseInvoiceForm() {
 
           {useTabbedLayout && (
             <>
+            <TabsContent value="industrialCosts" className="mt-0">
+              <CardContent className="pt-5 pb-5">
+                <IndustrialCostsTab
+                  lines={lines}
+                  branches={branches as any[]}
+                  costCenters={costCentersList as any[]}
+                  disabled={viewMode || (existing as any)?.status === "posted"}
+                  onChange={(lineId, industrialCost) => setLines(prev => prev.map(line => line._id === lineId ? { ...line, industrialCost } : line))}
+                />
+              </CardContent>
+            </TabsContent>
             <TabsContent value="payments" className="mt-0">
               <CardContent className="pt-5 pb-5">
                 <PurchaseInvoicePaymentsTab

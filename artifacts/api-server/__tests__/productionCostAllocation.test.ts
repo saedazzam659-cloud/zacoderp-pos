@@ -39,6 +39,17 @@ test("formula allocation derives hours, fixed-rate, and quantity amounts", () =>
   assert.equal(calculateFormulaAllocation("production_quantity", 5_000, 25, 1_000), 125);
 });
 
+test("final execution hours derive immutable delta targets from one approved source basis", () => {
+  // 10,000 source pool / approved company-wide 200 hour denominator.
+  // Three completed orders consume 20h, 30h and 10h respectively.
+  const targets = [20, 30, 10].map((hours) =>
+    calculateFormulaAllocation("operating_hours", 10_000, hours, 200));
+  assert.deepEqual(targets, [1_000, 1_500, 500]);
+  // Repeating finalization reads the same frozen numerator/denominator and
+  // hence has no new delta to journal.
+  assert.deepEqual(targets, [1_000, 1_500, 500]);
+});
+
 test("formula allocation rejects invalid approved inputs", () => {
   assert.throws(() => calculateFormulaAllocation("operating_hours", 100, 2, 0));
   assert.throws(() => calculateFormulaAllocation("production_quantity", 100, 0, 20));

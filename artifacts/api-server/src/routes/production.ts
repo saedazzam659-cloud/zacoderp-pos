@@ -13,6 +13,7 @@ import {
   productionResourcesTable,
   productionEventsTable,
   productionCostAllocationsTable,
+  productionDriverReconciliationsTable,
   productionOverheadClosuresTable,
   productionCommercialAccrualsTable,
   packagingSpecificationsTable,
@@ -68,11 +69,13 @@ import {
   salesLineProductionCostAttributionsTable,
   suppliersTable,
   supplierSettlementsTable,
+  purchaseInvoicesTable,
+  purchaseReturnsTable,
   type ProductionOrderStatus,
   type ProductionStageStatus,
 } from "@workspace/db";
 import { createHash, randomBytes } from "node:crypto";
-import { and, asc, desc, eq, ilike, sql, or, inArray, ne } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, sql, or, inArray, ne, isNull } from "drizzle-orm";
 import {
   extractAuth,
   resolveCompanyId,
@@ -114,6 +117,11 @@ import {
   type ManufacturingCostCategory,
   type ManufacturingCostConfiguration,
 } from "../lib/manualManufacturingCosts.js";
+import {
+  normalizeStageExecutionPayload,
+  STAGE_WASTE_CLASSIFICATIONS,
+} from "../lib/stageExecution.js";
+import { getPostedIndustrialPurchaseCosts } from "../lib/industrialPurchaseCosts.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 // ─── Journal entry helper (mirrors sales.ts / purchasing.ts) ─────────────────
@@ -382,6 +390,13 @@ const router = Router();
 // This narrow router is mounted by both facades; it must never include the
 // rest of the advanced production routes.
 export const commercialLifecycleRouter = Router();
+// Stage execution and monthly overhead close are the other two shared-core
+// workflows needed by the compact facade. Their handlers remain single-source:
+// the facade mounts these narrow routers instead of reimplementing stock, GL,
+// source allocation, or stage state logic.
+export const productionExecutionRouter = Router();
+
+export const productionOverheadClosureRouter = Router();
   // ─────────────────────────────────────────────────────────────────────────
   // Gemini-first transparent redirect (see notes in routes/ai.ts).
   // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
@@ -434,6 +449,30 @@ router.use((_req, _res, next) => {
 router.use(requireModulePermission("production"));
 router.use(moduleAudit("production"));
 router.use(commercialLifecycleRouter);
+router.use(productionExecutionRouter);
+router.use(productionOverheadClosureRouter);
+
+router.get("/execution-catalog", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const branch = effectiveBranchCondition(req, productionResourcesTable.branchId, req.query.branchId);
+    if ("deny" in branch) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const machineWhere = branch.cond
+      ? and(eq(productionResourcesTable.companyId, cid), branch.cond)
+      : eq(productionResourcesTable.companyId, cid);
+    const [machines, workers] = await Promise.all([
+      db.select({ id: productionResourcesTable.id, name: productionResourcesTable.name,
+        type: productionResourcesTable.type, branchId: productionResourcesTable.branchId })
+        .from(productionResourcesTable).where(machineWhere).orderBy(asc(productionResourcesTable.name)),
+      db.select({ id: usersTable.id, nameAr: usersTable.nameAr, nameEn: usersTable.nameEn,
+        username: usersTable.username }).from(usersTable).where(eq(usersTable.companyId, cid))
+        .orderBy(asc(usersTable.nameAr), asc(usersTable.nameEn), asc(usersTable.username)),
+    ]);
+    res.json({ machines, workers });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
 
 // Helper: validates that a branch row belongs to the user's allowed scope.
 // Returns true when the row's branchId is permitted, false otherwise.
@@ -579,15 +618,6 @@ function sourceAmountCents(value: unknown): number {
   return Number(num(value).toFixed(2));
 }
 
-async function assertOrderNotPaused(cid: number, orderId: number): Promise<void> {
-  const [row] = await db.select({ status: productionOrdersTable.status })
-    .from(productionOrdersTable).where(and(
-      eq(productionOrdersTable.companyId, cid), eq(productionOrdersTable.id, orderId),
-    )).limit(1);
-  if (row?.status === "paused")
-    throw Object.assign(new Error("الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل بياناته"), { status: 409 });
-}
-
 const COST_TREATMENTS = new Set([
   "direct_material", "direct_packaging", "manufacturing_overhead",
   "quality_prevention", "quality_appraisal", "internal_failure",
@@ -647,7 +677,8 @@ function sanitizeWizardConfiguration(value: unknown): Record<string, unknown> {
 }
 
 type CostSource = {
-  sourceType: "payroll" | "fixed_asset_depreciation" | "prepaid_amortization";
+  sourceType: "payroll" | "fixed_asset_depreciation" | "prepaid_amortization" |
+    "purchase_invoice" | "purchase_return";
   sourceRecordId: number;
   label: string;
   periodStart: string;
@@ -766,7 +797,77 @@ async function loadPostedCostSources(
       sql`${accountingAdjustmentsTable.approvedProductionQuantity} > 0`,
       journalBranch));
 
-  const journalIds = [...payroll, ...assets, ...prepaid]
+  // Purchase owns the industrial tag and determines whether a document is a
+  // posted actual source. Manufacturing only adapts that immutable source fact
+  // into the existing allocation/capacity/closure contract. Payments and
+  // settlements are deliberately not queried here.
+  const industrialCandidates = await getPostedIndustrialPurchaseCosts(q, cid, {
+    period,
+    ...(requestedBranchId != null ? { factoryId: requestedBranchId } : {}),
+  });
+  const industrial = industrialCandidates.filter((source) =>
+    !req || rowInScope(req, source.factoryId),
+  );
+  const invoiceIds = industrial
+    .filter((source) => source.sourceType === "purchase_invoice")
+    .map((source) => source.sourceDocumentId);
+  const returnIds = industrial
+    .filter((source) => source.sourceType === "purchase_return")
+    .map((source) => source.sourceDocumentId);
+  const [purchaseInvoices, purchaseReturns] = await Promise.all([
+    invoiceIds.length
+      ? q.select({ id: purchaseInvoicesTable.id, journalId: purchaseInvoicesTable.journalEntryId })
+        .from(purchaseInvoicesTable)
+        .where(and(eq(purchaseInvoicesTable.companyId, cid), inArray(purchaseInvoicesTable.id, invoiceIds)))
+      : [],
+    returnIds.length
+      ? q.select({ id: purchaseReturnsTable.id, journalId: purchaseReturnsTable.journalEntryId })
+        .from(purchaseReturnsTable)
+        .where(and(eq(purchaseReturnsTable.companyId, cid), inArray(purchaseReturnsTable.id, returnIds)))
+      : [],
+  ]);
+  const industrialJournalByDocument = new Map<string, number>();
+  for (const invoice of purchaseInvoices) {
+    if (invoice.journalId) industrialJournalByDocument.set(`purchase_invoice:${invoice.id}`, invoice.journalId);
+  }
+  for (const purchaseReturn of purchaseReturns) {
+    if (purchaseReturn.journalId) industrialJournalByDocument.set(`purchase_return:${purchaseReturn.id}`, purchaseReturn.journalId);
+  }
+  const missingIndustrialJournal = industrial.find((source) =>
+    !industrialJournalByDocument.has(`${source.sourceType}:${source.sourceDocumentId}`),
+  );
+  if (missingIndustrialJournal) {
+    throw Object.assign(
+      new Error(`مصدر الشراء الصناعي ${missingIndustrialJournal.sourceKey} مرحّل بلا قيد مصدر صالح`),
+      { status: 409 },
+    );
+  }
+  const missingIndustrialAccount = industrial.find((source) =>
+    !Number.isInteger(Number(source.sourceAccountId)) || Number(source.sourceAccountId) <= 0,
+  );
+  if (missingIndustrialAccount) {
+    throw Object.assign(
+      new Error(`مصدر الشراء الصناعي ${missingIndustrialAccount.sourceKey} بلا حساب تكلفة مصدر على السطر`),
+      { status: 409 },
+    );
+  }
+  const unlinkedIndustrialReturn = industrial.find((source) =>
+    source.sourceType === "purchase_return" &&
+    (!Number.isInteger(Number(source.sourcePurchaseLineId)) || Number(source.sourcePurchaseLineId) <= 0),
+  );
+  if (unlinkedIndustrialReturn) {
+    throw Object.assign(
+      new Error(`مرتجع الشراء الصناعي ${unlinkedIndustrialReturn.sourceKey} بلا رابط سطر شراء أصلي ثابت`),
+      { status: 409 },
+    );
+  }
+  const industrialWithJournal = industrial.map((source) => ({
+    ...source,
+    journalId: industrialJournalByDocument.get(`${source.sourceType}:${source.sourceDocumentId}`)!,
+    sourceAccountId: Number(source.sourceAccountId),
+  }));
+
+  const journalIds = [...payroll, ...assets, ...prepaid, ...industrialWithJournal]
     .map((r: any) => Number(r.journalId))
     .filter((id) => Number.isInteger(id) && id > 0);
   const debitLines = journalIds.length ? await q.select({
@@ -804,6 +905,37 @@ async function loadPostedCostSources(
       label: `مصروف مقدم — ${r.name}`, periodStart: start, periodEnd: end, basis: "posted_amortization",
       sourceAmount: num(r.amount), meta: sourceMeta(r, { adjustmentId: r.adjustmentId, manufacturingEligible: true,
         allocationMethod: r.method, approvedProductionQuantity: r.approvedQty }) })),
+    ...industrialWithJournal.map((r: any) => ({
+      sourceType: r.sourceType as "purchase_invoice" | "purchase_return",
+      sourceRecordId: r.sourceLineId,
+      label: `${r.sourceType === "purchase_return" ? "مرتجع" : "فاتورة"} صناعية — ${r.sourceDocumentNumber ?? r.sourceDocumentId}`,
+      periodStart: start,
+      periodEnd: end,
+      basis: r.allocationDriver,
+      sourceAmount: num(r.amount),
+      meta: {
+        ...sourceMeta(r, {
+        manufacturingEligible: true,
+        allocationMethod: r.allocationDriver,
+        purchaseSourceKey: r.sourceKey,
+        sourceDocumentId: r.sourceDocumentId,
+        sourceDocumentNumber: r.sourceDocumentNumber,
+        sourceLineId: r.sourceLineId,
+        sourceDate: r.sourceDate,
+        factoryId: r.factoryId,
+        costCenter: r.costCenter,
+        costType: r.costType,
+        linkedInvoiceId: r.linkedInvoiceId,
+        }),
+        // Per-line account trace is authoritative for a tagged industrial
+        // source. Never split a purchase line across VAT/other JE debit lines.
+        reclassificationAccounts: [{
+          accountId: r.sourceAccountId,
+          weight: Math.abs(num(r.amount)),
+          costCenter: r.costCenter ?? null,
+        }],
+      },
+    })),
   ].map((source) => ({ ...source, sourceAmount: sourceAmountCents(source.sourceAmount) }));
 }
 
@@ -1327,8 +1459,21 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
         overhead: { amount: num(order.overheadCost), source: allocations.filter((x) =>
           x.sourceType !== "payroll" && (x.snapshotMeta as any)?.includeInManufacturing !== false) },
         analyticalSources: analytical,
-        stages: stages.map((x) => ({ id: x.id, name: x.nameAr, standard: num(x.expectedCost), status: x.status })),
-        waste: waste.map((x) => ({ id: x.id, reason: x.reason, amount: num(x.costImpact), qty: num(x.qty) })),
+        stages: stages.map((x) => ({
+          id: x.id, name: x.nameAr, standard: num(x.expectedCost), status: x.status,
+          // Routing expectedCost is a legacy planning/reference value only.
+          // It is excluded from order WIP, source allocations, and close JEs;
+          // actual source snapshots remain the sole capitalization path.
+          standardEstimateOnly: true,
+          inputQty: num(x.inputQty), outputQty: num(x.outputQty), wasteQty: num(x.wasteQty),
+          actualDurationMinutes: x.actualDurationMinutes, workerUserId: x.operatorUserId,
+          machineId: x.resourceId, wasteReason: x.wasteReason, wasteType: x.wasteType,
+          wasteClassification: x.wasteClassification, notes: x.notes,
+        })),
+        waste: waste.map((x) => ({
+          id: x.id, reason: x.reason, type: x.wasteType,
+          classification: x.wasteClassification, amount: num(x.costImpact), qty: num(x.qty),
+        })),
         quality: { checks: checks.length, failed: checks.filter((x) => x.result === "fail").length },
          allocations,
          manualCosts,
@@ -1542,6 +1687,36 @@ function lifecycleModuleKey(): "production" | "simple_manufacturing" {
     ? "simple_manufacturing"
     : "production";
 }
+
+function executionAction(req: any): "view" | "edit" | "delete" {
+  if (req.method === "GET") return "view";
+  if (req.method === "DELETE") return "delete";
+  return "edit";
+}
+
+productionExecutionRouter.use((req, res, next) => {
+  if (!canAccessModule(req.authUser, lifecycleModuleKey(), executionAction(req))) {
+    res.status(403).json({ error: "ليس لديك صلاحية لتسجيل تنفيذ مراحل التصنيع" });
+    return;
+  }
+  next();
+});
+
+productionOverheadClosureRouter.use((req, res, next) => {
+  const path = String(req.path ?? "");
+  const action = req.method === "GET"
+    ? "view"
+    : /\/(reverse|reopen)$/i.test(path)
+      ? "unpost"
+      : /\/post$/i.test(path)
+        ? "post"
+        : "create";
+  if (!canAccessModule(req.authUser, lifecycleModuleKey(), action)) {
+    res.status(403).json({ error: "ليس لديك صلاحية لتسوية فروقات التصنيع" });
+    return;
+  }
+  next();
+});
 
 // Posting rights follow the facade that mounted this narrow router.  A
 // simple-manufacturing user must not need an unrelated advanced-production
@@ -3497,16 +3672,20 @@ async function buildOverheadClosureSnapshot(
   }
 
   const sources: OverheadClosureSource[] = [];
-  for (const source of sourceRows.filter((candidate) =>
-    appliedBySource.has(overheadSourceKey(candidate.sourceType, candidate.sourceRecordId)),
-  )) {
+  // Include every approved, posted source in the month, including a source
+  // with zero applied allocations. Omitting the latter makes an actual-vs-
+  // applied report look balanced while the whole source pool remains in its
+  // original expense account. The resulting correction still posts the
+  // difference only and never creates a second source expense.
+  for (const source of sourceRows) {
     const key = overheadSourceKey(source.sourceType, source.sourceRecordId);
-    const applied = appliedBySource.get(key)!;
+    const applied = appliedBySource.get(key) ?? { amount: 0, treatments: new Set<string>() };
     // A source pool that was split between manufacturing overhead and another
     // analytical treatment cannot be assigned a signed residual safely: the
     // source journal does not identify which debit belongs to each treatment.
     // Refuse the close instead of posting a plausible-looking fake correction.
-    if (applied.treatments.size !== 1 || !applied.treatments.has("manufacturing_overhead")) {
+    if (applied.treatments.size > 1 ||
+        (applied.treatments.size === 1 && !applied.treatments.has("manufacturing_overhead"))) {
       throw Object.assign(
         new Error(`لا يمكن إغلاق المصدر ${key}: توزيعاته المرحّلة ليست مصروفاً صناعياً غير مباشر حصراً`),
         { status: 409 },
@@ -3517,7 +3696,22 @@ async function buildOverheadClosureSnapshot(
     const variance = round2(actualAmount - appliedAmount);
     if (Math.abs(variance) < 0.01) continue;
     const sourceJournalId = Number(closureSourceMeta(source.meta).sourceJournalId);
-    const sourceJournalLines = linesByJournal.get(sourceJournalId) ?? [];
+    const tracedAccounts = Array.isArray(closureSourceMeta(source.meta).reclassificationAccounts)
+      ? closureSourceMeta(source.meta).reclassificationAccounts as WeightedAccount[]
+      : [];
+    // Industrial purchase lines supply their own line-account trace so VAT or
+    // unrelated debit lines in a multi-line purchase JE cannot be moved by
+    // manufacturing. Legacy payroll/depreciation/prepaid sources retain their
+    // journal-debit account split.
+    const sourceJournalLines = tracedAccounts.length
+      ? tracedAccounts
+        .filter((line) => Number.isInteger(Number(line.accountId)) && num(line.weight) > 0)
+        .map((line) => ({
+          accountId: Number(line.accountId),
+          debit: num(line.weight),
+          costCenter: (line as any).costCenter ?? closureSourceMeta(source.meta).costCenter ?? null,
+        }))
+      : linesByJournal.get(sourceJournalId) ?? [];
     if (!sourceJournalId || !sourceJournalLines.length) {
       throw Object.assign(
         new Error(`لا يمكن إغلاق المصدر ${key}: القيد الأصلي المرحّل أو حساب المصروف غير متاح`),
@@ -3677,10 +3871,11 @@ async function assertNoOverlappingOverheadClosureSources(
 }
 
 function closureActionPermission(action: "create" | "post" | "unpost") {
-  return requirePermission("production", action);
+  return (req: any, res: any, next: any) =>
+    requirePermission(lifecycleModuleKey(), action)(req, res, next);
 }
 
-router.get("/overhead-closures", async (req, res) => {
+productionOverheadClosureRouter.get("/overhead-closures", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const period = String(req.query.period ?? "");
@@ -3727,7 +3922,7 @@ router.get("/overhead-closures", async (req, res) => {
   }
 });
 
-router.post("/overhead-closures", closureActionPermission("create"), async (req, res) => {
+productionOverheadClosureRouter.post("/overhead-closures", closureActionPermission("create"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const period = String(req.body?.period ?? "");
@@ -3751,16 +3946,21 @@ router.post("/overhead-closures", closureActionPermission("create"), async (req,
       return void res.status(400).json({ error: "الفرع غير صحيح" });
     const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, requestedBranchId ?? undefined);
     if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    let closureBranchId = requestedBranchId;
+    if (!req.authUser!.viewAllBranches && closureBranchId == null) {
+      const allowed = req.authUser!.branchIds ?? [];
+      if (allowed.length !== 1)
+        return void res.status(400).json({ error: "اختر فرعاً صراحةً لإغلاق نطاق فروع مقيّد" });
+      closureBranchId = allowed[0];
+    }
     const correctionDate = String(req.body?.correctionDate || range.end);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(correctionDate))
       return void res.status(400).json({ error: "تاريخ قيد الإغلاق غير صحيح" });
     const varianceAccountId = Number(req.body?.varianceAccountId);
     if (!Number.isInteger(varianceAccountId) || varianceAccountId <= 0)
       return void res.status(400).json({ error: "حساب فروقات التصنيع مطلوب" });
-    const [varianceAccount] = await db.select({ id: accountsTable.id }).from(accountsTable)
-      .where(and(eq(accountsTable.id, varianceAccountId), eq(accountsTable.companyId, cid))).limit(1);
-    if (!varianceAccount) return void res.status(400).json({ error: "حساب الفروقات لا ينتمي إلى هذه الشركة" });
-    const sourceKey = closureSourceKey(cid, period, requestedBranchId);
+    await validateExpenseAccount(cid, varianceAccountId);
+    const sourceKey = closureSourceKey(cid, period, closureBranchId);
     const closure = await db.transaction(async (tx) => {
       await lockOverheadClosureMutation(tx, cid);
       const [existing] = await tx.select().from(productionOverheadClosuresTable)
@@ -3776,7 +3976,7 @@ router.post("/overhead-closures", closureActionPermission("create"), async (req,
         return { row: existing, created: false };
       }
       const snapshot = await buildOverheadClosureSnapshot(
-        tx, cid, period, req, requestedBranchId,
+        tx, cid, period, req, closureBranchId,
       );
       if (snapshot.sources.some((source) =>
         source.accountLines.some((line) => line.accountId === varianceAccountId),
@@ -3791,7 +3991,7 @@ router.post("/overhead-closures", closureActionPermission("create"), async (req,
       );
       const [row] = await tx.insert(productionOverheadClosuresTable).values({
         companyId: cid,
-        branchId: requestedBranchId,
+        branchId: closureBranchId,
         periodStart: snapshot.periodStart,
         periodEnd: snapshot.periodEnd,
         correctionDate,
@@ -3805,7 +4005,7 @@ router.post("/overhead-closures", closureActionPermission("create"), async (req,
         createdBy: req.authUser!.id,
       }).returning();
       await writeEvent(cid, null, "overhead_closure_draft_created", {
-        closureId: row.id, period, branchId: requestedBranchId,
+        closureId: row.id, period, branchId: closureBranchId,
         actualAmount: snapshot.actualAmount, appliedAmount: snapshot.appliedAmount,
         varianceAmount: snapshot.varianceAmount, sourceKey,
       }, req.authUser!.id, false, tx);
@@ -3817,8 +4017,8 @@ router.post("/overhead-closures", closureActionPermission("create"), async (req,
   }
 });
 
-router.post("/overhead-closures/:id/post",
-  closureActionPermission("post"), requirePostRight("production"), async (req, res) => {
+productionOverheadClosureRouter.post("/overhead-closures/:id/post",
+  closureActionPermission("post"), requireCommercialPostRight, async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -3950,8 +4150,8 @@ router.post("/overhead-closures/:id/post",
   }
 });
 
-router.post("/overhead-closures/:id/reverse",
-  closureActionPermission("unpost"), requireUnpostRight("production"), async (req, res) => {
+productionOverheadClosureRouter.post("/overhead-closures/:id/reverse",
+  closureActionPermission("unpost"), requireCommercialUnpostRight, async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -4049,6 +4249,80 @@ router.post("/overhead-closures/:id/reverse",
     res.json(result);
   } catch (e: any) {
     res.status(e.status ?? 500).json({ error: e.message });
+  }
+});
+
+// Reopen is deliberately available only after the exact reversal exists. It
+// does not alter the immutable source snapshot or remove historical journals;
+// it merely returns the same close to draft so an authorized user can post one
+// new, auditable settlement cycle. This prevents a second active close while
+// still allowing a legitimate reversal/repost correction.
+productionOverheadClosureRouter.post("/overhead-closures/:id/reopen",
+  closureActionPermission("unpost"), requireCommercialUnpostRight, async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const result = await db.transaction(async (tx) => {
+      await lockOverheadClosureMutation(tx, cid);
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${id})`);
+      const [closure] = await tx.select().from(productionOverheadClosuresTable).where(and(
+        eq(productionOverheadClosuresTable.id, id),
+        eq(productionOverheadClosuresTable.companyId, cid),
+      )).limit(1);
+      if (!closure || !rowInScope(req, closure.branchId)) {
+        throw Object.assign(new Error("تسوية المصروفات الصناعية غير موجودة"), { status: 404 });
+      }
+      if (closure.status === "draft") {
+        return { closure, idempotent: true };
+      }
+      if (closure.status !== "reversed" || !closure.journalEntryId || !closure.reversalJournalEntryId) {
+        throw Object.assign(
+          new Error("لا يمكن إعادة فتح التسوية إلا بعد عكس قيدها كاملاً"),
+          { status: 409 },
+        );
+      }
+      const journals = await tx.select({
+        id: journalEntriesTable.id,
+        status: journalEntriesTable.status,
+        entryType: journalEntriesTable.entryType,
+      }).from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.companyId, cid),
+        inArray(journalEntriesTable.id, [closure.journalEntryId, closure.reversalJournalEntryId]),
+      ));
+      const original = journals.find((journal) => journal.id === closure.journalEntryId);
+      const reversal = journals.find((journal) => journal.id === closure.reversalJournalEntryId);
+      if (!original || !reversal ||
+          original.entryType !== "production_overhead_closure" ||
+          reversal.entryType !== "production_overhead_closure_reversal" ||
+          original.status !== "posted" || reversal.status !== "posted") {
+        throw Object.assign(
+          new Error("لا يمكن إعادة فتح التسوية: القيد الأصلي أو قيد العكس غير صالح"),
+          { status: 409 },
+        );
+      }
+      const [reopened] = await tx.update(productionOverheadClosuresTable).set({
+        status: "draft",
+        reopenedJournalEntryId: closure.journalEntryId,
+        journalEntryId: null,
+        postedBy: null,
+        postedAt: null,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(productionOverheadClosuresTable.id, id),
+        eq(productionOverheadClosuresTable.companyId, cid),
+        eq(productionOverheadClosuresTable.status, "reversed"),
+      )).returning();
+      if (!reopened) throw Object.assign(new Error("تغيّرت حالة التسوية؛ أعد التحميل"), { status: 409 });
+      await writeEvent(cid, null, "overhead_closure_reopened", {
+        closureId: id,
+        originalJournalEntryId: closure.journalEntryId,
+        reversalJournalEntryId: closure.reversalJournalEntryId,
+      }, req.authUser!.id, false, tx);
+      return { closure: reopened, idempotent: false };
+    });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -4520,13 +4794,19 @@ export async function productionOrderDetailHandler(req: any, res: any) {
         ),
       )
       .orderBy(desc(productionWasteRecordsTable.createdAt));
-    const costAllocations = await db.select().from(productionCostAllocationsTable)
+    const [stages, costAllocations] = await Promise.all([
+      db.select().from(productionOrderStagesTable)
+        .where(eq(productionOrderStagesTable.orderId, id))
+        .orderBy(asc(productionOrderStagesTable.sequence)),
+      db.select().from(productionCostAllocationsTable)
       .where(and(eq(productionCostAllocationsTable.companyId, cid),
         eq(productionCostAllocationsTable.orderId, id)))
-      .orderBy(asc(productionCostAllocationsTable.id));
+      .orderBy(asc(productionCostAllocationsTable.id)),
+    ]);
     res.json({
       order,
       items,
+      stages,
       events,
       wasteRecords,
       costAllocations,
@@ -4751,6 +5031,23 @@ export async function productionWizardHandler(req: any, res: any) {
             eq(productionCostAllocationsTable.sourceRecordId, source.sourceRecordId),
             sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
           ));
+  const driverReconciliations = await q.select({
+    baseAllocationId: productionDriverReconciliationsTable.baseAllocationId,
+    deltaAmount: productionDriverReconciliationsTable.deltaAmount,
+  }).from(productionDriverReconciliationsTable).where(and(
+    eq(productionDriverReconciliationsTable.companyId, cid),
+    eq(productionDriverReconciliationsTable.periodStart, range.start),
+    eq(productionDriverReconciliationsTable.periodEnd, range.end),
+  )).for("update");
+  const driverDeltaByAllocation = new Map<number, number>();
+  for (const row of driverReconciliations) {
+    driverDeltaByAllocation.set(Number(row.baseAllocationId),
+      (driverDeltaByAllocation.get(Number(row.baseAllocationId)) ?? 0) + num(row.deltaAmount));
+  }
+  for (const row of allocationRows) {
+    row.allocatedAmount = String(num(row.allocatedAmount) +
+      (driverDeltaByAllocation.get(Number(row.allocationId)) ?? 0));
+  }
         try { assertAllocationCapacity(source.sourceAmount, num(used?.amount), amount); }
         catch { throw Object.assign(new Error(`تجاوز توزيع المصدر المتاح: ${source.label}`), { status: 409 }); }
         const treatment = COST_TREATMENTS.has(String(a.treatment))
@@ -5432,6 +5729,108 @@ router.patch("/orders/:id", async (req, res) => {
 
 // ──────────────────────────────────────────────────────────────────────────
 // SAP-style WIP status transition.
+// Once all stage facts are final, reconcile only the driver delta from the
+// immutable planned source allocation. This deliberately creates a separate
+// ledger/JЕ rather than rewriting the original allocation snapshot.
+async function reconcileFinalStageDrivers(
+  tx: any, cid: number, order: any, producedQty: number, actorId: number, req: any,
+) {
+  // Serialize against monthly snapshot construction so a close cannot see a
+  // base allocation without its final immutable driver delta.
+  await lockOverheadClosureMutation(tx, cid);
+  const stages = await tx.select({
+    status: productionOrderStagesTable.status,
+    actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
+  }).from(productionOrderStagesTable).where(eq(productionOrderStagesTable.orderId, order.id));
+  if (!stages.length || stages.some((stage) => !["completed", "skipped"].includes(stage.status))) {
+    return 0;
+  }
+  const actualHours = stages.reduce((n, s) => n + num(s.actualDurationMinutes) / 60, 0);
+  const allocations = await tx.select().from(productionCostAllocationsTable).where(and(
+    eq(productionCostAllocationsTable.companyId, cid),
+    eq(productionCostAllocationsTable.orderId, order.id),
+  ));
+  const existing = await tx.select().from(productionDriverReconciliationsTable).where(and(
+    eq(productionDriverReconciliationsTable.companyId, cid),
+    eq(productionDriverReconciliationsTable.orderId, order.id),
+  ));
+  const existingKeys = new Set(existing.map((r) => `${r.sourceType}:${r.sourceRecordId}`));
+  const rows: any[] = [];
+  for (const allocation of allocations) {
+    const key = `${allocation.sourceType}:${allocation.sourceRecordId}`;
+    if (existingKeys.has(key)) continue; // retry-safe frozen reconciliation
+    const meta = (allocation.snapshotMeta ?? {}) as Record<string, any>;
+    const method = meta.formulaMethod as string | undefined;
+    if (!["operating_hours", "fixed_hourly_rate", "production_quantity"].includes(method ?? "")) continue;
+    const planned = num(meta.numerator);
+    const denominator = num(meta.denominatorOrRate);
+    const actual = method === "production_quantity" ? producedQty : actualHours;
+    if (!(actual >= 0) || !(denominator > 0)) continue;
+    const target = actual === 0 ? 0 : calculateFormulaAllocation(
+      method as "operating_hours" | "fixed_hourly_rate" | "production_quantity",
+      num(allocation.sourceAmount), actual, denominator,
+    );
+    rows.push({ allocation, meta, method, planned, denominator, actual, target,
+      delta: Number((target - num(allocation.allocatedAmount)).toFixed(2)) });
+  }
+  if (!rows.length) return 0;
+  // Company-wide source capacity includes every branch's original allocations
+  // and previously frozen driver deltas.
+  for (const row of rows.filter((r) => r.delta > 0)) {
+    await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${row.allocation.sourceRecordId})`);
+    const [base, deltas] = await Promise.all([
+      tx.select({ amount: productionCostAllocationsTable.allocatedAmount })
+        .from(productionCostAllocationsTable).where(and(
+          eq(productionCostAllocationsTable.companyId, cid),
+          eq(productionCostAllocationsTable.sourceType, row.allocation.sourceType),
+          eq(productionCostAllocationsTable.sourceRecordId, row.allocation.sourceRecordId),
+        )),
+      tx.select({ amount: productionDriverReconciliationsTable.deltaAmount })
+        .from(productionDriverReconciliationsTable).where(and(
+          eq(productionDriverReconciliationsTable.companyId, cid),
+          eq(productionDriverReconciliationsTable.sourceType, row.allocation.sourceType),
+          eq(productionDriverReconciliationsTable.sourceRecordId, row.allocation.sourceRecordId),
+          isNull(productionDriverReconciliationsTable.reversalJournalEntryId),
+        )),
+    ]);
+    assertAllocationCapacity(num(row.allocation.sourceAmount),
+      base.reduce((n, x) => n + num(x.amount), 0) + deltas.reduce((n, x) => n + num(x.amount), 0),
+      row.delta);
+  }
+  const lines: JLine[] = [];
+  let net = 0;
+  for (const row of rows) {
+    if (Math.abs(row.delta) < 0.005) continue;
+    net += row.delta;
+    const accounts = Array.isArray(row.meta.reclassificationAccounts) ? row.meta.reclassificationAccounts : [];
+    const splits = allocateToSourceAccounts(Math.abs(row.delta), accounts);
+    lines.push(...splits.map((split) => row.delta > 0
+      ? { accountId: split.accountId, credit: split.amount, description: "فرق محرك فعلي لمصدر تكلفة" }
+      : { accountId: split.accountId, debit: split.amount, description: "عكس فرق محرك فعلي لمصدر تكلفة" }));
+  }
+  let journalId: number | null = null;
+  if (Math.abs(net) >= 0.005) {
+    if (!order.wipAccountId) throw Object.assign(new Error("حساب WIP مطلوب لتسوية محرك الوقت الفعلي"), { status: 409 });
+    lines.unshift(net > 0
+      ? { accountId: order.wipAccountId, debit: net, description: "فرق محركات تنفيذ فعلية — WIP" }
+      : { accountId: order.wipAccountId, credit: Math.abs(net), description: "عكس فرق محركات تنفيذ فعلية — WIP" });
+    journalId = await createJournalEntry({
+      companyId: cid, audit: { req }, branchId: order.branchId, date: new Date().toISOString().slice(0, 10),
+      docNumber: `${order.orderNumber}-DRV`, entryType: "production_driver_reconciliation",
+      costCenter: order.costCenter ?? null, description: `تسوية محركات فعلية لأمر ${order.orderNumber}`, lines, dx: tx,
+    });
+  }
+  await tx.insert(productionDriverReconciliationsTable).values(rows.map((row) => ({
+    companyId: cid, orderId: order.id, sourceType: row.allocation.sourceType, sourceRecordId: row.allocation.sourceRecordId,
+    baseAllocationId: row.allocation.id, periodStart: row.allocation.periodStart, periodEnd: row.allocation.periodEnd,
+    driverMethod: row.method, plannedNumerator: String(row.planned), actualNumerator: String(row.actual),
+    denominatorOrRate: String(row.denominator), sourceAmount: row.allocation.sourceAmount,
+    baseAllocatedAmount: row.allocation.allocatedAmount, reconciledAmount: String(row.target),
+    deltaAmount: String(row.delta), journalEntryId: journalId, snapshotMeta: row.meta, createdBy: actorId,
+  })));
+  return Number(net.toFixed(2));
+}
+
 //   in_production → ISSUE: decrement raw materials from rawWarehouseId at
 //     their current weighted-avg cost; post DR WIP / CR Raw Inventory
 //     (+ CR Labor Accrual + CR Overhead Applied if those costs are entered).
@@ -5962,7 +6361,13 @@ export async function productionStatusHandler(req: any, res: any) {
         res.status(400).json({ error: "إجمالي مخرجات الإنتاج صفر — تحقق من الكميات" });
         return;
       }
-      const wipBalance = Number(order.actualCost ?? 0);
+      // Final-stage facts are now frozen. Reconcile only the approved-basis
+      // driver delta before capitalizing the order; retries find the immutable
+      // reconciliation row and cannot rebook the source.
+      const driverDelta = await reconcileFinalStageDrivers(
+        tx, cid, order, producedQty, req.authUser!.id, req,
+      );
+      const wipBalance = Number((num(order.actualCost) + driverDelta).toFixed(2));
       if (!(wipBalance > 0)) {
         res.status(400).json({
           error:
@@ -5970,10 +6375,34 @@ export async function productionStatusHandler(req: any, res: any) {
         });
         return;
       }
-      // Allocate WIP cost between good output (FG) and waste pro-rata by qty.
+      // Stage execution owns the waste classification. Normal production loss
+      // remains in the cost of good output; only abnormal loss is expensed.
+      // A legacy order with a header-only waste quantity retains the old,
+      // conservative treatment (abnormal) until its stages are classified.
+      const completedStages = await tx.select({
+        wasteQty: productionOrderStagesTable.wasteQty,
+        wasteClassification: productionOrderStagesTable.wasteClassification,
+      }).from(productionOrderStagesTable)
+        .where(eq(productionOrderStagesTable.orderId, id));
+      const stagedWasteQty = completedStages.reduce(
+        (sum, stage) => sum + num(stage.wasteQty),
+        0,
+      );
+      if (stagedWasteQty > wasteQty + 0.00005) {
+        res.status(409).json({
+          error: "كمية هالك مراحل الأمر تتجاوز كمية الهالك على رأس أمر الإنتاج",
+        });
+        return;
+      }
+      const normalWasteQty = completedStages.reduce((sum, stage) =>
+        stage.wasteClassification === "normal" ? sum + num(stage.wasteQty) : sum,
+      0);
+      // Any unclassified/header-only difference is abnormal by design: it
+      // must not be silently capitalized into finished goods.
+      const abnormalWasteQty = Math.max(0, wasteQty - normalWasteQty);
       const totalOut = producedQty + wasteQty;
-      const fgCost = wipBalance * (producedQty / totalOut);
-      const wasteCost = wipBalance - fgCost;
+      const wasteCost = wipBalance * (abnormalWasteQty / totalOut);
+      const fgCost = wipBalance - wasteCost;
       const fgUnitCost = fgCost / producedQty;
       const wasteAcct =
         order.wasteAccountId ?? order.varianceAccountId ?? null;
@@ -6048,7 +6477,7 @@ export async function productionStatusHandler(req: any, res: any) {
                 {
                   accountId: wasteAcct!,
                   debit: wasteCost,
-                  description: "هالك / فروق إنتاج",
+                  description: "هالك غير طبيعي / فروق إنتاج",
                 } satisfies JLine,
               ]
             : []),
@@ -6142,19 +6571,11 @@ export async function productionStatusHandler(req: any, res: any) {
         res.status(409).json({ error: "لا يمكن العكس: لقطة كمية/تكلفة الإكمال غير صالحة" });
         return;
       }
-      const fgCost = totalCost * producedQty / totalOut;
-      const wasteCost = totalCost - fgCost;
-      const fgUnitCost = fgCost / producedQty;
-      const wasteAcct = order.wasteAccountId ?? order.varianceAccountId ?? null;
-      if (wasteCost > 0.005 && !wasteAcct) {
-        res.status(409).json({ error: "لا يمكن العكس: حساب الهالك الأصلي غير متاح" });
-        return;
-      }
       await lockStockBalances([{
         companyId: cid, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
       }], tx);
       const receiptSnapshot = await tx.execute(sql`
-        select id, created_at
+        select id, created_at, cost_price, total_cost
         from stock_ledger
         where company_id = ${cid}
           and item_id = ${order.productItemId}
@@ -6171,6 +6592,12 @@ export async function productionStatusHandler(req: any, res: any) {
         res.status(409).json({ error: "لا يمكن العكس: حركة استلام التشغيلة الأصلية غير موجودة" });
         return;
       }
+      // The receipt ledger is the immutable completion snapshot. Do not
+      // recompute it from current waste classifications when reversing: a
+      // normal/abnormal classification change must never alter historic FG
+      // stock or make an exact reversal diverge from the original receipt.
+      const fgCost = num(originalReceipt.total_cost);
+      const fgUnitCost = num(originalReceipt.cost_price);
       const downstream = await tx.execute(sql`
         select id, tx_type, ref_type, ref_id
         from stock_ledger
@@ -6284,6 +6711,46 @@ export async function productionStatusHandler(req: any, res: any) {
         description: `عكس صرف وتكلفة أمر إنتاج مكتمل ${order.orderNumber}`,
         lines: issueReversalLines, dx: tx,
       });
+      // Driver reconciliations are separate immutable delta JEs. Reverse
+      // their exact posted lines as part of an order reversal so their source
+      // capacity is economically released without touching base allocations.
+      const driverReconciliations = await tx.select().from(productionDriverReconciliationsTable)
+        .where(and(
+          eq(productionDriverReconciliationsTable.companyId, cid),
+          eq(productionDriverReconciliationsTable.orderId, id),
+        ));
+      for (const reconciliation of driverReconciliations) {
+        if (!reconciliation.journalEntryId || reconciliation.reversalJournalEntryId) continue;
+        const originalLines = await tx.select({
+          accountId: journalEntryLinesTable.accountId,
+          debit: journalEntryLinesTable.debit,
+          credit: journalEntryLinesTable.credit,
+          description: journalEntryLinesTable.description,
+          costCenter: journalEntryLinesTable.costCenter,
+        }).from(journalEntryLinesTable).where(eq(
+          journalEntryLinesTable.entryId, reconciliation.journalEntryId,
+        ));
+        if (originalLines.length < 2) {
+          throw Object.assign(new Error("لا يمكن عكس تسوية محرك التنفيذ: سطور القيد الأصلي غير مكتملة"), { status: 409 });
+        }
+        const reversalId = await createJournalEntry({
+          companyId: cid, audit: { req }, branchId: order.branchId, date: todayIso,
+          docNumber: `${order.orderNumber}-DRV-REV`,
+          entryType: "production_driver_reconciliation_reversal",
+          costCenter: order.costCenter ?? null,
+          description: `عكس تسوية محرك تنفيذ فعلية لأمر ${order.orderNumber}`,
+          lines: originalLines.map((line) => ({
+            accountId: line.accountId,
+            debit: num(line.credit),
+            credit: num(line.debit),
+            description: `عكس: ${line.description ?? ""}`,
+            costCenter: line.costCenter,
+          })), dx: tx,
+        });
+        await tx.update(productionDriverReconciliationsTable).set({
+          reversalJournalEntryId: reversalId,
+        }).where(eq(productionDriverReconciliationsTable.id, reconciliation.id));
+      }
       updates.meta = {
         ...((order.meta as Record<string, unknown>) ?? {}),
         reversal: {
@@ -7781,7 +8248,112 @@ async function loadOrderForStages(req: any, res: any) {
   return { cid, order };
 }
 
-router.get("/orders/:id/stages", async (req, res) => {
+function assertStageExecutionMutable(order: { status: string }) {
+  if (!["in_production", "quality_check"].includes(order.status)) {
+    throw Object.assign(
+      new Error("يمكن تسجيل التنفيذ الفعلي للمراحل فقط أثناء الإنتاج أو فحص الجودة"),
+      { status: 409 },
+    );
+  }
+}
+
+async function validateStageExecutionReferences(
+  cid: number,
+  execution: ReturnType<typeof normalizeStageExecutionPayload>,
+  req?: any,
+  orderBranchId?: number | null,
+) {
+  if (execution.operatorUserId) {
+    const [worker] = await db.select({ id: usersTable.id }).from(usersTable)
+      .where(and(
+        eq(usersTable.id, execution.operatorUserId),
+        eq(usersTable.companyId, cid),
+      )).limit(1);
+    if (!worker) {
+      throw Object.assign(new Error("العامل المحدد لا ينتمي إلى هذه الشركة"), { status: 400 });
+    }
+  }
+  if (execution.resourceId) {
+    const [machine] = await db.select({
+      id: productionResourcesTable.id,
+      branchId: productionResourcesTable.branchId,
+    }).from(productionResourcesTable)
+      .where(and(
+        eq(productionResourcesTable.id, execution.resourceId),
+        eq(productionResourcesTable.companyId, cid),
+      )).limit(1);
+    if (!machine || (req && !rowInScope(req, machine.branchId)) ||
+        (machine?.branchId != null && machine.branchId !== orderBranchId)) {
+      throw Object.assign(
+        new Error("الآلة المحددة لا تنتمي إلى نطاق فرع أمر الإنتاج"),
+        { status: 400 },
+      );
+    }
+  }
+}
+
+function assertStageQuantityConservation(
+  inputQty: unknown,
+  outputQty: number | undefined,
+  wasteQty: number | undefined,
+) {
+  const input = num(inputQty);
+  if (input > 0 && outputQty !== undefined && wasteQty !== undefined &&
+      outputQty + wasteQty > input + 0.00005) {
+    throw Object.assign(
+      new Error("كمية الإخراج والهالك لا يمكن أن تتجاوز كمية إدخال المرحلة"),
+      { status: 400 },
+    );
+  }
+}
+
+// Actual minutes remain a non-monetary driver. Keep the order aggregate in
+// sync with the per-stage snapshots so every downstream approved-basis
+// reconciliation reads one authoritative execution total rather than a UI
+// supplied hours field.
+async function refreshOrderActualHours(cid: number, orderId: number, actorId: number) {
+  const stages = await db.select({
+    actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
+  }).from(productionOrderStagesTable)
+    .where(eq(productionOrderStagesTable.orderId, orderId));
+  const actualMinutes = stages.reduce((sum, stage) => sum + Number(stage.actualDurationMinutes ?? 0), 0);
+  const actualHours = Number((actualMinutes / 60).toFixed(4));
+  const [order] = await db.select({
+    meta: productionOrdersTable.meta,
+    actualHours: productionOrdersTable.actualHours,
+  }).from(productionOrdersTable).where(and(
+    eq(productionOrdersTable.id, orderId),
+    eq(productionOrdersTable.companyId, cid),
+  )).limit(1);
+  if (!order) return actualHours;
+  const prior = (order.meta && typeof order.meta === "object" ? order.meta : {}) as Record<string, unknown>;
+  await db.update(productionOrdersTable).set({
+    actualHours: String(actualHours),
+    meta: {
+      ...prior,
+      actualExecutionDriver: {
+        minutes: actualMinutes,
+        hours: actualHours,
+        source: "sum(production_order_stages.actual_duration_minutes)",
+        capturedAt: new Date().toISOString(),
+      },
+    },
+    updatedAt: new Date(),
+  }).where(and(
+    eq(productionOrdersTable.id, orderId),
+    eq(productionOrdersTable.companyId, cid),
+  ));
+  if (num(order.actualHours) !== actualHours) {
+    await writeEvent(cid, orderId, "actual_execution_driver_updated", {
+      actualMinutes,
+      actualHours,
+      driver: "stage_duration",
+    }, actorId);
+  }
+  return actualHours;
+}
+
+productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
   try {
     const ctx = await loadOrderForStages(req, res);
     if (!ctx) return;
@@ -7796,12 +8368,14 @@ router.get("/orders/:id/stages", async (req, res) => {
   }
 });
 
-router.post("/orders/:id/stages/seed", async (req, res) => {
+productionExecutionRouter.post("/orders/:id/stages/seed", async (req, res) => {
   try {
     const ctx = await loadOrderForStages(req, res);
     if (!ctx) return;
     const { cid, order } = ctx;
-    if (order.status === "paused") return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل المراحل" });
+    if (!["draft", "approved"].includes(order.status)) {
+      return void res.status(409).json({ error: "لا يمكن استبدال قالب المراحل بعد بدء التنفيذ؛ مراحل الأمر هي لقطة مستقلة" });
+    }
     const existing = await db
       .select({ id: productionOrderStagesTable.id })
       .from(productionOrderStagesTable)
@@ -7900,11 +8474,11 @@ router.post("/orders/:id/stages/seed", async (req, res) => {
   }
 });
 
-router.post("/orders/:id/stages/:stageId/start", async (req, res) => {
+productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, res) => {
   try {
     const ctx = await loadOrderForStages(req, res);
     if (!ctx) return;
-    if (ctx.order.status === "paused") return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل بدء المرحلة" });
+    assertStageExecutionMutable(ctx.order);
     const stageId = Number(req.params.stageId);
     const [stage] = await db
       .select()
@@ -7939,9 +8513,11 @@ router.post("/orders/:id/stages/:stageId/start", async (req, res) => {
       res.status(400).json({ error: "أكمل المراحل السابقة أولاً" });
       return;
     }
+    const execution = normalizeStageExecutionPayload(req.body);
+    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId);
     const inputQty =
-      req.body?.inputQty !== undefined && req.body?.inputQty !== ""
-        ? String(num(req.body.inputQty))
+      execution.inputQty !== undefined
+        ? String(execution.inputQty)
         : Number(stage.inputQty) > 0
           ? stage.inputQty
           : String(num(ctx.order.plannedQty));
@@ -7951,8 +8527,11 @@ router.post("/orders/:id/stages/:stageId/start", async (req, res) => {
         status: "in_progress" as const,
         startedAt: stage.startedAt ?? new Date(),
         inputQty,
-        operatorUserId: req.body?.operatorUserId
-          ? Number(req.body.operatorUserId)
+        actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
+        resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+        notes: execution.notes !== undefined ? execution.notes : stage.notes,
+        operatorUserId: execution.operatorUserId !== undefined
+          ? execution.operatorUserId
           : (stage.operatorUserId ?? req.authUser!.id),
       })
       .where(eq(productionOrderStagesTable.id, stageId))
@@ -7961,22 +8540,26 @@ router.post("/orders/:id/stages/:stageId/start", async (req, res) => {
       ctx.cid,
       ctx.order.id,
       "stage_started",
-      { stageId, code: stage.code, inputQty },
+      { stageId, code: stage.code, inputQty, actualDurationMinutes: execution.actualDurationMinutes ?? null,
+        resourceId: execution.resourceId ?? null, workerUserId: execution.operatorUserId ?? null },
       req.authUser!.id,
     );
+    if (execution.actualDurationMinutes !== undefined) {
+      await refreshOrderActualHours(ctx.cid, ctx.order.id, req.authUser!.id);
+    }
     res.json(updated);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 
-router.post("/orders/:id/stages/:stageId/complete", async (req, res) => {
+productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (req, res) => {
   try {
     const ctx = await loadOrderForStages(req, res);
     if (!ctx) return;
-    if (ctx.order.status === "paused") return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل إكمال المرحلة" });
+    assertStageExecutionMutable(ctx.order);
     const stageId = Number(req.params.stageId);
-    const b = req.body ?? {};
+    const execution = normalizeStageExecutionPayload(req.body, { requireOutput: true });
     const [stage] = await db
       .select()
       .from(productionOrderStagesTable)
@@ -7998,11 +8581,18 @@ router.post("/orders/:id/stages/:stageId/complete", async (req, res) => {
       res.status(400).json({ error: "ابدأ المرحلة أولاً قبل إكمالها" });
       return;
     }
-    const outputQty = num(b.outputQty);
-    const wasteQty = num(b.wasteQty);
-    if (outputQty < 0 || wasteQty < 0) {
-      res.status(400).json({ error: "الكميات يجب أن تكون موجبة" });
-      return;
+    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId);
+    const outputQty = execution.outputQty!;
+    const wasteQty = execution.wasteQty ?? num(stage.wasteQty);
+    assertStageQuantityConservation(stage.inputQty, outputQty, wasteQty);
+    const wasteReason = execution.wasteReason !== undefined ? execution.wasteReason : stage.wasteReason;
+    const wasteType = execution.wasteType !== undefined ? execution.wasteType : stage.wasteType;
+    const wasteClassification = execution.wasteClassification !== undefined
+      ? execution.wasteClassification : stage.wasteClassification;
+    if (wasteQty > 0 && (!wasteReason || !wasteType || !wasteClassification)) {
+      return void res.status(400).json({
+        error: "سبب ونوع وتصنيف الهالك (normal أو abnormal) مطلوبة عند تسجيل هالك مرحلة",
+      });
     }
     const [updated] = await db
       .update(productionOrderStagesTable)
@@ -8012,9 +8602,14 @@ router.post("/orders/:id/stages/:stageId/complete", async (req, res) => {
         wasteQty: String(wasteQty),
         completedAt: new Date(),
         startedAt: stage.startedAt ?? new Date(),
-        notes: b.notes ?? stage.notes,
-        operatorUserId: b.operatorUserId
-          ? Number(b.operatorUserId)
+        actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
+        resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+        wasteReason,
+        wasteType,
+        wasteClassification,
+        notes: execution.notes !== undefined ? execution.notes : stage.notes,
+        operatorUserId: execution.operatorUserId !== undefined
+          ? execution.operatorUserId
           : (stage.operatorUserId ?? req.authUser!.id),
       })
       .where(eq(productionOrderStagesTable.id, stageId))
@@ -8034,36 +8629,75 @@ router.post("/orders/:id/stages/:stageId/complete", async (req, res) => {
         .set({ inputQty: String(outputQty) })
         .where(eq(productionOrderStagesTable.id, next.id));
     }
+    const actualHours = await refreshOrderActualHours(ctx.cid, ctx.order.id, req.authUser!.id);
 
     await writeEvent(
       ctx.cid,
       ctx.order.id,
       "stage_completed",
-      { stageId, code: stage.code, outputQty, wasteQty },
+      { stageId, code: stage.code, outputQty, wasteQty,
+        actualDurationMinutes: execution.actualDurationMinutes ?? num(stage.actualDurationMinutes),
+        resourceId: execution.resourceId ?? stage.resourceId ?? null,
+        workerUserId: execution.operatorUserId ?? stage.operatorUserId ?? null,
+        wasteReason: wasteReason ?? null,
+        wasteType: wasteType ?? null,
+        wasteClassification: wasteClassification ?? null, actualHours },
       req.authUser!.id,
     );
     res.json(updated);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 
-router.patch("/orders/:id/stages/:stageId", async (req, res) => {
+productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) => {
   try {
     const ctx = await loadOrderForStages(req, res);
     if (!ctx) return;
-    if (ctx.order.status === "paused") return void res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل المرحلة" });
+    assertStageExecutionMutable(ctx.order);
     const stageId = Number(req.params.stageId);
     const b = req.body ?? {};
+    const execution = normalizeStageExecutionPayload(b);
+    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId);
+    const [current] = await db.select().from(productionOrderStagesTable).where(and(
+      eq(productionOrderStagesTable.id, stageId),
+      eq(productionOrderStagesTable.orderId, ctx.order.id),
+    )).limit(1);
+    if (!current) return void res.status(404).json({ error: "المرحلة غير موجودة" });
+    if (["done", "completed", "skipped"].includes(String(current.status))) {
+      return void res.status(409).json({ error: "لا يمكن تعديل مرحلة مكتملة أو متخطاة" });
+    }
+    assertStageQuantityConservation(
+      execution.inputQty ?? current.inputQty,
+      execution.outputQty ?? num(current.outputQty),
+      execution.wasteQty ?? num(current.wasteQty),
+    );
+    const resultingWasteQty = execution.wasteQty ?? num(current.wasteQty);
+    const resultingWasteReason = execution.wasteReason !== undefined
+      ? execution.wasteReason : current.wasteReason;
+    const resultingWasteType = execution.wasteType !== undefined
+      ? execution.wasteType : current.wasteType;
+    const resultingWasteClassification = execution.wasteClassification !== undefined
+      ? execution.wasteClassification : current.wasteClassification;
+    if (resultingWasteQty > 0 &&
+        (!resultingWasteReason || !resultingWasteType || !resultingWasteClassification)) {
+      return void res.status(400).json({
+        error: "سبب ونوع وتصنيف الهالك (normal أو abnormal) مطلوبة عند تسجيل هالك مرحلة",
+      });
+    }
     const updates: Record<string, unknown> = {};
-    if ("inputQty" in b) updates.inputQty = String(num(b.inputQty));
-    if ("outputQty" in b) updates.outputQty = String(num(b.outputQty));
-    if ("wasteQty" in b) updates.wasteQty = String(num(b.wasteQty));
-    if ("notes" in b) updates.notes = b.notes || null;
-    if ("operatorUserId" in b)
-      updates.operatorUserId = b.operatorUserId
-        ? Number(b.operatorUserId)
-        : null;
+    if (execution.inputQty !== undefined) updates.inputQty = String(execution.inputQty);
+    if (execution.outputQty !== undefined) updates.outputQty = String(execution.outputQty);
+    if (execution.wasteQty !== undefined) updates.wasteQty = String(execution.wasteQty);
+    if (execution.actualDurationMinutes !== undefined)
+      updates.actualDurationMinutes = execution.actualDurationMinutes;
+    if (execution.resourceId !== undefined) updates.resourceId = execution.resourceId;
+    if (execution.wasteReason !== undefined) updates.wasteReason = execution.wasteReason;
+    if (execution.wasteType !== undefined) updates.wasteType = execution.wasteType;
+    if (execution.wasteClassification !== undefined)
+      updates.wasteClassification = execution.wasteClassification;
+    if (execution.notes !== undefined) updates.notes = execution.notes;
+    if (execution.operatorUserId !== undefined) updates.operatorUserId = execution.operatorUserId;
     if (
       typeof b.status === "string" &&
       (PRODUCTION_STAGE_STATUSES as readonly string[]).includes(b.status)
@@ -8087,16 +8721,29 @@ router.patch("/orders/:id/stages/:stageId", async (req, res) => {
         and(
           eq(productionOrderStagesTable.id, stageId),
           eq(productionOrderStagesTable.orderId, ctx.order.id),
+          ne(productionOrderStagesTable.status, "done"),
+          ne(productionOrderStagesTable.status, "completed"),
+          ne(productionOrderStagesTable.status, "skipped"),
         ),
       )
       .returning();
     if (!updated) {
-      res.status(404).json({ error: "المرحلة غير موجودة" });
+      res.status(409).json({ error: "المرحلة غير موجودة أو أصبحت نهائية أثناء التحديث" });
       return;
     }
+    await writeEvent(ctx.cid, ctx.order.id, "stage_execution_updated", {
+      stageId,
+      fields: Object.keys(updates).sort(),
+      actualDurationMinutes: updated.actualDurationMinutes,
+      inputQty: updated.inputQty,
+      outputQty: updated.outputQty,
+      wasteQty: updated.wasteQty,
+      wasteClassification: updated.wasteClassification,
+    }, req.authUser!.id);
+    await refreshOrderActualHours(ctx.cid, ctx.order.id, req.authUser!.id);
     res.json(updated);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -9073,7 +9720,10 @@ router.post("/quality-checks", async (req, res) => {
     // financial impact of scrap is still booked at completion via the
     // existing `wasteAccountId` JE line. wasteType must validate against the
     // shared enum; bad values reject the WHOLE request (atomicity).
-    let autoWaste: { qty: number; wasteType: string; reason: string | null; costImpact: number; unitCode: string } | null = null;
+    let autoWaste: {
+      qty: number; wasteType: string; wasteClassification: "normal" | "abnormal";
+      reason: string | null; costImpact: number; unitCode: string;
+    } | null = null;
     if (b.createWasteRecord === true && result !== "pass") {
       const wq = Number(b.wasteQty ?? 0);
       if (!(wq > 0)) {
@@ -9088,9 +9738,15 @@ router.post("/quality-checks", async (req, res) => {
         return;
       }
       const wc = Number(b.wasteCostImpact ?? 0);
+      const wasteClassification = String(b.wasteClassification ?? "abnormal").trim();
+      if (!(STAGE_WASTE_CLASSIFICATIONS as readonly string[]).includes(wasteClassification)) {
+        res.status(400).json({ error: "تصنيف الهالك يجب أن يكون normal أو abnormal" });
+        return;
+      }
       autoWaste = {
         qty: wq,
         wasteType: wt,
+        wasteClassification: wasteClassification as "normal" | "abnormal",
         reason:
           typeof b.wasteReason === "string" && b.wasteReason.trim()
             ? b.wasteReason.trim()
@@ -9138,6 +9794,7 @@ router.post("/quality-checks", async (req, res) => {
             orderId,
             stageId,
             wasteType: autoWaste.wasteType,
+            wasteClassification: autoWaste.wasteClassification,
             reason: autoWaste.reason,
             qty: String(autoWaste.qty),
             unitCode: autoWaste.unitCode,
@@ -9402,6 +10059,7 @@ async function assertOrderInScope(req: any, cid: number, orderId: number) {
     .select({
       id: productionOrdersTable.id,
       branchId: productionOrdersTable.branchId,
+      status: productionOrdersTable.status,
     })
     .from(productionOrdersTable)
     .where(
@@ -9413,10 +10071,10 @@ async function assertOrderInScope(req: any, cid: number, orderId: number) {
   if (!o) return { ok: false as const, error: "أمر الإنتاج غير موجود", status: 404 };
   if (!rowInScope(req, o.branchId))
     return { ok: false as const, error: "لا يمكنك العمل على هذا الفرع", status: 403 };
-  return { ok: true as const };
+  return { ok: true as const, order: o };
 }
 
-router.get("/orders/:id/waste-records", async (req, res) => {
+productionExecutionRouter.get("/orders/:id/waste-records", async (req, res) => {
   try {
     const cid = guard(req, res);
     if (!cid) return;
@@ -9449,14 +10107,14 @@ router.get("/orders/:id/waste-records", async (req, res) => {
   }
 });
 
-router.post("/orders/:id/waste-records", async (req, res) => {
+productionExecutionRouter.post("/orders/:id/waste-records", async (req, res) => {
   try {
     const cid = guard(req, res);
     if (!cid) return;
     const orderId = Number(req.params.id);
     const scope = await assertOrderInScope(req, cid, orderId);
     if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
-    await assertOrderNotPaused(cid, orderId);
+    assertStageExecutionMutable(scope.order);
     const b = req.body ?? {};
     const wasteType = String(b.wasteType ?? "").trim();
     if (!(PRODUCTION_WASTE_TYPES as readonly string[]).includes(wasteType)) {
@@ -9468,10 +10126,24 @@ router.post("/orders/:id/waste-records", async (req, res) => {
       res.status(400).json({ error: "الكمية يجب أن تكون أكبر من صفر" });
       return;
     }
+    const wasteClassification = String(b.wasteClassification ?? "normal").trim();
+    if (!(STAGE_WASTE_CLASSIFICATIONS as readonly string[]).includes(wasteClassification)) {
+      return void res.status(400).json({ error: "تصنيف الهالك يجب أن يكون normal أو abnormal" });
+    }
+    const executionReferences = normalizeStageExecutionPayload({
+      operatorUserId: b.operatorUserId,
+      resourceId: b.resourceId,
+    });
+    await validateStageExecutionReferences(
+      cid,
+      executionReferences,
+      req,
+      scope.order.branchId,
+    );
     // PHASE D — Validate FK ownership so a guessed/forged ID from another
     // tenant cannot be attached to this company's waste record.
     const stageId = b.stageId ? Number(b.stageId) : null;
-    const resourceId = b.resourceId ? Number(b.resourceId) : null;
+    const resourceId = executionReferences.resourceId ?? null;
     const workCenterId = b.workCenterId ? Number(b.workCenterId) : null;
     if (stageId) {
       const [s] = await db
@@ -9480,14 +10152,6 @@ router.post("/orders/:id/waste-records", async (req, res) => {
         .where(and(eq(productionOrderStagesTable.id, stageId), eq(productionOrderStagesTable.orderId, orderId)))
         .limit(1);
       if (!s) { res.status(400).json({ error: "المرحلة المحددة لا تخص هذا الأمر" }); return; }
-    }
-    if (resourceId) {
-      const [r] = await db
-        .select({ id: productionResourcesTable.id })
-        .from(productionResourcesTable)
-        .where(and(eq(productionResourcesTable.id, resourceId), eq(productionResourcesTable.companyId, cid)))
-        .limit(1);
-      if (!r) { res.status(400).json({ error: "المورد المحدد لا يخص هذه الشركة" }); return; }
     }
     if (workCenterId) {
       const [w] = await db
@@ -9504,24 +10168,32 @@ router.post("/orders/:id/waste-records", async (req, res) => {
         orderId,
         stageId: b.stageId ? Number(b.stageId) : null,
         wasteType,
+        wasteClassification,
         reason: typeof b.reason === "string" && b.reason.trim() ? b.reason.trim() : null,
         qty: String(qty),
         unitCode: typeof b.unitCode === "string" && b.unitCode ? b.unitCode : "PCE",
         costImpact: String(Number(b.costImpact ?? 0)),
-        resourceId: b.resourceId ? Number(b.resourceId) : null,
+        resourceId,
         workCenterId: b.workCenterId ? Number(b.workCenterId) : null,
-        operatorUserId: b.operatorUserId ? Number(b.operatorUserId) : null,
+        operatorUserId: executionReferences.operatorUserId ?? null,
         notes: typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
         createdBy: (req as any).user?.id ?? null,
       })
       .returning();
+    await writeEvent(cid, orderId, "stage_waste_recorded", {
+      wasteRecordId: row.id,
+      stageId: row.stageId,
+      qty,
+      wasteType,
+      wasteClassification,
+    }, req.authUser!.id);
     res.status(201).json(row);
   } catch (e: any) {
     res.status(e.status ?? 500).json({ error: e.message });
   }
 });
 
-router.delete("/orders/:orderId/waste-records/:id", async (req, res) => {
+productionExecutionRouter.delete("/orders/:orderId/waste-records/:id", async (req, res) => {
   try {
     const cid = guard(req, res);
     if (!cid) return;
@@ -9529,7 +10201,7 @@ router.delete("/orders/:orderId/waste-records/:id", async (req, res) => {
     const id = Number(req.params.id);
     const scope = await assertOrderInScope(req, cid, orderId);
     if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
-    await assertOrderNotPaused(cid, orderId);
+    assertStageExecutionMutable(scope.order);
     const result = await db
       .delete(productionWasteRecordsTable)
       .where(
@@ -9544,6 +10216,7 @@ router.delete("/orders/:orderId/waste-records/:id", async (req, res) => {
       res.status(404).json({ error: "السجل غير موجود" });
       return;
     }
+    await writeEvent(cid, orderId, "stage_waste_deleted", { wasteRecordId: id }, req.authUser!.id);
     res.json({ ok: true });
   } catch (e: any) {
     res.status(e.status ?? 500).json({ error: e.message });
@@ -12084,14 +12757,16 @@ router.post("/orders/:id/reject", async (req, res) => {
 //         across all warehouses (sum(qty*avgCost)/sum(qty)).
 //       lineCost = unitCost × scaledQty (scaled so the BOM produces 1 unit
 //         of FG: scaledQty = templateLine.quantity / template.outputQty).
-//   * Operating cost — from the active routing's stages:
-//       If stage.expectedCost > 0, use it directly (manual override).
-//       Else: hours = expectedDurationMinutes / 60;
-//             stageCost = hours × (workCenter.laborRatePerHour
-//                                 + workCenter.overheadRatePerHour)
+//   * Operating cost — from approved routing/work-centre rates (planning only):
+//       hours = expectedDurationMinutes / 60;
+//       stageCost = hours × (workCenter.laborRatePerHour
+//                            + workCenter.overheadRatePerHour).
+//       The deprecated routing-stage expectedCost is retained as a reference
+//       field but is never rolled into a product/order amount.
 //
-// Returns per-unit cost (already divided by 1 since BOM is scaled to 1 unit).
-// All queries scoped by companyId.
+// This endpoint never creates an order allocation, WIP amount, or journal
+// entry. Actual source allocation and the monthly difference-only close remain
+// the authoritative accounting path. All queries are company-scoped.
 router.get("/cost-rollup", async (req, res) => {
   try {
     const cid = guard(req, res);
@@ -12231,11 +12906,11 @@ router.get("/cost-rollup", async (req, res) => {
       laborCost: number;
       overheadCost: number;
       stageCost: number;
-      source: "expectedCost" | "rates" | "none";
+      source: "rates" | "none";
     }> = [];
     let laborCost = 0;
     let overheadCost = 0;
-    let routingExplicitCost = 0; // when stage.expectedCost is used we can't split
+    const routingExplicitCost = 0; // retained response field for API compatibility
 
     if (rt) {
       const rstages = await db
@@ -12245,7 +12920,6 @@ router.get("/cost-rollup", async (req, res) => {
           nameAr: productionRoutingStagesTable.nameAr,
           workCenterId: productionRoutingStagesTable.workCenterId,
           expectedDurationMinutes: productionRoutingStagesTable.expectedDurationMinutes,
-          expectedCost: productionRoutingStagesTable.expectedCost,
           wcNameAr: workCentersTable.nameAr,
           wcLaborRate: workCentersTable.laborRatePerHour,
           wcOverheadRate: workCentersTable.overheadRatePerHour,
@@ -12262,16 +12936,11 @@ router.get("/cost-rollup", async (req, res) => {
         .orderBy(asc(productionRoutingStagesTable.sequence));
 
       for (const s of rstages) {
-        const explicit = Number(s.expectedCost) || 0;
         let stLabor = 0;
         let stOverhead = 0;
         let stTotal = 0;
-        let source: "expectedCost" | "rates" | "none" = "none";
-        if (explicit > 0) {
-          stTotal = explicit;
-          routingExplicitCost += explicit;
-          source = "expectedCost";
-        } else if (s.expectedDurationMinutes && s.expectedDurationMinutes > 0) {
+        let source: "rates" | "none" = "none";
+        if (s.expectedDurationMinutes && s.expectedDurationMinutes > 0) {
           const hours = s.expectedDurationMinutes / 60;
           stLabor = hours * (Number(s.wcLaborRate) || 0);
           stOverhead = hours * (Number(s.wcOverheadRate) || 0);

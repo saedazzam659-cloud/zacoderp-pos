@@ -1796,7 +1796,7 @@ function SimpleManufacturingNavGroup({
       <HubGroupButton
         hubHref="/simple-manufacturing"
         icon={Factory}
-        label={t("nav.simpleManufacturingGroup", { defaultValue: "التصنيع المبسط" })}
+        label={t("nav.simpleManufacturingGroup", { defaultValue: "التصنيع الذكي" })}
         isOn={location === "/simple-manufacturing"}
         open
         onToggle={() => undefined}
@@ -2524,7 +2524,7 @@ function TopNavBar(props: any) {
     },
     {
       key: "simpleManufacturing",
-      label: t("nav.simpleManufacturingGroup", { defaultValue: "التصنيع المبسط" }),
+      label: t("nav.simpleManufacturingGroup", { defaultValue: "التصنيع الذكي" }),
       node: close => <SimpleManufacturingNavGroup location={location} onNavigate={nav(close)} />,
     },
     {

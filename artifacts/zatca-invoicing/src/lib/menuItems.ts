@@ -49,7 +49,7 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "production",         label: "الإنتاج والتصنيع",           section: "الإنتاج والتصنيع" },
   // Compact single-screen manufacturing facade. New module keys are
   // intentionally absent from LEGACY_DEFAULT_ON_MENU_KEYS (default OFF).
-  { key: "simple_manufacturing", label: "التصنيع المبسط",             section: "الإنتاج والتصنيع" },
+  { key: "simple_manufacturing", label: "التصنيع الذكي",             section: "الإنتاج والتصنيع" },
 
   { key: "safety",             label: "السلامة والصحة المهنية",      section: "السلامة والصحة المهنية" },
 

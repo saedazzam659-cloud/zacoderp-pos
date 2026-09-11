@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, FileText, TrendingUp, TrendingDown, Layers } from "lucide-react";
+import { MonthlyOverheadClosures } from "@/components/MonthlyOverheadClosures";
 
 function statusLabel(status: string) {
   return ({
@@ -142,6 +143,8 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
           </div>
         </CardContent>
       </Card>
+
+      <MonthlyOverheadClosures request={request} />
     </div>
   );
 }

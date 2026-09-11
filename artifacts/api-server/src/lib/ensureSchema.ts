@@ -225,6 +225,25 @@ async function ensureSupplierMetadataCompatibility(): Promise<void> {
   }
 }
 
+// Generic schema inspection can run after traffic starts in an external agent.
+// These source-fact columns are read during manufacturing close, so heal them
+// explicitly before any purchasing/production route can expose a tagged line.
+const INDUSTRIAL_PURCHASE_COST_COMPATIBILITY_DDL = [
+  `ALTER TABLE IF EXISTS purchase_invoice_lines ADD COLUMN IF NOT EXISTS industrial_cost JSONB`,
+  `ALTER TABLE IF EXISTS purchase_return_lines ADD COLUMN IF NOT EXISTS industrial_cost JSONB`,
+] as const;
+
+async function ensureIndustrialPurchaseCostCompatibility(): Promise<void> {
+  for (const stmt of INDUSTRIAL_PURCHASE_COST_COMPATIBILITY_DDL) {
+    try {
+      await execDDL(stmt);
+    } catch (err) {
+      logger.error({ err, stmt }, "ensureSchema: industrial purchase-cost compatibility reconciliation failed");
+      throw err;
+    }
+  }
+}
+
 // Boot-time DDL (ALTER TABLE ADD COLUMN / CREATE INDEX) must never hang forever
 // waiting on a relation lock held by another backend — most importantly the
 // PREVIOUS revision still serving traffic during an autoscale promote. A blocked
@@ -772,6 +791,17 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     DROP TRIGGER IF EXISTS production_cost_allocations_no_mutation ON production_cost_allocations;
     CREATE TRIGGER production_cost_allocations_no_mutation BEFORE UPDATE OR DELETE ON production_cost_allocations
       FOR EACH ROW EXECUTE FUNCTION reject_production_cost_allocation_mutation();` },
+  // Order-stage execution fields are additive snapshots. They intentionally
+  // carry no currency amount: elapsed time is a driver consumed by approved
+  // source allocations, not a second stage-expense engine.
+  { label: "production_order_stages execution facts",
+    sql: `ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS actual_duration_minutes INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS resource_id INTEGER REFERENCES production_resources(id) ON DELETE SET NULL;
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_reason TEXT;
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_type TEXT;
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_classification TEXT` },
+  { label: "production_waste_records classification",
+    sql: `ALTER TABLE production_waste_records ADD COLUMN IF NOT EXISTS waste_classification TEXT NOT NULL DEFAULT 'normal'` },
   { label: "production overhead closure workflow",
     sql: `CREATE TABLE IF NOT EXISTS production_overhead_closures (
       id SERIAL PRIMARY KEY,
@@ -818,6 +848,27 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     CREATE TRIGGER production_overhead_closures_snapshot_no_mutation
       BEFORE UPDATE ON production_overhead_closures
       FOR EACH ROW EXECUTE FUNCTION reject_production_overhead_closure_snapshot_mutation();` },
+  { label: "production actual driver reconciliation ledger",
+    sql: `CREATE TABLE IF NOT EXISTS production_driver_reconciliations (
+      id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      order_id INTEGER NOT NULL REFERENCES production_orders(id) ON DELETE RESTRICT,
+      source_type TEXT NOT NULL, source_record_id INTEGER NOT NULL,
+      base_allocation_id INTEGER NOT NULL REFERENCES production_cost_allocations(id) ON DELETE RESTRICT,
+      period_start DATE NOT NULL, period_end DATE NOT NULL, driver_method TEXT NOT NULL,
+      planned_numerator NUMERIC(18,4) NOT NULL, actual_numerator NUMERIC(18,4) NOT NULL,
+      denominator_or_rate NUMERIC(18,4) NOT NULL, source_amount NUMERIC(18,2) NOT NULL,
+      base_allocated_amount NUMERIC(18,2) NOT NULL, reconciled_amount NUMERIC(18,2) NOT NULL,
+      delta_amount NUMERIC(18,2) NOT NULL, journal_entry_id INTEGER, reversal_journal_entry_id INTEGER,
+      snapshot_meta JSONB NOT NULL DEFAULT '{}'::jsonb, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS prod_driver_reconcile_order_source_uniq
+      ON production_driver_reconciliations(order_id, source_type, source_record_id);
+    CREATE INDEX IF NOT EXISTS prod_driver_reconcile_source_idx
+      ON production_driver_reconciliations(company_id, source_type, source_record_id);` },
+  { label: "production overhead closure reopen trace",
+    sql: `ALTER TABLE production_overhead_closures
+      ADD COLUMN IF NOT EXISTS reopened_journal_entry_id INTEGER` },
   { label: "production commercial accrual workflow",
     sql: `CREATE TABLE IF NOT EXISTS production_commercial_accruals (
       id SERIAL PRIMARY KEY,
@@ -3803,6 +3854,7 @@ async function runHeal(options: {
   // posting writes these JE-line fields during the same request that follows an
   // agent package update, so a partially-upgraded agent must heal first.
   await ensureSupplierMetadataCompatibility();
+  await ensureIndustrialPurchaseCostCompatibility();
 
   // These release-managed tables have complete additive DDL here, unlike
   // generic schema entities. Create them before strict missing-table

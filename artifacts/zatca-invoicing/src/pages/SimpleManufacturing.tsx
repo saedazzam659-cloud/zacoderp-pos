@@ -364,7 +364,7 @@ export default function SimpleManufacturing() {
             <Factory className="h-7 w-7" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">التصنيع المبسط</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">التصنيع الذكي</h1>
             <p className="text-sm text-slate-500 mt-1">إدارة أوامر التشغيل، التكاليف، وإعدادات الورشة من شاشة واحدة.</p>
           </div>
         </div>

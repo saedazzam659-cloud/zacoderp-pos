@@ -24,6 +24,8 @@ import {
   suppliersTable,
   accountsTable,
   manufacturingSettingsTable,
+  productionResourcesTable,
+  usersTable,
 } from "@workspace/db";
 import {
   extractAuth,
@@ -45,6 +47,8 @@ import {
   productionStatusHandler,
   productionWizardHandler,
   commercialLifecycleRouter,
+  productionExecutionRouter,
+  productionOverheadClosureRouter,
   getCostSources,
   getBomTemplates,
   getBomTemplate,
@@ -65,6 +69,8 @@ router.use(moduleAudit("simple_manufacturing"));
 // Only the commercial lifecycle sub-router is shared with advanced
 // production. Never mount the complete production router here.
 router.use(commercialLifecycleRouter);
+router.use(productionExecutionRouter);
+router.use(productionOverheadClosureRouter);
 
 function companyId(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
@@ -88,10 +94,13 @@ router.get("/", view, (_req, res) => {
     module: "simple_manufacturing",
     title: "Simple Manufacturing",
     endpoints: [
-      "/catalog", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
+      "/catalog", "/execution-catalog", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
       "/orders", "/templates", "/setup/materials", "/setup/products",
       "/setup/warehouses", "/setup/accounting", "/setup/bom", "/setup/bom/:id",
       "/setup/routing", "/setup/routing/:id", "/reports",
+      "/orders/:id/stages", "/orders/:id/stages/:stageId/start",
+      "/orders/:id/stages/:stageId/complete", "/orders/:id/waste-records",
+      "/overhead-closures", "/overhead-closures/:id/reopen",
     ],
   });
 });
@@ -273,6 +282,46 @@ router.get("/catalog", view, async (req, res) => {
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// Execution pickers intentionally live on the compact manufacturing facade.
+// They expose only IDs/display names (never HR records, salaries or
+// employment fields), and machines remain branch-scoped.
+router.get("/execution-catalog", view, async (req, res) => {
+  try {
+    const cid = companyId(req, res);
+    if (!cid) return;
+    const branchResult = effectiveBranchCondition(
+      req,
+      productionResourcesTable.branchId,
+      req.query.branchId,
+    );
+    if ("deny" in branchResult) {
+      return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    }
+    const machineWhere = branchResult.cond
+      ? and(eq(productionResourcesTable.companyId, cid), branchResult.cond)
+      : eq(productionResourcesTable.companyId, cid);
+    const [machines, workers] = await Promise.all([
+      db.select({
+        id: productionResourcesTable.id,
+        name: productionResourcesTable.name,
+        type: productionResourcesTable.type,
+        branchId: productionResourcesTable.branchId,
+      }).from(productionResourcesTable).where(machineWhere)
+        .orderBy(asc(productionResourcesTable.name)),
+      db.select({
+        id: usersTable.id,
+        nameAr: usersTable.nameAr,
+        nameEn: usersTable.nameEn,
+        username: usersTable.username,
+      }).from(usersTable).where(eq(usersTable.companyId, cid))
+        .orderBy(asc(usersTable.nameAr), asc(usersTable.nameEn), asc(usersTable.username)),
+    ]);
+    res.json({ machines, workers });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 

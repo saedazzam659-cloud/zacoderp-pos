@@ -108,7 +108,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
     permissions: ["production"],
   },
   {
-    key: "simple_manufacturing", nameAr: "التصنيع المبسط", nameEn: "Simple Manufacturing",
+    key: "simple_manufacturing", nameAr: "التصنيع الذكي", nameEn: "Simple Manufacturing",
     descAr: "أوامر تصنيع مبسطة، المواد، المسارات والتكاليف", emoji: "🧰",
     category: "operations", categoryAr: "العمليات", monthlyPrice: 25,
     permissions: ["simple_manufacturing"],
