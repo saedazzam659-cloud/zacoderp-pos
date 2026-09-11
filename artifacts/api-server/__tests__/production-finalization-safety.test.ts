@@ -29,6 +29,8 @@ test("status rejection is transaction-local; balanced zero-net source transfers 
   assert.match(handler, /db\.transaction\(async \(tx\) => \{[\s\S]*?const res = transactionFailureResponse\(\)/);
   assert.match(handler, /e instanceof TransactionFailure[\s\S]*?res\.status\(e\.status\)\.json\(e\.payload\)/);
   const reconciliation = source.slice(source.indexOf("async function reconcileFinalStageDrivers"), source.indexOf("function productionStatusPermission"));
+  assert.match(reconciliation, /!\["done", "skipped"\]\.includes\(stage\.status\)/);
+  assert.doesNotMatch(reconciliation, /!\["completed", "skipped"\]\.includes\(stage\.status\)/);
   assert.match(reconciliation, /if \(lines\.length > 0\) \{[\s\S]*?if \(Math\.abs\(net\) >= 0\.005\)/);
   assert.match(reconciliation, /journalId = await createJournalEntry\([\s\S]*?dx: tx/);
 });

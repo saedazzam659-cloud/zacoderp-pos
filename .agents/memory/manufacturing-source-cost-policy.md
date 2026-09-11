@@ -4,6 +4,10 @@ description: Single-screen wizard and accounting ownership of allocated manufact
 ---
 Use one invoice-style tabbed manufacturing form over the existing core, not a separate execution engine. Source linkage configuration belongs in existing assets, payroll, and prepaid-expense screens.
 
+Execution inputs must be directly discoverable in the compact order detail, not only in the advanced detail route. Preserve approved time-based source allocation rules when adding operational workforce fields; do not implicitly multiply existing allocations by headcount.
+
+**Why:** The user could see only the routing preview and explicitly required per-stage employee entry while prohibiting changes to the existing linked cost calculations.
+
 Smart Manufacturing keeps existing route and permission identities; only the displayed module name changes.
 
 **Why:** The user requested a rename and richer execution without duplicate modules or broken existing links.

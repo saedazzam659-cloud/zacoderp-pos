@@ -709,6 +709,9 @@ export function SimpleWizard({
               <div className="bg-slate-50 border p-4 rounded-lg text-sm text-slate-700 leading-relaxed">
                 تُنسخ المراحل من مسار الإنتاج النشط كـ لقطة (Snapshot) مستقلة للأمر، فلا تغيّر التعديلات اللاحقة على المسار تاريخ هذا الأمر.
                 <br/><strong className="text-slate-900 mt-2 block">ملاحظة: يمكنك متابعة الأمر بدون مراحل إذا كان الإنتاج بسيطاً ويتم بخطوة واحدة.</strong>
+                <p className="mt-3 rounded-md border border-violet-200 bg-violet-50 p-3 text-violet-900">
+                  هذه معاينة قبل إنشاء الأمر، وليست تسجيل التنفيذ الفعلي. بعد «مراجعة وبدء الإنتاج» ستفتح تفاصيل الأمر هنا، وفيها لكل مرحلة: ساعات ودقائق العمل، العامل وعدد العمالة، الآلة، الكميات، والهالك وسببه وتصنيفه، مع زر حفظ وبدء وإنهاء المرحلة.
+                </p>
               </div>
 
               {!form.productItemId ? (

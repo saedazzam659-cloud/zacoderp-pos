@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import { Play, Pause, Square, Clock, ArrowDownToLine, ArrowUpFromLine, Activity, User, Cog, Save, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
-import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -29,6 +29,7 @@ type Stage = {
   nameAr: string;
   status: "pending" | "in_progress" | "done" | "skipped";
   actualDurationMinutes: number;
+  workerCount: number;
   inputQty: number;
   outputQty: number;
   wasteQty: number;
@@ -43,39 +44,41 @@ type Stage = {
 export function ProductionStageExecution({ orderId, orderStatus, plannedQty, token, apiBase, permissionKey, isSimple, onReload }: StageExecutionProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const { actingCompanyId } = useAuth();
+  const headers = useMemo(() => ({
+    Authorization: `Bearer ${token}`,
+    ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+  }), [token, actingCompanyId]);
   const canEdit = usePermission(permissionKey as any, "edit");
   const [stages, setStages] = useState<Stage[]>([]);
-  const [activeStage, setActiveStage] = useState<string | null>(null);
   const [users, setUsers] = useState<{value: string, label: string}[]>([]);
   const [machines, setMachines] = useState<{value: string, label: string}[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyStage, setBusyStage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   
   const isExecuting = ["in_production", "quality_check"].includes(orderStatus);
 
-  const fetchStages = useCallback(async () => {
+  const fetchStages = useCallback(async (savedStageId?: string) => {
     if (!token) return;
     try {
+      setLoadError(null);
       const response = await fetch(`${apiBase}/orders/${orderId}/stages`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers,
       });
       if (!response.ok) {
-        // Fallback: If there's no stages endpoint, the contract says they are in /orders/:id
-        const orderRes = await fetch(`${apiBase}/orders/${orderId}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (orderRes.ok) {
-          const j = await orderRes.json();
-          setStages(mapStages(j.stages || []));
-        }
-        return;
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "تعذر تحميل مراحل التنفيذ");
       }
       const data = await response.json();
-      setStages(mapStages(Array.isArray(data) ? data : data.stages || []));
-    } catch (e) {
-      console.error(e);
+      const latest = mapStages(Array.isArray(data) ? data : data.stages || []);
+      setStages(previous => savedStageId
+        ? latest.map(stage => stage.id === savedStageId ? stage : previous.find(row => row.id === stage.id) ?? stage)
+        : latest);
+    } catch (e: any) {
+      setLoadError(e.message || "تعذر تحميل مراحل التنفيذ");
     }
-  }, [apiBase, orderId, token]);
+  }, [apiBase, orderId, headers]);
 
   const mapStages = (rawStages: any[]): Stage[] => {
     return rawStages.map(s => ({
@@ -83,6 +86,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       nameAr: s.nameAr || "مرحلة",
       status: s.status || "pending",
       actualDurationMinutes: Number(s.actualDurationMinutes || s.actualMinutes || 0),
+      workerCount: Number(s.workerCount ?? 0),
       inputQty: Number(s.inputQty ?? plannedQty),
       outputQty: Number(s.outputQty ?? 0),
       wasteQty: Number(s.wasteQty ?? 0),
@@ -99,7 +103,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     if (!token) return;
     try {
       const res = await fetch(`${apiBase}/execution-catalog`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers,
       });
       if (res.ok) {
         const data = await res.json();
@@ -112,14 +116,13 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     } catch (e) {
       console.error(e);
     }
-  }, [apiBase, token]);
+  }, [apiBase, headers]);
 
   useEffect(() => {
     setLoading(true);
     Promise.all([fetchStages(), fetchLookups()]).finally(() => setLoading(false));
   }, [fetchStages, fetchLookups]);
 
-  useRefetchOnFocus(fetchStages);
 
   const handleUpdateStage = (id: string, updates: Partial<Stage>) => {
     setStages(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
@@ -131,6 +134,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     try {
       const payload = {
         actualDurationMinutes: stageData.actualDurationMinutes || 0,
+        workerCount: stageData.workerCount,
         inputQty: stageData.inputQty || 0,
         outputQty: stageData.outputQty || 0,
         wasteQty: stageData.wasteQty || 0,
@@ -142,7 +146,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         notes: stageData.notes || null,
       };
 
-      let url = `${API}/api/simple-manufacturing/orders/${orderId}/stages/${stageId}`;
+      let url = `${apiBase}/orders/${orderId}/stages/${stageId}`;
       let method = "PATCH";
       
       if (action === "start") {
@@ -155,7 +159,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
 
       const res = await fetch(url, {
         method,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
       
@@ -163,7 +167,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
       
       toast({ title: action === "update" ? "تم الحفظ" : action === "start" ? "تم بدء المرحلة" : "تم إنهاء المرحلة" });
-      await fetchStages();
+      await fetchStages(stageId);
       if (onReload) onReload();
     } catch (e: any) {
       toast({ title: "خطأ", description: e.message, variant: "destructive" });
@@ -176,6 +180,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
 
   return (
     <div className="space-y-4">
+      {loadError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-800">{loadError}<Button variant="outline" className="ms-3" onClick={() => void fetchStages()}>إعادة المحاولة</Button></div>}
       {!isExecuting && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 flex items-center gap-2">
           <AlertTriangle className="h-4 w-4" />
@@ -194,8 +199,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
           <div key={stage.id} className="rounded-xl border bg-white shadow-sm overflow-hidden transition-all">
             {/* Header */}
             <div 
-              className="flex items-center justify-between p-4 bg-slate-50 cursor-pointer hover:bg-slate-100"
-              onClick={() => setActiveStage(activeStage === stage.id ? null : stage.id)}
+              className="flex flex-wrap gap-3 items-center justify-between p-4 bg-slate-50"
             >
               <div className="flex items-center gap-3">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-700 font-bold text-sm">
@@ -240,7 +244,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
             </div>
 
             {/* Body */}
-            {activeStage === stage.id && (
+            {(
               <div className="p-4 border-t border-slate-100 grid md:grid-cols-2 gap-6 animate-in slide-in-from-top-2">
                 
                 <div className="space-y-4">
@@ -256,8 +260,19 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-slate-500 flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> المدة الفعلية (محرك التكلفة) - دقيقة</Label>
-                    <Input type="number" value={stage.actualDurationMinutes} onChange={e => handleUpdateStage(stage.id, { actualDurationMinutes: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")} />
+                    <Label className="text-xs text-slate-500 flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> وقت العمل الفعلي (محرك تحميل، وليس مصروفًا جديدًا)</Label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="text-xs">ساعات
+                        <Input dir="ltr" inputMode="numeric" value={Math.floor(stage.actualDurationMinutes / 60)} onChange={e => handleUpdateStage(stage.id, { actualDurationMinutes: Math.max(0, Math.floor(Number(e.target.value) || 0)) * 60 + stage.actualDurationMinutes % 60 })} disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped"} />
+                      </label>
+                      <label className="text-xs">دقائق
+                        <Input dir="ltr" inputMode="decimal" value={Number((stage.actualDurationMinutes % 60).toFixed(4))} onChange={e => handleUpdateStage(stage.id, { actualDurationMinutes: Math.floor(stage.actualDurationMinutes / 60) * 60 + Math.min(59.9999, Math.max(0, Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped"} />
+                      </label>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">عدد العمالة المشاركة</Label>
+                    <Input dir="ltr" inputMode="numeric" value={stage.workerCount} onChange={e => handleUpdateStage(stage.id, { workerCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped"} />
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4">

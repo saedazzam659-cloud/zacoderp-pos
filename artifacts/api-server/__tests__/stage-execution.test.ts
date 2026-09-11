@@ -59,6 +59,25 @@ test("stage execution rejects invalid duration, IDs, and unclassified waste", ()
   );
 });
 
+test("stage execution normalizes an optional nonnegative worker count", () => {
+  assert.deepEqual(
+    normalizeStageExecutionPayload({ workerCount: "3" }),
+    { workerCount: 3 },
+  );
+  assert.deepEqual(
+    normalizeStageExecutionPayload({ workerCount: null }),
+    { workerCount: null },
+  );
+  assert.throws(
+    () => normalizeStageExecutionPayload({ workerCount: 1.5 }),
+    /عدد العمال/,
+  );
+  assert.throws(
+    () => normalizeStageExecutionPayload({ workerCount: -1 }),
+    /عدد العمال/,
+  );
+});
+
 test("compact facade mounts the shared execution and settlement engines", async () => {
   const [facade, production, schema] = await Promise.all([
     readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8"),
@@ -90,6 +109,7 @@ test("compact facade mounts the shared execution and settlement engines", async 
   assert.match(production, /اختر فرعاً صراحةً لإغلاق نطاق فروع مقيّد/);
   assert.match(production, /ne\(productionOrderStagesTable\.status, "completed"\)/);
   assert.match(schema, /actualDurationMinutes: integer\("actual_duration_minutes"\)/);
+  assert.match(schema, /workerCount: integer\("worker_count"\)/);
   assert.match(schema, /wasteClassification: text\("waste_classification"\)/);
   assert.match(facade, /router\.get\("\/execution-catalog", view/);
   assert.match(facade, /productionResourcesTable\.branchId/);

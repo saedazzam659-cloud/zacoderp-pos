@@ -12,6 +12,7 @@ import { SimpleOrderList } from "./simple-manufacturing/SimpleList";
 import { SimpleWizard } from "./simple-manufacturing/SimpleWizard";
 import { SimpleSetup } from "./simple-manufacturing/SimpleSetup";
 import { SimpleReports } from "./simple-manufacturing/SimpleReports";
+import { ProductionStageExecution } from "@/components/ProductionStageExecution";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -400,6 +401,19 @@ export default function SimpleManufacturing() {
             catalog={catalog}
             busy={busy}
             selectedOrder={selectedOrder}
+            executionPanel={selectedOrder ? (
+              <ProductionStageExecution
+                key={`${tenantScope}:${selectedOrder.id}`}
+                orderId={selectedOrder.id}
+                orderStatus={selectedOrder.status}
+                plannedQty={String(selectedOrder.plannedQty)}
+                token={token ?? ""}
+                apiBase={`${API}/api/simple-manufacturing`}
+                permissionKey="simple_manufacturing"
+                isSimple
+                onReload={() => { void openOrder(selectedOrder); }}
+              />
+            ) : null}
             sourceCosts={sourceCosts}
              costDrilldown={costDrilldown}
              canPost={canPost}

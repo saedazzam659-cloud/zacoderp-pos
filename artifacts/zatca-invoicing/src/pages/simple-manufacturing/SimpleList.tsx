@@ -39,7 +39,8 @@ export function SimpleOrderList({
   onOpenOrder,
   onCloseOrder,
   onChangeStatus,
-  onDeleteDraft
+  onDeleteDraft,
+  executionPanel,
 }: {
   orders: Order[];
   catalog: Catalog;
@@ -54,6 +55,7 @@ export function SimpleOrderList({
   onCloseOrder: () => void;
   onChangeStatus: (order: Order, status: string) => void;
   onDeleteDraft: (order: Order) => void;
+  executionPanel?: import("react").ReactNode;
 }) {
   const productName = (id: number | null) => catalog.items.find(i => i.id === id)?.nameAr || "—";
   const actualPosted = selectedOrder
@@ -93,6 +95,13 @@ export function SimpleOrderList({
               </div>
             </div>
 
+            {executionPanel && (
+              <section className="my-5 rounded-xl border border-violet-200 p-4 bg-violet-50/30">
+                <h3 className="font-bold text-lg mb-2">مسار الإنتاج — تسجيل تنفيذ المراحل</h3>
+                <p className="text-sm text-slate-600 mb-4">سجّل الوقت الفعلي والعمالة والكميات والهالك، ثم احفظ بيانات كل مرحلة.</p>
+                {executionPanel}
+              </section>
+            )}
             <div className="flex gap-2 flex-wrap mb-6">
               {nextStatus(selectedOrder.status) && (
                 <Button disabled={busy || !canPost} onClick={() => onChangeStatus(selectedOrder, nextStatus(selectedOrder.status)!)} className="bg-violet-600 hover:bg-violet-700">

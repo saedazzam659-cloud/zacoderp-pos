@@ -1467,7 +1467,8 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
           // actual source snapshots remain the sole capitalization path.
           standardEstimateOnly: true,
           inputQty: num(x.inputQty), outputQty: num(x.outputQty), wasteQty: num(x.wasteQty),
-          actualDurationMinutes: x.actualDurationMinutes, workerUserId: x.operatorUserId,
+           actualDurationMinutes: x.actualDurationMinutes, workerUserId: x.operatorUserId,
+           workerCount: x.workerCount,
           machineId: x.resourceId, wasteReason: x.wasteReason, wasteType: x.wasteType,
           wasteClassification: x.wasteClassification, notes: x.notes,
         })),
@@ -5743,7 +5744,7 @@ async function reconcileFinalStageDrivers(
     status: productionOrderStagesTable.status,
     actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
   }).from(productionOrderStagesTable).where(eq(productionOrderStagesTable.orderId, order.id));
-  if (!stages.length || stages.some((stage) => !["completed", "skipped"].includes(stage.status))) {
+  if (!stages.length || stages.some((stage) => !["done", "skipped"].includes(stage.status))) {
     return 0;
   }
   const actualHours = stages.reduce((n, s) => n + num(s.actualDurationMinutes) / 60, 0);
@@ -8541,6 +8542,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
         startedAt: stage.startedAt ?? new Date(),
         inputQty,
         actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
+        workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
         resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
         notes: execution.notes !== undefined ? execution.notes : stage.notes,
         operatorUserId: execution.operatorUserId !== undefined
@@ -8554,6 +8556,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
       ctx.order.id,
       "stage_started",
       { stageId, code: stage.code, inputQty, actualDurationMinutes: execution.actualDurationMinutes ?? null,
+        workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
         resourceId: execution.resourceId ?? null, workerUserId: execution.operatorUserId ?? null },
       req.authUser!.id,
     );
@@ -8616,6 +8619,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
         completedAt: new Date(),
         startedAt: stage.startedAt ?? new Date(),
         actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
+        workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
         resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
         wasteReason,
         wasteType,
@@ -8650,6 +8654,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
       "stage_completed",
       { stageId, code: stage.code, outputQty, wasteQty,
         actualDurationMinutes: execution.actualDurationMinutes ?? num(stage.actualDurationMinutes),
+        workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
         resourceId: execution.resourceId ?? stage.resourceId ?? null,
         workerUserId: execution.operatorUserId ?? stage.operatorUserId ?? null,
         wasteReason: wasteReason ?? null,
@@ -8704,6 +8709,7 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (execution.wasteQty !== undefined) updates.wasteQty = String(execution.wasteQty);
     if (execution.actualDurationMinutes !== undefined)
       updates.actualDurationMinutes = execution.actualDurationMinutes;
+    if (execution.workerCount !== undefined) updates.workerCount = execution.workerCount;
     if (execution.resourceId !== undefined) updates.resourceId = execution.resourceId;
     if (execution.wasteReason !== undefined) updates.wasteReason = execution.wasteReason;
     if (execution.wasteType !== undefined) updates.wasteType = execution.wasteType;
@@ -8748,6 +8754,7 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
       stageId,
       fields: Object.keys(updates).sort(),
       actualDurationMinutes: updated.actualDurationMinutes,
+      workerCount: updated.workerCount,
       inputQty: updated.inputQty,
       outputQty: updated.outputQty,
       wasteQty: updated.wasteQty,

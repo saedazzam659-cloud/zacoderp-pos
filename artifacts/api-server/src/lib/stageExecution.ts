@@ -6,6 +6,7 @@ export type StageExecutionPayload = {
   outputQty?: number;
   wasteQty?: number;
   actualDurationMinutes?: number;
+  workerCount?: number | null;
   operatorUserId?: number | null;
   resourceId?: number | null;
   wasteReason?: string | null;
@@ -18,6 +19,15 @@ function nonNegative(value: unknown, field: string): number {
   const number = Number(value);
   if (!Number.isFinite(number) || number < 0) {
     throw Object.assign(new Error(`${field} يجب أن يكون رقماً موجباً أو صفراً`), { status: 400 });
+  }
+  return number;
+}
+
+function optionalNonNegativeInteger(value: unknown, field: string): number | null {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || !Number.isInteger(number) || number < 0) {
+    throw Object.assign(new Error(`${field} يجب أن يكون عدداً صحيحاً غير سالب`), { status: 400 });
   }
   return number;
 }
@@ -79,6 +89,9 @@ export function normalizeStageExecutionPayload(
         ? body.actualMinutes
         : Number(body.actualHours) * 60;
     result.actualDurationMinutes = nonNegative(minutes, "مدة التنفيذ بالدقائق");
+  }
+  if ("workerCount" in body) {
+    result.workerCount = optionalNonNegativeInteger(body.workerCount, "عدد العمال");
   }
   if ("operatorUserId" in body || "workerUserId" in body) {
     result.operatorUserId = optionalId(

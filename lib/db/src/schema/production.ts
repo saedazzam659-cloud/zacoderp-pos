@@ -933,6 +933,9 @@ export const productionOrderStagesTable = pgTable(
     actualDurationMinutes: integer("actual_duration_minutes")
       .notNull()
       .default(0),
+    // Operational execution snapshot only. Worker count is deliberately not
+    // part of the reusable routing template and never changes cost amounts.
+    workerCount: integer("worker_count"),
     resourceId: integer("resource_id").references(
       () => productionResourcesTable.id,
       { onDelete: "set null" },
