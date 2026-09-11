@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
   const [loading, setLoading] = useState(false);
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const dirtyStages = useRef(new Set<string>());
   
   const isExecuting = ["in_production", "quality_check"].includes(orderStatus);
 
@@ -72,9 +74,9 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       }
       const data = await response.json();
       const latest = mapStages(Array.isArray(data) ? data : data.stages || []);
-      setStages(previous => savedStageId
-        ? latest.map(stage => stage.id === savedStageId ? stage : previous.find(row => row.id === stage.id) ?? stage)
-        : latest);
+      if (savedStageId) dirtyStages.current.delete(savedStageId);
+      setStages(previous => latest.map(stage => dirtyStages.current.has(stage.id)
+        ? previous.find(row => row.id === stage.id) ?? stage : stage));
     } catch (e: any) {
       setLoadError(e.message || "تعذر تحميل مراحل التنفيذ");
     }
@@ -112,9 +114,12 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         
         setUsers(workersList.map((x: any) => ({ value: String(x.id), label: x.nameAr || x.nameEn || x.username || `User #${x.id}` })));
         setMachines(machinesList.map((x: any) => ({ value: String(x.id), label: x.name || `Machine #${x.id}` })));
+      } else {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.error || "تعذر تحميل قائمة العمال والآلات");
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      toast({ title: "تعذر تحميل قائمة العمال والآلات", description: e.message, variant: "destructive" });
     }
   }, [apiBase, headers]);
 
@@ -123,8 +128,12 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     Promise.all([fetchStages(), fetchLookups()]).finally(() => setLoading(false));
   }, [fetchStages, fetchLookups]);
 
+  useRefetchOnFocus(useCallback(async () => {
+    if (!busyStage) await fetchStages();
+  }, [busyStage, fetchStages]));
 
   const handleUpdateStage = (id: string, updates: Partial<Stage>) => {
+    dirtyStages.current.add(id);
     setStages(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
   };
 

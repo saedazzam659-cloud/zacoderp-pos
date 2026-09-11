@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChevronLeft, Play, Pause, RotateCcw, Boxes } from "lucide-react";
 import { Link } from "wouter";
 import type { Order, Catalog } from "./types";
+import { ProductionTimeCosts } from "@/components/ProductionTimeCosts";
 
 function statusLabel(status: string) {
   return ({
@@ -139,6 +140,9 @@ export function SimpleOrderList({
                 لا تملك صلاحية الترحيل في التصنيع الذكي؛ أزرار تغيير الحالة معروضة لكنها غير مفعلة.
               </div>
             )}
+            {costDrilldown?.trace && <div className="mb-4">
+              <ProductionTimeCosts trace={costDrilldown.trace} status={selectedOrder.status} />
+            </div>}
             <div className="rounded-xl border bg-slate-50/50 p-4">
               <div className="mb-3 font-semibold text-slate-800 flex items-center gap-2">
                 <div className="w-1.5 h-4 bg-violet-500 rounded-full" />

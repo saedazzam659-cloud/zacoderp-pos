@@ -177,7 +177,7 @@ export default function SimpleManufacturing() {
     const row = await request(`/api/simple-manufacturing/orders/${order.id}/status`, {
       method: "POST", body: JSON.stringify({ status: target }),
     });
-    setSelectedOrder(row);
+    await openOrder(row);
     // Quality approval and completion are separate lifecycle steps. Open the
     // shared detail screen after sending an order to QA so completion can only
     // happen through its produced/waste quantity form.

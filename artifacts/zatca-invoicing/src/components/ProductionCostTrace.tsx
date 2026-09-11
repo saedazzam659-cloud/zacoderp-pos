@@ -5,6 +5,7 @@ import { Calculator, AlertCircle, CheckCircle2, ChevronDown, Split, History, Rec
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { usePermission } from "@/hooks/usePermission";
+import { ProductionTimeCosts } from "@/components/ProductionTimeCosts";
 
 type CostTraceProps = {
   orderId: number;
@@ -42,6 +43,7 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
 
   return (
     <div className="space-y-6">
+      <ProductionTimeCosts trace={trace} status={orderStatus} />
       {/* KPI Cards */}
       <div className="grid md:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-white p-4 shadow-sm relative overflow-hidden">
@@ -111,9 +113,9 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
                   <tbody>
                     {labor.source.map((s: any, i: number) => (
                       <tr key={i} className="border-b last:border-0 border-slate-100">
-                        <td className="py-1 text-right text-slate-600">{s.employeeName || 'عامل'}</td>
-                        <td className="py-1">{s.hours} ساعة</td>
-                        <td className="py-1 text-violet-600 font-medium">{formatMoney(s.allocatedCost)}</td>
+                        <td className="py-1 text-right text-slate-600">مصدر رواتب #{s.sourceRecordId}</td>
+                        <td className="py-1">{["operating_hours", "fixed_hourly_rate"].includes(s.snapshotMeta?.formulaMethod) ? `${s.snapshotMeta.numerator} ساعة مخططة` : "تخصيص معتمد"}</td>
+                        <td className="py-1 text-violet-600 font-medium">{formatMoney(s.allocatedAmount)} <span className="text-slate-500">تحميل أصلي</span></td>
                       </tr>
                     ))}
                   </tbody>
