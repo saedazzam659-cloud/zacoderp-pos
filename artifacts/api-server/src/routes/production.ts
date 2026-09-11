@@ -105,6 +105,14 @@ import {
   calculateFormulaAllocation,
   type WeightedAccount,
 } from "../lib/productionCostAllocation.js";
+import {
+  MANUFACTURING_COST_CATEGORIES,
+  manualCostEntries,
+  sanitizeManufacturingCostConfiguration,
+  validateManufacturingCostConfiguration,
+  type ManufacturingCostCategory,
+  type ManufacturingCostConfiguration,
+} from "../lib/manualManufacturingCosts.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 // ─── Journal entry helper (mirrors sales.ts / purchasing.ts) ─────────────────
@@ -279,6 +287,31 @@ async function validateAccount(cid: number, id: number | null | undefined) {
   return id;
 }
 
+// A manual actual cost credits an existing chart counterpart account. Unlike
+// the compact manufacturing defaults, this may be any active posting account
+// (expense, liability, accrual, etc.); it must still be tenant-owned and
+// usable for a journal line at the moment of posting.
+async function validatePostingAccount(q: any, cid: number, id: number | null | undefined) {
+  if (!id) return null;
+  const [a] = await q
+    .select({
+      id: accountsTable.id,
+      isActive: accountsTable.isActive,
+      isPosting: accountsTable.isPosting,
+    })
+    .from(accountsTable)
+    .where(and(
+      eq(accountsTable.id, id),
+      eq(accountsTable.companyId, cid),
+    ));
+  if (!a || !a.isActive || !a.isPosting) {
+    const err: any = new Error(`الحساب المقابل رقم ${id} غير موجود أو غير نشط أو غير قابل للترحيل`);
+    err.status = 400;
+    throw err;
+  }
+  return id;
+}
+
 // PHASE B — per-tenant work-center validation. Returns the full row so
 // callers can read its rates / default accounts in one round-trip.
 async function loadWorkCenter(cid: number, id: number | null | undefined) {
@@ -445,6 +478,7 @@ function wizardPayloadHash(body: any): string {
     plannedHours: Number(body?.plannedHours) || 0,
     costPeriod: String(body?.costPeriod ?? ""),
     allocations,
+    costConfiguration: sanitizeManufacturingCostConfiguration(body?.costConfiguration),
     costPolicy: sanitizeCostPolicy(body?.costPolicy),
     templateId: Number(body?.templateId) || null,
     sourceOrderId: Number(body?.sourceOrderId) || null,
@@ -507,6 +541,19 @@ function sanitizeWizardConfiguration(value: unknown): Record<string, unknown> {
     plannedHoursPerUnit: Math.max(0, num(v.plannedHoursPerUnit)),
     notes: typeof v.notes === "string" ? v.notes.slice(0, 2000) : null,
     costPolicy: sanitizeCostPolicy(v.costPolicy),
+    // Templates carry the mode/account configuration only. Monetary manual
+    // amounts and source selections are intentionally not copied into a new
+    // order from a template.
+    costConfiguration: MANUFACTURING_COST_CATEGORIES.reduce<Record<string, unknown>>((acc, category) => {
+      const entry = sanitizeManufacturingCostConfiguration(v.costConfiguration)[category];
+      acc[category] = {
+        mode: entry.mode,
+        amount: 0,
+        description: entry.description,
+        counterpartAccountId: entry.counterpartAccountId,
+      };
+      return acc;
+    }, {}),
   };
 }
 
@@ -1115,6 +1162,7 @@ router.get("/orders/:id/manufacture-again", async (req, res) => {
         workCenterId: order.workCenterId,
         plannedHoursPerUnit: num(order.plannedQty) > 0 ? num(order.plannedHours) / num(order.plannedQty) : 0,
         notes: order.notes, costPolicy: (order.meta as any)?.costPolicy,
+        costConfiguration: (order.meta as any)?.costConfiguration,
       }),
       copied: "configuration_only",
       excluded: ["orderNumber", "actualQuantities", "journals", "stockMovements", "actualWaste", "sourceAllocations"],
@@ -1145,6 +1193,8 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
         .from(itemsTable).where(and(eq(itemsTable.companyId, cid), eq(itemsTable.id, order.productItemId))).limit(1) : [],
     ]);
     const material = lines.reduce((s, x) => s + num(x.totalCost), 0);
+    const manualCosts = manualCostEntries(order.meta);
+    const additionalActual = num(order.laborCost) + num(order.overheadCost);
     const analytical = allocations.filter((x) => (x.snapshotMeta as any)?.includeInManufacturing === false);
     const treatmentAmount = (names: string[]) => analytical
       .filter((x) => names.includes(String((x.snapshotMeta as any)?.costTreatment)))
@@ -1176,6 +1226,8 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
          simulatedGrossManufacturingMargin: selling == null ? null : selling - actual,
          operatingCost: operatingAdd,
          financingCost: financingAdd,
+         additionalActual,
+         additionalUnitCost: produced ? additionalActual / produced : null,
         marginBasis: snapshotUnitSalePrice == null ? "unavailable_for_legacy_order" : "creation_sale_price_snapshot",
         snapshotUnitSalePrice },
       trace: {
@@ -1189,7 +1241,8 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
         stages: stages.map((x) => ({ id: x.id, name: x.nameAr, standard: num(x.expectedCost), status: x.status })),
         waste: waste.map((x) => ({ id: x.id, reason: x.reason, amount: num(x.costImpact), qty: num(x.qty) })),
         quality: { checks: checks.length, failed: checks.filter((x) => x.result === "fail").length },
-        allocations,
+         allocations,
+         manualCosts,
       },
       costPolicy: sanitizeCostPolicy((order.meta as any)?.costPolicy),
     });
@@ -4353,7 +4406,17 @@ export async function productionOrderDetailHandler(req: any, res: any) {
       .where(and(eq(productionCostAllocationsTable.companyId, cid),
         eq(productionCostAllocationsTable.orderId, id)))
       .orderBy(asc(productionCostAllocationsTable.id));
-    res.json({ order, items, events, wasteRecords, costAllocations });
+    res.json({
+      order,
+      items,
+      events,
+      wasteRecords,
+      costAllocations,
+      manualCosts: manualCostEntries(order.meta),
+      costConfiguration: sanitizeManufacturingCostConfiguration(
+        (order.meta as any)?.costConfiguration,
+      ),
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -4443,6 +4506,46 @@ export async function productionWizardHandler(req: any, res: any) {
     const plannedHours = num(b.plannedHours);
     const period = String(b.costPeriod || String(b.plannedStartDate || "").slice(0, 7));
     const requested: any[] = Array.isArray(b.allocations) ? b.allocations : [];
+    let costConfiguration: ManufacturingCostConfiguration;
+    try {
+      costConfiguration = validateManufacturingCostConfiguration(
+        b.costConfiguration,
+        b.costConfiguration !== undefined,
+      );
+    } catch (error: any) {
+      res.status(error?.status ?? 400).json({ error: error.message });
+      return;
+    }
+    const requestedByCategory = new Map<ManufacturingCostCategory, any[]>(
+      MANUFACTURING_COST_CATEGORIES.map((category) => [
+        category,
+        requested.filter((allocation) => String(allocation?.sourceType) === category),
+      ]),
+    );
+    // Preserve the pre-configuration API contract for advanced callers that
+    // only sent allocations: those allocations imply the linked mode.
+    if (b.costConfiguration === undefined) {
+      for (const category of MANUFACTURING_COST_CATEGORIES) {
+        if ((requestedByCategory.get(category) ?? []).length)
+          costConfiguration[category].mode = "linked";
+      }
+    }
+    for (const category of MANUFACTURING_COST_CATEGORIES) {
+      const selected = requestedByCategory.get(category) ?? [];
+      const mode = costConfiguration[category].mode;
+      if (mode === "none" && selected.length) {
+        res.status(400).json({ error: `لا يمكن اختيار مصدر تكلفة مع وضع "بدون" (${category})` });
+        return;
+      }
+      if (mode === "manual" && selected.length) {
+        res.status(400).json({ error: `لا يمكن ربط مصدر مع وضع التكلفة اليدوية (${category})` });
+        return;
+      }
+      if (mode === "linked" && costConfiguration[category].amount > 0) {
+        res.status(400).json({ error: `الوضع المرتبط لا يقبل مبلغاً يدوياً (${category})` });
+        return;
+      }
+    }
     const postingModule = getContextModuleKey() === "simple_manufacturing"
       ? "simple_manufacturing" : "production";
     if (requested.length && !canAccessModule(req.authUser, postingModule, "post"))
@@ -4456,7 +4559,21 @@ export async function productionWizardHandler(req: any, res: any) {
       if (requested.length) await lockOverheadClosureMutation(tx, cid);
       const sources = requested.length ? await loadPostedCostSources(tx, cid, period, req, branchId) : [];
       const sourceMap = new Map(sources.map((s) => [`${s.sourceType}:${s.sourceRecordId}`, s]));
-      let payrollCost = 0, indirectCost = 0;
+      const manualEntries = MANUFACTURING_COST_CATEGORIES.flatMap((category) => {
+        const entry = costConfiguration[category];
+        return entry.mode === "manual" && entry.amount > 0 && entry.counterpartAccountId
+          ? [{ category, ...entry, counterpartAccountId: entry.counterpartAccountId }]
+          : [];
+      });
+      for (const entry of manualEntries)
+        await validatePostingAccount(tx, cid, entry.counterpartAccountId);
+      const manualPayrollCost = manualEntries
+        .filter((entry) => entry.category === "payroll")
+        .reduce((sum, entry) => sum + entry.amount, 0);
+      const manualIndirectCost = manualEntries
+        .filter((entry) => entry.category !== "payroll")
+        .reduce((sum, entry) => sum + entry.amount, 0);
+      let payrollCost = manualPayrollCost, indirectCost = manualIndirectCost;
       const snapshots: any[] = [];
       const requestedKeys = new Set<string>();
       for (const a of requested) {
@@ -4595,10 +4712,14 @@ export async function productionWizardHandler(req: any, res: any) {
       }
       const wcLabor = wc && plannedHours > 0 ? plannedHours * num(wc.laborRatePerHour) : 0;
       const wcOverhead = wc && plannedHours > 0 ? plannedHours * num(wc.overheadRatePerHour) : 0;
-      // Source snapshots take precedence: never add a work-centre rate for the
-      // same bucket, which is the central duplicate-cost guard.
-      const laborCost = payrollCost > 0 ? payrollCost : wcLabor;
-      const overheadCost = indirectCost > 0 ? indirectCost : wcOverhead;
+      // Source/manual selections take precedence. When the compact cost
+      // configuration is present, "none" is intentional and must not be
+      // replaced by a work-centre estimate.
+      const explicitCostConfiguration = b.costConfiguration !== undefined;
+      const laborCost = explicitCostConfiguration
+        ? payrollCost : (payrollCost > 0 ? payrollCost : wcLabor);
+      const overheadCost = explicitCostConfiguration
+        ? indirectCost : (indirectCost > 0 ? indirectCost : wcOverhead);
       const [order] = await tx.insert(productionOrdersTable).values({
         companyId: cid, branchId, orderNumber, wizardRequestId, title: String(b.title).trim(), status: "draft",
         plannedQty: String(plannedQty), productItemId, unitCode: b.unitCode || tmpl.outputUnitCode || "PCE",
@@ -4616,11 +4737,18 @@ export async function productionWizardHandler(req: any, res: any) {
         wasteAccountId: await validateAccount(cid, mfg?.defaultWasteAccountId ?? null),
         notes: b.notes || null,
         meta: { wizardVersion: 1, wizardRequestHash: requestHash, costPeriod: period,
-          costPolicy: sanitizeCostPolicy(b.costPolicy),
+           costPolicy: sanitizeCostPolicy(b.costPolicy),
+           costConfiguration: explicitCostConfiguration
+             ? costConfiguration
+             : sanitizeManufacturingCostConfiguration({
+                 payroll: { mode: payrollCost > 0 ? "linked" : "none", amount: 0 },
+                 fixed_asset_depreciation: { mode: indirectCost > 0 ? "linked" : "none", amount: 0 },
+                 prepaid_amortization: { mode: indirectCost > 0 ? "linked" : "none", amount: 0 },
+               }),
           templateId: validatedTemplateId,
           sourceOrderId: validatedSourceOrderId,
           salePriceSnapshot: productSnapshot?.salePrice == null ? null : sourceAmountCents(productSnapshot.salePrice),
-          duplicateCostGuard: "source_snapshot_precedes_rate" },
+           duplicateCostGuard: "source_snapshot_precedes_rate" },
         createdBy: req.authUser!.id,
       }).returning();
       await tx.insert(productionOrderItemsTable).values(itemRows.map((x) => ({ ...x, orderId: order.id })));
@@ -4644,7 +4772,9 @@ export async function productionWizardHandler(req: any, res: any) {
           routingId: routing?.id ?? null, stages: stages.length, allocations: snapshots.length },
         userId: req.authUser!.id });
       return { ...order, bomLoaded: itemRows.length, routingLoaded: stages.length,
-        allocatedCosts: snapshots.reduce((s, x) => s + num(x.allocatedAmount), 0) };
+        allocatedCosts: snapshots.reduce((s, x) => s + num(x.allocatedAmount), 0),
+        manualCosts: manualEntries,
+      };
     });
     res.status(201).json(result);
   } catch (e: any) {
@@ -5336,20 +5466,37 @@ export async function productionStatusHandler(req: any, res: any) {
       }
       const labor = Number(order.laborCost ?? 0);
       const overhead = Number(order.overheadCost ?? 0);
+      const manualEntries = manualCostEntries(order.meta);
+      for (const entry of manualEntries) {
+        try {
+          await validatePostingAccount(tx, cid, entry.counterpartAccountId);
+        } catch (error: any) {
+          res.status(error?.status ?? 400).json({
+            error: `تعذر ترحيل التكلفة اليدوية «${entry.description}»: ${error.message}`,
+          });
+          return;
+        }
+      }
+      const manualPayroll = manualEntries
+        .filter((entry) => entry.category === "payroll")
+        .reduce((sum, entry) => sum + entry.amount, 0);
+      const manualIndirect = manualEntries
+        .filter((entry) => entry.category !== "payroll")
+        .reduce((sum, entry) => sum + entry.amount, 0);
        const manufacturingSnapshots = frozenCosts.filter((x) => (x.snapshotMeta as any)?.includeInManufacturing !== false);
        const payrollSnapshots = manufacturingSnapshots.filter((x) => x.sourceType === "payroll");
        const indirectSnapshots = manufacturingSnapshots.filter((x) => x.sourceType !== "payroll");
       const frozenLabor = payrollSnapshots.reduce((sum, x) => sum + num(x.allocatedAmount), 0);
       const frozenOverhead = indirectSnapshots.reduce((sum, x) => sum + num(x.allocatedAmount), 0);
-      if ((payrollSnapshots.length && Math.abs(frozenLabor - labor) > 0.005) ||
-          (indirectSnapshots.length && Math.abs(frozenOverhead - overhead) > 0.005)) {
+      if ((payrollSnapshots.length && Math.abs(frozenLabor + manualPayroll - labor) > 0.005) ||
+          (indirectSnapshots.length && Math.abs(frozenOverhead + manualIndirect - overhead) > 0.005)) {
         res.status(409).json({ error: "تكلفة الأمر لم تعد تطابق لقطات المصادر غير القابلة للتعديل. أنشئ أمراً جديداً." });
         return;
       }
-      if (payrollSnapshots.length === 0 && labor > 0 && !order.laborAccountId) {
+      if (payrollSnapshots.length === 0 && manualPayroll === 0 && labor > 0 && !order.laborAccountId) {
         res.status(400).json({ error: "حساب الأجور مطلوب قبل بدء الإنتاج" }); return;
       }
-      if (indirectSnapshots.length === 0 && overhead > 0 && !order.overheadAccountId) {
+      if (indirectSnapshots.length === 0 && manualIndirect === 0 && overhead > 0 && !order.overheadAccountId) {
         res.status(400).json({ error: "حساب التكاليف الصناعية غير المباشرة مطلوب قبل بدء الإنتاج" }); return;
       }
       let sourceCredits: { accountId: number; amount: number }[];
@@ -5568,7 +5715,7 @@ export async function productionStatusHandler(req: any, res: any) {
             credit: line.amount,
             description: "إعادة تصنيف تكلفة مُرحّلة إلى الإنتاج تحت التشغيل",
           } satisfies JLine)),
-          ...(payrollSnapshots.length === 0 && labor > 0 && order.laborAccountId
+          ...(payrollSnapshots.length === 0 && manualPayroll === 0 && labor > 0 && order.laborAccountId
             ? [
                 {
                   accountId: order.laborAccountId,
@@ -5577,7 +5724,7 @@ export async function productionStatusHandler(req: any, res: any) {
                 } satisfies JLine,
               ]
             : []),
-          ...(indirectSnapshots.length === 0 && overhead > 0 && order.overheadAccountId
+          ...(indirectSnapshots.length === 0 && manualIndirect === 0 && overhead > 0 && order.overheadAccountId
             ? [
                 {
                   accountId: order.overheadAccountId,
@@ -5586,6 +5733,11 @@ export async function productionStatusHandler(req: any, res: any) {
                 } satisfies JLine,
               ]
             : []),
+          ...manualEntries.map((entry) => ({
+            accountId: entry.counterpartAccountId,
+            credit: entry.amount,
+            description: entry.description || `تكلفة يدوية (${entry.category})`,
+          } satisfies JLine)),
         ],
         dx: tx,
       });
@@ -6034,59 +6186,94 @@ export async function productionStatusHandler(req: any, res: any) {
       !order.receiptJournalEntryId
     ) {
       // Restore raw materials we previously consumed.
-      const rawLines = await tx
-        .select()
-        .from(productionOrderItemsTable)
-        .where(
-          and(
-            eq(productionOrderItemsTable.orderId, id),
-            eq(productionOrderItemsTable.kind, "raw"),
-          ),
-        );
-      const issuable = rawLines.filter(
-        (l) => l.itemId && Number(l.quantity) > 0,
-      );
-      const rawTotal = Number(order.rawMaterialsCost ?? 0);
-      const labor = Number(order.laborCost ?? 0);
-      const overhead = Number(order.overheadCost ?? 0);
-      const wipBalance = rawTotal + labor + overhead;
-      const frozenCosts = await tx.select().from(productionCostAllocationsTable)
-        .where(and(eq(productionCostAllocationsTable.companyId, cid),
-          eq(productionCostAllocationsTable.orderId, id)));
-      const payrollSnapshots = frozenCosts.filter((x) => x.sourceType === "payroll");
-      const indirectSnapshots = frozenCosts.filter((x) => x.sourceType !== "payroll");
-      const sourceDebits = sourceReclassificationLines(frozenCosts);
+      // Cancellation is an inverse of the already-posted issue, not a new
+      // posting derived from today's settings. In particular, a manual
+      // counterpart account may have been deactivated since the issue; an
+      // exact inverse must still be allowed to reference that account.
+      const [originalIssueJournal] = await tx.select({
+        id: journalEntriesTable.id,
+        status: journalEntriesTable.status,
+      }).from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.id, order.issueJournalEntryId),
+        eq(journalEntriesTable.companyId, cid),
+      )).limit(1);
+      if (!originalIssueJournal) {
+        res.status(409).json({ error: "لا يمكن الإلغاء: قيد صرف الخامات الأصلي غير موجود" });
+        return;
+      }
+      const originalIssueLines = await tx.select({
+        accountId: journalEntryLinesTable.accountId,
+        debit: journalEntryLinesTable.debit,
+        credit: journalEntryLinesTable.credit,
+        description: journalEntryLinesTable.description,
+        costCenter: journalEntryLinesTable.costCenter,
+      }).from(journalEntryLinesTable).where(eq(
+        journalEntryLinesTable.entryId, originalIssueJournal.id,
+      ));
+      const issueReversalLines: JLine[] = originalIssueLines.map((line) => ({
+        accountId: line.accountId,
+        debit: num(line.credit),
+        credit: num(line.debit),
+        description: `عكس قيد الصرف الأصلي: ${line.description ?? order.orderNumber}`,
+        costCenter: line.costCenter,
+      }));
+      if (issueReversalLines.length < 2) {
+        res.status(409).json({ error: "لا يمكن الإلغاء: سطور قيد صرف الخامات الأصلي غير مكتملة" });
+        return;
+      }
+      // Restore the exact issue snapshot, including FIFO/FEFO batch costs.
+      // Re-reading the current WAC would make the stock reversal disagree
+      // with the original issue JE after another receipt changed WAC.
+      const rawIssueRows = await tx.select({
+        itemId: stockLedgerTable.itemId,
+        warehouseId: stockLedgerTable.warehouseId,
+        qty: stockLedgerTable.qty,
+        costPrice: stockLedgerTable.costPrice,
+        totalCost: stockLedgerTable.totalCost,
+        batchNumber: stockLedgerTable.batchNumber,
+        expiryDate: stockLedgerTable.expiryDate,
+      }).from(stockLedgerTable).where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refId, id),
+        eq(stockLedgerTable.refType, "production_order"),
+        eq(stockLedgerTable.txType, "production_issue"),
+        sql`${stockLedgerTable.qty} < 0`,
+      ));
+      if (!rawIssueRows.length) {
+        res.status(409).json({ error: "لا يمكن الإلغاء: لقطة صرف الخامات الأصلية غير موجودة" });
+        return;
+      }
       const writable = await assertWritableForDate(cid, todayIso);
       if (!writable.ok) {
         res.status(423).json({ error: writable.reason }); return;
       }
-      for (const ln of issuable) {
-        const qty = Number(ln.quantity);
-        const cost = await readAvgCost(
-          cid,
-          ln.itemId!,
-          order.rawWarehouseId!,
-          Number(ln.unitCost),
-          tx,
-        );
-        await upsertBalance(cid, ln.itemId!, order.rawWarehouseId!, qty, cost, tx);
-        const newBal = await getBalance(cid, ln.itemId!, order.rawWarehouseId!, tx);
+      await lockStockBalances(rawIssueRows.map((line) => ({
+        companyId: cid, itemId: line.itemId, warehouseId: line.warehouseId,
+      })), tx);
+      for (const line of rawIssueRows) {
+        const qty = Math.abs(num(line.qty));
+        const cost = num(line.costPrice);
+        await upsertBalance(cid, line.itemId, line.warehouseId, qty, cost, tx);
+        const newBal = await getBalance(cid, line.itemId, line.warehouseId, tx);
         await addStockLedgerEntry({
           companyId: cid,
-          itemId: ln.itemId!,
-          warehouseId: order.rawWarehouseId!,
+          itemId: line.itemId,
+          warehouseId: line.warehouseId,
           txDate: todayIso,
           txType: "production_receipt", // reuses enum slot for restore-into-warehouse
           qty: String(qty),
           costPrice: String(cost.toFixed(4)),
-          totalCost: String((qty * cost).toFixed(2)),
+          totalCost: String(Math.abs(num(line.totalCost)).toFixed(2)),
           balanceQty: String(newBal),
           refId: id,
           refType: "production_order_cancel",
+          batchNumber: line.batchNumber,
+          expiryDate: line.expiryDate,
           notes: `إعادة خامات بعد إلغاء أمر إنتاج ${order.orderNumber}`,
         }, tx);
       }
-      // Reversing JE: DR Raw / DR Labor / DR Overhead, CR WIP — flips the issue.
+      // Reverse the exact issue lines, preserving the original journal's
+      // posting state and all source/manual counterpart lines.
       await createJournalEntry({
         companyId: cid,
         audit: { req },
@@ -6094,43 +6281,10 @@ export async function productionStatusHandler(req: any, res: any) {
         date: todayIso,
         docNumber: `${order.orderNumber}-REV`,
         entryType: "production_issue_reversal",
+        status: originalIssueJournal.status,
         costCenter: order.costCenter ?? null,
         description: `عكس إذن صرف خامات لأمر إنتاج ملغى ${order.orderNumber}`,
-        lines: [
-          {
-            accountId: order.rawInventoryAccountId!,
-            debit: rawTotal,
-            description: "إعادة مخزون خامات",
-          },
-          ...sourceDebits.map((line) => ({
-            accountId: line.accountId,
-            debit: line.amount,
-            description: "عكس إعادة تصنيف تكلفة المصدر المُرحّل",
-          } satisfies JLine)),
-          ...(payrollSnapshots.length === 0 && labor > 0 && order.laborAccountId
-            ? [
-                {
-                  accountId: order.laborAccountId,
-                  debit: labor,
-                  description: "إلغاء أجور إنتاج مستحقة",
-                } satisfies JLine,
-              ]
-            : []),
-          ...(indirectSnapshots.length === 0 && overhead > 0 && order.overheadAccountId
-            ? [
-                {
-                  accountId: order.overheadAccountId,
-                  debit: overhead,
-                  description: "إلغاء تكاليف صناعية غير مباشرة",
-                } satisfies JLine,
-              ]
-            : []),
-          {
-            accountId: order.wipAccountId!,
-            credit: wipBalance,
-            description: "إلغاء رصيد WIP",
-          },
-        ],
+        lines: issueReversalLines,
         dx: tx,
       });
       updates.rawMaterialsCost = "0";
@@ -6162,7 +6316,8 @@ export async function productionStatusHandler(req: any, res: any) {
     });
     if (transitioned && !res.headersSent) res.json(transitioned);
   } catch (e: any) {
-    const status = e?.status === 423 ? 423 : 500;
+    const status = [400, 403, 404, 409, 423].includes(Number(e?.status))
+      ? Number(e.status) : 500;
     res.status(status).json({ error: e.message });
   }
 }

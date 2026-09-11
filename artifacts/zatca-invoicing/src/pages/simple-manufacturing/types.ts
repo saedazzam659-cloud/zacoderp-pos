@@ -74,6 +74,8 @@ export type Order = {
   estimatedCost: string | number;
   actualCost: string | number;
   productItemId: number | null;
+  issueJournalEntryId?: number | null;
+  receiptJournalEntryId?: number | null;
   plannedStartDate?: string | null;
   createdAt?: string;
 };
@@ -95,3 +97,17 @@ export type WizardState = {
   sourceOrderId: string | null;
   costPolicy: Record<string, any>;
 };
+
+export type ManufacturingCostCategory =
+  | "payroll"
+  | "fixed_asset_depreciation"
+  | "prepaid_amortization";
+
+export type ManufacturingCostMode = "none" | "linked" | "manual";
+
+export type ManufacturingCostConfiguration = Record<ManufacturingCostCategory, {
+  mode: ManufacturingCostMode;
+  amount: string;
+  description: string;
+  counterpartAccountId: string;
+}>;

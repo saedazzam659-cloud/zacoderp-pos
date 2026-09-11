@@ -24,6 +24,12 @@ Simple manufacturing must expose its required WIP/raw/finished account defaults 
 
 Allocated posted costs must reclassify the original expense debit accounts into WIP, not book another expense or use unrelated generic offsets. Fixed assets still own depreciation and payroll still owns salary accounting. Use approved allocation denominators/rates, not arbitrary source percentages.
 
+Optional additional costs use one mode per category: none, linked, or manual. A positive manual actual cost requires a validated counterpart account and explanation; empty costs never block production. Do not copy actual amounts when reusing configuration.
+
+**Why:** The user explicitly approved optional manual entry when no source is linked, without duplicate source expense or mixing estimates into capitalized cost.
+
+**How to apply:** Manual costs debit WIP and credit the chosen counterpart through the existing production journal. Cancellation must invert original evidence rather than revalidate currently active accounts or recalculate current stock costs.
+
 **Why:** Already-posted source costs otherwise get counted twice or leave the wrong expense accounts overstated.
 
 **How to apply:** Preserve source/configuration snapshots, capacity caps and cancellation release together. Every production status write, stock movement, journal and number claim must share the same transaction; propagate the executor through helper calls.

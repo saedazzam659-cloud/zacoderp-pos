@@ -29,3 +29,17 @@ test("stock ledger and sequence helpers accept a surrounding transaction", async
   assert.match(stock, /await executor\.insert\(stockLedgerTable\)/);
   assert.match(sequences, /return dx \? issueWithin\(dx\) : db\.transaction\(issueWithin\)/);
 });
+
+test("cancellation reverses the issue snapshot instead of validating current manual accounts", async () => {
+  const source = await readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8");
+  const start = source.indexOf("target === \"cancelled\"");
+  const end = source.indexOf("\n    const [row] = await tx", start);
+  assert.ok(start > 0 && end > start, "cancellation block must be present");
+  const cancellation = source.slice(start, end);
+
+  assert.match(cancellation, /originalIssueLines/);
+  assert.match(cancellation, /issueReversalLines/);
+  assert.match(cancellation, /status: originalIssueJournal\.status/);
+  assert.match(cancellation, /stockLedgerTable\.txType, "production_issue"/);
+  assert.doesNotMatch(cancellation, /validatePostingAccount/);
+});

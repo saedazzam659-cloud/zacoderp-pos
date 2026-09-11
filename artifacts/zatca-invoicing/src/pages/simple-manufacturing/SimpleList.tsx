@@ -56,6 +56,10 @@ export function SimpleOrderList({
   onDeleteDraft: (order: Order) => void;
 }) {
   const productName = (id: number | null) => catalog.items.find(i => i.id === id)?.nameAr || "—";
+  const actualPosted = selectedOrder
+    ? ["in_production", "paused", "quality_check", "completed", "reversed"].includes(selectedOrder.status) &&
+      (selectedOrder.issueJournalEntryId != null || selectedOrder.receiptJournalEntryId != null)
+    : false;
 
   return (
     <div className="space-y-4">
@@ -139,6 +143,17 @@ export function SimpleOrderList({
                   لا توجد توزيعات مصادر تكلفة مرفقة مع هذا الأمر
                 </div>
               )}
+              {selectedOrder.detail?.manualCosts?.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs font-semibold text-amber-700">تكاليف يدوية فعلية</div>
+                  {selectedOrder.detail.manualCosts.map((cost: any) => (
+                    <div key={cost.category} className="flex justify-between items-center bg-amber-50 border border-amber-100 p-2 rounded-lg text-sm">
+                      <span>{cost.description || cost.category} <span className="text-xs text-slate-500">• حساب #{cost.counterpartAccountId}</span></span>
+                      <Badge variant="outline" className="font-bold text-amber-700">{formatMoney(cost.amount)}</Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="mt-4 rounded-xl border bg-white p-4">
               <div className="mb-3 font-semibold text-slate-800 flex items-center gap-2">
@@ -172,13 +187,13 @@ export function SimpleOrderList({
                      ? sourceCosts.reduce((sum: number, source: any) => sum + Number(source.allocatedAmount), 0)
                      : null,
                  )}</b></div>
-                 <div><span className="text-slate-500 block">إجمالي الأمر</span><b>{formatMoney(selectedOrder.actualCost ?? selectedOrder.estimatedCost)}</b></div>
+                 <div><span className="text-slate-500 block">إجمالي الأمر الفعلي</span><b>{actualPosted ? formatMoney(selectedOrder.actualCost) : "لم يُرحّل بعد"}</b></div>
               </div>
             </div>
-            {costDrilldown?.totals && costDrilldown.totals.actual != null && (
+            {actualPosted && costDrilldown?.totals && costDrilldown.totals.actual != null && (
               <div className="mt-4 rounded-xl border bg-white p-4">
                 <div className="mb-3 font-semibold text-slate-800">ملخص إجمالي تكلفة الأمر</div>
-                <div className="grid gap-2 sm:grid-cols-4 text-sm">
+                <div className="grid gap-2 sm:grid-cols-5 text-sm">
                   {(() => {
                     const materials = Array.isArray(costDrilldown.trace?.materials) ? costDrilldown.trace.materials : [];
                     const materialTotal = materials.length > 0 &&
@@ -195,6 +210,8 @@ export function SimpleOrderList({
                     );
                   })()}
                   <div><span className="text-slate-500 block">تكلفة الوحدة</span><b>{formatMoney(costDrilldown.totals.unitCost)}</b></div>
+                      <div><span className="text-slate-500 block">الإضافي الفعلي</span><b>{formatMoney(costDrilldown.totals.additionalActual)}</b></div>
+                      <div><span className="text-slate-500 block">الإضافي / وحدة</span><b>{formatMoney(costDrilldown.totals.additionalUnitCost)}</b></div>
                   <div><span className="text-slate-500 block">الانحراف</span><b>{formatMoney(costDrilldown.totals.variance)}</b></div>
                 </div>
               </div>

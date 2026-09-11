@@ -714,9 +714,7 @@ async function loginAndCapture(
     await runStage("screenshot-setup-bom", async () => {
       await page.screenshot({ path: bomPath, fullPage: true });
       console.log(`[visual] stage=screenshot-setup-bom artifact=${bomPath}`);
-      await page.keyboard.press("Escape");
-      // The first Escape closes the searchable list; the second closes its dialog.
-      if (await page.getByRole("dialog").isVisible()) await page.keyboard.press("Escape");
+      await page.goto("/simple-manufacturing", { waitUntil: "domcontentloaded" });
     });
 
     await runStage("wizard-tab", () => page.getByRole("tab", { name: "أمر تصنيع جديد", exact: true }).click());
@@ -734,7 +732,7 @@ async function loginAndCapture(
     });
     await runStage("costs-tab", async () => {
       await page.getByRole("button", { name: "التكاليف", exact: true }).click();
-      await page.getByText("أجور ورواتب (HR)", { exact: true }).waitFor({ state: "visible" });
+      await page.getByText("الرواتب والأجور", { exact: true }).waitFor({ state: "visible" });
     });
     const costsPath = derivedCapturePath(outputPath, "-costs");
     await runStage("screenshot-costs", async () => {

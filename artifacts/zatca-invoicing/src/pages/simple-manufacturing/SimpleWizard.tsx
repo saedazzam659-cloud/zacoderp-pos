@@ -3,14 +3,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { ClipboardList, Boxes, GitBranch, Cog, Calculator, CheckCircle2, Save, Play, Plus, Trash2, ExternalLink } from "lucide-react";
+import { ClipboardList, Boxes, GitBranch, Cog, Calculator, CheckCircle2, Save, Play, Plus, Trash2 } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
 import { DateField } from "@/components/ui/date-field";
-import type { WizardState, Catalog } from "./types";
+import type {
+  WizardState,
+  Catalog,
+  ManufacturingCostCategory,
+  ManufacturingCostConfiguration,
+  ManufacturingCostMode,
+} from "./types";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
-import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -52,6 +57,16 @@ export function SimpleWizard({
   const [costSources, setCostSources] = useState<any[]>([]);
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [sourceTreatments, setSourceTreatments] = useState<Record<string, string>>({});
+  const [costModes, setCostModes] = useState<Record<ManufacturingCostCategory, ManufacturingCostMode>>({
+    payroll: "none",
+    fixed_asset_depreciation: "none",
+    prepaid_amortization: "none",
+  });
+  const [manualCosts, setManualCosts] = useState<ManufacturingCostConfiguration>({
+    payroll: { mode: "manual", amount: "", description: "", counterpartAccountId: "" },
+    fixed_asset_depreciation: { mode: "manual", amount: "", description: "", counterpartAccountId: "" },
+    prepaid_amortization: { mode: "manual", amount: "", description: "", counterpartAccountId: "" },
+  });
   const [accountSettings, setAccountSettings] = useState({
     defaultWipAccountId: "",
     defaultRawInventoryAccountId: "",
@@ -72,9 +87,6 @@ export function SimpleWizard({
   const canCreate = usePermission("simple_manufacturing", "create");
   const canEdit = usePermission("simple_manufacturing", "edit");
   const canPost = usePermission("simple_manufacturing", "post");
-  const canViewPayroll = usePermission("hr_payroll", "view");
-  const canViewAssets = usePermission("fixed_assets", "view");
-  const canViewJournals = usePermission("journal_entries", "view");
 
   useEffect(() => {
     const settings = catalog.accounting?.settings;
@@ -238,6 +250,21 @@ export function SimpleWizard({
     const conf = chosen?.configuration || {};
     const it = catalog.items.find(x => String(x.id) === String(conf.productItemId));
     const nextPlannedQty = conf.plannedQty ? String(conf.plannedQty) : form.plannedQty;
+    const templateCosts = conf.costConfiguration && typeof conf.costConfiguration === "object"
+      ? conf.costConfiguration as Partial<ManufacturingCostConfiguration> : {};
+    const templateModes = {} as Record<ManufacturingCostCategory, ManufacturingCostMode>;
+    const templateManuals = {} as ManufacturingCostConfiguration;
+    (["payroll", "fixed_asset_depreciation", "prepaid_amortization"] as ManufacturingCostCategory[]).forEach(category => {
+      const entry = templateCosts[category];
+      const mode = entry?.mode === "linked" || entry?.mode === "manual" ? entry.mode : "none";
+      templateModes[category] = mode;
+      templateManuals[category] = {
+        mode: "manual",
+        amount: "",
+        description: entry?.description || "",
+        counterpartAccountId: entry?.counterpartAccountId ? String(entry.counterpartAccountId) : "",
+      };
+    });
     setForm(f => ({
       ...f,
       templateId: val,
@@ -251,7 +278,15 @@ export function SimpleWizard({
       notes: conf.notes || f.notes,
       costPolicy: conf.costPolicy || f.costPolicy,
     }));
+    setCostModes(templateModes);
+    setManualCosts(templateManuals);
+    setAllocations({});
+    setSourceTreatments({});
   };
+
+  const costCategories: ManufacturingCostCategory[] = [
+    "payroll", "fixed_asset_depreciation", "prepaid_amortization",
+  ];
 
   const submit = async (mode: "draft" | "execute") => {
     if (!form.title.trim() || !form.productItemId || !(Number(form.plannedQty) > 0)) {
@@ -263,6 +298,25 @@ export function SimpleWizard({
       toast({ title: "المخازن مفقودة", description: "تأكد من اختيار مستودعات الخامات والإنتاج", variant: "destructive" });
       setTab("resources");
       return;
+    }
+    for (const category of costCategories) {
+      if (costModes[category] !== "manual") continue;
+      const entry = manualCosts[category];
+      const amount = Number(entry.amount || 0);
+      if (!Number.isFinite(amount) || amount < 0) {
+        toast({ title: "مبلغ تكلفة يدوية غير صحيح", variant: "destructive" });
+        setTab("costs");
+        return;
+      }
+      if (amount > 0 && (!entry.description.trim() || !entry.counterpartAccountId)) {
+        toast({
+          title: "بيانات التكلفة اليدوية ناقصة",
+          description: "المبلغ الموجب يتطلب وصفاً وحساباً مقابلاً قابلاً للترحيل.",
+          variant: "destructive",
+        });
+        setTab("costs");
+        return;
+      }
     }
     if (!bomPreview?.lines?.length) {
       toast({ title: "الوصفة مفقودة", description: "أنشئ قائمة مواد نشطة للمنتج قبل حفظ أمر التصنيع.", variant: "destructive" });
@@ -315,9 +369,21 @@ export function SimpleWizard({
       costPeriod: form.costPeriod,
       templateId: form.templateId ? Number(form.templateId) : null,
       costPolicy: form.costPolicy,
+      costConfiguration: costCategories.reduce<Record<string, unknown>>((result, category) => {
+        const entry = manualCosts[category];
+        result[category] = {
+          mode: costModes[category],
+          amount: costModes[category] === "manual" ? Number(entry.amount || 0) : 0,
+          description: costModes[category] === "manual" ? entry.description.trim() : "",
+          counterpartAccountId: costModes[category] === "manual" && entry.counterpartAccountId
+            ? Number(entry.counterpartAccountId) : null,
+        };
+        return result;
+      }, {}),
       allocations: costSources.flatMap(s => {
         const key = `${s.sourceType}:${s.sourceRecordId}`;
-        const selected = allocations[key] === "1";
+        const category = s.sourceType as ManufacturingCostCategory;
+        const selected = costModes[category] === "linked" && allocations[key] === "1";
         return selected && canPost ? [{
           sourceType: s.sourceType,
           sourceRecordId: s.sourceRecordId,
@@ -346,37 +412,42 @@ export function SimpleWizard({
     });
   };
 
-  const calculateAllocatedTotal = () => {
-    let total = 0;
-    costSources.forEach(s => {
-      const key = `${s.sourceType}:${s.sourceRecordId}`;
-      if (allocations[key] === "1") {
-        const method = s.meta?.allocationMethod || s.basis;
-        let amount = 0;
-        if (s.sourceType === "prepaid_amortization") {
-          amount = Number(s.sourceAmount) * Number(form.plannedQty || 0) / Number(s.meta?.approvedProductionQuantity || 1);
-        } else if (s.sourceType === "fixed_asset_depreciation" && method === "fixed_hourly_rate") {
-          amount = Number(form.plannedHours || 0) * Number(s.meta?.fixedManufacturingRate || 0);
-        } else {
-          amount = Number(s.sourceAmount) * Number(form.plannedHours || 0) / Number(s.meta?.approvedManufacturingHours || s.meta?.approvedOperatingHours || 1);
-        }
-        total += amount;
-      }
-    });
-    return total;
+  const allocatedAmountForSource = (source: any): number => {
+    const method = source.meta?.allocationMethod || source.basis;
+    const sourceAmount = Number(source.sourceAmount || 0);
+    const plannedQty = Number(form.plannedQty || 0);
+    const plannedHours = Number(form.plannedHours || 0);
+    let amount = 0;
+    if (source.sourceType === "prepaid_amortization") {
+      const denominator = Number(source.meta?.approvedProductionQuantity);
+      amount = denominator > 0 ? sourceAmount * plannedQty / denominator : 0;
+    } else if (source.sourceType === "fixed_asset_depreciation" && method === "fixed_hourly_rate") {
+      amount = plannedHours * Number(source.meta?.fixedManufacturingRate || 0);
+    } else {
+      const denominator = Number(
+        source.meta?.approvedManufacturingHours ?? source.meta?.approvedOperatingHours,
+      );
+      amount = denominator > 0 ? sourceAmount * plannedHours / denominator : 0;
+    }
+    return Number.isFinite(amount) ? Number(amount.toFixed(2)) : 0;
   };
 
-  const calculateMaterialEstimate = () => {
-    const lines = Array.isArray(bomPreview?.lines) ? bomPreview.lines : [];
-    const hasCost = lines.some((line: any) => line.totalCost != null || line.unitCost != null);
-    if (!hasCost || materialScale == null) return null;
-    return lines.reduce((total: number, line: any) => {
-      const recipeLineTotal = line.totalCost != null
-        ? Number(line.totalCost)
-        : Number(line.quantity || 0) * Number(line.unitCost || 0);
-      const lineTotal = recipeLineTotal * materialScale;
-      return total + (Number.isFinite(lineTotal) ? lineTotal : 0);
+  const manualAmountForCategory = (category: ManufacturingCostCategory): number => {
+    const amount = Number(manualCosts[category].amount || 0);
+    return Number.isFinite(amount) && amount > 0 ? Number(amount.toFixed(2)) : 0;
+  };
+
+  // Round each source before summing, matching the server's cent allocation.
+  const calculateAllocatedTotal = () => {
+    const linked = costSources.reduce((total, source) => {
+      const key = `${source.sourceType}:${source.sourceRecordId}`;
+      if (costModes[source.sourceType as ManufacturingCostCategory] !== "linked" ||
+          allocations[key] !== "1") return total;
+      return total + allocatedAmountForSource(source);
     }, 0);
+    const manual = costCategories.reduce((total, category) =>
+      total + (costModes[category] === "manual" ? manualAmountForCategory(category) : 0), 0);
+    return Number((linked + manual).toFixed(2));
   };
 
   // A BOM line is defined for the recipe's declared outputQty, not implicitly
@@ -396,7 +467,8 @@ export function SimpleWizard({
     { id: "costs" as const, label: "التكاليف", icon: Calculator },
     { id: "review" as const, label: "المراجعة", icon: CheckCircle2 }
   ];
-  const accountingAccounts = (catalog.accounting?.accounts ?? [])
+  const postingAccounts = (catalog.accounting?.accounts ?? []);
+  const accountingAccounts = postingAccounts
     .filter(account => account.accountType === "asset");
   const hasRequiredAccounting =
     !!accountSettings.defaultWipAccountId && !!accountSettings.defaultRawInventoryAccountId;
@@ -789,139 +861,180 @@ export function SimpleWizard({
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
               <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between bg-violet-50/50 p-4 rounded-xl border border-violet-100">
                 <div className="space-y-1">
-                  <h4 className="font-semibold text-violet-900">مصادر التكلفة الإضافية</h4>
-                  <p className="text-xs text-violet-700/80">اختر المصادر (رواتب، إهلاك) التي ترغب بتحميل جزء من تكلفتها على هذا الأمر.</p>
+                  <h4 className="font-semibold text-violet-900">التكاليف الإضافية الفعلية</h4>
+                  <p className="text-xs text-violet-700/80">اختر طريقة واحدة لكل بطاقة. لا تُرحّل أي تكلفة عند اختيار «بدون».</p>
                 </div>
                 <div className="w-full md:w-48 space-y-1">
-                  <Label className="text-xs text-violet-800">تصفية حسب شهر التكلفة</Label>
+                  <Label className="text-xs text-violet-800">فترة المصادر المرتبطة</Label>
                   <Input type="month" value={form.costPeriod} onChange={e => setForm({...form, costPeriod: e.target.value})} className="h-9 border-violet-200" />
                 </div>
               </div>
-
               {!canPost && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                  لا تملك صلاحية ترحيل التصنيع المبسط؛ ستظل بطاقات المصادر ظاهرة للقراءة، لكن لا يمكن اختيار مصدر أو بدء أمر بهذه التوزيعات.
+                  لا تملك صلاحية ترحيل التصنيع المبسط؛ ستظل بيانات المصادر للقراءة فقط.
                 </div>
               )}
-              {costSources.length === 0 ? (
-                <div className="space-y-3">
-                  {[
-                    { type: "payroll", title: "أجور ورواتب (HR)", access: canViewPayroll, href: "/hr/payroll", hint: "فعّل أهلية التصنيع لمسير الرواتب، وحدد ساعات التصنيع الشهرية المعتمدة، ثم رحّل المسير وقيده." },
-                    { type: "fixed_asset_depreciation", title: "إهلاك الأصول والآلات", access: canViewAssets, href: "/fixed-assets/assets", hint: "من الأصل ← ربط التصنيع: فعّل الاستخدام في التصنيع وحدد الساعات المعتمدة أو سعر الساعة، ثم رحّل إهلاك الشهر." },
-                    { type: "prepaid_amortization", title: "إيجارات ومصروفات مقدمة", access: canViewJournals, href: "/accounting/adjustments", hint: "من المصروفات المقدمة: فعّل أهلية التصنيع للإيجار وحدد كمية الإنتاج المعتمدة، ثم رحّل قسط الاستهلاك للشهر." },
-                  ].map(source => (
-                    <div key={source.type} className="rounded-xl border bg-white p-4 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="font-semibold text-slate-700">{source.title}</div>
-                        <div className="text-xs text-slate-500 mt-1">لا توجد مصادر مرحّلة ومؤهلة لشهر {form.costPeriod}.</div>
-                        <div className="text-xs text-slate-400 mt-1">{source.hint}</div>
-                        {!source.access && <div className="text-xs text-amber-700 mt-1">لا تملك صلاحية فتح إعداد مالك هذا المصدر؛ يمكن اختيار مصادره فقط بصلاحية ترحيل التصنيع المبسط.</div>}
-                      </div>
-                      {source.access && (
-                        <Link href={source.href}>
-                          <a className="text-xs text-violet-700 hover:underline whitespace-nowrap">فتح الإعدادات</a>
-                        </Link>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {/* explicit groups */}
-                  {['payroll', 'fixed_asset_depreciation', 'prepaid_amortization', 'other'].map(groupType => {
-                    const groupSources = costSources.filter(s =>
-                      groupType === 'other' ? !['payroll', 'fixed_asset_depreciation', 'prepaid_amortization'].includes(s.sourceType)
-                      : s.sourceType === groupType
-                    );
-
-                    if (groupSources.length === 0) return null;
-
-                    const groupTitle = groupType === 'payroll' ? 'أجور ورواتب (HR)' :
-                                       groupType === 'fixed_asset_depreciation' ? 'إهلاك الأصول والآلات' :
-                                       groupType === 'prepaid_amortization' ? 'إيجارات ومصروفات مقدمة' : 'تكاليف غير مباشرة أخرى';
-
-                    return (
-                      <div key={groupType} className="border rounded-xl overflow-hidden">
-                        <div className="bg-slate-50 px-4 py-2 border-b font-semibold text-slate-700 text-sm">{groupTitle}</div>
-                        <div className="divide-y">
-                          {groupSources.map(s => {
-                            const key = `${s.sourceType}:${s.sourceRecordId}`;
-                            const isSelected = allocations[key] === "1";
-                            const ownerAccess = s.sourceType === "payroll"
-                              ? canViewPayroll
-                              : s.sourceType === "fixed_asset_depreciation"
-                                ? canViewAssets
-                                : canViewJournals;
-                            const canSelect = canPost && Number(s.availableAmount ?? s.sourceAmount) > 0;
-                            return (
-                              <div key={key} className={`p-4 grid md:grid-cols-[1fr_120px_160px] gap-4 items-center transition-colors ${isSelected ? 'bg-violet-50/30' : ''}`}>
-                                <div>
-                                  <label className="flex items-start gap-3 cursor-pointer">
-                                    <input type="checkbox" className="mt-1 h-4 w-4 rounded text-violet-600 focus:ring-violet-500"
-                                      disabled={!canSelect}
-                                      checked={isSelected}
-                                      onChange={e => setAllocations(current => ({...current, [key]: e.target.checked ? "1" : ""}))}
-                                    />
-                                    <div>
-                                      <b className="text-sm block text-slate-800">{s.label}</b>
-                                      <p className="text-xs text-slate-500 mt-0.5">
-                                        مبلغ المصدر: {Number(s.availableAmount || s.sourceAmount).toLocaleString()} • {s.meta?.allocationMethod || s.basis}
-                                      </p>
-                                       {!ownerAccess && <p className="text-xs text-amber-700 mt-1">لا تملك صلاحية فتح إعداد مالك المصدر؛ يظل اختيار المصدر محكوماً بصلاحية ترحيل التصنيع المبسط.</p>}
-                                       {ownerAccess && Number(s.availableAmount ?? s.sourceAmount) <= 0 && <p className="text-xs text-slate-500 mt-1">تم توزيع كامل المصدر.</p>}
-                                    </div>
-                                  </label>
-                                </div>
-                                <div className="text-sm font-semibold text-slate-700 bg-white border px-3 py-1.5 rounded-lg text-center shadow-sm">
-                                  {/* Calculate live amount */}
-                                  {(() => {
-                                    const method = s.meta?.allocationMethod || s.basis;
-                                    let amt = 0;
-                                    if (s.sourceType === "prepaid_amortization")
-                                      amt = Number(s.sourceAmount) * Number(form.plannedQty || 0) / Number(s.meta?.approvedProductionQuantity || 1);
-                                    else if (s.sourceType === "fixed_asset_depreciation" && method === "fixed_hourly_rate")
-                                      amt = Number(form.plannedHours || 0) * Number(s.meta?.fixedManufacturingRate || 0);
-                                    else
-                                      amt = Number(s.sourceAmount) * Number(form.plannedHours || 0) / Number(s.meta?.approvedManufacturingHours || s.meta?.approvedOperatingHours || 1);
-                                    return amt.toLocaleString(undefined, {maximumFractionDigits: 2});
-                                  })()}
-                                </div>
-                                <SearchCombobox
-                                  className="h-9"
-                                  disabled={!isSelected || !canSelect}
-                                  value={sourceTreatments[key] || "manufacturing_overhead"}
-                                  placeholder="نوع المعالجة..."
-                                  searchPlaceholder="ابحث عن المعالجة..."
-                                  items={[
-                                    { value: "manufacturing_overhead", label: "تكلفة صناعية غير مباشرة" },
-                                    { value: "quality_prevention", label: "تكلفة جودة وقائية" },
-                                    { value: "operating", label: "مصاريف تشغيلية" },
-                                  ]}
-                                  onValueChange={value => setSourceTreatments(current => ({...current, [key]: value}))}
-                                />
+              <div className="grid gap-5 lg:grid-cols-3">
+                {costCategories.map(category => {
+                  const title = category === "payroll" ? "الرواتب والأجور"
+                    : category === "fixed_asset_depreciation" ? "الإهلاك"
+                    : "المصروفات المقدمة / الإيجار";
+                  const hint = category === "payroll"
+                    ? "مصادر مسيرات الرواتب المؤهلة للتصنيع"
+                    : category === "fixed_asset_depreciation"
+                      ? "مصادر إهلاك الأصول المؤهلة للتصنيع"
+                      : "أقساط الإيجار والمصروفات المقدمة المرحّلة";
+                  const rows = costSources.filter(source => source.sourceType === category);
+                  const manual = manualCosts[category];
+                  const mode = costModes[category];
+                  const setMode = (next: ManufacturingCostMode) => {
+                    setCostModes(current => ({ ...current, [category]: next }));
+                    if (next !== "linked") {
+                      setAllocations(current => Object.fromEntries(
+                        Object.entries(current).filter(([key]) => !key.startsWith(`${category}:`)),
+                      ));
+                    }
+                  };
+                   const categoryTotal = mode === "linked"
+                     ? rows.reduce((total, source) => {
+                         const key = `${source.sourceType}:${source.sourceRecordId}`;
+                         return total + (allocations[key] === "1" ? allocatedAmountForSource(source) : 0);
+                       }, 0)
+                     : mode === "manual" ? manualAmountForCategory(category) : 0;
+                  return (
+                    <Card key={category} className={`border-2 transition-colors ${mode === "manual" ? "border-amber-200 bg-amber-50/20" : mode === "linked" ? "border-violet-200" : "border-slate-200"}`}>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-base text-slate-800">{title}</CardTitle>
+                        <CardDescription className="text-xs">{hint}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <SearchCombobox
+                          value={mode}
+                          onValueChange={value => setMode((value === "linked" || value === "manual") ? value : "none")}
+                          items={[
+                            { value: "none", label: "بدون تكلفة" },
+                            { value: "linked", label: "ربط مصدر مرحّل" },
+                            { value: "manual", label: "إدخال تكلفة يدوية" },
+                          ]}
+                          placeholder="اختر الطريقة..."
+                          searchPlaceholder="ابحث عن الطريقة..."
+                        />
+                        {mode === "none" && (
+                          <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">اختياري — لن تُضاف تكلفة فعلية من هذه الفئة.</div>
+                        )}
+                        {mode === "linked" && (
+                          <div className="space-y-2">
+                            {!rows.length ? (
+                              <div className="rounded-lg border border-dashed p-3 text-xs text-slate-500">
+                                لا توجد مصادر مرحّلة ومؤهلة للفترة {form.costPeriod}.
                               </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                            ) : rows.map(source => {
+                              const key = `${source.sourceType}:${source.sourceRecordId}`;
+                              const selected = allocations[key] === "1";
+                              const available = Number(source.availableAmount ?? 0);
+                              const applied = Number(source.allocatedAmount ?? 0);
+                               const method = source.meta?.allocationMethod || source.basis;
+                               const actual = allocatedAmountForSource(source);
+                              return (
+                                <div key={key} className={`rounded-lg border p-3 space-y-2 ${selected ? "bg-violet-50/60 border-violet-200" : "bg-white"}`}>
+                                  <label className="flex gap-2 items-start text-xs">
+                                    <input type="checkbox" className="mt-0.5 h-4 w-4 rounded text-violet-600"
+                                      disabled={!canPost || available <= 0}
+                                      checked={selected}
+                                      onChange={event => setAllocations(current => ({ ...current, [key]: event.target.checked ? "1" : "" }))}
+                                    />
+                                    <span className="font-semibold text-slate-800">{source.label}</span>
+                                  </label>
+                                  <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-500">
+                                    <span>الفترة: {source.periodStart} — {source.periodEnd}</span>
+                                    <span>الأساس: {method}</span>
+                                    <span>المتاح: <b className="text-slate-700">{available.toLocaleString()}</b></span>
+                                    <span>المطبق سابقاً: <b className="text-slate-700">{applied.toLocaleString()}</b></span>
+                                    <span className="col-span-2">المبلغ الفعلي لهذا الأمر: <b className="text-violet-700">{actual.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></span>
+                                  </div>
+                                  {selected && (
+                                    <SearchCombobox
+                                      className="h-8 text-xs"
+                                      value={sourceTreatments[key] || "manufacturing_overhead"}
+                                      placeholder="تصنيف المصدر..."
+                                      searchPlaceholder="ابحث عن التصنيف..."
+                                      items={[
+                                        { value: "manufacturing_overhead", label: "تكلفة صناعية غير مباشرة" },
+                                        { value: "quality_prevention", label: "تكلفة جودة وقائية" },
+                                        { value: "operating", label: "مصاريف تشغيلية" },
+                                      ]}
+                                      onValueChange={value => setSourceTreatments(current => ({ ...current, [key]: value }))}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {mode === "manual" && (
+                          <div className="space-y-3">
+                            <div className="space-y-1">
+                              <Label className="text-xs">المبلغ الفعلي</Label>
+                              <Input type="text" inputMode="decimal" dir="ltr" value={manual.amount}
+                                onChange={event => setManualCosts(current => ({ ...current, [category]: { ...current[category], amount: event.target.value } }))} placeholder="0.00" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">الوصف {Number(manual.amount || 0) > 0 && <span className="text-red-500">*</span>}</Label>
+                              <Input value={manual.description}
+                                onChange={event => setManualCosts(current => ({ ...current, [category]: { ...current[category], description: event.target.value } }))} placeholder="مثال: أجر فريق الإنتاج" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">الحساب المقابل {Number(manual.amount || 0) > 0 && <span className="text-red-500">*</span>}</Label>
+                              <SearchCombobox
+                                value={manual.counterpartAccountId}
+                                disabled={Number(manual.amount || 0) <= 0}
+                                items={[{ value: "", label: "اختر الحساب..." }, ...postingAccounts.map(account => ({
+                                  value: String(account.id), code: account.code,
+                                  label: `${account.code} — ${account.nameAr}`,
+                                }))]}
+                                placeholder="اختر الحساب المقابل..."
+                                searchPlaceholder="ابحث بالرمز أو الاسم..."
+                                onValueChange={value => setManualCosts(current => ({ ...current, [category]: { ...current[category], counterpartAccountId: value } }))}
+                              />
+                              <p className="text-[11px] text-slate-500">سيُسجل القيد مديناً WIP ودائناً بهذا الحساب، دون إنشاء مصروف ثانٍ.</p>
+                            </div>
+                          </div>
+                        )}
+                        {categoryTotal > 0 && (
+                          <div className="flex justify-between border-t pt-3 text-sm font-semibold text-violet-800">
+                            <span>إجمالي الفئة المحددة</span>
+                            <span>{Number(categoryTotal.toFixed(2)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {tab === "costs" && (
+            <div dir="rtl" className="mt-4 grid gap-4 rounded-xl border border-violet-200 bg-violet-50 p-4 sm:grid-cols-2">
+              <div>
+                <p className="text-sm text-violet-700">إجمالي التكاليف الإضافية</p>
+                <p className="mt-1 text-2xl font-bold text-violet-950" dir="ltr">{calculateAllocatedTotal().toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              </div>
+              <div>
+                <p className="text-sm text-violet-700">التكلفة الإضافية لكل وحدة مخططة</p>
+                <p className="mt-1 text-2xl font-bold text-violet-950" dir="ltr">{Number(form.plannedQty) > 0 ? (calculateAllocatedTotal() / Number(form.plannedQty)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</p>
+              </div>
+              <p className="text-xs text-violet-700 sm:col-span-2">تُحمّل عند تنفيذ الأمر، ولا تشمل تكلفة المواد. ترك البنود بدون تكلفة لا يمنع التنفيذ.</p>
             </div>
           )}
 
           {tab === "review" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
                {(() => {
-                 const materialEstimate = calculateMaterialEstimate();
                  const manufacturingAllocation = calculateAllocatedTotal();
-                 const totalEstimate = materialEstimate == null
+                  const additionalUnit = !(Number(form.plannedQty) > 0)
                    ? null
-                   : materialEstimate + manufacturingAllocation;
-                 const unitEstimate = totalEstimate == null || !(Number(form.plannedQty) > 0)
-                   ? null
-                   : totalEstimate / Number(form.plannedQty);
+                    : manufacturingAllocation / Number(form.plannedQty);
                  return (
                    <>
               <div className="bg-slate-50 rounded-xl p-6 border text-center space-y-2">
@@ -948,30 +1061,18 @@ export function SimpleWizard({
                   </div>
                 </div>
                 <div className="border rounded-xl p-4 bg-violet-50/30">
-                  <div className="text-xs font-semibold text-violet-700 uppercase mb-3">مؤشرات التكلفة (تقديري)</div>
+                   <div className="text-xs font-semibold text-violet-700 uppercase mb-3">التكاليف الفعلية الإضافية</div>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center text-sm">
-                       <span className="text-slate-600">تكلفة المواد من الوصفة:</span>
-                       <span className="font-bold text-violet-700">
-                         {materialEstimate == null ? "تثبت عند الصرف" : materialEstimate.toLocaleString(undefined, {maximumFractionDigits: 2})}
-                       </span>
+                        <span className="text-slate-600">إجمالي الإضافي (مرتبط + يدوي):</span>
+                        <span className="font-bold text-violet-700">{manufacturingAllocation.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
                      </div>
                      <div className="flex justify-between items-center text-sm">
-                       <span className="text-slate-600">توزيع التصنيع المختار:</span>
-                       <span className="font-bold text-violet-700">{manufacturingAllocation.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
+                        <span className="text-slate-600">نصيب الوحدة الإضافي:</span>
+                        <span className="font-bold text-violet-700">{additionalUnit == null ? "—" : additionalUnit.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
                      </div>
-                     <div className="flex justify-between items-center text-sm pt-2 border-t border-violet-100">
-                       <span className="text-slate-600">إجمالي تكلفة الأمر التقديرية:</span>
-                       <span className="font-bold text-lg text-violet-800">
-                         {totalEstimate == null ? "تثبت عند الصرف" : totalEstimate.toLocaleString(undefined, {maximumFractionDigits: 2})}
-                       </span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm pt-2 border-t border-violet-100">
-                       <span className="text-slate-600">نصيب الوحدة (مواد + تصنيع):</span>
-                       <span className="font-bold text-violet-700">{unitEstimate == null ? "تثبت عند الصرف" : unitEstimate.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
-                    </div>
                     <div className="text-xs text-slate-400 mt-2">
-                       * لا تُخفي الشاشة تكلفة المواد خلف توزيع المصادر؛ إذا لم تُعد الوصفة تكلفة معاينة، يثبت إجمالي المواد وتكلفة الوحدة عند صرفها من المخزن.
+                        * هذه أرقام فعلية للمصادر المرتبطة والمبالغ اليدوية فقط؛ لا تُخلط معها معاينة تكلفة المواد. تكلفة المواد الفعلية تثبت عند الصرف.
                     </div>
                   </div>
                 </div>

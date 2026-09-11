@@ -177,7 +177,6 @@ router.get("/catalog", view, async (req, res) => {
           eq(accountsTable.companyId, cid),
           eq(accountsTable.isActive, true),
           eq(accountsTable.isPosting, true),
-          eq(accountsTable.accountType, "asset"),
         ))
         .orderBy(asc(accountsTable.code))
         .limit(2000),
