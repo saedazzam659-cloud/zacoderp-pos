@@ -188,12 +188,17 @@ export default function ProductionOrderDetail() {
   const [wasteRecords, setWasteRecords] = useState<WasteRecord[]>([]);
   const [costDrilldown, setCostDrilldown] = useState<any>(null);
   const [commercialLifecycle, setCommercialLifecycle] = useState<any[]>([]);
+  const [packagingSpecs, setPackagingSpecs] = useState<any[]>([]);
+  const [packagingBusy, setPackagingBusy] = useState(false);
+  const [packagingForm, setPackagingForm] = useState({
+    code: "", name: "", primaryMaterial: "", testType: "drop_test",
+  });
   const [savingLifecycle, setSavingLifecycle] = useState(false);
   const [lifecycleForm, setLifecycleForm] = useState({
     type: "certificate", name: "", status: "draft", calculationMethod: "period",
     effectiveFrom: "", effectiveTo: "", sourceAllocationId: "", salesReturnId: "",
     rate: "", minimumAmount: "", maximumAmount: "", notes: "", supplierId: "",
-    tierBasis: "units",
+    tierBasis: "units", repairStatus: "open", technicianUserId: "", repairNotes: "",
   });
   const [claimDetails, setClaimDetails] = useState([
     { kind: "parts", description: "قطع الغيار", sourceAllocationId: "" },
@@ -254,6 +259,13 @@ export default function ProductionOrderDetail() {
       if (lifecycleResponse.ok) {
         const lifecycle = await lifecycleResponse.json();
         setCommercialLifecycle(lifecycle.records ?? []);
+      }
+      if (!simpleFacade && j.order?.productItemId) {
+        const packagingResponse = await fetch(
+          `${API}/api/production/packaging/specifications?productItemId=${j.order.productItemId}`,
+          { headers },
+        );
+        if (packagingResponse.ok) setPackagingSpecs(await packagingResponse.json());
       }
     } catch (e: any) {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
@@ -434,7 +446,7 @@ export default function ProductionOrderDetail() {
         type: "certificate", name: "", status: "draft", calculationMethod: "period",
         effectiveFrom: "", effectiveTo: "", sourceAllocationId: "", salesReturnId: "",
         rate: "", minimumAmount: "", maximumAmount: "", notes: "", supplierId: "",
-        tierBasis: "units",
+         tierBasis: "units", repairStatus: "open", technicianUserId: "", repairNotes: "",
       });
       setClaimDetails([
         { kind: "parts", description: "قطع الغيار", sourceAllocationId: "" },
@@ -465,6 +477,90 @@ export default function ProductionOrderDetail() {
     } catch (e: any) {
       toast({ title: "تعذر تحديث الحالة", description: e.message, variant: "destructive" });
     }
+  }
+
+  async function changeRepairStatus(lifecycleId: string, repairStatus: string) {
+    try {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle/${lifecycleId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ repairStatus }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      toast({ title: "تم تحديث حالة الإصلاح" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر تحديث حالة الإصلاح", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function packagingRequest(path: string, method: string, body?: unknown) {
+    const r = await fetch(`${API}/api/production${path}`, {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+    return j;
+  }
+
+  async function createPackagingSpec(e: React.FormEvent) {
+    e.preventDefault();
+    if (!order?.productItemId) return;
+    setPackagingBusy(true);
+    try {
+      await packagingRequest("/packaging/specifications", "POST", {
+        productItemId: order.productItemId,
+        code: packagingForm.code,
+        name: packagingForm.name,
+      });
+      setPackagingForm((form) => ({ ...form, code: "", name: "" }));
+      toast({ title: "تم إنشاء مواصفة التعبئة" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر إنشاء مواصفة التعبئة", description: e.message, variant: "destructive" });
+    } finally { setPackagingBusy(false); }
+  }
+
+  async function addPackagingVersion(specificationId: number) {
+    setPackagingBusy(true);
+    try {
+      await packagingRequest(`/packaging/specifications/${specificationId}/versions`, "POST", {
+        status: "pending_approval",
+        primaryMaterial: packagingForm.primaryMaterial,
+      });
+      toast({ title: "تم إنشاء إصدار التعبئة بانتظار الاعتماد" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر إنشاء إصدار التعبئة", description: e.message, variant: "destructive" });
+    } finally { setPackagingBusy(false); }
+  }
+
+  async function addPackagingTest(versionId: number) {
+    setPackagingBusy(true);
+    try {
+      await packagingRequest(`/packaging/versions/${versionId}/tests`, "POST", {
+        testType: packagingForm.testType, result: "pass",
+        testDate: new Date().toISOString().slice(0, 10),
+      });
+      toast({ title: "تم تسجيل اختبار التعبئة كمجتاز" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر تسجيل اختبار التعبئة", description: e.message, variant: "destructive" });
+    } finally { setPackagingBusy(false); }
+  }
+
+  async function approvePackagingVersion(versionId: number) {
+    setPackagingBusy(true);
+    try {
+      await packagingRequest(`/packaging/versions/${versionId}/approve`, "POST", {});
+      toast({ title: "تم اعتماد إصدار التعبئة بعد الاختبار" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر اعتماد إصدار التعبئة", description: e.message, variant: "destructive" });
+    } finally { setPackagingBusy(false); }
   }
 
   async function renewCertificate(lifecycleId: string) {
@@ -699,6 +795,9 @@ export default function ProductionOrderDetail() {
               <TabsTrigger value="commercial-lifecycle" data-testid="tab-commercial-lifecycle">
                 <ClipboardCheck className="h-4 w-4 me-1" /> الشهادات / Royalty / الضمان
               </TabsTrigger>
+              {!simpleFacade && <TabsTrigger value="packaging-specifications" data-testid="tab-packaging-specifications">
+                <ClipboardCheck className="h-4 w-4 me-1" /> مواصفات التعبئة
+              </TabsTrigger>}
             </TabsList>
             <TabsContent value="items" className="space-y-3">
               <div className="flex justify-end">
@@ -992,6 +1091,14 @@ export default function ProductionOrderDetail() {
                   {lifecycleForm.type==="warranty" && <div><Label>رقم مرتجع بيع مُرحّل</Label>
                     <Input type="number" min="1" value={lifecycleForm.salesReturnId}
                       onChange={e=>setLifecycleForm({...lifecycleForm,salesReturnId:e.target.value})}/></div>}
+                   {lifecycleForm.type==="warranty" && <div><Label>حالة الإصلاح</Label>
+                     <select className="w-full border rounded-md p-2" value={lifecycleForm.repairStatus}
+                       onChange={e=>setLifecycleForm({...lifecycleForm,repairStatus:e.target.value})}>
+                       <option value="open">مفتوح</option><option value="diagnosing">تشخيص</option>
+                       <option value="repairing">قيد الإصلاح</option><option value="ready">جاهز</option>
+                       <option value="closed">مغلق</option><option value="no_repair">لا يحتاج إصلاحاً</option>
+                     </select>
+                   </div>}
                   {lifecycleForm.type==="royalty" && lifecycleForm.calculationMethod==="tiered" &&
                     <div className="md:col-span-4 rounded border p-3">
                       <Label>شرائح Royalty (حتى / معدل %)</Label>
@@ -1023,6 +1130,14 @@ export default function ProductionOrderDetail() {
                         </div>)}
                       </div>
                     </div>}
+                   {lifecycleForm.type==="warranty" && <div className="md:col-span-4"><Label>ملاحظات الإصلاح</Label>
+                     <Input value={lifecycleForm.repairNotes}
+                       onChange={e=>setLifecycleForm({...lifecycleForm,repairNotes:e.target.value})}/>
+                   </div>}
+                   {lifecycleForm.type==="warranty" && <div><Label>معرّف الفني</Label>
+                     <Input type="number" min="1" value={lifecycleForm.technicianUserId}
+                       onChange={e=>setLifecycleForm({...lifecycleForm,technicianUserId:e.target.value})}/>
+                   </div>}
                   <div className="md:col-span-4"><Label>ملاحظات</Label><Input value={lifecycleForm.notes}
                     onChange={e=>setLifecycleForm({...lifecycleForm,notes:e.target.value})}/></div>
                 </div>
@@ -1039,6 +1154,8 @@ export default function ProductionOrderDetail() {
                     {row.salesReturnId ? ` • مرتجع #${row.salesReturnId}` : ""}
                     {row.supplierId ? ` • مورد #${row.supplierId}` : ""}
                     {row.claimDetails?.length ? ` • تفاصيل مطالبة: ${row.claimDetails.length}` : ""}
+                     {row.type==="warranty" && row.repairStatus ? ` • الإصلاح: ${row.repairStatus}` : ""}
+                     {row.type==="warranty" && row.technicianUserId ? ` • الفني #${row.technicianUserId}` : ""}
                   </p></div>
                   <div className="font-mono text-end">{row.recognisedAmount==null?"تحليلي بلا مبلغ":Number(row.recognisedAmount).toLocaleString("en-US")}</div>
                   <select className="border rounded-md p-2 text-xs" value={row.status}
@@ -1048,6 +1165,13 @@ export default function ProductionOrderDetail() {
                       {({draft:"مسودة",active:"نشط",suspended:"موقوف",expired:"منتهي",settled:"مسوّى",cancelled:"ملغى"} as any)[status]??status}
                     </option>)}
                   </select>
+                   {row.type==="warranty" && <select className="border rounded-md p-2 text-xs" value={row.repairStatus ?? "open"}
+                     onChange={e=>void changeRepairStatus(row.id,e.target.value)}
+                     disabled={order.status==="cancelled"}>
+                     <option value="open">إصلاح: مفتوح</option><option value="diagnosing">إصلاح: تشخيص</option>
+                     <option value="repairing">إصلاح: قيد التنفيذ</option><option value="ready">إصلاح: جاهز</option>
+                     <option value="closed">إصلاح: مغلق</option><option value="no_repair">إصلاح: لا يحتاج</option>
+                   </select>}
                   <div className="flex gap-1 justify-end">
                     {row.type==="certificate" && ["active","expired","suspended"].includes(row.status) &&
                       <Button type="button" size="sm" variant="outline" onClick={()=>void renewCertificate(row.id)}>بدء تجديد</Button>}
@@ -1060,6 +1184,39 @@ export default function ProductionOrderDetail() {
                 </div>)}
               </div>
             </TabsContent>
+            {!simpleFacade && <TabsContent value="packaging-specifications" className="space-y-4">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                مواصفات التعبئة ذات إصدارات غير قابلة للتعديل بعد الاعتماد. لا يمكن اعتماد إصدار
+                دون اختبار ناجح محفوظ بمرجع المصدر؛ وهذا السجل لا يضيف تكلفة مخزون تلقائياً.
+              </div>
+              {packagingSpecs.length === 0 && <form onSubmit={createPackagingSpec} className="rounded-lg border p-4 grid md:grid-cols-3 gap-3">
+                <div><Label>كود المواصفة</Label><Input required value={packagingForm.code}
+                  onChange={(e) => setPackagingForm((form) => ({ ...form, code: e.target.value }))}/></div>
+                <div><Label>اسم المواصفة</Label><Input required value={packagingForm.name}
+                  onChange={(e) => setPackagingForm((form) => ({ ...form, name: e.target.value }))}/></div>
+                <div className="flex items-end"><Button disabled={packagingBusy}>إنشاء مواصفة</Button></div>
+              </form>}
+              {packagingSpecs.map((spec: any) => <div key={spec.id} className="rounded-lg border bg-white dark:bg-slate-900 divide-y">
+                <div className="p-3 flex flex-wrap gap-3 items-center justify-between">
+                  <div><b>{spec.code} — {spec.name}</b><p className="text-xs text-slate-500">الصنف #{spec.productItemId}</p></div>
+                  <div className="flex gap-2 items-center">
+                    <Input className="w-36" placeholder="مادة التغليف" value={packagingForm.primaryMaterial}
+                      onChange={(e) => setPackagingForm((form) => ({ ...form, primaryMaterial: e.target.value }))}/>
+                    <Button type="button" size="sm" disabled={packagingBusy}
+                      onClick={() => void addPackagingVersion(spec.id)}>إصدار جديد</Button>
+                  </div>
+                </div>
+                {(spec.versions ?? []).map((version: any) => <div key={version.id} className="p-3 grid md:grid-cols-[1fr_auto_auto] gap-3 items-center">
+                  <div><b>الإصدار {version.versionNo}</b> <span className="text-xs text-slate-500">({version.status})</span>
+                    <p className="text-xs text-slate-500">{version.primaryMaterial || "مادة غير محددة"} • اختبارات: {(version.tests ?? []).length}</p>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" disabled={packagingBusy || version.status === "approved"}
+                    onClick={() => void addPackagingTest(version.id)}>تسجيل اختبار ناجح</Button>
+                  <Button type="button" size="sm" disabled={packagingBusy || version.status === "approved"}
+                    onClick={() => void approvePackagingVersion(version.id)}>اعتماد الإصدار</Button>
+                </div>)}
+              </div>)}
+            </TabsContent>}
           </Tabs>
         </div>
 

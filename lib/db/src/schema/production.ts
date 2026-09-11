@@ -16,7 +16,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
-import { itemsTable, warehousesTable } from "./inventory";
+import { itemsTable, warehousesTable, stockLedgerTable } from "./inventory";
 import { accountsTable } from "./accounts";
 import { usersTable } from "./users";
 
@@ -288,6 +288,87 @@ export const productionCostAllocationsTable = pgTable(
 
 export type ProductionCostAllocation = typeof productionCostAllocationsTable.$inferSelect;
 
+// Reusable packaging master data. Specifications are versioned rather than
+// edited in place so an approved artwork/dimension/material snapshot can be
+// tied to the production period that consumed it.
+export const packagingSpecificationsTable = pgTable(
+  "packaging_specifications",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    productItemId: integer("product_item_id").notNull().references(() => itemsTable.id, { onDelete: "restrict" }),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byCompanyCode: uniqueIndex("packaging_specs_company_code_uniq").on(t.companyId, t.code),
+    byProduct: index("packaging_specs_product_idx").on(t.companyId, t.productItemId),
+  }),
+);
+
+export const packagingSpecificationVersionsTable = pgTable(
+  "packaging_specification_versions",
+  {
+    id: serial("id").primaryKey(),
+    specificationId: integer("specification_id").notNull().references(() => packagingSpecificationsTable.id, { onDelete: "cascade" }),
+    versionNo: integer("version_no").notNull(),
+    status: text("status").notNull().default("draft"), // draft | pending_approval | approved | rejected | retired
+    effectiveFrom: date("effective_from"),
+    effectiveTo: date("effective_to"),
+    primaryMaterial: text("primary_material"),
+    dimensions: jsonb("dimensions").$type<Record<string, unknown>>().notNull().default({}),
+    materialLines: jsonb("material_lines").$type<Array<Record<string, unknown>>>().notNull().default([]),
+    artworkRefs: jsonb("artwork_refs").$type<Array<Record<string, unknown>>>().notNull().default([]),
+    notes: text("notes"),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    bySpecVersion: uniqueIndex("packaging_spec_versions_spec_no_uniq").on(t.specificationId, t.versionNo),
+    byStatus: index("packaging_spec_versions_status_idx").on(t.specificationId, t.status),
+  }),
+);
+
+export const packagingSpecificationApprovalsTable = pgTable(
+  "packaging_specification_approvals",
+  {
+    id: serial("id").primaryKey(),
+    versionId: integer("version_id").notNull().references(() => packagingSpecificationVersionsTable.id, { onDelete: "cascade" }),
+    decision: text("decision").notNull(), // approved | rejected
+    approvedBy: integer("approved_by").references(() => usersTable.id, { onDelete: "set null" }),
+    notes: text("notes"),
+    decidedAt: timestamp("decided_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byVersion: index("packaging_spec_approvals_version_idx").on(t.versionId),
+  }),
+);
+
+export const packagingSpecificationTestsTable = pgTable(
+  "packaging_specification_tests",
+  {
+    id: serial("id").primaryKey(),
+    versionId: integer("version_id").notNull().references(() => packagingSpecificationVersionsTable.id, { onDelete: "cascade" }),
+    testType: text("test_type").notNull(),
+    labName: text("lab_name"),
+    testDate: date("test_date").notNull(),
+    result: text("result").notNull(), // pass | fail | pending
+    reportReference: text("report_reference"),
+    notes: text("notes"),
+    testedBy: integer("tested_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byVersion: index("packaging_spec_tests_version_idx").on(t.versionId),
+  }),
+);
+
 // Reusable wizard configuration only. It deliberately stores no transaction
 // numbers, actual quantities, journals, stock movements or source allocations.
 export const productionWizardTemplatesTable = pgTable(
@@ -309,6 +390,44 @@ export const productionWizardTemplatesTable = pgTable(
 );
 
 export type ProductionWizardTemplate = typeof productionWizardTemplatesTable.$inferSelect;
+
+// Immutable, source-only cost snapshots for commercial product lines.  A row
+// is written only from a stock ledger movement created by posting the sale or
+// return.  `sourceLedgerId` points to the production receipt that supplied the
+// stamped batch when one is provable; legacy/unbatched movements are retained
+// as `unavailable` rather than being costed from a current WAC or a user input.
+export const salesLineProductionCostAttributionsTable = pgTable(
+  "sales_line_production_cost_attributions",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    documentType: text("document_type").notNull(), // sales_invoice | sales_return
+    documentId: integer("document_id").notNull(),
+    documentLineId: integer("document_line_id").notNull(),
+    movementLedgerId: integer("movement_ledger_id").references(() => stockLedgerTable.id, { onDelete: "restrict" }),
+    sourceOutboundLedgerId: integer("source_outbound_ledger_id").references(() => stockLedgerTable.id, { onDelete: "restrict" }),
+    sourceLedgerId: integer("source_ledger_id").references(() => stockLedgerTable.id, { onDelete: "restrict" }),
+    productionOrderId: integer("production_order_id").references(() => productionOrdersTable.id, { onDelete: "restrict" }),
+    itemId: integer("item_id").references(() => itemsTable.id, { onDelete: "set null" }),
+    batchNumber: text("batch_number"),
+    quantity: numeric("quantity", { precision: 18, scale: 4 }).notNull(),
+    costPrice: numeric("cost_price", { precision: 18, scale: 6 }).notNull().default("0"),
+    totalCost: numeric("total_cost", { precision: 18, scale: 4 }).notNull().default("0"),
+    status: text("status").notNull(), // complete | unavailable
+    unavailableReason: text("unavailable_reason"),
+    snapshotKey: text("snapshot_key").notNull(),
+    sourceSnapshot: jsonb("source_snapshot").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    snapshotUnique: uniqueIndex("sales_line_prod_cost_snapshot_uniq").on(t.companyId, t.snapshotKey),
+    byLine: index("sales_line_prod_cost_line_idx").on(t.companyId, t.documentType, t.documentLineId),
+    bySource: index("sales_line_prod_cost_source_idx").on(t.companyId, t.sourceLedgerId),
+  }),
+);
+
+export type SalesLineProductionCostAttribution =
+  typeof salesLineProductionCostAttributionsTable.$inferSelect;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Zod insert/select schemas

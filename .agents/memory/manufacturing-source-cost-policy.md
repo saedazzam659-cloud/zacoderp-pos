@@ -27,3 +27,14 @@ Financial cost variance must exclude analytical layers. Any margin based on a fr
 Completed-order reversal must invert the original journal lines and preserve their posting state, not recompute from present settings or order totals. Require finished-batch provenance and reject later outbound consumption.
 
 **Why:** Rounding, subsequent configuration changes and consumed output can otherwise produce incorrect reversals or negative stock.
+
+Sales returns linked to an invoice consume the invoice's paid and free quantities
+in the same base-unit cap. Posting locks the source invoice and rechecks all
+posted returns before restoring stock; a linked batch-tracked return that cannot
+be explained by current stamped outbound batches is rejected, never filled with
+an unbatched WAC row. Return attribution must use current movement identities,
+not stale snapshots left by unpost/repost.
+
+**Why:** Free units affect stock and COGS even when they contribute no revenue.
+Without the source-invoice lock, concurrent returns could each pass a stale
+remaining-quantity check and over-return the invoice.

@@ -323,6 +323,7 @@ export async function addStockLedgerEntry(entry: {
   balanceQty: string;
   refId: number;
   refType: string;
+  sourceLineId?: number | null;
   batchNumber?: string | null;
   expiryDate?: string | null;
   notes?: string;

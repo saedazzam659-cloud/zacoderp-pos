@@ -427,6 +427,10 @@ export const stockLedgerTable = pgTable("stock_ledger", {
   balanceQty:  numeric("balance_qty",{ precision: 18, scale: 4 }).default("0").notNull(),
   refId:       integer("ref_id"),
   refType:     text("ref_type"),     // transfer | adjustment | count | invoice
+  // Immutable source line identity for split outbound/inbound document
+  // movements.  NULL is retained for legacy movements created before line
+  // attribution was introduced.
+  sourceLineId: integer("source_line_id"),
   batchNumber: text("batch_number"),
   expiryDate:  date("expiry_date"),
   notes:       text("notes"),

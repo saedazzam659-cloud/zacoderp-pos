@@ -24,9 +24,10 @@ import {
   itemBrandsTable,
   brandsTable,
   accountsTable,
+  salesLineProductionCostAttributionsTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
-import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte, ilike, or } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte, ilike, or, ne } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread, intersectBranchRequest } from "../middleware/auth.js";
 import { isMobileChannel, mobilePermAllowed } from "../lib/mobilePerms.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
@@ -59,6 +60,164 @@ import {
   getInvoiceAccelerationMode,
   recordInvoiceSampleOnFinish,
 } from "../lib/agentInvoiceAcceleration.js";
+
+/**
+ * Persist the only safe product-cost attribution: the posted document's own
+ * stamped stock movement, linked to the production receipt that supplied its
+ * batch.  This deliberately does not fall back to WAC, item cost, or a
+ * caller-supplied amount.  Rows are append-only; an unpost/repost creates a
+ * new movement identity and therefore a new immutable snapshot while reports
+ * read only the current posted movement.
+ */
+async function writeSalesLineProductionAttributions(
+  executor: any,
+  companyId: number,
+  documentType: "sales_invoice" | "sales_return",
+  documentId: number,
+  lines: Array<{ id: number; itemId: number | null }>,
+): Promise<void> {
+  const lineIds = lines.map((line) => line.id).filter((id) => Number.isInteger(id) && id > 0);
+  if (!lineIds.length) return;
+  let linkedInvoiceId: number | null = null;
+  if (documentType === "sales_return") {
+    const [returnHeader] = await executor
+      .select({ invoiceId: salesReturnsTable.invoiceId })
+      .from(salesReturnsTable)
+      .where(and(
+        eq(salesReturnsTable.companyId, companyId),
+        eq(salesReturnsTable.id, documentId),
+      ))
+      .limit(1);
+    linkedInvoiceId = returnHeader?.invoiceId ?? null;
+  }
+  const movements = await executor
+    .select({
+      id: stockLedgerTable.id,
+      sourceLineId: stockLedgerTable.sourceLineId,
+      itemId: stockLedgerTable.itemId,
+      warehouseId: stockLedgerTable.warehouseId,
+      qty: stockLedgerTable.qty,
+      costPrice: stockLedgerTable.costPrice,
+      batchNumber: stockLedgerTable.batchNumber,
+      expiryDate: stockLedgerTable.expiryDate,
+    })
+    .from(stockLedgerTable)
+    .where(and(
+      eq(stockLedgerTable.companyId, companyId),
+      eq(stockLedgerTable.refType, documentType),
+      eq(stockLedgerTable.refId, documentId),
+      inArray(stockLedgerTable.sourceLineId, lineIds),
+    ));
+  if (!movements.length) return;
+
+  const rows: Array<typeof salesLineProductionCostAttributionsTable.$inferInsert> = [];
+  for (const movement of movements) {
+    if (!movement.sourceLineId) continue;
+    const quantity = Math.abs(Number(movement.qty) || 0);
+    if (quantity <= 0) continue;
+    let sourceOutboundLedgerId: number | null = null;
+    let sourceLedgerId: number | null = null;
+    let productionOrderId: number | null = null;
+    let sourceRow: any = null;
+
+    if (documentType === "sales_return") {
+      // A return's inbound row is restored from the source invoice's stamped
+      // outbound batch.  Keep that outbound identity in the snapshot before
+      // resolving it to the production receipt.
+      if (movement.batchNumber) {
+        const [outbound] = await executor
+          .select()
+          .from(stockLedgerTable)
+          .where(and(
+            eq(stockLedgerTable.companyId, companyId),
+            eq(stockLedgerTable.itemId, movement.itemId),
+            eq(stockLedgerTable.warehouseId, movement.warehouseId),
+            eq(stockLedgerTable.txType, "sale"),
+            ...(linkedInvoiceId != null ? [eq(stockLedgerTable.refType, "sales_invoice"), eq(stockLedgerTable.refId, linkedInvoiceId)] : []),
+            eq(stockLedgerTable.batchNumber, movement.batchNumber),
+            sql`${stockLedgerTable.qty} < 0`,
+          ))
+          .orderBy(asc(stockLedgerTable.id))
+          .limit(1);
+        if (outbound) {
+          sourceOutboundLedgerId = outbound.id;
+          sourceRow = outbound;
+        }
+      }
+    } else {
+      sourceRow = movement;
+    }
+
+    const batch = sourceRow?.batchNumber ?? movement.batchNumber;
+    if (batch) {
+      const receiptRows = await executor
+        .select()
+        .from(stockLedgerTable)
+        .where(and(
+          eq(stockLedgerTable.companyId, companyId),
+          eq(stockLedgerTable.itemId, movement.itemId),
+          eq(stockLedgerTable.warehouseId, movement.warehouseId),
+          eq(stockLedgerTable.txType, "production_receipt"),
+          eq(stockLedgerTable.refType, "production_order"),
+          eq(stockLedgerTable.batchNumber, batch),
+          sql`${stockLedgerTable.qty} > 0`,
+        ))
+        .orderBy(asc(stockLedgerTable.id))
+        .limit(2);
+      // A batch with more than one production receipt is not provably owned by
+      // one order (for example, a manually reused legacy batch label).  Keep
+      // it unavailable instead of guessing which production cost to assign.
+      if (receiptRows.length === 1) {
+        const receipt = receiptRows[0];
+        sourceLedgerId = receipt.id;
+        productionOrderId = receipt.refId ?? null;
+      }
+    }
+
+    const complete = !!sourceLedgerId;
+    const costPrice = complete ? Number(movement.costPrice) || 0 : 0;
+    rows.push({
+      companyId,
+      documentType,
+      documentId,
+      documentLineId: movement.sourceLineId,
+      movementLedgerId: movement.id,
+      sourceOutboundLedgerId,
+      sourceLedgerId,
+      productionOrderId,
+      itemId: movement.itemId,
+      batchNumber: batch ?? null,
+      quantity: String(quantity),
+      costPrice: String(costPrice.toFixed(6)),
+      totalCost: String((quantity * costPrice).toFixed(4)),
+      status: complete ? "complete" : "unavailable",
+      unavailableReason: complete ? null : (batch
+        ? (sourceLedgerId ? null : "production_receipt_source_unavailable")
+        : "batch_source_unavailable"),
+      snapshotKey: `${documentType}:${documentId}:${movement.sourceLineId}:${movement.id}`,
+      sourceSnapshot: {
+        movementLedgerId: movement.id,
+        sourceOutboundLedgerId,
+        sourceLedgerId,
+        productionOrderId,
+        batchNumber: batch ?? null,
+        expiryDate: movement.expiryDate ?? null,
+        movementCostPrice: Number(movement.costPrice) || 0,
+      },
+    });
+  }
+  if (rows.length) {
+    await executor
+      .insert(salesLineProductionCostAttributionsTable)
+      .values(rows)
+      .onConflictDoNothing({
+        target: [
+          salesLineProductionCostAttributionsTable.companyId,
+          salesLineProductionCostAttributionsTable.snapshotKey,
+        ],
+      });
+  }
+}
 
 type AgentInvoiceTiming = {
   mark: (stage: string) => void;
@@ -451,15 +610,15 @@ async function getCustomerAccountId(
     .where(and(eq(customersTable.id, c.id), eq(customersTable.companyId, cid)));
   return repairedAccountId;
 }
-async function getCashBoxAccountId(cid: number, cashBoxId: number | null | undefined): Promise<number | null> {
+async function getCashBoxAccountId(cid: number, cashBoxId: number | null | undefined, executor: any = db): Promise<number | null> {
   if (!cashBoxId) return null;
-  const [cb] = await db.select().from(cashBoxesTable)
+  const [cb] = await executor.select().from(cashBoxesTable)
     .where(and(eq(cashBoxesTable.id, cashBoxId), eq(cashBoxesTable.companyId, cid)));
   return cb?.accountId ?? null;
 }
-async function getBankAccountAccountId(cid: number, bankAccountId: number | null | undefined): Promise<number | null> {
+async function getBankAccountAccountId(cid: number, bankAccountId: number | null | undefined, executor: any = db): Promise<number | null> {
   if (!bankAccountId) return null;
-  const [ba] = await db.select().from(bankAccountsTable)
+  const [ba] = await executor.select().from(bankAccountsTable)
     .where(and(eq(bankAccountsTable.id, bankAccountId), eq(bankAccountsTable.companyId, cid)));
   return ba?.accountId ?? null;
 }
@@ -807,8 +966,8 @@ async function cleanupDocArtifacts(opts: {
   }
 }
 
-async function getAvgCost(companyId: number, itemId: number, warehouseId: number): Promise<number> {
-  const [bal] = await db.select().from(stockBalanceTable).where(and(
+async function getAvgCost(companyId: number, itemId: number, warehouseId: number, executor: any = db): Promise<number> {
+  const [bal] = await executor.select().from(stockBalanceTable).where(and(
     eq(stockBalanceTable.companyId, companyId),
     eq(stockBalanceTable.itemId, itemId),
     eq(stockBalanceTable.warehouseId, warehouseId),
@@ -1184,7 +1343,7 @@ router.get("/sales-invoices/:id", async (req, res) => {
         ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
       ));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
-    const [lines, customerRows] = await Promise.all([
+    const [lines, customerRows, lineAttributions] = await Promise.all([
       db.select().from(salesInvoiceLinesTable)
         .where(eq(salesInvoiceLinesTable.invoiceId, id))
         .orderBy(asc(salesInvoiceLinesTable.id)),
@@ -1196,6 +1355,12 @@ router.get("/sales-invoices/:id", async (req, res) => {
             ))
             .limit(1)
         : Promise.resolve([]),
+      db.select().from(salesLineProductionCostAttributionsTable)
+        .where(and(
+          eq(salesLineProductionCostAttributionsTable.companyId, cid),
+          eq(salesLineProductionCostAttributionsTable.documentType, "sales_invoice"),
+          eq(salesLineProductionCostAttributionsTable.documentId, id),
+        )),
     ]);
     // Surface offer names alongside the FK ids so the form can render the
     // "applied offer" badges immediately on edit, without an extra round-trip.
@@ -1210,9 +1375,16 @@ router.get("/sales-invoices/:id", async (req, res) => {
           .where(and(inArray(offersTable.id, [...offerIds]), eq(offersTable.companyId, cid)))
       : [];
     const offerNameById = new Map(offerRows.map(o => [o.id, o.nameAr ?? o.offerNumber] as const));
+    const attributionByLine = new Map<number, any[]>();
+    for (const attribution of lineAttributions) {
+      const existing = attributionByLine.get(attribution.documentLineId);
+      if (existing) existing.push(attribution);
+      else attributionByLine.set(attribution.documentLineId, [attribution]);
+    }
     const linesWithOfferName = lines.map(l => ({
       ...l,
       appliedOfferName: l.appliedOfferId ? (offerNameById.get(l.appliedOfferId) ?? null) : null,
+      productionCostAttributions: attributionByLine.get(l.id) ?? [],
     }));
     // Resolve `createdByName` / `postedByName` so the print templates (and
     // the read-only view) can show "أنشأ بواسطة" + "رحّل بواسطة" without
@@ -2728,6 +2900,7 @@ async function postSalesInvoiceHandler(
     // a single getAvgCost(); the ledger write loop below emits N stamped rows
     // per line (one per pick) so traceability/recall works on sales OUT too.
     type StockOp = {
+      sourceLineId: number;
       itemId: number;
       warehouseId: number;
       qty: number;
@@ -2788,7 +2961,7 @@ async function postSalesInvoiceHandler(
         const lineCogs = qty * avgCost;
         totalCogs += lineCogs;
         cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
-        stockOps.push({ itemId: line.itemId, warehouseId: line.warehouseId, qty, avgCost, notes: line.notes ?? null, picks });
+        stockOps.push({ sourceLineId: line.id, itemId: line.itemId, warehouseId: line.warehouseId, qty, avgCost, notes: line.notes ?? null, picks });
       }
     }
     timing?.mark("costing");
@@ -3233,6 +3406,7 @@ async function postSalesInvoiceHandler(
             balanceQty:  String(cursor.toFixed(4)),
             refId:       id,
             refType:     "sales_invoice",
+            sourceLineId: op.sourceLineId,
             notes:       op.notes ?? undefined,
           });
           continue;
@@ -3251,6 +3425,7 @@ async function postSalesInvoiceHandler(
             balanceQty:  String(cursor.toFixed(4)),
             refId:       id,
             refType:     "sales_invoice",
+            sourceLineId: op.sourceLineId,
             batchNumber: pick.batchNumber,
             expiryDate:  pick.expiryDate,
             notes:       `${op.notes ?? ""}${pick.batchNumber ? ` — تشغيلة ${pick.batchNumber}` : ""}`.trim() || undefined,
@@ -3261,6 +3436,13 @@ async function postSalesInvoiceHandler(
     if (ledgerEntries.length) {
       await tx.insert(stockLedgerTable).values(ledgerEntries);
     }
+    await writeSalesLineProductionAttributions(
+      tx,
+      cid,
+      "sales_invoice",
+      id,
+      lines.map((line) => ({ id: line.id, itemId: line.itemId })),
+    );
     timing?.mark("stock-ledger-bulk");
 
     const [updated] = await tx.update(salesInvoicesTable)
@@ -3588,10 +3770,32 @@ router.get("/sales-returns/:id", async (req, res) => {
         ...multiBranchScopeSpread(req, salesReturnsTable.branchId, undefined),
       ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
-    const lines = await db.select().from(salesReturnLinesTable)
-      .where(eq(salesReturnLinesTable.returnId, id))
-      .orderBy(asc(salesReturnLinesTable.id));
-    res.json({ ...ret, lines });
+    const [lines, lineAttributions] = await Promise.all([
+      db.select().from(salesReturnLinesTable)
+        .where(eq(salesReturnLinesTable.returnId, id))
+        .orderBy(asc(salesReturnLinesTable.id)),
+      cid
+        ? db.select().from(salesLineProductionCostAttributionsTable)
+            .where(and(
+              eq(salesLineProductionCostAttributionsTable.companyId, cid),
+              eq(salesLineProductionCostAttributionsTable.documentType, "sales_return"),
+              eq(salesLineProductionCostAttributionsTable.documentId, id),
+            ))
+        : Promise.resolve([]),
+    ]);
+    const attributionByLine = new Map<number, any[]>();
+    for (const attribution of lineAttributions) {
+      const existing = attributionByLine.get(attribution.documentLineId);
+      if (existing) existing.push(attribution);
+      else attributionByLine.set(attribution.documentLineId, [attribution]);
+    }
+    res.json({
+      ...ret,
+      lines: lines.map((line) => ({
+        ...line,
+        productionCostAttributions: attributionByLine.get(line.id) ?? [],
+      })),
+    });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
@@ -3636,12 +3840,13 @@ async function validateSalesReturnPayload(
       const srcLines = await db.select({
         itemId: salesInvoiceLinesTable.itemId,
         qty: salesInvoiceLinesTable.qty,
+        freeQty: salesInvoiceLinesTable.freeQty,
         conversionFactor: salesInvoiceLinesTable.conversionFactor,
       }).from(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, invId));
       const soldBase = new Map<number, number>();
       for (const sl of srcLines) {
         if (sl.itemId == null) continue;
-        const base = Number(sl.qty || 0) * Number(sl.conversionFactor || 1);
+         const base = (Number(sl.qty || 0) + Number(sl.freeQty || 0)) * Number(sl.conversionFactor || 1);
         soldBase.set(sl.itemId, (soldBase.get(sl.itemId) || 0) + base);
       }
       const priorWhere = [
@@ -3657,11 +3862,12 @@ async function validateSalesReturnPayload(
         const prior = await db.select({
           itemId: salesReturnLinesTable.itemId,
           qty: salesReturnLinesTable.qty,
+          freeQty: salesReturnLinesTable.freeQty,
           conversionFactor: salesReturnLinesTable.conversionFactor,
         }).from(salesReturnLinesTable).where(inArray(salesReturnLinesTable.returnId, priorIds));
         for (const pl of prior) {
           if (pl.itemId == null) continue;
-          const base = Number(pl.qty || 0) * Number(pl.conversionFactor || 1);
+           const base = (Number(pl.qty || 0) + Number(pl.freeQty || 0)) * Number(pl.conversionFactor || 1);
           returnedBase.set(pl.itemId, (returnedBase.get(pl.itemId) || 0) + base);
         }
       }
@@ -3669,7 +3875,7 @@ async function validateSalesReturnPayload(
       for (const l of lines) {
         const iid = Number(l.itemId);
         if (!Number.isFinite(iid) || !iid) continue;
-        const base = Number(l.qty || 0) * Number(l.conversionFactor || 1);
+         const base = (Number(l.qty || 0) + Number(l.freeQty || 0)) * Number(l.conversionFactor || 1);
         const cur = currBase.get(iid) || { base: 0, rawQty: 0 };
         cur.base += base; cur.rawQty += Number(l.qty || 0);
         currBase.set(iid, cur);
@@ -3995,7 +4201,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
     const id = Number(req.params.id);
 
     // Branch-scope guard: prevent cross-branch posting by ID guess.
-    const [ret] = await db.select().from(salesReturnsTable)
+    let [ret] = await db.select().from(salesReturnsTable)
       .where(and(
         eq(salesReturnsTable.id, id),
         eq(salesReturnsTable.companyId, cid),
@@ -4022,7 +4228,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
       }
     }
 
-    const lines = await db.select().from(salesReturnLinesTable)
+    let lines = await db.select().from(salesReturnLinesTable)
       .where(eq(salesReturnLinesTable.returnId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
 
@@ -4081,7 +4287,85 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
     // both lines would each see the same `alreadyByBucket` from DB and
     // collectively over-restore into the same source batch.
     // Key: `${itemId}|${warehouseId}|${batch||__null__}|${expiry||""}`
-    const consumedThisDoc = new Map<string, number>();
+    const updated = await db.transaction(async (tx) => {
+      const [lockedReturn] = await tx.select().from(salesReturnsTable).where(and(
+        eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid),
+      )).for("update");
+      if (!lockedReturn)
+        throw Object.assign(new Error("المرتجع غير موجود"), { status: 404 });
+      ret = lockedReturn;
+      if (ret.status === "posted")
+        throw Object.assign(new Error("المرتجع مُرحَّل مسبقاً"), { status: 400 });
+      lines = await tx.select().from(salesReturnLinesTable)
+        .where(eq(salesReturnLinesTable.returnId, id));
+      if (!lines.length)
+        throw Object.assign(new Error("لا توجد أصناف في المرتجع"), { status: 400 });
+      if (ret.invoiceId) {
+        const [sourceInvoice] = await tx.select({
+          id: salesInvoicesTable.id,
+          status: salesInvoicesTable.status,
+        }).from(salesInvoicesTable).where(and(
+          eq(salesInvoicesTable.id, ret.invoiceId),
+          eq(salesInvoicesTable.companyId, cid),
+        )).for("update");
+        if (!sourceInvoice)
+          throw Object.assign(new Error("الفاتورة المصدر غير موجودة في هذه الشركة"), { status: 400 });
+        if (sourceInvoice.status !== "posted")
+          throw Object.assign(new Error("لا يمكن ترحيل مرتجع مرتبط بفاتورة غير مُرحّلة"), { status: 400 });
+
+        // Re-check under the source-invoice row lock.  The draft validation
+        // above is only advisory; concurrent returns can otherwise each pass
+        // against the same remaining quantity.  Free quantities consume stock
+        // and therefore count toward both the sold and already-returned cap.
+        const sourceLines = await tx.select({
+          itemId: salesInvoiceLinesTable.itemId,
+          qty: salesInvoiceLinesTable.qty,
+          freeQty: salesInvoiceLinesTable.freeQty,
+          conversionFactor: salesInvoiceLinesTable.conversionFactor,
+        }).from(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, ret.invoiceId));
+        const postedReturnRows = await tx.select({
+          itemId: salesReturnLinesTable.itemId,
+          qty: salesReturnLinesTable.qty,
+          freeQty: salesReturnLinesTable.freeQty,
+          conversionFactor: salesReturnLinesTable.conversionFactor,
+        }).from(salesReturnLinesTable).innerJoin(
+          salesReturnsTable,
+          eq(salesReturnsTable.id, salesReturnLinesTable.returnId),
+        ).where(and(
+          eq(salesReturnsTable.companyId, cid),
+          eq(salesReturnsTable.invoiceId, ret.invoiceId),
+          eq(salesReturnsTable.status, "posted"),
+          ne(salesReturnsTable.id, id),
+        ));
+        const baseByItem = (rows: Array<{
+          itemId: number | null;
+          qty: string;
+          freeQty: string;
+          conversionFactor: string | null;
+        }>) => {
+          const out = new Map<number, number>();
+          for (const row of rows) {
+            if (row.itemId == null) continue;
+            const base = (Number(row.qty || 0) + Number(row.freeQty || 0)) *
+              Number(row.conversionFactor || 1);
+            out.set(row.itemId, (out.get(row.itemId) ?? 0) + base);
+          }
+          return out;
+        };
+        const sourceBase = baseByItem(sourceLines);
+        const postedReturnBase = baseByItem(postedReturnRows);
+        const currentBase = baseByItem(lines);
+        for (const [itemId, currentQty] of currentBase) {
+          const soldQty = sourceBase.get(itemId) ?? 0;
+          const returnedQty = postedReturnBase.get(itemId) ?? 0;
+          const remainingQty = soldQty - returnedQty;
+          if (soldQty <= 0 || currentQty > remainingQty + 1e-6)
+            throw Object.assign(new Error(
+              `الصنف #${itemId}: كمية المرتجع تتجاوز المتاح بعد احتساب المجاني — المباع ${soldQty}، المرتجع سابقاً ${returnedQty}، المتاح ${Math.max(0, remainingQty).toFixed(3)} (بالوحدة الأساس)`,
+            ), { status: 400 });
+        }
+      }
+      const consumedThisDoc = new Map<string, number>();
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor  = Number(line.conversionFactor || "1") || 1;
@@ -4089,7 +4373,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
       // both must be added back to stock and refunded into COGS reversal.
       const qty     = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
       if (qty <= 0) continue; // skip non-positive returns (mirror /post guard)
-      const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
+      const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId, tx);
       // If item never existed in warehouse, fall back to the line's price as cost.
       // unitPrice is in the SELECTED unit, so divide by factor to get base-unit cost.
       const costUnit = avgCost > 0 ? avgCost : (Number(line.unitPrice) / factor);
@@ -4107,7 +4391,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
         // batch_number + expiry_date (Round 4 stamped them) or be a legacy
         // single row with NULL batch (item was 'none' at sale time but is
         // batch-tracked now — restore as unbatched).
-        const srcRows = await db
+        const srcRows = await tx
           .select({
             id: stockLedgerTable.id,
             qty: stockLedgerTable.qty,
@@ -4154,7 +4438,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
         // restored qty so a second partial return can't double-credit the
         // same batch slot. Keyed by (batch,expiry) to match bucket
         // granularity. Excludes current return id defensively.
-        const priorReturned = await db
+        const priorReturned = await tx
           .select({
             qty: stockLedgerTable.qty,
             batchNumber: stockLedgerTable.batchNumber,
@@ -4199,11 +4483,13 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
           consumedThisDoc.set(docKey, consumedDoc + take);
           remaining -= take;
         }
-        // Excess (returning more than originally shipped — rare, e.g. legacy
-        // data or operator override) falls back to a single unbatched IN row
-        // at the current WAC so we never silently drop returned units.
+        // A linked return must be explainable by the source invoice's stamped
+        // outbound batches.  Never hide a cap/provenance failure by restoring
+        // excess units into an unbatched WAC row.
         if (remaining > 0.0001) {
-          parts.push({ takeQty: remaining, costPrice: costUnit, batchNumber: null, expiryDate: null });
+          throw Object.assign(new Error(
+            `لا يمكن ترحيل المرتجع: لا توجد كمية دفعة مصدر كافية للصنف #${line.itemId}؛ أعد ربط المرتجع بالفاتورة أو صحح الكمية`,
+          ), { status: 400 });
         }
       } else {
         // Legacy path — one unbatched row at WAC.
@@ -4217,8 +4503,8 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
 
       // Single balance update for the full qty using the weighted unit cost.
       const wac = qty > 0 ? lineRestoredCost / qty : costUnit;
-      await upsertBalance(cid, line.itemId, line.warehouseId, qty, wac);
-      let cursor = await getBalance(cid, line.itemId, line.warehouseId);
+      await upsertBalance(cid, line.itemId, line.warehouseId, qty, wac, tx);
+      let cursor = await getBalance(cid, line.itemId, line.warehouseId, tx);
       // Walk back so each ledger row's balance_qty reflects post-row state.
       let pre = cursor - qty; // pre-restore total
       for (const p of parts) {
@@ -4235,18 +4521,27 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
           balanceQty:  String(pre.toFixed(4)),
           refId:       id,
           refType:     "sales_return",
+          sourceLineId: line.id,
           batchNumber: p.batchNumber,
           expiryDate:  p.expiryDate,
           notes:       `${line.notes ?? ""}${p.batchNumber ? ` — استرجاع تشغيلة ${p.batchNumber}` : ""}`.trim() || undefined,
-        });
+        }, tx);
       }
     }
+
+    await writeSalesLineProductionAttributions(
+      tx,
+      cid,
+      "sales_return",
+      id,
+      lines.map((line) => ({ id: line.id, itemId: line.itemId })),
+    );
 
     // ── Build reversed journal entry ──
     // (Reverse of sales-invoice JE: customer becomes credit, sales/vat become debit, inventory becomes debit, COGS becomes credit)
     // If account FKs are missing on the return but a source invoice is linked, inherit them from the invoice.
     if (ret.invoiceId && (!ret.salesAccountId || !ret.cogsAccountId || !ret.taxAccountId || !ret.discountAccountId)) {
-      const [srcInv] = await db.select().from(salesInvoicesTable)
+      const [srcInv] = await tx.select().from(salesInvoicesTable)
         .where(and(eq(salesInvoicesTable.id, ret.invoiceId), eq(salesInvoicesTable.companyId, cid)));
       if (srcInv) {
         const patch: any = {};
@@ -4255,7 +4550,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
         if (!ret.taxAccountId       && srcInv.taxAccountId)       { patch.taxAccountId       = srcInv.taxAccountId;       ret.taxAccountId       = srcInv.taxAccountId; }
         if (!ret.discountAccountId  && srcInv.discountAccountId)  { patch.discountAccountId  = srcInv.discountAccountId;  ret.discountAccountId  = srcInv.discountAccountId; }
         if (Object.keys(patch).length) {
-          await db.update(salesReturnsTable).set(patch).where(eq(salesReturnsTable.id, id));
+          await tx.update(salesReturnsTable).set(patch).where(eq(salesReturnsTable.id, id));
         }
       }
     }
@@ -4268,8 +4563,8 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
     const cogsAccId     = pickAccount(ret.cogsAccountId,     mapSr("sales_return", "cogs")       ?? mapSi("sales_invoice", "cogs"));
     const taxAccId      = pickAccount(ret.taxAccountId,      mapSr("sales_return", "vat_output") ?? mapSi("sales_invoice", "vat_output"));
     const discountAccId = pickAccount(ret.discountAccountId, mapSr("sales_return", "discount")   ?? mapSi("sales_invoice", "discount"));
-    if (!salesAccId) { res.status(400).json({ error: "لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)" }); return; }
-    if (!cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
+    if (!salesAccId) throw Object.assign(new Error("لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
+    if (!cogsAccId) throw Object.assign(new Error("لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
     // Inventory account derived from warehouse — verify each used warehouse has one
     const missingWh: string[] = [];
     for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
@@ -4278,8 +4573,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
       if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
     }
     if (missingWh.length) {
-      res.status(400).json({ error: `لم يتم ربط حساب محاسبي للمخزن/المخازن التالية: ${missingWh.join("، ")}.` });
-      return;
+      throw Object.assign(new Error(`لم يتم ربط حساب محاسبي للمخزن/المخازن التالية: ${missingWh.join("، ")}.`), { status: 400 });
     }
 
     const totalAmt      = Number(ret.totalAmount || 0);
@@ -4317,29 +4611,27 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
     const discountAmt      = headerDiscAmt + lineDiscountTotal;
 
     const partyAccountId =
-      ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
-      : ret.paymentType === "bank" ? await getBankAccountAccountId(cid, (ret as any).bankAccountId)
+      ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId, tx)
+      : ret.paymentType === "bank" ? await getBankAccountAccountId(cid, (ret as any).bankAccountId, tx)
       : await getCustomerAccountId(cid, ret.customerId, tx);
     // AR pass-through (mirrors purchases): cash/bank returns route through
     // the customer's receivable account (CR AR + DR AR refund leg + CR
     // cash/bank) so the return AND the cash refund both show on the ledger.
     const retCustomerArAccId =
       (ret.paymentType === "cash" || ret.paymentType === "bank")
-        ? await getCustomerAccountId(cid, ret.customerId, tx)
+         ? await getCustomerAccountId(cid, ret.customerId, tx)
         : null;
     if (!partyAccountId) {
-      res.status(400).json({ error:
+      throw Object.assign(new Error(
         ret.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
         : ret.paymentType === "bank" ? "الحساب البنكي لا يحتوي على حساب محاسبي مرتبط"
-        : "العميل لا يحتوي على حساب محاسبي مرتبط" });
-      return;
+        : "العميل لا يحتوي على حساب محاسبي مرتبط",
+      ), { status: 400 });
     }
-    if (vatAmt > 0 && !taxAccId) {
-      res.status(400).json({ error: "لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)" }); return;
-    }
-    if (discountAmt > 0 && !discountAccId) {
-      res.status(400).json({ error: "لم يتم تحديد حساب الخصم المسموح به (اضبطه من ربط القيود المحاسبية)" }); return;
-    }
+    if (vatAmt > 0 && !taxAccId)
+      throw Object.assign(new Error("لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
+    if (discountAmt > 0 && !discountAccId)
+      throw Object.assign(new Error("لم يتم تحديد حساب الخصم المسموح به (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
 
     const journalId = await createJournalEntry({
       companyId: cid,
@@ -4354,6 +4646,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
       // Inherit cost center from the original invoice when set so the
       // return tags the same CC as the sale it reverses.
       costCenter: (ret as any).costCenter ?? null,
+      executor: tx,
       description: `قيد مرتجع مبيعات رقم ${ret.docNumber || ret.id}`,
       lines: [
         // Debits (reversed from the original sale)
@@ -4388,10 +4681,12 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
       ],
     });
 
-    const [updated] = await db.update(salesReturnsTable)
+    const [updated] = await tx.update(salesReturnsTable)
       .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
       .where(eq(salesReturnsTable.id, id))
       .returning();
+    return updated;
+    });
 
     // NOTE: لا نُنشئ سند صرف تلقائياً عند ترحيل مرتجع نقدي/بنكي.
     // القيد المحاسبي أعلاه يكفي لتسجيل الأثر النقدي؛ سند الصرف يُنشأ يدوياً عند الحاجة.

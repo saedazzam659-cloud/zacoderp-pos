@@ -506,6 +506,9 @@ export default function ProductionOrders() {
                      <option value="certification">شهادة / اعتماد</option>
                      <option value="royalty">Royalty</option>
                      <option value="warranty">ضمان</option>
+                      <option value="operating">تشغيلية</option>
+                      <option value="financing">تمويلية</option>
+                      <option value="sga">بيعية / إدارية</option>
                      <option value="economic">اقتصادية فقط</option>
                    </select>
                   <div className="text-end font-mono text-sm">{Number.isFinite(derivedSourceAmount(s))?derivedSourceAmount(s).toFixed(2):"—"}</div>

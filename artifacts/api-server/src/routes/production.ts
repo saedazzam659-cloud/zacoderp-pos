@@ -13,6 +13,10 @@ import {
   productionResourcesTable,
   productionEventsTable,
   productionCostAllocationsTable,
+  packagingSpecificationsTable,
+  packagingSpecificationVersionsTable,
+  packagingSpecificationApprovalsTable,
+  packagingSpecificationTestsTable,
   productionWizardTemplatesTable,
   warehousesTable,
   itemsTable,
@@ -58,6 +62,7 @@ import {
   salesInvoiceLinesTable,
   salesReturnsTable,
   salesReturnLinesTable,
+  salesLineProductionCostAttributionsTable,
   suppliersTable,
   supplierSettlementsTable,
   type ProductionOrderStatus,
@@ -458,7 +463,7 @@ const COST_TREATMENTS = new Set([
   "direct_material", "direct_packaging", "manufacturing_overhead",
   "quality_prevention", "quality_appraisal", "internal_failure",
   "abnormal_loss", "certification", "royalty", "warranty",
-  "operating", "economic", "sga",
+  "operating", "financing", "economic", "sga",
 ]);
 
 function sanitizeCostPolicy(value: unknown): Record<string, unknown> {
@@ -1078,6 +1083,7 @@ router.get("/orders/:id/cost-drilldown", async (req, res) => {
       .filter((x) => names.includes(String((x.snapshotMeta as any)?.costTreatment)))
       .reduce((s, x) => s + num(x.allocatedAmount), 0);
     const operatingAdd = treatmentAmount(["operating", "warranty", "sga"]);
+    const financingAdd = treatmentAmount(["financing"]);
     const economicAdd = analytical.reduce((s, x) => s + num(x.allocatedAmount), 0);
     // Zero is a real posted/draft value, not a signal to silently recompute.
     const actual = order.actualCost == null
@@ -1094,12 +1100,15 @@ router.get("/orders/:id/cost-drilldown", async (req, res) => {
       layers: {
         financialManufacturing: actual, managementManufacturing: actual,
         operating: actual + operatingAdd,
+         financing: financingAdd,
         economic: actual + economicAdd,
       },
       totals: { standard, actual, variance: actual - standard,
         variancePct: standard ? ((actual - standard) / standard) * 100 : null,
         unitCost: produced ? actual / produced : null, simulatedSalesValue: selling,
-        simulatedGrossManufacturingMargin: selling == null ? null : selling - actual,
+         simulatedGrossManufacturingMargin: selling == null ? null : selling - actual,
+         operatingCost: operatingAdd,
+         financingCost: financingAdd,
         marginBasis: snapshotUnitSalePrice == null ? "unavailable_for_legacy_order" : "creation_sale_price_snapshot",
         snapshotUnitSalePrice },
       trace: {
@@ -1118,6 +1127,186 @@ router.get("/orders/:id/cost-drilldown", async (req, res) => {
       costPolicy: sanitizeCostPolicy((order.meta as any)?.costPolicy),
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+const PACKAGING_TEST_RESULTS = new Set(["pass", "fail", "pending"]);
+
+function packagingWriteAllowed(req: any, res: any): boolean {
+  if (canAccessModule(req.authUser, "production", "post")) return true;
+  res.status(403).json({ error: "تتطلب إدارة مواصفات التعبئة صلاحية ترحيل التصنيع" });
+  return false;
+}
+
+router.get("/packaging/specifications", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const productItemId = req.query.productItemId ? Number(req.query.productItemId) : null;
+    const specs = await db.select().from(packagingSpecificationsTable).where(and(
+      eq(packagingSpecificationsTable.companyId, cid),
+      ...(productItemId && Number.isInteger(productItemId)
+        ? [eq(packagingSpecificationsTable.productItemId, productItemId)] : []),
+    )).orderBy(asc(packagingSpecificationsTable.code));
+    if (!specs.length) return void res.json([]);
+    const versions = await db.select().from(packagingSpecificationVersionsTable)
+      .where(inArray(packagingSpecificationVersionsTable.specificationId, specs.map((spec) => spec.id)))
+      .orderBy(desc(packagingSpecificationVersionsTable.versionNo));
+    const versionIds = versions.map((version) => version.id);
+    const [approvals, tests] = versionIds.length
+      ? await Promise.all([
+          db.select().from(packagingSpecificationApprovalsTable)
+            .where(inArray(packagingSpecificationApprovalsTable.versionId, versionIds))
+            .orderBy(desc(packagingSpecificationApprovalsTable.decidedAt)),
+          db.select().from(packagingSpecificationTestsTable)
+            .where(inArray(packagingSpecificationTestsTable.versionId, versionIds))
+            .orderBy(desc(packagingSpecificationTestsTable.testDate)),
+        ])
+      : [[], []] as const;
+    const versionsBySpec = new Map<number, any[]>();
+    for (const version of versions) {
+      const rows = versionsBySpec.get(version.specificationId) ?? [];
+      rows.push({
+        ...version,
+        approvals: approvals.filter((approval) => approval.versionId === version.id),
+        tests: tests.filter((test) => test.versionId === version.id),
+      });
+      versionsBySpec.set(version.specificationId, rows);
+    }
+    res.json(specs.map((spec) => ({ ...spec, versions: versionsBySpec.get(spec.id) ?? [] })));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/packaging/specifications", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid || !packagingWriteAllowed(req, res)) return;
+    const code = String(req.body?.code ?? "").trim().slice(0, 80);
+    const name = String(req.body?.name ?? "").trim().slice(0, 250);
+    const productItemId = Number(req.body?.productItemId);
+    if (!code || !name || !Number.isInteger(productItemId) || productItemId <= 0)
+      return void res.status(400).json({ error: "كود ومسمى الصنف ومادة المنتج مطلوبة" });
+    const [item] = await db.select({ id: itemsTable.id }).from(itemsTable).where(and(
+      eq(itemsTable.companyId, cid), eq(itemsTable.id, productItemId),
+    )).limit(1);
+    if (!item) return void res.status(400).json({ error: "الصنف غير موجود في هذه الشركة" });
+    const [row] = await db.insert(packagingSpecificationsTable).values({
+      companyId: cid, productItemId, code, name,
+      description: req.body?.description ? String(req.body.description).slice(0, 2000) : null,
+      createdBy: req.authUser!.id,
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) { res.status(e?.code === "23505" ? 409 : 500).json({ error: e.message }); }
+});
+
+router.post("/packaging/specifications/:id/versions", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid || !packagingWriteAllowed(req, res)) return;
+    const specificationId = Number(req.params.id);
+    const [spec] = await db.select({ id: packagingSpecificationsTable.id })
+      .from(packagingSpecificationsTable)
+      .where(and(eq(packagingSpecificationsTable.id, specificationId),
+        eq(packagingSpecificationsTable.companyId, cid))).limit(1);
+    if (!spec) return void res.status(404).json({ error: "مواصفة التعبئة غير موجودة" });
+    const [latest] = await db.select({ versionNo: packagingSpecificationVersionsTable.versionNo })
+      .from(packagingSpecificationVersionsTable)
+      .where(eq(packagingSpecificationVersionsTable.specificationId, specificationId))
+      .orderBy(desc(packagingSpecificationVersionsTable.versionNo)).limit(1);
+    const versionNo = latest ? latest.versionNo + 1 : 1;
+    const status = String(req.body?.status ?? "draft");
+    if (!["draft", "pending_approval"].includes(status))
+      return void res.status(400).json({ error: "الإصدار الجديد يجب أن يكون مسودة أو بانتظار الاعتماد" });
+    const materialLines: Array<{
+      itemId: number | null;
+      description: string;
+      quantity: number;
+      unitCode: string;
+      packaging: string;
+    }> = Array.isArray(req.body?.materialLines)
+      ? req.body.materialLines.slice(0, 100).map((line: any) => ({
+          itemId: Number.isInteger(Number(line?.itemId)) ? Number(line.itemId) : null,
+          description: String(line?.description ?? "").slice(0, 250),
+          quantity: num(line?.quantity),
+          unitCode: String(line?.unitCode ?? "PCE").slice(0, 20),
+          packaging: String(line?.packaging ?? "primary").slice(0, 30),
+        })) : [];
+    const materialItemIds = [...new Set(materialLines.map((line) => line.itemId)
+      .filter((itemId): itemId is number => typeof itemId === "number" && itemId > 0))];
+    if (materialItemIds.length) {
+      const validMaterialItems = await db.select({ id: itemsTable.id }).from(itemsTable).where(and(
+        eq(itemsTable.companyId, cid), inArray(itemsTable.id, materialItemIds),
+      ));
+      if (validMaterialItems.length !== materialItemIds.length)
+        return void res.status(400).json({ error: "أحد مواد التغليف غير موجود في هذه الشركة" });
+    }
+    const [row] = await db.insert(packagingSpecificationVersionsTable).values({
+      specificationId, versionNo, status,
+      effectiveFrom: req.body?.effectiveFrom ? String(req.body.effectiveFrom) : null,
+      effectiveTo: req.body?.effectiveTo ? String(req.body.effectiveTo) : null,
+      primaryMaterial: req.body?.primaryMaterial ? String(req.body.primaryMaterial).slice(0, 250) : null,
+      dimensions: req.body?.dimensions && typeof req.body.dimensions === "object" ? req.body.dimensions : {},
+      materialLines,
+      artworkRefs: Array.isArray(req.body?.artworkRefs) ? req.body.artworkRefs.slice(0, 100) : [],
+      notes: req.body?.notes ? String(req.body.notes).slice(0, 2000) : null,
+      createdBy: req.authUser!.id,
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) { res.status(e?.code === "23505" ? 409 : 500).json({ error: e.message }); }
+});
+
+router.post("/packaging/versions/:id/tests", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid || !packagingWriteAllowed(req, res)) return;
+    const versionId = Number(req.params.id);
+    const [version] = await db.select({ id: packagingSpecificationVersionsTable.id })
+      .from(packagingSpecificationVersionsTable)
+      .innerJoin(packagingSpecificationsTable, eq(
+        packagingSpecificationsTable.id, packagingSpecificationVersionsTable.specificationId,
+      )).where(and(eq(packagingSpecificationVersionsTable.id, versionId),
+        eq(packagingSpecificationsTable.companyId, cid))).limit(1);
+    if (!version) return void res.status(404).json({ error: "إصدار مواصفة التعبئة غير موجود" });
+    const result = String(req.body?.result ?? "pending");
+    const testType = String(req.body?.testType ?? "").trim().slice(0, 120);
+    const testDate = String(req.body?.testDate ?? new Date().toISOString().slice(0, 10));
+    if (!testType || !PACKAGING_TEST_RESULTS.has(result) || !/^\d{4}-\d{2}-\d{2}$/.test(testDate))
+      return void res.status(400).json({ error: "نوع الاختبار والتاريخ والنتيجة مطلوبة" });
+    const [row] = await db.insert(packagingSpecificationTestsTable).values({
+      versionId, testType, testDate, result,
+      labName: req.body?.labName ? String(req.body.labName).slice(0, 250) : null,
+      reportReference: req.body?.reportReference ? String(req.body.reportReference).slice(0, 250) : null,
+      notes: req.body?.notes ? String(req.body.notes).slice(0, 2000) : null,
+      testedBy: req.authUser!.id,
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/packaging/versions/:id/approve", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid || !packagingWriteAllowed(req, res)) return;
+    const versionId = Number(req.params.id);
+    const result = await db.transaction(async (tx) => {
+      const locked = await tx.select().from(packagingSpecificationVersionsTable)
+        .innerJoin(packagingSpecificationsTable, eq(
+          packagingSpecificationsTable.id, packagingSpecificationVersionsTable.specificationId,
+        )).where(and(eq(packagingSpecificationVersionsTable.id, versionId),
+          eq(packagingSpecificationsTable.companyId, cid))).limit(1);
+      const version = locked[0]?.packaging_specification_versions;
+      if (!version) throw Object.assign(new Error("إصدار مواصفة التعبئة غير موجود"), { status: 404 });
+      if (!["draft", "pending_approval", "rejected"].includes(version.status))
+        throw Object.assign(new Error("لا يمكن اعتماد هذا الإصدار في حالته الحالية"), { status: 409 });
+      const tests = await tx.select({ result: packagingSpecificationTestsTable.result })
+        .from(packagingSpecificationTestsTable)
+        .where(eq(packagingSpecificationTestsTable.versionId, versionId));
+      if (!tests.length || tests.some((test) => test.result !== "pass"))
+        throw Object.assign(new Error("اعتماد التعبئة يتطلب اختباراً واحداً ناجحاً ولا توجد اختبارات فاشلة أو معلقة"), { status: 409 });
+      await tx.update(packagingSpecificationVersionsTable).set({ status: "approved", updatedAt: new Date() })
+        .where(eq(packagingSpecificationVersionsTable.id, versionId));
+      await tx.insert(packagingSpecificationApprovalsTable).values({
+        versionId, decision: "approved", approvedBy: req.authUser!.id,
+        notes: req.body?.notes ? String(req.body.notes).slice(0, 2000) : null,
+      });
+      return { ...version, status: "approved" };
+    });
+    res.json(result);
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
 // Operational certificate / royalty / warranty lifecycle attached to the
@@ -1163,6 +1352,7 @@ function lifecycleRows(meta: unknown): any[] {
 }
 
 const WARRANTY_CLAIM_DETAIL_KINDS = new Set(["parts", "labor", "shipping"]);
+const WARRANTY_REPAIR_STATUSES = new Set(["open", "diagnosing", "repairing", "ready", "closed", "no_repair"]);
 
 function lifecycleSourceAllocationIds(record: any): number[] {
   const ids = new Set<number>();
@@ -1340,6 +1530,12 @@ commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle", async (req, r
       (claimDetails.length ? claimDetails[0].sourceAllocationId : null);
     const salesReturnId = body.salesReturnId ? Number(body.salesReturnId) : null;
     const supplierId = body.supplierId ? Number(body.supplierId) : null;
+    const repairStatus = body.repairStatus == null ? "open" : String(body.repairStatus);
+    const technicianUserId = body.technicianUserId ? Number(body.technicianUserId) : null;
+    if (type === "warranty" && !WARRANTY_REPAIR_STATUSES.has(repairStatus))
+      return void res.status(400).json({ error: "حالة الإصلاح غير صحيحة" });
+    if (type !== "warranty" && (body.repairStatus != null || body.technicianUserId != null))
+      return void res.status(400).json({ error: "بيانات الإصلاح متاحة لمطالبات الضمان فقط" });
     if (
       body.salesReturnId != null &&
       body.salesReturnId !== "" &&
@@ -1460,21 +1656,62 @@ commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle", async (req, r
         if (!supplier)
           throw Object.assign(new Error("المورد غير موجود في هذه الشركة"), { status: 400 });
       }
+      if (technicianUserId) {
+        const [technician] = await tx.select({ id: usersTable.id }).from(usersTable)
+          .where(and(eq(usersTable.id, technicianUserId), eq(usersTable.companyId, cid))).limit(1);
+        if (!technician)
+          throw Object.assign(new Error("الفني غير موجود في هذه الشركة"), { status: 400 });
+      }
       if (salesReturnId) {
         if (type !== "warranty")
           throw Object.assign(new Error("ربط مرتجع البيع متاح للضمان فقط"), { status: 400 });
-        const [returnLine] = await tx.select({ id: salesReturnsTable.id })
-          .from(salesReturnsTable)
-          .innerJoin(salesReturnLinesTable, and(
-            eq(salesReturnLinesTable.returnId, salesReturnsTable.id),
-            eq(salesReturnLinesTable.companyId, cid),
+        const returnLines = await tx.select({
+          id: salesReturnLinesTable.id,
+          itemId: salesReturnLinesTable.itemId,
+        }).from(salesReturnLinesTable)
+          .innerJoin(salesReturnsTable, and(
+            eq(salesReturnsTable.id, salesReturnLinesTable.returnId),
+            eq(salesReturnsTable.companyId, cid),
+            eq(salesReturnsTable.status, "posted"),
           ))
-          .where(and(eq(salesReturnsTable.id, salesReturnId),
-            eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted"),
-            eq(salesReturnLinesTable.itemId, Number(order.product_item_id))))
-          .limit(1);
-        if (!returnLine)
+          .where(and(
+            eq(salesReturnLinesTable.companyId, cid),
+            eq(salesReturnLinesTable.returnId, salesReturnId),
+          ));
+        const matchingReturnLines = returnLines.filter(
+          (line) => line.itemId === Number(order.product_item_id),
+        );
+        if (!matchingReturnLines.length)
           throw Object.assign(new Error("المرتجع المُرحّل لا يحتوي منتج أمر التصنيع"), { status: 400 });
+        const currentAttributions = await tx.select({
+          lineId: salesLineProductionCostAttributionsTable.documentLineId,
+          status: salesLineProductionCostAttributionsTable.status,
+          productionOrderId: salesLineProductionCostAttributionsTable.productionOrderId,
+        }).from(salesLineProductionCostAttributionsTable)
+          .innerJoin(stockLedgerTable, and(
+            eq(stockLedgerTable.id, salesLineProductionCostAttributionsTable.movementLedgerId),
+            eq(stockLedgerTable.companyId, cid),
+            eq(stockLedgerTable.refType, "sales_return"),
+            eq(stockLedgerTable.refId, salesReturnId),
+            eq(stockLedgerTable.sourceLineId, salesLineProductionCostAttributionsTable.documentLineId),
+          ))
+          .where(and(
+            eq(salesLineProductionCostAttributionsTable.companyId, cid),
+            eq(salesLineProductionCostAttributionsTable.documentType, "sales_return"),
+            eq(salesLineProductionCostAttributionsTable.documentId, salesReturnId),
+          ));
+        const attributionsByLine = new Map<number, typeof currentAttributions>();
+        for (const attribution of currentAttributions) {
+          const rows = attributionsByLine.get(attribution.lineId);
+          if (rows) rows.push(attribution);
+          else attributionsByLine.set(attribution.lineId, [attribution]);
+        }
+        if (matchingReturnLines.some((line) => {
+          const rows = attributionsByLine.get(line.id) ?? [];
+          return rows.length === 0 ||
+            rows.some((row) => row.status !== "complete" || row.productionOrderId !== orderId);
+        }))
+          throw Object.assign(new Error("المطالبة الفعلية تتطلب لقطة دفعة إنتاج مكتملة وحديثة لكل سطر منتج في مرتجع البيع"), { status: 409 });
       }
       if (
         status !== "draft" &&
@@ -1500,6 +1737,10 @@ commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle", async (req, r
         maximumAmount: body.maximumAmount == null ? null : num(body.maximumAmount),
         effectiveFrom, effectiveTo, sourceAllocationId, salesReturnId, supplierId,
         tiers, tierBasis: body.tierBasis === "sales" ? "sales" : "units",
+        repairStatus: type === "warranty" ? repairStatus : null,
+        technicianUserId: type === "warranty" ? technicianUserId : null,
+        repairNotes: type === "warranty" && body.repairNotes ? String(body.repairNotes).slice(0, 2000) : null,
+        repairOpenedAt: type === "warranty" ? now : null,
         claimDetails: claimDetails.map((detail) => ({
           ...detail,
           amount: num(allocations.find((x) => x.id === detail.sourceAllocationId)?.allocatedAmount),
@@ -1742,9 +1983,14 @@ commercialLifecycleRouter.patch("/orders/:id/commercial-lifecycle/:lifecycleId",
       return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
     const orderId = Number(req.params.id);
     const lifecycleId = String(req.params.lifecycleId);
-    const status = String(req.body?.status ?? "");
-    if (!COMMERCIAL_LIFECYCLE_STATUSES.has(status))
+    const requestedStatus = req.body?.status == null ? null : String(req.body.status);
+    const requestedRepairStatus = req.body?.repairStatus == null ? null : String(req.body.repairStatus);
+    if (!requestedStatus && !requestedRepairStatus)
+      return void res.status(400).json({ error: "حالة دورة الحياة أو الإصلاح مطلوبة" });
+    if (requestedStatus && !COMMERCIAL_LIFECYCLE_STATUSES.has(requestedStatus))
       return void res.status(400).json({ error: "حالة دورة الحياة غير صحيحة" });
+    if (requestedRepairStatus && !WARRANTY_REPAIR_STATUSES.has(requestedRepairStatus))
+      return void res.status(400).json({ error: "حالة الإصلاح غير صحيحة" });
     const updated = await db.transaction(async (tx) => {
       const locked = await tx.execute(sql`
         select id, branch_id, status, meta from production_orders
@@ -1759,16 +2005,27 @@ commercialLifecycleRouter.patch("/orders/:id/commercial-lifecycle/:lifecycleId",
       const index = rows.findIndex((x) => x.id === lifecycleId);
       if (index < 0) throw Object.assign(new Error("سجل دورة الحياة غير موجود"), { status: 404 });
       const current = rows[index];
-      if (!(COMMERCIAL_LIFECYCLE_TRANSITIONS[String(current.status)] ?? []).includes(status))
-        throw Object.assign(new Error(`لا يمكن نقل دورة الحياة من ${current.status} إلى ${status}`), { status: 409 });
+      if (requestedRepairStatus && current.type !== "warranty")
+        throw Object.assign(new Error("حالة الإصلاح متاحة لمطالبات الضمان فقط"), { status: 400 });
+      if (requestedRepairStatus && req.body?.technicianUserId) {
+        const technicianId = Number(req.body.technicianUserId);
+        const [technician] = await tx.select({ id: usersTable.id }).from(usersTable).where(and(
+          eq(usersTable.id, technicianId), eq(usersTable.companyId, cid),
+        )).limit(1);
+        if (!technician)
+          throw Object.assign(new Error("الفني غير موجود في هذه الشركة"), { status: 400 });
+      }
+      if (requestedStatus &&
+          !(COMMERCIAL_LIFECYCLE_TRANSITIONS[String(current.status)] ?? []).includes(requestedStatus))
+        throw Object.assign(new Error(`لا يمكن نقل دورة الحياة من ${current.status} إلى ${requestedStatus}`), { status: 409 });
       if (
-        status === "active" &&
+        requestedStatus === "active" &&
         !current.sourceAllocationId &&
         current.calculationMethod !== "provision" &&
         current.type !== "royalty"
       )
         throw Object.assign(new Error("التفعيل المالي يتطلب لقطة تكلفة مُرحّلة من المصدر"), { status: 400 });
-      if (status === "active") {
+      if (requestedStatus === "active") {
         const today = new Date().toISOString().slice(0, 10);
         if (current.effectiveFrom && current.effectiveFrom > today)
           throw Object.assign(new Error("لا يمكن التفعيل قبل تاريخ السريان"), { status: 400 });
@@ -1781,22 +2038,38 @@ commercialLifecycleRouter.patch("/orders/:id/commercial-lifecycle/:lifecycleId",
         )
           throw Object.assign(new Error("تفعيل عقد Royalty يتطلب معدلاً موجباً"), { status: 400 });
       }
-      const next = { ...current, status, updatedAt: new Date().toISOString(), updatedBy: req.authUser!.id };
+      const next = {
+        ...current,
+        ...(requestedStatus ? { status: requestedStatus } : {}),
+        ...(current.type === "warranty" && requestedRepairStatus
+          ? {
+              repairStatus: requestedRepairStatus,
+              repairNotes: req.body?.repairNotes == null
+                ? current.repairNotes ?? null
+                : String(req.body.repairNotes).slice(0, 2000),
+              technicianUserId: req.body?.technicianUserId
+                ? Number(req.body.technicianUserId) : current.technicianUserId ?? null,
+            }
+          : {}),
+        updatedAt: new Date().toISOString(), updatedBy: req.authUser!.id,
+      };
       rows[index] = next;
       await tx.update(productionOrdersTable).set({
         meta: { ...(order.meta ?? {}), commercialLifecycle: rows }, updatedAt: new Date(),
       }).where(and(eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid)));
       await writeEvent(cid, orderId, `${current.type}_lifecycle_status_changed`,
-        { lifecycleId, from: current.status, to: status }, req.authUser!.id, false, tx);
+        { lifecycleId, from: current.status, to: requestedStatus, repairStatus: requestedRepairStatus },
+        req.authUser!.id, false, tx);
       return next;
     });
     res.json(updated);
   } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
 });
 
-// Aggregate manufacturing reports. Sales are deliberately attributed only at
-// product + period level because sales lines do not currently carry production
-// order/batch ids. This prevents fabricated order-level profitability.
+// Aggregate manufacturing reports. Sales and returns are attributed to a
+// production order only through the immutable stamped stock movement snapshot;
+// legacy lines without that proof remain unavailable rather than falling back
+// to current WAC.
 router.get("/reports/costs", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -1946,31 +2219,223 @@ router.get("/reports/realized-product-profitability", async (req, res) => {
           sql`${salesReturnsTable.returnDate} between ${from} and ${to}`, returnsBranch.cond))
         .groupBy(salesReturnLinesTable.itemId),
     ]);
+    // Line-level attribution is intentionally evaluated from the current
+    // posted movement identity, not from item WAC or a reconstructed history.
+    // Missing movement snapshots therefore remain explicitly unavailable.
+    const [saleLineRows, returnLineRows] = await Promise.all([
+      db.select({
+        id: salesInvoiceLinesTable.id,
+        itemId: salesInvoiceLinesTable.itemId,
+        qty: salesInvoiceLinesTable.qty,
+        freeQty: salesInvoiceLinesTable.freeQty,
+        itemType: itemsTable.itemType,
+      }).from(salesInvoiceLinesTable)
+        .innerJoin(salesInvoicesTable, and(
+          eq(salesInvoicesTable.id, salesInvoiceLinesTable.invoiceId),
+          eq(salesInvoicesTable.companyId, cid),
+        ))
+        .leftJoin(itemsTable, and(
+          eq(itemsTable.id, salesInvoiceLinesTable.itemId),
+          eq(itemsTable.companyId, cid),
+        ))
+        .where(and(eq(salesInvoiceLinesTable.companyId, cid), eq(salesInvoicesTable.status, "posted"),
+          sql`${salesInvoicesTable.invoiceDate} between ${from} and ${to}`, salesBranch.cond)),
+      db.select({
+        id: salesReturnLinesTable.id,
+        itemId: salesReturnLinesTable.itemId,
+        qty: salesReturnLinesTable.qty,
+        freeQty: salesReturnLinesTable.freeQty,
+        itemType: itemsTable.itemType,
+      }).from(salesReturnLinesTable)
+        .innerJoin(salesReturnsTable, and(
+          eq(salesReturnsTable.id, salesReturnLinesTable.returnId),
+          eq(salesReturnsTable.companyId, cid),
+        ))
+        .leftJoin(itemsTable, and(
+          eq(itemsTable.id, salesReturnLinesTable.itemId),
+          eq(itemsTable.companyId, cid),
+        ))
+        .where(and(eq(salesReturnLinesTable.companyId, cid), eq(salesReturnsTable.status, "posted"),
+          sql`${salesReturnsTable.returnDate} between ${from} and ${to}`, returnsBranch.cond)),
+    ]);
+    const saleDocIds = [...new Set(saleLineRows.map((row) => row.id).filter(Number.isInteger))];
+    const returnDocIds = [...new Set(returnLineRows.map((row) => row.id).filter(Number.isInteger))];
+    // Filter by line ids below rather than header ids: document ids are
+    // deliberately kept polymorphic in the immutable attribution table.
+    const [saleAttributions, returnAttributions] = await Promise.all([
+      saleDocIds.length
+        ? db.select({ row: salesLineProductionCostAttributionsTable })
+          .from(salesLineProductionCostAttributionsTable)
+          .innerJoin(stockLedgerTable, and(
+            eq(stockLedgerTable.id, salesLineProductionCostAttributionsTable.movementLedgerId),
+            eq(stockLedgerTable.refType, "sales_invoice"),
+            eq(stockLedgerTable.refId, salesLineProductionCostAttributionsTable.documentId),
+          ))
+          .where(and(
+            eq(salesLineProductionCostAttributionsTable.companyId, cid),
+            eq(salesLineProductionCostAttributionsTable.documentType, "sales_invoice"),
+            inArray(salesLineProductionCostAttributionsTable.documentLineId, saleDocIds),
+          ))
+          .then((rows) => rows.map(({ row }) => row))
+        : Promise.resolve([]),
+      returnDocIds.length
+        ? db.select({ row: salesLineProductionCostAttributionsTable })
+          .from(salesLineProductionCostAttributionsTable)
+          .innerJoin(stockLedgerTable, and(
+            eq(stockLedgerTable.id, salesLineProductionCostAttributionsTable.movementLedgerId),
+            eq(stockLedgerTable.refType, "sales_return"),
+            eq(stockLedgerTable.refId, salesLineProductionCostAttributionsTable.documentId),
+          ))
+          .where(and(
+            eq(salesLineProductionCostAttributionsTable.companyId, cid),
+            eq(salesLineProductionCostAttributionsTable.documentType, "sales_return"),
+            inArray(salesLineProductionCostAttributionsTable.documentLineId, returnDocIds),
+          ))
+          .then((rows) => rows.map(({ row }) => row))
+        : Promise.resolve([]),
+    ]);
     const returnByItem = new Map(returns.map((x) => [x.itemId, x]));
     const itemIds = [...new Set([...sales, ...returns].map((x) => x.itemId)
       .filter((x): x is number => Number.isInteger(x) && Number(x) > 0))];
-    const names = itemIds.length ? await db.select({ id: itemsTable.id, name: itemsTable.nameAr })
+    const names = itemIds.length ? await db.select({ id: itemsTable.id, name: itemsTable.nameAr, itemType: itemsTable.itemType })
       .from(itemsTable).where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, itemIds))) : [];
     const nameById = new Map(names.map((x) => [x.id, x.name]));
+    const typeById = new Map(names.map((x) => [x.id, x.itemType]));
     const saleByItem = new Map(sales.map((x) => [x.itemId, x]));
+    const summarizeAttribution = (
+      lineRows: Array<{ id: number; itemId: number | null; qty: string; freeQty: string; itemType: string | null }>,
+      attributionRows: Array<typeof salesLineProductionCostAttributionsTable.$inferSelect>,
+    ) => {
+      const rowsByLine = new Map<number, typeof attributionRows>();
+      for (const row of attributionRows) {
+        const existing = rowsByLine.get(row.documentLineId);
+        if (existing) existing.push(row);
+        else rowsByLine.set(row.documentLineId, [row]);
+      }
+      const byItem = new Map<number, { cost: number; expected: number; complete: number; unavailable: number }>();
+      for (const line of lineRows) {
+        if (!line.itemId || line.itemType === "service" || line.itemType === "prepaid_expense") continue;
+        if ((Number(line.qty) || 0) + (Number(line.freeQty) || 0) <= 0) continue;
+        const item = byItem.get(line.itemId) ?? { cost: 0, expected: 0, complete: 0, unavailable: 0 };
+        item.expected += 1;
+        const attrs = rowsByLine.get(line.id) ?? [];
+        if (attrs.length > 0 && attrs.every((row) => row.status === "complete")) {
+          item.complete += 1;
+          item.cost += attrs.reduce((sum, row) => sum + num(row.totalCost), 0);
+        } else {
+          item.unavailable += 1;
+        }
+        byItem.set(line.itemId, item);
+      }
+      return byItem;
+    };
+    const saleCostByItem = summarizeAttribution(saleLineRows, saleAttributions);
+    const returnCostByItem = summarizeAttribution(returnLineRows, returnAttributions);
+    const attributedOrderIds = [...new Set(
+      [...saleAttributions, ...returnAttributions]
+        .map((row) => row.productionOrderId)
+        .filter((id): id is number => typeof id === "number" && Number.isInteger(id) && id > 0),
+    )];
+    const [attributedOrders, operatingFinancingAllocations] = attributedOrderIds.length
+      ? await Promise.all([
+          db.select({
+            id: productionOrdersTable.id,
+            producedQty: productionOrdersTable.producedQty,
+          }).from(productionOrdersTable).where(and(
+            eq(productionOrdersTable.companyId, cid),
+            inArray(productionOrdersTable.id, attributedOrderIds),
+          )),
+          db.select().from(productionCostAllocationsTable).where(and(
+            eq(productionCostAllocationsTable.companyId, cid),
+            inArray(productionCostAllocationsTable.orderId, attributedOrderIds),
+          )),
+        ])
+      : [[], []] as const;
+    const producedQtyByOrder = new Map(attributedOrders.map((row) => [row.id, num(row.producedQty)]));
+    const layersByOrder = new Map<number, { operating: number; financing: number }>();
+    for (const allocation of operatingFinancingAllocations) {
+      const treatment = String((allocation.snapshotMeta as any)?.costTreatment ?? "");
+      const layer = layersByOrder.get(allocation.orderId) ?? { operating: 0, financing: 0 };
+      if (["operating", "sga", "warranty"].includes(treatment))
+        layer.operating += num(allocation.allocatedAmount);
+      else if (treatment === "financing")
+        layer.financing += num(allocation.allocatedAmount);
+      layersByOrder.set(allocation.orderId, layer);
+    }
+    const summarizeOperatingFinancing = (
+      rows: Array<typeof salesLineProductionCostAttributionsTable.$inferSelect>,
+      sign: number,
+    ) => {
+      const byItem = new Map<number, { operating: number; financing: number }>();
+      for (const row of rows) {
+        if (row.status !== "complete" || !row.itemId || !row.productionOrderId) continue;
+        const orderQty = producedQtyByOrder.get(row.productionOrderId) ?? 0;
+        const layer = layersByOrder.get(row.productionOrderId);
+        if (!(orderQty > 0) || !layer) continue;
+        const item = byItem.get(row.itemId) ?? { operating: 0, financing: 0 };
+        const share = num(row.quantity) / orderQty;
+        item.operating += sign * layer.operating * share;
+        item.financing += sign * layer.financing * share;
+        byItem.set(row.itemId, item);
+      }
+      return byItem;
+    };
+    const saleOperatingFinancing = summarizeOperatingFinancing(saleAttributions, 1);
+    // Keep return layers positive here; the product result subtracts returned
+    // costs exactly once below. A negative layer plus subtraction would add
+    // returned operating/financing costs back into realized margin.
+    const returnOperatingFinancing = summarizeOperatingFinancing(returnAttributions, 1);
     const products = itemIds.map((itemId) => {
       const sold = saleByItem.get(itemId);
       const returned = returnByItem.get(itemId);
+      const saleCost = saleCostByItem.get(itemId);
+      const returnCost = returnCostByItem.get(itemId);
+      const itemType = typeById.get(itemId);
+      const stockAttributionComplete =
+        itemType === "service" || itemType === "prepaid_expense"
+          ? false
+          : (saleCost?.expected ?? 0) === (saleCost?.complete ?? 0) &&
+            (returnCost?.expected ?? 0) === (returnCost?.complete ?? 0);
+      const attributedCost = stockAttributionComplete
+        ? (saleCost?.cost ?? 0) - (returnCost?.cost ?? 0)
+        : null;
+      const saleLayers = saleOperatingFinancing.get(itemId) ?? { operating: 0, financing: 0 };
+      const returnLayers = returnOperatingFinancing.get(itemId) ?? { operating: 0, financing: 0 };
+      const operatingCost = stockAttributionComplete
+        ? saleLayers.operating - returnLayers.operating : null;
+      const financingCost = stockAttributionComplete
+        ? saleLayers.financing - returnLayers.financing : null;
+      const realizedNetRevenue = num(sold?.revenue) - num(returned?.revenue);
+      const grossMargin = stockAttributionComplete
+        ? realizedNetRevenue - (attributedCost ?? 0) : null;
       return {
         itemId, productName: nameById.get(itemId) ?? null,
         postedSalesQty: num(sold?.quantity), postedReturnQty: num(returned?.quantity),
         netSoldQty: num(sold?.quantity) - num(returned?.quantity),
         postedSalesRevenue: num(sold?.revenue), postedReturnRevenue: num(returned?.revenue),
-        realizedNetRevenue: num(sold?.revenue) - num(returned?.revenue),
-        operatingCost: null, financingCost: null, grossMargin: null,
-        marginStatus: "unavailable_without_sales_line_batch_or_production_order_cost_link",
+        realizedNetRevenue,
+        operatingCost, financingCost,
+        grossMargin,
+        operatingProfit: stockAttributionComplete && operatingCost != null
+          ? grossMargin! - operatingCost : null,
+        finalMargin: stockAttributionComplete && operatingCost != null && financingCost != null
+          ? grossMargin! - operatingCost - financingCost : null,
+        attributedProductionCost: attributedCost,
+        marginStatus: itemType === "service" || itemType === "prepaid_expense"
+          ? "not_applicable_non_stock_item"
+          : stockAttributionComplete
+            ? "complete_from_immutable_stock_batch_source"
+            : "unavailable_without_complete_immutable_stock_batch_source",
       };
     });
     res.json({
       products,
       basis: "posted_sales_and_posted_returns_base_currency_product_period",
-      attribution: "product_period_only_not_production_order",
-      separation: { operating: "not_attributed", financing: "not_attributed" },
+      attribution: "immutable_sales_return_line_stock_movement_to_production_receipt_batch",
+      separation: {
+        operating: "immutable_order_source_allocations_applied_by_finished_batch_quantity",
+        financing: "immutable_order_source_allocations_applied_by_finished_batch_quantity",
+      },
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -2192,7 +2657,7 @@ export async function productionWizardHandler(req: any, res: any) {
         const treatment = COST_TREATMENTS.has(String(a.treatment))
           ? String(a.treatment) : "manufacturing_overhead";
         const policy = sanitizeCostPolicy(b.costPolicy);
-        const includeInManufacturing = !["economic", "operating", "sga", "warranty"].includes(treatment) &&
+         const includeInManufacturing = !["economic", "operating", "financing", "sga", "warranty"].includes(treatment) &&
           !(treatment === "royalty" && policy.royaltyLayer !== "manufacturing") &&
           !(treatment === "certification" && policy.certificationLayer !== "manufacturing");
         if (includeInManufacturing) {

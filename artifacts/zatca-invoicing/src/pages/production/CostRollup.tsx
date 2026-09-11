@@ -140,8 +140,8 @@ export default function CostRollup() {
         ["Source Type","Source Record ID","Actual Source Amount","Applied Amount","Under Applied","Over Applied","Variance"],
         ...(aggregate?.overhead?.rows??[]).map((x:any)=>[x.sourceType,x.sourceRecordId,x.actualAmount,x.appliedAmount,x.underAppliedAmount,x.overAppliedAmount,x.variance])];
     } else {
-      rows=[["Product ID","Product","Posted Sales Qty","Posted Return Qty","Net Sold Qty","Posted Sales Revenue","Posted Return Revenue","Realized Net Revenue","Gross Margin","Operating Cost","Financing Cost","Attribution"],
-        ...(profitability?.products??[]).map((x:any)=>[x.itemId,x.productName,x.postedSalesQty,x.postedReturnQty,x.netSoldQty,x.postedSalesRevenue,x.postedReturnRevenue,x.realizedNetRevenue,"UNAVAILABLE","UNAVAILABLE","UNAVAILABLE",x.marginStatus])];
+      rows=[["Product ID","Product","Posted Sales Qty","Posted Return Qty","Net Sold Qty","Posted Sales Revenue","Posted Return Revenue","Realized Net Revenue","Attributed Production Cost","Gross Manufacturing Margin","Operating Cost","Financing Cost","Operating Profit","Final Margin","Attribution"],
+        ...(profitability?.products??[]).map((x:any)=>[x.itemId,x.productName,x.postedSalesQty,x.postedReturnQty,x.netSoldQty,x.postedSalesRevenue,x.postedReturnRevenue,x.realizedNetRevenue,x.attributedProductionCost ?? "UNAVAILABLE",x.grossMargin ?? "UNAVAILABLE",x.operatingCost ?? "UNAVAILABLE",x.financingCost ?? "UNAVAILABLE",x.operatingProfit ?? "UNAVAILABLE",x.finalMargin ?? "UNAVAILABLE",x.marginStatus])];
     }
     const csv="\uFEFF"+rows.map(r=>r.map(quote).join(",")).join("\r\n");
     downloadBlob(new Blob([csv],{type:"text/csv;charset=utf-8"}),
@@ -460,11 +460,21 @@ export default function CostRollup() {
             onRefresh={loadReports} loading={reportLoading} onExport={()=>exportCsv("sales")}/>
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
             الإيراد أدناه محقق من فواتير البيع والمرتجعات المُرحّلة فقط وعلى مستوى المنتج والفترة.
-            هامش الربح وتكاليف التشغيل والتمويل غير متاحة بأمان لأن سطور البيع لا تحفظ رابط التشغيلة/أمر الإنتاج؛ لن ينسب النظام تكلفة مختلقة.
+             هامش التصنيع وتكاليف التشغيل/التمويل تُعرض فقط عند ثبوت رابط حركة المخزون إلى دفعة إنتاج فعلية
+             ولقطات مصدر معتمدة؛ السجل التاريخي غير المربوط يظهر صراحة كغير متاح دون تكلفة تقديرية.
           </div>
           <Card><CardHeader><CardTitle className="text-base">المبيعات والمرتجعات المحققة</CardTitle></CardHeader>
-            <CardContent className="p-0"><ReportTable headers={["المنتج","مباع","مرتجع","صافي الكمية","إيراد البيع","إيراد المرتجع","صافي الإيراد","الربحية"]}
-              rows={(profitability?.products??[]).map((x:any)=>[x.productName??`#${x.itemId}`,x.postedSalesQty,x.postedReturnQty,x.netSoldQty,x.postedSalesRevenue,x.postedReturnRevenue,x.realizedNetRevenue,"غير متاحة — ينقص رابط تكلفة التشغيلة"])}/></CardContent></Card>
+             <CardContent className="p-0"><ReportTable headers={["المنتج","مباع","مرتجع","صافي الكمية","إيراد البيع","إيراد المرتجع","صافي الإيراد","تكلفة التصنيع المنسوبة","هامش التصنيع","التشغيل","التمويل","ربح التشغيل","الهامش النهائي","حالة الإسناد"]}
+               rows={(profitability?.products??[]).map((x:any)=>[
+                 x.productName??`#${x.itemId}`,x.postedSalesQty,x.postedReturnQty,x.netSoldQty,
+                 x.postedSalesRevenue,x.postedReturnRevenue,x.realizedNetRevenue,
+                 x.attributedProductionCost ?? "غير متاحة", x.grossMargin ?? "غير متاح",
+                 x.operatingCost ?? "غير متاح", x.financingCost ?? "غير متاح",
+                 x.operatingProfit ?? "غير متاح", x.finalMargin ?? "غير متاح",
+                 x.marginStatus === "complete_from_immutable_stock_batch_source" ? "مكتمل — مصدر دفعة إنتاج فعلي" :
+                   x.marginStatus === "not_applicable_non_stock_item" ? "غير منطبق — صنف غير مخزني" :
+                   "غير متاح — مصدر الدفعة التاريخي مفقود",
+               ])}/></CardContent></Card>
         </TabsContent>
       </Tabs>
     </div>

@@ -600,6 +600,106 @@ async function ensureColumns(
  * to re-run on every boot.
  */
 const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
+  { label: "stock_ledger.source_line_id",
+    sql: `ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS source_line_id INTEGER` },
+  { label: "packaging specification workflow tables",
+    sql: `CREATE TABLE IF NOT EXISTS packaging_specifications (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      product_item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
+      code TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS packaging_specs_company_code_uniq
+      ON packaging_specifications(company_id, code);
+    CREATE INDEX IF NOT EXISTS packaging_specs_product_idx
+      ON packaging_specifications(company_id, product_item_id);
+
+    CREATE TABLE IF NOT EXISTS packaging_specification_versions (
+      id SERIAL PRIMARY KEY,
+      specification_id INTEGER NOT NULL REFERENCES packaging_specifications(id) ON DELETE CASCADE,
+      version_no INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      effective_from DATE,
+      effective_to DATE,
+      primary_material TEXT,
+      dimensions JSONB NOT NULL DEFAULT '{}'::jsonb,
+      material_lines JSONB NOT NULL DEFAULT '[]'::jsonb,
+      artwork_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+      notes TEXT,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS packaging_spec_versions_spec_no_uniq
+      ON packaging_specification_versions(specification_id, version_no);
+    CREATE INDEX IF NOT EXISTS packaging_spec_versions_status_idx
+      ON packaging_specification_versions(specification_id, status);
+
+    CREATE TABLE IF NOT EXISTS packaging_specification_approvals (
+      id SERIAL PRIMARY KEY,
+      version_id INTEGER NOT NULL REFERENCES packaging_specification_versions(id) ON DELETE CASCADE,
+      decision TEXT NOT NULL,
+      approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      notes TEXT,
+      decided_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS packaging_spec_approvals_version_idx
+      ON packaging_specification_approvals(version_id);
+
+    CREATE TABLE IF NOT EXISTS packaging_specification_tests (
+      id SERIAL PRIMARY KEY,
+      version_id INTEGER NOT NULL REFERENCES packaging_specification_versions(id) ON DELETE CASCADE,
+      test_type TEXT NOT NULL,
+      lab_name TEXT,
+      test_date DATE NOT NULL,
+      result TEXT NOT NULL,
+      report_reference TEXT,
+      notes TEXT,
+      tested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS packaging_spec_tests_version_idx
+      ON packaging_specification_tests(version_id);` },
+  { label: "sales_line_production_cost_attributions",
+    sql: `CREATE TABLE IF NOT EXISTS sales_line_production_cost_attributions (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      document_type TEXT NOT NULL,
+      document_id INTEGER NOT NULL,
+      document_line_id INTEGER NOT NULL,
+      movement_ledger_id INTEGER REFERENCES stock_ledger(id) ON DELETE RESTRICT,
+      source_outbound_ledger_id INTEGER REFERENCES stock_ledger(id) ON DELETE RESTRICT,
+      source_ledger_id INTEGER REFERENCES stock_ledger(id) ON DELETE RESTRICT,
+      production_order_id INTEGER REFERENCES production_orders(id) ON DELETE RESTRICT,
+      item_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
+      batch_number TEXT,
+      quantity NUMERIC(18,4) NOT NULL,
+      cost_price NUMERIC(18,6) NOT NULL DEFAULT '0',
+      total_cost NUMERIC(18,4) NOT NULL DEFAULT '0',
+      status TEXT NOT NULL,
+      unavailable_reason TEXT,
+      snapshot_key TEXT NOT NULL,
+      source_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT sales_line_prod_cost_snapshot_uniq UNIQUE(company_id, snapshot_key)
+    );
+    CREATE INDEX IF NOT EXISTS sales_line_prod_cost_line_idx
+      ON sales_line_production_cost_attributions(company_id, document_type, document_line_id);
+    CREATE INDEX IF NOT EXISTS sales_line_prod_cost_source_idx
+      ON sales_line_production_cost_attributions(company_id, source_ledger_id);
+    CREATE OR REPLACE FUNCTION reject_sales_line_production_cost_mutation() RETURNS trigger AS $$
+    BEGIN RAISE EXCEPTION 'sales line production cost attributions are immutable'; END; $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS sales_line_prod_cost_no_mutation
+      ON sales_line_production_cost_attributions;
+    CREATE TRIGGER sales_line_prod_cost_no_mutation
+      BEFORE UPDATE OR DELETE ON sales_line_production_cost_attributions
+      FOR EACH ROW EXECUTE FUNCTION reject_sales_line_production_cost_mutation();` },
   { label: "companies.payroll_cost_basis",
     sql: `ALTER TABLE companies ADD COLUMN IF NOT EXISTS payroll_cost_basis TEXT NOT NULL DEFAULT 'gross'` },
   { label: "create employee_project_assignments table",
@@ -3561,10 +3661,11 @@ async function runHeal(options: {
   // agent package update, so a partially-upgraded agent must heal first.
   await ensureSupplierMetadataCompatibility();
 
-  // These two payroll tables have complete additive DDL here, unlike generic
-  // schema entities. Create them before strict missing-table validation so an
-  // already-initialized agent DB can heal itself on its first request after a
-  // central release instead of entering a permanent AGENT_SCHEMA_FAILED loop.
+  // These release-managed tables have complete additive DDL here, unlike
+  // generic schema entities. Create them before strict missing-table
+  // validation so an already-initialized agent DB can heal itself on its
+  // first request after a central release instead of entering a permanent
+  // AGENT_SCHEMA_FAILED loop.
   try {
     await ensurePayrollAllocationSchema({ strict: strictSchema });
   } catch (err) {

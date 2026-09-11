@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 
 import {
   canAccessModule,
@@ -77,4 +78,20 @@ test("normalizing a legacy company menu materializes simple manufacturing OFF", 
     JSON.parse(normalizeCompanyMenuPermissions('{"simple_manufacturing":true}')),
     { simple_manufacturing: true },
   );
+});
+
+test("simple facade exposes only explicit lifecycle endpoints under simple action gates", async () => {
+  const [facade, production] = await Promise.all([
+    readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(facade, /router\.use\(commercialLifecycleRouter\)/);
+  assert.match(facade, /requireModulePermission\("simple_manufacturing"\)/);
+  assert.match(facade, /const view = requirePermission\("simple_manufacturing", "view"\)/);
+  assert.match(facade, /const post = requirePermission\("simple_manufacturing", "post"\)/);
+  assert.match(facade, /const unpost = requirePermission\("simple_manufacturing", "unpost"\)/);
+  assert.doesNotMatch(facade, /router\.use\(\s*productionRouter/);
+  assert.match(production, /function lifecycleModuleKey\(\): "production" \| "simple_manufacturing"/);
+  assert.match(production, /getContextModuleKey\(\) === "simple_manufacturing"/);
+  assert.match(production, /eq\(productionOrdersTable\.companyId, cid\)/);
 });
