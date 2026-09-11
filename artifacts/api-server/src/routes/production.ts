@@ -3,6 +3,7 @@
 // Multi-tenant, branch-scoped. Status transitions enforced server-side.
 // Every mutation writes a row into production_events for full auditability.
 import { Router } from "express";
+import { TransactionFailure, transactionFailureResponse } from "../lib/transactionFailure.js";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
@@ -5809,11 +5810,16 @@ async function reconcileFinalStageDrivers(
       : { accountId: split.accountId, debit: split.amount, description: "عكس فرق محرك فعلي لمصدر تكلفة" }));
   }
   let journalId: number | null = null;
-  if (Math.abs(net) >= 0.005) {
-    if (!order.wipAccountId) throw Object.assign(new Error("حساب WIP مطلوب لتسوية محرك الوقت الفعلي"), { status: 409 });
-    lines.unshift(net > 0
-      ? { accountId: order.wipAccountId, debit: net, description: "فرق محركات تنفيذ فعلية — WIP" }
-      : { accountId: order.wipAccountId, credit: Math.abs(net), description: "عكس فرق محركات تنفيذ فعلية — WIP" });
+  net = Number(net.toFixed(2));
+  // Offsetting source deltas still move value between expense accounts even
+  // when the net WIP change is zero.
+  if (lines.length > 0) {
+    if (Math.abs(net) >= 0.005) {
+      if (!order.wipAccountId) throw Object.assign(new Error("حساب WIP مطلوب لتسوية محرك الوقت الفعلي"), { status: 409 });
+      lines.unshift(net > 0
+        ? { accountId: order.wipAccountId, debit: net, description: "فرق محركات تنفيذ فعلية — WIP" }
+        : { accountId: order.wipAccountId, credit: Math.abs(net), description: "عكس فرق محركات تنفيذ فعلية — WIP" });
+    }
     journalId = await createJournalEntry({
       companyId: cid, audit: { req }, branchId: order.branchId, date: new Date().toISOString().slice(0, 10),
       docNumber: `${order.orderNumber}-DRV`, entryType: "production_driver_reconciliation",
@@ -5868,6 +5874,9 @@ export async function productionStatusHandler(req: any, res: any) {
       return;
     }
     const transitioned = await db.transaction(async (tx) => {
+    // All status-handler rejection paths throw locally. The outer catch sends
+    // the response only after Drizzle has rolled back preceding GL/stock writes.
+    const res = transactionFailureResponse();
     // Serialize every transition for one tenant/order. The lock is held until
     // stock, ledger, GL, event and status all commit or all roll back.
     await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${id})`);
@@ -6904,6 +6913,10 @@ export async function productionStatusHandler(req: any, res: any) {
     });
     if (transitioned && !res.headersSent) res.json(transitioned);
   } catch (e: any) {
+    if (e instanceof TransactionFailure) {
+      res.status(e.status).json(e.payload);
+      return;
+    }
     const status = [400, 403, 404, 409, 423].includes(Number(e?.status))
       ? Number(e.status) : 500;
     res.status(status).json({ error: e.message });

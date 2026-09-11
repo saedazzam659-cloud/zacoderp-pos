@@ -14,7 +14,7 @@ test("production status effects share one transaction and order lock", async () 
   assert.match(handler, /lockStockBalances\([\s\S]*?, tx\)/);
   assert.doesNotMatch(handler.replace("db.transaction", ""), /\bdb\.(select|insert|update|delete|execute)\b/);
   const journalCalls = (handler.match(/await createJournalEntry\(/g) ?? []).length;
-  assert.equal(journalCalls, 5, "issue, receipt, both reversal journals and cancellation are covered");
+  assert.equal(journalCalls, 6, "issue, receipt, original and driver reversal journals and cancellation are covered");
   assert.equal((handler.match(/dx: tx/g) ?? []).length, journalCalls, "every journal uses the surrounding transaction");
   assert.ok((handler.match(/}, tx\);/g) ?? []).length >= 4, "stock ledger writes use tx");
   assert.match(handler, /writeEvent\([\s\S]*?false,\s*tx,/);
