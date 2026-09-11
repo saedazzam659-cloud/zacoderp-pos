@@ -14,6 +14,12 @@ Actual stage drivers reconcile against immutable planned source allocations thro
 
 **How to apply:** Freeze posted facts, include unreversed driver deltas in capacity and closure calculations, and reverse those deltas exactly.
 
+Accounting verification must include failed finalization after driver reconciliation and zero-net reallocations across different source accounts.
+
+**Why:** An HTTP error plus normal return inside a database transaction commits preceding writes; a zero total delta can still require balanced debit/credit transfers between source accounts.
+
+**How to apply:** Require rollback on post-write validation failure, and decide whether to create a reconciliation journal from nonzero ledger lines rather than the net WIP delta alone.
+
 Simple manufacturing must remain independently activatable, default OFF at company level, with separate user grants. Its shared-core API access must be limited to explicitly supported operations, never a blanket alternative permission for advanced production.
 
 **Why:** Small companies must use the compact module without activating or exposing advanced production screens.
