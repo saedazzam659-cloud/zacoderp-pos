@@ -352,6 +352,12 @@ async function loginAndCapture(
     page.on("console", (message) => {
       if (message.text().startsWith("[visual]")) console.log(message.text());
     });
+    page.on("pageerror", (error) => {
+      // Keep browser diagnostics useful without echoing request bodies,
+      // credentials, or full URLs into the visual-verification log.
+      const message = error.message.replace(/\s+/g, " ").slice(0, 240);
+      console.error(`[visual] browser-pageerror message=${message}`);
+    });
     page.setDefaultTimeout(VISUAL_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(VISUAL_TIMEOUT_MS);
 
@@ -684,13 +690,33 @@ async function loginAndCapture(
       }).first();
       await bomButton.waitFor({ state: "visible" });
       await bomButton.click();
-      await page.getByRole("dialog").waitFor({ state: "visible" });
+      const dialog = page.getByRole("dialog");
+      await dialog.waitFor({ state: "visible" });
+
+      // Opening the dialog is not enough to verify the searchable control:
+      // click the first combobox, filter by the seeded product code, and
+      // assert that the open popover contains exactly the filtered option.
+      const productCombobox = dialog.getByRole("combobox").first();
+      await productCombobox.click();
+      await productCombobox.fill(seeded.productCode);
+      const optionPopover = page.locator("[data-radix-popper-content-wrapper]").last();
+      await optionPopover.getByText(seeded.productCode, { exact: true }).waitFor({ state: "visible" });
+      if (await optionPopover.locator("[data-idx]").count() !== 1) {
+        throw new Error("BOM product combobox did not filter to the seeded product.");
+      }
+      console.log("[visual] stage=bom-dialog status=search-filtered");
+    }).catch(async (error) => {
+      await page.screenshot({ path: derivedCapturePath(outputPath, "-bom-failure"), fullPage: true })
+        .catch(() => undefined);
+      throw error;
     });
     const bomPath = derivedCapturePath(outputPath, "-setup-bom");
     await runStage("screenshot-setup-bom", async () => {
       await page.screenshot({ path: bomPath, fullPage: true });
       console.log(`[visual] stage=screenshot-setup-bom artifact=${bomPath}`);
       await page.keyboard.press("Escape");
+      // The first Escape closes the searchable list; the second closes its dialog.
+      if (await page.getByRole("dialog").isVisible()) await page.keyboard.press("Escape");
     });
 
     await runStage("wizard-tab", () => page.getByRole("tab", { name: "أمر تصنيع جديد", exact: true }).click());

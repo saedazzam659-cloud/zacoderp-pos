@@ -20,6 +20,12 @@ function nextStatus(status: string): string | null {
   } as Record<string, string>)[status] ?? null;
 }
 
+function formatMoney(value: unknown) {
+  if (value == null) return "—";
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount.toLocaleString() : "—";
+}
+
 export function SimpleOrderList({
   orders,
   catalog,
@@ -75,7 +81,7 @@ export function SimpleOrderList({
               </div>
               <div className="space-y-1">
                 <span className="text-muted-foreground text-xs uppercase">التكلفة التقديرية</span>
-                <div className="font-semibold text-base">{Number(selectedOrder.estimatedCost ?? 0).toLocaleString()}</div>
+                <div className="font-semibold text-base">{formatMoney(selectedOrder.estimatedCost)}</div>
               </div>
               <div className="space-y-1">
                 <span className="text-muted-foreground text-xs uppercase">الحالة</span>
@@ -154,10 +160,19 @@ export function SimpleOrderList({
               ) : (
                 <div className="text-sm text-slate-500">لا توجد حركات مواد محفوظة لهذا الأمر.</div>
               )}
-              <div className="mt-3 grid gap-2 sm:grid-cols-3 text-sm border-t pt-3">
-                <div><span className="text-slate-500 block">إجمالي المواد</span><b>{Number(selectedOrder.detail?.items?.reduce((sum: number, item: any) => sum + Number(item.totalCost || 0), 0) || 0).toLocaleString()}</b></div>
-                <div><span className="text-slate-500 block">توزيع التصنيع</span><b>{Number(sourceCosts.reduce((sum: number, source: any) => sum + Number(source.allocatedAmount || 0), 0)).toLocaleString()}</b></div>
-                <div><span className="text-slate-500 block">إجمالي الأمر</span><b>{Number(selectedOrder.actualCost ?? selectedOrder.estimatedCost ?? 0).toLocaleString()}</b></div>
+               <div className="mt-3 grid gap-2 sm:grid-cols-3 text-sm border-t pt-3">
+                 <div><span className="text-slate-500 block">إجمالي المواد</span><b>{formatMoney(
+                   selectedOrder.detail?.items?.length &&
+                   selectedOrder.detail.items.every((item: any) => item.totalCost != null)
+                     ? selectedOrder.detail.items.reduce((sum: number, item: any) => sum + Number(item.totalCost), 0)
+                     : null,
+                 )}</b></div>
+                 <div><span className="text-slate-500 block">توزيع التصنيع</span><b>{formatMoney(
+                   sourceCosts.length
+                     ? sourceCosts.reduce((sum: number, source: any) => sum + Number(source.allocatedAmount), 0)
+                     : null,
+                 )}</b></div>
+                 <div><span className="text-slate-500 block">إجمالي الأمر</span><b>{formatMoney(selectedOrder.actualCost ?? selectedOrder.estimatedCost)}</b></div>
               </div>
             </div>
             {costDrilldown?.totals && costDrilldown.totals.actual != null && (
@@ -165,17 +180,22 @@ export function SimpleOrderList({
                 <div className="mb-3 font-semibold text-slate-800">ملخص إجمالي تكلفة الأمر</div>
                 <div className="grid gap-2 sm:grid-cols-4 text-sm">
                   {(() => {
-                    const materialTotal = Number(costDrilldown.trace?.materials?.reduce((sum: number, line: any) => sum + Number(line.amount || 0), 0) || 0);
-                    const manufacturingTotal = Math.max(0, Number(costDrilldown.totals.actual || 0) - materialTotal);
+                    const materials = Array.isArray(costDrilldown.trace?.materials) ? costDrilldown.trace.materials : [];
+                    const materialTotal = materials.length > 0 &&
+                      materials.every((line: any) => line?.amount != null && Number.isFinite(Number(line.amount)))
+                      ? materials.reduce((sum: number, line: any) => sum + Number(line.amount), 0)
+                      : null;
+                    const manufacturingTotal = materialTotal == null ? null
+                      : Math.max(0, Number(costDrilldown.totals.actual) - materialTotal);
                     return (
                       <>
-                        <div><span className="text-slate-500 block">المواد</span><b>{materialTotal.toLocaleString()}</b></div>
-                        <div><span className="text-slate-500 block">توزيع التصنيع</span><b>{manufacturingTotal.toLocaleString()}</b></div>
+                        <div><span className="text-slate-500 block">المواد</span><b>{formatMoney(materialTotal)}</b></div>
+                        <div><span className="text-slate-500 block">توزيع التصنيع</span><b>{formatMoney(manufacturingTotal)}</b></div>
                       </>
                     );
                   })()}
-                  <div><span className="text-slate-500 block">تكلفة الوحدة</span><b>{Number(costDrilldown.totals.unitCost || 0).toLocaleString()}</b></div>
-                  <div><span className="text-slate-500 block">الانحراف</span><b>{Number(costDrilldown.totals.variance || 0).toLocaleString()}</b></div>
+                  <div><span className="text-slate-500 block">تكلفة الوحدة</span><b>{formatMoney(costDrilldown.totals.unitCost)}</b></div>
+                  <div><span className="text-slate-500 block">الانحراف</span><b>{formatMoney(costDrilldown.totals.variance)}</b></div>
                 </div>
               </div>
             )}

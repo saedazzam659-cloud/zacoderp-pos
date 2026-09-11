@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Boxes, GitBranch, FileText, Plus, Save, Server, PackageOpen } from "lucide-react";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import type { Catalog } from "./types";
 
 export function SimpleSetup({
@@ -74,12 +75,20 @@ export function SimpleSetup({
                 <div className="space-y-4 py-4">
                   <Input value={material.code} onChange={e => setMaterial({ ...material, code: e.target.value })} placeholder="رمز الصنف (مثال: RAW-01)" />
                   <Input value={material.nameAr} onChange={e => setMaterial({ ...material, nameAr: e.target.value })} placeholder="اسم الصنف (مثال: دقيق)" />
-                  <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background" value={material.itemNature} onChange={e => setMaterial({ ...material, itemNature: e.target.value })}>
-                    <option value="raw">مادة خام</option>
-                    <option value="semi">نصف مصنعة</option>
-                    <option value="finished">منتج نهائي</option>
-                    <option value="consumable">مستهلك</option>
-                  </select>
+                  <SearchCombobox
+                    value={material.itemNature}
+                    className="h-10"
+                    openOnFocus={false}
+                    placeholder="اختر طبيعة الصنف..."
+                    searchPlaceholder="ابحث عن طبيعة الصنف..."
+                    items={[
+                      { value: "raw", label: "مادة خام" },
+                      { value: "semi", label: "نصف مصنعة" },
+                      { value: "finished", label: "منتج نهائي" },
+                      { value: "consumable", label: "مستهلك" },
+                    ]}
+                    onValueChange={value => setMaterial({ ...material, itemNature: value })}
+                  />
                    <Button disabled={busy || !canCreate || !material.code || !material.nameAr} onClick={handleSaveMaterial} className="w-full">
                     حفظ الصنف
                   </Button>
@@ -96,10 +105,25 @@ export function SimpleSetup({
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
                     <label className="text-sm font-semibold">المنتج النهائي</label>
-                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={bom.productItemId} onChange={e => setBom({ ...bom, productItemId: e.target.value })}>
-                      <option value="">اختر المنتج...</option>
-                      {catalog.items.filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature)).map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-                    </select>
+                    <SearchCombobox
+                      value={bom.productItemId}
+                      className="h-10"
+                      openOnFocus={false}
+                      placeholder="اختر المنتج..."
+                      searchPlaceholder="ابحث برمز أو اسم المنتج..."
+                      items={[
+                        { value: "", label: "اختر المنتج..." },
+                        ...catalog.items
+                          .filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature))
+                          .map(i => ({
+                            value: String(i.id),
+                            code: i.code,
+                            label: i.nameAr,
+                            labelEn: i.nameEn || undefined,
+                          })),
+                      ]}
+                      onValueChange={value => setBom({ ...bom, productItemId: value })}
+                    />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -108,10 +132,22 @@ export function SimpleSetup({
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-semibold">وحدة المنتج (اختياري)</label>
-                      <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-slate-700" value={bom.outputUnitCode} onChange={e => setBom({ ...bom, outputUnitCode: e.target.value })}>
-                        <option value="">(افتراضي للصنف)</option>
-                        {catalog.units?.map(u => <option key={u.id} value={u.code}>{u.nameAr}</option>)}
-                      </select>
+                      <SearchCombobox
+                        value={bom.outputUnitCode}
+                        className="h-10"
+                        openOnFocus={false}
+                        placeholder="(افتراضي للصنف)"
+                        searchPlaceholder="ابحث عن الوحدة..."
+                        items={[
+                          { value: "", label: "(افتراضي للصنف)" },
+                          ...(catalog.units ?? []).map(u => ({
+                            value: u.code,
+                            code: u.code,
+                            label: u.nameAr,
+                          })),
+                        ]}
+                        onValueChange={value => setBom({ ...bom, outputUnitCode: value })}
+                      />
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -122,30 +158,50 @@ export function SimpleSetup({
                      <div className="text-sm font-semibold text-slate-700">المواد المطلوبة للإنتاج</div>
                      {bomLines.map((line, index) => (
                        <div key={index} className="flex items-center gap-2">
-                         <select className="flex h-10 flex-[2] rounded-md border border-input bg-background px-3 py-2 text-sm"
-                           value={line.itemId}
-                           onChange={e => setBomLines(lines => lines.map((current, i) => i === index
-                             ? { ...current, itemId: e.target.value }
-                             : current))}>
-                           <option value="">اختر المادة...</option>
-                           {catalog.items
-                             .filter(i => !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature))
-                             .map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-                         </select>
+                          <SearchCombobox
+                            value={line.itemId}
+                            className="h-10 flex-[2]"
+                            openOnFocus={false}
+                            placeholder="اختر المادة..."
+                            searchPlaceholder="ابحث برمز أو اسم المادة..."
+                            items={[
+                              { value: "", label: "اختر المادة..." },
+                              ...catalog.items
+                                .filter(i => !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature))
+                                .map(i => ({
+                                  value: String(i.id),
+                                  code: i.code,
+                                  label: i.nameAr,
+                                  labelEn: i.nameEn || undefined,
+                                })),
+                            ]}
+                            onValueChange={value => setBomLines(lines => lines.map((current, i) => i === index
+                              ? { ...current, itemId: value }
+                              : current))}
+                          />
                          <Input className="flex-[1] min-w-[80px]" type="text" inputMode="decimal" value={line.quantity}
                            onChange={e => setBomLines(lines => lines.map((current, i) => i === index
                              ? { ...current, quantity: e.target.value }
                              : current))}
                            placeholder="الكمية" />
-                         <select className="flex h-10 flex-[1] rounded-md border border-input bg-slate-50 px-2 py-2 text-xs"
-                           value={line.unitCode}
-                           title="وحدة القياس (فارغ يعتمد على الوحدة الأساسية للصنف)"
-                           onChange={e => setBomLines(lines => lines.map((current, i) => i === index
-                             ? { ...current, unitCode: e.target.value }
-                             : current))}>
-                           <option value="">(افتراضي)</option>
-                           {catalog.units?.map(u => <option key={u.id} value={u.code}>{u.code}</option>)}
-                         </select>
+                          <SearchCombobox
+                            value={line.unitCode}
+                            className="h-10 flex-[1]"
+                            openOnFocus={false}
+                            placeholder="(افتراضي)"
+                            searchPlaceholder="ابحث عن الوحدة..."
+                            items={[
+                              { value: "", label: "(افتراضي)" },
+                              ...(catalog.units ?? []).map(u => ({
+                                value: u.code,
+                                code: u.code,
+                                label: u.nameAr,
+                              })),
+                            ]}
+                            onValueChange={value => setBomLines(lines => lines.map((current, i) => i === index
+                              ? { ...current, unitCode: value }
+                              : current))}
+                          />
                          <Button type="button" variant="ghost" size="icon" className="text-destructive"
                            disabled={bomLines.length <= 1}
                            onClick={() => setBomLines(lines => lines.filter((_, i) => i !== index))}>
@@ -225,10 +281,23 @@ export function SimpleSetup({
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
                   <label className="text-sm font-semibold">المنتج المرتبط</label>
-                  <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={routing.productItemId} onChange={e => setRouting({ ...routing, productItemId: e.target.value })}>
-                    <option value="">اختر المنتج...</option>
-                    {catalog.items.map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-                  </select>
+                  <SearchCombobox
+                    value={routing.productItemId}
+                    className="h-10"
+                    openOnFocus={false}
+                    placeholder="اختر المنتج..."
+                    searchPlaceholder="ابحث برمز أو اسم المنتج..."
+                    items={[
+                      { value: "", label: "اختر المنتج..." },
+                      ...catalog.items.map(i => ({
+                        value: String(i.id),
+                        code: i.code,
+                        label: i.nameAr,
+                        labelEn: i.nameEn || undefined,
+                      })),
+                    ]}
+                    onValueChange={value => setRouting({ ...routing, productItemId: value })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-semibold">اسم المسار</label>
@@ -324,10 +393,25 @@ export function SimpleSetup({
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-semibold">المنتج الافتراضي</label>
-                  <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={template.productItemId} onChange={e => setTemplate({ ...template, productItemId: e.target.value })}>
-                    <option value="">اختر المنتج الافتراضي...</option>
-                    {catalog.items.filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature)).map(i => <option key={i.id} value={i.id}>{i.nameAr}</option>)}
-                  </select>
+                  <SearchCombobox
+                    value={template.productItemId}
+                    className="h-10"
+                    openOnFocus={false}
+                    placeholder="اختر المنتج الافتراضي..."
+                    searchPlaceholder="ابحث برمز أو اسم المنتج..."
+                    items={[
+                      { value: "", label: "اختر المنتج الافتراضي..." },
+                      ...catalog.items
+                        .filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature))
+                        .map(i => ({
+                          value: String(i.id),
+                          code: i.code,
+                          label: i.nameAr,
+                          labelEn: i.nameEn || undefined,
+                        })),
+                    ]}
+                    onValueChange={value => setTemplate({ ...template, productItemId: value })}
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -336,10 +420,22 @@ export function SimpleSetup({
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-semibold">وحدة القياس</label>
-                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={template.unitCode} onChange={e => setTemplate({ ...template, unitCode: e.target.value })}>
-                      <option value="">(افتراضي للصنف)</option>
-                      {catalog.units?.map(u => <option key={u.id} value={u.code}>{u.nameAr}</option>)}
-                    </select>
+                    <SearchCombobox
+                      value={template.unitCode}
+                      className="h-10"
+                      openOnFocus={false}
+                      placeholder="(افتراضي للصنف)"
+                      searchPlaceholder="ابحث عن الوحدة..."
+                      items={[
+                        { value: "", label: "(افتراضي للصنف)" },
+                        ...(catalog.units ?? []).map(u => ({
+                          value: u.code,
+                          code: u.code,
+                          label: u.nameAr,
+                        })),
+                      ]}
+                      onValueChange={value => setTemplate({ ...template, unitCode: value })}
+                    />
                   </div>
                 </div>
                 <div className="bg-slate-50 p-2 text-xs text-slate-500 rounded border">ملاحظة: إذا تركت الوحدة فارغة سيتم استخدام وحدة القياس الأساسية للصنف عند تطبيق القالب.</div>

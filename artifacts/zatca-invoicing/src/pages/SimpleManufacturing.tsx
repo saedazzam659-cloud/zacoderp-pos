@@ -52,7 +52,14 @@ export default function SimpleManufacturing() {
         throw new Error(response.ok ? "استجابة غير صالحة من الخادم" : `HTTP ${response.status}`);
       }
     }
-    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+     if (!response.ok) {
+       const shortageHint = body?.code === "INSUFFICIENT_RAW_STOCK" &&
+         body?.warehouseId != null && Array.isArray(body?.shortages)
+         ? ` المخزن #${body.warehouseId}: ${body.shortages.map((row: any) =>
+           `${row.description} ناقص ${row.shortfall} ${row.unitCode || ""}`).join("؛")}`
+         : "";
+       throw new Error(`${body?.error || `HTTP ${response.status}`}${shortageHint}`);
+     }
     return body;
   }, [headers]);
 
@@ -179,12 +186,14 @@ export default function SimpleManufacturing() {
   // Wizard Submit
   const handleWizardSubmit = async (mode: "draft" | "execute", payload: any) => {
     const submissionScope = tenantScopeRef.current;
+    let submittedOrderId: number | null = null;
     setBusy(true);
     try {
       const j = await request("/api/simple-manufacturing/orders/wizard", {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      submittedOrderId = Number.isInteger(Number(j?.id)) ? Number(j.id) : null;
       let finalOrder = j;
 
       if (mode === "execute") {
@@ -209,6 +218,15 @@ export default function SimpleManufacturing() {
       setTab("orders");
       await openOrder(finalOrder);
     } catch (e: any) {
+      // Creating the draft and starting it are separate transitions. If issue
+      // fails (for example because the selected raw warehouse has a genuine
+      // shortage), keep the saved order reachable so the operator can inspect
+      // the required/available quantities and fix setup or stock before retry.
+      if (mode === "execute" && submittedOrderId) {
+        setTab("orders");
+        await load();
+        await openOrder({ id: submittedOrderId } as Order);
+      }
       toast({ title: e?.message || "حدث خطأ أثناء الحفظ", variant: "destructive" });
     } finally {
       if (submissionScope === tenantScopeRef.current) setBusy(false);

@@ -32,6 +32,12 @@ interface SearchComboboxProps {
   emptyText?: string;
   className?: string;
   disabled?: boolean;
+  /**
+   * Dialog focus management focuses the first form control when content
+   * mounts. Callers can keep that initial focus from opening the popover while
+   * preserving click/keyboard opening for searchable fields inside dialogs.
+   */
+  openOnFocus?: boolean;
   grouped?: boolean;
   autoFocus?: boolean;
   testId?: string;
@@ -48,6 +54,7 @@ export function SearchCombobox({
   emptyText = "لا توجد نتائج",
   className,
   disabled,
+  openOnFocus = true,
   grouped,
   autoFocus,
   testId,
@@ -221,7 +228,7 @@ export function SearchCombobox({
             disabled={disabled}
             value={displayValue}
             placeholder={selectedItem ? "" : (searchPlaceholder ?? placeholder)}
-            onFocus={() => setOpen(true)}
+            onFocus={() => { if (openOnFocus) setOpen(true); }}
             onClick={() => setOpen(true)}
             onChange={e => {
               setSearch(e.target.value);

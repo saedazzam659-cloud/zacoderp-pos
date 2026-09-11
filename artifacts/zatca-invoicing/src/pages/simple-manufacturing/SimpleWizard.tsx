@@ -369,14 +369,24 @@ export function SimpleWizard({
   const calculateMaterialEstimate = () => {
     const lines = Array.isArray(bomPreview?.lines) ? bomPreview.lines : [];
     const hasCost = lines.some((line: any) => line.totalCost != null || line.unitCost != null);
-    if (!hasCost) return null;
+    if (!hasCost || materialScale == null) return null;
     return lines.reduce((total: number, line: any) => {
-      const lineTotal = line.totalCost != null
+      const recipeLineTotal = line.totalCost != null
         ? Number(line.totalCost)
         : Number(line.quantity || 0) * Number(line.unitCost || 0);
+      const lineTotal = recipeLineTotal * materialScale;
       return total + (Number.isFinite(lineTotal) ? lineTotal : 0);
     }, 0);
   };
+
+  // A BOM line is defined for the recipe's declared outputQty, not implicitly
+  // for one finished unit. Keep the same dimensionless scale used by the
+  // server when it snapshots/executes the order.
+  const recipeOutputQty = Number(bomPreview?.outputQty);
+  const recipeOutputUnit = bomPreview?.outputUnitCode || form.unitCode;
+  const materialScale = Number.isFinite(recipeOutputQty) && recipeOutputQty > 0
+    ? Number(form.plannedQty || 0) / recipeOutputQty
+    : null;
 
   const steps = [
     { id: "basic" as const, label: "البيانات الأساسية", icon: ClipboardList },
@@ -503,15 +513,26 @@ export function SimpleWizard({
                         <div key={i} className="flex gap-2 items-end">
                           <div className="flex-[2] space-y-1">
                             <Label className="text-xs">المادة</Label>
-                            <select className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                              value={line.itemId} onChange={e => {
-                                 setNewBomLines(lines => lines.map((line, index) => index === i
-                                   ? { ...line, itemId: e.target.value }
-                                   : line));
-                              }}>
-                              <option value="">اختر مادة...</option>
-                               {materialItems.map(it => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
-                            </select>
+                            <SearchCombobox
+                              value={line.itemId}
+                              className="h-9"
+                              placeholder="اختر مادة..."
+                              searchPlaceholder="ابحث بالرمز أو الاسم..."
+                              items={[
+                                { value: "", label: "اختر مادة..." },
+                                ...materialItems.map(it => ({
+                                  value: String(it.id),
+                                  code: it.code,
+                                  label: it.nameAr,
+                                  labelEn: it.nameEn || undefined,
+                                })),
+                              ]}
+                              onValueChange={value => {
+                                setNewBomLines(lines => lines.map((line, index) => index === i
+                                  ? { ...line, itemId: value }
+                                  : line));
+                              }}
+                            />
                           </div>
                           <div className="flex-[1] space-y-1">
                             <Label className="text-xs">الكمية</Label>
@@ -523,15 +544,25 @@ export function SimpleWizard({
                           </div>
                           <div className="flex-[1] space-y-1">
                             <Label className="text-xs">الوحدة (فارغ=الأساسية)</Label>
-                            <select className="flex h-9 w-full rounded-md border border-input bg-slate-50 px-2 py-1 text-xs shadow-sm"
-                              value={line.unitCode} onChange={e => {
-                                 setNewBomLines(lines => lines.map((line, index) => index === i
-                                   ? { ...line, unitCode: e.target.value }
-                                   : line));
-                              }}>
-                              <option value="">(افتراضي)</option>
-                               {catalog.units?.map(u => <option key={u.id} value={u.code}>{u.code}</option>)}
-                            </select>
+                            <SearchCombobox
+                              value={line.unitCode}
+                              className="h-9"
+                              placeholder="(افتراضي)"
+                              searchPlaceholder="ابحث عن الوحدة..."
+                              items={[
+                                { value: "", label: "(افتراضي)" },
+                                ...(catalog.units ?? []).map(u => ({
+                                  value: u.code,
+                                  code: u.code,
+                                  label: u.nameAr,
+                                })),
+                              ]}
+                              onValueChange={value => {
+                                setNewBomLines(lines => lines.map((line, index) => index === i
+                                  ? { ...line, unitCode: value }
+                                  : line));
+                              }}
+                            />
                           </div>
                           <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive shrink-0"
                              onClick={() => setNewBomLines(lines => lines.filter((_, idx) => idx !== i))}
@@ -566,7 +597,9 @@ export function SimpleWizard({
                              {l.itemNameAr || l.itemNameEn || l.description || `صنف #${l.itemId}`}
                            </span>
                           <div className="flex items-center gap-2">
-                            <span className="text-slate-400 text-xs">الكمية للوحدة:</span>
+                            <span className="text-slate-400 text-xs">
+                              الكمية لكل {bomPreview?.outputQty || 1} {recipeOutputUnit}:
+                            </span>
                             <span className="font-mono bg-slate-100 px-2 py-0.5 rounded border">{l.quantity} {l.unitCode}</span>
                           </div>
                         </div>
@@ -619,7 +652,8 @@ export function SimpleWizard({
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base text-amber-900">إعداد حسابات ترحيل التصنيع</CardTitle>
                   <CardDescription className="text-amber-800">
-                    تُستخدم حسابات الشركة الموجودة فقط. حفظ المسودة لا يرحّل قيداً ولا يحتاج حساب WIP؛ يلزم حفظ حساب WIP وحساب مخزون الخامات قبل بدء الإنتاج.
+                     تُستخدم حسابات أصول الشركة الموجودة والقابلة للترحيل فقط؛ لا ينشئ هذا النموذج حسابات تلقائياً.
+                     حفظ المسودة لا يرحّل قيداً ولا يحتاج حساب WIP، لكن يلزم حفظ حساب إنتاج تحت التشغيل وحساب مخزون الخامات قبل بدء الإنتاج.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-3 space-y-4">
@@ -632,41 +666,57 @@ export function SimpleWizard({
                       {[
                         {
                           key: "defaultWipAccountId" as const,
-                          label: "حساب إنتاج تحت التشغيل WIP",
+                           label: "إنتاج تحت التشغيل (WIP) — أصل WIP",
                           required: true,
                         },
                         {
                           key: "defaultRawInventoryAccountId" as const,
-                          label: "حساب مخزون الخامات",
+                           label: "مخزون الخامات — أصل المواد الخام",
                           required: true,
                         },
                         {
                           key: "defaultFinishedGoodsAccountId" as const,
-                          label: "حساب مخزون الإنتاج التام (اختياري)",
+                           label: "مخزون الإنتاج التام — أصل المنتج (اختياري)",
                           required: false,
                         },
                       ].map(field => (
                         <div key={field.key} className="space-y-2">
                           <Label>{field.label} {field.required && <span className="text-red-500">*</span>}</Label>
-                          <select
-                            className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-sm"
-                            value={accountSettings[field.key]}
-                            onChange={e => setAccountSettings(current => ({
-                              ...current,
-                              [field.key]: e.target.value,
-                            }))}
-                          >
-                            <option value="">اختر حساباً من دليل الشركة...</option>
-                            {accountingAccounts.map(account => (
-                              <option key={account.id} value={account.id}>
-                                {account.code} — {account.nameAr}
-                              </option>
-                            ))}
-                          </select>
+                           <SearchCombobox
+                             value={accountSettings[field.key]}
+                             className="h-10"
+                             placeholder="اختر حساباً من دليل الشركة..."
+                             searchPlaceholder="ابحث بالرمز أو اسم الحساب..."
+                             items={[
+                               { value: "", label: "اختر حساباً من دليل الشركة..." },
+                               ...accountingAccounts.map(account => ({
+                                 value: String(account.id),
+                                 code: account.code,
+                                 label: account.nameAr,
+                                 labelEn: account.nameEn || undefined,
+                               })),
+                             ]}
+                             onValueChange={value => setAccountSettings(current => ({
+                               ...current,
+                               [field.key]: value,
+                             }))}
+                           />
+                           <p className="text-[11px] text-slate-500">
+                             {accountSettings[field.key]
+                               ? `المحدد: ${accountingAccounts.find(account => String(account.id) === accountSettings[field.key])?.code ?? `#${accountSettings[field.key]}`}`
+                               : "اختر حساباً موجوداً من دليل الشركة؛ لا يتم إنشاء حساب جديد هنا."}
+                           </p>
                         </div>
                       ))}
                     </div>
                   )}
+                   {accountSettings.defaultWipAccountId &&
+                     accountSettings.defaultRawInventoryAccountId &&
+                     accountSettings.defaultWipAccountId === accountSettings.defaultRawInventoryAccountId && (
+                       <div className="rounded-lg border border-amber-300 bg-white p-3 text-xs text-amber-900">
+                         تم اختيار الحساب نفسه لـ WIP ومخزون الخامات. راجع دليل الحسابات واختر الحسابين الصحيحين حسب طبيعة كل حساب؛ لن يتم إنشاء حساب بديل تلقائياً.
+                       </div>
+                     )}
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-amber-200 pt-3">
                     <p className="text-xs text-amber-800">
                       اختيارات المخازن أدناه تُحفظ مع أمر التصنيع نفسه، وليست إعداد مخزن مستقلاً.
@@ -687,19 +737,39 @@ export function SimpleWizard({
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>مخزن سحب الخامات <span className="text-red-500">*</span></Label>
-                  <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm"
-                    value={form.rawWarehouseId} onChange={e => setForm({...form, rawWarehouseId: e.target.value})}>
-                    <option value="">اختر المخزن...</option>
-                    {catalog.warehouses.map(w => <option key={w.id} value={w.id}>{w.nameAr}</option>)}
-                  </select>
+                  <SearchCombobox
+                    value={form.rawWarehouseId}
+                    className="h-10"
+                    placeholder="اختر المخزن..."
+                    searchPlaceholder="ابحث برمز أو اسم المخزن..."
+                    items={[
+                      { value: "", label: "اختر المخزن..." },
+                      ...catalog.warehouses.map(w => ({
+                        value: String(w.id),
+                        code: w.code,
+                        label: w.nameAr,
+                      })),
+                    ]}
+                    onValueChange={value => setForm({...form, rawWarehouseId: value})}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>مستودع إيداع الإنتاج التام <span className="text-red-500">*</span></Label>
-                  <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm"
-                    value={form.finishedWarehouseId} onChange={e => setForm({...form, finishedWarehouseId: e.target.value})}>
-                    <option value="">اختر المخزن...</option>
-                    {catalog.warehouses.map(w => <option key={w.id} value={w.id}>{w.nameAr}</option>)}
-                  </select>
+                  <SearchCombobox
+                    value={form.finishedWarehouseId}
+                    className="h-10"
+                    placeholder="اختر المخزن..."
+                    searchPlaceholder="ابحث برمز أو اسم المخزن..."
+                    items={[
+                      { value: "", label: "اختر المخزن..." },
+                      ...catalog.warehouses.map(w => ({
+                        value: String(w.id),
+                        code: w.code,
+                        label: w.nameAr,
+                      })),
+                    ]}
+                    onValueChange={value => setForm({...form, finishedWarehouseId: value})}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>مركز العمل (اختياري)</Label>
@@ -816,14 +886,19 @@ export function SimpleWizard({
                                     return amt.toLocaleString(undefined, {maximumFractionDigits: 2});
                                   })()}
                                 </div>
-                                <select className="w-full text-xs rounded-lg border-slate-200 bg-white h-9 shadow-sm"
+                                <SearchCombobox
+                                  className="h-9"
                                   disabled={!isSelected || !canSelect}
                                   value={sourceTreatments[key] || "manufacturing_overhead"}
-                                   onChange={e => setSourceTreatments(current => ({...current, [key]: e.target.value}))}>
-                                  <option value="manufacturing_overhead">تكلفة صناعية غير مباشرة</option>
-                                  <option value="quality_prevention">تكلفة جودة وقائية</option>
-                                  <option value="operating">مصاريف تشغيلية</option>
-                                </select>
+                                  placeholder="نوع المعالجة..."
+                                  searchPlaceholder="ابحث عن المعالجة..."
+                                  items={[
+                                    { value: "manufacturing_overhead", label: "تكلفة صناعية غير مباشرة" },
+                                    { value: "quality_prevention", label: "تكلفة جودة وقائية" },
+                                    { value: "operating", label: "مصاريف تشغيلية" },
+                                  ]}
+                                  onValueChange={value => setSourceTreatments(current => ({...current, [key]: value}))}
+                                />
                               </div>
                             );
                           })}
@@ -901,6 +976,37 @@ export function SimpleWizard({
                   </div>
                 </div>
               </div>
+
+               <div className="border rounded-xl p-4">
+                 <div className="text-xs font-semibold text-slate-500 uppercase mb-2">الكميات المطلوبة من الوصفة</div>
+                 {materialScale == null ? (
+                   <div className="text-sm text-amber-700">
+                     كمية ناتج الوصفة غير صالحة؛ لا يمكن حساب المطلوب حتى تُراجع الوصفة.
+                   </div>
+                 ) : (
+                   <>
+                     <p className="text-xs text-slate-500 mb-3">
+                       تنتج الوصفة {bomPreview?.outputQty} {recipeOutputUnit}. المطلوب =
+                       كمية السطر × ({form.plannedQty} ÷ {bomPreview?.outputQty}).
+                       هذه معاينة كمية فقط؛ لا تُنشئ رصيداً ولا تتجاوز تحقق المخزون.
+                       بعد الحفظ افتح تفاصيل الأمر ووسّع «معاينة سحب التشغيلات» لرؤية المتاح في مخزن السحب قبل البدء.
+                     </p>
+                     <div className="divide-y rounded-lg border">
+                       {(bomPreview?.lines ?? []).map((line: any) => (
+                         <div key={line.id} className="flex items-center justify-between gap-3 p-2 text-sm">
+                           <span>{line.itemNameAr || line.description || `صنف #${line.itemId}`}</span>
+                           <span className="font-mono font-semibold">
+                             {Number.isFinite(Number(line.quantity))
+                               ? (Number(line.quantity) * materialScale).toLocaleString(undefined, { maximumFractionDigits: 4 })
+                               : "—"}
+                             {" "}{line.unitCode || ""}
+                           </span>
+                         </div>
+                       ))}
+                     </div>
+                   </>
+                 )}
+               </div>
 
                    </>
                  );

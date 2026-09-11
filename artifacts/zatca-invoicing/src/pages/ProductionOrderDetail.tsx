@@ -952,7 +952,7 @@ export default function ProductionOrderDetail() {
           )}
 
           {/* ─── Phase E — Issue preview (which batches will be pulled) ─── */}
-          {!simpleFacade && !order.issueJournalEntryId && order.rawWarehouseId && (
+          {!order.issueJournalEntryId && order.rawWarehouseId && (
             <IssuePreviewPanel orderId={orderId} token={token ?? ""} apiPrefix={apiPrefix} />
           )}
 
@@ -1242,24 +1242,56 @@ export default function ProductionOrderDetail() {
             </TabsContent>
             <TabsContent value="cost-analysis" className="space-y-3">
               {!costDrilldown ? <div className="p-8 text-center text-slate-500">لا تتوفر بيانات تحليل التكلفة.</div> : <>
-                <div className="grid md:grid-cols-4 gap-2">
-                  <StatCard label="التكلفة الفعلية" value={costDrilldown.totals.actual}/>
-                  <StatCard label="التكلفة القياسية" value={costDrilldown.totals.standard}/>
-                  <StatCard label="الانحراف" value={costDrilldown.totals.variance}/>
-                  <StatCard label="هامش محاكاة بسعر البيع المثبّت عند الإنشاء" value={costDrilldown.totals.simulatedGrossManufacturingMargin}/>
-                </div>
-                <div className="rounded-lg border bg-white dark:bg-slate-900 divide-y text-sm">
-                  <DrillRow label="المواد والتغليف من BOM" value={costDrilldown.trace.materials.reduce((s:number,x:any)=>s+Number(x.amount),0)}
-                    detail={`${costDrilldown.trace.materials.length} سطر — كل سطر مرتبط بصنف المصدر`}/>
-                  <DrillRow label="العمالة" value={costDrilldown.trace.labor.amount}
-                    detail={`${costDrilldown.trace.labor.source.length} لقطة رواتب مُرحّلة`}/>
-                  <DrillRow label="التكاليف غير المباشرة / الشهادات" value={costDrilldown.trace.overhead.amount}
-                    detail={`${costDrilldown.trace.overhead.source.length} لقطة مصدر غير قابلة للتعديل`}/>
-                  <DrillRow label="الهالك" value={costDrilldown.trace.waste.reduce((s:number,x:any)=>s+Number(x.amount),0)}
-                    detail={`${costDrilldown.trace.waste.length} سجل تفصيلي`}/>
-                  <DrillRow label="الجودة وإعادة التشغيل" value={0}
-                    detail={`${costDrilldown.trace.quality.checks} فحص، ${costDrilldown.trace.quality.failed} فاشل — بلا قيد مكرر`}/>
-                </div>
+                 {(() => {
+                   // The compact facade now returns the canonical production
+                   // drilldown envelope. Keep this consumer defensive for
+                   // older saved orders/partial responses: missing financial
+                   // evidence is shown as unavailable, never as a fabricated
+                   // zero and never dereferenced as an absent object.
+                   const trace = costDrilldown?.trace && typeof costDrilldown.trace === "object"
+                     ? costDrilldown.trace : {};
+                   const materials = Array.isArray(trace.materials) ? trace.materials : [];
+                   const labor = trace.labor && typeof trace.labor === "object" ? trace.labor : null;
+                   const overhead = trace.overhead && typeof trace.overhead === "object" ? trace.overhead : null;
+                   const waste = Array.isArray(trace.waste) ? trace.waste : [];
+                   const quality = trace.quality && typeof trace.quality === "object" ? trace.quality : null;
+                   const qualityChecks = quality?.checks == null ? null : Number(quality.checks);
+                   const qualityFailed = quality?.failed == null ? null : Number(quality.failed);
+                   const totalKnownAmounts = (rows: any[]) => rows.length > 0 &&
+                     rows.every((row) => row?.amount != null && Number.isFinite(Number(row.amount)))
+                     ? rows.reduce((sum:number, row:any) => sum + Number(row.amount), 0)
+                     : null;
+                   const countDetail = (source: unknown, label: string) => source == null
+                     ? "بيانات المصدر غير متاحة"
+                     : `${Array.isArray(source) ? source.length : 0} ${label}`;
+                   return (
+                     <>
+                       <div className="grid md:grid-cols-4 gap-2">
+                         <StatCard label="التكلفة الفعلية" value={costDrilldown.totals?.actual}/>
+                         <StatCard label="التكلفة القياسية" value={costDrilldown.totals?.standard}/>
+                         <StatCard label="الانحراف" value={costDrilldown.totals?.variance}/>
+                         <StatCard label="هامش محاكاة بسعر البيع المثبّت عند الإنشاء" value={costDrilldown.totals?.simulatedGrossManufacturingMargin}/>
+                       </div>
+                       <div className="rounded-lg border bg-white dark:bg-slate-900 divide-y text-sm">
+                         <DrillRow label="المواد والتغليف من BOM"
+                           value={totalKnownAmounts(materials)}
+                           detail={`${materials.length} سطر — كل سطر مرتبط بصنف المصدر`}/>
+                         <DrillRow label="العمالة" value={labor?.amount}
+                           detail={countDetail(labor?.source, "لقطة رواتب مُرحّلة")}/>
+                         <DrillRow label="التكاليف غير المباشرة / الشهادات" value={overhead?.amount}
+                           detail={countDetail(overhead?.source, "لقطة مصدر غير قابلة للتعديل")}/>
+                         <DrillRow label="الهالك"
+                           value={totalKnownAmounts(waste)}
+                           detail={`${waste.length} سجل تفصيلي`}/>
+                         <DrillRow label="الجودة وإعادة التشغيل" value={null}
+                           detail={qualityChecks != null && qualityFailed != null &&
+                             Number.isFinite(qualityChecks) && Number.isFinite(qualityFailed)
+                             ? `${qualityChecks} فحص، ${qualityFailed} فاشل — بلا قيد مكرر`
+                             : "بيانات الجودة غير متاحة — بلا مبلغ محاسبي مُفترض"}/>
+                       </div>
+                     </>
+                   );
+                 })()}
                 <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3 text-xs">
                   التتبع: مستند المصدر ← لقطة التوزيع ← المرحلة ← أمر التصنيع ← المنتج.
                    Royalty والضمان والتكلفة الاقتصادية تظهر كطبقات تحليل وفق السياسة؛ الاستحقاق المالي
@@ -1278,54 +1310,97 @@ export default function ProductionOrderDetail() {
               </div>
               <form onSubmit={addLifecycle} className="rounded-lg border bg-white dark:bg-slate-900 p-4 space-y-3">
                 <div className="grid md:grid-cols-4 gap-3">
-                  <div><Label>النوع</Label><select className="w-full border rounded-md p-2" value={lifecycleForm.type}
-                    onChange={(e) => {
-                      const type=e.target.value;
-                      setLifecycleForm({...lifecycleForm,type,calculationMethod:lifecycleMethods(type)[0][0]});
-                    }}>
-                    <option value="certificate">شهادة / اعتماد</option>
-                    <option value="royalty">Royalty / ترخيص</option>
-                    <option value="warranty">ضمان / ما بعد البيع</option>
-                  </select></div>
+                  <div><Label>النوع</Label>
+                    <SearchCombobox
+                      className="h-9"
+                      value={lifecycleForm.type}
+                      placeholder="اختر النوع..."
+                      searchPlaceholder="ابحث عن النوع..."
+                      items={[
+                        { value: "certificate", label: "شهادة / اعتماد" },
+                        { value: "royalty", label: "Royalty / ترخيص" },
+                        { value: "warranty", label: "ضمان / ما بعد البيع" },
+                      ]}
+                      onValueChange={(type) => setLifecycleForm({...lifecycleForm,type,calculationMethod:lifecycleMethods(type)[0][0]})}
+                    />
+                  </div>
                   <div className="md:col-span-2"><Label>اسم الشهادة / العقد / المطالبة *</Label>
                     <Input required value={lifecycleForm.name} onChange={e=>setLifecycleForm({...lifecycleForm,name:e.target.value})}/></div>
-                  <div><Label>الحالة</Label><select className="w-full border rounded-md p-2" value={lifecycleForm.status}
-                    onChange={e=>setLifecycleForm({...lifecycleForm,status:e.target.value})}>
-                    <option value="draft">مسودة</option><option value="active">نشط</option>
-                  </select></div>
-                  <div><Label>طريقة الحساب</Label><select className="w-full border rounded-md p-2"
-                    value={lifecycleForm.calculationMethod}
-                    onChange={e=>setLifecycleForm({...lifecycleForm,calculationMethod:e.target.value})}>
-                    {lifecycleMethods(lifecycleForm.type).map(([value,label])=><option key={value} value={value}>{label}</option>)}
-                  </select></div>
+                  <div><Label>الحالة</Label>
+                    <SearchCombobox
+                      className="h-9"
+                      value={lifecycleForm.status}
+                      placeholder="اختر الحالة..."
+                      searchPlaceholder="ابحث عن الحالة..."
+                      items={[
+                        { value: "draft", label: "مسودة" },
+                        { value: "active", label: "نشط" },
+                      ]}
+                      onValueChange={value=>setLifecycleForm({...lifecycleForm,status:value})}
+                    />
+                  </div>
+                  <div><Label>طريقة الحساب</Label>
+                    <SearchCombobox
+                      className="h-9"
+                      value={lifecycleForm.calculationMethod}
+                      placeholder="اختر طريقة الحساب..."
+                      searchPlaceholder="ابحث عن طريقة الحساب..."
+                      items={lifecycleMethods(lifecycleForm.type).map(([value,label]) => ({ value, label }))}
+                      onValueChange={value=>setLifecycleForm({...lifecycleForm,calculationMethod:value})}
+                    />
+                  </div>
                   <div><Label>من</Label><Input type="date" value={lifecycleForm.effectiveFrom}
                     onChange={e=>setLifecycleForm({...lifecycleForm,effectiveFrom:e.target.value})}/></div>
                   <div><Label>إلى</Label><Input type="date" value={lifecycleForm.effectiveTo}
                     onChange={e=>setLifecycleForm({...lifecycleForm,effectiveTo:e.target.value})}/></div>
-                  <div><Label>لقطة مصدر التكلفة</Label><select className="w-full border rounded-md p-2"
-                    value={lifecycleForm.sourceAllocationId}
-                    onChange={e=>setLifecycleForm({...lifecycleForm,sourceAllocationId:e.target.value})}>
-                    <option value="">بدون مبلغ مُرحّل</option>
-                    {(costDrilldown?.trace?.allocations??[]).map((a:any)=><option key={a.id} value={a.id}>
-                      #{a.id} — {a.sourceType} — {Number(a.allocatedAmount).toLocaleString("en-US")}
-                    </option>)}
-                  </select></div>
+                  <div><Label>لقطة مصدر التكلفة</Label>
+                    <SearchCombobox
+                      className="h-9"
+                      value={lifecycleForm.sourceAllocationId}
+                      placeholder="بدون مبلغ مُرحّل"
+                      searchPlaceholder="ابحث برقم أو نوع المصدر..."
+                      items={[
+                        { value: "", label: "بدون مبلغ مُرحّل" },
+                        ...(costDrilldown?.trace?.allocations??[]).map((a:any)=>({
+                          value: String(a.id),
+                          code: String(a.id),
+                          label: `${a.sourceType} — ${Number(a.allocatedAmount).toLocaleString("en-US")}`,
+                        })),
+                      ]}
+                      onValueChange={value=>setLifecycleForm({...lifecycleForm,sourceAllocationId:value})}
+                    />
+                  </div>
                   {lifecycleForm.type==="royalty" && <div>
                     <Label>المستفيد / المورد</Label>
-                    <select className="w-full border rounded-md p-2" value={lifecycleForm.supplierId}
-                      onChange={e=>setLifecycleForm({...lifecycleForm,supplierId:e.target.value})}>
-                      <option value="">اختر المورد عند التسوية</option>
-                      {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>
-                        {supplier.code ? `${supplier.code} — ` : ""}{supplier.nameAr ?? supplier.name ?? `#${supplier.id}`}
-                      </option>)}
-                    </select>
+                    <SearchCombobox
+                      className="h-9"
+                      value={lifecycleForm.supplierId}
+                      placeholder="اختر المورد عند التسوية"
+                      searchPlaceholder="ابحث برمز أو اسم المورد..."
+                      items={[
+                        { value: "", label: "اختر المورد عند التسوية" },
+                        ...suppliers.map((supplier) => ({
+                          value: String(supplier.id),
+                          code: supplier.code || undefined,
+                          label: supplier.nameAr ?? supplier.name ?? `#${supplier.id}`,
+                        })),
+                      ]}
+                      onValueChange={value=>setLifecycleForm({...lifecycleForm,supplierId:value})}
+                    />
                   </div>}
                   {lifecycleForm.type==="royalty" && lifecycleForm.calculationMethod==="tiered" && <div>
                     <Label>أساس الشرائح</Label>
-                    <select className="w-full border rounded-md p-2" value={lifecycleForm.tierBasis}
-                      onChange={e=>setLifecycleForm({...lifecycleForm,tierBasis:e.target.value})}>
-                      <option value="units">الوحدات المباعة</option><option value="sales">صافي المبيعات</option>
-                    </select>
+                    <SearchCombobox
+                      className="h-9"
+                      value={lifecycleForm.tierBasis}
+                      placeholder="اختر أساس الشرائح..."
+                      searchPlaceholder="ابحث عن الأساس..."
+                      items={[
+                        { value: "units", label: "الوحدات المباعة" },
+                        { value: "sales", label: "صافي المبيعات" },
+                      ]}
+                      onValueChange={value=>setLifecycleForm({...lifecycleForm,tierBasis:value})}
+                    />
                   </div>}
                   <div><Label>المعدل</Label><Input type="number" step="0.0001" min="0" value={lifecycleForm.rate}
                     onChange={e=>setLifecycleForm({...lifecycleForm,rate:e.target.value})}/></div>
@@ -1346,12 +1421,21 @@ export default function ProductionOrderDetail() {
                          placeholder="رقم محضر/موافقة/تقدير معتمد"/></div>
                    </>}
                    {lifecycleForm.type==="warranty" && <div><Label>حالة الإصلاح</Label>
-                     <select className="w-full border rounded-md p-2" value={lifecycleForm.repairStatus}
-                       onChange={e=>setLifecycleForm({...lifecycleForm,repairStatus:e.target.value})}>
-                       <option value="open">مفتوح</option><option value="diagnosing">تشخيص</option>
-                       <option value="repairing">قيد الإصلاح</option><option value="ready">جاهز</option>
-                       <option value="closed">مغلق</option><option value="no_repair">لا يحتاج إصلاحاً</option>
-                     </select>
+                      <SearchCombobox
+                        className="h-9"
+                        value={lifecycleForm.repairStatus}
+                        placeholder="اختر حالة الإصلاح..."
+                        searchPlaceholder="ابحث عن حالة الإصلاح..."
+                        items={[
+                          { value: "open", label: "مفتوح" },
+                          { value: "diagnosing", label: "تشخيص" },
+                          { value: "repairing", label: "قيد الإصلاح" },
+                          { value: "ready", label: "جاهز" },
+                          { value: "closed", label: "مغلق" },
+                          { value: "no_repair", label: "لا يحتاج إصلاحاً" },
+                        ]}
+                        onValueChange={value=>setLifecycleForm({...lifecycleForm,repairStatus:value})}
+                      />
                    </div>}
                   {lifecycleForm.type==="royalty" && lifecycleForm.calculationMethod==="tiered" &&
                     <div className="md:col-span-4 rounded border p-3">
@@ -1374,13 +1458,21 @@ export default function ProductionOrderDetail() {
                           <div className="text-xs text-slate-500">{detail.kind==="parts"?"قطع الغيار":detail.kind==="labor"?"العمالة":"الشحن"}</div>
                           <Input value={detail.description} aria-label={`وصف ${detail.kind}`}
                             onChange={e=>setClaimDetails(rows=>rows.map((row,i)=>i===index?{...row,description:e.target.value}:row))}/>
-                          <select className="w-full border rounded-md p-2" value={detail.sourceAllocationId}
-                            onChange={e=>setClaimDetails(rows=>rows.map((row,i)=>i===index?{...row,sourceAllocationId:e.target.value}:row))}>
-                            <option value="">اختر لقطة المصدر</option>
-                            {(costDrilldown?.trace?.allocations??[]).map((a:any)=><option key={a.id} value={a.id}>
-                              #{a.id} — {a.sourceType} — {Number(a.allocatedAmount).toLocaleString("en-US")}
-                            </option>)}
-                          </select>
+                          <SearchCombobox
+                            className="h-9"
+                            value={detail.sourceAllocationId}
+                            placeholder="اختر لقطة المصدر"
+                            searchPlaceholder="ابحث برقم أو نوع المصدر..."
+                            items={[
+                              { value: "", label: "اختر لقطة المصدر" },
+                              ...(costDrilldown?.trace?.allocations??[]).map((a:any)=>({
+                                value: String(a.id),
+                                code: String(a.id),
+                                label: `${a.sourceType} — ${Number(a.allocatedAmount).toLocaleString("en-US")}`,
+                              })),
+                            ]}
+                            onValueChange={value=>setClaimDetails(rows=>rows.map((row,i)=>i===index?{...row,sourceAllocationId:value}:row))}
+                          />
                         </div>)}
                       </div>
                     </div>}
@@ -1399,18 +1491,38 @@ export default function ProductionOrderDetail() {
                      </div>
                      <div className="grid md:grid-cols-2 gap-2">
                        <div><Label>حساب المصروف</Label>
-                         <select className="w-full border rounded-md p-2" value={accrualForm.expenseAccountId}
-                           onChange={e=>setAccrualForm({...accrualForm,expenseAccountId:e.target.value})}>
-                           <option value="">اختر حساب مصروف</option>
-                           {accounts.filter((a)=>a.accountType==="expense").map((a)=><option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
-                         </select>
+                          <SearchCombobox
+                            className="h-9"
+                            value={accrualForm.expenseAccountId}
+                            placeholder="اختر حساب مصروف"
+                            searchPlaceholder="ابحث برمز أو اسم الحساب..."
+                            items={[
+                              { value: "", label: "اختر حساب مصروف" },
+                              ...accounts.filter((a)=>a.accountType==="expense").map((a)=>({
+                                value: String(a.id),
+                                code: a.code,
+                                label: a.nameAr,
+                              })),
+                            ]}
+                            onValueChange={value=>setAccrualForm({...accrualForm,expenseAccountId:value})}
+                          />
                        </div>
                        <div><Label>حساب الالتزام / المخصص</Label>
-                         <select className="w-full border rounded-md p-2" value={accrualForm.liabilityAccountId}
-                           onChange={e=>setAccrualForm({...accrualForm,liabilityAccountId:e.target.value})}>
-                           <option value="">اختر حساب التزام</option>
-                           {accounts.filter((a)=>a.accountType==="liability").map((a)=><option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
-                         </select>
+                          <SearchCombobox
+                            className="h-9"
+                            value={accrualForm.liabilityAccountId}
+                            placeholder="اختر حساب التزام"
+                            searchPlaceholder="ابحث برمز أو اسم الحساب..."
+                            items={[
+                              { value: "", label: "اختر حساب التزام" },
+                              ...accounts.filter((a)=>a.accountType==="liability").map((a)=>({
+                                value: String(a.id),
+                                code: a.code,
+                                label: a.nameAr,
+                              })),
+                            ]}
+                            onValueChange={value=>setAccrualForm({...accrualForm,liabilityAccountId:value})}
+                          />
                        </div>
                      </div>
                    </div>}
@@ -1434,20 +1546,34 @@ export default function ProductionOrderDetail() {
                      {row.type==="warranty" && row.technicianUserId ? ` • الفني #${row.technicianUserId}` : ""}
                   </p></div>
                   <div className="font-mono text-end">{row.recognisedAmount==null?"تحليلي بلا مبلغ":Number(row.recognisedAmount).toLocaleString("en-US")}</div>
-                  <select className="border rounded-md p-2 text-xs" value={row.status}
-                    onChange={e=>void changeLifecycleStatus(row.id,e.target.value)}
-                    disabled={order.status==="cancelled" || (LIFECYCLE_NEXT[row.status]??[]).length===0}>
-                    {[row.status,...(LIFECYCLE_NEXT[row.status]??[])].map(status=><option key={status} value={status}>
-                      {({draft:"مسودة",active:"نشط",suspended:"موقوف",expired:"منتهي",settled:"مسوّى",cancelled:"ملغى"} as any)[status]??status}
-                    </option>)}
-                  </select>
-                   {row.type==="warranty" && <select className="border rounded-md p-2 text-xs" value={row.repairStatus ?? "open"}
-                     onChange={e=>void changeRepairStatus(row.id,e.target.value)}
-                     disabled={order.status==="cancelled"}>
-                     <option value="open">إصلاح: مفتوح</option><option value="diagnosing">إصلاح: تشخيص</option>
-                     <option value="repairing">إصلاح: قيد التنفيذ</option><option value="ready">إصلاح: جاهز</option>
-                     <option value="closed">إصلاح: مغلق</option><option value="no_repair">إصلاح: لا يحتاج</option>
-                   </select>}
+                   <SearchCombobox
+                     className="h-9"
+                     value={row.status}
+                     placeholder="الحالة"
+                     searchPlaceholder="ابحث عن الحالة..."
+                     disabled={order.status==="cancelled" || (LIFECYCLE_NEXT[row.status]??[]).length===0}
+                     items={[row.status,...(LIFECYCLE_NEXT[row.status]??[])].map(status=>({
+                       value: status,
+                       label: ({draft:"مسودة",active:"نشط",suspended:"موقوف",expired:"منتهي",settled:"مسوّى",cancelled:"ملغى"} as any)[status]??status,
+                     }))}
+                     onValueChange={value=>void changeLifecycleStatus(row.id,value)}
+                   />
+                    {row.type==="warranty" && <SearchCombobox
+                      className="h-9"
+                      value={row.repairStatus ?? "open"}
+                      placeholder="حالة الإصلاح"
+                      searchPlaceholder="ابحث عن حالة الإصلاح..."
+                      disabled={order.status==="cancelled"}
+                      items={[
+                        { value: "open", label: "إصلاح: مفتوح" },
+                        { value: "diagnosing", label: "إصلاح: تشخيص" },
+                        { value: "repairing", label: "إصلاح: قيد التنفيذ" },
+                        { value: "ready", label: "إصلاح: جاهز" },
+                        { value: "closed", label: "إصلاح: مغلق" },
+                        { value: "no_repair", label: "إصلاح: لا يحتاج" },
+                      ]}
+                      onValueChange={value=>void changeRepairStatus(row.id,value)}
+                    />}
                   <div className="flex gap-1 justify-end">
                     {row.type==="certificate" && ["active","expired","suspended"].includes(row.status) &&
                       <Button type="button" size="sm" variant="outline" onClick={()=>void renewCertificate(row.id)}>بدء تجديد</Button>}
@@ -1464,12 +1590,23 @@ export default function ProductionOrderDetail() {
                          onClick={()=>void createCommercialAccrual(row, "new_accrual")}>مسودة مخصص</Button>}
                      {row.type==="warranty" && row.calculationMethod==="actual_claim" && ["active","suspended"].includes(row.status) &&
                        <>
-                         <select className="border rounded-md p-1 text-xs" value={accrualForm.provisionAccrualId}
-                           onChange={e=>setAccrualForm({...accrualForm,provisionAccrualId:e.target.value})}>
-                           <option value="">اختر مخصصاً مرحّلاً</option>
-                           {commercialAccruals.filter((a:any)=>a.obligationType==="warranty_provision" && a.status==="posted").map((a:any)=>
-                             <option key={a.id} value={a.id}>مخصص #{a.id} — {Number(a.amount).toLocaleString("en-US")}</option>)}
-                         </select>
+                          <SearchCombobox
+                            className="h-9"
+                            value={accrualForm.provisionAccrualId}
+                            placeholder="اختر مخصصاً مرحّلاً"
+                            searchPlaceholder="ابحث برقم المخصص..."
+                            items={[
+                              { value: "", label: "اختر مخصصاً مرحّلاً" },
+                              ...commercialAccruals
+                                .filter((a:any)=>a.obligationType==="warranty_provision" && a.status==="posted")
+                                .map((a:any)=>({
+                                  value: String(a.id),
+                                  code: String(a.id),
+                                  label: `مخصص — ${Number(a.amount).toLocaleString("en-US")}`,
+                                })),
+                            ]}
+                            onValueChange={value=>setAccrualForm({...accrualForm,provisionAccrualId:value})}
+                          />
                          <Button type="button" size="sm" variant="outline"
                            disabled={!accrualForm.provisionAccrualId}
                            onClick={()=>void createCommercialAccrual(row, "claim")}>مسودة استهلاك</Button>
@@ -1707,29 +1844,39 @@ function PackagingTransportFields({
         {field("height", "الارتفاع", "number")}
         <div>
           <Label className="text-[11px]">وحدة الأبعاد</Label>
-          <select
-            className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+          <SearchCombobox
+            className="h-9"
             value={value.dimensionUnit}
             disabled={disabled}
-            onChange={(event) => onChange({ dimensionUnit: event.target.value })}
-          >
-            <option value="mm">mm</option><option value="cm">cm</option>
-            <option value="m">m</option><option value="in">in</option>
-          </select>
+            placeholder="اختر الوحدة..."
+            searchPlaceholder="ابحث عن الوحدة..."
+            items={[
+              { value: "mm", label: "mm" },
+              { value: "cm", label: "cm" },
+              { value: "m", label: "m" },
+              { value: "in", label: "in" },
+            ]}
+            onValueChange={(unit) => onChange({ dimensionUnit: unit })}
+          />
         </div>
         {field("capacityUnits", "السعة بالوحدات", "number")}
         {field("capacityUnit", "وحدة السعة")}
         {field("maxGrossWeight", "الوزن الإجمالي الأقصى", "number")}
         <div>
           <Label className="text-[11px]">وحدة الوزن</Label>
-          <select
-            className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+          <SearchCombobox
+            className="h-9"
             value={value.weightUnit}
             disabled={disabled}
-            onChange={(event) => onChange({ weightUnit: event.target.value })}
-          >
-            <option value="kg">kg</option><option value="g">g</option><option value="lb">lb</option>
-          </select>
+            placeholder="اختر الوحدة..."
+            searchPlaceholder="ابحث عن الوحدة..."
+            items={[
+              { value: "kg", label: "kg" },
+              { value: "g", label: "g" },
+              { value: "lb", label: "lb" },
+            ]}
+            onValueChange={(unit) => onChange({ weightUnit: unit })}
+          />
         </div>
         {field("stackLimit", "حد التكديس", "number")}
       </div>
@@ -1738,16 +1885,26 @@ function PackagingTransportFields({
 }
 
 function StatCard({ label, value }: { label: string; value: unknown }) {
+  const numericValue = value == null ? null : Number(value);
   return <div className="rounded-lg border bg-white dark:bg-slate-900 p-3">
     <div className="text-xs text-slate-500">{label}</div>
-    <div className="font-mono font-bold mt-1">{value == null ? "—" : Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })}</div>
+    <div className="font-mono font-bold mt-1">
+      {numericValue != null && Number.isFinite(numericValue)
+        ? numericValue.toLocaleString("en-US", { maximumFractionDigits: 2 })
+        : "—"}
+    </div>
   </div>;
 }
 
 function DrillRow({ label, value, detail }: { label: string; value: unknown; detail: string }) {
+  const numericValue = value == null ? null : Number(value);
   return <div className="p-3 flex items-center justify-between gap-3">
     <div><b>{label}</b><p className="text-xs text-slate-500">{detail}</p></div>
-    <span className="font-mono font-semibold">{Number(value ?? 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</span>
+    <span className="font-mono font-semibold">
+      {numericValue != null && Number.isFinite(numericValue)
+        ? numericValue.toLocaleString("en-US", { maximumFractionDigits: 2 })
+        : "—"}
+    </span>
   </div>;
 }
 
@@ -2169,6 +2326,15 @@ function IssuePreviewPanel({
       </button>
       {open && (
         <div className="border-t border-violet-200 dark:border-violet-900/50 p-3 space-y-3">
+           {data?.warehouseId && (
+             <div className="text-xs text-slate-600 dark:text-slate-300">
+               مخزن سحب الخامات:{" "}
+               <span className="font-medium">
+                 {data.warehouse?.nameAr ?? `#${data.warehouseId}`}
+               </span>
+               {data.warehouse?.code && <span className="text-slate-400 ms-1">({data.warehouse.code})</span>}
+             </div>
+           )}
           {loading && <div className="text-xs text-slate-500">جارٍ تحميل التوزيع...</div>}
           {err && <div className="text-xs text-red-600">{err}</div>}
           {!loading && !err && lines.length === 0 && (
@@ -2189,9 +2355,12 @@ function IssuePreviewPanel({
                   </span>
                 </div>
                 <div className="text-slate-600 dark:text-slate-400">
-                  مطلوب {Number(ln.requestedQty).toLocaleString("en-US")} — متاح {Number(ln.available).toLocaleString("en-US")}
+                  مطلوب {Number(ln.requestedQty).toLocaleString("en-US")} {ln.unitCode || ""}
+                  {" — "}متاح {Number(ln.available).toLocaleString("en-US")} {ln.unitCode || ""}
                   {Number(ln.shortfall) > 0 && (
-                    <span className="text-red-600 ms-2">نقص {Number(ln.shortfall).toLocaleString("en-US")}</span>
+                    <span className="text-red-600 ms-2">
+                      نقص {Number(ln.shortfall).toLocaleString("en-US")} {ln.unitCode || ""}
+                    </span>
                   )}
                 </div>
               </div>
@@ -2489,16 +2658,15 @@ function WasteRecordsTab({
         >
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Field label="نوع التالف">
-              <select
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              <SearchCombobox
+                className="h-9"
                 value={form.wasteType}
-                onChange={(e) => setForm({ ...form, wasteType: e.target.value })}
-                data-testid="select-waste-type"
-              >
-                {WASTE_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>{t.labelAr}</option>
-                ))}
-              </select>
+                placeholder="اختر نوع التالف..."
+                searchPlaceholder="ابحث عن نوع التالف..."
+                testId="select-waste-type"
+                items={WASTE_TYPES.map((t) => ({ value: t.value, label: t.labelAr }))}
+                onValueChange={(value) => setForm({ ...form, wasteType: value })}
+              />
             </Field>
             <Field label="الكمية">
               <Input
@@ -2524,17 +2692,22 @@ function WasteRecordsTab({
               />
             </Field>
             <Field label="مركز العمل (اختياري)">
-              <select
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              <SearchCombobox
+                className="h-9"
                 value={form.workCenterId === "" ? "" : String(form.workCenterId)}
-                onChange={(e) => setForm({ ...form, workCenterId: e.target.value === "" ? "" : Number(e.target.value) })}
-                data-testid="select-waste-wc"
-              >
-                <option value="">—</option>
-                {workCenters.filter((w) => w.isActive).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code} — {w.nameAr}</option>
-                ))}
-              </select>
+                placeholder="—"
+                searchPlaceholder="ابحث برمز أو اسم مركز العمل..."
+                testId="select-waste-wc"
+                items={[
+                  { value: "", label: "—" },
+                  ...workCenters.filter((w) => w.isActive).map((w) => ({
+                    value: String(w.id),
+                    code: w.code,
+                    label: w.nameAr,
+                  })),
+                ]}
+                onValueChange={(value) => setForm({ ...form, workCenterId: value === "" ? "" : Number(value) })}
+              />
             </Field>
             <Field label="السبب المختصر">
               <Input

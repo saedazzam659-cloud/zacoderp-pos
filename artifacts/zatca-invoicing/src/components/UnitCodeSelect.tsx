@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -93,21 +93,20 @@ export default function UnitCodeSelect({
   }, [units, value]);
 
   return (
-    <Select value={value || undefined} onValueChange={onChange} disabled={disabled}>
-      <SelectTrigger
-        className={className}
-        data-testid={rest["data-testid"]}
-        title={degraded ? t("production.unitsOfflineFallback", "Using standard units (inventory list unavailable)") : undefined}
-      >
-        <SelectValue placeholder={placeholder ?? t("production.unitCode")} />
-      </SelectTrigger>
-      <SelectContent className="max-h-[280px]">
-        {list.map((u) => (
-          <SelectItem key={u.code} value={u.code}>
-            {formatUnit(u, lang)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <SearchCombobox
+      value={value}
+      onValueChange={onChange}
+      disabled={disabled}
+      className={className}
+      testId={rest["data-testid"]}
+      placeholder={placeholder ?? t("production.unitCode")}
+      searchPlaceholder={placeholder ?? t("production.unitCode")}
+      items={list.map((u) => ({
+        value: u.code,
+        code: u.code,
+        label: formatUnit(u, lang),
+        labelEn: u.nameEn || undefined,
+      }))}
+    />
   );
 }

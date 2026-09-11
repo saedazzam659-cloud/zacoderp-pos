@@ -40,6 +40,8 @@ import { setContextModuleKey } from "../lib/requestContext.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import {
   productionOrderDetailHandler,
+  productionCostDrilldownHandler,
+  productionIssuePreviewHandler,
   productionStatusHandler,
   productionWizardHandler,
   commercialLifecycleRouter,
@@ -1004,43 +1006,14 @@ const sourceCostHandler = async (req: any, res: any) => {
 
 router.get("/orders/:id/source-costs", view, sourceCostHandler);
 router.get("/orders/:id/costs", view, sourceCostHandler);
-router.get("/orders/:id/cost-drilldown", view, async (req, res) => {
-  const cid = companyId(req, res);
-  if (!cid) return;
-  const orderId = Number(req.params.id);
-  try {
-    const [order] = await db.select({
-      id: productionOrdersTable.id,
-      orderNumber: productionOrdersTable.orderNumber,
-      status: productionOrdersTable.status,
-      branchId: productionOrdersTable.branchId,
-      producedQty: productionOrdersTable.producedQty,
-      plannedQty: productionOrdersTable.plannedQty,
-    }).from(productionOrdersTable).where(and(
-      eq(productionOrdersTable.id, orderId),
-      eq(productionOrdersTable.companyId, cid),
-    )).limit(1);
-    if (!order) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
-    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, order.branchId);
-    if ("deny" in branchResult) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
-    const allocations = await db.select().from(productionCostAllocationsTable)
-      .where(and(
-        eq(productionCostAllocationsTable.companyId, cid),
-        eq(productionCostAllocationsTable.orderId, orderId),
-      )).orderBy(asc(productionCostAllocationsTable.id));
-    res.json({
-      order: {
-        id: order.id, orderNumber: order.orderNumber, status: order.status,
-        producedQty: Number(order.producedQty || order.plannedQty || 0),
-      },
-      layers: {}, totals: {},
-      trace: { allocations, materials: [], stages: [], waste: [], quality: { checks: 0, failed: 0 } },
-      costPolicy: null,
-    });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
+// The detail page is shared with advanced production and expects the canonical
+// drilldown envelope (`totals`, `trace.labor`, `trace.overhead`, etc.). Reuse
+// the guarded handler instead of returning a compact placeholder shape that
+// makes the shared page dereference missing financial fields.
+router.get("/orders/:id/cost-drilldown", view, productionCostDrilldownHandler);
+// This is a read-only preview. It uses the same warehouse balance/batch
+// calculation as issue time, but never creates stock or ledger rows.
+router.get("/orders/:id/issue-preview", view, productionIssuePreviewHandler);
 
 router.get("/suppliers", view, async (req, res) => {
   const cid = companyId(req, res);

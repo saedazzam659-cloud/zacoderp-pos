@@ -1123,7 +1123,7 @@ router.get("/orders/:id/manufacture-again", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-router.get("/orders/:id/cost-drilldown", async (req, res) => {
+export async function productionCostDrilldownHandler(req: any, res: any) {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -1194,7 +1194,9 @@ router.get("/orders/:id/cost-drilldown", async (req, res) => {
       costPolicy: sanitizeCostPolicy((order.meta as any)?.costPolicy),
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
-});
+}
+
+router.get("/orders/:id/cost-drilldown", productionCostDrilldownHandler);
 
 const PACKAGING_TEST_RESULTS = new Set(["pass", "fail", "pending"]);
 
@@ -4567,7 +4569,14 @@ export async function productionWizardHandler(req: any, res: any) {
           eq(itemsTable.id, productItemId),
           eq(itemsTable.status, "active"),
         )).limit(1);
-      const scale = plannedQty / Math.max(num(tmpl.outputQty, 1), 0.000001);
+      // BOM quantities are expressed for the template's declared outputQty.
+      // Scale only by planned output / recipe output; never silently turn an
+      // invalid zero output into a huge raw-material requirement.
+      const recipeOutputQty = num(tmpl.outputQty);
+      if (!(recipeOutputQty > 0)) {
+        throw Object.assign(new Error("قالب المكونات النشط يحتوي كمية ناتج غير صالحة"), { status: 400 });
+      }
+      const scale = plannedQty / recipeOutputQty;
       let rawCost = 0;
       const itemRows: any[] = [];
       for (const line of bomLines) {
@@ -5387,15 +5396,39 @@ export async function productionStatusHandler(req: any, res: any) {
         itemId: ln.itemId!,
         warehouseId: order.rawWarehouseId!,
       })), tx);
+      const shortages: Array<{
+        lineId: number;
+        itemId: number;
+        description: string;
+        unitCode: string;
+        requiredQty: number;
+        availableQty: number;
+        shortfall: number;
+      }> = [];
       for (const ln of issuableLines) {
         const have = await getBalance(cid, ln.itemId!, order.rawWarehouseId, tx);
         const need = Number(ln.quantity);
         if (have + 1e-6 < need) {
-          res.status(400).json({
-            error: `الكمية المتاحة غير كافية للصنف «${ln.description}» (متاح: ${have}، مطلوب: ${need})`,
+          shortages.push({
+            lineId: ln.id,
+            itemId: ln.itemId!,
+            description: ln.description,
+            unitCode: ln.unitCode,
+            requiredQty: need,
+            availableQty: have,
+            shortfall: Math.max(0, need - have),
           });
-          return;
         }
+      }
+      if (shortages.length) {
+        const first = shortages[0];
+        res.status(400).json({
+          error: `الكمية المتاحة غير كافية للصنف «${first.description}» (متاح: ${first.availableQty}، مطلوب: ${first.requiredQty})`,
+          code: "INSUFFICIENT_RAW_STOCK",
+          warehouseId: order.rawWarehouseId,
+          shortages,
+        });
+        return;
       }
 
       // c) Decrement stock + ledger entries; track total raw cost.
@@ -9244,7 +9277,7 @@ router.delete("/orders/:orderId/waste-records/:id", async (req, res) => {
 // التالية" preview before confirming the issue. Per-item modes:
 //   * none → returns a single virtual pick representing the WAC issue (legacy)
 //   * fifo/fefo → returns the actual ordered batches pickBatches() would use
-router.get("/orders/:id/issue-preview", async (req, res) => {
+export async function productionIssuePreviewHandler(req: any, res: any) {
   try {
     const cid = guard(req, res);
     if (!cid) return;
@@ -9260,6 +9293,18 @@ router.get("/orders/:id/issue-preview", async (req, res) => {
       res.status(400).json({ error: "حدّد مخزن الخامات قبل عرض المعاينة" });
       return;
     }
+    const [rawWarehouse] = await db
+      .select({
+        id: warehousesTable.id,
+        code: warehousesTable.code,
+        nameAr: warehousesTable.nameAr,
+      })
+      .from(warehousesTable)
+      .where(and(
+        eq(warehousesTable.id, order.rawWarehouseId),
+        eq(warehousesTable.companyId, cid),
+      ))
+      .limit(1);
     const rawLines = await db
       .select()
       .from(productionOrderItemsTable)
@@ -9300,6 +9345,7 @@ router.get("/orders/:id/issue-preview", async (req, res) => {
         out.push({
           lineId: ln.id,
           itemId: ln.itemId,
+          unitCode: ln.unitCode,
           itemNameAr: info.nameAr || ln.description,
           itemCode: info.code,
           mode: "none",
@@ -9315,6 +9361,7 @@ router.get("/orders/:id/issue-preview", async (req, res) => {
         out.push({
           lineId: ln.id,
           itemId: ln.itemId,
+          unitCode: ln.unitCode,
           itemNameAr: info.nameAr || ln.description,
           itemCode: info.code,
           mode: info.mode,
@@ -9335,6 +9382,7 @@ router.get("/orders/:id/issue-preview", async (req, res) => {
         out.push({
           lineId: ln.id,
           itemId: ln.itemId,
+          unitCode: ln.unitCode,
           itemNameAr: info.nameAr || ln.description,
           itemCode: info.code,
           mode: info.mode,
@@ -9346,11 +9394,17 @@ router.get("/orders/:id/issue-preview", async (req, res) => {
         });
       }
     }
-    res.json({ lines: out });
+    res.json({
+      warehouseId: order.rawWarehouseId,
+      warehouse: rawWarehouse ?? null,
+      lines: out,
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
-});
+}
+
+router.get("/orders/:id/issue-preview", productionIssuePreviewHandler);
 
 // Company-wide aggregated scrap report for the dashboard.
 // Branch-scoped: joins to `production_orders` and reuses the same
