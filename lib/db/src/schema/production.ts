@@ -19,6 +19,7 @@ import { branchesTable } from "./branches";
 import { itemsTable, warehousesTable, stockLedgerTable } from "./inventory";
 import { accountsTable } from "./accounts";
 import { usersTable } from "./users";
+import { suppliersTable } from "./suppliers";
 
 export const productionResourcesTable = pgTable(
   "production_resources",
@@ -479,6 +480,75 @@ export const productionOverheadClosuresTable = pgTable(
 
 export type ProductionOverheadClosure =
   typeof productionOverheadClosuresTable.$inferSelect;
+
+// Explicit financial recognition for commercial obligations.  This is
+// deliberately separate from production_cost_allocations: those rows are
+// immutable snapshots of expense journals already posted by their owning
+// modules and must never be accrued again.  A commercial accrual owns its
+// liability/expense journal and has an exact, auditable reversal lifecycle.
+export const productionCommercialAccrualsTable = pgTable(
+  "production_commercial_accruals",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    orderId: integer("order_id")
+      .notNull()
+      .references(() => productionOrdersTable.id, { onDelete: "restrict" }),
+    branchId: integer("branch_id").references(() => branchesTable.id, {
+      onDelete: "set null",
+    }),
+    lifecycleId: text("lifecycle_id").notNull(),
+    obligationType: text("obligation_type").notNull(), // royalty | warranty_provision | warranty_claim
+    recognitionMode: text("recognition_mode").notNull(), // new_accrual | source_backed_claim
+    sourceKey: text("source_key").notNull(),
+    status: text("status").notNull().default("draft"), // draft | posted | reversed
+    postingDate: date("posting_date").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
+    basisAmount: numeric("basis_amount", { precision: 18, scale: 2 }).notNull().default("0"),
+    expenseAccountId: integer("expense_account_id").references(() => accountsTable.id),
+    liabilityAccountId: integer("liability_account_id").notNull().references(() => accountsTable.id),
+    supplierId: integer("supplier_id").references(() => suppliersTable.id, {
+      onDelete: "set null",
+    }),
+    technicianUserId: integer("technician_user_id").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    provisionAccrualId: integer("provision_accrual_id"),
+    settlementId: integer("settlement_id"),
+    journalEntryId: integer("journal_entry_id"),
+    reversalJournalEntryId: integer("reversal_journal_entry_id"),
+    sourceSnapshot: jsonb("source_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdBy: integer("created_by").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    postedBy: integer("posted_by").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    postedAt: timestamp("posted_at"),
+    reversedBy: integer("reversed_by").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    reversedAt: timestamp("reversed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    sourceKeyUnique: uniqueIndex("production_commercial_accruals_source_key_uniq")
+      .on(t.companyId, t.sourceKey),
+    byOrderLifecycle: index("production_commercial_accruals_order_lifecycle_idx")
+      .on(t.companyId, t.orderId, t.lifecycleId),
+    byProvision: index("production_commercial_accruals_provision_idx")
+      .on(t.companyId, t.provisionAccrualId),
+  }),
+);
+
+export type ProductionCommercialAccrual =
+  typeof productionCommercialAccrualsTable.$inferSelect;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Zod insert/select schemas

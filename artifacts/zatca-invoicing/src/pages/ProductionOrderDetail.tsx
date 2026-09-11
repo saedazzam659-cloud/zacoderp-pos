@@ -260,6 +260,7 @@ export default function ProductionOrderDetail() {
   const [wasteRecords, setWasteRecords] = useState<WasteRecord[]>([]);
   const [costDrilldown, setCostDrilldown] = useState<any>(null);
   const [commercialLifecycle, setCommercialLifecycle] = useState<any[]>([]);
+  const [commercialAccruals, setCommercialAccruals] = useState<any[]>([]);
   const [packagingSpecs, setPackagingSpecs] = useState<any[]>([]);
   const [packagingBusy, setPackagingBusy] = useState(false);
   const [packagingMetadata, setPackagingMetadata] = useState<Record<number, PackagingMetadata>>({});
@@ -274,6 +275,10 @@ export default function ProductionOrderDetail() {
     effectiveFrom: "", effectiveTo: "", sourceAllocationId: "", salesReturnId: "",
     rate: "", minimumAmount: "", maximumAmount: "", notes: "", supplierId: "",
     tierBasis: "units", repairStatus: "open", technicianUserId: "", repairNotes: "",
+    approvedEstimateAmount: "", approvedEstimateReference: "",
+  });
+  const [accrualForm, setAccrualForm] = useState({
+    expenseAccountId: "", liabilityAccountId: "", provisionAccrualId: "",
   });
   const [claimDetails, setClaimDetails] = useState([
     { kind: "parts", description: "قطع الغيار", sourceAllocationId: "" },
@@ -334,6 +339,7 @@ export default function ProductionOrderDetail() {
       if (lifecycleResponse.ok) {
         const lifecycle = await lifecycleResponse.json();
         setCommercialLifecycle(lifecycle.records ?? []);
+        setCommercialAccruals(lifecycle.accruals ?? []);
       }
       if (!simpleFacade && j.order?.productItemId) {
         const packagingResponse = await fetch(
@@ -548,7 +554,8 @@ export default function ProductionOrderDetail() {
         type: "certificate", name: "", status: "draft", calculationMethod: "period",
         effectiveFrom: "", effectiveTo: "", sourceAllocationId: "", salesReturnId: "",
         rate: "", minimumAmount: "", maximumAmount: "", notes: "", supplierId: "",
-         tierBasis: "units", repairStatus: "open", technicianUserId: "", repairNotes: "",
+          tierBasis: "units", repairStatus: "open", technicianUserId: "", repairNotes: "",
+          approvedEstimateAmount: "", approvedEstimateReference: "",
       });
       setClaimDetails([
         { kind: "parts", description: "قطع الغيار", sourceAllocationId: "" },
@@ -711,19 +718,122 @@ export default function ProductionOrderDetail() {
     }
   }
 
-  async function calculateRoyalty(lifecycleId: string, settle: boolean) {
+  async function calculateRoyalty(lifecycleId: string) {
     try {
        const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle/${lifecycleId}/royalty-calculate`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ settle }),
+        body: JSON.stringify({}),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-      toast({ title: settle ? "تم إنشاء مسودة تسوية Royalty" : `Royalty المحسوب: ${Number(j.amount ?? 0).toLocaleString("en-US")}` });
+      toast({ title: `Royalty المحسوب: ${Number(j.amount ?? 0).toLocaleString("en-US")}` });
       void load();
     } catch (e: any) {
       toast({ title: "تعذر حساب Royalty", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function createCommercialAccrual(row: any, mode: "new_accrual" | "claim") {
+    try {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle/${row.id}/accrual-draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          mode,
+          expenseAccountId: accrualForm.expenseAccountId ? Number(accrualForm.expenseAccountId) : null,
+          liabilityAccountId: accrualForm.liabilityAccountId ? Number(accrualForm.liabilityAccountId) : null,
+          provisionAccrualId: accrualForm.provisionAccrualId ? Number(accrualForm.provisionAccrualId) : null,
+          approvedEstimateAmount: row.approvedEstimateAmount ?? null,
+          approvedEstimateReference: row.approvedEstimateReference ?? null,
+          from: row.effectiveFrom ?? undefined,
+          to: row.effectiveTo ?? undefined,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: "تم إنشاء مسودة قيد محاسبي من أساس موثق" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر إنشاء مسودة الاستحقاق", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function postCommercialAccrual(accrual: any) {
+    try {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle/${accrual.lifecycleId}/accrual/${accrual.id}/post`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: "تم ترحيل القيد المحاسبي" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر ترحيل القيد", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function reverseCommercialAccrual(accrual: any) {
+    if (!confirm("سيتم إنشاء قيد عكسي مطابق تماماً للقيد الأصلي. هل تريد المتابعة؟")) return;
+    try {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle/${accrual.lifecycleId}/accrual/${accrual.id}/reverse`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: "تم عكس القيد بنفس أسطره الأصلية" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر عكس القيد", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function settleCommercialAccrual(accrual: any) {
+    try {
+      const r = await fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle/${accrual.lifecycleId}/accrual/${accrual.id}/settle`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: "تم إنشاء مسودة تسوية المورد على حساب الالتزام دون مصروف جديد" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر إنشاء تسوية الالتزام", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function postRoyaltySettlement(accrual: any) {
+    const settlementId = Number(accrual.settlement?.id);
+    if (!settlementId) return;
+    try {
+      const r = await fetch(`${API}/api/purchasing/supplier-settlements/${settlementId}/post`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: "تم ترحيل تسوية المورد بقيد إقفال الالتزام" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر ترحيل تسوية المورد", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function unpostRoyaltySettlement(accrual: any) {
+    const settlementId = Number(accrual.settlement?.id);
+    if (!settlementId || !confirm("سيتم إنشاء قيد عكسي لقيد إقفال التزام المورد. هل تريد المتابعة؟")) return;
+    try {
+      const r = await fetch(`${API}/api/purchasing/supplier-settlements/${settlementId}/unpost`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: "تم عكس تسوية المورد وإعادتها لمسودة" });
+      void load();
+    } catch (e: any) {
+      toast({ title: "تعذر عكس تسوية المورد", description: e.message, variant: "destructive" });
     }
   }
 
@@ -1152,16 +1262,19 @@ export default function ProductionOrderDetail() {
                 </div>
                 <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3 text-xs">
                   التتبع: مستند المصدر ← لقطة التوزيع ← المرحلة ← أمر التصنيع ← المنتج.
-                  Royalty والضمان والتكلفة الاقتصادية تظهر كطبقات تحليل وفق السياسة ولا تُرحّل محاسبياً بلا مستند مصدر.
+                   Royalty والضمان والتكلفة الاقتصادية تظهر كطبقات تحليل وفق السياسة؛ الاستحقاق المالي
+                   لا يُنشأ إلا من شاشة دورة الحياة وبأساس مبيعات مرحّل أو تقدير ضمان معتمد.
                   هامش المحاكاة ليس إيراداً محققاً؛ يعتمد لقطة سعر الصنف وقت إنشاء الأمر، ولا يتغير بتعديل السعر لاحقاً.
                 </div>
               </>}
             </TabsContent>
             <TabsContent value="commercial-lifecycle" className="space-y-4">
               <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
-                هذه دورة تشغيلية داخل أمر الإنتاج نفسه. المبلغ المعترف به لا يُدخل يدوياً:
-                يجب ربطه بلقطة توزيع من مستند مُرحّل، ويبقى القيد مملوكاً لوحدة المصدر.
-                مخصص الضمان التحليلي منفصل دائماً عن تكلفة المطالبة الفعلية.
+                هذه دورة تشغيلية داخل أمر الإنتاج، أما القيد المالي فله مسار صريح مستقل:
+                مسودة ← ترحيل بصلاحية الترحيل ← عكس مطابق. Royalty يحسب من المبيعات والمرتجعات
+                المرحّلة فقط، ومخصص الضمان لا يقبل مبلغاً إلا مع تقدير معتمد صريح.
+                المطالبة الفعلية تستهلك المتبقي من مخصص مرحّل ومن مصادر تكلفة ضمان موثقة، ولا تعيد
+                مصروف لقطة مصدر سبق ترحيلها.
               </div>
               <form onSubmit={addLifecycle} className="rounded-lg border bg-white dark:bg-slate-900 p-4 space-y-3">
                 <div className="grid md:grid-cols-4 gap-3">
@@ -1223,6 +1336,15 @@ export default function ProductionOrderDetail() {
                   {lifecycleForm.type==="warranty" && <div><Label>رقم مرتجع بيع مُرحّل</Label>
                     <Input type="number" min="1" value={lifecycleForm.salesReturnId}
                       onChange={e=>setLifecycleForm({...lifecycleForm,salesReturnId:e.target.value})}/></div>}
+                   {lifecycleForm.type==="warranty" && lifecycleForm.calculationMethod==="provision" && <>
+                     <div><Label>مبلغ التقدير المعتمد</Label>
+                       <Input type="number" min="0.01" step="0.01" value={lifecycleForm.approvedEstimateAmount}
+                         onChange={e=>setLifecycleForm({...lifecycleForm,approvedEstimateAmount:e.target.value})}/></div>
+                     <div className="md:col-span-2"><Label>مرجع اعتماد التقدير</Label>
+                       <Input value={lifecycleForm.approvedEstimateReference}
+                         onChange={e=>setLifecycleForm({...lifecycleForm,approvedEstimateReference:e.target.value})}
+                         placeholder="رقم محضر/موافقة/تقدير معتمد"/></div>
+                   </>}
                    {lifecycleForm.type==="warranty" && <div><Label>حالة الإصلاح</Label>
                      <select className="w-full border rounded-md p-2" value={lifecycleForm.repairStatus}
                        onChange={e=>setLifecycleForm({...lifecycleForm,repairStatus:e.target.value})}>
@@ -1270,6 +1392,28 @@ export default function ProductionOrderDetail() {
                      <Input type="number" min="1" value={lifecycleForm.technicianUserId}
                        onChange={e=>setLifecycleForm({...lifecycleForm,technicianUserId:e.target.value})}/>
                    </div>}
+                   {(lifecycleForm.type==="royalty" ||
+                     (lifecycleForm.type==="warranty" && lifecycleForm.calculationMethod==="provision")) && <div className="md:col-span-4 rounded border border-emerald-200 bg-emerald-50 p-3">
+                     <div className="text-xs text-emerald-900 mb-2">
+                       حسابات القيد المطلوبة عند إنشاء مسودة الاستحقاق (لا تُستخدم لإعادة تصنيف لقطة مصدر).
+                     </div>
+                     <div className="grid md:grid-cols-2 gap-2">
+                       <div><Label>حساب المصروف</Label>
+                         <select className="w-full border rounded-md p-2" value={accrualForm.expenseAccountId}
+                           onChange={e=>setAccrualForm({...accrualForm,expenseAccountId:e.target.value})}>
+                           <option value="">اختر حساب مصروف</option>
+                           {accounts.filter((a)=>a.accountType==="expense").map((a)=><option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
+                         </select>
+                       </div>
+                       <div><Label>حساب الالتزام / المخصص</Label>
+                         <select className="w-full border rounded-md p-2" value={accrualForm.liabilityAccountId}
+                           onChange={e=>setAccrualForm({...accrualForm,liabilityAccountId:e.target.value})}>
+                           <option value="">اختر حساب التزام</option>
+                           {accounts.filter((a)=>a.accountType==="liability").map((a)=><option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
+                         </select>
+                       </div>
+                     </div>
+                   </div>}
                   <div className="md:col-span-4"><Label>ملاحظات</Label><Input value={lifecycleForm.notes}
                     onChange={e=>setLifecycleForm({...lifecycleForm,notes:e.target.value})}/></div>
                 </div>
@@ -1309,9 +1453,55 @@ export default function ProductionOrderDetail() {
                       <Button type="button" size="sm" variant="outline" onClick={()=>void renewCertificate(row.id)}>بدء تجديد</Button>}
                     {row.type==="royalty" && ["active","suspended"].includes(row.status) &&
                       <>
-                        <Button type="button" size="sm" variant="outline" onClick={()=>void calculateRoyalty(row.id, false)}>حساب</Button>
-                        <Button type="button" size="sm" onClick={()=>void calculateRoyalty(row.id, true)}>تسوية مسودة</Button>
+                        <Button type="button" size="sm" variant="outline" onClick={()=>void calculateRoyalty(row.id)}>حساب وقائع Royalty</Button>
+                         <Button type="button" size="sm" variant="outline"
+                           disabled={!accrualForm.expenseAccountId || !accrualForm.liabilityAccountId}
+                           onClick={()=>void createCommercialAccrual(row, "new_accrual")}>مسودة قيد Royalty</Button>
                       </>}
+                     {row.type==="warranty" && row.calculationMethod==="provision" && ["active","suspended"].includes(row.status) &&
+                       <Button type="button" size="sm" variant="outline"
+                         disabled={!accrualForm.expenseAccountId || !accrualForm.liabilityAccountId || !(row.approvedEstimateAmount || lifecycleForm.approvedEstimateAmount)}
+                         onClick={()=>void createCommercialAccrual(row, "new_accrual")}>مسودة مخصص</Button>}
+                     {row.type==="warranty" && row.calculationMethod==="actual_claim" && ["active","suspended"].includes(row.status) &&
+                       <>
+                         <select className="border rounded-md p-1 text-xs" value={accrualForm.provisionAccrualId}
+                           onChange={e=>setAccrualForm({...accrualForm,provisionAccrualId:e.target.value})}>
+                           <option value="">اختر مخصصاً مرحّلاً</option>
+                           {commercialAccruals.filter((a:any)=>a.obligationType==="warranty_provision" && a.status==="posted").map((a:any)=>
+                             <option key={a.id} value={a.id}>مخصص #{a.id} — {Number(a.amount).toLocaleString("en-US")}</option>)}
+                         </select>
+                         <Button type="button" size="sm" variant="outline"
+                           disabled={!accrualForm.provisionAccrualId}
+                           onClick={()=>void createCommercialAccrual(row, "claim")}>مسودة استهلاك</Button>
+                       </>}
+                     {commercialAccruals.filter((a:any)=>a.lifecycleId===row.id).map((accrual:any)=>
+                       <span key={accrual.id} className="flex gap-1 items-center">
+                          <span className="text-xs font-mono px-1">
+                            قيد الاستحقاق #{accrual.id}: {accrual.status}
+                            {accrual.journalEntryId ? ` • دفتر #${accrual.journalEntryId}` : ""}
+                            {accrual.reversalJournalEntryId ? ` • عكس #${accrual.reversalJournalEntryId}` : ""}
+                          </span>
+                         {accrual.status==="draft" && <Button type="button" size="sm"
+                           onClick={()=>void postCommercialAccrual(accrual)}>ترحيل</Button>}
+                         {accrual.status==="posted" && <Button type="button" size="sm" variant="outline"
+                           onClick={()=>void reverseCommercialAccrual(accrual)}>عكس</Button>}
+                          {accrual.status==="posted" && accrual.obligationType==="royalty" && !accrual.settlement &&
+                            <Button type="button" size="sm" variant="outline"
+                              onClick={()=>void settleCommercialAccrual(accrual)}>إنشاء مسودة تسوية</Button>}
+                          {accrual.settlement && <span className="text-xs font-mono px-1">
+                            تسوية المورد: {accrual.settlement.status === "posted" ? "مرحّلة" : "مسودة"}
+                            {accrual.settlement.journalEntryId ? ` • دفتر #${accrual.settlement.journalEntryId}` : ""}
+                            {accrual.settlement.reversalJournalEntryId ? ` • عكس #${accrual.settlement.reversalJournalEntryId}` : ""}
+                          </span>}
+                          {accrual.status==="posted" && accrual.obligationType==="royalty" &&
+                            accrual.settlement?.status==="draft" &&
+                            <Button type="button" size="sm" variant="outline"
+                              onClick={()=>void postRoyaltySettlement(accrual)}>ترحيل إقفال الالتزام</Button>}
+                          {accrual.status==="posted" && accrual.obligationType==="royalty" &&
+                            accrual.settlement?.status==="posted" &&
+                            <Button type="button" size="sm" variant="outline"
+                              onClick={()=>void unpostRoyaltySettlement(accrual)}>عكس إقفال الالتزام</Button>}
+                       </span>)}
                   </div>
                 </div>)}
               </div>

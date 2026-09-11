@@ -818,6 +818,70 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     CREATE TRIGGER production_overhead_closures_snapshot_no_mutation
       BEFORE UPDATE ON production_overhead_closures
       FOR EACH ROW EXECUTE FUNCTION reject_production_overhead_closure_snapshot_mutation();` },
+  { label: "production commercial accrual workflow",
+    sql: `CREATE TABLE IF NOT EXISTS production_commercial_accruals (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      order_id INTEGER NOT NULL REFERENCES production_orders(id) ON DELETE RESTRICT,
+      branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+      lifecycle_id TEXT NOT NULL,
+      obligation_type TEXT NOT NULL,
+      recognition_mode TEXT NOT NULL,
+      source_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      posting_date DATE NOT NULL,
+      amount NUMERIC(18,2) NOT NULL CHECK (amount > 0),
+      basis_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+      expense_account_id INTEGER REFERENCES accounts(id),
+      liability_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+      technician_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      provision_accrual_id INTEGER,
+      settlement_id INTEGER,
+      journal_entry_id INTEGER,
+      reversal_journal_entry_id INTEGER,
+      source_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      posted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      posted_at TIMESTAMP,
+      reversed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reversed_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS production_commercial_accruals_source_key_uniq
+      ON production_commercial_accruals(company_id, source_key);
+    CREATE INDEX IF NOT EXISTS production_commercial_accruals_order_lifecycle_idx
+      ON production_commercial_accruals(company_id, order_id, lifecycle_id);
+    CREATE INDEX IF NOT EXISTS production_commercial_accruals_provision_idx
+      ON production_commercial_accruals(company_id, provision_accrual_id);
+    CREATE OR REPLACE FUNCTION reject_production_commercial_accrual_basis_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      IF NEW.company_id IS DISTINCT FROM OLD.company_id
+         OR NEW.order_id IS DISTINCT FROM OLD.order_id
+         OR NEW.branch_id IS DISTINCT FROM OLD.branch_id
+         OR NEW.lifecycle_id IS DISTINCT FROM OLD.lifecycle_id
+         OR NEW.obligation_type IS DISTINCT FROM OLD.obligation_type
+         OR NEW.recognition_mode IS DISTINCT FROM OLD.recognition_mode
+         OR NEW.source_key IS DISTINCT FROM OLD.source_key
+         OR NEW.posting_date IS DISTINCT FROM OLD.posting_date
+         OR NEW.amount IS DISTINCT FROM OLD.amount
+         OR NEW.basis_amount IS DISTINCT FROM OLD.basis_amount
+         OR NEW.expense_account_id IS DISTINCT FROM OLD.expense_account_id
+         OR NEW.liability_account_id IS DISTINCT FROM OLD.liability_account_id
+         OR NEW.supplier_id IS DISTINCT FROM OLD.supplier_id
+         OR NEW.technician_user_id IS DISTINCT FROM OLD.technician_user_id
+         OR NEW.provision_accrual_id IS DISTINCT FROM OLD.provision_accrual_id
+         OR NEW.source_snapshot IS DISTINCT FROM OLD.source_snapshot
+      THEN RAISE EXCEPTION 'production commercial accrual basis is immutable'; END IF;
+      RETURN NEW;
+    END; $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS production_commercial_accruals_basis_no_mutation
+      ON production_commercial_accruals;
+    CREATE TRIGGER production_commercial_accruals_basis_no_mutation
+      BEFORE UPDATE ON production_commercial_accruals
+      FOR EACH ROW EXECUTE FUNCTION reject_production_commercial_accrual_basis_mutation();` },
   { label: "production wizard retry key",
     sql: `ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS wizard_request_id TEXT;
           CREATE UNIQUE INDEX IF NOT EXISTS prod_orders_wizard_request_uniq
@@ -3506,6 +3570,33 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
         ADD COLUMN IF NOT EXISTS source_type TEXT,
         ADD COLUMN IF NOT EXISTS source_record_id INTEGER,
         ADD COLUMN IF NOT EXISTS source_key TEXT` },
+    { label: "supplier_settlements commercial journal linkage",
+      sql:   `ALTER TABLE supplier_settlements
+        ADD COLUMN IF NOT EXISTS journal_entry_id INTEGER,
+        ADD COLUMN IF NOT EXISTS reversal_journal_entry_id INTEGER;
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'supplier_settlements_journal_entry_id_fkey'
+              AND conrelid = 'supplier_settlements'::regclass
+          ) THEN
+            ALTER TABLE supplier_settlements
+              ADD CONSTRAINT supplier_settlements_journal_entry_id_fkey
+              FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id)
+              ON DELETE SET NULL;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'supplier_settlements_reversal_journal_entry_id_fkey'
+              AND conrelid = 'supplier_settlements'::regclass
+          ) THEN
+            ALTER TABLE supplier_settlements
+              ADD CONSTRAINT supplier_settlements_reversal_journal_entry_id_fkey
+              FOREIGN KEY (reversal_journal_entry_id) REFERENCES journal_entries(id)
+              ON DELETE SET NULL;
+          END IF;
+        END $$` },
     { label: "supplier_settlements_company_source_key_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS supplier_settlements_company_source_key_uniq
         ON supplier_settlements (company_id, source_key)

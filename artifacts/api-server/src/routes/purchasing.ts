@@ -11,6 +11,7 @@ import {
   purchaseOrdersTable, purchaseOrderLinesTable,
   purchaseReturnsTable, purchaseReturnLinesTable,
   supplierSettlementsTable, suppliersTable,
+  productionCommercialAccrualsTable,
   cashBoxesTable, bankAccountsTable, journalEntriesTable, journalEntryLinesTable,
   stockBalanceTable, stockLedgerTable, warehousesTable, branchesTable,
   receiptVouchersTable, paymentVouchersTable,
@@ -254,8 +255,13 @@ async function createJournalEntry(opts: {
   // omitted, the JE simply draws the next number with no reuse.
   sourceType?: string;
   sourceId?: number;
+  // A linked commercial settlement posts inside the settlement transaction and
+  // must explicitly create a posted clearing JE. Existing callers omit these.
+  status?: string;
+  dx?: any;
   lines: JLine[];
 }): Promise<number> {
+  const executor = opts.dx ?? db;
   // Filter out lines with zero amount or no account
   const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
   if (cleanLines.length < 2) throw new Error("القيد المحاسبي يحتاج إلى طرفين على الأقل");
@@ -278,7 +284,7 @@ async function createJournalEntry(opts: {
   // tenant has auto-post OFF — otherwise a draft JE would look "posted"
   // in the audit dialog. Callers pass `audit: { req }` (or an old-style
   // pre-baked object); the latter is preserved verbatim for legacy paths.
-  const jeStatus = await resolvePostingStatus(opts.companyId, "purchase");
+  const jeStatus = opts.status ?? await resolvePostingStatus(opts.companyId, "purchase");
   const auditFields = opts.audit?.req
     ? fullAuditFor(opts.audit.req as any, jeStatus)
     : (opts.audit ?? {});
@@ -300,7 +306,7 @@ async function createJournalEntry(opts: {
     userId:     (opts.audit?.req as any)?.authUser?.id ?? null,
   });
   const jeDocNumber = seqDocNumber ?? (opts.docNumber ?? null);
-  const [entry] = await db.insert(journalEntriesTable).values({
+  const [entry] = await executor.insert(journalEntriesTable).values({
     companyId:    opts.companyId,
     branchId:     opts.branchId ?? null,
     docNumber:    jeDocNumber,
@@ -314,7 +320,7 @@ async function createJournalEntry(opts: {
     ...auditFields,
   }).returning();
 
-  await db.insert(journalEntryLinesTable).values(
+  await executor.insert(journalEntryLinesTable).values(
     cleanLines.map((l, i) => ({
       entryId:     entry.id,
       accountId:   l.accountId!,
@@ -330,6 +336,32 @@ async function createJournalEntry(opts: {
     }))
   );
   return entry.id;
+}
+
+async function validateLinkedSettlementAccount(
+  executor: any,
+  companyId: number,
+  accountId: unknown,
+  label: string,
+): Promise<number> {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0)
+    throw Object.assign(new Error(`${label} مطلوب`), { status: 400 });
+  const [account] = await executor.select({
+    id: accountsTable.id,
+    accountType: accountsTable.accountType,
+    isPosting: accountsTable.isPosting,
+    isActive: accountsTable.isActive,
+  }).from(accountsTable).where(and(
+    eq(accountsTable.id, id),
+    eq(accountsTable.companyId, companyId),
+  )).limit(1);
+  if (!account || !account.isActive || !account.isPosting || account.accountType !== "liability")
+    throw Object.assign(
+      new Error(`${label} يجب أن يكون حساب التزام مرحّل ونشط في نفس الشركة`),
+      { status: 400 },
+    );
+  return id;
 }
 
 // Resolve cash-box account
@@ -3965,6 +3997,14 @@ router.post("/supplier-settlements", requirePermission("supplier_settlements", "
     if (sourceKey != null && !normalizedSourceKey) {
       res.status(400).json({ error: "مفتاح مصدر التسوية غير صحيح" }); return;
     }
+    const normalizedSourceType = sourceType == null || sourceType === ""
+      ? null : String(sourceType).trim();
+    if (normalizedSourceType && /^production_/i.test(normalizedSourceType)) {
+      res.status(400).json({
+        error: "مرجع production_* محجوز لمسار الاستحقاق التجاري؛ لا يمكن إنشاؤه من مسار تسوية المورد العام",
+      });
+      return;
+    }
     const normalizedSourceRecordId = sourceRecordId == null || sourceRecordId === ""
       ? null : Number(sourceRecordId);
     if (normalizedSourceRecordId != null &&
@@ -3994,7 +4034,7 @@ router.post("/supplier-settlements", requirePermission("supplier_settlements", "
       amount: String(amount), currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       status: "draft", notes: notes || null,
-      sourceType: sourceType ? String(sourceType) : null,
+      sourceType: normalizedSourceType,
       sourceRecordId: normalizedSourceRecordId,
       sourceKey: normalizedSourceKey,
     };
@@ -4026,19 +4066,121 @@ router.patch("/supplier-settlements/:id/post",
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const [existing] = await db.select({ supplierId: supplierSettlementsTable.supplierId })
-      .from(supplierSettlementsTable).where(and(
+    const row = await db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(supplierSettlementsTable).where(and(
         eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid),
+      )).for("update").limit(1);
+      if (!existing) throw Object.assign(new Error("التسوية غير موجودة"), { status: 404 });
+      if (!(await settlementSupplierInScope(req, cid, existing.supplierId)))
+        throw Object.assign(new Error("لا يمكنك العمل على فرع المورد"), { status: 403 });
+
+      // Ordinary supplier settlements retain their historical status-only
+      // behavior. Only the royalty accrual link opts into the atomic clearing
+      // journal below.
+      if (existing.sourceType && /^production_/i.test(existing.sourceType) &&
+          existing.sourceType !== "production_royalty_accrual")
+        throw Object.assign(new Error("مسودة Royalty قديمة أو مرجع production_* غير قابل للترحيل؛ أنشئ استحقاقاً تجارياً جديداً"), { status: 409 });
+      if (existing.sourceType !== "production_royalty_accrual")
+        return (await tx.update(supplierSettlementsTable)
+          .set({ status: "posted", updatedAt: new Date() })
+          .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)))
+          .returning())[0];
+
+      const sourceId = Number(existing.sourceRecordId);
+      if (!Number.isInteger(sourceId) || sourceId <= 0)
+        throw Object.assign(new Error("مرجع استحقاق Royalty في التسوية غير صحيح"), { status: 409 });
+      const lockedAccrual = await tx.select().from(productionCommercialAccrualsTable).where(and(
+        eq(productionCommercialAccrualsTable.id, sourceId),
+        eq(productionCommercialAccrualsTable.companyId, cid),
+        eq(productionCommercialAccrualsTable.obligationType, "royalty"),
+      )).for("update").limit(1);
+      const accrual = lockedAccrual[0];
+      if (!accrual)
+        throw Object.assign(new Error("استحقاق Royalty المصدر غير موجود في هذه الشركة"), { status: 404 });
+      if ("deny" in effectiveBranchCondition(req, branchesTable.id, accrual.branchId))
+        throw Object.assign(new Error("لا يمكنك العمل على فرع استحقاق Royalty"), { status: 403 });
+      if (accrual.status !== "posted" || !accrual.journalEntryId)
+        throw Object.assign(new Error("تسوية Royalty تتطلب استحقاقاً وقيده مرحّلين"), { status: 409 });
+      if (accrual.settlementId == null || Number(accrual.settlementId) !== id)
+        throw Object.assign(new Error("الاستحقاق مرتبط بتسوية أخرى"), { status: 409 });
+      const expectedSourceKey = `production_royalty_accrual_settlement:${cid}:${sourceId}`;
+      if (existing.sourceRecordId == null || Number(existing.sourceRecordId) !== sourceId ||
+          existing.sourceKey !== expectedSourceKey)
+        throw Object.assign(new Error("مرجع تسوية Royalty أو مفتاح مصدرها غير مطابق للاستحقاق"), { status: 409 });
+      if (existing.supplierId == null || Number(existing.supplierId) !== Number(accrual.supplierId))
+        throw Object.assign(new Error("مورد تسوية Royalty لا يطابق مورد الاستحقاق"), { status: 409 });
+      if (Math.abs(Number(existing.amount) - Number(accrual.amount)) > 0.005)
+        throw Object.assign(new Error("مبلغ التسوية لا يطابق مبلغ استحقاق Royalty"), { status: 409 });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(existing.settlementDate)))
+        throw Object.assign(new Error("تاريخ تسوية Royalty غير صحيح"), { status: 400 });
+
+      const [supplier] = await tx.select({
+        id: suppliersTable.id,
+        accountId: suppliersTable.accountId,
+        branchId: suppliersTable.branchId,
+      }).from(suppliersTable).where(and(
+        eq(suppliersTable.id, existing.supplierId),
+        eq(suppliersTable.companyId, cid),
       )).limit(1);
-    if (!existing) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
-    if (!(await settlementSupplierInScope(req, cid, existing.supplierId))) {
-      res.status(403).json({ error: "لا يمكنك العمل على فرع المورد" }); return;
-    }
-    const [row] = await db.update(supplierSettlementsTable)
-      .set({ status: "posted", updatedAt: new Date() })
-      .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)))
-      .returning();
-    if (!row) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+      if (!supplier)
+        throw Object.assign(new Error("المورد غير موجود في هذه الشركة"), { status: 400 });
+      if (accrual.branchId != null && supplier.branchId != null &&
+          Number(accrual.branchId) !== Number(supplier.branchId))
+        throw Object.assign(new Error("فرع مورد Royalty لا يطابق فرع الاستحقاق"), { status: 409 });
+      if (String(existing.paymentMethod ?? "").toLowerCase() === "cash")
+        throw Object.assign(new Error("تسوية Royalty المرتبطة ليست دفعة نقدية؛ استخدم حساب دائن المورد"), { status: 409 });
+      const supplierApAccountId = await validateLinkedSettlementAccount(
+        tx, cid, supplier.accountId, "حساب دائن المورد",
+      );
+      const accruedLiabilityAccountId = await validateLinkedSettlementAccount(
+        tx, cid, accrual.liabilityAccountId, "حساب التزام Royalty المستحق",
+      );
+      if (supplierApAccountId === accruedLiabilityAccountId)
+        throw Object.assign(new Error("حساب دائن المورد يجب أن يختلف عن حساب الالتزام المستحق"), { status: 400 });
+      if (existing.accountId == null || Number(existing.accountId) !== supplierApAccountId)
+        throw Object.assign(new Error("حساب التسوية يجب أن يكون حساب دائن المورد"), { status: 409 });
+
+      // The settlement is a payable-obligation transition, not a cash
+      // payment: DR the accrued royalty liability and CR the supplier AP.
+      const journalEntryId = existing.status === "posted" && existing.journalEntryId
+        ? existing.journalEntryId
+        : await createJournalEntry({
+            companyId: cid,
+            branchId: accrual.branchId,
+            date: String(existing.settlementDate),
+            description: `تسوية التزام Royalty #${sourceId} إلى دائن المورد`,
+            docNumber: existing.docNumber,
+            entryType: "production_royalty_settlement_clearing",
+            status: "posted",
+            audit: { req },
+            sourceType: "supplier_settlement",
+            sourceId: id,
+            dx: tx,
+            lines: [
+              {
+                accountId: accruedLiabilityAccountId,
+                debit: Number(Number(existing.amount).toFixed(2)),
+                description: `إقفال التزام Royalty #${sourceId}`,
+              },
+              {
+                accountId: supplierApAccountId,
+                credit: Number(Number(existing.amount).toFixed(2)),
+                description: `دائن المورد لتسوية Royalty #${sourceId}`,
+              },
+            ],
+          });
+      const [posted] = await tx.update(supplierSettlementsTable).set({
+        status: "posted",
+        accountId: supplierApAccountId,
+        journalEntryId,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(supplierSettlementsTable.id, id),
+        eq(supplierSettlementsTable.companyId, cid),
+      )).returning();
+      if (!posted) throw Object.assign(new Error("تعذر ترحيل تسوية Royalty"), { status: 409 });
+      return posted;
+    });
     res.json(row);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
@@ -4052,19 +4194,74 @@ router.patch("/supplier-settlements/:id/unpost",
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const [existing] = await db.select({ supplierId: supplierSettlementsTable.supplierId })
-      .from(supplierSettlementsTable).where(and(
+    const row = await db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(supplierSettlementsTable).where(and(
         eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid),
-      )).limit(1);
-    if (!existing) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
-    if (!(await settlementSupplierInScope(req, cid, existing.supplierId))) {
-      res.status(403).json({ error: "لا يمكنك العمل على فرع المورد" }); return;
-    }
-    const [row] = await db.update(supplierSettlementsTable)
-      .set({ status: "draft", updatedAt: new Date() })
-      .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)))
-      .returning();
-    if (!row) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+      )).for("update").limit(1);
+      if (!existing) throw Object.assign(new Error("التسوية غير موجودة"), { status: 404 });
+      if (!(await settlementSupplierInScope(req, cid, existing.supplierId)))
+        throw Object.assign(new Error("لا يمكنك العمل على فرع المورد"), { status: 403 });
+      if (existing.sourceType !== "production_royalty_accrual")
+        return (await tx.update(supplierSettlementsTable)
+          .set({ status: "draft", updatedAt: new Date() })
+          .where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)))
+          .returning())[0];
+      if (existing.status === "draft") return existing;
+      if (existing.status !== "posted" || !existing.journalEntryId)
+        throw Object.assign(new Error("تسوية Royalty مرحّلة بلا قيد قابل للعكس"), { status: 409 });
+
+      const sourceId = Number(existing.sourceRecordId);
+      const lockedAccrual = await tx.select().from(productionCommercialAccrualsTable).where(and(
+        eq(productionCommercialAccrualsTable.id, sourceId),
+        eq(productionCommercialAccrualsTable.companyId, cid),
+        eq(productionCommercialAccrualsTable.obligationType, "royalty"),
+      )).for("update").limit(1);
+      const accrual = lockedAccrual[0];
+      if (!accrual || accrual.status !== "posted")
+        throw Object.assign(new Error("لا يمكن عكس تسوية Royalty دون استحقاق مرحّل"), { status: 409 });
+      if ("deny" in effectiveBranchCondition(req, branchesTable.id, accrual.branchId))
+        throw Object.assign(new Error("لا يمكنك العمل على فرع استحقاق Royalty"), { status: 403 });
+      const originalLines = await tx.select({
+        accountId: journalEntryLinesTable.accountId,
+        debit: journalEntryLinesTable.debit,
+        credit: journalEntryLinesTable.credit,
+        description: journalEntryLinesTable.description,
+        costCenter: journalEntryLinesTable.costCenter,
+      }).from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, existing.journalEntryId))
+        .orderBy(asc(journalEntryLinesTable.sortOrder));
+      if (originalLines.length < 2)
+        throw Object.assign(new Error("قيد تسوية Royalty الأصلي غير مكتمل ولا يمكن عكسه"), { status: 409 });
+      const reversalJournalEntryId = await createJournalEntry({
+        companyId: cid,
+        branchId: accrual.branchId,
+        date: String(existing.settlementDate),
+        description: `عكس تسوية التزام Royalty #${sourceId} — القيد #${existing.journalEntryId}`,
+        docNumber: existing.docNumber,
+        entryType: "production_royalty_settlement_reversal",
+        status: "posted",
+        audit: { req },
+        sourceType: "supplier_settlement_reversal",
+        sourceId: id,
+        dx: tx,
+        lines: originalLines.map((line) => ({
+          accountId: line.accountId,
+          debit: Number(line.credit ?? 0),
+          credit: Number(line.debit ?? 0),
+          description: `عكس: ${line.description ?? "تسوية التزام Royalty"}`,
+          costCenter: line.costCenter,
+        })),
+      });
+      const [unposted] = await tx.update(supplierSettlementsTable).set({
+        status: "draft",
+        reversalJournalEntryId,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(supplierSettlementsTable.id, id),
+        eq(supplierSettlementsTable.companyId, cid),
+      )).returning();
+      if (!unposted) throw Object.assign(new Error("تعذر عكس تسوية Royalty"), { status: 409 });
+      return unposted;
+    });
     res.json(row);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });

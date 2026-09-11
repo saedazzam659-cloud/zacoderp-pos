@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
 import { suppliersTable } from "./suppliers";
 import { accountsTable } from "./accounts";
+import { journalEntriesTable } from "./journalEntries";
 
 // ─── Supplier Groups ────────────────────────────────────────────────────────
 export const supplierGroupsTable = pgTable("supplier_groups", {
@@ -303,11 +304,17 @@ export const supplierSettlementsTable = pgTable("supplier_settlements", {
   notes:         text("notes"),
   // Optional provenance for generated payable drafts (for example a royalty
   // calculation). The owning module remains responsible for the source facts;
-  // this row only enters the normal supplier-settlement workflow and does not
-  // create accounting until the existing posting action is used.
+  // linked commercial settlements create their liability-clearing JE only
+  // when the normal posting action is used.
   sourceType:    text("source_type"),
   sourceRecordId: integer("source_record_id"),
   sourceKey:     text("source_key"),
+  journalEntryId: integer("journal_entry_id").references(() => journalEntriesTable.id, {
+    onDelete: "set null",
+  }),
+  reversalJournalEntryId: integer("reversal_journal_entry_id").references(() => journalEntriesTable.id, {
+    onDelete: "set null",
+  }),
   createdAt:     timestamp("created_at").defaultNow().notNull(),
   updatedAt:     timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({

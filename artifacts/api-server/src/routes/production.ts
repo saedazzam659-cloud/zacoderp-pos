@@ -14,6 +14,7 @@ import {
   productionEventsTable,
   productionCostAllocationsTable,
   productionOverheadClosuresTable,
+  productionCommercialAccrualsTable,
   packagingSpecificationsTable,
   packagingSpecificationVersionsTable,
   packagingSpecificationApprovalsTable,
@@ -1311,9 +1312,9 @@ router.post("/packaging/versions/:id/approve", async (req, res) => {
 });
 
 // Operational certificate / royalty / warranty lifecycle attached to the
-// existing manufacturing order. Recognised amounts can only come from an
-// immutable production_cost_allocation snapshot. Terms and lifecycle state do
-// not post journals, so the owning source module remains the single booker.
+// existing manufacturing order. Operational records remain separate from
+// accounting; explicit commercial-accrual endpoints below are the only path
+// that can recognise a new royalty/provision obligation.
 const COMMERCIAL_LIFECYCLE_TYPES = new Set(["certificate", "royalty", "warranty"]);
 const COMMERCIAL_LIFECYCLE_STATUSES = new Set([
   "draft", "active", "expired", "suspended", "settled", "cancelled",
@@ -1333,13 +1334,38 @@ function lifecycleModuleKey(): "production" | "simple_manufacturing" {
     : "production";
 }
 
+// Posting rights follow the facade that mounted this narrow router.  A
+// simple-manufacturing user must not need an unrelated advanced-production
+// posting grant, while direct advanced routes remain protected by production.
+const requireCommercialPostRight = (req: any, res: any, next: any) =>
+  requirePostRight(lifecycleModuleKey())(req, res, next);
+const requireCommercialUnpostRight = (req: any, res: any, next: any) =>
+  requireUnpostRight(lifecycleModuleKey())(req, res, next);
+
 commercialLifecycleRouter.use((req, res, next) => {
-  const action: "view" | "post" | "unpost" =
-    req.method === "GET"
-      ? "view"
-      : req.method === "PATCH" && /^(cancelled|reversed)$/i.test(String((req as any).body?.status ?? ""))
-        ? "unpost"
-        : "post";
+  const path = String((req as any).path ?? "");
+  let action: "view" | "create" | "edit" | "post" | "unpost";
+  if (req.method === "GET") {
+    action = "view";
+  } else if (
+    (req.method === "PATCH" &&
+      /^(cancelled|reversed)$/i.test(String((req as any).body?.status ?? ""))) ||
+    /\/reverse$/i.test(path)
+  ) {
+    // Cancellation/reversal is an unpost-like destructive transition. It
+    // must not also require the ordinary post grant.
+    action = "unpost";
+  } else if (/\/royalty-calculate$/i.test(path)) {
+    // This endpoint reads posted sales/return facts only; it never creates a
+    // lifecycle row, settlement, or journal entry.
+    action = "view";
+  } else if (req.method === "PATCH") {
+    action = "edit";
+  } else if (/\/accrual\/[^/]+\/post$/i.test(path) || /\/accrual\/[^/]+\/settle$/i.test(path)) {
+    action = "post";
+  } else {
+    action = "create";
+  }
   if (!canAccessModule(req.authUser, lifecycleModuleKey(), action)) {
     res.status(403).json({ error: "ليس لديك صلاحية لهذا الإجراء التشغيلي" });
     return;
@@ -1420,6 +1446,146 @@ function normalizeWarrantyClaimDetails(value: unknown): Array<{
   });
 }
 
+async function validateCommercialAccount(
+  executor: any,
+  companyId: number,
+  accountId: unknown,
+  expectedType: "expense" | "liability",
+  label: string,
+) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0)
+    throw Object.assign(new Error(`${label} مطلوب`), { status: 400 });
+  const [account] = await executor.select({
+    id: accountsTable.id,
+    accountType: accountsTable.accountType,
+    isPosting: accountsTable.isPosting,
+    isActive: accountsTable.isActive,
+  }).from(accountsTable).where(and(
+    eq(accountsTable.id, id),
+    eq(accountsTable.companyId, companyId),
+  )).limit(1);
+  if (!account || !account.isActive || !account.isPosting || account.accountType !== expectedType)
+    throw Object.assign(
+      new Error(`${label} يجب أن يكون حساب ${expectedType === "expense" ? "مصروف" : "التزام"} مرحّل ونشط في نفس الشركة`),
+      { status: 400 },
+    );
+  return id;
+}
+
+async function royaltyFacts(
+  executor: any,
+  companyId: number,
+  orderId: number,
+  productItemId: number,
+  from: string,
+  to: string,
+) {
+  const [sales, returns] = await Promise.all([
+    executor.select({
+      invoiceId: salesInvoicesTable.id,
+      qty: salesInvoiceLinesTable.qty,
+      lineTotal: salesInvoiceLinesTable.lineTotal,
+      exchangeRate: salesInvoicesTable.exchangeRate,
+    }).from(salesInvoiceLinesTable)
+      .innerJoin(salesInvoicesTable, eq(salesInvoicesTable.id, salesInvoiceLinesTable.invoiceId))
+      .where(and(
+        eq(salesInvoiceLinesTable.companyId, companyId),
+        eq(salesInvoicesTable.companyId, companyId),
+        eq(salesInvoicesTable.status, "posted"),
+        eq(salesInvoiceLinesTable.itemId, productItemId),
+        sql`${salesInvoicesTable.invoiceDate} >= ${from}`,
+        sql`${salesInvoicesTable.invoiceDate} <= ${to}`,
+      )),
+    executor.select({
+      returnId: salesReturnsTable.id,
+      qty: salesReturnLinesTable.qty,
+      lineTotal: salesReturnLinesTable.lineTotal,
+      exchangeRate: salesReturnsTable.exchangeRate,
+    }).from(salesReturnLinesTable)
+      .innerJoin(salesReturnsTable, eq(salesReturnsTable.id, salesReturnLinesTable.returnId))
+      .where(and(
+        eq(salesReturnLinesTable.companyId, companyId),
+        eq(salesReturnsTable.companyId, companyId),
+        eq(salesReturnsTable.status, "posted"),
+        eq(salesReturnLinesTable.itemId, productItemId),
+        sql`${salesReturnsTable.returnDate} >= ${from}`,
+        sql`${salesReturnsTable.returnDate} <= ${to}`,
+      )),
+  ]);
+  const postedUnits = sales.reduce((sum: number, line: any) => sum + num(line.qty), 0);
+  const returnedUnits = returns.reduce((sum: number, line: any) => sum + num(line.qty), 0);
+  const netUnits = Math.max(0, postedUnits - returnedUnits);
+  const postedRevenue = sales.reduce(
+    (sum: number, line: any) => sum + num(line.lineTotal) * num(line.exchangeRate || 1), 0,
+  );
+  const returnedRevenue = returns.reduce(
+    (sum: number, line: any) => sum + num(line.lineTotal) * num(line.exchangeRate || 1), 0,
+  );
+  return {
+    sales,
+    returns,
+    postedUnits,
+    returnedUnits,
+    netUnits,
+    postedRevenue,
+    returnedRevenue,
+    netRevenue: Math.max(0, postedRevenue - returnedRevenue),
+    references: {
+      invoiceIds: [...new Set(sales.map((line: any) => Number(line.invoiceId)))],
+      returnIds: [...new Set(returns.map((line: any) => Number(line.returnId)))],
+    },
+  };
+}
+
+function dateOnly(value: unknown, fallback = new Date().toISOString().slice(0, 10)): string {
+  const date = value == null || value === "" ? fallback : String(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+    throw Object.assign(new Error("تاريخ الترحيل غير صحيح"), { status: 400 });
+  return date;
+}
+
+function canonicalFactKey(
+  companyId: number,
+  orderId: number,
+  lifecycleId: string,
+  obligationType: string,
+  period: { from?: string; to?: string },
+  sourceIds: string[],
+): string {
+  const ids = [...new Set(sourceIds)].sort();
+  const sourcePart = ids.length ? ids.join(",") : "none";
+  return [
+    "production_commercial",
+    companyId,
+    orderId,
+    lifecycleId,
+    obligationType,
+    period.from ?? "",
+    period.to ?? "",
+    sourcePart,
+  ].join(":");
+}
+
+function sourceKeyGeneration(sourceKey: string, baseKey: string): number | null {
+  if (sourceKey === baseKey) return 1;
+  const prefix = `${baseKey}:generation:`;
+  if (!sourceKey.startsWith(prefix)) return null;
+  const generation = Number(sourceKey.slice(prefix.length));
+  return Number.isInteger(generation) && generation > 1 ? generation : null;
+}
+
+function lifecycleWithAccrual(
+  meta: any,
+  lifecycleId: string,
+  patch: Record<string, unknown>,
+) {
+  const rows = lifecycleRows(meta);
+  return rows.map((row) => row.id === lifecycleId
+    ? { ...row, ...patch, updatedAt: new Date().toISOString() }
+    : row);
+}
+
 commercialLifecycleRouter.get("/orders/:id/commercial-lifecycle", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -1438,6 +1604,25 @@ commercialLifecycleRouter.get("/orders/:id/commercial-lifecycle", async (req, re
         eq(productionCostAllocationsTable.orderId, id),
         inArray(productionCostAllocationsTable.id, allocationIds))) : [];
     const allocationById = new Map(allocations.map((x) => [x.id, x]));
+    const accrualRows = await db.select().from(productionCommercialAccrualsTable).where(and(
+      eq(productionCommercialAccrualsTable.companyId, cid),
+      eq(productionCommercialAccrualsTable.orderId, id),
+    )).orderBy(desc(productionCommercialAccrualsTable.createdAt));
+    const settlementIds = [...new Set(accrualRows
+      .map((row) => row.settlementId)
+      .filter((settlementId): settlementId is number =>
+        settlementId != null && Number.isInteger(settlementId) && settlementId > 0))];
+    const settlements = settlementIds.length
+      ? await db.select().from(supplierSettlementsTable).where(and(
+        eq(supplierSettlementsTable.companyId, cid),
+        inArray(supplierSettlementsTable.id, settlementIds),
+      ))
+      : [];
+    const settlementById = new Map(settlements.map((settlement) => [settlement.id, settlement]));
+    const accruals = accrualRows.map((accrual) => ({
+      ...accrual,
+      settlement: accrual.settlementId ? settlementById.get(accrual.settlementId) ?? null : null,
+    }));
     res.json({
       records: records.map((record) => {
         const source = allocationById.get(Number(record.sourceAllocationId)) ?? null;
@@ -1490,7 +1675,8 @@ commercialLifecycleRouter.get("/orders/:id/commercial-lifecycle", async (req, re
           } : null,
         };
       }),
-      accountingRule: "source_allocation_only_no_duplicate_posting",
+      accountingRule: "source_allocations_are_immutable_evidence; commercial_accruals_have_explicit_journal_lifecycle",
+      accruals,
     });
   } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
 });
@@ -1498,8 +1684,6 @@ commercialLifecycleRouter.get("/orders/:id/commercial-lifecycle", async (req, re
 commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    if (!canAccessModule(req.authUser, lifecycleModuleKey(), "post"))
-      return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
     const orderId = Number(req.params.id);
     const body = req.body ?? {};
     const type = String(body.type ?? "");
@@ -1570,6 +1754,17 @@ commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle", async (req, r
     const calculationMethod = String(body.calculationMethod ?? allowedMethods[0]);
     if (!allowedMethods.includes(calculationMethod))
       return void res.status(400).json({ error: "طريقة الحساب غير صحيحة" });
+    const approvedEstimateAmount = body.approvedEstimateAmount == null ||
+      body.approvedEstimateAmount === "" ? null : num(body.approvedEstimateAmount);
+    const approvedEstimateReference = body.approvedEstimateReference == null
+      ? null : String(body.approvedEstimateReference).trim().slice(0, 250);
+    if (
+      type === "warranty" &&
+      calculationMethod === "provision" &&
+      status === "active" &&
+      (!(approvedEstimateAmount && approvedEstimateAmount > 0) || !approvedEstimateReference)
+    )
+      return void res.status(400).json({ error: "تفعيل مخصص الضمان يتطلب مبلغ تقدير موجباً ومرجع اعتماد صريح" });
     const effectiveFrom = body.effectiveFrom ? String(body.effectiveFrom) : null;
     const effectiveTo = body.effectiveTo ? String(body.effectiveTo) : null;
     if (effectiveFrom && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom))
@@ -1649,13 +1844,22 @@ commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle", async (req, r
             throw Object.assign(new Error("تصنيف لقطة المصدر لا يطابق نوع السجل"), { status: 400 });
         }
       }
-      if (supplierId) {
-        const [supplier] = await tx.select({ id: suppliersTable.id }).from(suppliersTable).where(and(
+        if (supplierId) {
+          const [supplier] = await tx.select({
+            id: suppliersTable.id,
+            branchId: suppliersTable.branchId,
+          }).from(suppliersTable).where(and(
           eq(suppliersTable.id, supplierId),
           eq(suppliersTable.companyId, cid),
         )).limit(1);
         if (!supplier)
           throw Object.assign(new Error("المورد غير موجود في هذه الشركة"), { status: 400 });
+          if (
+            supplier.branchId != null &&
+            order.branch_id != null &&
+            Number(supplier.branchId) !== Number(order.branch_id)
+          )
+            throw Object.assign(new Error("فرع المورد لا يطابق فرع أمر الإنتاج"), { status: 400 });
       }
       if (technicianUserId) {
         const [technician] = await tx.select({ id: usersTable.id }).from(usersTable)
@@ -1742,6 +1946,10 @@ commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle", async (req, r
         technicianUserId: type === "warranty" ? technicianUserId : null,
         repairNotes: type === "warranty" && body.repairNotes ? String(body.repairNotes).slice(0, 2000) : null,
         repairOpenedAt: type === "warranty" ? now : null,
+        approvedEstimateAmount: type === "warranty" && calculationMethod === "provision"
+          ? approvedEstimateAmount : null,
+        approvedEstimateReference: type === "warranty" && calculationMethod === "provision"
+          ? approvedEstimateReference : null,
         claimDetails: claimDetails.map((detail) => ({
           ...detail,
           amount: num(allocations.find((x) => x.id === detail.sourceAllocationId)?.allocatedAmount),
@@ -1771,8 +1979,6 @@ commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle", async (req, r
 commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle/:lifecycleId/renew", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    if (!canAccessModule(req.authUser, lifecycleModuleKey(), "post"))
-      return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
     const orderId = Number(req.params.id);
     const lifecycleId = String(req.params.lifecycleId);
     const renewed = await db.transaction(async (tx) => {
@@ -1835,8 +2041,10 @@ commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle/:lifecycleId/re
 commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle/:lifecycleId/royalty-calculate", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    if (!canAccessModule(req.authUser, lifecycleModuleKey(), "post"))
-      return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
+    if (req.body?.settle === true)
+      return void res.status(400).json({
+        error: "حساب Royalty للوقائع المرحّلة للقراءة فقط؛ أنشئ استحقاقاً تجارياً جديداً قبل أي تسوية",
+      });
     const orderId = Number(req.params.id);
     const lifecycleId = String(req.params.lifecycleId);
     const result = await db.transaction(async (tx) => {
@@ -1923,65 +2131,838 @@ commercialLifecycleRouter.post("/orders/:id/commercial-lifecycle/:lifecycleId/ro
         returnIds: [...new Set(returns.map((line) => Number(line.returnId)))],
         allocationIds: allocations.map((allocation) => allocation.id),
       };
-      let settlement: any = null;
-      if (req.body?.settle === true) {
-        const supplierId = Number(current.supplierId);
-        if (!Number.isInteger(supplierId) || supplierId <= 0)
-          throw Object.assign(new Error("تسوية Royalty تتطلب مورداً مستفيداً"), { status: 400 });
-        const [supplier] = await tx.select({ id: suppliersTable.id, branchId: suppliersTable.branchId })
-          .from(suppliersTable).where(and(
-          eq(suppliersTable.id, supplierId), eq(suppliersTable.companyId, cid))).limit(1);
-        if (!supplier)
-          throw Object.assign(new Error("مورد Royalty غير موجود في هذه الشركة"), { status: 400 });
-        if (!rowInScope(req, supplier.branchId))
-          throw Object.assign(new Error("لا يمكنك إنشاء تسوية لمورد خارج نطاق فروعك"), { status: 403 });
-        if (!(amount > 0))
-          throw Object.assign(new Error("لا يمكن إنشاء تسوية Royalty بصفر؛ لا توجد وقائع مرحّلة"), { status: 400 });
-        const sourceKey = `production_royalty:${cid}:${orderId}:${lifecycleId}:${from}:${to}`;
-        [settlement] = await tx.select().from(supplierSettlementsTable).where(and(
-          eq(supplierSettlementsTable.companyId, cid),
-          eq(supplierSettlementsTable.sourceKey, sourceKey))).limit(1);
-        if (!settlement) {
-          [settlement] = await tx.insert(supplierSettlementsTable).values({
-            companyId: cid, docNumber: `ROY-${orderId}-${from.replaceAll("-", "")}`,
-            settlementDate: to, supplierId, paymentMethod: "bank", accountId: null,
-            amount: String(amount), currencyCode: "SAR", exchangeRate: "1", status: "draft",
-            notes: `Royalty source: order=${orderId}; lifecycle=${lifecycleId}; period=${from}:${to}; references=${JSON.stringify(references)}`,
-            sourceType: "production_royalty", sourceRecordId: orderId, sourceKey,
-          }).returning();
-        }
-        const updatedRows = rows.map((row) => row.id === lifecycleId
-          ? { ...row, royaltySettlementId: settlement.id, lastRoyaltyCalculation: {
-              from, to, amount, basisAmount, rate, references,
-            }, updatedAt: new Date().toISOString() } : row);
-        await tx.update(productionOrdersTable).set({
-          meta: { ...(order.meta ?? {}), commercialLifecycle: updatedRows },
-          updatedAt: new Date(),
-        }).where(and(eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid)));
-        await writeEvent(cid, orderId, "royalty_settlement_draft_created", {
-          lifecycleId, settlementId: settlement.id, amount, from, to, references,
-        }, req.authUser!.id, false, tx);
-      }
       return {
         lifecycleId, method, period: { from, to }, basisAmount, rate, amount,
         basis: { postedUnits, returnedUnits, netUnits, postedRevenue, returnedRevenue,
           netRevenue, manufacturingCost,
           attribution: "posted_product_period_and_order_source_allocations" },
         references,
-        settlement: settlement
-          ? { id: settlement.id, status: settlement.status, sourceKey: settlement.sourceKey }
-          : null,
       };
     });
     res.json(result);
   } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
 });
 
+// ──────────────────────────────────────────────────────────────────────────
+// COMMERCIAL ACCRUALS
+//
+// Commercial lifecycle records above are operational contracts/claims.  They
+// intentionally do not create accounting.  These explicit endpoints are the
+// accounting boundary: a draft snapshots a validated basis, POST creates one
+// balanced JE, and REVERSE inverts those exact posted lines.  Existing
+// production_cost_allocations are never used as an expense amount for a new
+// royalty/provision; they are only allowed as the source-backed evidence for a
+// warranty claim that consumes an already-posted provision.
+// ──────────────────────────────────────────────────────────────────────────
+commercialLifecycleRouter.get(
+  "/orders/:id/commercial-lifecycle/:lifecycleId/accruals",
+  async (req, res) => {
+    try {
+      const cid = guard(req, res); if (!cid) return;
+      const orderId = Number(req.params.id);
+      const lifecycleId = String(req.params.lifecycleId);
+      const [order] = await db.select({ id: productionOrdersTable.id, branchId: productionOrdersTable.branchId })
+        .from(productionOrdersTable).where(and(
+          eq(productionOrdersTable.id, orderId),
+          eq(productionOrdersTable.companyId, cid),
+        )).limit(1);
+      if (!order || !rowInScope(req, order.branchId))
+        return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+      const rows = await db.select().from(productionCommercialAccrualsTable).where(and(
+        eq(productionCommercialAccrualsTable.companyId, cid),
+        eq(productionCommercialAccrualsTable.orderId, orderId),
+        eq(productionCommercialAccrualsTable.lifecycleId, lifecycleId),
+      )).orderBy(desc(productionCommercialAccrualsTable.createdAt));
+      const settlementIds = [...new Set(rows
+        .map((row) => row.settlementId)
+        .filter((settlementId): settlementId is number =>
+          settlementId != null && Number.isInteger(settlementId) && settlementId > 0))];
+      const settlements = settlementIds.length
+        ? await db.select().from(supplierSettlementsTable).where(and(
+          eq(supplierSettlementsTable.companyId, cid),
+          inArray(supplierSettlementsTable.id, settlementIds),
+        ))
+        : [];
+      const settlementById = new Map(settlements.map((settlement) => [settlement.id, settlement]));
+      res.json(rows.map((row) => ({
+        ...row,
+        settlement: row.settlementId ? settlementById.get(row.settlementId) ?? null : null,
+      })));
+    } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+  },
+);
+
+commercialLifecycleRouter.post(
+  "/orders/:id/commercial-lifecycle/:lifecycleId/accrual-draft",
+  async (req, res) => {
+    try {
+      const cid = guard(req, res); if (!cid) return;
+      const orderId = Number(req.params.id);
+      const lifecycleId = String(req.params.lifecycleId);
+      const body = req.body ?? {};
+      const postingDate = dateOnly(body.postingDate);
+      const mode = String(body.mode ?? body.recognitionMode ?? "new_accrual");
+      const result = await db.transaction(async (tx) => {
+        // This lock serializes lifecycle edits, accrual creation and warranty
+        // cap checks for the same order.
+        const locked = await tx.execute(sql`
+          SELECT id, branch_id, product_item_id, status, meta
+          FROM production_orders
+          WHERE id = ${orderId} AND company_id = ${cid}
+          FOR UPDATE
+        `);
+        const order: any = locked.rows[0];
+        if (!order || !rowInScope(req, order.branch_id))
+          throw Object.assign(new Error("أمر الإنتاج غير موجود"), { status: 404 });
+        if (["cancelled", "reversed"].includes(String(order.status)))
+          throw Object.assign(new Error("لا يمكن إنشاء استحقاق لأمر إنتاج مغلق"), { status: 409 });
+        const rows = lifecycleRows(order.meta);
+        const current = rows.find((row) => row.id === lifecycleId);
+        if (!current)
+          throw Object.assign(new Error("سجل دورة الحياة غير موجود"), { status: 404 });
+        if (!["active", "suspended"].includes(String(current.status)))
+          throw Object.assign(new Error("يجب تفعيل سجل دورة الحياة قبل إنشاء الاستحقاق"), { status: 409 });
+
+        let obligationType: "royalty" | "warranty_provision" | "warranty_claim";
+        let recognitionMode: "new_accrual" | "source_backed_claim";
+        let amount = 0;
+        let basisAmount = 0;
+        let expenseAccountId: number | null = null;
+        let liabilityAccountId: number;
+        let supplierId: number | null = null;
+        let technicianUserId: number | null = null;
+        let provisionAccrualId: number | null = null;
+        let sourceSnapshot: Record<string, unknown>;
+        let sourceKeyBase: string;
+
+        if (current.type === "royalty") {
+          if (mode !== "new_accrual")
+            throw Object.assign(new Error("Royalty يدعم استحقاقاً جديداً من وقائع المبيعات المرحّلة فقط؛ لا يمكن إعادة استحقاق لقطة تكلفة مرحّلة"), { status: 400 });
+          if (!order.product_item_id)
+            throw Object.assign(new Error("أمر التصنيع غير مرتبط بمنتج"), { status: 409 });
+          const from = String(body.from ?? current.effectiveFrom ?? postingDate);
+          const to = String(body.to ?? current.effectiveTo ?? postingDate);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+              !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from)
+            throw Object.assign(new Error("فترة استحقاق Royalty غير صحيحة"), { status: 400 });
+          const facts = await royaltyFacts(tx, cid, orderId, Number(order.product_item_id), from, to);
+          const allocations = await tx.select().from(productionCostAllocationsTable).where(and(
+            eq(productionCostAllocationsTable.companyId, cid),
+            eq(productionCostAllocationsTable.orderId, orderId),
+          ));
+          const manufacturingCost = allocations
+            .filter((allocation) => (allocation.snapshotMeta as any)?.includeInManufacturing !== false)
+            .reduce((sum, allocation) => sum + num(allocation.allocatedAmount), 0);
+          const method = String(current.calculationMethod);
+          const tierBasis = current.tierBasis === "sales" ? "sales" : "units";
+          basisAmount = method === "sales_percentage" ? facts.netRevenue
+            : method === "manufacturing_cost_percentage" ? manufacturingCost
+            : method === "tiered" && tierBasis === "sales" ? facts.netRevenue
+            : facts.netUnits;
+          const sortedTiers = Array.isArray(current.tiers)
+            ? [...current.tiers].sort((a: any, b: any) =>
+                (a.upTo == null ? Number.POSITIVE_INFINITY : num(a.upTo)) -
+                (b.upTo == null ? Number.POSITIVE_INFINITY : num(b.upTo)))
+            : [];
+          const tier = method === "tiered"
+            ? (sortedTiers.find((candidate: any) =>
+                candidate.upTo == null || basisAmount <= num(candidate.upTo)) ??
+              sortedTiers[sortedTiers.length - 1] ?? null)
+            : null;
+          const rate = tier ? num((tier as any).rate) : num(current.rate);
+          const rawAmount = method === "per_unit" ||
+            (method === "tiered" && tierBasis === "units")
+            ? basisAmount * rate
+            : basisAmount * rate / 100;
+          amount = Number(Math.min(
+            current.maximumAmount == null ? Number.POSITIVE_INFINITY : num(current.maximumAmount),
+            Math.max(current.minimumAmount == null ? 0 : num(current.minimumAmount), rawAmount),
+          ).toFixed(2));
+          if (!(amount > 0))
+            throw Object.assign(new Error("لا توجد وقائع مبيعات/مرتجعات مرحّلة موجبة لإنشاء استحقاق Royalty"), { status: 409 });
+          obligationType = "royalty";
+          recognitionMode = "new_accrual";
+          expenseAccountId = await validateCommercialAccount(
+            tx, cid, body.expenseAccountId, "expense", "حساب مصروف Royalty",
+          );
+          liabilityAccountId = await validateCommercialAccount(
+            tx, cid, body.liabilityAccountId, "liability", "حساب التزام Royalty",
+          );
+          supplierId = current.supplierId == null ? null : Number(current.supplierId);
+          if (!supplierId)
+            throw Object.assign(new Error("استحقاق Royalty يتطلب مورداً مستفيداً"), { status: 400 });
+           const [supplier] = await tx.select({ id: suppliersTable.id, branchId: suppliersTable.branchId })
+            .from(suppliersTable).where(and(
+              eq(suppliersTable.id, supplierId), eq(suppliersTable.companyId, cid),
+            )).limit(1);
+          if (!supplier) throw Object.assign(new Error("مورد Royalty غير موجود في الشركة"), { status: 400 });
+          if (!rowInScope(req, supplier.branchId))
+            throw Object.assign(new Error("لا يمكنك العمل على فرع مورد Royalty"), { status: 403 });
+           if (
+             supplier.branchId != null &&
+             order.branch_id != null &&
+             Number(supplier.branchId) !== Number(order.branch_id)
+           )
+             throw Object.assign(new Error("فرع مورد Royalty لا يطابق فرع أمر الإنتاج"), { status: 400 });
+          sourceSnapshot = {
+            calculation: "posted_sales_and_returns",
+            from, to, method, tierBasis, rate,
+            basisAmount, postedUnits: facts.postedUnits, returnedUnits: facts.returnedUnits,
+            netUnits: facts.netUnits, postedRevenue: facts.postedRevenue,
+            returnedRevenue: facts.returnedRevenue, netRevenue: facts.netRevenue,
+            invoiceIds: facts.references.invoiceIds, returnIds: facts.references.returnIds,
+            allocationIds: allocations.map((allocation) => allocation.id),
+            accountingRule: "new_expense_and_liability_not_source_allocation",
+          };
+          sourceKeyBase = canonicalFactKey(
+            cid,
+            orderId,
+            lifecycleId,
+            "royalty",
+            { from, to },
+            [
+              ...facts.references.invoiceIds.map((id) => `invoice:${id}`),
+              ...facts.references.returnIds.map((id) => `return:${id}`),
+              ...allocations.map((allocation) => `allocation:${allocation.id}`),
+            ],
+          );
+        } else if (mode === "claim" || mode === "source_backed_claim") {
+          if (current.type !== "warranty" || current.calculationMethod !== "actual_claim")
+            throw Object.assign(new Error("المطالبة الفعلية المدعومة بالمصدر متاحة لضمان فعلي فقط"), { status: 400 });
+          const sourceDetails = Array.isArray(current.claimDetails) ? current.claimDetails : [];
+          const sourceIds: number[] = [...new Set<number>(
+            sourceDetails.map((detail: any) => Number(detail.sourceAllocationId)),
+          )];
+          if (!sourceIds.length || sourceIds.some((id) => !Number.isInteger(id) || id <= 0))
+            throw Object.assign(new Error("لا يمكن تسجيل مطالبة ضمان بلا تفاصيل تكلفة مصدرية"), { status: 409 });
+          const allocations = await tx.select().from(productionCostAllocationsTable).where(and(
+            eq(productionCostAllocationsTable.companyId, cid),
+            eq(productionCostAllocationsTable.orderId, orderId),
+            inArray(productionCostAllocationsTable.id, sourceIds),
+          ));
+          if (allocations.length !== sourceIds.length)
+            throw Object.assign(new Error("لقطة تكلفة مطالبة الضمان غير موجودة لهذا الأمر"), { status: 409 });
+          const priorClaims = await tx.select({
+            sourceSnapshot: productionCommercialAccrualsTable.sourceSnapshot,
+          }).from(productionCommercialAccrualsTable).where(and(
+            eq(productionCommercialAccrualsTable.companyId, cid),
+            eq(productionCommercialAccrualsTable.orderId, orderId),
+            eq(productionCommercialAccrualsTable.obligationType, "warranty_claim"),
+            ne(productionCommercialAccrualsTable.status, "reversed"),
+          ));
+          const priorSourceIds = new Set<number>();
+          for (const prior of priorClaims) {
+            const priorDetails = Array.isArray((prior.sourceSnapshot as any)?.claimDetails)
+              ? (prior.sourceSnapshot as any).claimDetails : [];
+            for (const detail of priorDetails) {
+              const priorId = Number(detail?.allocationId);
+              if (Number.isInteger(priorId) && priorId > 0) priorSourceIds.add(priorId);
+            }
+          }
+          if (sourceIds.some((sourceId) => priorSourceIds.has(sourceId)))
+            throw Object.assign(new Error("لقطة مصدر مطالبة الضمان مستخدمة بالفعل في مطالبة أخرى"), { status: 409 });
+          const details = allocations.map((allocation) => {
+            const meta: any = allocation.snapshotMeta ?? {};
+            if (String(meta.costTreatment) !== "warranty")
+              throw Object.assign(new Error("مطالبة الضمان لا تقبل إلا لقطة مصدر مصنفة warranty"), { status: 409 });
+            const weighted = Array.isArray(meta.reclassificationAccounts)
+              ? meta.reclassificationAccounts.map((x: any) => ({
+                  accountId: Number(x.accountId), weight: num(x.weight),
+                }))
+              : [];
+            if (!weighted.length)
+              throw Object.assign(new Error("مصدر مطالبة الضمان لا يحتوي حساب مصروف مرحّلاً قابلاً للمطابقة"), { status: 409 });
+            return {
+              allocationId: allocation.id,
+              amount: num(allocation.allocatedAmount),
+              sourceType: allocation.sourceType,
+              sourceRecordId: allocation.sourceRecordId,
+              accounts: weighted,
+            };
+          });
+          const sourceExpenseAccountIds = [...new Set(details.flatMap((detail) =>
+            detail.accounts.map((account: { accountId: number }) => account.accountId),
+          ))];
+          for (const accountId of sourceExpenseAccountIds)
+            await validateCommercialAccount(tx, cid, accountId, "expense", "حساب مصروف مصدر مطالبة الضمان");
+          amount = Number(details.reduce((sum, detail) => sum + detail.amount, 0).toFixed(2));
+          if (!(amount > 0))
+            throw Object.assign(new Error("قيمة مطالبة الضمان المصدرية صفر"), { status: 409 });
+          provisionAccrualId = Number(body.provisionAccrualId);
+          if (!Number.isInteger(provisionAccrualId) || provisionAccrualId <= 0)
+            throw Object.assign(new Error("مطالبة الضمان تتطلب مخصصاً مرحّلاً للاستهلاك"), { status: 400 });
+          const provisionLocked = await tx.execute(sql`
+            SELECT id, amount, liability_account_id, status, order_id
+            FROM production_commercial_accruals
+            WHERE id = ${provisionAccrualId}
+              AND company_id = ${cid}
+              AND order_id = ${orderId}
+              AND obligation_type = 'warranty_provision'
+            FOR UPDATE
+          `);
+          const provision: any = provisionLocked.rows[0];
+          if (!provision || provision.status !== "posted")
+            throw Object.assign(new Error("المخصص المطلوب لمطالبة الضمان غير مرحّل"), { status: 409 });
+          const [consumed] = await tx.select({
+            amount: sql<string>`coalesce(sum(${productionCommercialAccrualsTable.amount}), 0)`,
+          }).from(productionCommercialAccrualsTable).where(and(
+            eq(productionCommercialAccrualsTable.companyId, cid),
+            eq(productionCommercialAccrualsTable.provisionAccrualId, provisionAccrualId),
+            eq(productionCommercialAccrualsTable.status, "posted"),
+            eq(productionCommercialAccrualsTable.obligationType, "warranty_claim"),
+          ));
+          const remaining = num(provision.amount) - num(consumed?.amount);
+          if (amount > remaining + 0.005)
+            throw Object.assign(new Error(`تتجاوز مطالبة الضمان المتبقي من المخصص (${Math.max(0, remaining).toFixed(2)})`), { status: 409 });
+          obligationType = "warranty_claim";
+          recognitionMode = "source_backed_claim";
+          liabilityAccountId = await validateCommercialAccount(
+            tx, cid, provision.liability_account_id, "liability", "حساب مخصص الضمان",
+          );
+          const technicianId = current.technicianUserId == null ? null : Number(current.technicianUserId);
+          if (current.technicianUserId != null &&
+              (technicianId == null || !Number.isInteger(technicianId) || technicianId <= 0))
+            throw Object.assign(new Error("مرجع الفني في مطالبة الضمان غير صحيح"), { status: 400 });
+          technicianUserId = technicianId;
+          if (technicianId) {
+            const [technician] = await tx.select({ id: usersTable.id })
+              .from(usersTable).where(and(
+                eq(usersTable.id, technicianId),
+                eq(usersTable.companyId, cid),
+              )).limit(1);
+            if (!technician)
+              throw Object.assign(new Error("الفني غير موجود في هذه الشركة"), { status: 400 });
+          }
+          sourceSnapshot = {
+            calculation: "immutable_warranty_source_allocations",
+            salesReturnId: current.salesReturnId ?? null,
+            claimDetails: details,
+            provisionAccrualId,
+            provisionAmount: num(provision.amount),
+            consumedBefore: num(consumed?.amount),
+            remainingBefore: remaining,
+            accountingRule: "consume_liability_and_credit_original_source_expense",
+          };
+          sourceKeyBase = canonicalFactKey(
+            cid,
+            orderId,
+            lifecycleId,
+            "warranty_claim",
+            {},
+            [
+              `provision:${provisionAccrualId}`,
+              ...sourceIds.map((id) => `allocation:${id}`),
+            ],
+          );
+        } else {
+          if (current.type !== "warranty" || current.calculationMethod !== "provision")
+            throw Object.assign(new Error("المخصص الجديد متاح لسجل ضمان من نوع provision فقط"), { status: 400 });
+          const approvedAmount = body.approvedEstimateAmount ?? body.provisionEstimateAmount ??
+            current.approvedEstimateAmount;
+          const approvalReference = String(
+            body.approvedEstimateReference ?? body.provisionEstimateReference ??
+            current.approvedEstimateReference ?? "",
+          ).trim();
+          if (!approvalReference || !(num(approvedAmount) > 0))
+            throw Object.assign(new Error("المخصص يتطلب مبلغ تقدير موجباً ومرجع اعتماد صريح؛ لا يتم تخمين مبلغ من أمر الإنتاج"), { status: 400 });
+          amount = Number(num(approvedAmount).toFixed(2));
+          basisAmount = amount;
+          obligationType = "warranty_provision";
+          recognitionMode = "new_accrual";
+          expenseAccountId = await validateCommercialAccount(
+            tx, cid, body.expenseAccountId, "expense", "حساب مصروف مخصص الضمان",
+          );
+          liabilityAccountId = await validateCommercialAccount(
+            tx, cid, body.liabilityAccountId, "liability", "حساب التزام مخصص الضمان",
+          );
+          sourceSnapshot = {
+            calculation: "explicit_approved_provision_estimate",
+            approvedEstimateAmount: amount,
+            approvedEstimateReference: approvalReference,
+            approvedBy: req.authUser!.id,
+            approvedAt: new Date().toISOString(),
+            accountingRule: "new_expense_and_provision_liability",
+          };
+          sourceKeyBase = canonicalFactKey(
+            cid,
+            orderId,
+            lifecycleId,
+            "warranty_provision",
+            {},
+            [`approval:${approvalReference}`],
+          );
+        }
+
+        const priorAccruals = await tx.select().from(productionCommercialAccrualsTable).where(and(
+          eq(productionCommercialAccrualsTable.companyId, cid),
+          eq(productionCommercialAccrualsTable.orderId, orderId),
+          eq(productionCommercialAccrualsTable.lifecycleId, lifecycleId),
+        ));
+        const priorGenerations = priorAccruals
+          .map((row) => ({
+            row,
+            generation: sourceKeyGeneration(row.sourceKey, sourceKeyBase),
+          }))
+          .filter((item): item is typeof item & { generation: number } =>
+            item.generation != null);
+        const latestGeneration = priorGenerations
+          .sort((a, b) => b.generation - a.generation)[0];
+        if (latestGeneration && latestGeneration.row.status !== "reversed")
+          return { ...latestGeneration.row, idempotentReplay: true };
+
+        // Fact periods are mutually exclusive while they remain financially
+        // live. The order row is already locked above, so two concurrent
+        // requests cannot both pass this overlap check.
+        if (obligationType === "royalty") {
+          const from = String((sourceSnapshot as any)?.from ?? "");
+          const to = String((sourceSnapshot as any)?.to ?? "");
+          const overlap = priorAccruals.find((row) => {
+            if (row.status === "reversed" || row.obligationType !== "royalty") return false;
+            const priorFrom = String((row.sourceSnapshot as any)?.from ?? "");
+            const priorTo = String((row.sourceSnapshot as any)?.to ?? "");
+            return priorFrom && priorTo && priorFrom <= to && from <= priorTo;
+          });
+          if (overlap)
+            throw Object.assign(new Error("فترة وقائع Royalty تتداخل مع استحقاق غير معكوس لهذا الأمر"), { status: 409 });
+        }
+
+        const generation = latestGeneration ? latestGeneration.generation + 1 : 1;
+        const sourceKey = generation === 1
+          ? sourceKeyBase
+          : `${sourceKeyBase}:generation:${generation}`;
+        const [inserted] = await tx.insert(productionCommercialAccrualsTable).values({
+          companyId: cid,
+          orderId,
+          branchId: order.branch_id ?? null,
+          lifecycleId,
+          obligationType,
+          recognitionMode,
+          sourceKey,
+          status: "draft",
+          postingDate,
+          amount: String(amount.toFixed(2)),
+          basisAmount: String((basisAmount || amount).toFixed(2)),
+          expenseAccountId,
+          liabilityAccountId,
+          supplierId,
+          technicianUserId,
+          provisionAccrualId,
+          sourceSnapshot,
+          createdBy: req.authUser!.id,
+        }).returning();
+        await tx.update(productionOrdersTable).set({
+          meta: {
+            ...(order.meta ?? {}),
+            commercialLifecycle: lifecycleWithAccrual(order.meta, lifecycleId, {
+              lastAccrualId: inserted.id,
+              lastAccrualStatus: "draft",
+            }),
+          },
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionOrdersTable.id, orderId),
+          eq(productionOrdersTable.companyId, cid),
+        ));
+        await writeEvent(cid, orderId, `${obligationType}_accrual_draft_created`, {
+          accrualId: inserted.id, lifecycleId, sourceKey, amount, recognitionMode,
+          sourceBacked: recognitionMode === "source_backed_claim",
+        }, req.authUser!.id, false, tx);
+        return inserted;
+      });
+      res.status(201).json(result);
+    } catch (e: any) {
+      if (String(e?.code ?? "") === "23505")
+        return void res.status(409).json({ error: "مفتاح مصدر الاستحقاق مستخدم بالفعل" });
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  },
+);
+
+commercialLifecycleRouter.post(
+  "/orders/:id/commercial-lifecycle/:lifecycleId/accrual/:accrualId/post",
+  requireCommercialPostRight,
+  async (req, res) => {
+    try {
+      const cid = guard(req, res); if (!cid) return;
+      const orderId = Number(req.params.id);
+      const lifecycleId = String(req.params.lifecycleId);
+      const accrualId = Number(req.params.accrualId);
+      const posted = await db.transaction(async (tx) => {
+        const locked = await tx.execute(sql`
+          SELECT * FROM production_commercial_accruals
+          WHERE id = ${accrualId} AND company_id = ${cid} AND order_id = ${orderId}
+          FOR UPDATE
+        `);
+        const accrual: any = locked.rows[0];
+        if (!accrual || accrual.lifecycle_id !== lifecycleId)
+          throw Object.assign(new Error("مسودة الاستحقاق غير موجودة"), { status: 404 });
+        const orderLocked = await tx.execute(sql`
+          SELECT id, branch_id, meta, status
+          FROM production_orders
+          WHERE id = ${orderId} AND company_id = ${cid}
+          FOR UPDATE
+        `);
+        const order: any = orderLocked.rows[0];
+        if (!order || !rowInScope(req, order.branch_id))
+          throw Object.assign(new Error("أمر الإنتاج غير موجود"), { status: 404 });
+        if (accrual.branch_id != null && Number(accrual.branch_id) !== Number(order.branch_id))
+          throw Object.assign(new Error("فرع الاستحقاق لا يطابق فرع أمر الإنتاج"), { status: 409 });
+        if (accrual.status === "posted" && accrual.journal_entry_id)
+          return { ...accrual, idempotentReplay: true };
+        if (accrual.status === "posted")
+          throw Object.assign(new Error("استحقاق مرحّل بلا قيد محاسبي صالح"), { status: 409 });
+        if (accrual.status !== "draft")
+          throw Object.assign(new Error("لا يمكن ترحيل استحقاق غير موجود في حالة مسودة"), { status: 409 });
+        const liabilityAccountId = await validateCommercialAccount(
+          tx, cid, accrual.liability_account_id, "liability", "حساب الالتزام",
+        );
+        if (accrual.obligation_type === "warranty_claim") {
+          const provisionId = Number((accrual.source_snapshot as any)?.provisionAccrualId);
+          const provisionLocked = await tx.execute(sql`
+            SELECT id, amount, status
+            FROM production_commercial_accruals
+            WHERE id = ${provisionId}
+              AND company_id = ${cid}
+              AND order_id = ${orderId}
+              AND obligation_type = 'warranty_provision'
+            FOR UPDATE
+          `);
+          const provision: any = provisionLocked.rows[0];
+          if (!provision || provision.status !== "posted")
+            throw Object.assign(new Error("مخصص الضمان المرتبط بالمطالبة غير مرحّل"), { status: 409 });
+          const [consumed] = await tx.select({
+            amount: sql<string>`coalesce(sum(${productionCommercialAccrualsTable.amount}), 0)`,
+          }).from(productionCommercialAccrualsTable).where(and(
+            eq(productionCommercialAccrualsTable.companyId, cid),
+            eq(productionCommercialAccrualsTable.provisionAccrualId, provisionId),
+            eq(productionCommercialAccrualsTable.obligationType, "warranty_claim"),
+            eq(productionCommercialAccrualsTable.status, "posted"),
+          ));
+          if (num(accrual.amount) > num(provision.amount) - num(consumed?.amount) + 0.005)
+            throw Object.assign(new Error("تجاوزت المطالبة المتبقي من مخصص الضمان؛ أعد إنشاء المسودة بمصدر أقل"), { status: 409 });
+        }
+        const lines: JLine[] = [];
+        if (accrual.obligation_type === "warranty_claim") {
+          const snapshot: any = accrual.source_snapshot ?? {};
+          const detailRows = Array.isArray(snapshot.claimDetails) ? snapshot.claimDetails : [];
+          const sourceCredits: Array<{ accountId: number; amount: number }> = [];
+          for (const detail of detailRows) {
+            const splits = allocateToSourceAccounts(num(detail.amount), Array.isArray(detail.accounts)
+              ? detail.accounts.map((x: any) => ({ accountId: Number(x.accountId), weight: num(x.weight) }))
+              : []);
+            if (!splits.length)
+              throw Object.assign(new Error("لا يمكن ترحيل مطالبة بلا حساب مصروف مصدر صالح"), { status: 409 });
+            for (const split of splits) {
+              await validateCommercialAccount(tx, cid, split.accountId, "expense", "حساب مصروف مصدر المطالبة");
+              sourceCredits.push(split);
+            }
+          }
+          const creditTotal = Number(sourceCredits.reduce((sum, row) => sum + row.amount, 0).toFixed(2));
+          if (Math.abs(creditTotal - num(accrual.amount)) > 0.01)
+            throw Object.assign(new Error("تفاصيل مصدر المطالبة لا تساوي المبلغ المجمد للمسودة"), { status: 409 });
+          lines.push({
+            accountId: liabilityAccountId,
+            debit: num(accrual.amount),
+            description: `استهلاك مخصص ضمان — مطالبة مصدرية #${accrual.id}`,
+          });
+          for (const split of sourceCredits) lines.push({
+            accountId: split.accountId,
+            credit: split.amount,
+            description: `إقفال مصروف مصدر مطالبة ضمان #${accrual.id}`,
+          });
+        } else {
+          const expenseAccountId = await validateCommercialAccount(
+            tx, cid, accrual.expense_account_id, "expense", "حساب المصروف",
+          );
+          lines.push({
+            accountId: expenseAccountId,
+            debit: num(accrual.amount),
+            description: `${accrual.obligation_type === "royalty" ? "استحقاق Royalty" : "استحقاق مخصص ضمان"} #${accrual.id}`,
+          }, {
+            accountId: liabilityAccountId,
+            credit: num(accrual.amount),
+            description: `التزام ${accrual.obligation_type === "royalty" ? "Royalty" : "مخصص ضمان"} #${accrual.id}`,
+          });
+        }
+        const journalEntryId = await createJournalEntry({
+          companyId: cid,
+          branchId: accrual.branch_id,
+          date: accrual.posting_date,
+          description: `${accrual.obligation_type === "royalty" ? "Royalty" : accrual.obligation_type === "warranty_claim" ? "مطالبة ضمان" : "مخصص ضمان"} — أمر إنتاج #${orderId}`,
+          entryType: "production_commercial_accrual",
+          status: "posted",
+          audit: { req },
+          lines,
+          dx: tx,
+        });
+        const [row] = await tx.update(productionCommercialAccrualsTable).set({
+          status: "posted",
+          journalEntryId,
+          postedBy: req.authUser!.id,
+          postedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionCommercialAccrualsTable.id, accrualId),
+          eq(productionCommercialAccrualsTable.companyId, cid),
+        )).returning();
+        await tx.update(productionOrdersTable).set({
+          meta: {
+            ...(order.meta ?? {}),
+            commercialLifecycle: lifecycleWithAccrual(order.meta, lifecycleId, {
+              lastAccrualId: accrualId, lastAccrualStatus: "posted",
+              lastAccrualJournalEntryId: journalEntryId,
+            }),
+          },
+          updatedAt: new Date(),
+        }).where(and(eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid)));
+        await writeEvent(cid, orderId, `${accrual.obligation_type}_posted`, {
+          accrualId, lifecycleId, journalEntryId, amount: num(accrual.amount),
+        }, req.authUser!.id, false, tx);
+        return row;
+      });
+      res.json(posted);
+    } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+  },
+);
+
+commercialLifecycleRouter.post(
+  "/orders/:id/commercial-lifecycle/:lifecycleId/accrual/:accrualId/reverse",
+  requireCommercialUnpostRight,
+  async (req, res) => {
+    try {
+      const cid = guard(req, res); if (!cid) return;
+      const orderId = Number(req.params.id);
+      const lifecycleId = String(req.params.lifecycleId);
+      const accrualId = Number(req.params.accrualId);
+      const reversed = await db.transaction(async (tx) => {
+        const locked = await tx.execute(sql`
+          SELECT * FROM production_commercial_accruals
+          WHERE id = ${accrualId} AND company_id = ${cid} AND order_id = ${orderId}
+          FOR UPDATE
+        `);
+        const accrual: any = locked.rows[0];
+        if (!accrual || accrual.lifecycle_id !== lifecycleId)
+          throw Object.assign(new Error("الاستحقاق غير موجود"), { status: 404 });
+        const orderLocked = await tx.execute(sql`
+          SELECT id, branch_id, meta, status
+          FROM production_orders
+          WHERE id = ${orderId} AND company_id = ${cid}
+          FOR UPDATE
+        `);
+        const order: any = orderLocked.rows[0];
+        if (!order || !rowInScope(req, order.branch_id))
+          throw Object.assign(new Error("أمر الإنتاج غير موجود"), { status: 404 });
+        if (accrual.branch_id != null && Number(accrual.branch_id) !== Number(order.branch_id))
+          throw Object.assign(new Error("فرع الاستحقاق لا يطابق فرع أمر الإنتاج"), { status: 409 });
+        if (accrual.status === "reversed") return { ...accrual, idempotentReplay: true };
+        if (accrual.status !== "posted" || !accrual.journal_entry_id)
+          throw Object.assign(new Error("لا يمكن عكس استحقاق غير مرحّل"), { status: 409 });
+        if (accrual.obligation_type === "warranty_provision") {
+          const [claims] = await tx.select({
+            amount: sql<string>`coalesce(sum(${productionCommercialAccrualsTable.amount}), 0)`,
+          }).from(productionCommercialAccrualsTable).where(and(
+            eq(productionCommercialAccrualsTable.companyId, cid),
+            eq(productionCommercialAccrualsTable.provisionAccrualId, accrualId),
+            eq(productionCommercialAccrualsTable.status, "posted"),
+          ));
+          if (num(claims?.amount) > 0.005)
+            throw Object.assign(new Error("لا يمكن عكس مخصص ضمان استُهلكت منه مطالبات مرحّلة"), { status: 409 });
+        }
+        const [settlement] = await tx.select({ id: supplierSettlementsTable.id, status: supplierSettlementsTable.status })
+          .from(supplierSettlementsTable).where(and(
+            eq(supplierSettlementsTable.companyId, cid),
+            eq(supplierSettlementsTable.sourceType, "production_royalty_accrual"),
+            eq(supplierSettlementsTable.sourceRecordId, accrualId),
+          )).limit(1);
+        if (settlement?.status === "posted")
+          throw Object.assign(new Error("لا يمكن عكس Royalty بعد ترحيل تسوية المورد؛ اعكس التسوية أولاً"), { status: 409 });
+        const originalLines = await tx.select({
+          accountId: journalEntryLinesTable.accountId,
+          debit: journalEntryLinesTable.debit,
+          credit: journalEntryLinesTable.credit,
+          description: journalEntryLinesTable.description,
+          costCenter: journalEntryLinesTable.costCenter,
+        }).from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, accrual.journal_entry_id))
+          .orderBy(asc(journalEntryLinesTable.sortOrder));
+        if (originalLines.length < 2)
+          throw Object.assign(new Error("القيد الأصلي للاستحقاق غير مكتمل ولا يمكن عكسه"), { status: 409 });
+        const reversalJournalEntryId = await createJournalEntry({
+          companyId: cid,
+          branchId: accrual.branch_id,
+          date: dateOnly(req.body?.reversalDate),
+          description: `عكس الاستحقاق التجاري #${accrualId} — القيد #${accrual.journal_entry_id}`,
+          entryType: "production_commercial_accrual_reversal",
+          status: "posted",
+          audit: { req },
+          lines: originalLines.map((line) => ({
+            accountId: line.accountId,
+            debit: num(line.credit),
+            credit: num(line.debit),
+            description: `عكس: ${line.description ?? "استحقاق تجاري"}`,
+            costCenter: line.costCenter,
+          })),
+          dx: tx,
+        });
+        const [row] = await tx.update(productionCommercialAccrualsTable).set({
+          status: "reversed",
+          reversalJournalEntryId,
+          reversedBy: req.authUser!.id,
+          reversedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionCommercialAccrualsTable.id, accrualId),
+          eq(productionCommercialAccrualsTable.companyId, cid),
+        )).returning();
+        await tx.update(productionOrdersTable).set({
+          meta: {
+            ...(order.meta ?? {}),
+            commercialLifecycle: lifecycleWithAccrual(order.meta, lifecycleId, {
+              lastAccrualId: accrualId, lastAccrualStatus: "reversed",
+              lastAccrualReversalJournalEntryId: reversalJournalEntryId,
+            }),
+          },
+          updatedAt: new Date(),
+        }).where(and(eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid)));
+        await writeEvent(cid, orderId, `${accrual.obligation_type}_reversed`, {
+          accrualId, lifecycleId, journalEntryId: accrual.journal_entry_id,
+          reversalJournalEntryId,
+        }, req.authUser!.id, false, tx);
+        return row;
+      });
+      res.json(reversed);
+    } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+  },
+);
+
+commercialLifecycleRouter.post(
+  "/orders/:id/commercial-lifecycle/:lifecycleId/accrual/:accrualId/settle",
+  requireCommercialPostRight,
+  async (req, res) => {
+    try {
+      const cid = guard(req, res); if (!cid) return;
+      const orderId = Number(req.params.id);
+      const lifecycleId = String(req.params.lifecycleId);
+      const accrualId = Number(req.params.accrualId);
+      const result = await db.transaction(async (tx) => {
+        const locked = await tx.execute(sql`
+          SELECT * FROM production_commercial_accruals
+          WHERE id = ${accrualId} AND company_id = ${cid} AND order_id = ${orderId}
+          FOR UPDATE
+        `);
+        const accrual: any = locked.rows[0];
+        if (!accrual || accrual.lifecycle_id !== lifecycleId || accrual.obligation_type !== "royalty")
+          throw Object.assign(new Error("استحقاق Royalty غير موجود"), { status: 404 });
+        if (accrual.status !== "posted")
+          throw Object.assign(new Error("تسوية Royalty تتطلب استحقاقاً مرحّلاً"), { status: 409 });
+        const [order] = await tx.select({ branchId: productionOrdersTable.branchId })
+          .from(productionOrdersTable).where(and(
+            eq(productionOrdersTable.id, orderId), eq(productionOrdersTable.companyId, cid),
+          )).limit(1);
+        if (!order || !rowInScope(req, order.branchId))
+          throw Object.assign(new Error("أمر الإنتاج غير موجود"), { status: 404 });
+        if (accrual.branch_id != null && Number(accrual.branch_id) !== Number(order.branchId))
+          throw Object.assign(new Error("فرع الاستحقاق لا يطابق فرع أمر الإنتاج"), { status: 409 });
+        const [lifecycle] = lifecycleRows((await tx.select({ meta: productionOrdersTable.meta })
+          .from(productionOrdersTable).where(eq(productionOrdersTable.id, orderId)).limit(1))?.[0]?.meta)
+          .filter((row) => row.id === lifecycleId);
+        const supplierId = Number(accrual.supplier_id ?? lifecycle?.supplierId);
+        if (!Number.isInteger(supplierId) || supplierId <= 0)
+          throw Object.assign(new Error("تسوية Royalty تتطلب مورداً مستفيداً"), { status: 400 });
+        const [supplier] = await tx.select({
+          id: suppliersTable.id,
+          branchId: suppliersTable.branchId,
+          accountId: suppliersTable.accountId,
+        })
+          .from(suppliersTable).where(and(
+            eq(suppliersTable.id, supplierId), eq(suppliersTable.companyId, cid),
+          )).limit(1);
+        if (!supplier) throw Object.assign(new Error("المورد غير موجود في هذه الشركة"), { status: 400 });
+        if (!rowInScope(req, supplier.branchId))
+          throw Object.assign(new Error("لا يمكنك العمل على فرع المورد"), { status: 403 });
+        if (
+          supplier.branchId != null &&
+          order.branchId != null &&
+          Number(supplier.branchId) !== Number(order.branchId)
+        )
+          throw Object.assign(new Error("فرع المورد لا يطابق فرع أمر الإنتاج"), { status: 409 });
+         const supplierApAccountId = await validateCommercialAccount(
+           tx, cid, supplier.accountId, "liability", "حساب دائن المورد",
+         );
+        const sourceKey = `production_royalty_accrual_settlement:${cid}:${accrualId}`;
+        let [settlement] = await tx.select().from(supplierSettlementsTable).where(and(
+          eq(supplierSettlementsTable.companyId, cid),
+          eq(supplierSettlementsTable.sourceKey, sourceKey),
+        )).limit(1);
+        if (!settlement) {
+          const insertedSettlement = await tx.insert(supplierSettlementsTable).values({
+            companyId: cid,
+            docNumber: `ROY-ACCR-${accrualId}`,
+            settlementDate: accrual.posting_date,
+            supplierId,
+            paymentMethod: "bank",
+             accountId: supplierApAccountId,
+            amount: String(num(accrual.amount).toFixed(2)),
+            currencyCode: "SAR",
+            exchangeRate: "1",
+            status: "draft",
+            notes: `تسوية التزام Royalty فقط — لا ينشئ مصروفاً جديداً؛ الإقفال يتم على حساب الالتزام ${accrual.liability_account_id}`,
+            sourceType: "production_royalty_accrual",
+            sourceRecordId: accrualId,
+            sourceKey,
+          }).onConflictDoNothing().returning();
+          settlement = insertedSettlement[0];
+          if (!settlement) {
+            [settlement] = await tx.select().from(supplierSettlementsTable).where(and(
+              eq(supplierSettlementsTable.companyId, cid),
+              eq(supplierSettlementsTable.sourceKey, sourceKey),
+            )).limit(1);
+          }
+        }
+         if (!settlement)
+           throw Object.assign(new Error("تعذر إنشاء أو استرجاع مسودة تسوية Royalty"), { status: 409 });
+         if (settlement.accountId != null && Number(settlement.accountId) !== supplierApAccountId)
+           throw Object.assign(new Error("حساب التسوية يجب أن يكون حساب دائن المورد"), { status: 409 });
+         if (settlement.accountId == null) {
+           [settlement] = await tx.update(supplierSettlementsTable).set({
+             accountId: supplierApAccountId,
+             updatedAt: new Date(),
+           }).where(and(
+             eq(supplierSettlementsTable.id, settlement.id),
+             eq(supplierSettlementsTable.companyId, cid),
+           )).returning();
+           if (!settlement)
+             throw Object.assign(new Error("تعذر تثبيت حساب دائن المورد في مسودة التسوية"), { status: 409 });
+         }
+         await tx.update(productionCommercialAccrualsTable).set({
+          settlementId: settlement.id,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionCommercialAccrualsTable.id, accrualId),
+          eq(productionCommercialAccrualsTable.companyId, cid),
+        ));
+        await writeEvent(cid, orderId, "royalty_accrual_settlement_draft_created", {
+          accrualId, settlementId: settlement.id, amount: num(accrual.amount),
+          clearingAccountId: accrual.liability_account_id,
+          accountingRule: "liability_clearing_no_duplicate_expense",
+        }, req.authUser!.id, false, tx);
+        return {
+          settlement,
+          accountingRule: "liability_clearing_no_duplicate_expense",
+          liabilityAccountId: accrual.liability_account_id,
+           settlementStage: settlement.status === "posted"
+             ? "posted_clearing_je"
+             : "draft_payable_before_clearing_je",
+           clearingJournalEntryId: settlement.journalEntryId ?? null,
+        };
+      });
+      res.status(201).json(result);
+    } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
+  },
+);
+
 commercialLifecycleRouter.patch("/orders/:id/commercial-lifecycle/:lifecycleId", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    if (!canAccessModule(req.authUser, lifecycleModuleKey(), "post"))
-      return void res.status(403).json({ error: "تتطلب العملية صلاحية ترحيل التصنيع" });
     const orderId = Number(req.params.id);
     const lifecycleId = String(req.params.lifecycleId);
     const requestedStatus = req.body?.status == null ? null : String(req.body.status);
@@ -2038,6 +3019,13 @@ commercialLifecycleRouter.patch("/orders/:id/commercial-lifecycle/:lifecycleId",
             Array.isArray(current.tiers) && current.tiers.length > 0))
         )
           throw Object.assign(new Error("تفعيل عقد Royalty يتطلب معدلاً موجباً"), { status: 400 });
+        if (
+          current.type === "warranty" &&
+          current.calculationMethod === "provision" &&
+          (!(num(current.approvedEstimateAmount) > 0) ||
+            !String(current.approvedEstimateReference ?? "").trim())
+        )
+          throw Object.assign(new Error("تفعيل مخصص الضمان يتطلب مبلغ تقدير موجباً ومرجع اعتماد صريح"), { status: 400 });
       }
       const next = {
         ...current,
