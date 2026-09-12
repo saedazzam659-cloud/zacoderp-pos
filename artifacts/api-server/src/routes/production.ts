@@ -9924,6 +9924,32 @@ router.post("/seed-maamoul-example", async (req, res) => {
     const cid = guard(req, res);
     if (!cid) return;
 
+    // The demo item is intentionally self-contained: use a real KG unit owned
+    // by this tenant rather than persisting the old display-only unitCode.
+    let [kilogramUnit] = await db
+      .select({ id: unitsTable.id, code: unitsTable.code })
+      .from(unitsTable)
+      .where(
+        and(
+          eq(unitsTable.companyId, cid),
+          eq(unitsTable.code, "KG"),
+        ),
+      )
+      .limit(1);
+    if (!kilogramUnit) {
+      const inserted = await db
+        .insert(unitsTable)
+        .values({
+          companyId: cid,
+          code: "KG",
+          nameAr: "كيلوغرام",
+          nameEn: "Kilogram",
+          conversionFactor: "1",
+        })
+        .returning({ id: unitsTable.id, code: unitsTable.code });
+      kilogramUnit = inserted[0];
+    }
+
     // 1) صنف تجريبي — أنشئ إن لم يوجد
     let [maamoul] = await db
       .select()
@@ -9943,12 +9969,17 @@ router.post("/seed-maamoul-example", async (req, res) => {
           code: "DEMO-PRODUCT",
           nameAr: "منتج تجريبي (مثال خط الإنتاج)",
           nameEn: "Demo Product (Production Example)",
-          unitCode: "KG",
+          unitId: kilogramUnit.id,
           itemType: "stock" as const,
-          isActive: true,
+          status: "active" as const,
         } as any)
         .returning();
       maamoul = inserted[0];
+    }
+    // Legacy demo quantities are historical too: never infer their base.
+    if (maamoul.unitId == null) {
+      res.status(409).json({ error: "الصنف التجريبي القديم بلا وحدة أساسية؛ يجب مراجعة وحدته وحركاته قبل إعادة استخدامه." });
+      return;
     }
 
     // 2) قالب Routing — أنشئ أو حدّث
@@ -10028,7 +10059,7 @@ router.post("/seed-maamoul-example", async (req, res) => {
         producedQty: "0",
         wasteQty: "0",
         productItemId: maamoul.id,
-        unitCode: "KG",
+        unitCode: kilogramUnit.code,
         plannedStartDate: new Date().toISOString().slice(0, 10),
         notes: "مثال تلقائي يوضح كامل دورة مراحل خط الإنتاج.",
         meta: { isDemo: true, scenario: "demo-line" },

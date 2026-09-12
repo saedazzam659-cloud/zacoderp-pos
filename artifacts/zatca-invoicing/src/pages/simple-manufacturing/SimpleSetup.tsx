@@ -24,7 +24,7 @@ export function SimpleSetup({
   busy: boolean;
    canCreate: boolean;
    canEdit: boolean;
-  onSaveMaterial: (data: { code: string; nameAr: string; itemNature: string }) => Promise<any>;
+  onSaveMaterial: (data: { code: string; nameAr: string; itemNature: string; unitId: string }) => Promise<any>;
   onSaveBom: (data: { id?: number; productItemId: string; nameAr: string; outputQty: string; outputUnitCode: string; lines: Array<{ itemId: string; quantity: string; unitCode: string }> }) => Promise<unknown>;
   onLoadBom: (id: number) => Promise<any>;
   onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null }> }) => Promise<unknown>;
@@ -32,7 +32,7 @@ export function SimpleSetup({
   onSaveTemplate: (data: { name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
   onSaveWarehouse: (data: { code: string; nameAr: string; isDefault: boolean }) => Promise<unknown>;
 }) {
-  const [material, setMaterial] = useState({ code: "", nameAr: "", itemNature: "raw" });
+  const [material, setMaterial] = useState({ code: "", nameAr: "", itemNature: "raw", unitId: "" });
   const [bom, setBom] = useState({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
   const [bomLines, setBomLines] = useState<Array<{ itemId: string; quantity: string; unitCode: string }>>([{ itemId: "", quantity: "1", unitCode: "" }]);
   const [routing, setRouting] = useState({ productItemId: "", nameAr: "" });
@@ -147,7 +147,7 @@ export function SimpleSetup({
 
   const handleSaveMaterial = async () => {
     const row = await onSaveMaterial(material);
-    setMaterial({ code: "", nameAr: "", itemNature: "raw" });
+    setMaterial({ code: "", nameAr: "", itemNature: "raw", unitId: "" });
     setOpenMat(false);
     if (row && row.id) setBomLines([{ itemId: String(row.id), quantity: "1", unitCode: "" }]);
   };
@@ -191,7 +191,29 @@ export function SimpleSetup({
                     ]}
                     onValueChange={value => setMaterial({ ...material, itemNature: value })}
                   />
-                   <Button disabled={busy || !canCreate || !material.code || !material.nameAr} onClick={handleSaveMaterial} className="w-full">
+                   <div className="space-y-2">
+                     <label className="text-sm font-semibold">
+                       الوحدة الأساسية <span className="text-destructive">*</span>
+                     </label>
+                     <SearchCombobox
+                       value={material.unitId}
+                       className="h-10"
+                       openOnFocus={false}
+                       placeholder="اختر الوحدة الأساسية..."
+                       searchPlaceholder="ابحث عن الوحدة..."
+                       items={[
+                         { value: "", label: "اختر الوحدة الأساسية..." },
+                         ...(catalog.units ?? []).map(unit => ({
+                           value: String(unit.id),
+                           code: unit.code,
+                           label: unit.nameAr,
+                           labelEn: unit.code,
+                         })),
+                       ]}
+                       onValueChange={value => setMaterial({ ...material, unitId: value })}
+                     />
+                   </div>
+                    <Button disabled={busy || !canCreate || !material.code || !material.nameAr || !material.unitId} onClick={handleSaveMaterial} className="w-full">
                     حفظ الصنف
                   </Button>
                 </div>

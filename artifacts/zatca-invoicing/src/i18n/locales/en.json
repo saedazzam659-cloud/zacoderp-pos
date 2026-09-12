@@ -6048,6 +6048,7 @@
     "units": {
       "title": "Units of Measure",
       "fromUnit": "From Unit (Source)",
+      "baseRequired": "A base unit is required. Select a unit before saving the item.",
       "initializeReferenceAsBase": "Use the reference as the base if none is set (only for items without historical activity)",
       "saveError": "Unable to save unit relationship",
       "missingBaseError": "The item needs exactly one base unit. Set it in the item details, or explicitly use the reference as the base when creating the first relationship.",

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireItemUnit } from "../lib/requiredItemUnit.js";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db, pool } from "@workspace/db";
@@ -1277,8 +1278,14 @@ router.post("/items", async (req, res) => {
   if (!variantAttrsCheck.ok) { res.status(400).json({ error: variantAttrsCheck.error }); return; }
   const normalizedTags = normalizeTags(tags);
   const disc = normalizeDiscount(discountType, discountValue);
-  if (unitId !== undefined && unitId !== null && unitId !== "") {
-    const normalizedUnitId = Number(unitId);
+  let requiredUnitId: number;
+  try {
+    requiredUnitId = requireItemUnit(unitId, parentRowForVariant?.unitId);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message }); return;
+  }
+  {
+    const normalizedUnitId = requiredUnitId;
     if (!Number.isInteger(normalizedUnitId) || normalizedUnitId <= 0) {
       res.status(400).json({ error: "وحدة الصنف غير صالحة" }); return;
     }
@@ -1291,7 +1298,7 @@ router.post("/items", async (req, res) => {
     itemType: itemType || parentRowForVariant?.itemType || "stock",
     itemNature: ["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? itemNature : (parentRowForVariant?.itemNature || "merchandise"),
     groupId: groupId || parentRowForVariant?.groupId || null,
-    unitId: unitId || parentRowForVariant?.unitId || null,
+    unitId: requiredUnitId,
     costPrice: costPrice || parentRowForVariant?.costPrice || "0",
     salePrice: salePrice || parentRowForVariant?.salePrice || "0",
     vatRate:   vatRate   || parentRowForVariant?.vatRate   || "15",
@@ -1359,6 +1366,11 @@ router.put("/items/:id", async (req, res) => {
   // Snapshot the existing row BEFORE mutating so we can compute a precise diff.
   const existing = others.find(i => i.id === id) ?? null;
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  try {
+    requireItemUnit(unitId, existing.unitId);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message }); return;
+  }
   if (unitId !== undefined) {
     const requestedUnitId = unitId === null || unitId === "" ? null : Number(unitId);
     if (requestedUnitId !== null && (!Number.isInteger(requestedUnitId) || requestedUnitId <= 0)) {
@@ -3947,6 +3959,11 @@ router.post("/items/:id/variants", async (req, res) => {
   const all = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   const parent = all.find(i => i.id === id);
   if (!parent) { res.status(404).json({ error: "الصنف الأب غير موجود" }); return; }
+  try {
+    requireItemUnit(parent.unitId);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message }); return;
+  }
   if (parent.parentItemId) {
     res.status(400).json({ error: "لا يمكن إنشاء متغيّر لمتغيّر آخر (المتغيّرات لا تتداخل)" }); return;
   }
@@ -4184,6 +4201,7 @@ router.post("/import/items", async (req, res) => {
         errors.push({ row: i + 2, error: "وحدة القياس غير موجودة في هذه الشركة" }); continue;
       }
       const existingRow = itemByCode.get(code.toLowerCase());
+      requireItemUnit(r.unitCode === undefined ? undefined : unitId, existingRow?.unitId);
       // A bulk import is another item master writer. It may not silently
       // rebase an item that already has unit links or historical movement.
       if (existingRow && r.unitCode !== undefined && unitId !== existingRow.unitId) {

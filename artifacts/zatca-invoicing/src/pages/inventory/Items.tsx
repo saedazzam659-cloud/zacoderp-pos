@@ -1489,6 +1489,11 @@ export default function Items() {
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!Number.isSafeInteger(Number(form.unitId)) || Number(form.unitId) <= 0) {
+      setActiveItemTab("basic");
+      toast({ title: t("inventoryMaster.units.baseRequired"), variant: "destructive" });
+      return;
+    }
     // Service items are non-stock: the REVENUE account is mandatory (sales
     // routing); the cost account is optional — purchases of a service item
     // validate cost routing at posting time if ever needed.
@@ -1775,7 +1780,7 @@ export default function Items() {
                     );
                   })()}
                 </Field>
-                <Field label={t("pages.items.baseUnit")} hint={t("pages.items.baseUnitHint")}>
+                <Field label={`${t("pages.items.baseUnit")} *`} hint={t("inventoryMaster.units.baseRequired")}>
                   <SearchCombobox items={[{ value: "", label: t("pages.items.chooseUnit") }, ...(units as any[]).map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))]} value={form.unitId} onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))} placeholder={t("pages.items.chooseUnit")} />
                 </Field>
                 <Field label={t("common.status")}>

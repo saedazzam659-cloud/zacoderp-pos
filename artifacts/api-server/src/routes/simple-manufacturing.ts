@@ -40,6 +40,7 @@ import {
 } from "../middleware/permissions.js";
 import { setContextModuleKey } from "../lib/requestContext.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
+import { requireItemUnit } from "../lib/requiredItemUnit.js";
 import {
   productionOrderDetailHandler,
   productionCostDrilldownHandler,
@@ -458,6 +459,16 @@ const materialSetupHandler = async (req: any, res: any) => {
   if (!code || !nameAr) return void res.status(400).json({ error: "رمز المادة واسمها مطلوبان" });
   if (!allowedNature.has(itemNature)) return void res.status(400).json({ error: "طبيعة مادة غير صحيحة" });
   try {
+    let unitId: number;
+    try {
+      unitId = requireItemUnit(req.body?.unitId);
+    } catch (error) {
+      return void res.status(400).json({ error: (error as Error).message });
+    }
+    const [unit] = await db.select({ id: unitsTable.id }).from(unitsTable)
+      .where(and(eq(unitsTable.id, unitId), eq(unitsTable.companyId, cid)))
+      .limit(1);
+    if (!unit) return void res.status(400).json({ error: "وحدة الصنف لا تنتمي إلى هذه الشركة" });
     const [duplicate] = await db.select({ id: itemsTable.id }).from(itemsTable)
       .where(and(eq(itemsTable.companyId, cid), eq(itemsTable.code, code))).limit(1);
     if (duplicate) return void res.status(409).json({ error: "رمز المادة مستخدم بالفعل" });
@@ -465,6 +476,7 @@ const materialSetupHandler = async (req: any, res: any) => {
       companyId: cid, code, nameAr,
       nameEn: req.body?.nameEn ? String(req.body.nameEn).trim() : null,
       itemType: "stock", itemNature: itemNature as "raw" | "semi" | "finished" | "consumable" | "merchandise",
+      unitId,
       status: "active",
     }).returning();
     res.status(201).json(row);

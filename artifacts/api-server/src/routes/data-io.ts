@@ -1,3 +1,4 @@
+import { requireItemUnit } from "../lib/requiredItemUnit.js";
 /**
  * Generic AI-powered Import / Export center.
  *
@@ -379,15 +380,16 @@ async function assertGenericImportUnitInvariant(args: {
   existingId: number | null;
 }): Promise<void> {
   const { tx, entity, companyId, cleaned, existingId } = args;
-  if (entity.key === "items" && existingId != null && Object.prototype.hasOwnProperty.call(cleaned, "unitId")) {
-    const [before] = await tx.select({ unitId: itemsTable.unitId })
+  if (entity.key === "items") {
+    const [before] = existingId == null ? [] : await tx.select({ unitId: itemsTable.unitId })
       .from(itemsTable)
       .where(and(eq(itemsTable.id, existingId), eq(itemsTable.companyId, companyId)));
-    if (before && Number(before.unitId ?? 0) !== Number(cleaned.unitId ?? 0)) {
+    const requiredUnitId = requireItemUnit(cleaned.unitId, before?.unitId);
+    if (before && existingId != null && Number(before.unitId ?? 0) !== requiredUnitId) {
       await assertItemBaseMutationSafe(tx, companyId, {
         itemId: existingId,
         previousBaseUnitId: before.unitId == null ? null : Number(before.unitId),
-        nextBaseUnitId: cleaned.unitId == null ? null : Number(cleaned.unitId),
+        nextBaseUnitId: requiredUnitId,
       });
     }
     return;
