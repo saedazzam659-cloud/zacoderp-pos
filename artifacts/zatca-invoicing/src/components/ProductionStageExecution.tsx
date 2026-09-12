@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Badge } from "@/components/ui/badge";
-import { Play, Square, Clock, ArrowDownToLine, ArrowUpFromLine, Activity, User, Save, AlertTriangle, RotateCcw } from "lucide-react";
+import { Play, Square, Clock, ArrowDownToLine, ArrowUpFromLine, Activity, User, Save, AlertTriangle, RotateCcw, Check, ChevronRight, ChevronLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import { ProductionResourcePicker, type ResourceCatalog } from "@/components/ProductionResourcePicker";
@@ -70,7 +70,47 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
   const [loadError, setLoadError] = useState<string | null>(null);
   const dirtyStages = useRef(new Set<string>());
   
+  const previousOrderId = useRef(orderId);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
   const isExecuting = ["in_production", "quality_check"].includes(orderStatus);
+
+  useEffect(() => {
+    if (previousOrderId.current !== orderId) {
+      setActiveTabId(null);
+      dirtyStages.current.clear();
+      previousOrderId.current = orderId;
+    }
+  }, [orderId]);
+
+  useEffect(() => {
+    if (stages.length > 0 && !stages.some(s => s.id === activeTabId)) {
+      const firstActive = stages.find(s => s.status === "in_progress") || stages.find(s => s.status === "pending") || stages[0];
+      setActiveTabId(firstActive.id);
+    }
+  }, [stages, activeTabId]);
+
+  const navigateToTab = (id: string, focusIdx?: number) => {
+    if (activeTabId && activeTabId !== id && dirtyStages.current.has(activeTabId)) {
+      if (!window.confirm("هناك تعديلات غير محفوظة في هذه المرحلة. هل تريد الانتقال؟ (ستبقى التعديلات كمسودة)")) {
+        return;
+      }
+    }
+    setActiveTabId(id);
+    if (focusIdx !== undefined) {
+      setTimeout(() => tabRefs.current[focusIdx]?.focus(), 0);
+    }
+  };
+
+  const handleTabKeyDown = (e: React.KeyboardEvent, idx: number) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const dir = e.key === 'ArrowLeft' ? 1 : -1; // RTL: ArrowLeft = next
+      const nextIdx = (idx + dir + stages.length) % stages.length;
+      navigateToTab(stages[nextIdx].id, nextIdx);
+    }
+  };
 
   const normalizeStageUnitFactor = (unit: string | null, factor: unknown): number => {
     // A null unit is the legacy/order unit, whose conversion is intrinsically
@@ -85,32 +125,6 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     const trimmed = value.trim();
     return trimmed || null;
   };
-
-  const fetchStages = useCallback(async (savedStageId?: string) => {
-    if (!token) return;
-    try {
-      setLoadError(null);
-      const response = await fetch(`${apiBase}/orders/${orderId}/stages`, {
-        headers,
-      });
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.error || "تعذر تحميل مراحل التنفيذ");
-      }
-      const data = await response.json();
-      const rows = Array.isArray(data) ? data : (Array.isArray(data?.stages) ? data.stages : []);
-      if (data && !Array.isArray(data)) {
-        if (typeof data.orderUnitCode === "string") setOrderUnitCode(data.orderUnitCode.trim());
-        if (Array.isArray(data.unitCatalog)) setUnitCatalog(data.unitCatalog);
-      }
-      const latest = mapStages(rows);
-      if (savedStageId) dirtyStages.current.delete(savedStageId);
-      setStages(previous => latest.map(stage => dirtyStages.current.has(stage.id)
-        ? previous.find(row => row.id === stage.id) ?? stage : stage));
-    } catch (e: any) {
-      setLoadError(e.message || "تعذر تحميل مراحل التنفيذ");
-    }
-  }, [apiBase, orderId, headers]);
 
   const mapStages = (rawStages: any[]): Stage[] => {
     return rawStages.map(s => {
@@ -151,6 +165,32 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       };
     });
   };
+
+  const fetchStages = useCallback(async (savedStageId?: string) => {
+    if (!token) return;
+    try {
+      setLoadError(null);
+      const response = await fetch(`${apiBase}/orders/${orderId}/stages`, {
+        headers,
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "تعذر تحميل مراحل التنفيذ");
+      }
+      const data = await response.json();
+      const rows = Array.isArray(data) ? data : (Array.isArray(data?.stages) ? data.stages : []);
+      if (data && !Array.isArray(data)) {
+        if (typeof data.orderUnitCode === "string") setOrderUnitCode(data.orderUnitCode.trim());
+        if (Array.isArray(data.unitCatalog)) setUnitCatalog(data.unitCatalog);
+      }
+      const latest = mapStages(rows);
+      if (savedStageId) dirtyStages.current.delete(savedStageId);
+      setStages(previous => latest.map(stage => dirtyStages.current.has(stage.id)
+        ? previous.find(row => row.id === stage.id) ?? stage : stage));
+    } catch (e: any) {
+      setLoadError(e.message || "تعذر تحميل مراحل التنفيذ");
+    }
+  }, [apiBase, orderId, headers]);
 
   const fetchLookups = useCallback(async () => {
     if (!token) return;
@@ -352,218 +392,288 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         </div>
       )}
 
-      <div className="grid gap-4">
-        {stages.map((stage, idx) => (
-          <div key={stage.id} className="rounded-xl border bg-white shadow-sm overflow-hidden transition-all">
-            {/* Header */}
-            <div 
-              className="flex flex-wrap gap-3 items-center justify-between p-4 bg-slate-50"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-700 font-bold text-sm">
-                  {idx + 1}
-                </div>
-                <div className="font-semibold text-slate-800">{stage.nameAr}</div>
-                <Badge variant="outline" className={
-                  stage.status === "done" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                  stage.status === "skipped" ? "bg-slate-50 text-slate-500 border-slate-200" :
-                  stage.status === "in_progress" ? "bg-amber-50 text-amber-700 border-amber-200 animate-pulse" :
-                  "bg-slate-100 text-slate-600 border-slate-200"
-                }>
-                  {stage.status === "pending" ? "قيد الانتظار" : 
-                   stage.status === "in_progress" ? "جاري التنفيذ" : 
-                   stage.status === "skipped" ? "تم التخطي" : "مكتمل"}
-                </Badge>
-              </div>
-              <div className="flex gap-2">
-                {(stage.status === "done" || stage.status === "skipped") && isExecuting && canEdit && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 bg-white border-amber-200 text-amber-700 hover:bg-amber-50"
-                    disabled={busyStage === stage.id}
-                    onClick={(e) => { e.stopPropagation(); void reopenStage(stage); }}
-                    data-testid={`button-reopen-stage-${stage.id}`}
-                  >
-                    <RotateCcw className="h-3.5 w-3.5 me-1" /> إعادة فتح للتصحيح
-                  </Button>
-                )}
-                {stage.status !== "done" && stage.status !== "skipped" && isExecuting && canEdit && (
-                  <>
-                    {(stage.status === "pending") && (
-                      <Button 
-                        size="sm" variant="outline" className="h-8 bg-white" 
-                        disabled={busyStage === stage.id}
-                        onClick={(e) => { e.stopPropagation(); sendStageAction(stage.id, "start", stage); }}
-                      >
-                        <Play className="h-3.5 w-3.5 me-1 text-amber-600" /> بدء
-                      </Button>
-                    )}
-                    {stage.status === "in_progress" && (
-                      <Button 
-                        size="sm" variant="outline" className="h-8 bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" 
-                        disabled={busyStage === stage.id}
-                        onClick={(e) => { e.stopPropagation(); sendStageAction(stage.id, "complete", stage); }}
-                      >
-                        <Square className="h-3.5 w-3.5 me-1" /> إنهاء
-                      </Button>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
+      {stages.length > 0 && (
+        <div className="flex flex-col rounded-xl border bg-white shadow-sm overflow-hidden transition-all">
+          <div 
+            className="flex border-b overflow-x-auto rtl:space-x-reverse hide-scrollbar bg-slate-50/50" 
+            role="tablist" 
+             aria-label="مراحل التصنيع"
+            aria-orientation="horizontal"
+          >
+            {stages.map((stage, idx) => {
+              const isActive = stage.id === activeTabId;
+              const isDone = stage.status === "done";
+              return (
+                <button
+                  key={stage.id}
+                  ref={el => { tabRefs.current[idx] = el; }}
+                  type="button"
+                  role="tab"
+                   id={`stage-tab-${orderId}-${stage.id}`}
+                   aria-controls={`stage-panel-${orderId}-${stage.id}`}
+                   tabIndex={isActive ? 0 : -1}
+                  aria-selected={isActive}
+                  onClick={() => navigateToTab(stage.id)}
+                  onKeyDown={e => handleTabKeyDown(e, idx)}
+                  className={`px-5 py-3.5 border-b-2 flex items-center gap-2.5 font-medium text-sm whitespace-nowrap transition-colors outline-none focus-visible:bg-slate-100 ${
+                    isActive ? 'border-violet-600 text-violet-800 bg-white shadow-[0_-1px_0_0_inset_#e5e7eb] z-10' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100/70'
+                  }`}
+                >
+                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${
+                    isDone ? 'bg-emerald-100 text-emerald-700' : 
+                    isActive ? 'bg-violet-600 text-white' : 
+                    'bg-slate-200 text-slate-600'
+                  }`}>
+                    {isDone ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : (idx + 1)}
+                  </span>
+                  {stage.nameAr}
+                   <span className={`text-[10px] rounded-full px-2 py-0.5 ${isDone ? "bg-emerald-50 text-emerald-700" : stage.status === "in_progress" ? "bg-amber-50 text-amber-800" : "bg-slate-100 text-slate-500"}`}>
+                     {isDone ? "مكتملة" : stage.status === "in_progress" ? "قيد التنفيذ" : stage.status === "skipped" ? "تم التخطي" : "لم تبدأ"}
+                   </span>
+                  {dirtyStages.current.has(stage.id) && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 ms-0.5" title="تعديلات غير محفوظة"></span>}
+                </button>
+              );
+            })}
+          </div>
 
-            {/* Body */}
-            {(
-              <div className="p-4 border-t border-slate-100 grid md:grid-cols-2 gap-6 animate-in slide-in-from-top-2">
-                
-                <div className="space-y-4">
-                  <StageUnitSelector
-                    value={stage.quantityUnit}
-                    factor={stage.quantityUnitFactor}
-                    baseUnit={orderUnitCode}
-                    unitCatalog={unitCatalog}
-                    amount={stage.inputQty}
-                    label="وحدة كميات المرحلة"
-                    kind="quantity"
-                    stageId={stage.id}
-                    customMode={stage.quantityUnitCustomMode}
-                    onUnitChange={(unit, factor, customMode) => handleStageUnitChange(stage.id, "quantity", unit, factor, customMode)}
-                    onFactorChange={factor => handleStageUnitFactorChange(stage.id, "quantity", factor)}
-                    onCustomModeChange={customMode => handleUpdateStage(stage.id, { quantityUnitCustomMode: customMode })}
-                    disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped" || busyStage === stage.id}
-                  />
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-slate-500 flex items-center gap-1.5"><ArrowDownToLine className="h-3.5 w-3.5" /> الكمية المدخلة</Label>
-                      <Input type="number" step="0.01" value={stage.inputQty} onChange={e => handleUpdateStage(stage.id, { inputQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")} />
+          {activeTabId && (
+            (() => {
+              const activeStage = stages.find(s => s.id === activeTabId);
+              const currentIndex = stages.findIndex(s => s.id === activeTabId);
+              if (!activeStage) return null;
+              
+              return (
+                <div role="tabpanel" id={`stage-panel-${orderId}-${activeStage.id}`} aria-labelledby={`stage-tab-${orderId}-${activeStage.id}`} className="animate-in fade-in duration-200 motion-reduce:animate-none" key={activeStage.id}>
+                  {/* Header */}
+                  <div className="flex flex-wrap gap-3 items-center justify-between p-4 bg-white border-b border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <div className="font-semibold text-slate-800 text-lg flex items-center gap-2">
+                        {activeStage.nameAr}
+                      </div>
+                      <Badge variant="outline" className={
+                        activeStage.status === "done" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                        activeStage.status === "skipped" ? "bg-slate-50 text-slate-500 border-slate-200" :
+                        activeStage.status === "in_progress" ? "bg-amber-50 text-amber-700 border-amber-200 animate-pulse" :
+                        "bg-slate-100 text-slate-600 border-slate-200"
+                      }>
+                        {activeStage.status === "pending" ? "قيد الانتظار" : 
+                         activeStage.status === "in_progress" ? "جاري التنفيذ" : 
+                         activeStage.status === "skipped" ? "تم التخطي" : "مكتمل"}
+                      </Badge>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-slate-500 flex items-center gap-1.5"><ArrowUpFromLine className="h-3.5 w-3.5" /> الكمية المنتجة</Label>
-                      <Input type="number" step="0.01" value={stage.outputQty} onChange={e => handleUpdateStage(stage.id, { outputQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")} />
+                    
+                    <div className="flex gap-2">
+                      {(activeStage.status === "done" || activeStage.status === "skipped") && isExecuting && canEdit && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 bg-white border-amber-200 text-amber-700 hover:bg-amber-50"
+                          disabled={busyStage === activeStage.id}
+                          onClick={() => void reopenStage(activeStage)}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5 me-1" /> إعادة فتح للتصحيح
+                        </Button>
+                      )}
+                      {activeStage.status !== "done" && activeStage.status !== "skipped" && isExecuting && canEdit && (
+                        <>
+                          {activeStage.status === "pending" && (
+                            <Button 
+                              size="sm" variant="outline" className="h-8 bg-white" 
+                              disabled={busyStage === activeStage.id}
+                              onClick={() => sendStageAction(activeStage.id, "start", activeStage)}
+                            >
+                              <Play className="h-3.5 w-3.5 me-1 text-amber-600" /> بدء التنفيذ
+                            </Button>
+                          )}
+                          {activeStage.status === "in_progress" && (
+                            <Button 
+                              size="sm" variant="outline" className="h-8 bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" 
+                              disabled={busyStage === activeStage.id}
+                              onClick={() => sendStageAction(activeStage.id, "complete", activeStage)}
+                            >
+                              <Square className="h-3.5 w-3.5 me-1" /> إنهاء المرحلة
+                            </Button>
+                          )}
+                        </>
+                      )}
                     </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-slate-500 flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> وقت العمل الفعلي (محرك تحميل، وليس مصروفًا جديدًا)</Label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="text-xs">ساعات
-                        <Input dir="ltr" inputMode="numeric" value={Math.floor(stage.actualDurationMinutes / 60)} onChange={e => handleUpdateStage(stage.id, { actualDurationMinutes: Math.max(0, Math.floor(Number(e.target.value) || 0)) * 60 + stage.actualDurationMinutes % 60 })} disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped"} />
-                      </label>
-                      <label className="text-xs">دقائق
-                        <Input dir="ltr" inputMode="decimal" value={Number((stage.actualDurationMinutes % 60).toFixed(4))} onChange={e => handleUpdateStage(stage.id, { actualDurationMinutes: Math.floor(stage.actualDurationMinutes / 60) * 60 + Math.min(59.9999, Math.max(0, Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped"} />
-                      </label>
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">عدد العمالة المشاركة</Label>
-                    <Input dir="ltr" inputMode="numeric" value={stage.workerCount} onChange={e => handleUpdateStage(stage.id, { workerCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped"} />
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-slate-500 flex items-center gap-1.5"><User className="h-3.5 w-3.5" /> العامل</Label>
-                      <SearchCombobox 
-                        value={stage.workerUserId} 
-                        onValueChange={(val) => handleUpdateStage(stage.id, { workerUserId: val })}
-                        items={[{value: "", label: "غير محدد"}, ...users]}
-                        disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")}
-                        placeholder="ابحث..."
+                  {/* Body */}
+                  <div className="p-5 grid md:grid-cols-2 gap-8 bg-slate-50/30">
+                    <div className="space-y-5">
+                      <StageUnitSelector
+                        value={activeStage.quantityUnit}
+                        factor={activeStage.quantityUnitFactor}
+                        baseUnit={orderUnitCode}
+                        unitCatalog={unitCatalog}
+                        amount={activeStage.inputQty}
+                        label="وحدة كميات المرحلة"
+                        kind="quantity"
+                        stageId={activeStage.id}
+                        customMode={activeStage.quantityUnitCustomMode}
+                        onUnitChange={(unit, factor, customMode) => handleStageUnitChange(activeStage.id, "quantity", unit, factor, customMode)}
+                        onFactorChange={factor => handleStageUnitFactorChange(activeStage.id, "quantity", factor)}
+                        onCustomModeChange={customMode => handleUpdateStage(activeStage.id, { quantityUnitCustomMode: customMode })}
+                        disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped" || busyStage === activeStage.id}
+                      />
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><ArrowDownToLine className="h-3.5 w-3.5 text-slate-400" /> الكمية المدخلة</Label>
+                          <Input type="number" step="0.01" value={activeStage.inputQty} onChange={e => handleUpdateStage(activeStage.id, { inputQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><ArrowUpFromLine className="h-3.5 w-3.5 text-slate-400" /> الكمية المنتجة</Label>
+                          <Input type="number" step="0.01" value={activeStage.outputQty} onChange={e => handleUpdateStage(activeStage.id, { outputQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" /> وقت العمل الفعلي (محرك تحميل)</Label>
+                        <div className="grid grid-cols-2 gap-3 bg-white p-2 border rounded-md shadow-sm">
+                          <label className="text-xs font-medium text-slate-500">ساعات
+                            <Input className="mt-1 bg-slate-50 border-slate-200" dir="ltr" inputMode="numeric" value={Math.floor(activeStage.actualDurationMinutes / 60)} onChange={e => handleUpdateStage(activeStage.id, { actualDurationMinutes: Math.max(0, Math.floor(Number(e.target.value) || 0)) * 60 + activeStage.actualDurationMinutes % 60 })} disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} />
+                          </label>
+                          <label className="text-xs font-medium text-slate-500">دقائق
+                            <Input className="mt-1 bg-slate-50 border-slate-200" dir="ltr" inputMode="decimal" value={Number((activeStage.actualDurationMinutes % 60).toFixed(4))} onChange={e => handleUpdateStage(activeStage.id, { actualDurationMinutes: Math.floor(activeStage.actualDurationMinutes / 60) * 60 + Math.min(59.9999, Math.max(0, Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} />
+                          </label>
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-600">عدد العمالة المشاركة</Label>
+                          <Input dir="ltr" inputMode="numeric" value={activeStage.workerCount} onChange={e => handleUpdateStage(activeStage.id, { workerCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} className="bg-white" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-slate-400" /> العامل</Label>
+                          <SearchCombobox 
+                            value={activeStage.workerUserId} 
+                            onValueChange={(val) => handleUpdateStage(activeStage.id, { workerUserId: val })}
+                            items={[{value: "", label: "غير محدد"}, ...users]}
+                            disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")}
+                            placeholder="ابحث..."
+                          />
+                        </div>
+                      </div>
+                      
+                      <ProductionResourcePicker
+                        workCenterId={activeStage.workCenterId}
+                        machineId={activeStage.machineId}
+                        catalog={resourceCatalog}
+                        disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped" || busyStage === activeStage.id}
+                        canCreate={canCreate}
+                        endpoint={`${apiBase}/orders/${orderId}`}
+                        headers={headers}
+                        onChange={values => handleUpdateStage(activeStage.id, values)}
+                        onCreated={(kind, row) => setResourceCatalog(previous => kind === "work-centers"
+                          ? { ...previous, workCenters: [...previous.workCenters.filter(x => x.id !== row.id), row] }
+                          : { ...previous, machines: [...previous.machines.filter(x => x.id !== row.id), row] })}
                       />
                     </div>
-                  </div>
-                  <ProductionResourcePicker
-                    workCenterId={stage.workCenterId}
-                    machineId={stage.machineId}
-                    catalog={resourceCatalog}
-                    disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped" || busyStage === stage.id}
-                    canCreate={canCreate}
-                    endpoint={`${apiBase}/orders/${orderId}`}
-                    headers={headers}
-                    onChange={values => handleUpdateStage(stage.id, values)}
-                    onCreated={(kind, row) => setResourceCatalog(previous => kind === "work-centers"
-                      ? { ...previous, workCenters: [...previous.workCenters.filter(x => x.id !== row.id), row] }
-                      : { ...previous, machines: [...previous.machines.filter(x => x.id !== row.id), row] })}
-                  />
-                </div>
 
-                <div className="space-y-4">
-                  <div className="rounded-lg border border-rose-100 bg-rose-50/30 p-3 space-y-3">
-                    <div className="font-semibold text-sm text-rose-800 flex items-center gap-1.5">
-                      <Activity className="h-4 w-4" /> فاقد العملية (هذه المرحلة — لا ينشئ مصروفاً مستقلاً)
-                    </div>
-                    <StageUnitSelector
-                      value={stage.wasteUnit}
-                      factor={stage.wasteUnitFactor}
-                      baseUnit={orderUnitCode}
-                      unitCatalog={unitCatalog}
-                      amount={stage.wasteQty}
-                      label="وحدة كمية الهالك"
-                      kind="waste"
-                      stageId={stage.id}
-                      customMode={stage.wasteUnitCustomMode}
-                      onUnitChange={(unit, factor, customMode) => handleStageUnitChange(stage.id, "waste", unit, factor, customMode)}
-                      onFactorChange={factor => handleStageUnitFactorChange(stage.id, "waste", factor)}
-                      onCustomModeChange={customMode => handleUpdateStage(stage.id, { wasteUnitCustomMode: customMode, wasteUnitExplicit: true })}
-                      disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped" || busyStage === stage.id}
-                    />
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">كمية الهالك</Label>
-                        <Input type="number" step="0.01" value={stage.wasteQty} onChange={e => handleUpdateStage(stage.id, { wasteQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")} className="bg-white border-rose-200" />
+                    <div className="space-y-5">
+                      <div className="rounded-xl border border-rose-100 bg-rose-50/40 p-4 space-y-4 shadow-sm">
+                        <div className="font-bold text-sm text-rose-800 flex items-center gap-1.5 border-b border-rose-100 pb-2">
+                          <Activity className="h-4 w-4" /> فاقد العملية (هذه المرحلة — لا ينشئ مصروفاً مستقلاً)
+                        </div>
+                        <StageUnitSelector
+                          value={activeStage.wasteUnit}
+                          factor={activeStage.wasteUnitFactor}
+                          baseUnit={orderUnitCode}
+                          unitCatalog={unitCatalog}
+                          amount={activeStage.wasteQty}
+                          label="وحدة كمية الهالك"
+                          kind="waste"
+                          stageId={activeStage.id}
+                          customMode={activeStage.wasteUnitCustomMode}
+                          onUnitChange={(unit, factor, customMode) => handleStageUnitChange(activeStage.id, "waste", unit, factor, customMode)}
+                          onFactorChange={factor => handleStageUnitFactorChange(activeStage.id, "waste", factor)}
+                          onCustomModeChange={customMode => handleUpdateStage(activeStage.id, { wasteUnitCustomMode: customMode, wasteUnitExplicit: true })}
+                          disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped" || busyStage === activeStage.id}
+                        />
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-semibold text-rose-900">كمية الهالك</Label>
+                            <Input type="number" step="0.01" value={activeStage.wasteQty} onChange={e => handleUpdateStage(activeStage.id, { wasteQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-semibold text-rose-900">طبيعي أم تالف</Label>
+                            <SearchCombobox 
+                              value={activeStage.wasteClassification} 
+                              onValueChange={(val: any) => handleUpdateStage(activeStage.id, { wasteClassification: val })} 
+                              items={[
+                                 { value: "normal", label: "فاقد طبيعي (مخطط — بلا مصروف مستقل)" },
+                                 { value: "abnormal", label: "تالف/فاقد غير طبيعي (استثنائي)" }
+                              ]}
+                              disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-semibold text-rose-900">نوع الفاقد (wasteType)</Label>
+                            <Input placeholder="مثال: تلف خام أو فاقد حراري" value={activeStage.wasteType} onChange={e => handleUpdateStage(activeStage.id, { wasteType: e.target.value })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-semibold text-rose-900">سبب الهالك</Label>
+                            <Input placeholder="مثال: خطأ في الحرارة..." value={activeStage.wasteReason} onChange={e => handleUpdateStage(activeStage.id, { wasteReason: e.target.value })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                          </div>
+                        </div>
                       </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">طبيعي أم تالف</Label>
-                        <SearchCombobox 
-                          value={stage.wasteClassification} 
-                          onValueChange={(val: any) => handleUpdateStage(stage.id, { wasteClassification: val })} 
-                          items={[
-                             { value: "normal", label: "فاقد طبيعي (مخطط — بلا مصروف مستقل)" },
-                             { value: "abnormal", label: "تالف/فاقد غير طبيعي (استثنائي)" }
-                          ]}
-                          disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")}
+
+                      <div className="space-y-1.5 bg-white p-4 border rounded-xl shadow-sm">
+                        <Label className="text-xs font-semibold text-slate-700">ملاحظات المرحلة</Label>
+                        <Textarea 
+                          rows={3} 
+                          className="resize-none border-slate-200 bg-slate-50 focus-visible:bg-white transition-colors"
+                          placeholder="أضف أي ملاحظات حول الأداء، الأعطال، إلخ..."
+                          value={activeStage.notes}
+                          onChange={e => handleUpdateStage(activeStage.id, { notes: e.target.value })}
+                          disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")}
                         />
                       </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">نوع الفاقد/التالف (wasteType)</Label>
-                        <Input placeholder="مثال: تلف خام أو فاقد حراري" value={stage.wasteType} onChange={e => handleUpdateStage(stage.id, { wasteType: e.target.value })} disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")} className="bg-white border-rose-200" />
+                    </div>
+
+                    <div className="md:col-span-2 flex flex-wrap gap-3 items-center justify-between pt-5 border-t border-slate-200 mt-2">
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-9 bg-white shadow-sm hover:bg-slate-50"
+                          disabled={currentIndex === 0}
+                          onClick={() => navigateToTab(stages[currentIndex - 1].id)}
+                        >
+                          <ChevronRight className="h-4 w-4 ms-1" /> السابق
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-9 bg-white shadow-sm hover:bg-slate-50"
+                          disabled={currentIndex === stages.length - 1}
+                          onClick={() => navigateToTab(stages[currentIndex + 1].id)}
+                        >
+                          التالي <ChevronLeft className="h-4 w-4 me-1" />
+                        </Button>
                       </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">سبب الهالك</Label>
-                        <Input placeholder="مثال: خطأ في الحرارة..." value={stage.wasteReason} onChange={e => handleUpdateStage(stage.id, { wasteReason: e.target.value })} disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")} className="bg-white border-rose-200" />
-                      </div>
+
+                      {isExecuting && canEdit && activeStage.status !== "done" && activeStage.status !== "skipped" && (
+                        <Button 
+                          disabled={busyStage === activeStage.id} 
+                          onClick={() => sendStageAction(activeStage.id, "update", activeStage)} 
+                          className="h-9 bg-violet-600 hover:bg-violet-700 shadow-sm px-5"
+                        >
+                          <Save className="h-4 w-4 me-2" /> حفظ مسودة المرحلة
+                        </Button>
+                      )}
                     </div>
                   </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-slate-500">ملاحظات المرحلة</Label>
-                    <Textarea 
-                      rows={2} 
-                      className="resize-none"
-                      placeholder="أضف أي ملاحظات حول الأداء، الأعطال، إلخ..."
-                      value={stage.notes}
-                      onChange={e => handleUpdateStage(stage.id, { notes: e.target.value })}
-                      disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")}
-                    />
-                  </div>
                 </div>
-
-                {isExecuting && canEdit && stage.status !== "done" && stage.status !== "skipped" && (
-                  <div className="md:col-span-2 flex justify-end pt-2">
-                    <Button 
-                      disabled={busyStage === stage.id} 
-                      onClick={() => sendStageAction(stage.id, "update", stage)} 
-                      className="bg-violet-600 hover:bg-violet-700"
-                    >
-                      <Save className="h-4 w-4 me-2" /> حفظ بيانات المرحلة
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+              );
+            })()
+          )}
+        </div>
+      )}
     </div>
   );
 }
