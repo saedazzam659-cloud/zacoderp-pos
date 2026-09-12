@@ -34,6 +34,12 @@ Accounting verification must include failed finalization after driver reconcilia
 
 **How to apply:** Require rollback on post-write validation failure, and decide whether to create a reconciliation journal from nonzero ledger lines rather than the net WIP delta alone.
 
+Source-cost verification must generate at least one driver delta through real order finalization, not only seed reconciliation rows.
+
+**Why:** Seeded deltas can prove capacity and closure arithmetic while masking a mismatch between the wizard's frozen formula metadata and the finalization reader that silently skips reconciliation.
+
+**How to apply:** Create a source-linked order through the wizard, complete its stage facts, finalize through the status handler, and assert the generated delta and retry behavior alongside immutable base allocations.
+
 Simple manufacturing must remain independently activatable, default OFF at company level, with separate user grants. Its shared-core API access must be limited to explicitly supported operations, never a blanket alternative permission for advanced production.
 
 **Why:** Small companies must use the compact module without activating or exposing advanced production screens.

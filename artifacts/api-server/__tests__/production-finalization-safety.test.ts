@@ -26,6 +26,18 @@ test("overhead closure counts each active driver delta without mutating planned 
   assert.doesNotMatch(closure, /row\.allocatedAmount\s*=/);
 });
 
+test("driver reconciliation reads wizard formula snapshots with legacy compatibility", async () => {
+  const source = await readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8");
+  const wizard = source.slice(source.indexOf("export async function productionWizardHandler"),
+    source.indexOf("async function reconcileFinalStageDrivers"));
+  const reconciliation = source.slice(source.indexOf("async function reconcileFinalStageDrivers"),
+    source.indexOf("function productionStatusPermission"));
+  assert.match(wizard, /formulaNumerator:/);
+  assert.match(wizard, /formulaDenominator:/);
+  assert.match(reconciliation, /meta\.formulaNumerator \?\? meta\.numerator/);
+  assert.match(reconciliation, /meta\.formulaDenominator \?\? meta\.denominatorOrRate/);
+});
+
 test("validation rejection throws so transaction rolls back and preserves HTTP details", async () => {
   let committed = false;
   let rolledBack = false;

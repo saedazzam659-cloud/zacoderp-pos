@@ -3879,18 +3879,16 @@ async function buildOverheadClosureSnapshot(
       { status: 409 },
     );
   }
-  const appliedBySource = new Map<string, {
-    amount: number;
-    treatments: Set<string>;
-  }>();
-  // Apply immutable, unreversed driver deltas once to this closure snapshot,
-  // never to the persisted planned allocations or the order-create handler.
+  // Apply only live deltas to this transaction-local snapshot. The saved
+  // planned allocations remain immutable, including when a close is retried.
   const driverReconciliations = allocationIds.length
     ? await q.select({
         baseAllocationId: productionDriverReconciliationsTable.baseAllocationId,
         deltaAmount: productionDriverReconciliationsTable.deltaAmount,
       }).from(productionDriverReconciliationsTable).where(and(
         eq(productionDriverReconciliationsTable.companyId, cid),
+        eq(productionDriverReconciliationsTable.periodStart, range.start),
+        eq(productionDriverReconciliationsTable.periodEnd, range.end),
         inArray(productionDriverReconciliationsTable.baseAllocationId, allocationIds),
         isNull(productionDriverReconciliationsTable.reversalJournalEntryId),
       )).for("update")
@@ -3900,11 +3898,15 @@ async function buildOverheadClosureSnapshot(
     driverDeltaByAllocation.set(Number(row.baseAllocationId),
       (driverDeltaByAllocation.get(Number(row.baseAllocationId)) ?? 0) + num(row.deltaAmount));
   }
+  const appliedBySource = new Map<string, {
+    amount: number;
+    treatments: Set<string>;
+  }>();
   for (const row of allocationRows) {
     const key = overheadSourceKey(row.sourceType, row.sourceRecordId);
     const current = appliedBySource.get(key) ?? { amount: 0, treatments: new Set<string>() };
-    current.amount = round2(current.amount + num(row.allocatedAmount)
-      + (driverDeltaByAllocation.get(Number(row.allocationId)) ?? 0));
+    current.amount = round2(current.amount + num(row.allocatedAmount) +
+      (driverDeltaByAllocation.get(Number(row.allocationId)) ?? 0));
     current.treatments.add(String(row.costTreatment ?? ""));
     appliedBySource.set(key, current);
   }
@@ -5318,7 +5320,8 @@ export async function productionWizardHandler(req: any, res: any) {
           .innerJoin(productionOrdersTable, and(
             eq(productionDriverReconciliationsTable.orderId, productionOrdersTable.id),
             eq(productionOrdersTable.companyId, cid),
-          )).where(and(
+          ))
+          .where(and(
             eq(productionDriverReconciliationsTable.companyId, cid),
             eq(productionDriverReconciliationsTable.sourceType, source.sourceType),
             eq(productionDriverReconciliationsTable.sourceRecordId, source.sourceRecordId),
@@ -6090,8 +6093,10 @@ async function reconcileFinalStageDrivers(
     const meta = (allocation.snapshotMeta ?? {}) as Record<string, any>;
     const method = meta.formulaMethod as string | undefined;
     if (!["operating_hours", "fixed_hourly_rate", "production_quantity"].includes(method ?? "")) continue;
-    const planned = num(meta.numerator);
-    const denominator = num(meta.denominatorOrRate);
+    // Wizard snapshots use formula* keys; retain legacy-key support without
+    // rewriting any historical allocation or approved conversion factors.
+    const planned = num(meta.formulaNumerator ?? meta.numerator);
+    const denominator = num(meta.formulaDenominator ?? meta.denominatorOrRate);
     const actual = method === "production_quantity" ? producedQty : actualHours;
     if (!(actual >= 0) || !(denominator > 0)) continue;
     const target = actual === 0 ? 0 : calculateFormulaAllocation(
