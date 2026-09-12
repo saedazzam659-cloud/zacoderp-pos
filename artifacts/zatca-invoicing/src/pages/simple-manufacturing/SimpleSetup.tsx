@@ -504,16 +504,32 @@ export function SimpleSetup({
                          )}
                          {(stage.resourceMode === "machine" || stage.resourceMode === "both") && (
                            <div className="space-y-1">
-                             <label className="text-xs font-medium text-slate-600">معرّف الآلة المحفوظة</label>
-                             <Input type="text" inputMode="numeric" dir="ltr" value={stage.resourceId ?? ""}
-                               onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index
-                                 ? { ...s, resourceId: e.target.value }
-                                 : s))} placeholder="رقم مورد الآلة" />
+                              <label className="text-xs font-medium text-slate-600">آلة المرحلة</label>
+                              <SearchCombobox
+                                value={stage.resourceId ?? ""}
+                                placeholder="اختر آلة محفوظة…"
+                                searchPlaceholder="ابحث عن آلة…"
+                                items={[
+                                  { value: "", label: "اختر آلة محفوظة…" },
+                                  ...(catalog.machines ?? []).map(machine => ({
+                                    value: String(machine.id),
+                                    label: machine.name,
+                                  })),
+                                ]}
+                                onValueChange={resourceId => setRoutingStages(stages => stages.map((s, i) => i === index
+                                  ? { ...s, resourceId }
+                                  : s))}
+                              />
+                              {(() => {
+                                const machine = (catalog.machines ?? []).find(row => String(row.id) === stage.resourceId);
+                                if (!machine?.electricityEnabled) return null;
+                                return <p className="text-[11px] leading-5 text-amber-800">كهرباء مفعلة ({machine.electricityKw ?? "—"} kW): عند تنفيذ أمر v1 تُجمّد ساعات الآلة وkWh/التعريفة كلقطة استخدام. تُحدّد فاتورة الكهرباء الصناعية والمصنع ومركز التكلفة لاحقاً صراحةً في إقفال المصادر؛ ليست التعريفة مصروفاً مستقلاً.</p>;
+                              })()}
                            </div>
                          )}
                        </div>
                        <p className="text-[11px] text-slate-500">
-                         تستخدم المرحلة ساعات تشغيل واحدة فقط. اختر الآلة من تنفيذ الأمر عند الحاجة ثم احفظ رقمها هنا لمسار قابل لإعادة الاستخدام.
+                          تستخدم المرحلة ساعات تشغيل واحدة فقط. بيانات الطاقة مرتبطة بالآلة المختارة؛ لا توجد ساعات كهرباء أو إهلاك منفصلة.
                        </p>
                     </div>
                   ))}

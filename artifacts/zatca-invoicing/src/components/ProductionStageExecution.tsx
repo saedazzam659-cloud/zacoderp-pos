@@ -72,7 +72,6 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
   const [loading, setLoading] = useState(false);
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [completedResourceCost, setCompletedResourceCost] = useState<any>(null);
   const dirtyStages = useRef(new Set<string>());
   
   const previousOrderId = useRef(orderId);
@@ -308,6 +307,18 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       });
       return;
     }
+    if (isResourceCostingV1) {
+      const needsLabor = stageData.resourceMode === "labor" || stageData.resourceMode === "both";
+      const needsMachine = stageData.resourceMode === "machine" || stageData.resourceMode === "both";
+      if (needsLabor && (!Number.isInteger(stageData.workerCount) || stageData.workerCount <= 0)) {
+        toast({ title: "عدد العمال مطلوب", description: "أدخل عدداً صحيحاً موجباً للعمالة في مرحلة تكلفة الموارد.", variant: "destructive" });
+        return;
+      }
+      if (needsMachine && !(Number(stageData.resourceId) > 0)) {
+        toast({ title: "الآلة مطلوبة", description: "اختر آلة صالحة لمرحلة الآلة أو الآلة مع العمالة.", variant: "destructive" });
+        return;
+      }
+    }
     setBusyStage(stageId);
     try {
       const payload = {
@@ -354,7 +365,6 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
       
-      if (action === "complete" && j.resourceCost) setCompletedResourceCost(j.resourceCost);
       toast({ title: action === "update" ? "تم الحفظ" : action === "start" ? "تم بدء المرحلة" : "تم إنهاء المرحلة" });
       await fetchStages(stageId);
       if (onReload) onReload();
@@ -475,7 +485,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                     </div>
                     
                     <div className="flex gap-2">
-                      {(activeStage.status === "done" || activeStage.status === "skipped") && isExecuting && canEdit && (
+                      {(activeStage.status === "done" || activeStage.status === "skipped") && isExecuting && canEdit && !isResourceCostingV1 && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -485,6 +495,9 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                         >
                           <RotateCcw className="h-3.5 w-3.5 me-1" /> إعادة فتح للتصحيح
                         </Button>
+                      )}
+                      {activeStage.status === "done" && isResourceCostingV1 && (
+                        <p className="max-w-xs text-xs leading-5 text-amber-800">لقطة تكلفة الموارد مجمّدة. للتصحيح استخدم عكس أمر الإنتاج ومسار التسوية القائم؛ لا تعِد فتح المرحلة.</p>
                       )}
                       {activeStage.status !== "done" && activeStage.status !== "skipped" && isExecuting && canEdit && (
                         <>
@@ -588,19 +601,14 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                           ? { ...previous, workCenters: [...previous.workCenters.filter(x => x.id !== row.id), row] }
                           : { ...previous, machines: [...previous.machines.filter(x => x.id !== row.id), row] })}
                       />}
-                      {isResourceCostingV1 && completedResourceCost && String(completedResourceCost.stageId) === activeStage.id && (
-                        <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3 text-xs text-violet-950">
-                          <div className="mb-2 font-semibold">لقطة تكلفة المورد المحفوظة بعد الإنهاء</div>
-                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                            <span>عمالة: {Number(completedResourceCost.labor ?? 0).toLocaleString()}</span>
-                            <span>إهلاك: {Number(completedResourceCost.depreciation ?? 0).toLocaleString()}</span>
-                            <span>كهرباء (تقدير): {Number(completedResourceCost.electricity ?? 0).toLocaleString()}</span>
-                            <span>عبء مصنع: {completedResourceCost.factoryOverhead == null ? "—" : Number(completedResourceCost.factoryOverhead).toLocaleString()}</span>
-                            <span className="font-semibold">إجمالي لقطة الاستخدام: {Number(completedResourceCost.total ?? 0).toLocaleString()}</span>
-                          </div>
-                          <p className="mt-2 text-[11px] text-amber-900">الكهرباء تقدير استخدام فقط ولا تدخل كتكلفة فعلية للأمر حتى مسار المصدر الصناعي والإقفال القائم.</p>
-                        </div>
-                      )}
+                       {isResourceCostingV1 && (() => {
+                         const machine = resourceCatalog.machines.find(row => String(row.id) === activeStage.resourceId);
+                         if (!machine?.electricityEnabled) return null;
+                         return <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-950">
+                           <p className="font-semibold">كهرباء الآلة مفعّلة ({machine.electricityKw ?? "—"} kW)</p>
+                           <p>سيُجمّد الخادم kWh والتعريفة كسجل استخدام عند الإنهاء، دون مصروف إضافي. تُختار فاتورة الكهرباء الصناعية والمصنع ومركز التكلفة لاحقاً صراحةً في إقفال المصادر الشهري؛ لا توجد ساعات كهرباء منفصلة.</p>
+                         </div>;
+                       })()}
                     </div>
 
                     <div className="space-y-5">

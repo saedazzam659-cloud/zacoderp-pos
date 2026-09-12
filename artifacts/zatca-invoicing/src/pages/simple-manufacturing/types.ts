@@ -26,6 +26,13 @@ export type Catalog = {
     code: string;
     nameAr: string;
   }>;
+  machines?: Array<{
+    id: number;
+    name: string;
+    fixedAssetId?: number | null;
+    electricityEnabled?: boolean;
+    electricityKw?: string | number | null;
+  }>;
   warehouses: Array<{ id: number; code: string; nameAr: string; branchId?: number | null; isDefault?: boolean }>;
   templates: Array<{
     id: number;

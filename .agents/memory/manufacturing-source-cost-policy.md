@@ -22,6 +22,12 @@ Machine kWh × tariff is usage evidence, not an additional posted expense. Resou
 
 **How to apply:** Version-gate new resource semantics, freeze source rates, preserve legacy operator and quantity payloads, and require end-to-end source settlement verification before enabling the new costing mode.
 
+Late utility settlement must not guess FG/COGS distribution after consumption. Require provably isolated, fully retained finished goods; otherwise reject explicitly. A posted WIP utility settlement must be reversed before completing, cancelling, or reversing its order until destination migration is supported.
+
+**Why:** Reversing against the order's current destination rather than the original posting destination can strand a valid settlement or misstate inventory. An estimate alone is not an expense.
+
+**How to apply:** Share transaction locks across settlement and order transitions. Preserve immutable historical close keys when released evidence is settled again; use a new lifecycle attempt rather than rewriting history.
+
 Execution inputs must be directly discoverable in the compact order detail, not only in the advanced detail route. Preserve approved time-based source allocation rules when adding operational workforce fields; do not implicitly multiply existing allocations by headcount.
 
 **Why:** The user could see only the routing preview and explicitly required per-stage employee entry while prohibiting changes to the existing linked cost calculations.

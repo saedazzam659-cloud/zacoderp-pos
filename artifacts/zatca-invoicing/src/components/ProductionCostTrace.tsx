@@ -34,7 +34,9 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
   const totals = costDrilldown.totals || {};
   const act = Number(totals.actual || 0);
   const std = Number(totals.standard || 0);
-  const variance = std - act; // Positive means saving, Negative means over budget
+  // The server's variance contract is actual minus standard.  A positive
+  // value is therefore an overrun, never a browser-reversed "saving".
+  const variance = Number(totals.variance ?? (act - std));
 
   const formatMoney = (val: any) => {
     const num = Number(val);
@@ -59,14 +61,14 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
         </div>
 
         <div className="rounded-xl border bg-white p-4 shadow-sm relative overflow-hidden">
-          <div className={`absolute top-0 end-0 w-16 h-16 bg-gradient-to-br ${variance >= 0 ? 'from-emerald-100' : 'from-rose-100'} to-transparent rounded-bl-full opacity-50`} />
+           <div className={`absolute top-0 end-0 w-16 h-16 bg-gradient-to-br ${variance <= 0 ? 'from-emerald-100' : 'from-rose-100'} to-transparent rounded-bl-full opacity-50`} />
           <div className="text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">الانحراف (Variance)</div>
-          <div className={`text-2xl font-bold flex items-center gap-2 ${variance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+           <div className={`text-2xl font-bold flex items-center gap-2 ${variance <= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
             {formatMoney(Math.abs(variance))}
-            {variance > 0 ? (
-              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">توفير</Badge>
-            ) : variance < 0 ? (
+             {variance > 0 ? (
               <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 text-[10px]">تجاوز</Badge>
+             ) : variance < 0 ? (
+               <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">توفير</Badge>
             ) : null}
           </div>
         </div>

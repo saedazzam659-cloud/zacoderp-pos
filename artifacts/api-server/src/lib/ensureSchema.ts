@@ -1025,6 +1025,14 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS quantity_unit_factor NUMERIC(14,8) NOT NULL DEFAULT 1;
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_unit TEXT;
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_unit_factor NUMERIC(14,8) NOT NULL DEFAULT 1` },
+  // Resource-costing v1 is deliberately additive.  Runtime schema repair is
+  // required for tenant databases that pre-date the generated schema fields.
+  { label: "production resource costing v1 fields",
+    sql: `ALTER TABLE production_resources ADD COLUMN IF NOT EXISTS fixed_asset_id INTEGER REFERENCES fixed_assets(id) ON DELETE SET NULL;
+          ALTER TABLE production_resources ADD COLUMN IF NOT EXISTS electricity_enabled BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE production_resources ADD COLUMN IF NOT EXISTS electricity_kw NUMERIC(14,4);
+          ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS resource_costing_version INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE manufacturing_settings ADD COLUMN IF NOT EXISTS electricity_tariff_per_kwh NUMERIC(14,6) NOT NULL DEFAULT 0` },
   { label: "production_waste_records classification",
     sql: `ALTER TABLE production_waste_records ADD COLUMN IF NOT EXISTS waste_classification TEXT NOT NULL DEFAULT 'normal';
           ALTER TABLE production_waste_records ADD COLUMN IF NOT EXISTS unit_factor NUMERIC(14,8) NOT NULL DEFAULT 1` },
@@ -1074,6 +1082,22 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     CREATE TRIGGER production_overhead_closures_snapshot_no_mutation
       BEFORE UPDATE ON production_overhead_closures
       FOR EACH ROW EXECUTE FUNCTION reject_production_overhead_closure_snapshot_mutation();` },
+  { label: "production_pending_utility_claims",
+    sql: `CREATE TABLE IF NOT EXISTS production_pending_utility_claims (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      closure_id INTEGER NOT NULL REFERENCES production_overhead_closures(id) ON DELETE CASCADE,
+      stage_resource_cost_id INTEGER NOT NULL REFERENCES production_stage_resource_costs(id) ON DELETE CASCADE,
+      order_id INTEGER NOT NULL REFERENCES production_orders(id) ON DELETE CASCADE,
+      source_type TEXT NOT NULL,
+      source_record_id INTEGER NOT NULL,
+      allocated_amount NUMERIC(18,2) NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS prod_pending_utility_claim_stage_uniq
+      ON production_pending_utility_claims(stage_resource_cost_id);
+    CREATE INDEX IF NOT EXISTS prod_pending_utility_claim_closure_idx
+      ON production_pending_utility_claims(company_id, closure_id);` },
   { label: "production actual driver reconciliation ledger",
     sql: `CREATE TABLE IF NOT EXISTS production_driver_reconciliations (
       id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,

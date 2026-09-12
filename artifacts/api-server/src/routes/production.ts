@@ -9,12 +9,18 @@ import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { getContextModuleKey, setContextModuleKey } from "../lib/requestContext.js";
 import {
+  isMachineElectricityAllocation,
+  machineElectricityEstimate,
+  requireSingleMachineElectricityAllocation,
+} from "../lib/resourceCosting.js";
+import {
   productionOrdersTable,
   productionOrderItemsTable,
   productionResourcesTable,
   productionEventsTable,
   productionCostAllocationsTable,
   productionStageResourceCostsTable,
+  productionPendingUtilityClaimsTable,
   productionDriverReconciliationsTable,
   productionOverheadClosuresTable,
   productionCommercialAccrualsTable,
@@ -130,6 +136,15 @@ import {
   STAGE_WASTE_CLASSIFICATIONS,
 } from "../lib/stageExecution.js";
 import { getPostedIndustrialPurchaseCosts } from "../lib/industrialPurchaseCosts.js";
+import {
+  buildPendingUtilityProposal,
+  isPendingUtilityClosure,
+  pendingUtilityBlocksOrderTransition,
+  pendingUtilityLifecycleAttempt,
+  postPendingUtilitySettlement,
+  reversePendingUtilitySettlement,
+  type PendingUtilitySource,
+} from "../lib/pendingUtilitySettlement.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 // Manufacturing deliberately consumes the central item-unit engine.  Keep
@@ -404,12 +419,6 @@ async function validateItem(cid: number, id: number | null | undefined) {
 }
 
 const router = Router();
-// Resource costing remains deliberately unavailable until electricity has a
-// source-backed settlement lifecycle (posted utility source -> WIP estimate
-// settlement -> exact reversal). A tariff plus an accrual account alone would
-// create a second expense path and violate source ownership.
-export const RESOURCE_COSTING_NOT_READY_REASON =
-  "تكلفة الموارد غير مفعلة: تسوية كهرباء الآلة مع مصدر الفاتورة المرحّل غير مكتملة بعد";
 // Lifecycle actions are also exposed by the compact manufacturing facade.
 // This narrow router is mounted by both facades; it must never include the
 // rest of the advanced production routes.
@@ -1261,17 +1270,98 @@ router.get("/resource-costing-readiness", async (req, res) => {
   const cid = guard(req, res);
   if (!cid) return;
   res.json({
-    ready: false,
-    code: "RESOURCE_COSTING_ELECTRICITY_SETTLEMENT_UNAVAILABLE",
-    reason: RESOURCE_COSTING_NOT_READY_REASON,
+    ready: true,
+    version: 1,
+    electricitySettlement: "posted_industrial_source_driver_reconciliation",
   });
 });
+
+function resourceElectricityConfig(
+  body: Record<string, unknown>,
+  existing?: {
+    type: string;
+    fixedAssetId: number | null;
+    electricityEnabled: boolean;
+    electricityKw: string | null;
+  },
+) {
+  const type = typeof body.type === "string" ? body.type : (existing?.type ?? "machine");
+  const fixedAssetId = body.fixedAssetId === undefined
+    ? (existing?.fixedAssetId ?? null)
+    : setupOptionalId(body.fixedAssetId, "الأصل الثابت");
+  if (
+    body.electricityEnabled !== undefined &&
+    typeof body.electricityEnabled !== "boolean"
+  ) {
+    throw Object.assign(new Error("حقل تفعيل كهرباء الآلة يجب أن يكون true أو false"), { status: 400 });
+  }
+  const electricityEnabled = body.electricityEnabled === undefined
+    ? (existing?.electricityEnabled ?? false)
+    : body.electricityEnabled;
+  const electricityKw = body.electricityKw === undefined
+    ? (existing?.electricityKw == null ? null : Number(existing.electricityKw))
+    : body.electricityKw == null || body.electricityKw === ""
+      ? null
+      : num(body.electricityKw);
+  if (electricityKw !== null && !(electricityKw > 0)) {
+    throw Object.assign(new Error("قدرة كهرباء الآلة kW يجب أن تكون موجبة"), { status: 400 });
+  }
+  if ((fixedAssetId != null || electricityEnabled || electricityKw != null) && type !== "machine") {
+    throw Object.assign(new Error("ربط الأصل الثابت وإعدادات الكهرباء متاحان للآلة فقط"), { status: 400 });
+  }
+  if (electricityEnabled && !(electricityKw && electricityKw > 0)) {
+    throw Object.assign(new Error("قدرة كهرباء الآلة kW مطلوبة عند تفعيل الكهرباء"), { status: 400 });
+  }
+  return { type, fixedAssetId, electricityEnabled, electricityKw };
+}
+
+async function assertResourceFixedAsset(
+  executor: any,
+  companyId: number,
+  resourceBranchId: number | null,
+  fixedAssetId: number | null,
+  currentResourceId?: number,
+): Promise<void> {
+  if (fixedAssetId == null) return;
+  const [asset] = await executor
+    .select({
+      id: fixedAssetsTable.id,
+      branchId: fixedAssetsTable.branchId,
+    })
+    .from(fixedAssetsTable)
+    .where(and(
+      eq(fixedAssetsTable.id, fixedAssetId),
+      eq(fixedAssetsTable.companyId, companyId),
+      eq(fixedAssetsTable.status, "active"),
+    ))
+    .limit(1);
+  if (!asset) {
+    throw Object.assign(new Error("الأصل الثابت غير موجود أو غير متاح للربط في هذه الشركة"), { status: 400 });
+  }
+  if (asset.branchId != null && asset.branchId !== resourceBranchId) {
+    throw Object.assign(new Error("الأصل الثابت خارج نطاق فرع المورد"), { status: 400 });
+  }
+  const linked = await executor
+    .select({ id: productionResourcesTable.id })
+    .from(productionResourcesTable)
+    .where(and(
+      eq(productionResourcesTable.companyId, companyId),
+      or(
+        eq(productionResourcesTable.fixedAssetId, fixedAssetId),
+        sql`${productionResourcesTable.meta}->>'fixedAssetId' = ${String(fixedAssetId)}`,
+      ),
+    ))
+    .limit(2);
+  if (linked.some((row: any) => Number(row.id) !== currentResourceId)) {
+    throw Object.assign(new Error("الأصل الثابت مرتبط بآلة أخرى مسبقاً"), { status: 409 });
+  }
+}
 
 router.post("/resources", async (req, res) => {
   try {
     const cid = guard(req, res);
     if (!cid) return;
-    const { name, type, status, capacityPerHour, branchId, notes, meta } =
+    const { name, status, capacityPerHour, branchId, notes, meta } =
       req.body ?? {};
     if (!name || typeof name !== "string") {
       res.status(400).json({ error: "اسم المورد مطلوب" });
@@ -1282,22 +1372,32 @@ router.post("/resources", async (req, res) => {
       res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
       return;
     }
-    const [row] = await db
-      .insert(productionResourcesTable)
-      .values({
-        companyId: cid,
-        branchId: typeof bid === "number" ? bid : null,
-        name: name.trim(),
-        type: type || "machine",
-        status: status || "available",
-        capacityPerHour: String(num(capacityPerHour)),
-        notes: notes || null,
-        meta: meta && typeof meta === "object" ? meta : {},
-      })
-      .returning();
+    const config = resourceElectricityConfig(req.body ?? {});
+    const resourceBranchId = typeof bid === "number" ? bid : null;
+    const [row] = await db.transaction(async (tx) => {
+      await assertResourceFixedAsset(
+        tx, cid, resourceBranchId, config.fixedAssetId,
+      );
+      return tx
+        .insert(productionResourcesTable)
+        .values({
+          companyId: cid,
+          branchId: resourceBranchId,
+          name: name.trim(),
+          type: config.type,
+          status: status || "available",
+          capacityPerHour: String(num(capacityPerHour)),
+          fixedAssetId: config.fixedAssetId,
+          electricityEnabled: config.electricityEnabled,
+          electricityKw: config.electricityKw == null ? null : String(config.electricityKw),
+          notes: notes || null,
+          meta: meta && typeof meta === "object" ? meta : {},
+        })
+        .returning();
+    });
     res.status(201).json(row);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -1308,7 +1408,13 @@ router.patch("/resources/:id", async (req, res) => {
     const id = Number(req.params.id);
     // HIGH fix #2 — branch scope: load existing row + verify scope before mutating
     const [existing] = await db
-      .select({ branchId: productionResourcesTable.branchId })
+      .select({
+        branchId: productionResourcesTable.branchId,
+        type: productionResourcesTable.type,
+        fixedAssetId: productionResourcesTable.fixedAssetId,
+        electricityEnabled: productionResourcesTable.electricityEnabled,
+        electricityKw: productionResourcesTable.electricityKw,
+      })
       .from(productionResourcesTable)
       .where(
         and(
@@ -1334,23 +1440,35 @@ router.patch("/resources/:id", async (req, res) => {
     if (b.notes !== undefined) updates.notes = b.notes || null;
     if (b.meta !== undefined && typeof b.meta === "object")
       updates.meta = b.meta;
-    const [row] = await db
-      .update(productionResourcesTable)
-      .set(updates)
-      .where(
-        and(
-          eq(productionResourcesTable.id, id),
-          eq(productionResourcesTable.companyId, cid),
-        ),
-      )
-      .returning();
+    const config = resourceElectricityConfig(b, existing);
+    if (b.type !== undefined || b.fixedAssetId !== undefined || b.electricityEnabled !== undefined || b.electricityKw !== undefined) {
+      updates.type = config.type;
+      updates.fixedAssetId = config.fixedAssetId;
+      updates.electricityEnabled = config.electricityEnabled;
+      updates.electricityKw = config.electricityKw == null ? null : String(config.electricityKw);
+    }
+    const [row] = await db.transaction(async (tx) => {
+      await assertResourceFixedAsset(
+        tx, cid, existing.branchId, config.fixedAssetId, id,
+      );
+      return tx
+        .update(productionResourcesTable)
+        .set(updates)
+        .where(
+          and(
+            eq(productionResourcesTable.id, id),
+            eq(productionResourcesTable.companyId, cid),
+          ),
+        )
+        .returning();
+    });
     if (!row) {
       res.status(404).json({ error: "المورد غير موجود" });
       return;
     }
     res.json(row);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -4251,6 +4369,60 @@ productionOverheadClosureRouter.get("/overhead-closures", async (req, res) => {
   }
 });
 
+// Pending utility use is immutable stage evidence.  It is deliberately
+// discoverable before an invoice is selected, but no invoice is inferred here:
+// the close screen must make the factory/cost-center/invoice choice explicit.
+productionOverheadClosureRouter.get("/pending-utility-orders", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const period = String(req.query.period ?? "");
+    const range = closurePeriod(period);
+    if (!range) return void res.status(400).json({ error: "الفترة مطلوبة بصيغة YYYY-MM" });
+    const requestedBranchId = req.query.branchId == null || req.query.branchId === ""
+      ? undefined : Number(req.query.branchId);
+    if (requestedBranchId !== undefined && !Number.isInteger(requestedBranchId))
+      return void res.status(400).json({ error: "الفرع غير صحيح" });
+    const branchResult = effectiveBranchCondition(
+      req, productionOrdersTable.branchId, requestedBranchId,
+    );
+    if ("deny" in branchResult)
+      return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const conditions: any[] = [
+      eq(productionStageResourceCostsTable.companyId, cid),
+      eq(productionStageResourceCostsTable.component, "electricity"),
+      eq(productionStageResourceCostsTable.sourceType, "pending_machine_electricity"),
+      eq(productionOrdersTable.resourceCostingVersion, 1),
+    ];
+    if (branchResult.cond) conditions.push(branchResult.cond);
+    const rows = await db.select({
+      orderId: productionOrdersTable.id,
+      orderNumber: productionOrdersTable.orderNumber,
+      orderStatus: productionOrdersTable.status,
+      branchId: productionOrdersTable.branchId,
+      costPeriod: productionOrdersTable.meta,
+      stageId: productionStageResourceCostsTable.stageId,
+      kwh: sql<string>`${productionStageResourceCostsTable.snapshot}->>'kwh'`,
+      tariffPerKwh: sql<string>`${productionStageResourceCostsTable.snapshot}->>'tariffPerKwh'`,
+      estimate: productionStageResourceCostsTable.amount,
+    }).from(productionStageResourceCostsTable)
+      .innerJoin(productionOrdersTable, eq(
+        productionOrdersTable.id, productionStageResourceCostsTable.orderId,
+      ))
+      .leftJoin(productionPendingUtilityClaimsTable, and(
+        eq(productionPendingUtilityClaimsTable.companyId, cid),
+        eq(productionPendingUtilityClaimsTable.stageResourceCostId, productionStageResourceCostsTable.id),
+      ))
+      .where(and(...conditions, isNull(productionPendingUtilityClaimsTable.id)));
+    const pending = rows.filter((row: any) =>
+      String(row.costPeriod?.costPeriod ?? "") === period &&
+      Number(row.kwh) > 0,
+    );
+    res.json({ period, rows: pending });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
 productionOverheadClosureRouter.post("/overhead-closures", closureActionPermission("create"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -4289,12 +4461,53 @@ productionOverheadClosureRouter.post("/overhead-closures", closureActionPermissi
     if (!Number.isInteger(varianceAccountId) || varianceAccountId <= 0)
       return void res.status(400).json({ error: "حساب فروقات التصنيع مطلوب" });
     await validateExpenseAccount(cid, varianceAccountId);
-    const sourceKey = closureSourceKey(cid, period, closureBranchId);
+    const suppliedPendingOrderIds: number[] = Array.isArray(req.body?.pendingOrderIds)
+      ? (req.body.pendingOrderIds as unknown[]).map((value) => Number(value)) : [];
+    const suppliedUtility = req.body?.utilitySource;
+    const isPendingUtilityRequest = suppliedPendingOrderIds.length > 0 || suppliedUtility != null;
+    if (isPendingUtilityRequest && (!suppliedPendingOrderIds.length || !suppliedUtility)) {
+      return void res.status(400).json({
+        error: "تسوية الكهرباء المعلقة تتطلب أوامر مختارة ومصدر فاتورة/مصنع/مركز تكلفة صريحاً",
+      });
+    }
+    const utilitySource: PendingUtilitySource | null = isPendingUtilityRequest
+      ? {
+          sourceType: String(suppliedUtility?.sourceType) as "purchase_invoice",
+          sourceRecordId: Number(suppliedUtility?.sourceRecordId),
+          factoryId: Number(suppliedUtility?.factoryId),
+          costCenter: String(suppliedUtility?.costCenter ?? "").trim(),
+        }
+      : null;
+    const sourceKeyBase = utilitySource
+      ? `production_pending_utility_close:${cid}:${closureBranchId ?? 0}:${period}:` +
+        `${utilitySource.sourceType}:${utilitySource.sourceRecordId}:` +
+        [...new Set(suppliedPendingOrderIds)].sort((a, b) => a - b).join(",")
+      : closureSourceKey(cid, period, closureBranchId);
     const closure = await db.transaction(async (tx) => {
       await lockOverheadClosureMutation(tx, cid);
-      const [existing] = await tx.select().from(productionOverheadClosuresTable)
+      let sourceKey = sourceKeyBase;
+      let [existing] = await tx.select().from(productionOverheadClosuresTable)
         .where(and(eq(productionOverheadClosuresTable.companyId, cid),
           eq(productionOverheadClosuresTable.sourceKey, sourceKey))).limit(1);
+      if (utilitySource && existing?.status === "reversed" &&
+          isPendingUtilityClosure(existing.sourceSnapshot)) {
+        // Snapshots (including source_key) are immutable. Find the latest
+        // lifecycle attempt: reuse an active attempt idempotently, otherwise
+        // create a new immutable key without rewriting the reversed history.
+        const attempts = await tx.select().from(productionOverheadClosuresTable)
+          .where(and(
+            eq(productionOverheadClosuresTable.companyId, cid),
+            sql`${productionOverheadClosuresTable.sourceKey} like ${sourceKeyBase + ":attempt:%"}`,
+          ));
+        const attempt = pendingUtilityLifecycleAttempt(sourceKeyBase, attempts);
+        if (attempt.reuseActive) {
+          sourceKey = attempt.sourceKey;
+          existing = attempts.find((row: any) => row.sourceKey === sourceKey);
+        } else {
+          sourceKey = attempt.sourceKey;
+          existing = undefined;
+        }
+      }
       if (existing) {
         if (existing.varianceAccountId !== varianceAccountId) {
           throw Object.assign(
@@ -4303,6 +4516,45 @@ productionOverheadClosureRouter.post("/overhead-closures", closureActionPermissi
           );
         }
         return { row: existing, created: false };
+      }
+      if (utilitySource) {
+        const proposal = await buildPendingUtilityProposal(tx, cid, {
+          period,
+          branchId: closureBranchId,
+          pendingOrderIds: suppliedPendingOrderIds,
+          utilitySource,
+        });
+        const [row] = await tx.insert(productionOverheadClosuresTable).values({
+          companyId: cid,
+          branchId: closureBranchId,
+          periodStart: range.start,
+          periodEnd: range.end,
+          correctionDate,
+          sourceKey,
+          varianceAccountId,
+          status: "draft",
+          actualAmount: proposal.actualAmount.toFixed(2),
+          appliedAmount: proposal.actualAmount.toFixed(2),
+          varianceAmount: "0",
+          sourceSnapshot: proposal.sourceSnapshot as any,
+          createdBy: req.authUser!.id,
+        }).returning();
+        await tx.insert(productionPendingUtilityClaimsTable).values(proposal.lines.map((line) => ({
+          companyId: cid,
+          closureId: row.id,
+          stageResourceCostId: line.stageResourceCostId,
+          orderId: line.orderId,
+          sourceType: utilitySource.sourceType,
+          sourceRecordId: utilitySource.sourceRecordId,
+          allocatedAmount: line.allocatedAmount.toFixed(2),
+        })));
+        await writeEvent(cid, null, "pending_utility_closure_draft_created", {
+          closureId: row.id, period, branchId: closureBranchId,
+          sourceType: utilitySource.sourceType, sourceRecordId: utilitySource.sourceRecordId,
+          factoryId: utilitySource.factoryId, costCenter: utilitySource.costCenter,
+          actualAmount: proposal.actualAmount, allocations: proposal.lines,
+        }, req.authUser!.id, false, tx);
+        return { row, created: true };
       }
       const snapshot = await buildOverheadClosureSnapshot(
         tx, cid, period, req, closureBranchId,
@@ -4360,6 +4612,7 @@ productionOverheadClosureRouter.post("/overhead-closures/:id/post",
       )).limit(1);
       if (!closure || !rowInScope(req, closure.branchId))
         throw Object.assign(new Error("تسوية المصروفات الصناعية غير موجودة"), { status: 404 });
+      const pendingUtility = isPendingUtilityClosure(closure.sourceSnapshot);
       if (closure.status === "posted") {
         if (!closure.journalEntryId) {
           throw Object.assign(new Error("تسوية مرحّلة بلا قيد محاسبي؛ يلزم إصلاح السجل قبل إعادة المحاولة"), { status: 409 });
@@ -4372,7 +4625,9 @@ productionOverheadClosureRouter.post("/overhead-closures/:id/post",
           eq(journalEntriesTable.id, closure.journalEntryId),
           eq(journalEntriesTable.companyId, cid),
         )).limit(1);
-        if (!journal || journal.entryType !== "production_overhead_closure" ||
+        if (!journal || journal.entryType !== (pendingUtility
+          ? "production_pending_utility_settlement"
+          : "production_overhead_closure") ||
             journal.status !== "posted") {
           throw Object.assign(new Error("قيد تسوية المصروفات غير موجود أو غير صالح"), { status: 409 });
         }
@@ -4382,6 +4637,33 @@ productionOverheadClosureRouter.post("/overhead-closures/:id/post",
         throw Object.assign(new Error("لا يمكن ترحيل تسوية تم عكسها"), { status: 409 });
       if (closure.journalEntryId)
         throw Object.assign(new Error("مسودة الإغلاق مرتبطة بقيد غير مكتمل؛ لا يمكن إنشاء قيد ثانٍ"), { status: 409 });
+      if (pendingUtility) {
+        const settlement = await postPendingUtilitySettlement(tx, cid, closure, req, {
+          createJournalEntry,
+          lockStockBalances,
+          getBalance,
+          addStockLedgerEntry,
+        });
+        await tx.update(productionOverheadClosuresTable).set({
+          status: "posted",
+          journalEntryId: settlement.journalId,
+          postedBy: req.authUser!.id,
+          postedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionOverheadClosuresTable.id, id),
+          eq(productionOverheadClosuresTable.companyId, cid),
+        ));
+        await writeEvent(cid, null, "pending_utility_closure_posted", {
+          closureId: id, journalEntryId: settlement.journalId,
+          orderIds: settlement.orderIds, actualAmount: settlement.total,
+        }, req.authUser!.id, false, tx);
+        return {
+          closure: { ...closure, status: "posted", journalEntryId: settlement.journalId },
+          idempotent: false,
+          journalStatus: "posted",
+        };
+      }
       const variance = num(closure.varianceAmount);
       if (Math.abs(variance) < 0.01)
         throw Object.assign(new Error("لا يوجد انحراف قابل للترحيل"), { status: 409 });
@@ -4496,7 +4778,14 @@ productionOverheadClosureRouter.post("/overhead-closures/:id/reverse",
       )).limit(1);
       if (!closure || !rowInScope(req, closure.branchId))
         throw Object.assign(new Error("تسوية المصروفات الصناعية غير موجودة"), { status: 404 });
+      const pendingUtility = isPendingUtilityClosure(closure.sourceSnapshot);
       if (closure.status === "reversed") {
+        if (pendingUtility && !closure.reversalJournalEntryId) {
+          // A pending-utility draft owns only a reservation, not a JE.  Let an
+          // authorized operator discard it so a stale draft cannot strand
+          // immutable stage evidence; legacy drafts retain their old behavior.
+          return { closure, idempotent: true, journalStatus: null };
+        }
         if (!closure.reversalJournalEntryId) {
           throw Object.assign(new Error("تسوية معكوسة بلا قيد عكسي؛ يلزم إصلاح السجل قبل إعادة المحاولة"), { status: 409 });
         }
@@ -4517,15 +4806,73 @@ productionOverheadClosureRouter.post("/overhead-closures/:id/reverse",
             eq(journalEntriesTable.companyId, cid),
           )).limit(1)
           : [];
-        if (!journal || journal.entryType !== "production_overhead_closure_reversal" ||
-            !original || original.entryType !== "production_overhead_closure" ||
+        if (!journal || journal.entryType !== (pendingUtility
+          ? "production_pending_utility_settlement_reversal"
+          : "production_overhead_closure_reversal") ||
+            !original || original.entryType !== (pendingUtility
+              ? "production_pending_utility_settlement"
+              : "production_overhead_closure") ||
             journal.status !== original.status) {
           throw Object.assign(new Error("قيد عكس تسوية المصروفات غير موجود أو غير صالح"), { status: 409 });
         }
         return { closure, idempotent: true, journalStatus: journal?.status ?? null };
       }
+      if (pendingUtility && closure.status === "draft") {
+        await tx.delete(productionPendingUtilityClaimsTable).where(and(
+          eq(productionPendingUtilityClaimsTable.companyId, cid),
+          eq(productionPendingUtilityClaimsTable.closureId, closure.id),
+        ));
+        await tx.update(productionOverheadClosuresTable).set({
+          status: "reversed",
+          reversedBy: req.authUser!.id,
+          reversedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionOverheadClosuresTable.id, id),
+          eq(productionOverheadClosuresTable.companyId, cid),
+        ));
+        await writeEvent(cid, null, "pending_utility_closure_draft_discarded", {
+          closureId: id,
+        }, req.authUser!.id, false, tx);
+        return {
+          closure: { ...closure, status: "reversed" },
+          idempotent: false,
+          journalStatus: null,
+        };
+      }
       if (closure.status !== "posted" || !closure.journalEntryId)
         throw Object.assign(new Error("لا يمكن عكس تسوية غير مرحّلة"), { status: 409 });
+      if (pendingUtility) {
+        const settlement = await reversePendingUtilitySettlement(
+          tx, cid, closure, reversalDate, req, {
+            createJournalEntry,
+            lockStockBalances,
+            getBalance,
+            addStockLedgerEntry,
+          },
+        );
+        await tx.update(productionOverheadClosuresTable).set({
+          status: "reversed",
+          reversalJournalEntryId: settlement.journalId,
+          reversedBy: req.authUser!.id,
+          reversedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionOverheadClosuresTable.id, id),
+          eq(productionOverheadClosuresTable.companyId, cid),
+        ));
+        await writeEvent(cid, null, "pending_utility_closure_reversed", {
+          closureId: id,
+          journalEntryId: closure.journalEntryId,
+          reversalJournalEntryId: settlement.journalId,
+          orderIds: settlement.orderIds,
+        }, req.authUser!.id, false, tx);
+        return {
+          closure: { ...closure, status: "reversed", reversalJournalEntryId: settlement.journalId },
+          idempotent: false,
+          journalStatus: "posted",
+        };
+      }
       const [original] = await tx.select().from(journalEntriesTable).where(and(
         eq(journalEntriesTable.id, closure.journalEntryId),
         eq(journalEntriesTable.companyId, cid),
@@ -4600,6 +4947,15 @@ productionOverheadClosureRouter.post("/overhead-closures/:id/reopen",
       )).limit(1);
       if (!closure || !rowInScope(req, closure.branchId)) {
         throw Object.assign(new Error("تسوية المصروفات الصناعية غير موجودة"), { status: 404 });
+      }
+      if (isPendingUtilityClosure(closure.sourceSnapshot)) {
+        // A utility claim is released on reversal. Reopening its old proposal
+        // could re-use a source balance or FG destination that has changed;
+        // create a fresh explicit proposal instead.
+        throw Object.assign(
+          new Error("لا يمكن إعادة فتح تسوية كهرباء معلقة؛ أنشئ اختياراً جديداً من الأدلة المتاحة"),
+          { status: 409 },
+        );
       }
       if (closure.status === "draft") {
         return { closure, idempotent: true };
@@ -5173,13 +5529,6 @@ export async function productionWizardHandler(req: any, res: any) {
     if (![0, 1].includes(resourceCostingVersion)) {
       res.status(400).json({ error: "إصدار تكلفة الموارد يجب أن يكون 1 عند تفعيله" }); return;
     }
-    if (resourceCostingVersion === 1) {
-      res.status(422).json({
-        code: "RESOURCE_COSTING_ELECTRICITY_SETTLEMENT_UNAVAILABLE",
-        error: RESOURCE_COSTING_NOT_READY_REASON,
-      });
-      return;
-    }
     if (!wizardRequestId) { res.status(400).json({ error: "مفتاح الطلب مطلوب لإتاحة إعادة المحاولة الآمنة" }); return; }
     const [previous] = await db.select().from(productionOrdersTable).where(and(
       eq(productionOrdersTable.companyId, cid), eq(productionOrdersTable.wizardRequestId, wizardRequestId),
@@ -5433,7 +5782,22 @@ export async function productionWizardHandler(req: any, res: any) {
             isNull(productionDriverReconciliationsTable.reversalJournalEntryId),
             sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
           ));
-        try { assertAllocationCapacity(source.sourceAmount, num(used?.amount) + num(usedDeltas?.amount), amount); }
+        const [pendingUtilityClaims] = source.sourceType === "purchase_invoice"
+          ? await tx.select({
+              amount: sql<string>`coalesce(sum(${productionPendingUtilityClaimsTable.allocatedAmount}), 0)`,
+            }).from(productionPendingUtilityClaimsTable).where(and(
+              eq(productionPendingUtilityClaimsTable.companyId, cid),
+              eq(productionPendingUtilityClaimsTable.sourceType, source.sourceType),
+              eq(productionPendingUtilityClaimsTable.sourceRecordId, source.sourceRecordId),
+            ))
+          : [{ amount: "0" }];
+        try {
+          assertAllocationCapacity(
+            source.sourceAmount,
+            num(used?.amount) + num(usedDeltas?.amount) + num(pendingUtilityClaims?.amount),
+            amount,
+          );
+        }
         catch { throw Object.assign(new Error(`تجاوز توزيع المصدر المتاح: ${source.label}`), { status: 409 }); }
         const treatment = COST_TREATMENTS.has(String(a.treatment))
           ? String(a.treatment) : "manufacturing_overhead";
@@ -6191,6 +6555,7 @@ async function reconcileFinalStageDrivers(
     actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
     workerCount: productionOrderStagesTable.workerCount,
     resourceMode: productionOrderStagesTable.resourceMode,
+    resourceId: productionOrderStagesTable.resourceId,
   }).from(productionOrderStagesTable).where(eq(productionOrderStagesTable.orderId, order.id));
   if (!stages.length || stages.some((stage: any) => !["done", "skipped"].includes(stage.status))) {
     return 0;
@@ -6204,6 +6569,37 @@ async function reconcileFinalStageDrivers(
         : 0);
     }, 0)
     : actualHours;
+  const actualMachineHours = Number(order.resourceCostingVersion) >= 1
+    ? stages.reduce((n: number, s: any) => {
+      const mode = String(s.resourceMode ?? "labor");
+      return n + (mode === "machine" || mode === "both"
+        ? num(s.actualDurationMinutes) / 60
+        : 0);
+    }, 0)
+    : actualHours;
+  // Final reconciliation reads the completion-time resource evidence rather
+  // than today's machine configuration. That keeps a later asset relink or
+  // tariff edit from changing the driver for an already completed stage.
+  const frozenResourceCosts = Number(order.resourceCostingVersion) >= 1
+    ? await tx.select({
+      component: productionStageResourceCostsTable.component,
+      snapshot: productionStageResourceCostsTable.snapshot,
+    }).from(productionStageResourceCostsTable).where(and(
+      eq(productionStageResourceCostsTable.companyId, cid),
+      eq(productionStageResourceCostsTable.orderId, order.id),
+    ))
+    : [];
+  const resourceHoursByAllocationId = new Map<number, number>();
+  for (const frozen of frozenResourceCosts) {
+    const snapshot = (frozen.snapshot ?? {}) as Record<string, unknown>;
+    const allocationId = Number(snapshot.sourceAllocationId);
+    if (!Number.isInteger(allocationId) || allocationId <= 0) continue;
+    const hours = num(snapshot.hours ?? snapshot.stageHours);
+    resourceHoursByAllocationId.set(
+      allocationId,
+      (resourceHoursByAllocationId.get(allocationId) ?? 0) + hours,
+    );
+  }
   const allocations = await tx.select().from(productionCostAllocationsTable).where(and(
     eq(productionCostAllocationsTable.companyId, cid),
     eq(productionCostAllocationsTable.orderId, order.id),
@@ -6226,11 +6622,23 @@ async function reconcileFinalStageDrivers(
     const denominator = num(meta.formulaDenominator ?? meta.denominatorOrRate);
     const actual = method === "production_quantity"
       ? producedQty
-      : (allocation.sourceType === "payroll" ||
-          meta.industrialDriver === "labor_hours") &&
-          Number(order.resourceCostingVersion) >= 1
-        ? actualLaborPersonHours
-        : actualHours;
+      : Number(order.resourceCostingVersion) >= 1 &&
+          allocation.sourceType === "fixed_asset_depreciation" &&
+          resourceHoursByAllocationId.has(Number(allocation.id))
+        ? resourceHoursByAllocationId.get(Number(allocation.id))!
+        : Number(order.resourceCostingVersion) >= 1 &&
+          meta.industrialDriver === "machine_hours" &&
+          meta.costType === "electricity" &&
+          resourceHoursByAllocationId.has(Number(allocation.id))
+          ? resourceHoursByAllocationId.get(Number(allocation.id))!
+          : Number(order.resourceCostingVersion) >= 1 &&
+            meta.industrialDriver === "machine_hours"
+          ? actualMachineHours
+          : (allocation.sourceType === "payroll" ||
+              meta.industrialDriver === "labor_hours") &&
+              Number(order.resourceCostingVersion) >= 1
+            ? actualLaborPersonHours
+            : actualHours;
     if (!(actual >= 0) || !(denominator > 0)) continue;
     const target = actual === 0 ? 0 : calculateFormulaAllocation(
       method as "operating_hours" | "fixed_hourly_rate" | "production_quantity",
@@ -6245,7 +6653,7 @@ async function reconcileFinalStageDrivers(
   for (const row of rows.filter((r) => r.delta > 0)) {
     const sourceLockKey = `${row.allocation.sourceType}:${Number(row.allocation.sourceRecordId)}`;
     await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${sourceLockKey}))`);
-    const [base, deltas] = await Promise.all([
+      const [base, deltas, pendingUtilityClaims] = await Promise.all([
       tx.select({ amount: productionCostAllocationsTable.allocatedAmount })
         .from(productionCostAllocationsTable).where(and(
           eq(productionCostAllocationsTable.companyId, cid),
@@ -6259,10 +6667,20 @@ async function reconcileFinalStageDrivers(
           eq(productionDriverReconciliationsTable.sourceRecordId, row.allocation.sourceRecordId),
           isNull(productionDriverReconciliationsTable.reversalJournalEntryId),
         )),
+        row.allocation.sourceType === "purchase_invoice"
+          ? tx.select({
+              amount: sql<string>`coalesce(sum(${productionPendingUtilityClaimsTable.allocatedAmount}), 0)`,
+            }).from(productionPendingUtilityClaimsTable).where(and(
+              eq(productionPendingUtilityClaimsTable.companyId, cid),
+              eq(productionPendingUtilityClaimsTable.sourceType, row.allocation.sourceType),
+              eq(productionPendingUtilityClaimsTable.sourceRecordId, row.allocation.sourceRecordId),
+            ))
+          : Promise.resolve([{ amount: "0" }]),
     ]);
     assertAllocationCapacity(num(row.allocation.sourceAmount),
       base.reduce((n: number, x: any) => n + num(x.amount), 0) +
-      deltas.reduce((n: number, x: any) => n + num(x.amount), 0),
+      deltas.reduce((n: number, x: any) => n + num(x.amount), 0) +
+      num(pendingUtilityClaims[0]?.amount),
       row.delta);
   }
   const lines: JLine[] = [];
@@ -6375,6 +6793,31 @@ export async function productionStatusHandler(req: any, res: any) {
         error: `لا يمكن نقل الأمر من "${order.status}" إلى "${target}"`,
       });
       return;
+    }
+    // A posted late-utility close may have capitalized this order while it was
+    // still in WIP, or adjusted its completed FG. Moving the order now would
+    // change that destination and make an exact settlement reversal unsafe.
+    // This runs under the order's transaction/advisory lock, shared with the
+    // settlement post/reverse order locks.
+    if (pendingUtilityBlocksOrderTransition(target)) {
+      const [activeUtilityClaim] = await tx.select({
+        closureId: productionOverheadClosuresTable.id,
+      }).from(productionPendingUtilityClaimsTable)
+        .innerJoin(productionOverheadClosuresTable, and(
+          eq(productionOverheadClosuresTable.id, productionPendingUtilityClaimsTable.closureId),
+          eq(productionOverheadClosuresTable.companyId, productionPendingUtilityClaimsTable.companyId),
+        ))
+        .where(and(
+          eq(productionPendingUtilityClaimsTable.companyId, cid),
+          eq(productionPendingUtilityClaimsTable.orderId, order.id),
+          eq(productionOverheadClosuresTable.status, "posted"),
+        )).for("update").limit(1);
+      if (activeUtilityClaim) {
+        res.status(409).json({
+          error: "لا يمكن إكمال أو إلغاء أو عكس أمر الإنتاج بينما توجد تسوية كهرباء معلقة مرحّلة. اعكس تسوية الكهرباء أولاً.",
+        });
+        return;
+      }
     }
 
     const todayIso = new Date().toISOString().slice(0, 10);
@@ -7076,6 +7519,14 @@ export async function productionStatusHandler(req: any, res: any) {
 
       updates.producedQty = String(producedQty);
       updates.wasteQty = String(wasteQty);
+      if (Number(order.resourceCostingVersion) >= 1) {
+        // The delta JE has already moved the posted source amount into WIP.
+        // Persist the same settled balance that was capitalized into FG so the
+        // order drilldown, subsequent COGS attribution, and exact reversal all
+        // retain one financial total instead of showing the tariff estimate.
+        // Legacy orders retain their historical header values unchanged.
+        updates.actualCost = String(wipBalance);
+      }
       updates.receiptJournalEntryId = receiptJournalId;
       if (!order.actualEndAt) updates.actualEndAt = new Date();
     }
@@ -9235,14 +9686,48 @@ async function freezeStageResourceCosts(
         .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
       const kw = num(machine.electricityKw);
       const tariff = num(settings?.tariff);
-      if (!(kw > 0) || !(tariff > 0)) {
-        throw Object.assign(new Error("كهرباء الآلة مفعلة لكن قدرة kW أو تعريفة kWh غير معتمدة"), { status: 422 });
+      const electricityAllocations = await tx.select({
+        id: productionCostAllocationsTable.id,
+        sourceType: productionCostAllocationsTable.sourceType,
+        sourceRecordId: productionCostAllocationsTable.sourceRecordId,
+        snapshotMeta: productionCostAllocationsTable.snapshotMeta,
+      }).from(productionCostAllocationsTable).where(and(
+        eq(productionCostAllocationsTable.companyId, cid),
+        eq(productionCostAllocationsTable.orderId, order.id),
+      ));
+      // A posted invoice may be selected up-front, but utility bills commonly
+      // arrive after production.  In that case freeze usage as pending evidence
+      // rather than inventing an expense; the close workflow claims it later.
+      const matchingElectricityAllocations = electricityAllocations.filter(
+        isMachineElectricityAllocation,
+      );
+      if (matchingElectricityAllocations.length > 1) {
+        throw Object.assign(
+          new Error("لا يمكن ربط المرحلة بأكثر من مصدر كهرباء صناعي واحد"),
+          { status: 422 },
+        );
       }
+      const electricityAllocation = matchingElectricityAllocations.length === 1
+        ? requireSingleMachineElectricityAllocation(electricityAllocations)
+        : null;
+      const estimate = machineElectricityEstimate(kw, hours, tariff);
       rows.push({
         companyId: cid, orderId: order.id, stageId: stage.id, component: "electricity",
-        sourceType: "machine_electricity_tariff", sourceRecordId: machine.id,
-        amount: String(Number((kw * hours * tariff).toFixed(2))),
-        snapshot: { hours, kw, tariffPerKwh: tariff, formula: "kW × hours × tariff" },
+        sourceType: electricityAllocation?.sourceType ?? "pending_machine_electricity",
+        sourceRecordId: electricityAllocation?.sourceRecordId ?? machine.id,
+        amount: String(estimate.amount),
+        snapshot: {
+          pendingUtilitySettlement: electricityAllocation == null,
+          sourceAllocationId: electricityAllocation?.id ?? null,
+          sourceType: electricityAllocation?.sourceType ?? null,
+          sourceRecordId: electricityAllocation?.sourceRecordId ?? null,
+          hours,
+          kw,
+          kwh: estimate.kwh,
+          tariffPerKwh: tariff,
+          formula: "kW × hours × tariff",
+          accountingTreatment: "estimate_evidence_only; posted_source_reconciled_by_actual_machine_hours",
+        },
         createdBy: actorId,
       });
     }
@@ -9380,6 +9865,9 @@ productionExecutionRouter.get("/orders/:id/resource-catalog", async (req, res) =
         id: productionResourcesTable.id,
         name: productionResourcesTable.name,
         meta: productionResourcesTable.meta,
+        fixedAssetId: productionResourcesTable.fixedAssetId,
+        electricityEnabled: productionResourcesTable.electricityEnabled,
+        electricityKw: productionResourcesTable.electricityKw,
       })
       .from(productionResourcesTable)
       .where(machineWhere)
@@ -9388,7 +9876,10 @@ productionExecutionRouter.get("/orders/:id/resource-catalog", async (req, res) =
       id: resource.id,
       name: resource.name,
       workCenterId: resourceRelationshipId(resource.meta, "workCenterId"),
-      fixedAssetId: resourceRelationshipId(resource.meta, "fixedAssetId"),
+      fixedAssetId: resource.fixedAssetId ??
+        resourceRelationshipId(resource.meta, "fixedAssetId"),
+      electricityEnabled: resource.electricityEnabled,
+      electricityKw: resource.electricityKw,
     }));
     const workCenters = await db
       .select({
@@ -9555,7 +10046,10 @@ productionExecutionRouter.post("/orders/:id/setup/machines", async (req, res) =>
           .from(productionResourcesTable)
           .where(and(
             eq(productionResourcesTable.companyId, ctx.cid),
-            sql`${productionResourcesTable.meta}->>'fixedAssetId' = ${String(fixedAssetId)}`,
+            or(
+              eq(productionResourcesTable.fixedAssetId, fixedAssetId),
+              sql`${productionResourcesTable.meta}->>'fixedAssetId' = ${String(fixedAssetId)}`,
+            ),
           ))
           .limit(1);
         if (duplicate) {
@@ -9575,6 +10069,10 @@ productionExecutionRouter.post("/orders/:id/setup/machines", async (req, res) =>
       }).returning({
         id: productionResourcesTable.id,
         name: productionResourcesTable.name,
+        fixedAssetId: productionResourcesTable.fixedAssetId,
+        electricityEnabled: productionResourcesTable.electricityEnabled,
+        electricityKw: productionResourcesTable.electricityKw,
+        meta: productionResourcesTable.meta,
       });
       await writeEvent(ctx.cid, ctx.order.id, "machine_resource_created", {
         resourceId: created.id,
@@ -9585,7 +10083,14 @@ productionExecutionRouter.post("/orders/:id/setup/machines", async (req, res) =>
       }, req.authUser!.id, false, tx);
       return created;
     });
-    res.status(201).json({ id: row.id, name: row.name, workCenterId, fixedAssetId });
+    res.status(201).json({
+      id: row.id,
+      name: row.name,
+      workCenterId,
+      fixedAssetId: row.fixedAssetId,
+      electricityEnabled: row.electricityEnabled,
+      electricityKw: row.electricityKw,
+    });
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e.message });
   }

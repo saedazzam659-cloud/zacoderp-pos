@@ -73,9 +73,10 @@ export default function SimpleManufacturing() {
     loadAbortRef.current = controller;
     setBusy(true);
     try {
-      const [nextCatalog, nextOrders] = await Promise.all([
+      const [nextCatalog, nextOrders, executionCatalog] = await Promise.all([
         request("/api/simple-manufacturing/catalog", { signal: controller.signal }),
         request("/api/simple-manufacturing/orders", { signal: controller.signal }),
+        request("/api/simple-manufacturing/execution-catalog", { signal: controller.signal }),
       ]);
       if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
       if (!nextCatalog || typeof nextCatalog !== "object" ||
@@ -85,7 +86,10 @@ export default function SimpleManufacturing() {
           !Array.isArray(nextCatalog.routings)) {
         throw new Error("استجابة كتالوج التصنيع غير صالحة");
       }
-      setCatalog(nextCatalog);
+      if (!Array.isArray(executionCatalog?.machines)) {
+        throw new Error("استجابة كتالوج آلات التصنيع غير صالحة");
+      }
+      setCatalog({ ...nextCatalog, machines: executionCatalog.machines });
       if (!Array.isArray(nextOrders)) throw new Error("استجابة أوامر التصنيع غير صالحة");
       setOrders(nextOrders);
     } catch (e: any) {

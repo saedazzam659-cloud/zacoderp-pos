@@ -58,7 +58,6 @@ import {
   getWorkCenters,
   loadItemUnitOptions,
   resolveProductionItemUnit,
-  RESOURCE_COSTING_NOT_READY_REASON,
 } from "./production.js";
 
 const router = Router();
@@ -111,9 +110,9 @@ router.get("/", view, (_req, res) => {
 
 router.get("/resource-costing-readiness", view, (_req, res) => {
   res.json({
-    ready: false,
-    code: "RESOURCE_COSTING_ELECTRICITY_SETTLEMENT_UNAVAILABLE",
-    reason: RESOURCE_COSTING_NOT_READY_REASON,
+    ready: true,
+    version: 1,
+    electricitySettlement: "posted_industrial_source_driver_reconciliation",
   });
 });
 
@@ -326,14 +325,24 @@ router.get("/execution-catalog", view, async (req, res) => {
       return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
     }
     const machineWhere = branchResult.cond
-      ? and(eq(productionResourcesTable.companyId, cid), branchResult.cond)
-      : eq(productionResourcesTable.companyId, cid);
+      ? and(
+        eq(productionResourcesTable.companyId, cid),
+        eq(productionResourcesTable.type, "machine"),
+        branchResult.cond,
+      )
+      : and(
+        eq(productionResourcesTable.companyId, cid),
+        eq(productionResourcesTable.type, "machine"),
+      );
     const [machines, workers] = await Promise.all([
       db.select({
         id: productionResourcesTable.id,
         name: productionResourcesTable.name,
         type: productionResourcesTable.type,
         branchId: productionResourcesTable.branchId,
+        fixedAssetId: productionResourcesTable.fixedAssetId,
+        electricityEnabled: productionResourcesTable.electricityEnabled,
+        electricityKw: productionResourcesTable.electricityKw,
       }).from(productionResourcesTable).where(machineWhere)
         .orderBy(asc(productionResourcesTable.name)),
       db.select({

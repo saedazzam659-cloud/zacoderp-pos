@@ -11,14 +11,24 @@ import { usePermission } from "@/hooks/usePermission";
 export function MonthlyOverheadClosures({ request }: { request: (path: string, init?: RequestInit) => Promise<any> }) {
   const [closures, setClosures] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<{value: string, label: string}[]>([]);
+  const [pendingUtilityOrders, setPendingUtilityOrders] = useState<any[]>([]);
+  const [utilitySources, setUtilitySources] = useState<any[]>([]);
+  const [pendingOrderIds, setPendingOrderIds] = useState<string[]>([]);
+  const [utilitySourceKey, setUtilitySourceKey] = useState("");
+  const [utilityBranchScope, setUtilityBranchScope] = useState("");
+  const [utilityBranches, setUtilityBranches] = useState<Array<{ value: string; label: string }>>([]);
+  const [utilityFactoryId, setUtilityFactoryId] = useState("");
+  const [utilityCostCenter, setUtilityCostCenter] = useState("");
+  const [utilityLoadError, setUtilityLoadError] = useState<string | null>(null);
   const [varianceAccountId, setVarianceAccountId] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const { toast } = useToast();
   
-  const canEdit = usePermission("simple_manufacturing", "edit");
+  const canCreate = usePermission("simple_manufacturing", "create");
   const canPost = usePermission("simple_manufacturing", "post");
+  const canUnpost = usePermission("simple_manufacturing", "unpost");
 
   useEffect(() => {
     // Fetch compact catalog merged accounts
@@ -38,31 +48,113 @@ export function MonthlyOverheadClosures({ request }: { request: (path: string, i
   const load = async () => {
     setLoading(true);
     try {
-      const data = await request(`/api/simple-manufacturing/overhead-closures?period=${period}`);
+      const [data, pending, sources] = await Promise.all([
+        request(`/api/simple-manufacturing/overhead-closures?period=${encodeURIComponent(period)}`),
+        request(`/api/simple-manufacturing/pending-utility-orders?period=${encodeURIComponent(period)}${utilityBranchScope ? `&branchId=${encodeURIComponent(utilityBranchScope)}` : ""}`),
+        request(`/api/simple-manufacturing/cost-sources?period=${encodeURIComponent(period)}`),
+      ]);
       setClosures(Array.isArray(data) ? data : data.rows || []);
+      const pendingRows = Array.isArray(pending) ? pending : pending?.rows || pending?.orders || [];
+      const discoveredBranches = pendingRows.map((row: any) => row.branchId)
+        .filter((branchId: unknown) => branchId != null)
+        .map((branchId: unknown) => String(branchId));
+      setUtilityBranches(current => {
+        const values = new Set([...current.map(item => item.value), ...discoveredBranches]);
+        return [...values].sort((a, b) => Number(a) - Number(b))
+          .map(value => ({ value, label: `فرع #${value}` }));
+      });
+      // The endpoint returns one immutable evidence row per stage, while the
+      // close contract claims complete orders. Group only the displayed rows;
+      // the submitted IDs remain the server-issued order IDs.
+      const groupedPending = new Map<string, any>();
+      pendingRows.forEach((row: any) => {
+        const orderId = String(row.orderId ?? row.id);
+        const current = groupedPending.get(orderId);
+        groupedPending.set(orderId, {
+          ...row,
+          id: orderId,
+          kwh: Number(current?.kwh ?? 0) + Number(row.kwh ?? 0),
+          estimatedAmount: Number(current?.estimatedAmount ?? 0) + Number(row.estimate ?? row.estimatedAmount ?? 0),
+          stageCount: Number(current?.stageCount ?? 0) + 1,
+        });
+      });
+      setPendingUtilityOrders([...groupedPending.values()]);
+      setUtilitySources((Array.isArray(sources) ? sources : []).filter((source: any) =>
+        source.sourceType === "purchase_invoice" &&
+        source.meta?.costType === "electricity" &&
+        (source.meta?.industrialDriver ?? source.meta?.allocationMethod) === "machine_hours",
+      ));
+      setUtilityLoadError(null);
     } catch (e: any) {
-      toast({ title: "خطأ", description: e.message, variant: "destructive" });
+      // Keep the established closure list usable if the new utility endpoint
+      // rejects this period. The server's exact error is shown beside the
+      // pending-settlement controls rather than being silently treated as no
+      // pending usage.
+      setUtilityLoadError(e.message || "تعذر تحميل تسويات الكهرباء المعلقة");
+      try {
+        const data = await request(`/api/simple-manufacturing/overhead-closures?period=${encodeURIComponent(period)}`);
+        setClosures(Array.isArray(data) ? data : data.rows || []);
+      } catch (closureError: any) {
+        toast({ title: "خطأ", description: closureError.message, variant: "destructive" });
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    setPendingOrderIds([]);
+    setUtilitySourceKey("");
+    setUtilityBranchScope("");
+    setUtilityFactoryId("");
+    setUtilityCostCenter("");
     load();
   }, [period]);
+
+  useEffect(() => {
+    if (!utilityBranchScope) return;
+    setPendingOrderIds([]);
+    setUtilitySourceKey("");
+    setUtilityFactoryId("");
+    setUtilityCostCenter("");
+    void load();
+  }, [utilityBranchScope]);
 
   const handleCreate = async () => {
     if (!varianceAccountId) {
       toast({ title: "الرجاء اختيار حساب الفروقات (Variance Account)", variant: "destructive" });
       return;
     }
+    const source = scopedUtilitySources.find(row =>
+      `${row.sourceType}:${row.sourceRecordId}` === utilitySourceKey,
+    );
+    const hasPendingSelection = pendingOrderIds.length > 0;
+    if (hasPendingSelection && (!source || !utilityBranchScope || !utilityFactoryId || !utilityCostCenter)) {
+      toast({
+        title: "اختيار تسوية الكهرباء غير مكتمل",
+        description: "اختر الفرع وفاتورة الكهرباء الصناعية والمصنع ومركز التكلفة صراحةً. لا يطابق النظام هذه الحقول تلقائياً.",
+        variant: "destructive",
+      });
+      return;
+    }
     setBusy(true);
     try {
       await request("/api/simple-manufacturing/overhead-closures", {
         method: "POST",
-        body: JSON.stringify({ period, varianceAccountId: Number(varianceAccountId) })
+        body: JSON.stringify(hasPendingSelection ? {
+          period,
+          varianceAccountId: Number(varianceAccountId),
+          branchId: Number(utilityBranchScope),
+          pendingOrderIds: pendingOrderIds.map(Number),
+          utilitySource: {
+            sourceType: "purchase_invoice",
+            sourceRecordId: Number(source.sourceRecordId),
+            factoryId: Number(utilityFactoryId),
+            costCenter: utilityCostCenter,
+          },
+        } : { period, varianceAccountId: Number(varianceAccountId) })
       });
-      toast({ title: "تم إنشاء مسودة إقفال المصادر بنجاح" });
+      toast({ title: hasPendingSelection ? "تم إنشاء مسودة تسوية الكهرباء المعلقة" : "تم إنشاء مسودة إقفال المصادر بنجاح" });
       load();
     } catch (e: any) {
       toast({ title: "خطأ", description: e.message, variant: "destructive" });
@@ -70,6 +162,24 @@ export function MonthlyOverheadClosures({ request }: { request: (path: string, i
       setBusy(false);
     }
   };
+
+  // The settlement service requires the explicit close branch and factory to
+  // match. Keep candidates within the branch the operator selected, then
+  // expose only the tags belonging to the selected posted source.
+  const scopedUtilitySources = utilityBranchScope
+    ? utilitySources.filter(source => String(source.meta?.factoryId) === utilityBranchScope)
+    : [];
+  const selectedUtilitySource = scopedUtilitySources.find(source =>
+    `${source.sourceType}:${source.sourceRecordId}` === utilitySourceKey,
+  );
+  const factoryOptions = selectedUtilitySource
+    ? [String(selectedUtilitySource.meta?.factoryId)]
+    : [];
+  const costCenterOptions = selectedUtilitySource
+    ? [selectedUtilitySource.meta?.costCenter]
+    .filter((value: unknown) => value != null && value !== "")
+    .map((value: unknown) => String(value))
+    : [];
 
   const handleAction = async (id: string, action: "post" | "reverse" | "reopen") => {
     setBusy(true);
@@ -116,10 +226,68 @@ export function MonthlyOverheadClosures({ request }: { request: (path: string, i
               placeholder="اختر الحساب..."
             />
                   </div>
-          {canEdit && (
-            <Button onClick={handleCreate} disabled={busy || loading || !varianceAccountId} className="bg-violet-600 hover:bg-violet-700 w-full">
+          {canCreate && (
+            <Button onClick={handleCreate} disabled={busy || loading || !varianceAccountId || (pendingOrderIds.length > 0 && (!utilitySourceKey || !utilityBranchScope || !utilityFactoryId || !utilityCostCenter))} className="bg-violet-600 hover:bg-violet-700 w-full">
               <Plus className="h-4 w-4 me-2" /> إنشاء مسودة للشهر المحدد
             </Button>
+          )}
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 space-y-3">
+          <div>
+            <h4 className="text-sm font-semibold text-amber-950">تسوية كهرباء آلات معلّقة ضمن الإقفال الحالي</h4>
+            <p className="mt-1 text-xs leading-5 text-amber-900">تظهر هنا لقطات kWh المجمدة التي اكتملت دون فاتورة كهرباء. اختر الأمر/الأوامر وفاتورة صناعية مرحّلة والمصنع ومركز التكلفة صراحةً؛ لا يوجد ربط تلقائي ولا تُعامل قيمة التعريفة التقديرية كمصروف فعلي.</p>
+          </div>
+          {utilityLoadError ? (
+            <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-800">{utilityLoadError}</div>
+          ) : pendingUtilityOrders.length === 0 ? (
+            <p className="rounded-md border border-dashed border-amber-200 bg-white/70 p-3 text-xs text-slate-600">لا توجد استخدامات كهرباء آلة مجمّدة معلّقة ومؤهلة لهذه الفترة، أو لم يثبت الخادم أن تكلفة الإنتاج التام لا تزال بالكامل في المخزون.</p>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {pendingUtilityOrders.map(order => {
+                  const id = String(order.orderId ?? order.id);
+                  const checked = pendingOrderIds.includes(id);
+                  return <label key={id} className="flex cursor-pointer items-start gap-2 rounded-md border border-amber-100 bg-white p-3 text-xs">
+                    <input type="checkbox" className="mt-0.5 rounded text-violet-600" checked={checked} disabled={!canCreate || busy}
+                      onChange={event => setPendingOrderIds(current => event.target.checked ? [...current, id] : current.filter(value => value !== id))} />
+                    <span><b>{order.orderNumber ?? `أمر #${id}`}</b> — kWh مجمّدة: {Number(order.kwh ?? order.totalKwh ?? 0).toLocaleString()} — تقدير التعريفة: {Number(order.estimatedAmount ?? order.tariffEstimate ?? 0).toLocaleString()}</span>
+                  </label>;
+                })}
+              </div>
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">نطاق الفرع</label>
+                  <SearchCombobox value={utilityBranchScope} onValueChange={setUtilityBranchScope} disabled={!canCreate || busy}
+                    placeholder="اختر الفرع…" items={[
+                      { value: "", label: "اختر الفرع…" },
+                      ...utilityBranches,
+                    ]} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">فاتورة كهرباء صناعية مرحّلة</label>
+                  <SearchCombobox value={utilitySourceKey} onValueChange={value => {
+                    setUtilitySourceKey(value);
+                    setUtilityFactoryId("");
+                    setUtilityCostCenter("");
+                  }} disabled={!canCreate || busy || !utilityBranchScope}
+                    placeholder="اختر المصدر…" items={[
+                      { value: "", label: "اختر فاتورة الكهرباء…" },
+                      ...scopedUtilitySources.map(source => ({ value: `${source.sourceType}:${source.sourceRecordId}`, label: `${source.label} (#${source.sourceRecordId})` })),
+                    ]} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">المصنع</label>
+                  <SearchCombobox value={utilityFactoryId} onValueChange={setUtilityFactoryId} disabled={!canCreate || busy || !selectedUtilitySource}
+                    placeholder="اختر المصنع…" items={[{ value: "", label: "اختر المصنع…" }, ...factoryOptions.map(value => ({ value, label: `#${value}` }))]} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">مركز التكلفة</label>
+                  <SearchCombobox value={utilityCostCenter} onValueChange={setUtilityCostCenter} disabled={!canCreate || busy || !selectedUtilitySource}
+                    placeholder="اختر مركز التكلفة…" items={[{ value: "", label: "اختر مركز التكلفة…" }, ...costCenterOptions.map(value => ({ value, label: value }))]} />
+                </div>
+              </div>
+              {!utilitySources.length && <p className="text-xs leading-5 text-amber-900">لا توجد فاتورة شراء صناعية مرحّلة موسومة «كهرباء» بمحرك «ساعات الآلة» لهذه الفترة. أضف المصدر المرحّل أولاً، ثم حدده هنا للتسوية المتأخرة.</p>}
+            </>
           )}
         </div>
 
@@ -162,12 +330,12 @@ export function MonthlyOverheadClosures({ request }: { request: (path: string, i
         <CheckCircle2 className="h-4 w-4 me-1" /> ترحيل
       </Button>
     )}
-    {c.status === "posted" && canPost && (
+    {c.status === "posted" && canUnpost && (
       <Button size="sm" variant="outline" className="text-rose-700 hover:text-rose-800" disabled={busy} onClick={() => handleAction(c.id, "reverse")}>
         <RotateCcw className="h-4 w-4 me-1" /> عكس
       </Button>
     )}
-    {c.status === "reversed" && canEdit && (
+    {c.status === "reversed" && canUnpost && (
       <Button size="sm" variant="outline" className="text-blue-700 hover:text-blue-800" disabled={busy} onClick={() => handleAction(c.id, "reopen")}>
         <Unlock className="h-4 w-4 me-1" /> إعادة فتح
       </Button>

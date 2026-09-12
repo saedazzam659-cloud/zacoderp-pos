@@ -59,9 +59,10 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
       const row = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(row.error || "تعذر الحفظ");
       if (!row.id) throw new Error("لم يُرجع الخادم بيانات العنصر المحفوظ");
-      onCreated(kind, kind === "machines"
-        ? { ...row, electricityEnabled, electricityKw: electricityKw || null }
-        : row);
+      // Keep the catalog backed only by fields returned from the server.  In
+      // particular, never present a requested tariff/power value as saved
+      // evidence before the resource endpoint has persisted and returned it.
+      onCreated(kind, row);
       onChange(kind === "work-centers"
         ? { workCenterId: String(row.id), machineId: "" }
         : { workCenterId: row.workCenterId ? String(row.workCenterId) : "", machineId: String(row.id) });
@@ -125,7 +126,7 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
                   onChange={event => setElectricityKw(event.target.value)} disabled={saving}
                   placeholder="مثال: 7.5" />
               </div>
-              <p className="text-xs leading-5 text-amber-900">تقدير الكهرباء = kW × ساعات تشغيل المرحلة × تعريفة الكهرباء المحفوظة. لا توجد ساعات كهرباء مستقلة، ولا يصبح التقدير تكلفة فعلية إلا عبر مصدر كهرباء صناعي مرحّل ومسار الإقفال القائم.</p>
+              <p className="text-xs leading-5 text-amber-900">تقدير الكهرباء = kW × ساعات تشغيل المرحلة × تعريفة الكهرباء المحفوظة. لا توجد ساعات كهرباء مستقلة. يُجمّد كتتبع استخدام، ثم تُختار فاتورة الكهرباء الصناعية والمصنع ومركز التكلفة صراحةً في إقفال المصادر الشهري.</p>
             </div>
             <p className="text-xs text-slate-500">لن يتم نسخ الأصل أو إنشاء إهلاك جديد. مصادر الإهلاك وتحميل الساعات تظل كما هي. ربط عداد/IoT مرجع مستقبلي فقط وليس اتصالاً مباشراً.</p>
           </>}

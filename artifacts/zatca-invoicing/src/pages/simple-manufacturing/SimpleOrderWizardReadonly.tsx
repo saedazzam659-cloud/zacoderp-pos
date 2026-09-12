@@ -161,6 +161,7 @@ export function SimpleOrderWizardReadonly({
   const hasSavedCostConfiguration = savedObject(meta.costConfiguration) !== null;
   const costPolicy = savedObject(meta.costPolicy);
   const productId = savedOrder.productItemId ?? order.productItemId;
+  const resourceStages = Array.isArray(resourceCost?.stages) ? resourceCost.stages : [];
 
   const renderBasic = () => (
     <div className="space-y-5">
@@ -266,6 +267,8 @@ export function SimpleOrderWizardReadonly({
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                   <SnapshotValue label="المدة المتوقعة المحفوظة (دقيقة)" value={savedNumber(stage.expectedDurationMinutes)} />
+                   <SnapshotValue label="مدة التشغيل الفعلية المحفوظة (دقيقة)" value={savedNumber(stage.actualDurationMinutes)} />
+                   <SnapshotValue label="حالة التنفيذ المحفوظة" value={valueOrNotSaved(stage.status)} />
                   <SnapshotValue label="التكلفة المتوقعة المحفوظة" value={savedNumber(stage.expectedCost)} />
                   <SnapshotValue label="الهالك المتوقع المحفوظ" value={savedNumber(stage.expectedWasteRatio)} />
                   <SnapshotValue label="مركز العمل المحفوظ" value={stage.workCenterId == null ? NOT_SAVED : `#${stage.workCenterId}`} />
@@ -325,7 +328,7 @@ export function SimpleOrderWizardReadonly({
       {Number(resourceCost?.version) >= 1 && (
         <div className="rounded-lg border border-violet-200 bg-white p-3">
           <div className="mb-2 text-sm font-semibold text-violet-950">لقطة تكلفة المورد المحفوظة</div>
-          <p className="mb-3 text-xs text-slate-600">هذه الأرقام وردت من لقطة الخادم ولا تستند إلى أسعار المورد الحالية. الكهرباء لقطة تقدير استخدام وليست تكلفة فعلية مرسملة حتى مسار المصدر الصناعي والإقفال القائم.</p>
+          <p className="mb-3 text-xs text-slate-600">هذه الأرقام وردت من لقطة الخادم ولا تستند إلى أسعار المورد الحالية. الكهرباء دليل استخدام تقديري فقط؛ يختار المستخدم فاتورة صناعية مرحّلة والمصنع ومركز التكلفة لاحقاً في الإقفال، ثم تطابق ساعات الآلات الفعلية. لا تجمع لقطة الكهرباء مع WIP/FG/COGS مرة أخرى.</p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
             <SnapshotValue label="عمالة" value={savedNumber(resourceCost?.totals?.labor)} />
             <SnapshotValue label="إهلاك" value={savedNumber(resourceCost?.totals?.depreciation)} />
@@ -333,6 +336,29 @@ export function SimpleOrderWizardReadonly({
             <SnapshotValue label="عبء مصنع" value={savedNumber(resourceCost?.totals?.factoryOverhead)} />
             <SnapshotValue label="إجمالي لقطة الاستخدام" value={savedNumber(resourceCost?.totals?.total)} />
           </div>
+          {resourceStages.length > 0 && (
+            <div className="mt-3 space-y-2">
+              <div className="text-xs font-semibold text-violet-950">تفصيل لقطات المراحل المجمدة</div>
+              {resourceStages.map((stage: any) => {
+                const components = Array.isArray(stage.snapshot) ? stage.snapshot : [];
+                return <div key={stage.stageId} className="rounded-md border border-violet-100 bg-violet-50/30 p-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-800">
+                    <span>مرحلة #{valueOrNotSaved(stage.stageId)} — {stage.resourceMode === "both" ? "آلة + عمالة" : stage.resourceMode === "machine" ? "آلة" : "عمالة"}</span>
+                    <span>دقائق التشغيل الفعلية: {savedNumber(stage.durationMinutes)}</span>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    {components.map((component: any, index: number) => (
+                      <SnapshotValue
+                        key={`${component.component}-${component.sourceType}-${component.sourceRecordId}-${index}`}
+                        label={`${valueOrNotSaved(component.component)} — ${valueOrNotSaved(component.sourceType)}`}
+                        value={`مصدر #${valueOrNotSaved(component.sourceRecordId)} / تخصيص #${valueOrNotSaved(savedObject(component.snapshot)?.sourceAllocationId)}`}
+                      />
+                    ))}
+                  </div>
+                </div>;
+              })}
+            </div>
+          )}
         </div>
       )}
       {!hasSavedCostConfiguration || !costConfiguration ? (

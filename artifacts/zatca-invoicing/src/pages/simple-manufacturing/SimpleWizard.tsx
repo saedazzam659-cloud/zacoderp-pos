@@ -328,6 +328,13 @@ export function SimpleWizard({
     !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature),
   );
   const selectedProduct = catalog.items.find(i => String(i.id) === form.productItemId);
+  const plannedLaborPersonHours = (routingPreview?.stages ?? [])
+    .filter((stage: any) => stage.resourceMode === "labor" || stage.resourceMode === "both")
+    .reduce((sum: number, stage: any) =>
+      sum + (Number(stage.expectedDurationMinutes || 0) / 60) * Number(stage.workerCount || 0), 0);
+  const industrialSources = costSources.filter(source =>
+    source.sourceType === "purchase_invoice" || source.sourceType === "purchase_return",
+  );
   const productUnitOptions = selectedProduct?.unitOptions ?? (
     selectedProduct?.unitCode
       ? [{ code: selectedProduct.unitCode, nameAr: selectedProduct.unitCode, isBase: true }]
@@ -607,10 +614,6 @@ export function SimpleWizard({
     const selectedPayrollSource = costModes.payroll === "linked" && costSources.some(source =>
       source.sourceType === "payroll" && allocations[`${source.sourceType}:${source.sourceRecordId}`] === "1",
     );
-    const plannedLaborPersonHours = (routingPreview?.stages ?? [])
-      .filter((stage: any) => stage.resourceMode === "labor" || stage.resourceMode === "both")
-      .reduce((sum: number, stage: any) =>
-        sum + (Number(stage.expectedDurationMinutes || 0) / 60) * Number(stage.workerCount || 0), 0);
     if (form.resourceCostingVersion && selectedPayrollSource && !(plannedLaborPersonHours > 0)) {
       toast({
         title: "محرك ساعات العمالة المخططة مطلوب",
@@ -655,7 +658,13 @@ export function SimpleWizard({
       allocations: costSources.flatMap(s => {
         const key = `${s.sourceType}:${s.sourceRecordId}`;
         const category = s.sourceType as ManufacturingCostCategory;
-        const selected = costModes[category] === "linked" && allocations[key] === "1";
+        // Industrial purchase rows are existing posted overhead sources, not a
+        // fourth manual-cost category.  Their source identity is submitted
+        // unchanged so the server remains the sole owner of the allocation and
+        // subsequent machine-hour reconciliation.
+        const selected = (s.sourceType === "purchase_invoice" || s.sourceType === "purchase_return")
+          ? allocations[key] === "1"
+          : costModes[category] === "linked" && allocations[key] === "1";
         return selected && canPost ? [{
           sourceType: s.sourceType,
           sourceRecordId: s.sourceRecordId,
@@ -694,7 +703,17 @@ export function SimpleWizard({
     const plannedQty = Number(form.plannedQty || 0);
     const plannedHours = Number(form.plannedHours || 0);
     let amount = 0;
-    if (source.sourceType === "prepaid_amortization") {
+    if (source.sourceType === "purchase_invoice") {
+      const denominator = Number(source.meta?.approvedAllocationDriverTotal);
+      const numerator = method === "production_quantity"
+        ? plannedQty
+        : method === "labor_hours"
+          ? plannedLaborPersonHours
+          : method === "machine_hours"
+            ? plannedHours
+            : 0;
+      amount = numerator > 0 && denominator > 0 ? sourceAmount * numerator / denominator : 0;
+    } else if (source.sourceType === "prepaid_amortization") {
       const denominator = Number(source.meta?.approvedProductionQuantity);
       amount = denominator > 0 ? sourceAmount * plannedQty / denominator : 0;
     } else if (source.sourceType === "fixed_asset_depreciation" && method === "fixed_hourly_rate") {
@@ -717,8 +736,9 @@ export function SimpleWizard({
   const calculateAllocatedTotal = () => {
     const linked = costSources.reduce((total, source) => {
       const key = `${source.sourceType}:${source.sourceRecordId}`;
-      if (costModes[source.sourceType as ManufacturingCostCategory] !== "linked" ||
-          allocations[key] !== "1") return total;
+      const industrial = source.sourceType === "purchase_invoice" || source.sourceType === "purchase_return";
+      if (allocations[key] !== "1" ||
+          (!industrial && costModes[source.sourceType as ManufacturingCostCategory] !== "linked")) return total;
       return total + allocatedAmountForSource(source);
     }, 0);
     const manual = costCategories.reduce((total, category) =>
@@ -1477,6 +1497,61 @@ export function SimpleWizard({
                     </Card>
                   );
                 })}
+                <Card className="border-2 border-indigo-200 bg-indigo-50/20">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base text-slate-800">المصادر الصناعية العامة</CardTitle>
+                    <CardDescription className="text-xs">
+                      فاتورة صناعية مرحّلة هي المصدر الفعلي للكهرباء العامة والمياه والصيانة والمواد غير المباشرة. لا ينشئ اختيارها مصروفاً جديداً أو يضيف تقدير تعريفة الآلة مرة ثانية.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {costSourcesState === "loading" ? (
+                      <div className="rounded-lg border border-indigo-200 bg-white p-3 text-xs text-indigo-800">جاري تحميل المصادر الصناعية المؤهلة…</div>
+                    ) : !industrialSources.length ? (
+                      <div className="rounded-lg border border-dashed bg-white p-3 text-xs leading-6 text-slate-600">
+                        لا توجد فاتورة شراء صناعية مرحّلة ومؤهلة للفترة {form.costPeriod}. يمكن إنهاء مرحلة آلة كهربائية مع تجميد دليل kWh/التعريفة؛ تُختار فاتورة الكهرباء المنشورة والمصنع ومركز التكلفة لاحقاً صراحةً في إقفال المصادر الشهري. لا يقبل الإقفال فاتورة غير مرحّلة أو تقديراً بديلاً.
+                      </div>
+                    ) : industrialSources.map(source => {
+                      const key = `${source.sourceType}:${source.sourceRecordId}`;
+                      const costType = source.meta?.costType || "industrial_overhead";
+                      const driver = source.meta?.industrialDriver || source.meta?.allocationMethod || source.basis;
+                      const selectable = source.sourceType === "purchase_invoice" &&
+                        ["machine_hours", "labor_hours", "production_quantity"].includes(driver) &&
+                        Number(source.availableAmount ?? 0) > 0;
+                      const actual = allocatedAmountForSource(source);
+                      return (
+                        <div key={key} className={`rounded-lg border p-3 text-xs space-y-2 ${allocations[key] === "1" ? "border-indigo-300 bg-white" : "bg-white/70"}`}>
+                          <label className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 rounded text-indigo-600"
+                              checked={allocations[key] === "1"}
+                              disabled={!canPost || !selectable}
+                              onChange={event => setAllocations(current => ({ ...current, [key]: event.target.checked ? "1" : "" }))}
+                            />
+                            <span className="font-semibold text-slate-800">{source.label}</span>
+                          </label>
+                          <div className="grid grid-cols-2 gap-2 text-slate-600">
+                            <span>النوع: {costType}</span>
+                            <span>المحرك: {driver}</span>
+                            <span>المتاح: {Number(source.availableAmount ?? 0).toLocaleString()}</span>
+                            <span>نصيب الأمر المخطط: {actual.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                          </div>
+                          {!selectable && (
+                            <p className="rounded bg-amber-50 p-2 leading-5 text-amber-900">
+                              {source.sourceType === "purchase_return"
+                                ? "المرتجع معروض لتتبع المصدر فقط؛ لا يمكن اختياره كتوزيع موجب مستقل."
+                                : "لا يمكن اختيار المصدر: يلزم قيد فاتورة شراء صناعية مرحّل، محرك ساعات آلة/عمالة أو كمية إنتاج، وإجمالي محرك معتمد ومبلغ متاح موجب."}
+                            </p>
+                          )}
+                          {costType === "electricity" && driver === "machine_hours" && (
+                            <p className="rounded bg-emerald-50 p-2 leading-5 text-emerald-900">مصدر كهرباء آلة مؤهل: تظل قيمة kWh/التعريفة لقطة استخدام فقط، ويُسوّى المصدر المرحّل مرة واحدة من ساعات الآلات الفعلية عند الإقفال.</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
               </div>
             </div>
           )}

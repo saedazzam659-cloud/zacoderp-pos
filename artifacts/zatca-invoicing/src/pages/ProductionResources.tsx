@@ -21,8 +21,14 @@ type Resource = {
   type: string;
   status: string;
   capacityPerHour: string | null;
+  fixedAssetId?: number | null;
+  electricityEnabled?: boolean;
+  electricityKw?: string | number | null;
+  meta?: Record<string, unknown> | null;
   notes: string | null;
 };
+
+type FixedAsset = { id: number; code: string; nameAr: string; status?: string };
 
 const STATUS_TONES: Record<string, string> = {
   available: "bg-emerald-100 text-emerald-700",
@@ -33,9 +39,10 @@ const STATUS_TONES: Record<string, string> = {
 
 export default function ProductionResources() {
   const { t } = useTranslation();
-  const { token } = useAuth() as any;
+  const { token, actingCompanyId, user } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<Resource[] | null>(null);
+  const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -45,6 +52,9 @@ export default function ProductionResources() {
     type: "machine",
     status: "available",
     capacityPerHour: "",
+    fixedAssetId: "",
+    electricityEnabled: false,
+    electricityKw: "",
     notes: "",
   });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -54,7 +64,7 @@ export default function ProductionResources() {
   function closePanel() {
     setOpen(false);
     setEditing(null);
-    setForm({ name: "", type: "machine", status: "available", capacityPerHour: "", notes: "" });
+    setForm({ name: "", type: "machine", status: "available", capacityPerHour: "", fixedAssetId: "", electricityEnabled: false, electricityKw: "", notes: "" });
     requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
@@ -76,23 +86,40 @@ export default function ProductionResources() {
     if (!token) return;
     setLoading(true);
     try {
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+      };
       const r = await fetch(`${API}/api/production/resources`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers,
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setRows(await r.json());
+      const companyId = actingCompanyId || user?.companyId;
+      if (companyId) {
+        const assetResponse = await fetch(`${API}/api/fixed-assets/assets?companyId=${companyId}`, { headers });
+        if (!assetResponse.ok) {
+          const error = await assetResponse.json().catch(() => ({}));
+          throw new Error(error?.error || "تعذر تحميل الأصول الثابتة");
+        }
+        const assetRows = await assetResponse.json();
+        if (!Array.isArray(assetRows)) throw new Error("بيانات الأصول الثابتة غير صالحة");
+        setAssets(assetRows);
+      } else {
+        setAssets([]);
+      }
     } catch (e: any) {
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
-  }, [token, t, toast]);
+  }, [token, actingCompanyId, user?.companyId, t, toast]);
 
   useEffect(() => { void load(); }, [load]);
 
   function openCreate() {
     setEditing(null);
-    setForm({ name: "", type: "machine", status: "available", capacityPerHour: "", notes: "" });
+    setForm({ name: "", type: "machine", status: "available", capacityPerHour: "", fixedAssetId: "", electricityEnabled: false, electricityKw: "", notes: "" });
     setOpen(true);
   }
   function openEdit(r: Resource) {
@@ -102,6 +129,9 @@ export default function ProductionResources() {
       type: r.type,
       status: r.status,
       capacityPerHour: r.capacityPerHour ?? "",
+      fixedAssetId: String(r.fixedAssetId ?? r.meta?.fixedAssetId ?? ""),
+      electricityEnabled: r.electricityEnabled === true,
+      electricityKw: r.electricityKw == null ? "" : String(r.electricityKw),
       notes: r.notes ?? "",
     });
     setOpen(true);
@@ -113,6 +143,10 @@ export default function ProductionResources() {
       toast({ title: t("production.errorOccurred"), description: t("production.resourceName"), variant: "destructive" });
       return;
     }
+    if (form.type === "machine" && form.electricityEnabled && !(Number(form.electricityKw) > 0)) {
+      toast({ title: t("production.errorOccurred"), description: "قدرة الآلة بالكيلوواط مطلوبة ويجب أن تكون موجبة عند تفعيل الكهرباء.", variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       const body = {
@@ -120,13 +154,20 @@ export default function ProductionResources() {
         type: form.type,
         status: form.status,
         capacityPerHour: Number(form.capacityPerHour) || 0,
+        fixedAssetId: form.type === "machine" && form.fixedAssetId ? Number(form.fixedAssetId) : null,
+        electricityEnabled: form.type === "machine" && form.electricityEnabled,
+        electricityKw: form.type === "machine" && form.electricityKw ? Number(form.electricityKw) : null,
         notes: form.notes || null,
       };
       const r = await fetch(
         editing ? `${API}/api/production/resources/${editing.id}` : `${API}/api/production/resources`,
         {
           method: editing ? "PATCH" : "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+          },
           body: JSON.stringify(body),
         },
       );
@@ -147,7 +188,10 @@ export default function ProductionResources() {
     try {
       const r = await fetch(`${API}/api/production/resources/${id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+        },
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -275,6 +319,49 @@ export default function ProductionResources() {
                   className="mt-1"
                 />
               </div>
+              {form.type === "machine" && <>
+                <div className="md:col-span-2">
+                  <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">الأصل الثابت المرتبط</Label>
+                  <div className="mt-1">
+                    <SearchCombobox
+                      value={form.fixedAssetId}
+                      onValueChange={(fixedAssetId) => setForm({ ...form, fixedAssetId })}
+                      placeholder="آلة بدون أصل ثابت / مؤجرة"
+                      searchPlaceholder="ابحث عن أصل…"
+                      items={[
+                        { value: "", label: "آلة بدون أصل ثابت / مؤجرة" },
+                        ...assets.map(asset => ({ value: String(asset.id), label: `${asset.code} — ${asset.nameAr}` })),
+                      ]}
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">الربط مرجع تشغيلي للأصل الحالي فقط؛ لا ينسخ الأصل ولا ينشئ إهلاكاً جديداً.</p>
+                </div>
+                <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3 md:col-span-2 space-y-2">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-amber-950">
+                    <input
+                      type="checkbox"
+                      className="rounded text-violet-600"
+                      checked={form.electricityEnabled}
+                      onChange={event => setForm({ ...form, electricityEnabled: event.target.checked })}
+                    />
+                    تفعيل كهرباء الآلة
+                  </label>
+                  <div className="max-w-xs">
+                    <Label className="text-xs text-amber-950">قدرة الآلة (kW)</Label>
+                    <Input
+                      className="mt-1 bg-white"
+                      type="text"
+                      inputMode="decimal"
+                      dir="ltr"
+                      value={form.electricityKw}
+                      onChange={event => setForm({ ...form, electricityKw: event.target.value })}
+                      disabled={!form.electricityEnabled}
+                      placeholder="مثال: 7.5"
+                    />
+                  </div>
+                  <p className="text-[11px] leading-5 text-amber-900">لقطة الاستهلاك = kW × ساعات المرحلة × تعريفة الشركة. ليست مصروفاً ثانياً؛ تُسوّى لاحقاً من إقفال المصادر بعد اختيار فاتورة الكهرباء الصناعية والمصنع ومركز التكلفة صراحةً.</p>
+                </div>
+              </>}
               <div className="md:col-span-2 lg:col-span-3">
                 <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.notes")}</Label>
                 <Input
@@ -303,16 +390,17 @@ export default function ProductionResources() {
                   <th className="text-start p-3">{t("production.resourceName")}</th>
                   <th className="text-start p-3">{t("production.resourceType")}</th>
                   <th className="text-start p-3">{t("production.status")}</th>
-                  <th className="text-end p-3">{t("production.capacityPerHour")}</th>
+                   <th className="text-start p-3">ربط الأصل والكهرباء</th>
+                   <th className="text-end p-3">{t("production.capacityPerHour")}</th>
                   <th className="p-3"></th>
                 </tr>
               </thead>
               <tbody>
                 {loading && rows === null && (
-                  <tr><td colSpan={5} className="p-3"><Skeleton className="h-6 w-full" /></td></tr>
+                  <tr><td colSpan={6} className="p-3"><Skeleton className="h-6 w-full" /></td></tr>
                 )}
                 {!loading && (rows ?? []).length === 0 && (
-                  <tr><td colSpan={5} className="p-8 text-center text-slate-500">{t("production.noResources")}</td></tr>
+                  <tr><td colSpan={6} className="p-8 text-center text-slate-500">{t("production.noResources")}</td></tr>
                 )}
                 {(rows ?? []).map((r) => (
                   <tr key={r.id} className="border-t" data-testid={`row-res-${r.id}`}>
@@ -322,6 +410,18 @@ export default function ProductionResources() {
                       <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_TONES[r.status] ?? "bg-slate-100"}`}>
                         {t(`production.resourceStatus_${r.status}`)}
                       </span>
+                    </td>
+                    <td className="p-3 text-xs text-slate-600">
+                      {r.type === "machine" ? (
+                        <div className="space-y-1">
+                          {r.fixedAssetId || r.meta?.fixedAssetId ? (
+                            <div>الأصل: {assets.find(asset => asset.id === Number(r.fixedAssetId ?? r.meta?.fixedAssetId))?.nameAr || `#${r.fixedAssetId ?? r.meta?.fixedAssetId}`}</div>
+                          ) : <div>بدون أصل ثابت</div>}
+                          <div className={r.electricityEnabled ? "text-amber-800" : "text-slate-500"}>
+                            {r.electricityEnabled ? `كهرباء مفعلة — ${r.electricityKw ?? "—"} kW` : "الكهرباء غير مفعلة"}
+                          </div>
+                        </div>
+                      ) : "—"}
                     </td>
                     <td className="p-3 text-end">{Number(r.capacityPerHour ?? 0).toLocaleString("en-US")}</td>
                     <td className="p-3 text-end space-x-1 rtl:space-x-reverse">

@@ -16,6 +16,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
+import { fixedAssetsTable } from "./fixedAssets";
 import { itemsTable, warehousesTable, stockLedgerTable } from "./inventory";
 import { accountsTable } from "./accounts";
 import { usersTable } from "./users";
@@ -41,7 +42,9 @@ export const productionResourcesTable = pgTable(
     // A machine remains an operational resource.  These links/configuration
     // values make its resource use traceable without creating a parallel
     // machine or electricity master.
-    fixedAssetId: integer("fixed_asset_id"),
+    fixedAssetId: integer("fixed_asset_id").references(() => fixedAssetsTable.id, {
+      onDelete: "set null",
+    }),
     electricityEnabled: boolean("electricity_enabled").notNull().default(false),
     electricityKw: numeric("electricity_kw", {
       precision: 14,
@@ -284,7 +287,7 @@ export const productionCostAllocationsTable = pgTable(
     id: serial("id").primaryKey(),
     companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
     orderId: integer("order_id").notNull().references(() => productionOrdersTable.id, { onDelete: "restrict" }),
-    sourceType: text("source_type").notNull(), // payroll | fixed_asset_depreciation | prepaid_amortization
+    sourceType: text("source_type").notNull(), // payroll | fixed_asset_depreciation | prepaid_amortization | posted industrial purchase line
     sourceRecordId: integer("source_record_id").notNull(),
     periodStart: date("period_start").notNull(),
     periodEnd: date("period_end").notNull(),
@@ -316,9 +319,12 @@ export const productionStageResourceCostsTable = pgTable(
     companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
     orderId: integer("order_id").notNull().references(() => productionOrdersTable.id, { onDelete: "restrict" }),
     stageId: integer("stage_id").notNull().references(() => productionOrderStagesTable.id, { onDelete: "restrict" }),
-    component: text("component").notNull(), // labor | depreciation | electricity | factory_overhead
+    component: text("component").notNull(), // labor | depreciation | electricity estimate | factory_overhead
     sourceType: text("source_type").notNull(),
-    // Every frozen component must identify its accounting/configuration source.
+    // Every frozen component identifies its owning source. Electricity stores
+    // the selected posted industrial purchase source (not a tariff pseudo
+    // source), while its snapshot retains the tariff/kWh estimate and exact
+    // production_cost_allocations identity used for one-time settlement.
     // Keeping this non-null makes the composite idempotency key NULL-safe.
     sourceRecordId: integer("source_record_id").notNull(),
     amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
@@ -331,6 +337,29 @@ export const productionStageResourceCostsTable = pgTable(
       .on(t.stageId, t.component, t.sourceType, t.sourceRecordId),
     byOrder: index("prod_stage_resource_cost_order_idx").on(t.companyId, t.orderId),
     bySource: index("prod_stage_resource_cost_source_idx").on(t.companyId, t.sourceType, t.sourceRecordId),
+  }),
+);
+
+// Mutable close-claim only: the underlying stage evidence remains immutable.
+// A unique stage row prevents two active utility closes from claiming one kWh
+// fact; reversal deletes this claim so the established correction workflow can
+// select it again.
+export const productionPendingUtilityClaimsTable = pgTable(
+  "production_pending_utility_claims",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    closureId: integer("closure_id").notNull().references(() => productionOverheadClosuresTable.id, { onDelete: "cascade" }),
+    stageResourceCostId: integer("stage_resource_cost_id").notNull().references(() => productionStageResourceCostsTable.id, { onDelete: "cascade" }),
+    orderId: integer("order_id").notNull().references(() => productionOrdersTable.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull(),
+    sourceRecordId: integer("source_record_id").notNull(),
+    allocatedAmount: numeric("allocated_amount", { precision: 18, scale: 2 }).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    uniqueStage: uniqueIndex("prod_pending_utility_claim_stage_uniq").on(t.stageResourceCostId),
+    byClosure: index("prod_pending_utility_claim_closure_idx").on(t.companyId, t.closureId),
   }),
 );
 

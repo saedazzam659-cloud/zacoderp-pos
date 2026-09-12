@@ -13,7 +13,7 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
   const money = (value: unknown) => value == null ? "—" : Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const sourceLabels: Record<string, string> = {
     payroll: "الرواتب", fixed_asset_depreciation: "الإهلاك", prepaid_amortization: "المصروفات المقدمة",
-    industrial_purchase: "مشتريات صناعية",
+    purchase_invoice: "فاتورة شراء صناعية", purchase_return: "مرتجع شراء صناعي",
   };
   return (
     <section className="rounded-xl border border-violet-200 bg-violet-50/30 p-4 space-y-3">
@@ -23,7 +23,7 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
       </div>
       <p className="text-xs text-slate-600">
         الوقت يُقرأ من بيانات المراحل المحفوظة. تكلفة المورد أدناه لقطة خادم مصدرية؛ لا يعاد حسابها من أسعار أو إعدادات المتصفح الحالية.
-        {status !== "completed" && " تسوية فرق التحميل تتم عند إكمال الأمر، وليس عند حفظ المرحلة."}
+        {status !== "completed" && " التسوية تستخدم تخصيص المصدر المرحّل ومطابقة محركه الفعلي في دورة الإقفال القائمة، لا عند إدخال ساعات مستقلة."}
       </p>
       {stages.length > 0 && <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -40,7 +40,7 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
             <h4 className="text-sm font-semibold text-violet-950">لقطة تكلفة موارد المراحل</h4>
             <span className="text-[11px] text-violet-700">إصدار اللقطة {resourceCost.version}</span>
           </div>
-          <p className="text-xs leading-5 text-amber-900">الكهرباء تقدير استخدام للآلة فقط وليست تكلفة مرسملة أو مبلغاً فعلياً حتى يُربط مصدر كهرباء صناعي مُرحّل عبر مسار التخصيص والإقفال القائم. لا تُضاف تلقائياً إلى إجمالي محاسبة الأمر.</p>
+          <p className="text-xs leading-5 text-amber-900">الكهرباء أدناه لقطة تقدير استخدام (kW × ساعات المرحلة × التعريفة المجمدة) وليست مصروفاً ثانياً. تختار تسوية الإقفال لاحقاً فاتورة الكهرباء الصناعية والمصنع ومركز التكلفة صراحةً، ثم تطابق ساعات الآلات الفعلية مرة واحدة؛ لا تجمع هذه اللقطة مع WIP/FG/COGS.</p>
           {resourceStages.length > 0 ? <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-xs">
               <thead><tr className="border-b text-slate-500">
@@ -56,7 +56,7 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
                 </tr>;
               })}</tbody>
               {resourceCost?.totals && <tfoot><tr className="border-t-2 border-violet-200 font-semibold text-violet-950">
-                <td className="p-2" colSpan={2}>إجمالي لقطة الاستخدام (لا يرحّل الكهرباء)</td><td className="p-2">{money(resourceCost.totals.labor)}</td><td className="p-2">{money(resourceCost.totals.depreciation)}</td>
+                <td className="p-2" colSpan={2}>إجمالي لقطة الاستخدام (كهرباء تقديرية غير مضافة ثانية)</td><td className="p-2">{money(resourceCost.totals.labor)}</td><td className="p-2">{money(resourceCost.totals.depreciation)}</td>
                 <td className="p-2">{money(resourceCost.totals.electricity)}</td><td className="p-2">{money(resourceCost.totals.factoryOverhead)}</td><td className="p-2">{money(resourceCost.totals.total)}</td>
               </tr></tfoot>}
             </table>
@@ -66,7 +66,8 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
       <div className="space-y-2">
         {allocations.map((source: any) => {
           const meta = source.snapshotMeta ?? {};
-          const method = meta.formulaMethod;
+            const method = meta.formulaMethod;
+            const industrialDriver = meta.industrialDriver ?? meta.allocationMethod;
           const rule = method === "operating_hours"
             ? `ساعات التشغيل ÷ ${fmt(meta.denominatorOrRate)} ساعة معتمدة × قيمة المصدر`
             : method === "fixed_hourly_rate"
@@ -75,6 +76,8 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
           return <div key={source.id} className="rounded-lg border bg-white p-3 text-sm">
             <div className="font-medium">{sourceLabels[source.sourceType] ?? "مصدر تكلفة"} #{source.sourceRecordId}</div>
             <div className="text-xs text-slate-600 mt-1">{rule}</div>
+            {(source.sourceType === "purchase_invoice" || source.sourceType === "purchase_return") && <div className="text-xs text-indigo-700 mt-1">مصدر صناعي: {String(meta.costType ?? "غير مصنف")} — المحرك: {String(industrialDriver ?? "غير محدد")}</div>}
+            {source.sourceType === "purchase_invoice" && meta.costType === "electricity" && industrialDriver === "machine_hours" && <div className="text-xs text-emerald-700 mt-1">مصدر كهرباء صناعي مؤهل: عند اختياره صراحةً في الإقفال يكون هو المبلغ المحاسبي؛ kWh/التعريفة في لقطة المرحلة دليل استخدام فقط.</div>}
             {meta.includeInManufacturing === false && <div className="text-xs text-amber-700 mt-1">تحليلي فقط — غير محمل على التصنيع</div>}
           </div>;
         })}
