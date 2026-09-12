@@ -287,7 +287,10 @@ export default function SimpleManufacturing() {
       expectedCostAccountId: s.expectedCostAccountId == null ? null : Number(s.expectedCostAccountId),
       notes: s.notes || null,
       nameEn: s.nameEn || null,
-      expectedDurationMinutes: s.expectedDurationMinutes ? Number(s.expectedDurationMinutes) : undefined
+      expectedDurationMinutes: s.expectedDurationMinutes ? Number(s.expectedDurationMinutes) : undefined,
+      resourceMode: s.resourceMode,
+      resourceId: s.resourceId ? Number(s.resourceId) : null,
+      workerCount: s.workerCount == null ? null : Number(s.workerCount),
     }));
     const path = data.id
       ? `/api/simple-manufacturing/setup/routing/${Number(data.id)}`
@@ -353,6 +356,7 @@ export default function SimpleManufacturing() {
     defaultRawInventoryAccountId: number | null;
     defaultFinishedGoodsAccountId: number | null;
     defaultWasteAccountId: number | null;
+    electricityTariffPerKwh?: number | null;
   }) => {
     return mutate(() => request("/api/simple-manufacturing/setup/accounting", {
       method: "PUT",
@@ -414,6 +418,7 @@ export default function SimpleManufacturing() {
                 apiBase={`${API}/api/simple-manufacturing`}
                 permissionKey="simple_manufacturing"
                 isSimple
+                resourceCostingVersion={selectedOrder.resourceCostingVersion}
                 onReload={() => { void openOrder(selectedOrder); }}
               />
             ) : null}

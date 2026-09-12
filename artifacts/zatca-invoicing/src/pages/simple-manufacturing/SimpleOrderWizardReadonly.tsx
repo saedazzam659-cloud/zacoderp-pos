@@ -144,9 +144,11 @@ function SnapshotValue({
 export function SimpleOrderWizardReadonly({
   order,
   catalog,
+  resourceCost,
 }: {
   order: ReadonlyOrder;
   catalog: Catalog;
+  resourceCost?: any;
 }) {
   const [tab, setTab] = useState<StepId>("basic");
   const detail = order.detail ?? {};
@@ -267,6 +269,9 @@ export function SimpleOrderWizardReadonly({
                   <SnapshotValue label="التكلفة المتوقعة المحفوظة" value={savedNumber(stage.expectedCost)} />
                   <SnapshotValue label="الهالك المتوقع المحفوظ" value={savedNumber(stage.expectedWasteRatio)} />
                   <SnapshotValue label="مركز العمل المحفوظ" value={stage.workCenterId == null ? NOT_SAVED : `#${stage.workCenterId}`} />
+                   <SnapshotValue label="نمط المورد المحفوظ" value={stage.resourceMode === "both" ? "آلة + عمالة" : stage.resourceMode === "machine" ? "آلة" : stage.resourceMode === "labor" ? "عمالة" : NOT_SAVED} />
+                   <SnapshotValue label="معرّف آلة المرحلة المحفوظ" value={stage.resourceId == null ? NOT_SAVED : `#${stage.resourceId}`} />
+                   <SnapshotValue label="عدد العمال المحفوظ" value={savedNumber(stage.workerCount)} />
                 </div>
               </CardContent>
             </Card>
@@ -317,6 +322,19 @@ export function SimpleOrderWizardReadonly({
         <Field label="فترة مصادر التكلفة المحفوظة" value={valueOrNotSaved(meta.costPeriod)} />
         <Field label="التكلفة التقديرية المحفوظة" value={savedNumber(savedOrder.estimatedCost)} />
       </div>
+      {Number(resourceCost?.version) >= 1 && (
+        <div className="rounded-lg border border-violet-200 bg-white p-3">
+          <div className="mb-2 text-sm font-semibold text-violet-950">لقطة تكلفة المورد المحفوظة</div>
+          <p className="mb-3 text-xs text-slate-600">هذه الأرقام وردت من لقطة الخادم ولا تستند إلى أسعار المورد الحالية. الكهرباء لقطة تقدير استخدام وليست تكلفة فعلية مرسملة حتى مسار المصدر الصناعي والإقفال القائم.</p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <SnapshotValue label="عمالة" value={savedNumber(resourceCost?.totals?.labor)} />
+            <SnapshotValue label="إهلاك" value={savedNumber(resourceCost?.totals?.depreciation)} />
+            <SnapshotValue label="كهرباء (تقدير)" value={savedNumber(resourceCost?.totals?.electricity)} />
+            <SnapshotValue label="عبء مصنع" value={savedNumber(resourceCost?.totals?.factoryOverhead)} />
+            <SnapshotValue label="إجمالي لقطة الاستخدام" value={savedNumber(resourceCost?.totals?.total)} />
+          </div>
+        </div>
+      )}
       {!hasSavedCostConfiguration || !costConfiguration ? (
         <div className="rounded-lg border border-dashed p-4 text-sm text-slate-500">
           إعدادات التكاليف التفصيلية غير محفوظة لهذا الأمر.

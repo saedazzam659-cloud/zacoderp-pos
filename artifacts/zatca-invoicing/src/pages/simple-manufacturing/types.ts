@@ -57,6 +57,9 @@ export type Catalog = {
       sequence?: number;
       plannedMinutes?: number;
       workCenterId?: number | null;
+        resourceMode?: "labor" | "machine" | "both";
+        resourceId?: number | null;
+        workerCount?: number | null;
     }>;
   }>;
   accounting?: {
@@ -65,6 +68,7 @@ export type Catalog = {
       defaultRawInventoryAccountId?: number | null;
       defaultFinishedGoodsAccountId?: number | null;
       defaultWasteAccountId?: number | null;
+        electricityTariffPerKwh?: string | number | null;
     } | null;
     accounts: Array<{
       id: number;
@@ -86,6 +90,7 @@ export type Order = {
   producedQty: string | number;
   estimatedCost: string | number;
   actualCost: string | number;
+  resourceCostingVersion?: number;
   productItemId: number | null;
   issueJournalEntryId?: number | null;
   receiptJournalEntryId?: number | null;
@@ -108,6 +113,7 @@ export type WizardState = {
   costPeriod: string;
   templateId: string;
   sourceOrderId: string | null;
+  resourceCostingVersion: boolean;
   costPolicy: Record<string, any>;
 };
 

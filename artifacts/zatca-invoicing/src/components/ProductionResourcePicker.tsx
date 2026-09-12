@@ -9,7 +9,14 @@ import { useToast } from "@/hooks/use-toast";
 
 export type ResourceCatalog = {
   workCenters: { id: number; name?: string; nameAr?: string }[];
-  machines: { id: number; name: string; workCenterId?: number | null; fixedAssetId?: number | null }[];
+  machines: {
+    id: number;
+    name: string;
+    workCenterId?: number | null;
+    fixedAssetId?: number | null;
+    electricityEnabled?: boolean;
+    electricityKw?: string | number | null;
+  }[];
   assets: { id: number; name?: string; nameAr?: string; code?: string }[];
 };
 
@@ -25,6 +32,8 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
   const [center, setCenter] = useState("");
   const [asset, setAsset] = useState("");
   const [mode, setMode] = useState("unlinked");
+  const [electricityEnabled, setElectricityEnabled] = useState(false);
+  const [electricityKw, setElectricityKw] = useState("");
   const [saving, setSaving] = useState(false);
   const centers = catalog.workCenters.map(row => ({ value: String(row.id), label: row.nameAr || row.name || String(row.id) }));
   const machines = catalog.machines.filter(row => !workCenterId || String(row.workCenterId ?? "") === workCenterId);
@@ -32,6 +41,7 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
   const linkedAsset = catalog.assets.find(row => row.id === selectedMachine?.fixedAssetId);
   const open = (type: "work-centers" | "machines") => {
     setKind(type); setName(""); setCenter(workCenterId); setAsset(""); setMode("unlinked");
+    setElectricityEnabled(false); setElectricityKw("");
   };
   const save = async () => {
     if (!kind || !canCreate || saving || !name.trim() || (kind === "machines" && mode === "linked" && !asset)) return;
@@ -42,12 +52,16 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
         body: JSON.stringify({ name: name.trim(), ...(kind === "machines" ? {
           workCenterId: center ? Number(center) : null,
           fixedAssetId: mode === "linked" ? Number(asset) : null,
+          electricityEnabled,
+          electricityKw: electricityKw ? Number(electricityKw) : null,
         } : {}) }),
       });
       const row = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(row.error || "تعذر الحفظ");
       if (!row.id) throw new Error("لم يُرجع الخادم بيانات العنصر المحفوظ");
-      onCreated(kind, row);
+      onCreated(kind, kind === "machines"
+        ? { ...row, electricityEnabled, electricityKw: electricityKw || null }
+        : row);
       onChange(kind === "work-centers"
         ? { workCenterId: String(row.id), machineId: "" }
         : { workCenterId: row.workCenterId ? String(row.workCenterId) : "", machineId: String(row.id) });
@@ -79,6 +93,9 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
       </div>
     </div>
     {selectedMachine?.fixedAssetId && <p className="text-xs text-violet-700">مرتبطة بالأصل: {linkedAsset?.nameAr || linkedAsset?.name || `#${selectedMachine.fixedAssetId}`} — الربط لا ينشئ إهلاكًا أو تحميلًا إضافيًا.</p>}
+    {selectedMachine?.electricityEnabled && (
+      <p className="text-xs text-amber-800">استهلاك الكهرباء مفعل بقدرة {selectedMachine.electricityKw ?? "—"} kW وفق تعريفة الشركة وساعات تشغيل المرحلة.</p>
+    )}
     <Dialog open={kind !== null} onOpenChange={value => { if (!value && !saving) setKind(null); }}>
       <DialogContent dir="rtl">
         <DialogHeader><DialogTitle>{kind === "work-centers" ? "إضافة مركز عمل" : "إضافة آلة إنتاج"}</DialogTitle>
@@ -96,10 +113,24 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
               disabled={saving} placeholder="ابحث عن أصل ثابت" />
               {!catalog.assets.length && <p className="text-xs text-amber-700">لا توجد أصول متاحة للربط ضمن نطاق هذا الأمر.</p>}
             </div>}
-            <p className="text-xs text-slate-500">لن يتم نسخ الأصل أو إنشاء إهلاك جديد. مصادر الإهلاك وتحميل الساعات تظل كما هي.</p>
+            <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 space-y-2">
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-amber-950">
+                <input type="checkbox" className="rounded text-violet-600" checked={electricityEnabled}
+                  onChange={event => setElectricityEnabled(event.target.checked)} disabled={saving} />
+                احتساب استهلاك كهرباء الآلة
+              </label>
+              <div className="space-y-1.5">
+                <Label className="text-xs">قدرة الآلة (kW)</Label>
+                <Input type="text" inputMode="decimal" dir="ltr" value={electricityKw}
+                  onChange={event => setElectricityKw(event.target.value)} disabled={saving}
+                  placeholder="مثال: 7.5" />
+              </div>
+              <p className="text-xs leading-5 text-amber-900">تقدير الكهرباء = kW × ساعات تشغيل المرحلة × تعريفة الكهرباء المحفوظة. لا توجد ساعات كهرباء مستقلة، ولا يصبح التقدير تكلفة فعلية إلا عبر مصدر كهرباء صناعي مرحّل ومسار الإقفال القائم.</p>
+            </div>
+            <p className="text-xs text-slate-500">لن يتم نسخ الأصل أو إنشاء إهلاك جديد. مصادر الإهلاك وتحميل الساعات تظل كما هي. ربط عداد/IoT مرجع مستقبلي فقط وليس اتصالاً مباشراً.</p>
           </>}
           <div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={saving} onClick={() => setKind(null)}>إلغاء</Button>
-            <Button type="button" disabled={saving || !name.trim() || (kind === "machines" && mode === "linked" && !asset)} onClick={() => void save()}>{saving ? "جاري الحفظ…" : "حفظ واختيار"}</Button></div>
+            <Button type="button" disabled={saving || !name.trim() || (kind === "machines" && mode === "linked" && !asset) || (kind === "machines" && electricityEnabled && !(Number(electricityKw) > 0))} onClick={() => void save()}>{saving ? "جاري الحفظ…" : "حفظ واختيار"}</Button></div>
         </div>
       </DialogContent>
     </Dialog>

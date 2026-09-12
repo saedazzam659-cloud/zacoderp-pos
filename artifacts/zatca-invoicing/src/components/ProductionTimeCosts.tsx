@@ -4,8 +4,13 @@ import { Clock } from "lucide-react";
 export function ProductionTimeCosts({ trace, status }: { trace: any; status: string }) {
   const stages = Array.isArray(trace?.stages) ? trace.stages : [];
   const allocations = Array.isArray(trace?.allocations) ? trace.allocations : [];
+  // This object is returned by the server from immutable source snapshots.
+  // It is deliberately displayed as-is; no browser-side financial rollup is made.
+  const resourceCost = trace?.resourceCost ?? trace?.resourceCosts ?? null;
+  const resourceStages = Array.isArray(resourceCost?.stages) ? resourceCost.stages : [];
   const hours = stages.reduce((sum: number, stage: any) => sum + Number(stage.actualDurationMinutes ?? 0) / 60, 0);
   const fmt = (value: unknown) => Number(value ?? 0).toLocaleString("en-US", { maximumFractionDigits: 4 });
+  const money = (value: unknown) => value == null ? "—" : Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const sourceLabels: Record<string, string> = {
     payroll: "الرواتب", fixed_asset_depreciation: "الإهلاك", prepaid_amortization: "المصروفات المقدمة",
     industrial_purchase: "مشتريات صناعية",
@@ -17,7 +22,7 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
         <span>{fmt(hours)} ساعة محفوظة</span>
       </div>
       <p className="text-xs text-slate-600">
-        الوقت يُقرأ من بيانات المراحل المحفوظة. المصادر المرتبطة بالساعات تستخدم قاعدة التحميل المعتمدة؛ عدد العمالة لا يضاعف التكلفة تلقائيًا.
+        الوقت يُقرأ من بيانات المراحل المحفوظة. تكلفة المورد أدناه لقطة خادم مصدرية؛ لا يعاد حسابها من أسعار أو إعدادات المتصفح الحالية.
         {status !== "completed" && " تسوية فرق التحميل تتم عند إكمال الأمر، وليس عند حفظ المرحلة."}
       </p>
       {stages.length > 0 && <div className="overflow-x-auto">
@@ -29,6 +34,35 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
           </tr>)}</tbody>
         </table>
       </div>}
+      {Number(resourceCost?.version) >= 1 && (
+        <div className="space-y-3 rounded-lg border border-violet-200 bg-white p-3">
+          <div className="flex items-center justify-between gap-3">
+            <h4 className="text-sm font-semibold text-violet-950">لقطة تكلفة موارد المراحل</h4>
+            <span className="text-[11px] text-violet-700">إصدار اللقطة {resourceCost.version}</span>
+          </div>
+          <p className="text-xs leading-5 text-amber-900">الكهرباء تقدير استخدام للآلة فقط وليست تكلفة مرسملة أو مبلغاً فعلياً حتى يُربط مصدر كهرباء صناعي مُرحّل عبر مسار التخصيص والإقفال القائم. لا تُضاف تلقائياً إلى إجمالي محاسبة الأمر.</p>
+          {resourceStages.length > 0 ? <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-xs">
+              <thead><tr className="border-b text-slate-500">
+                <th className="p-2 text-start">المرحلة</th><th className="p-2 text-start">نمط المورد</th><th className="p-2 text-start">عمالة</th><th className="p-2 text-start">إهلاك</th><th className="p-2 text-start">كهرباء (تقدير)</th><th className="p-2 text-start">عبء مصنع</th><th className="p-2 text-start">إجمالي لقطة الاستخدام</th>
+              </tr></thead>
+              <tbody>{resourceStages.map((stage: any) => {
+                const routeStage = stages.find((candidate: any) => String(candidate.id) === String(stage.stageId));
+                const modeLabel = stage.resourceMode === "both" ? "آلة + عمالة" : stage.resourceMode === "machine" ? "آلة" : "عمالة";
+                return <tr key={stage.stageId} className="border-b last:border-0">
+                  <td className="p-2 font-medium">{routeStage?.name ?? `#${stage.stageId}`}</td>
+                  <td className="p-2">{modeLabel}</td><td className="p-2">{money(stage.labor)}</td><td className="p-2">{money(stage.depreciation)}</td>
+                  <td className="p-2">{money(stage.electricity)}</td><td className="p-2">{money(stage.factoryOverhead)}</td><td className="p-2 font-semibold">{money(stage.total)}</td>
+                </tr>;
+              })}</tbody>
+              {resourceCost?.totals && <tfoot><tr className="border-t-2 border-violet-200 font-semibold text-violet-950">
+                <td className="p-2" colSpan={2}>إجمالي لقطة الاستخدام (لا يرحّل الكهرباء)</td><td className="p-2">{money(resourceCost.totals.labor)}</td><td className="p-2">{money(resourceCost.totals.depreciation)}</td>
+                <td className="p-2">{money(resourceCost.totals.electricity)}</td><td className="p-2">{money(resourceCost.totals.factoryOverhead)}</td><td className="p-2">{money(resourceCost.totals.total)}</td>
+              </tr></tfoot>}
+            </table>
+          </div> : <p className="text-xs text-slate-500">لا توجد لقطة تكلفة مرحلة مكتملة بعد.</p>}
+        </div>
+      )}
       <div className="space-y-2">
         {allocations.map((source: any) => {
           const meta = source.snapshotMeta ?? {};

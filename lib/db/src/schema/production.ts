@@ -38,6 +38,15 @@ export const productionResourcesTable = pgTable(
       precision: 14,
       scale: 4,
     }).default("0"),
+    // A machine remains an operational resource.  These links/configuration
+    // values make its resource use traceable without creating a parallel
+    // machine or electricity master.
+    fixedAssetId: integer("fixed_asset_id"),
+    electricityEnabled: boolean("electricity_enabled").notNull().default(false),
+    electricityKw: numeric("electricity_kw", {
+      precision: 14,
+      scale: 4,
+    }),
     notes: text("notes"),
     meta: jsonb("meta").$type<Record<string, unknown>>().default({}),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -89,6 +98,12 @@ export const productionOrdersTable = pgTable(
     actualCost: numeric("actual_cost", { precision: 14, scale: 2 })
       .notNull()
       .default("0"),
+    // 0 keeps every historical order on its frozen legacy costing path.
+    // Version 1 is explicitly selected by the wizard before resource facts
+    // may be costed from HR/assets/electricity configuration.
+    resourceCostingVersion: integer("resource_costing_version")
+      .notNull()
+      .default(0),
     // ─── SAP-style WIP cycle: header-level warehouses + cost allocation ────
     // When the order moves to "in_production" the BOM raw lines are
     // decremented from rawWarehouseId; on "completed" the produced qty is
@@ -288,6 +303,39 @@ export const productionCostAllocationsTable = pgTable(
 );
 
 export type ProductionCostAllocation = typeof productionCostAllocationsTable.$inferSelect;
+
+// Immutable, per-stage calculation evidence for the opt-in resource-costing
+// version. This is not a new expense source and never posts a second JE:
+// payroll/assets/industrial invoices remain the accounting source. The unique
+// component key makes completion retries and stage edits unable to duplicate a
+// source charge.
+export const productionStageResourceCostsTable = pgTable(
+  "production_stage_resource_costs",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    orderId: integer("order_id").notNull().references(() => productionOrdersTable.id, { onDelete: "restrict" }),
+    stageId: integer("stage_id").notNull().references(() => productionOrderStagesTable.id, { onDelete: "restrict" }),
+    component: text("component").notNull(), // labor | depreciation | electricity | factory_overhead
+    sourceType: text("source_type").notNull(),
+    // Every frozen component must identify its accounting/configuration source.
+    // Keeping this non-null makes the composite idempotency key NULL-safe.
+    sourceRecordId: integer("source_record_id").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
+    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull().default({}),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    componentDedup: uniqueIndex("prod_stage_resource_cost_component_source_uniq")
+      .on(t.stageId, t.component, t.sourceType, t.sourceRecordId),
+    byOrder: index("prod_stage_resource_cost_order_idx").on(t.companyId, t.orderId),
+    bySource: index("prod_stage_resource_cost_source_idx").on(t.companyId, t.sourceType, t.sourceRecordId),
+  }),
+);
+
+export type ProductionStageResourceCost =
+  typeof productionStageResourceCostsTable.$inferSelect;
 
 // Delta-only reconciliation of an immutable planned source allocation once
 // execution drivers are final. The base allocation is never edited.
@@ -720,6 +768,10 @@ export const manufacturingSettingsTable = pgTable(
       () => accountsTable.id,
       { onDelete: "set null" },
     ),
+    electricityTariffPerKwh: numeric("electricity_tariff_per_kwh", {
+      precision: 14,
+      scale: 6,
+    }),
     // ─── Round A — Approval gate (informational on this MVP) ─────────────
     // When approvalRequired is true (or estimatedCost >= approvalThreshold),
     // the order's pending-approval UI surfaces it for manual approval before
@@ -857,6 +909,12 @@ export const productionRoutingStagesTable = pgTable(
       () => workCentersTable.id,
       { onDelete: "set null" },
     ),
+    resourceMode: text("resource_mode").notNull().default("labor"), // labor | machine | both
+    resourceId: integer("resource_id").references(
+      () => productionResourcesTable.id,
+      { onDelete: "set null" },
+    ),
+    workerCount: integer("worker_count"),
     expectedWasteRatio: numeric("expected_waste_ratio", {
       precision: 6,
       scale: 4,
@@ -957,6 +1015,7 @@ export const productionOrderStagesTable = pgTable(
       () => productionResourcesTable.id,
       { onDelete: "set null" },
     ),
+    resourceMode: text("resource_mode").notNull().default("labor"), // labor | machine | both
     wasteReason: text("waste_reason"),
     wasteType: text("waste_type"),
     wasteClassification: text("waste_classification"), // normal | abnormal

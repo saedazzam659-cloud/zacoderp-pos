@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Badge } from "@/components/ui/badge";
-import { Play, Square, Clock, ArrowDownToLine, ArrowUpFromLine, Activity, User, Save, AlertTriangle, RotateCcw, Check, ChevronRight, ChevronLeft } from "lucide-react";
+import { Play, Square, Clock, ArrowDownToLine, ArrowUpFromLine, Activity, Save, AlertTriangle, RotateCcw, Check, ChevronRight, ChevronLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import { ProductionResourcePicker, type ResourceCatalog } from "@/components/ProductionResourcePicker";
@@ -22,6 +22,7 @@ type StageExecutionProps = {
   apiBase: string;
   permissionKey: string;
   isSimple: boolean;
+  resourceCostingVersion?: number;
   onReload?: () => void;
 };
 
@@ -31,6 +32,7 @@ type Stage = {
   status: "pending" | "in_progress" | "done" | "skipped";
   actualDurationMinutes: number;
   workerCount: number;
+  workerUserId: string;
   inputQty: number;
   outputQty: number;
   quantityUnit: string | null;
@@ -44,13 +46,14 @@ type Stage = {
   wasteReason: string;
   wasteType: string;
   wasteClassification: "normal" | "abnormal";
-  workerUserId: string;
+  resourceMode: "labor" | "machine" | "both";
+  resourceId: string;
   machineId: string;
   workCenterId: string;
   notes: string;
 };
 
-export function ProductionStageExecution({ orderId, orderStatus, plannedQty, token, apiBase, permissionKey, isSimple, onReload }: StageExecutionProps) {
+export function ProductionStageExecution({ orderId, orderStatus, plannedQty, token, apiBase, permissionKey, isSimple, resourceCostingVersion = 0, onReload }: StageExecutionProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { actingCompanyId } = useAuth();
@@ -60,6 +63,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
   }), [token, actingCompanyId]);
   const canEdit = usePermission(permissionKey as any, "edit");
   const canCreate = usePermission(permissionKey as any, "create");
+  const isResourceCostingV1 = Number(resourceCostingVersion) >= 1;
   const [stages, setStages] = useState<Stage[]>([]);
   const [users, setUsers] = useState<{value: string, label: string}[]>([]);
   const [resourceCatalog, setResourceCatalog] = useState<ResourceCatalog>({ workCenters: [], machines: [], assets: [] });
@@ -68,6 +72,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
   const [loading, setLoading] = useState(false);
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [completedResourceCost, setCompletedResourceCost] = useState<any>(null);
   const dirtyStages = useRef(new Set<string>());
   
   const previousOrderId = useRef(orderId);
@@ -145,6 +150,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       status: s.status || "pending",
       actualDurationMinutes: Number(s.actualDurationMinutes || s.actualMinutes || 0),
       workerCount: Number(s.workerCount ?? 0),
+       workerUserId: s.workerUserId ? String(s.workerUserId) : s.operatorUserId ? String(s.operatorUserId) : "",
       inputQty: Number(s.inputQty ?? plannedQty),
       outputQty: Number(s.outputQty ?? 0),
       quantityUnit,
@@ -158,8 +164,9 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       wasteReason: s.wasteReason || "",
       wasteType: s.wasteType || "",
       wasteClassification: s.wasteClassification === "abnormal" ? "abnormal" : "normal",
-      workerUserId: s.workerUserId ? String(s.workerUserId) : s.operatorUserId ? String(s.operatorUserId) : "",
-      machineId: s.machineId ? String(s.machineId) : s.resourceId ? String(s.resourceId) : "",
+       resourceMode: s.resourceMode === "machine" || s.resourceMode === "both" ? s.resourceMode : "labor",
+       resourceId: s.resourceId ? String(s.resourceId) : s.machineId ? String(s.machineId) : "",
+       machineId: s.machineId ? String(s.machineId) : s.resourceId ? String(s.resourceId) : "",
       workCenterId: s.workCenterId ? String(s.workCenterId) : "",
       notes: s.notes || ""
       };
@@ -201,11 +208,10 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       if (res.ok) {
         const data = await res.json();
         const workersList = Array.isArray(data.workers) ? data.workers : [];
-        
         setUsers(workersList.map((x: any) => ({ value: String(x.id), label: x.nameAr || x.nameEn || x.username || `User #${x.id}` })));
       } else {
         const error = await res.json().catch(() => ({}));
-        throw new Error(error.error || "تعذر تحميل قائمة العمال والآلات");
+        throw new Error(error.error || "تعذر تحميل قائمة الآلات");
       }
       const resources = await fetch(`${apiBase}/orders/${orderId}/resource-catalog`, { headers });
       const catalog = await resources.json().catch(() => ({}));
@@ -213,7 +219,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       if (!Array.isArray(catalog.workCenters) || !Array.isArray(catalog.machines) || !Array.isArray(catalog.assets)) throw new Error("بيانات مراكز العمل والآلات غير صالحة");
       setResourceCatalog(catalog);
     } catch (e: any) {
-      toast({ title: "تعذر تحميل قائمة العمال والآلات", description: e.message, variant: "destructive" });
+      toast({ title: "تعذر تحميل قائمة الآلات", description: e.message, variant: "destructive" });
     }
   }, [apiBase, orderId, headers]);
 
@@ -314,9 +320,14 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         wasteQty: stageData.wasteQty || 0,
         wasteUnit: stageData.wasteUnit || null,
         wasteUnitFactor: stageData.wasteUnit ? stageData.wasteUnitFactor : 1,
-        workerUserId: stageData.workerUserId ? Number(stageData.workerUserId) : null,
-        machineId: stageData.machineId ? Number(stageData.machineId) : null,
         workCenterId: stageData.workCenterId ? Number(stageData.workCenterId) : null,
+        workerUserId: stageData.workerUserId ? Number(stageData.workerUserId) : null,
+        ...(isResourceCostingV1 ? {
+          resourceMode: stageData.resourceMode,
+          resourceId: stageData.resourceId ? Number(stageData.resourceId) : null,
+        } : {
+          machineId: stageData.machineId ? Number(stageData.machineId) : null,
+        }),
         wasteReason: stageData.wasteReason || null,
         wasteType: stageData.wasteType || null,
         wasteClassification: stageData.wasteClassification || "normal",
@@ -343,6 +354,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
       
+      if (action === "complete" && j.resourceCost) setCompletedResourceCost(j.resourceCost);
       toast({ title: action === "update" ? "تم الحفظ" : action === "start" ? "تم بدء المرحلة" : "تم إنهاء المرحلة" });
       await fetchStages(stageId);
       if (onReload) onReload();
@@ -529,47 +541,66 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" /> وقت العمل الفعلي (محرك تحميل)</Label>
-                        <div className="grid grid-cols-2 gap-3 bg-white p-2 border rounded-md shadow-sm">
-                          <label className="text-xs font-medium text-slate-500">ساعات
-                            <Input className="mt-1 bg-slate-50 border-slate-200" dir="ltr" inputMode="numeric" value={Math.floor(activeStage.actualDurationMinutes / 60)} onChange={e => handleUpdateStage(activeStage.id, { actualDurationMinutes: Math.max(0, Math.floor(Number(e.target.value) || 0)) * 60 + activeStage.actualDurationMinutes % 60 })} disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} />
-                          </label>
-                          <label className="text-xs font-medium text-slate-500">دقائق
-                            <Input className="mt-1 bg-slate-50 border-slate-200" dir="ltr" inputMode="decimal" value={Number((activeStage.actualDurationMinutes % 60).toFixed(4))} onChange={e => handleUpdateStage(activeStage.id, { actualDurationMinutes: Math.floor(activeStage.actualDurationMinutes / 60) * 60 + Math.min(59.9999, Math.max(0, Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} />
-                          </label>
-                        </div>
+                        <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" /> ساعات التشغيل الفعلية</Label>
+                        <Input className="bg-white border-slate-200" dir="ltr" inputMode="decimal" placeholder="مثال: 1.5"
+                          value={Number((activeStage.actualDurationMinutes / 60).toFixed(4))}
+                          onChange={e => {
+                            const hours = Number(e.target.value);
+                            handleUpdateStage(activeStage.id, { actualDurationMinutes: Number.isFinite(hours) && hours >= 0 ? Math.round(hours * 60) : 0 });
+                          }}
+                          disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} />
+                        <p className="text-[11px] leading-5 text-slate-500">إدخال تشغيلي واحد فقط؛ يحفظ بالدقائق ويقود جميع مكونات المورد دون ساعات عمالة أو إهلاك أو كهرباء منفصلة.</p>
                       </div>
-                      
-                      <div className="grid grid-cols-2 gap-4">
+                      {isResourceCostingV1 && <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-slate-600">موارد المرحلة</Label>
+                        <SearchCombobox value={activeStage.resourceMode}
+                          onValueChange={val => handleUpdateStage(activeStage.id, { resourceMode: val === "machine" || val === "both" ? val : "labor" })}
+                          items={[{ value: "labor", label: "عمالة فقط" }, { value: "machine", label: "آلة فقط" }, { value: "both", label: "آلة + عمالة" }]}
+                          disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} />
+                      </div>}
+                      {(!isResourceCostingV1 || activeStage.resourceMode === "labor" || activeStage.resourceMode === "both") && <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-slate-600">عدد العمالة المشاركة</Label>
                           <Input dir="ltr" inputMode="numeric" value={activeStage.workerCount} onChange={e => handleUpdateStage(activeStage.id, { workerCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} className="bg-white" />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-slate-400" /> العامل</Label>
-                          <SearchCombobox 
-                            value={activeStage.workerUserId} 
-                            onValueChange={(val) => handleUpdateStage(activeStage.id, { workerUserId: val })}
-                            items={[{value: "", label: "غير محدد"}, ...users]}
-                            disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")}
-                            placeholder="ابحث..."
-                          />
+                          <Label className="text-xs font-semibold text-slate-600">العامل المسؤول</Label>
+                          <SearchCombobox value={activeStage.workerUserId} onValueChange={val => handleUpdateStage(activeStage.id, { workerUserId: val })}
+                            items={[{ value: "", label: "غير محدد" }, ...users]}
+                            disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"}
+                            placeholder="ابحث..." />
                         </div>
-                      </div>
+                      </div>}
                       
-                      <ProductionResourcePicker
+                      {(!isResourceCostingV1 || activeStage.resourceMode === "machine" || activeStage.resourceMode === "both") && <ProductionResourcePicker
                         workCenterId={activeStage.workCenterId}
-                        machineId={activeStage.machineId}
+                        machineId={isResourceCostingV1 ? activeStage.resourceId : activeStage.machineId}
                         catalog={resourceCatalog}
                         disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped" || busyStage === activeStage.id}
                         canCreate={canCreate}
                         endpoint={`${apiBase}/orders/${orderId}`}
                         headers={headers}
-                        onChange={values => handleUpdateStage(activeStage.id, values)}
+                        onChange={values => handleUpdateStage(activeStage.id, {
+                          workCenterId: values.workCenterId,
+                          ...(isResourceCostingV1 ? { resourceId: values.machineId } : { machineId: values.machineId }),
+                        })}
                         onCreated={(kind, row) => setResourceCatalog(previous => kind === "work-centers"
                           ? { ...previous, workCenters: [...previous.workCenters.filter(x => x.id !== row.id), row] }
                           : { ...previous, machines: [...previous.machines.filter(x => x.id !== row.id), row] })}
-                      />
+                      />}
+                      {isResourceCostingV1 && completedResourceCost && String(completedResourceCost.stageId) === activeStage.id && (
+                        <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3 text-xs text-violet-950">
+                          <div className="mb-2 font-semibold">لقطة تكلفة المورد المحفوظة بعد الإنهاء</div>
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                            <span>عمالة: {Number(completedResourceCost.labor ?? 0).toLocaleString()}</span>
+                            <span>إهلاك: {Number(completedResourceCost.depreciation ?? 0).toLocaleString()}</span>
+                            <span>كهرباء (تقدير): {Number(completedResourceCost.electricity ?? 0).toLocaleString()}</span>
+                            <span>عبء مصنع: {completedResourceCost.factoryOverhead == null ? "—" : Number(completedResourceCost.factoryOverhead).toLocaleString()}</span>
+                            <span className="font-semibold">إجمالي لقطة الاستخدام: {Number(completedResourceCost.total ?? 0).toLocaleString()}</span>
+                          </div>
+                          <p className="mt-2 text-[11px] text-amber-900">الكهرباء تقدير استخدام فقط ولا تدخل كتكلفة فعلية للأمر حتى مسار المصدر الصناعي والإقفال القائم.</p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-5">

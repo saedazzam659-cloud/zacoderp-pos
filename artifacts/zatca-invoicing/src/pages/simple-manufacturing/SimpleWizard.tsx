@@ -43,6 +43,7 @@ export function SimpleWizard({
     defaultRawInventoryAccountId: number | null;
     defaultFinishedGoodsAccountId: number | null;
     defaultWasteAccountId: number | null;
+    electricityTariffPerKwh?: number | null;
   }) => Promise<unknown>;
   onSubmit: (mode: "draft" | "execute", payload: any) => Promise<void>;
   onCancel: () => void;
@@ -56,7 +57,7 @@ export function SimpleWizard({
     rawWarehouseId: catalog.warehouses[0]?.id ? String(catalog.warehouses[0].id) : "",
     finishedWarehouseId: catalog.warehouses[0]?.id ? String(catalog.warehouses[0].id) : "",
     workCenterId: "", plannedHours: "1", costPeriod: new Date().toISOString().slice(0, 7),
-    templateId: "", sourceOrderId: null, costPolicy: { packaging: "primary", quality: "appraisal", wasteTreatment: "normal_manufacturing", reworkTreatment: "internal_failure", certificationLayer: "manufacturing", royaltyLayer: "economic", warrantyLayer: "operating" }
+    templateId: "", sourceOrderId: null, resourceCostingVersion: false, costPolicy: { packaging: "primary", quality: "appraisal", wasteTreatment: "normal_manufacturing", reworkTreatment: "internal_failure", certificationLayer: "manufacturing", royaltyLayer: "economic", warrantyLayer: "operating" }
   });
 
   const [bomPreview, setBomPreview] = useState<any>(null);
@@ -70,6 +71,9 @@ export function SimpleWizard({
   });
   const [costSourcesState, setCostSourcesState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [costSourcesError, setCostSourcesError] = useState<string | null>(null);
+  const [resourceCostReadiness, setResourceCostReadiness] = useState<{ loading: boolean; ready: boolean; reason: string | null }>({
+    loading: true, ready: false, reason: null,
+  });
   const [costSourcesRefreshKey, setCostSourcesRefreshKey] = useState(0);
   const [costPrefsHydratedKey, setCostPrefsHydratedKey] = useState<string | null>(null);
   const [costPrefsSaveState, setCostPrefsSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -90,6 +94,7 @@ export function SimpleWizard({
     defaultRawInventoryAccountId: "",
     defaultFinishedGoodsAccountId: "",
     defaultWasteAccountId: "",
+    electricityTariffPerKwh: "",
   });
 
   // Inline BOM creation
@@ -287,6 +292,7 @@ export function SimpleWizard({
       defaultRawInventoryAccountId: settings.defaultRawInventoryAccountId ? String(settings.defaultRawInventoryAccountId) : "",
       defaultFinishedGoodsAccountId: settings.defaultFinishedGoodsAccountId ? String(settings.defaultFinishedGoodsAccountId) : "",
       defaultWasteAccountId: settings.defaultWasteAccountId ? String(settings.defaultWasteAccountId) : "",
+      electricityTariffPerKwh: settings.electricityTariffPerKwh == null ? "" : String(settings.electricityTariffPerKwh),
     });
   }, [catalog.accounting?.settings]);
 
@@ -327,6 +333,41 @@ export function SimpleWizard({
       ? [{ code: selectedProduct.unitCode, nameAr: selectedProduct.unitCode, isBase: true }]
       : []
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!token) {
+      setResourceCostReadiness({ loading: false, ready: false, reason: "يلزم تسجيل الدخول للتحقق من جاهزية تكلفة الموارد." });
+      return () => controller.abort();
+    }
+    setResourceCostReadiness({ loading: true, ready: false, reason: null });
+    void request("/api/simple-manufacturing/resource-costing-readiness", { signal: controller.signal })
+      .then((data: any) => {
+        if (!controller.signal.aborted) {
+          setResourceCostReadiness({
+            loading: false,
+            ready: data?.ready === true,
+            reason: typeof data?.reason === "string" ? data.reason : null,
+          });
+        }
+      })
+      .catch((error: any) => {
+        if (!controller.signal.aborted) setResourceCostReadiness({
+          loading: false,
+          ready: false,
+          reason: error?.message || "تعذر التحقق من جاهزية تكلفة الموارد.",
+        });
+      });
+    return () => controller.abort();
+  }, [request, token]);
+
+  useEffect(() => {
+    if (!resourceCostReadiness.loading && !resourceCostReadiness.ready) {
+      setForm(current => current.resourceCostingVersion
+        ? { ...current, resourceCostingVersion: false }
+        : current);
+    }
+  }, [resourceCostReadiness.loading, resourceCostReadiness.ready]);
 
   // Fetch the simple-facade envelopes and their details when product changes.
   // The old implementation queried /production and converted errors to null,
@@ -563,6 +604,22 @@ export function SimpleWizard({
         return;
       }
     }
+    const selectedPayrollSource = costModes.payroll === "linked" && costSources.some(source =>
+      source.sourceType === "payroll" && allocations[`${source.sourceType}:${source.sourceRecordId}`] === "1",
+    );
+    const plannedLaborPersonHours = (routingPreview?.stages ?? [])
+      .filter((stage: any) => stage.resourceMode === "labor" || stage.resourceMode === "both")
+      .reduce((sum: number, stage: any) =>
+        sum + (Number(stage.expectedDurationMinutes || 0) / 60) * Number(stage.workerCount || 0), 0);
+    if (form.resourceCostingVersion && selectedPayrollSource && !(plannedLaborPersonHours > 0)) {
+      toast({
+        title: "محرك ساعات العمالة المخططة مطلوب",
+        description: "حدّد مدة متوقعة وعدد عمال موجباً لمراحل العمالة في مسار الإنتاج قبل ربط مصدر الرواتب.",
+        variant: "destructive",
+      });
+      setTab("routing");
+      return;
+    }
 
     const payload = {
       wizardRequestId: wizardRequestIdRef.current,
@@ -577,6 +634,10 @@ export function SimpleWizard({
       finishedWarehouseId: Number(form.finishedWarehouseId) || null,
       workCenterId: Number(form.workCenterId) || null,
       plannedHours: Number(form.plannedHours) || 0,
+      ...(form.resourceCostingVersion && resourceCostReadiness.ready ? {
+        resourceCostingVersion: 1,
+        ...(selectedPayrollSource ? { plannedLaborPersonHours } : {}),
+      } : {}),
       costPeriod: form.costPeriod,
       templateId: form.templateId ? Number(form.templateId) : null,
       costPolicy: form.costPolicy,
@@ -622,6 +683,8 @@ export function SimpleWizard({
         ? Number(accountSettings.defaultFinishedGoodsAccountId) : null,
       defaultWasteAccountId: accountSettings.defaultWasteAccountId
         ? Number(accountSettings.defaultWasteAccountId) : null,
+      electricityTariffPerKwh: accountSettings.electricityTariffPerKwh
+        ? Number(accountSettings.electricityTariffPerKwh) : null,
     });
   };
 
@@ -945,7 +1008,7 @@ export function SimpleWizard({
                 تُنسخ المراحل من مسار الإنتاج النشط كـ لقطة (Snapshot) مستقلة للأمر، فلا تغيّر التعديلات اللاحقة على المسار تاريخ هذا الأمر.
                 <br/><strong className="text-slate-900 mt-2 block">ملاحظة: يمكنك متابعة الأمر بدون مراحل إذا كان الإنتاج بسيطاً ويتم بخطوة واحدة.</strong>
                 <p className="mt-3 rounded-md border border-violet-200 bg-violet-50 p-3 text-violet-900">
-                  هذه معاينة قبل إنشاء الأمر، وليست تسجيل التنفيذ الفعلي. بعد «مراجعة وبدء الإنتاج» ستفتح تفاصيل الأمر هنا، وفيها لكل مرحلة: ساعات ودقائق العمل، العامل وعدد العمالة، الآلة، الكميات، والهالك وسببه وتصنيفه، مع زر حفظ وبدء وإنهاء المرحلة.
+                  هذه معاينة قبل إنشاء الأمر، وليست تسجيل التنفيذ الفعلي. بعد «مراجعة وبدء الإنتاج» ستفتح تفاصيل الأمر هنا، وفيها لكل مرحلة: ساعات تشغيل واحدة، عدد العمالة، الآلة، الكميات، والهالك وسببه وتصنيفه، مع زر حفظ وبدء وإنهاء المرحلة.
                 </p>
               </div>
 
@@ -968,6 +1031,9 @@ export function SimpleWizard({
                       <div className="font-semibold text-slate-800">{s.nameAr}</div>
                       <div className="text-xs text-slate-500 mt-1 flex items-center gap-4">
                         <span>المدة (محرك التكلفة): {s.expectedDurationMinutes || 0} دقيقة</span>
+                         <span>المورد: {s.resourceMode === "both" ? "آلة + عمالة" : s.resourceMode === "machine" ? "آلة" : "عمالة"}</span>
+                         {(s.resourceMode === "labor" || s.resourceMode === "both") && <span>العمال: {s.workerCount ?? "—"}</span>}
+                         {(s.resourceMode === "machine" || s.resourceMode === "both") && <span>الآلة: {s.resourceId == null ? "—" : `#${s.resourceId}`}</span>}
                       </div>
                     </div>
                   ))}
@@ -1122,6 +1188,50 @@ export function SimpleWizard({
                   <Input type="text" inputMode="decimal" value={form.plannedHours} onChange={e => setForm({...form, plannedHours: e.target.value})} className="h-10 text-left" dir="ltr" />
                   <p className="text-xs text-slate-500">يُستخدم هذا الرقم لتوزيع تكلفة الإهلاك والإيجار على الأمر بدقة.</p>
                 </div>
+              </div>
+              {resourceCostReadiness.ready ? <Card className={`shadow-none ${form.resourceCostingVersion ? "border-violet-300 bg-violet-50/40" : "border-slate-200"}`}>
+                <CardContent className="space-y-3 pt-5">
+                  <label className="flex cursor-pointer items-start gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 rounded text-violet-600"
+                      checked={form.resourceCostingVersion}
+                      onChange={event => setForm(current => ({ ...current, resourceCostingVersion: event.target.checked }))}
+                    />
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-800">تفعيل تكلفة موارد المرحلة لهذا الأمر</span>
+                      <span className="mt-1 block text-xs leading-6 text-slate-600">
+                        خيار اختياري للأوامر الجديدة فقط. يستخدم ساعات تشغيل المرحلة الواحدة لحساب العمالة أو الإهلاك والكهرباء حسب المورد؛ لا يغيّر تكاليف أو أوامر سابقة.
+                      </span>
+                    </span>
+                  </label>
+                  {form.resourceCostingVersion && (
+                    <div className="rounded-md border border-violet-200 bg-white p-3 text-xs leading-6 text-violet-950">
+                      أكمل إعداد نوع المورد والآلة/عدد العمال في مسار الإنتاج. يحسب مصدر الرواتب المعتمد بساعات الشخص المخططة، بينما تحفظ نتائج المراحل كلقطات مصدرية ولا تُنشأ مصروفات مكررة.
+                    </div>
+                  )}
+                </CardContent>
+              </Card> : (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-600">
+                  {resourceCostReadiness.loading
+                    ? "يجري التحقق من جاهزية تكلفة موارد المراحل…"
+                    : `تكلفة موارد المراحل غير متاحة حالياً${resourceCostReadiness.reason ? `: ${resourceCostReadiness.reason}` : ""}. لن يتغير سلوك الأوامر الحالية.`}
+                </div>
+              )}
+              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/40 p-4">
+                <Label>تعريفة الكهرباء لكل kWh</Label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  dir="ltr"
+                  value={accountSettings.electricityTariffPerKwh}
+                  onChange={e => setAccountSettings(current => ({ ...current, electricityTariffPerKwh: e.target.value }))}
+                  placeholder="مثال: 0.18"
+                  className="max-w-xs bg-white"
+                />
+                <p className="text-xs leading-6 text-amber-900">
+                  إعداد شركة قائم يُستخدم فقط للآلات التي فُعّل استهلاكها وتملك قدرة kW. لا توجد ساعات كهرباء منفصلة، ومرجع العداد/IoT يبقى مرجعاً مستقبلياً دون اتصال حي.
+                </p>
               </div>
             </div>
           )}

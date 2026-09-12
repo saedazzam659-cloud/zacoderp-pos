@@ -68,6 +68,10 @@ test("stage execution normalizes an optional nonnegative worker count", () => {
     { workerCount: 3 },
   );
   assert.deepEqual(
+    normalizeStageExecutionPayload({ resourceMode: "both", resourceId: "12", workerCount: 2 }),
+    { resourceMode: "both", resourceId: 12, workerCount: 2 },
+  );
+  assert.deepEqual(
     normalizeStageExecutionPayload({ workerCount: null }),
     { workerCount: null },
   );
@@ -78,6 +82,10 @@ test("stage execution normalizes an optional nonnegative worker count", () => {
   assert.throws(
     () => normalizeStageExecutionPayload({ workerCount: -1 }),
     /عدد العمال/,
+  );
+  assert.throws(
+    () => normalizeStageExecutionPayload({ workerEmployeeId: 7 }),
+    /مصدر الرواتب المرحّل/,
   );
 });
 
@@ -153,6 +161,8 @@ test("compact facade mounts the shared execution and settlement engines", async 
   assert.match(production, /Payments and[\s\S]*not queried here/);
   assert.match(production, /Normal production loss[\s\S]*only abnormal loss is expensed/);
   assert.match(production, /refreshOrderActualHours/);
+  assert.match(production, /pg_advisory_xact_lock\(\$\{ctx\.cid\}, \$\{ctx\.order\.id\}\)/);
+  assert.match(production, /eq\(productionOrderStagesTable\.status, "in_progress"\)/);
   assert.match(production, /sum\(production_order_stages\.actual_duration_minutes\)/);
   assert.match(production, /router\.get\("\/execution-catalog"/);
   assert.match(production, /validateExpenseAccount\(cid, varianceAccountId\)/);

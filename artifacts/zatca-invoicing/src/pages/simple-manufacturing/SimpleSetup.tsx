@@ -27,7 +27,7 @@ export function SimpleSetup({
   onSaveMaterial: (data: { code: string; nameAr: string; itemNature: string; unitId: string }) => Promise<any>;
   onSaveBom: (data: { id?: number; productItemId: string; nameAr: string; outputQty: string; outputUnitCode: string; lines: Array<{ itemId: string; quantity: string; unitCode: string }> }) => Promise<unknown>;
   onLoadBom: (id: number) => Promise<any>;
-  onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null }> }) => Promise<unknown>;
+  onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null; resourceMode: "labor" | "machine" | "both"; resourceId?: string; workerCount?: number }> }) => Promise<unknown>;
   onLoadRouting: (id: number) => Promise<any>;
   onSaveTemplate: (data: { id?: number; name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
   onSaveWarehouse: (data: { code: string; nameAr: string; isDefault: boolean }) => Promise<unknown>;
@@ -46,7 +46,10 @@ export function SimpleSetup({
     expectedCostAccountId?: number | null;
     notes?: string | null;
     nameEn?: string | null;
-  }>>([{ nameAr: "", expectedDurationMinutes: 0 }]);
+    resourceMode: "labor" | "machine" | "both";
+    resourceId?: string;
+    workerCount?: number;
+  }>>([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }]);
   const [template, setTemplate] = useState({ name: "", productItemId: "", plannedQty: "1", unitCode: "" });
   const [warehouse, setWarehouse] = useState({ code: "", nameAr: "", isDefault: false });
 
@@ -71,7 +74,7 @@ export function SimpleSetup({
   const resetRouting = () => {
     setEditingRoutingId(null);
     setRouting({ productItemId: "", nameAr: "" });
-    setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0 }]);
+    setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }]);
   };
 
   const resetTemplate = () => {
@@ -158,8 +161,11 @@ export function SimpleSetup({
             expectedCostAccountId: stage?.expectedCostAccountId == null ? null : Number(stage.expectedCostAccountId),
             notes: stage?.notes ?? null,
             nameEn: stage?.nameEn ?? null,
+            resourceMode: stage?.resourceMode === "machine" || stage?.resourceMode === "both" ? stage.resourceMode : "labor",
+            resourceId: stage?.resourceId == null ? "" : String(stage.resourceId),
+            workerCount: Number(stage?.workerCount ?? 1) || 1,
           }))
-        : [{ nameAr: "", expectedDurationMinutes: 0 }]);
+        : [{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }]);
       setOpenRouting(true);
     } catch {
       // The controller owns the toast/error contract.
@@ -461,27 +467,68 @@ export function SimpleSetup({
                 <div className="space-y-2">
                   <div className="text-sm font-semibold text-slate-700">مراحل الإنتاج بالترتيب</div>
                   {routingStages.map((stage, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <div className="w-6 h-6 shrink-0 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500">{index + 1}</div>
-                      <Input className="flex-[2]" value={stage.nameAr} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, nameAr: e.target.value } : s))} placeholder="اسم المرحلة (مثال: العجن)" />
-                      <div className="flex-[1] flex items-center gap-1">
-                        <Input type="text" inputMode="numeric" value={stage.expectedDurationMinutes || ""} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, expectedDurationMinutes: Number(e.target.value) || 0 } : s))} placeholder="المدة (دقيقة)" />
-                      </div>
-                      <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0"
-                        disabled={routingStages.length <= 1}
-                        onClick={() => setRoutingStages(stages => stages.filter((_, i) => i !== index))}>
-                        ×
-                      </Button>
+                     <div key={index} className="rounded-lg border bg-slate-50/50 p-3 space-y-3">
+                       <div className="flex items-center gap-2">
+                         <div className="w-6 h-6 shrink-0 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500">{index + 1}</div>
+                         <Input className="flex-[2]" value={stage.nameAr} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, nameAr: e.target.value } : s))} placeholder="اسم المرحلة (مثال: العجن)" />
+                         <Input className="flex-[1]" type="text" inputMode="numeric" value={stage.expectedDurationMinutes || ""} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, expectedDurationMinutes: Number(e.target.value) || 0 } : s))} placeholder="المدة (دقيقة)" />
+                         <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0"
+                           disabled={routingStages.length <= 1}
+                           onClick={() => setRoutingStages(stages => stages.filter((_, i) => i !== index))}>
+                           ×
+                         </Button>
+                       </div>
+                       <div className="grid gap-3 sm:grid-cols-3">
+                         <div className="space-y-1">
+                           <label className="text-xs font-medium text-slate-600">موارد المرحلة</label>
+                           <SearchCombobox
+                             value={stage.resourceMode}
+                             items={[
+                               { value: "labor", label: "عمالة فقط" },
+                               { value: "machine", label: "آلة فقط" },
+                               { value: "both", label: "آلة + عمالة" },
+                             ]}
+                             onValueChange={value => setRoutingStages(stages => stages.map((s, i) => i === index
+                               ? { ...s, resourceMode: value === "machine" || value === "both" ? value : "labor" }
+                               : s))}
+                           />
+                         </div>
+                         {(stage.resourceMode === "labor" || stage.resourceMode === "both") && (
+                           <div className="space-y-1">
+                             <label className="text-xs font-medium text-slate-600">عدد العمال</label>
+                             <Input type="text" inputMode="numeric" dir="ltr" value={stage.workerCount ?? ""}
+                               onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index
+                                 ? { ...s, workerCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) }
+                                 : s))} />
+                           </div>
+                         )}
+                         {(stage.resourceMode === "machine" || stage.resourceMode === "both") && (
+                           <div className="space-y-1">
+                             <label className="text-xs font-medium text-slate-600">معرّف الآلة المحفوظة</label>
+                             <Input type="text" inputMode="numeric" dir="ltr" value={stage.resourceId ?? ""}
+                               onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index
+                                 ? { ...s, resourceId: e.target.value }
+                                 : s))} placeholder="رقم مورد الآلة" />
+                           </div>
+                         )}
+                       </div>
+                       <p className="text-[11px] text-slate-500">
+                         تستخدم المرحلة ساعات تشغيل واحدة فقط. اختر الآلة من تنفيذ الأمر عند الحاجة ثم احفظ رقمها هنا لمسار قابل لإعادة الاستخدام.
+                       </p>
                     </div>
                   ))}
                   <Button type="button" variant="outline" size="sm"
-                    onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0 }])}
+                     onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }])}
                     disabled={!canEdit}>
                     <Plus className="mr-1 h-4 w-4" /> إضافة مرحلة
                   </Button>
                 </div>
 
-                <Button disabled={busy || !canEdit || !routing.productItemId || routingStages.some(s => !s.nameAr)} onClick={async () => { await onSaveRouting({ ...routing, id: editingRoutingId ?? undefined, stages: routingStages }); setOpenRouting(false); resetRouting(); }} className="w-full">
+                <Button disabled={busy || !canEdit || !routing.productItemId || routingStages.some(s =>
+                  !s.nameAr ||
+                  ((s.resourceMode === "labor" || s.resourceMode === "both") && !(Number.isInteger(s.workerCount) && Number(s.workerCount) > 0)) ||
+                  ((s.resourceMode === "machine" || s.resourceMode === "both") && !(Number.isInteger(Number(s.resourceId)) && Number(s.resourceId) > 0))
+                )} onClick={async () => { await onSaveRouting({ ...routing, id: editingRoutingId ?? undefined, stages: routingStages }); setOpenRouting(false); resetRouting(); }} className="w-full">
                   {editingRoutingId ? "تحديث المسار" : "حفظ المسار"}
                 </Button>
               </div>

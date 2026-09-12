@@ -982,6 +982,35 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     DROP TRIGGER IF EXISTS production_cost_allocations_no_mutation ON production_cost_allocations;
     CREATE TRIGGER production_cost_allocations_no_mutation BEFORE UPDATE OR DELETE ON production_cost_allocations
       FOR EACH ROW EXECUTE FUNCTION reject_production_cost_allocation_mutation();` },
+  // Frozen calculation evidence only. This deliberately has no journal entry:
+  // the linked payroll/asset source allocation owns capitalization and its
+  // delta/reversal lifecycle.
+  { label: "production_stage_resource_costs",
+    sql: `CREATE TABLE IF NOT EXISTS production_stage_resource_costs (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      order_id INTEGER NOT NULL REFERENCES production_orders(id) ON DELETE RESTRICT,
+      stage_id INTEGER NOT NULL REFERENCES production_order_stages(id) ON DELETE RESTRICT,
+      component TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_record_id INTEGER NOT NULL,
+      amount NUMERIC(18,2) NOT NULL,
+      snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS prod_stage_resource_cost_component_source_uniq
+      ON production_stage_resource_costs(stage_id, component, source_type, source_record_id);
+    CREATE INDEX IF NOT EXISTS prod_stage_resource_cost_order_idx
+      ON production_stage_resource_costs(company_id, order_id);
+    CREATE INDEX IF NOT EXISTS prod_stage_resource_cost_source_idx
+      ON production_stage_resource_costs(company_id, source_type, source_record_id);
+    CREATE OR REPLACE FUNCTION reject_production_stage_resource_cost_mutation() RETURNS trigger AS $$
+    BEGIN RAISE EXCEPTION 'production stage resource cost snapshots are immutable'; END; $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS production_stage_resource_costs_no_mutation ON production_stage_resource_costs;
+    CREATE TRIGGER production_stage_resource_costs_no_mutation
+      BEFORE UPDATE OR DELETE ON production_stage_resource_costs
+      FOR EACH ROW EXECUTE FUNCTION reject_production_stage_resource_cost_mutation();` },
   // Order-stage execution fields are additive snapshots. They intentionally
   // carry no currency amount: elapsed time is a driver consumed by approved
   // source allocations, not a second stage-expense engine.

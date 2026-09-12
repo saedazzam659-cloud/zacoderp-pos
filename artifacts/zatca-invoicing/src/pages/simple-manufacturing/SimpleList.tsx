@@ -108,6 +108,7 @@ export function SimpleOrderList({
               <SimpleOrderWizardReadonly
                 order={selectedOrder}
                 catalog={catalog}
+                resourceCost={costDrilldown?.trace?.resourceCost ?? costDrilldown?.trace?.resourceCosts}
               />
             )}
             <div className="flex gap-2 flex-wrap mb-6">
@@ -218,29 +219,14 @@ export function SimpleOrderList({
                  <div><span className="text-slate-500 block">إجمالي الأمر الفعلي</span><b>{actualPosted ? formatMoney(selectedOrder.actualCost) : "لم يُرحّل بعد"}</b></div>
               </div>
             </div>
-            {actualPosted && costDrilldown?.totals && costDrilldown.totals.actual != null && (
+            {costDrilldown?.totals && (
               <div className="mt-4 rounded-xl border bg-white p-4">
-                <div className="mb-3 font-semibold text-slate-800">ملخص إجمالي تكلفة الأمر</div>
-                <div className="grid gap-2 sm:grid-cols-5 text-sm">
-                  {(() => {
-                    const materials = Array.isArray(costDrilldown.trace?.materials) ? costDrilldown.trace.materials : [];
-                    const materialTotal = materials.length > 0 &&
-                      materials.every((line: any) => line?.amount != null && Number.isFinite(Number(line.amount)))
-                      ? materials.reduce((sum: number, line: any) => sum + Number(line.amount), 0)
-                      : null;
-                    const manufacturingTotal = materialTotal == null ? null
-                      : Math.max(0, Number(costDrilldown.totals.actual) - materialTotal);
-                    return (
-                      <>
-                        <div><span className="text-slate-500 block">المواد</span><b>{formatMoney(materialTotal)}</b></div>
-                        <div><span className="text-slate-500 block">توزيع التصنيع</span><b>{formatMoney(manufacturingTotal)}</b></div>
-                      </>
-                    );
-                  })()}
-                  <div><span className="text-slate-500 block">تكلفة الوحدة</span><b>{formatMoney(costDrilldown.totals.unitCost)}</b></div>
-                      <div><span className="text-slate-500 block">الإضافي الفعلي</span><b>{formatMoney(costDrilldown.totals.additionalActual)}</b></div>
-                      <div><span className="text-slate-500 block">الإضافي / وحدة</span><b>{formatMoney(costDrilldown.totals.additionalUnitCost)}</b></div>
+                <div className="mb-3 font-semibold text-slate-800">ملخص تكلفة الأمر من لقطة الخادم</div>
+                <div className="grid gap-2 sm:grid-cols-4 text-sm">
+                  <div><span className="text-slate-500 block">التقديرية</span><b>{formatMoney(costDrilldown.totals.standard)}</b></div>
+                  <div><span className="text-slate-500 block">الفعلية</span><b>{formatMoney(costDrilldown.totals.actual)}</b></div>
                   <div><span className="text-slate-500 block">الانحراف</span><b>{formatMoney(costDrilldown.totals.variance)}</b></div>
+                  <div><span className="text-slate-500 block">تكلفة الوحدة</span><b>{formatMoney(costDrilldown.totals.unitCost)}</b></div>
                 </div>
               </div>
             )}

@@ -58,6 +58,7 @@ import {
   getWorkCenters,
   loadItemUnitOptions,
   resolveProductionItemUnit,
+  RESOURCE_COSTING_NOT_READY_REASON,
 } from "./production.js";
 
 const router = Router();
@@ -97,7 +98,7 @@ router.get("/", view, (_req, res) => {
     module: "simple_manufacturing",
     title: "Simple Manufacturing",
     endpoints: [
-      "/catalog", "/execution-catalog", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
+      "/catalog", "/execution-catalog", "/resource-costing-readiness", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
       "/orders", "/templates", "/setup/materials", "/setup/products",
       "/setup/warehouses", "/setup/accounting", "/setup/bom", "/setup/bom/:id",
       "/setup/routing", "/setup/routing/:id", "/templates/:id", "/reports",
@@ -105,6 +106,14 @@ router.get("/", view, (_req, res) => {
       "/orders/:id/stages/:stageId/complete", "/orders/:id/waste-records",
       "/overhead-closures", "/overhead-closures/:id/reopen",
     ],
+  });
+});
+
+router.get("/resource-costing-readiness", view, (_req, res) => {
+  res.json({
+    ready: false,
+    code: "RESOURCE_COSTING_ELECTRICITY_SETTLEMENT_UNAVAILABLE",
+    reason: RESOURCE_COSTING_NOT_READY_REASON,
   });
 });
 
@@ -230,6 +239,9 @@ router.get("/catalog", view, async (req, res) => {
         sequence: productionRoutingStagesTable.sequence,
         plannedMinutes: productionRoutingStagesTable.expectedDurationMinutes,
         workCenterId: productionRoutingStagesTable.workCenterId,
+        resourceMode: productionRoutingStagesTable.resourceMode,
+        resourceId: productionRoutingStagesTable.resourceId,
+        workerCount: productionRoutingStagesTable.workerCount,
       }).from(productionRoutingStagesTable)
         .where(inArray(productionRoutingStagesTable.routingId, routingIds))
         .orderBy(asc(productionRoutingStagesTable.sequence), asc(productionRoutingStagesTable.id))
@@ -251,6 +263,9 @@ router.get("/catalog", view, async (req, res) => {
       sequence: number;
       plannedMinutes: number | null;
       workCenterId: number | null;
+      resourceMode: string;
+      resourceId: number | null;
+      workerCount: number | null;
     }>>();
     for (const stage of routingStages) {
       const stages = stagesByRouting.get(stage.routingId);
@@ -260,6 +275,9 @@ router.get("/catalog", view, async (req, res) => {
         sequence: stage.sequence,
         plannedMinutes: stage.plannedMinutes,
         workCenterId: stage.workCenterId,
+        resourceMode: stage.resourceMode,
+        resourceId: stage.resourceId,
+        workerCount: stage.workerCount,
       };
       if (stages) stages.push(stageSummary);
       else stagesByRouting.set(stage.routingId, [stageSummary]);
@@ -558,9 +576,22 @@ router.put("/setup/accounting", edit, async (req, res) => {
       defaultRawInventoryAccountId: manufacturingSettingsTable.defaultRawInventoryAccountId,
       defaultFinishedGoodsAccountId: manufacturingSettingsTable.defaultFinishedGoodsAccountId,
       defaultWasteAccountId: manufacturingSettingsTable.defaultWasteAccountId,
+      electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
     }).from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
     const requestedIds = new Set<number>();
+    let electricityTariffPerKwh: string | null = current?.electricityTariffPerKwh ?? null;
+    if (req.body?.electricityTariffPerKwh !== undefined) {
+      if (req.body.electricityTariffPerKwh === null || req.body.electricityTariffPerKwh === "") {
+        electricityTariffPerKwh = null;
+      } else {
+        const tariff = Number(req.body.electricityTariffPerKwh);
+        if (!Number.isFinite(tariff) || tariff <= 0) {
+          return void res.status(400).json({ error: "تعريفة الكهرباء لكل kWh يجب أن تكون موجبة" });
+        }
+        electricityTariffPerKwh = String(tariff);
+      }
+    }
     for (const key of keys) {
       const raw = req.body?.[key];
       if (raw === undefined) {
@@ -608,11 +639,13 @@ router.put("/setup/accounting", edit, async (req, res) => {
     const [row] = await db.insert(manufacturingSettingsTable).values({
       companyId: cid,
       ...values,
+      electricityTariffPerKwh,
       updatedAt: new Date(),
     }).onConflictDoUpdate({
       target: manufacturingSettingsTable.companyId,
       set: {
         ...values,
+        electricityTariffPerKwh,
         updatedAt: new Date(),
       },
     }).returning();
@@ -644,6 +677,7 @@ router.get("/orders", view, async (req, res) => {
       wasteQty: productionOrdersTable.wasteQty,
       estimatedCost: productionOrdersTable.estimatedCost,
       actualCost: productionOrdersTable.actualCost,
+      resourceCostingVersion: productionOrdersTable.resourceCostingVersion,
       productItemId: productionOrdersTable.productItemId,
       plannedStartDate: productionOrdersTable.plannedStartDate,
       plannedEndDate: productionOrdersTable.plannedEndDate,
@@ -1112,6 +1146,10 @@ async function normalizeSetupBom(cid: number, body: any) {
 }
 
 async function normalizeSetupRouting(cid: number, body: any) {
+  // Resource costing is separately versioned and currently server-gated. Do
+  // not make a legacy routing (including the historic compact `stage` string)
+  // invalid merely because it has no resource configuration.
+  const resourceCostingV1 = Number(body?.resourceCostingVersion) === 1;
   const productItemId = Number(body?.productItemId);
   const stages = Array.isArray(body?.stages)
     ? body.stages
@@ -1140,6 +1178,16 @@ async function normalizeSetupRouting(cid: number, body: any) {
       ? null : Number(x.workCenterId);
     const rawAccountId = x.expectedCostAccountId == null || x.expectedCostAccountId === ""
       ? null : Number(x.expectedCostAccountId);
+    const requestedResourceMode = x.resourceMode == null || x.resourceMode === ""
+      ? "labor" : String(x.resourceMode);
+    const resourceMode = !resourceCostingV1 &&
+      !["labor", "machine", "both"].includes(requestedResourceMode)
+      ? "labor"
+      : requestedResourceMode;
+    const resourceId = x.resourceId == null || x.resourceId === ""
+      ? null : Number(x.resourceId);
+    const workerCount = x.workerCount == null || x.workerCount === ""
+      ? null : Number(x.workerCount);
     return {
       code: String(x.code || `S${i + 1}`).trim(),
       nameAr: String(x.nameAr || `مرحلة ${i + 1}`).trim(),
@@ -1151,6 +1199,9 @@ async function normalizeSetupRouting(cid: number, body: any) {
       expectedCost: x.expectedCost == null || x.expectedCost === "" ? 0 : Number(x.expectedCost),
       expectedCostAccountId: rawAccountId,
       workCenterId: rawWorkCenterId,
+      resourceMode,
+      resourceId,
+      workerCount,
       notes: x.notes ? String(x.notes) : null,
       icon: x.icon ? String(x.icon) : null,
       color: x.color ? String(x.color) : null,
@@ -1162,6 +1213,11 @@ async function normalizeSetupRouting(cid: number, body: any) {
       (!Number.isFinite(x.expectedDurationMinutes) || x.expectedDurationMinutes <= 0)) ||
     (x.workCenterId !== null &&
       (!Number.isInteger(x.workCenterId) || x.workCenterId <= 0)) ||
+    (resourceCostingV1 && !["labor", "machine", "both"].includes(x.resourceMode)) ||
+    (resourceCostingV1 && (x.resourceMode === "machine" || x.resourceMode === "both") &&
+      (x.resourceId === null || !Number.isInteger(x.resourceId) || x.resourceId <= 0)) ||
+    (x.workerCount !== null &&
+      (!Number.isInteger(x.workerCount) || x.workerCount <= 0)) ||
     (x.expectedCostAccountId !== null &&
       (!Number.isInteger(x.expectedCostAccountId) || x.expectedCostAccountId <= 0)) ||
     !Number.isFinite(x.expectedWasteRatio) || x.expectedWasteRatio < 0 ||
@@ -1183,6 +1239,23 @@ async function normalizeSetupRouting(cid: number, body: any) {
       ));
     if (permittedWorkCenters.length !== workCenterIds.length) {
       throw setupError("أحد مراكز العمل غير موجود في هذه الشركة");
+    }
+  }
+  const resourceIds: number[] = [...new Set<number>(
+    normalizedStages
+      .map((stage: any) => stage.resourceId)
+      .filter((id: number | null): id is number => id !== null),
+  )];
+  if (resourceIds.length) {
+    const permittedResources = await db.select({ id: productionResourcesTable.id })
+      .from(productionResourcesTable)
+      .where(and(
+        eq(productionResourcesTable.companyId, cid),
+        inArray(productionResourcesTable.id, resourceIds),
+        eq(productionResourcesTable.type, "machine"),
+      ));
+    if (permittedResources.length !== resourceIds.length) {
+      throw setupError("إحدى آلات المرحلة غير موجودة في هذه الشركة");
     }
   }
   const accountIds: number[] = [...new Set<number>(
@@ -1314,6 +1387,7 @@ router.post("/setup/routing", edit, async (req, res) => {
   }
   try {
     await validateSetupBranch(req, cid, req.body?.branchId);
+    const normalizedResourceStages = (await normalizeSetupRouting(cid, req.body)).normalizedStages;
     const [product] = await db.select({ id: itemsTable.id }).from(itemsTable)
       .where(and(
         eq(itemsTable.id, productItemId),
@@ -1321,27 +1395,7 @@ router.post("/setup/routing", edit, async (req, res) => {
         eq(itemsTable.status, "active"),
       )).limit(1);
     if (!product) return void res.status(400).json({ error: "المنتج النهائي غير موجود" });
-    const normalizedStages = stages.map((rawStage: any, i: number) => {
-      const x = typeof rawStage === "string" ? { nameAr: rawStage } : (rawStage ?? {});
-      const rawDuration = x.expectedDurationMinutes == null || x.expectedDurationMinutes === ""
-        ? x.plannedMinutes
-        : x.expectedDurationMinutes;
-      const rawWorkCenterId = x.workCenterId == null || x.workCenterId === ""
-        ? null
-        : Number(x.workCenterId);
-      return {
-        code: String(x.code || `S${i + 1}`).trim(),
-        nameAr: String(x.nameAr || `مرحلة ${i + 1}`).trim(),
-        nameEn: x.nameEn ? String(x.nameEn).trim() : null,
-        expectedDurationMinutes: rawDuration == null || rawDuration === ""
-          ? null : Number(rawDuration),
-        expectedWasteRatio: x.expectedWasteRatio == null || x.expectedWasteRatio === ""
-          ? 0 : Number(x.expectedWasteRatio),
-        expectedCost: x.expectedCost == null || x.expectedCost === "" ? 0 : Number(x.expectedCost),
-        workCenterId: rawWorkCenterId,
-        notes: x.notes ? String(x.notes) : null,
-      };
-    });
+    const normalizedStages = normalizedResourceStages;
     if (normalizedStages.some((x: any) =>
       !x.code || !x.nameAr ||
       (x.expectedDurationMinutes !== null &&
@@ -1381,6 +1435,9 @@ router.post("/setup/routing", edit, async (req, res) => {
       nameAr: x.nameAr,
       nameEn: x.nameEn,
       workCenterId: x.workCenterId,
+        resourceMode: x.resourceMode,
+        resourceId: x.resourceId,
+        workerCount: x.workerCount,
       expectedDurationMinutes: x.expectedDurationMinutes,
       expectedWasteRatio: String(x.expectedWasteRatio),
       expectedCost: String(x.expectedCost),
@@ -1437,6 +1494,9 @@ router.patch("/setup/routing/:id", edit, async (req, res) => {
         nameAr: x.nameAr,
         nameEn: x.nameEn,
         workCenterId: x.workCenterId,
+        resourceMode: x.resourceMode,
+        resourceId: x.resourceId,
+        workerCount: x.workerCount,
         expectedDurationMinutes: x.expectedDurationMinutes,
         expectedWasteRatio: String(x.expectedWasteRatio),
         expectedCost: String(x.expectedCost),
@@ -1528,6 +1588,7 @@ const simpleReportHandler = async (req: any, res: any) => {
       producedQty: productionOrdersTable.producedQty,
       estimatedCost: productionOrdersTable.estimatedCost,
       actualCost: productionOrdersTable.actualCost,
+      resourceCostingVersion: productionOrdersTable.resourceCostingVersion,
       productItemId: productionOrdersTable.productItemId,
       productName: itemsTable.nameAr,
       createdAt: productionOrdersTable.createdAt,

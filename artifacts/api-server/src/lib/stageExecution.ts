@@ -11,6 +11,7 @@ export type StageExecutionPayload = {
   wasteUnitFactor?: number;
   actualDurationMinutes?: number;
   workerCount?: number | null;
+  resourceMode?: "labor" | "machine" | "both";
   operatorUserId?: number | null;
   resourceId?: number | null;
   workCenterId?: number | null;
@@ -171,6 +172,15 @@ export function normalizeStageExecutionPayload(
       );
     }
   }
+  // HR currently publishes only approved aggregate payroll sources to
+  // manufacturing. Accepting an employee/hourly-rate payload here would create
+  // a parallel HR costing path and expose protected HR records.
+  if ("workerEmployeeId" in body || "laborHourlyRate" in body) {
+    throw Object.assign(
+      new Error("لا يدعم المصدر الحالي تسعير موظف بالساعة؛ استخدم مصدر الرواتب المرحّل"),
+      { status: 422 },
+    );
+  }
   const result: StageExecutionPayload = {};
   if ("inputQty" in body) result.inputQty = nonNegative(body.inputQty, "كمية الإدخال");
   if ("outputQty" in body) result.outputQty = nonNegative(body.outputQty, "كمية الإخراج");
@@ -211,6 +221,13 @@ export function normalizeStageExecutionPayload(
   }
   if ("workerCount" in body) {
     result.workerCount = optionalNonNegativeInteger(body.workerCount, "عدد العمال");
+  }
+  if ("resourceMode" in body) {
+    const mode = String(body.resourceMode);
+    if (!["labor", "machine", "both"].includes(mode)) {
+      throw Object.assign(new Error("نوع مورد المرحلة يجب أن يكون labor أو machine أو both"), { status: 400 });
+    }
+    result.resourceMode = mode as "labor" | "machine" | "both";
   }
   if ("operatorUserId" in body || "workerUserId" in body) {
     result.operatorUserId = optionalId(

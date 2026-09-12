@@ -14,6 +14,7 @@ import {
   productionResourcesTable,
   productionEventsTable,
   productionCostAllocationsTable,
+  productionStageResourceCostsTable,
   productionDriverReconciliationsTable,
   productionOverheadClosuresTable,
   productionCommercialAccrualsTable,
@@ -403,6 +404,12 @@ async function validateItem(cid: number, id: number | null | undefined) {
 }
 
 const router = Router();
+// Resource costing remains deliberately unavailable until electricity has a
+// source-backed settlement lifecycle (posted utility source -> WIP estimate
+// settlement -> exact reversal). A tariff plus an accrual account alone would
+// create a second expense path and violate source ownership.
+export const RESOURCE_COSTING_NOT_READY_REASON =
+  "تكلفة الموارد غير مفعلة: تسوية كهرباء الآلة مع مصدر الفاتورة المرحّل غير مكتملة بعد";
 // Lifecycle actions are also exposed by the compact manufacturing facade.
 // This narrow router is mounted by both facades; it must never include the
 // rest of the advanced production routes.
@@ -1250,6 +1257,16 @@ router.get("/resources", async (req, res) => {
   }
 });
 
+router.get("/resource-costing-readiness", async (req, res) => {
+  const cid = guard(req, res);
+  if (!cid) return;
+  res.json({
+    ready: false,
+    code: "RESOURCE_COSTING_ELECTRICITY_SETTLEMENT_UNAVAILABLE",
+    reason: RESOURCE_COSTING_NOT_READY_REASON,
+  });
+});
+
 router.post("/resources", async (req, res) => {
   try {
     const cid = guard(req, res);
@@ -1625,11 +1642,15 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
     )).limit(1);
     if (!order || !rowInScope(req, order.branchId))
       return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
-    const [lines, stages, allocations, waste, checks, product] = await Promise.all([
+    const [lines, stages, allocations, resourceCosts, waste, checks, product] = await Promise.all([
       db.select().from(productionOrderItemsTable).where(eq(productionOrderItemsTable.orderId, id)),
       db.select().from(productionOrderStagesTable).where(eq(productionOrderStagesTable.orderId, id)),
       db.select().from(productionCostAllocationsTable).where(and(
         eq(productionCostAllocationsTable.companyId, cid), eq(productionCostAllocationsTable.orderId, id))),
+      db.select().from(productionStageResourceCostsTable).where(and(
+        eq(productionStageResourceCostsTable.companyId, cid),
+        eq(productionStageResourceCostsTable.orderId, id),
+      )),
       db.select().from(productionWasteRecordsTable).where(and(
         eq(productionWasteRecordsTable.companyId, cid), eq(productionWasteRecordsTable.orderId, id))),
       db.select().from(productionQualityChecksTable).where(and(
@@ -1652,6 +1673,16 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
       ? material + num(order.laborCost) + num(order.overheadCost)
       : num(order.actualCost);
     const standard = order.estimatedCost == null ? 0 : num(order.estimatedCost);
+    const resourceTotals = resourceCosts.reduce((totals, row) => {
+      const component = String(row.component);
+      const amount = num(row.amount);
+      if (component === "labor") totals.labor += amount;
+      else if (component === "depreciation") totals.depreciation += amount;
+      else if (component === "electricity") totals.electricity += amount;
+      else if (component === "factory_overhead") totals.factoryOverhead += amount;
+      totals.total += amount;
+      return totals;
+    }, { labor: 0, depreciation: 0, electricity: 0, factoryOverhead: 0, total: 0 });
     const produced = num(order.producedQty) > 0 ? num(order.producedQty) : num(order.plannedQty);
     const salePriceSnapshot = (order.meta as any)?.salePriceSnapshot;
     const snapshotUnitSalePrice = salePriceSnapshot == null ? null : num(salePriceSnapshot);
@@ -1682,6 +1713,31 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
           x.sourceType === "payroll" && (x.snapshotMeta as any)?.includeInManufacturing !== false) },
         overhead: { amount: num(order.overheadCost), source: allocations.filter((x) =>
           x.sourceType !== "payroll" && (x.snapshotMeta as any)?.includeInManufacturing !== false) },
+        resourceCosts: {
+          version: Number(order.resourceCostingVersion),
+          totals: resourceTotals,
+          stages: stages.map((stage) => {
+            const components = resourceCosts.filter((row) => row.stageId === stage.id);
+            const amounts = Object.fromEntries(components.map((row) => [row.component, num(row.amount)]));
+            return {
+              stageId: stage.id,
+              durationMinutes: stage.actualDurationMinutes,
+              resourceMode: stage.resourceMode,
+              // Payroll is allocated at order/source level. A per-stage labor
+              // amount is explicitly unavailable until HR publishes an
+              // approved hourly source; never display a made-up zero.
+              labor: amounts.labor ?? null,
+              depreciation: amounts.depreciation ?? 0,
+              electricity: amounts.electricity ?? 0,
+              factoryOverhead: amounts.factory_overhead ?? null,
+              total: components.reduce((sum, row) => sum + num(row.amount), 0),
+              snapshot: components.map((row) => ({
+                component: row.component, sourceType: row.sourceType,
+                sourceRecordId: row.sourceRecordId, snapshot: row.snapshot,
+              })),
+            };
+          }),
+        },
         analyticalSources: analytical,
         stages: stages.map((x) => {
           const quantityUnitFactor = canonicalStageUnitFactor(
@@ -1934,7 +1990,7 @@ function lifecycleModuleKey(): "production" | "simple_manufacturing" {
     : "production";
 }
 
-function executionAction(req: any): "view" | "edit" | "delete" {
+function executionAction(req: any): "view" | "create" | "edit" | "delete" {
   if (req.method === "GET") return "view";
   // The shared execution router is mounted by both the advanced and compact
   // facades. Setup creates must use the facade's create grant, rather than
@@ -5112,6 +5168,18 @@ export async function productionWizardHandler(req: any, res: any) {
   try {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body ?? {};
+    const resourceCostingVersion = b.resourceCostingVersion == null || b.resourceCostingVersion === ""
+      ? 0 : Number(b.resourceCostingVersion);
+    if (![0, 1].includes(resourceCostingVersion)) {
+      res.status(400).json({ error: "إصدار تكلفة الموارد يجب أن يكون 1 عند تفعيله" }); return;
+    }
+    if (resourceCostingVersion === 1) {
+      res.status(422).json({
+        code: "RESOURCE_COSTING_ELECTRICITY_SETTLEMENT_UNAVAILABLE",
+        error: RESOURCE_COSTING_NOT_READY_REASON,
+      });
+      return;
+    }
     if (!wizardRequestId) { res.status(400).json({ error: "مفتاح الطلب مطلوب لإتاحة إعادة المحاولة الآمنة" }); return; }
     const [previous] = await db.select().from(productionOrdersTable).where(and(
       eq(productionOrdersTable.companyId, cid), eq(productionOrdersTable.wizardRequestId, wizardRequestId),
@@ -5185,6 +5253,9 @@ export async function productionWizardHandler(req: any, res: any) {
     const [mfg] = await db.select().from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
     const plannedHours = num(b.plannedHours);
+    const plannedLaborPersonHours = resourceCostingVersion >= 1
+      ? num(b.plannedLaborPersonHours)
+      : plannedHours;
     const period = String(b.costPeriod || String(b.plannedStartDate || "").slice(0, 7));
     const requested: any[] = Array.isArray(b.allocations) ? b.allocations : [];
     let costConfiguration: ManufacturingCostConfiguration;
@@ -5270,22 +5341,56 @@ export async function productionWizardHandler(req: any, res: any) {
         const method = String(source.meta.allocationMethod ?? source.basis);
         let amount = 0;
         let denominator = 0;
-        if (source.sourceType === "payroll" ||
+        let formulaMethod: "operating_hours" | "production_quantity" | "fixed_hourly_rate" = "operating_hours";
+        if (source.sourceType === "purchase_invoice" &&
+            ["machine_hours", "labor_hours", "production_quantity"].includes(method)) {
+          // An industrial invoice is the actual expense source. Its tagged
+          // driver is mapped onto the existing immutable allocation formula;
+          // percentage/direct_cost lack an approved denominator here and are
+          // intentionally rejected rather than guessed.
+          const industrialNumerator = method === "production_quantity"
+            ? plannedQty
+            : method === "labor_hours"
+              ? plannedLaborPersonHours
+              : plannedHours;
+          denominator = num((source.meta as any).approvedAllocationDriverTotal);
+          if (!(industrialNumerator > 0 && denominator > 0)) {
+            throw Object.assign(
+              new Error(`مصدر ${source.label} يحتاج إجمالي محرك توزيع معتمداً للفترة`),
+              { status: 400 },
+            );
+          }
+          formulaMethod = method === "production_quantity"
+            ? "production_quantity"
+            : "operating_hours";
+          amount = calculateFormulaAllocation(
+            formulaMethod,
+            source.sourceAmount,
+            industrialNumerator,
+            denominator,
+          );
+        } else if (source.sourceType === "payroll" ||
             (source.sourceType === "fixed_asset_depreciation" && method === "operating_hours")) {
           denominator = num(source.meta.approvedManufacturingHours ?? source.meta.approvedOperatingHours);
-          if (!(plannedHours > 0 && denominator > 0))
+          const numerator = source.sourceType === "payroll"
+            ? plannedLaborPersonHours
+            : plannedHours;
+          if (!(numerator > 0 && denominator > 0))
             throw Object.assign(new Error(`ساعات الأمر والساعات المعتمدة مطلوبة لتوزيع ${source.label}`), { status: 400 });
-          amount = calculateFormulaAllocation("operating_hours", source.sourceAmount, plannedHours, denominator);
+          formulaMethod = "operating_hours";
+          amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, numerator, denominator);
         } else if (source.sourceType === "fixed_asset_depreciation" && method === "fixed_hourly_rate") {
           denominator = num(source.meta.fixedManufacturingRate);
           if (!(plannedHours > 0 && denominator > 0))
             throw Object.assign(new Error(`ساعات الأمر ومعدل الساعة مطلوبان لتوزيع ${source.label}`), { status: 400 });
-          amount = calculateFormulaAllocation("fixed_hourly_rate", source.sourceAmount, plannedHours, denominator);
+          formulaMethod = "fixed_hourly_rate";
+          amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, plannedHours, denominator);
         } else if (source.sourceType === "prepaid_amortization") {
           denominator = num(source.meta.approvedProductionQuantity);
           if (!(plannedQty > 0 && denominator > 0))
             throw Object.assign(new Error(`كمية الأمر والكمية الشهرية المعتمدة مطلوبتان لتوزيع ${source.label}`), { status: 400 });
-          amount = calculateFormulaAllocation("production_quantity", source.sourceAmount, plannedQty, denominator);
+          formulaMethod = "production_quantity";
+          amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, plannedQty, denominator);
         } else {
           throw Object.assign(new Error(`طريقة توزيع غير مدعومة للمصدر: ${source.label}`), { status: 400 });
         }
@@ -5345,8 +5450,17 @@ export async function productionWizardHandler(req: any, res: any) {
           sourceAmount: String(source.sourceAmount.toFixed(2)), sharePct: String(sharePct),
           allocatedAmount: String(amount.toFixed(2)), snapshotMeta: { ...source.meta, label: source.label,
             costTreatment: treatment, includeInManufacturing,
-            formulaMethod: method,
-            formulaNumerator: source.sourceType === "prepaid_amortization" ? plannedQty : plannedHours,
+            formulaMethod,
+            industrialDriver: source.sourceType === "purchase_invoice" ? method : undefined,
+            formulaNumerator: source.sourceType === "prepaid_amortization"
+              ? plannedQty
+              : source.sourceType === "payroll"
+                ? plannedLaborPersonHours
+                : source.sourceType === "purchase_invoice" && method === "production_quantity"
+                  ? plannedQty
+                  : source.sourceType === "purchase_invoice" && method === "labor_hours"
+                    ? plannedLaborPersonHours
+                : plannedHours,
             formulaDenominator: denominator },
           createdBy: req.authUser!.id });
       }
@@ -5437,6 +5551,7 @@ export async function productionWizardHandler(req: any, res: any) {
       const [order] = await tx.insert(productionOrdersTable).values({
         companyId: cid, branchId, orderNumber, wizardRequestId, title: String(b.title).trim(), status: "draft",
         plannedQty: String(plannedQty), productItemId, unitCode: b.unitCode || tmpl.outputUnitCode || "PCE",
+        resourceCostingVersion,
         plannedStartDate: b.plannedStartDate || null, plannedEndDate: b.plannedEndDate || null,
         rawWarehouseId, finishedWarehouseId, workCenterId: wc?.id ?? null,
         plannedHours: String(plannedHours), laborCost: String(laborCost.toFixed(2)),
@@ -5450,7 +5565,8 @@ export async function productionWizardHandler(req: any, res: any) {
         varianceAccountId: await validateAccount(cid, mfg?.defaultVarianceAccountId ?? null),
         wasteAccountId: await validateExpenseAccount(cid, mfg?.defaultWasteAccountId ?? null),
         notes: b.notes || null,
-        meta: { wizardVersion: 1, wizardRequestHash: requestHash, costPeriod: period,
+         meta: { wizardVersion: 1, resourceCostingVersion, plannedLaborPersonHours,
+           wizardRequestHash: requestHash, costPeriod: period,
            costPolicy: sanitizeCostPolicy(b.costPolicy),
            costConfiguration: explicitCostConfiguration
              ? costConfiguration
@@ -5476,6 +5592,7 @@ export async function productionWizardHandler(req: any, res: any) {
       if (stages.length) await tx.insert(productionOrderStagesTable).values(stages.map((s: any, i: number) => ({
         orderId: order.id, sequence: s.sequence, code: s.code, nameAr: s.nameAr, nameEn: s.nameEn,
         workCenterId: s.workCenterId, expectedWasteRatio: s.expectedWasteRatio,
+        resourceMode: s.resourceMode, resourceId: s.resourceId, workerCount: s.workerCount,
         expectedDurationMinutes: s.expectedDurationMinutes, expectedCost: s.expectedCost,
         expectedCostAccountId: s.expectedCostAccountId, icon: s.icon, color: s.color,
         inputQty: i === 0 ? String(plannedQty) : "0", fromRoutingId: routing.id,
@@ -6072,11 +6189,21 @@ async function reconcileFinalStageDrivers(
   const stages = await tx.select({
     status: productionOrderStagesTable.status,
     actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
+    workerCount: productionOrderStagesTable.workerCount,
+    resourceMode: productionOrderStagesTable.resourceMode,
   }).from(productionOrderStagesTable).where(eq(productionOrderStagesTable.orderId, order.id));
-  if (!stages.length || stages.some((stage) => !["done", "skipped"].includes(stage.status))) {
+  if (!stages.length || stages.some((stage: any) => !["done", "skipped"].includes(stage.status))) {
     return 0;
   }
-  const actualHours = stages.reduce((n, s) => n + num(s.actualDurationMinutes) / 60, 0);
+  const actualHours = stages.reduce((n: number, s: any) => n + num(s.actualDurationMinutes) / 60, 0);
+  const actualLaborPersonHours = Number(order.resourceCostingVersion) >= 1
+    ? stages.reduce((n: number, s: any) => {
+      const mode = String(s.resourceMode ?? "labor");
+      return n + (mode === "labor" || mode === "both"
+        ? num(s.actualDurationMinutes) / 60 * num(s.workerCount)
+        : 0);
+    }, 0)
+    : actualHours;
   const allocations = await tx.select().from(productionCostAllocationsTable).where(and(
     eq(productionCostAllocationsTable.companyId, cid),
     eq(productionCostAllocationsTable.orderId, order.id),
@@ -6085,7 +6212,7 @@ async function reconcileFinalStageDrivers(
     eq(productionDriverReconciliationsTable.companyId, cid),
     eq(productionDriverReconciliationsTable.orderId, order.id),
   ));
-  const existingKeys = new Set(existing.map((r) => `${r.sourceType}:${r.sourceRecordId}`));
+  const existingKeys = new Set(existing.map((r: any) => `${r.sourceType}:${r.sourceRecordId}`));
   const rows: any[] = [];
   for (const allocation of allocations) {
     const key = `${allocation.sourceType}:${allocation.sourceRecordId}`;
@@ -6097,7 +6224,13 @@ async function reconcileFinalStageDrivers(
     // rewriting any historical allocation or approved conversion factors.
     const planned = num(meta.formulaNumerator ?? meta.numerator);
     const denominator = num(meta.formulaDenominator ?? meta.denominatorOrRate);
-    const actual = method === "production_quantity" ? producedQty : actualHours;
+    const actual = method === "production_quantity"
+      ? producedQty
+      : (allocation.sourceType === "payroll" ||
+          meta.industrialDriver === "labor_hours") &&
+          Number(order.resourceCostingVersion) >= 1
+        ? actualLaborPersonHours
+        : actualHours;
     if (!(actual >= 0) || !(denominator > 0)) continue;
     const target = actual === 0 ? 0 : calculateFormulaAllocation(
       method as "operating_hours" | "fixed_hourly_rate" | "production_quantity",
@@ -6128,7 +6261,8 @@ async function reconcileFinalStageDrivers(
         )),
     ]);
     assertAllocationCapacity(num(row.allocation.sourceAmount),
-      base.reduce((n, x) => n + num(x.amount), 0) + deltas.reduce((n, x) => n + num(x.amount), 0),
+      base.reduce((n: number, x: any) => n + num(x.amount), 0) +
+      deltas.reduce((n: number, x: any) => n + num(x.amount), 0),
       row.delta);
   }
   const lines: JLine[] = [];
@@ -8762,11 +8896,30 @@ async function validateStageExecutionReferences(
   execution: ReturnType<typeof normalizeStageExecutionPayload>,
   req?: any,
   orderBranchId?: number | null,
+  resourceCostingVersion = 0,
   existingStage?: {
     workCenterId: number | null;
     resourceId: number | null;
+    resourceMode?: string | null;
+    workerCount?: number | null;
   } | null,
 ) {
+  const effectiveResourceMode = execution.resourceMode !== undefined
+    ? execution.resourceMode
+    : existingStage?.resourceMode ?? "labor";
+  const effectiveWorkerCount = execution.workerCount !== undefined
+    ? execution.workerCount
+    : existingStage?.workerCount ?? null;
+  if (!["labor", "machine", "both"].includes(effectiveResourceMode)) {
+    throw Object.assign(new Error("نوع مورد المرحلة غير صحيح"), { status: 400 });
+  }
+  if (resourceCostingVersion >= 1 && ["labor", "both"].includes(effectiveResourceMode) &&
+      (!Number.isInteger(effectiveWorkerCount) || effectiveWorkerCount! <= 0)) {
+    throw Object.assign(
+      new Error("مرحلة العمالة تحتاج عدد عمال موجباً"),
+      { status: 400 },
+    );
+  }
   if (execution.operatorUserId) {
     const [worker] = await db.select({ id: usersTable.id }).from(usersTable)
       .where(and(
@@ -8786,6 +8939,10 @@ async function validateStageExecutionReferences(
   const effectiveResourceId = execution.resourceId !== undefined
     ? execution.resourceId
     : existingStage?.resourceId ?? null;
+  if (resourceCostingVersion >= 1 && ["machine", "both"].includes(effectiveResourceMode) &&
+      (!Number.isInteger(effectiveResourceId) || effectiveResourceId! <= 0)) {
+    throw Object.assign(new Error("مرحلة الآلة تحتاج آلة مرتبطة"), { status: 400 });
+  }
   if (effectiveWorkCenterId != null) {
     const [workCenter] = await db.select({ id: workCentersTable.id })
       .from(workCentersTable)
@@ -8803,12 +8960,14 @@ async function validateStageExecutionReferences(
       id: productionResourcesTable.id,
       branchId: productionResourcesTable.branchId,
       meta: productionResourcesTable.meta,
+      type: productionResourcesTable.type,
     }).from(productionResourcesTable)
       .where(and(
         eq(productionResourcesTable.id, effectiveResourceId),
         eq(productionResourcesTable.companyId, cid),
       )).limit(1);
-    if (!machine || (req && !rowInScope(req, machine.branchId)) ||
+    if (!machine || machine.type !== "machine" ||
+        (req && !rowInScope(req, machine.branchId)) ||
         (machine?.branchId != null && machine.branchId !== orderBranchId)) {
       throw Object.assign(
         new Error("الآلة المحددة لا تنتمي إلى نطاق فرع أمر الإنتاج"),
@@ -8908,6 +9067,190 @@ function stageApiRow<T extends Record<string, any>>(stage: T): T {
   };
 }
 
+/**
+ * Freeze resource-calculation evidence exactly once when a v1 stage completes.
+ * These rows are analytical evidence, not a second payroll/depreciation/
+ * electricity journal: source modules and the existing source-allocation +
+ * driver-reconciliation/period-close flow remain the sole posting path.
+ */
+async function freezeStageResourceCosts(
+  tx: any,
+  cid: number,
+  order: any,
+  stage: any,
+  actorId: number,
+) {
+  if (Number(order.resourceCostingVersion) < 1) return;
+  const mode = String(stage.resourceMode ?? "labor");
+  if (!["labor", "machine", "both"].includes(mode)) {
+    throw Object.assign(new Error("نوع مورد المرحلة غير صحيح"), { status: 400 });
+  }
+  const hours = num(stage.actualDurationMinutes) / 60;
+  const rows: any[] = [];
+
+  // Payroll remains owned by HR. In v1 the existing posted payroll source
+  // explicitly declares approvedManufacturingHours as person-hours, so stage
+  // duration × workerCount is a valid actual driver rather than a multiplier
+  // silently applied to legacy allocations.
+  if (mode === "labor" || mode === "both") {
+    const payrollSources = await tx.select({
+      id: productionCostAllocationsTable.id,
+      sourceRecordId: productionCostAllocationsTable.sourceRecordId,
+      sourceAmount: productionCostAllocationsTable.sourceAmount,
+      allocatedAmount: productionCostAllocationsTable.allocatedAmount,
+      snapshotMeta: productionCostAllocationsTable.snapshotMeta,
+    }).from(productionCostAllocationsTable).where(and(
+      eq(productionCostAllocationsTable.companyId, cid),
+      eq(productionCostAllocationsTable.orderId, order.id),
+      eq(productionCostAllocationsTable.sourceType, "payroll"),
+      sql`${productionCostAllocationsTable.snapshotMeta}->>'includeInManufacturing' IS DISTINCT FROM 'false'`,
+    ));
+    if (payrollSources.length !== 1) {
+      throw Object.assign(
+        new Error("تكلفة عمالة الموارد تتطلب مصدر رواتب واحداً مرحّلاً ومختاراً للأمر"),
+        { status: 422 },
+      );
+    }
+    const payroll = payrollSources[0];
+    const approvedPersonHours = num(
+      (payroll.snapshotMeta as Record<string, unknown>)?.approvedManufacturingHours ??
+      (payroll.snapshotMeta as Record<string, unknown>)?.formulaDenominator,
+    );
+    const workers = Number(stage.workerCount);
+    if (!Number.isInteger(workers) || workers <= 0 || !(approvedPersonHours > 0)) {
+      throw Object.assign(
+        new Error("مصدر الرواتب لا يملك ساعات تصنيع معتمدة أو أن عدد العمال غير صحيح"),
+        { status: 422 },
+      );
+    }
+    const personHours = hours * workers;
+    const hourlyRate = num(payroll.sourceAmount) / approvedPersonHours;
+    rows.push({
+      companyId: cid, orderId: order.id, stageId: stage.id, component: "labor",
+      sourceType: "payroll", sourceRecordId: payroll.sourceRecordId,
+      amount: String(Number((personHours * hourlyRate).toFixed(2))),
+      snapshot: {
+        sourceAllocationId: payroll.id,
+        sourceAmount: num(payroll.sourceAmount),
+        approvedPersonHours,
+        stageHours: hours,
+        workerCount: workers,
+        personHours,
+        hourlyRate,
+        driver: "actual_duration_hours_times_worker_count",
+      },
+      createdBy: actorId,
+    });
+  }
+
+  if (mode === "machine" || mode === "both") {
+    const [machine] = await tx.select({
+      id: productionResourcesTable.id,
+      fixedAssetId: productionResourcesTable.fixedAssetId,
+      meta: productionResourcesTable.meta,
+      electricityEnabled: productionResourcesTable.electricityEnabled,
+      electricityKw: productionResourcesTable.electricityKw,
+    }).from(productionResourcesTable).where(and(
+      eq(productionResourcesTable.id, Number(stage.resourceId)),
+      eq(productionResourcesTable.companyId, cid),
+      eq(productionResourcesTable.type, "machine"),
+    )).limit(1);
+    if (!machine) throw Object.assign(new Error("آلة المرحلة غير صالحة للتكلفة"), { status: 422 });
+    const fixedAssetId = machine.fixedAssetId ??
+      resourceRelationshipId(machine.meta, "fixedAssetId");
+    if (!fixedAssetId) {
+      throw Object.assign(new Error("آلة المرحلة غير مرتبطة بأصل ثابت؛ لا يمكن احتساب الإهلاك"), { status: 422 });
+    }
+    const period = String((order.meta as any)?.costPeriod ??
+      new Date().toISOString().slice(0, 7));
+    const [year, month] = period.split("-").map(Number);
+    if (!Number.isInteger(year) || !Number.isInteger(month)) {
+      throw Object.assign(new Error("فترة تكلفة الأمر غير صالحة"), { status: 422 });
+    }
+    const [depreciation] = await tx.select({
+      id: faDepreciationRunsTable.id,
+      amount: faDepreciationRunsTable.depreciationAmount,
+      approvedHours: fixedAssetsTable.approvedOperatingHours,
+      method: fixedAssetsTable.manufacturingAllocationMethod,
+      fixedRate: fixedAssetsTable.fixedManufacturingRate,
+    }).from(faDepreciationRunsTable)
+      .innerJoin(fixedAssetsTable, and(
+        eq(fixedAssetsTable.id, faDepreciationRunsTable.assetId),
+        eq(fixedAssetsTable.companyId, cid),
+      ))
+      .innerJoin(journalEntriesTable, and(
+        eq(journalEntriesTable.id, faDepreciationRunsTable.journalEntryId),
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "posted"),
+      ))
+      .where(and(
+        eq(faDepreciationRunsTable.companyId, cid),
+        eq(faDepreciationRunsTable.assetId, fixedAssetId),
+        eq(faDepreciationRunsTable.periodYear, year),
+        eq(faDepreciationRunsTable.periodMonth, month),
+        eq(faDepreciationRunsTable.status, "posted"),
+        eq(fixedAssetsTable.usedInManufacturing, true),
+      )).limit(1);
+    if (!depreciation) {
+      throw Object.assign(new Error("لا يوجد إهلاك أصل مرحّل ومؤهل لفترة تكلفة المرحلة"), { status: 422 });
+    }
+    const [sourceAllocation] = await tx.select({
+      id: productionCostAllocationsTable.id,
+      sourceAmount: productionCostAllocationsTable.sourceAmount,
+    }).from(productionCostAllocationsTable).where(and(
+      eq(productionCostAllocationsTable.companyId, cid),
+      eq(productionCostAllocationsTable.orderId, order.id),
+      eq(productionCostAllocationsTable.sourceType, "fixed_asset_depreciation"),
+      eq(productionCostAllocationsTable.sourceRecordId, depreciation.id),
+    )).limit(1);
+    if (!sourceAllocation) {
+      throw Object.assign(
+        new Error("إهلاك الآلة يحتاج ربط مصدر الإهلاك المرحّل في تكاليف أمر التصنيع أولاً"),
+        { status: 422 },
+      );
+    }
+    const method = String(depreciation.method);
+    const rate = method === "fixed_hourly_rate"
+      ? num(depreciation.fixedRate)
+      : num(depreciation.amount) / num(depreciation.approvedHours);
+    if (!(rate > 0)) {
+      throw Object.assign(new Error("معدل إهلاك الأصل التشغيلي غير معتمد"), { status: 422 });
+    }
+    rows.push({
+      companyId: cid, orderId: order.id, stageId: stage.id, component: "depreciation",
+      sourceType: "fixed_asset_depreciation", sourceRecordId: depreciation.id,
+      amount: String(Number((hours * rate).toFixed(2))),
+      snapshot: {
+        hours, fixedAssetId, depreciationRunId: depreciation.id, method,
+        hourlyRate: rate, sourceAllocationId: sourceAllocation.id,
+        sourceAmount: num(sourceAllocation.sourceAmount),
+      },
+      createdBy: actorId,
+    });
+
+    if (machine.electricityEnabled) {
+      const [settings] = await tx.select({
+        tariff: manufacturingSettingsTable.electricityTariffPerKwh,
+      }).from(manufacturingSettingsTable)
+        .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
+      const kw = num(machine.electricityKw);
+      const tariff = num(settings?.tariff);
+      if (!(kw > 0) || !(tariff > 0)) {
+        throw Object.assign(new Error("كهرباء الآلة مفعلة لكن قدرة kW أو تعريفة kWh غير معتمدة"), { status: 422 });
+      }
+      rows.push({
+        companyId: cid, orderId: order.id, stageId: stage.id, component: "electricity",
+        sourceType: "machine_electricity_tariff", sourceRecordId: machine.id,
+        amount: String(Number((kw * hours * tariff).toFixed(2))),
+        snapshot: { hours, kw, tariffPerKwh: tariff, formula: "kW × hours × tariff" },
+        createdBy: actorId,
+      });
+    }
+  }
+  if (rows.length) await tx.insert(productionStageResourceCostsTable).values(rows)
+    .onConflictDoNothing();
+}
+
 async function loadStageUnitCatalog(
   cid: number,
   order: { unitCode?: string | null; productItemId?: number | null },
@@ -8935,7 +9278,8 @@ async function refreshOrderActualHours(
     actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
   }).from(productionOrderStagesTable)
     .where(eq(productionOrderStagesTable.orderId, orderId));
-  const actualMinutes = stages.reduce((sum, stage) => sum + Number(stage.actualDurationMinutes ?? 0), 0);
+  const actualMinutes = stages.reduce((sum: number, stage: any) =>
+    sum + Number(stage.actualDurationMinutes ?? 0), 0);
   const actualHours = Number((actualMinutes / 60).toFixed(4));
   const [order] = await executor.select({
     meta: productionOrdersTable.meta,
@@ -9152,6 +9496,15 @@ productionExecutionRouter.post("/orders/:id/setup/machines", async (req, res) =>
     if (name.length > 200) return void res.status(400).json({ error: "اسم الآلة طويل جداً" });
     const workCenterId = setupOptionalId(req.body?.workCenterId, "مركز العمل");
     const fixedAssetId = setupOptionalId(req.body?.fixedAssetId, "الأصل الثابت");
+    const electricityEnabled = req.body?.electricityEnabled === true;
+    const electricityKw = req.body?.electricityKw == null || req.body?.electricityKw === ""
+      ? null : num(req.body.electricityKw);
+    if (electricityKw !== null && !(electricityKw > 0)) {
+      return void res.status(400).json({ error: "قدرة كهرباء الآلة kW يجب أن تكون موجبة" });
+    }
+    if (electricityEnabled && !(electricityKw && electricityKw > 0)) {
+      return void res.status(400).json({ error: "قدرة كهرباء الآلة kW مطلوبة عند تفعيل الكهرباء" });
+    }
     const row = await db.transaction(async (tx) => {
       if (workCenterId != null) {
         const [center] = await tx
@@ -9215,6 +9568,9 @@ productionExecutionRouter.post("/orders/:id/setup/machines", async (req, res) =>
         name,
         type: "machine",
         status: "available",
+        fixedAssetId,
+        electricityEnabled,
+        electricityKw: electricityKw == null ? null : String(electricityKw),
         meta: { workCenterId, fixedAssetId },
       }).returning({
         id: productionResourcesTable.id,
@@ -9337,6 +9693,9 @@ productionExecutionRouter.post("/orders/:id/stages/seed", async (req, res) => {
           nameAr: s.nameAr,
           nameEn: s.nameEn,
           workCenterId: s.workCenterId,
+          resourceMode: s.resourceMode,
+          resourceId: s.resourceId,
+          workerCount: s.workerCount,
           expectedWasteRatio: s.expectedWasteRatio,
           expectedDurationMinutes: s.expectedDurationMinutes,
           // Routing-stage cost fields are tenant-validated already (only
@@ -9409,7 +9768,8 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
       return;
     }
     const execution = normalizeStageExecutionPayload(req.body);
-    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId, stage);
+    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId,
+      ctx.order.resourceCostingVersion, stage);
     const inputQty = execution.inputQty !== undefined
       ? String(execution.inputQty)
       : String(resolvedStageInputQuantity(
@@ -9439,26 +9799,65 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
     );
     const result = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(${ctx.cid}, ${ctx.order.id})`);
+      const [lockedStage] = await tx.select().from(productionOrderStagesTable)
+        .where(and(
+          eq(productionOrderStagesTable.id, stageId),
+          eq(productionOrderStagesTable.orderId, ctx.order.id),
+        )).limit(1);
+      if (!lockedStage || lockedStage.status !== "pending") {
+        throw Object.assign(new Error("المرحلة بدأت أو أصبحت نهائية أثناء الطلب"), { status: 409 });
+      }
+      const lockedPreviousStages = await tx.select({
+        status: productionOrderStagesTable.status,
+        sequence: productionOrderStagesTable.sequence,
+      }).from(productionOrderStagesTable)
+        .where(eq(productionOrderStagesTable.orderId, ctx.order.id));
+      if (lockedPreviousStages.some((s: any) =>
+        s.sequence < lockedStage.sequence && s.status !== "done" && s.status !== "skipped")) {
+        throw Object.assign(new Error("أكمل المراحل السابقة أولاً"), { status: 409 });
+      }
+      await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId,
+        ctx.order.resourceCostingVersion, lockedStage);
+      const finalInputQty = execution.inputQty !== undefined
+        ? inputQty
+        : String(resolvedStageInputQuantity(
+          lockedStage.inputQty,
+          num(ctx.order.plannedQty),
+          !prevStages.some((s) => s.sequence < lockedStage.sequence),
+        ));
+      const finalQuantityUnit = execution.quantityUnit !== undefined
+        ? quantityUnit : lockedStage.quantityUnit;
+      const finalWasteUnit = execution.wasteUnit !== undefined ? wasteUnit : lockedStage.wasteUnit;
+      const finalQuantityUnitFactor = execution.quantityUnit !== undefined ||
+        execution.quantityUnitFactor !== undefined
+        ? quantityUnitFactor : num(lockedStage.quantityUnitFactor, 1);
+      const finalWasteUnitFactor = execution.wasteUnit !== undefined ||
+        execution.wasteUnitFactor !== undefined
+        ? wasteUnitFactor : num(lockedStage.wasteUnitFactor, 1);
       const [updated] = await tx
         .update(productionOrderStagesTable)
         .set({
           status: "in_progress" as const,
-          startedAt: stage.startedAt ?? new Date(),
-          inputQty,
-           quantityUnit,
-          quantityUnitFactor: String(quantityUnitFactor),
-           wasteUnit,
-          wasteUnitFactor: String(wasteUnitFactor),
-          actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
-          workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-          resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
-          workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
-          notes: execution.notes !== undefined ? execution.notes : stage.notes,
+          startedAt: lockedStage.startedAt ?? new Date(),
+          inputQty: finalInputQty,
+          quantityUnit: finalQuantityUnit,
+          quantityUnitFactor: String(finalQuantityUnitFactor),
+          wasteUnit: finalWasteUnit,
+          wasteUnitFactor: String(finalWasteUnitFactor),
+          actualDurationMinutes: execution.actualDurationMinutes ?? lockedStage.actualDurationMinutes,
+          workerCount: execution.workerCount !== undefined ? execution.workerCount : lockedStage.workerCount,
+          resourceMode: execution.resourceMode !== undefined ? execution.resourceMode : lockedStage.resourceMode,
+          resourceId: execution.resourceId !== undefined ? execution.resourceId : lockedStage.resourceId,
+          workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : lockedStage.workCenterId,
+          notes: execution.notes !== undefined ? execution.notes : lockedStage.notes,
           operatorUserId: execution.operatorUserId !== undefined
             ? execution.operatorUserId
-            : (stage.operatorUserId ?? req.authUser!.id),
+            : (lockedStage.operatorUserId ?? req.authUser!.id),
         })
-        .where(eq(productionOrderStagesTable.id, stageId))
+        .where(and(
+          eq(productionOrderStagesTable.id, stageId),
+          eq(productionOrderStagesTable.status, "pending"),
+        ))
         .returning();
       if (!updated) {
         throw Object.assign(new Error("المرحلة غير موجودة أو أصبحت نهائية أثناء التحديث"), { status: 409 });
@@ -9467,14 +9866,14 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
         ctx.cid,
         ctx.order.id,
         "stage_started",
-        { stageId, code: stage.code, inputQty, actualDurationMinutes: execution.actualDurationMinutes ?? null,
-          workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-          resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
-          workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
+        { stageId, code: lockedStage.code, inputQty: finalInputQty, actualDurationMinutes: execution.actualDurationMinutes ?? null,
+          workerCount: updated.workerCount,
+          resourceId: updated.resourceId,
+          workCenterId: updated.workCenterId,
           quantityUnit: updated.quantityUnit,
-          quantityUnitFactor,
+          quantityUnitFactor: finalQuantityUnitFactor,
           wasteUnit: updated.wasteUnit,
-          wasteUnitFactor,
+          wasteUnitFactor: finalWasteUnitFactor,
           workerUserId: execution.operatorUserId ?? null },
         req.authUser!.id,
         false,
@@ -9519,15 +9918,16 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
       res.status(400).json({ error: "ابدأ المرحلة أولاً قبل إكمالها" });
       return;
     }
-    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId, stage);
+    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId,
+      ctx.order.resourceCostingVersion, stage);
     const outputQty = execution.outputQty!;
-    const wasteQty = execution.wasteQty ?? num(stage.wasteQty);
-    const inputQty = execution.inputQty ?? num(stage.inputQty);
-    const quantityUnit = execution.quantityUnit !== undefined
+    let wasteQty = execution.wasteQty ?? num(stage.wasteQty);
+    let inputQty = execution.inputQty ?? num(stage.inputQty);
+    let quantityUnit = execution.quantityUnit !== undefined
       ? execution.quantityUnit : stage.quantityUnit;
-    const wasteUnit = execution.wasteUnit !== undefined
+    let wasteUnit = execution.wasteUnit !== undefined
       ? execution.wasteUnit : stage.wasteUnit;
-    const quantityUnitFactor = await resolveStageFactor(
+    let quantityUnitFactor = await resolveStageFactor(
       ctx.cid,
       ctx.order.productItemId,
       quantityUnit,
@@ -9535,7 +9935,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
       stage.quantityUnit,
       stage.quantityUnitFactor,
     );
-    const wasteUnitFactor = await resolveStageFactor(
+    let wasteUnitFactor = await resolveStageFactor(
       ctx.cid,
       ctx.order.productItemId,
       wasteUnit,
@@ -9559,9 +9959,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
         error: "لا يمكن إكمال مرحلة بإخراج صفر قبل حساب كامل الإدخال كهالك",
       });
     }
-    const wasteReason = execution.wasteReason !== undefined ? execution.wasteReason : stage.wasteReason;
-    const wasteType = execution.wasteType !== undefined ? execution.wasteType : stage.wasteType;
-    const wasteClassification = execution.wasteClassification !== undefined
+    let wasteReason = execution.wasteReason !== undefined ? execution.wasteReason : stage.wasteReason;
+    let wasteType = execution.wasteType !== undefined ? execution.wasteType : stage.wasteType;
+    let wasteClassification = execution.wasteClassification !== undefined
       ? execution.wasteClassification : stage.wasteClassification;
     if (wasteQty > 0 && (!wasteReason || !wasteType || !wasteClassification)) {
       return void res.status(400).json({
@@ -9570,6 +9970,46 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
     }
     const result = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(${ctx.cid}, ${ctx.order.id})`);
+      // The request-time stage read is only a UX preflight. Re-read after the
+      // order lock and derive all fallback facts from this authoritative row so
+      // an overlapping PATCH/start cannot be overwritten by stale completion.
+      const [lockedStage] = await tx.select().from(productionOrderStagesTable)
+        .where(and(
+          eq(productionOrderStagesTable.id, stageId),
+          eq(productionOrderStagesTable.orderId, ctx.order.id),
+        )).limit(1);
+      if (!lockedStage || lockedStage.status !== "in_progress") {
+        throw Object.assign(new Error("المرحلة أصبحت نهائية أو لم تعد قيد التنفيذ"), { status: 409 });
+      }
+      await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId,
+        ctx.order.resourceCostingVersion, lockedStage);
+      wasteQty = execution.wasteQty ?? num(lockedStage.wasteQty);
+      inputQty = execution.inputQty ?? num(lockedStage.inputQty);
+      quantityUnit = execution.quantityUnit !== undefined ? execution.quantityUnit : lockedStage.quantityUnit;
+      wasteUnit = execution.wasteUnit !== undefined ? execution.wasteUnit : lockedStage.wasteUnit;
+      quantityUnitFactor = await resolveStageFactor(
+        ctx.cid, ctx.order.productItemId, quantityUnit, execution.quantityUnitFactor,
+        lockedStage.quantityUnit, lockedStage.quantityUnitFactor,
+      );
+      wasteUnitFactor = await resolveStageFactor(
+        ctx.cid, ctx.order.productItemId, wasteUnit, execution.wasteUnitFactor,
+        lockedStage.wasteUnit, lockedStage.wasteUnitFactor,
+      );
+      assertStageQuantityConservation(inputQty, outputQty, wasteQty, quantityUnitFactor, wasteUnitFactor);
+      if (inputQty > 0 && outputQty === 0 &&
+          wasteQty * wasteUnitFactor < inputQty * quantityUnitFactor - 0.00005) {
+        throw Object.assign(
+          new Error("لا يمكن إكمال مرحلة بإخراج صفر قبل حساب كامل الإدخال كهالك"),
+          { status: 400 },
+        );
+      }
+      wasteReason = execution.wasteReason !== undefined ? execution.wasteReason : lockedStage.wasteReason;
+      wasteType = execution.wasteType !== undefined ? execution.wasteType : lockedStage.wasteType;
+      wasteClassification = execution.wasteClassification !== undefined
+        ? execution.wasteClassification : lockedStage.wasteClassification;
+      if (wasteQty > 0 && (!wasteReason || !wasteType || !wasteClassification)) {
+        throw Object.assign(new Error("سبب ونوع وتصنيف الهالك مطلوبة عند تسجيل هالك مرحلة"), { status: 400 });
+      }
       const [updated] = await tx
         .update(productionOrderStagesTable)
         .set({
@@ -9582,20 +10022,24 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
            wasteUnit,
           wasteUnitFactor: String(wasteUnitFactor),
           completedAt: new Date(),
-          startedAt: stage.startedAt ?? new Date(),
-          actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
-          workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-          resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
-          workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
+          startedAt: lockedStage.startedAt ?? new Date(),
+          actualDurationMinutes: execution.actualDurationMinutes ?? lockedStage.actualDurationMinutes,
+          workerCount: execution.workerCount !== undefined ? execution.workerCount : lockedStage.workerCount,
+          resourceMode: execution.resourceMode !== undefined ? execution.resourceMode : lockedStage.resourceMode,
+          resourceId: execution.resourceId !== undefined ? execution.resourceId : lockedStage.resourceId,
+          workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : lockedStage.workCenterId,
           wasteReason,
           wasteType,
           wasteClassification,
-          notes: execution.notes !== undefined ? execution.notes : stage.notes,
+          notes: execution.notes !== undefined ? execution.notes : lockedStage.notes,
           operatorUserId: execution.operatorUserId !== undefined
             ? execution.operatorUserId
-            : (stage.operatorUserId ?? req.authUser!.id),
+            : (lockedStage.operatorUserId ?? req.authUser!.id),
         })
-        .where(eq(productionOrderStagesTable.id, stageId))
+        .where(and(
+          eq(productionOrderStagesTable.id, stageId),
+          eq(productionOrderStagesTable.status, "in_progress"),
+        ))
         .returning();
       if (!updated) {
         throw Object.assign(new Error("المرحلة غير موجودة أو أصبحت نهائية أثناء التحديث"), { status: 409 });
@@ -9633,12 +10077,19 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
         req.authUser!.id,
         tx,
       );
+      await freezeStageResourceCosts(
+        tx,
+        ctx.cid,
+        ctx.order,
+        updated,
+        req.authUser!.id,
+      );
 
       await writeEvent(
         ctx.cid,
         ctx.order.id,
         "stage_completed",
-        { stageId, code: stage.code, outputQty, wasteQty, inputQty,
+        { stageId, code: lockedStage.code, outputQty, wasteQty, inputQty,
           quantityUnit: updated.quantityUnit,
           quantityUnitFactor,
           wasteUnit: updated.wasteUnit,
@@ -9646,11 +10097,11 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           convertedOutputQty: multiplyQuantity(String(outputQty), String(quantityUnitFactor)),
           convertedWasteQty: multiplyQuantity(String(wasteQty), String(wasteUnitFactor)),
           propagatedInputQty,
-          actualDurationMinutes: execution.actualDurationMinutes ?? num(stage.actualDurationMinutes),
-          workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-           resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
-           workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
-          workerUserId: execution.operatorUserId ?? stage.operatorUserId ?? null,
+          actualDurationMinutes: updated.actualDurationMinutes,
+          workerCount: updated.workerCount,
+          resourceId: updated.resourceId,
+          workCenterId: updated.workCenterId,
+          workerUserId: updated.operatorUserId ?? null,
           wasteReason: wasteReason ?? null,
           wasteType: wasteType ?? null,
           wasteClassification: wasteClassification ?? null, actualHours },
@@ -9679,7 +10130,8 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
       eq(productionOrderStagesTable.orderId, ctx.order.id),
     )).limit(1);
     if (!current) return void res.status(404).json({ error: "المرحلة غير موجودة" });
-    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId, current);
+    await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId,
+      ctx.order.resourceCostingVersion, current);
     if (["done", "completed", "skipped"].includes(String(current.status))) {
       return void res.status(409).json({ error: "لا يمكن تعديل مرحلة مكتملة أو متخطاة؛ أعد فتحها أولاً" });
     }
@@ -9736,6 +10188,7 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (execution.actualDurationMinutes !== undefined)
       updates.actualDurationMinutes = execution.actualDurationMinutes;
     if (execution.workerCount !== undefined) updates.workerCount = execution.workerCount;
+    if (execution.resourceMode !== undefined) updates.resourceMode = execution.resourceMode;
     if (execution.resourceId !== undefined) updates.resourceId = execution.resourceId;
     if (execution.workCenterId !== undefined) updates.workCenterId = execution.workCenterId;
     if (execution.wasteReason !== undefined) updates.wasteReason = execution.wasteReason;
@@ -9825,6 +10278,20 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/reopen", async (req,
       if (!current) throw Object.assign(new Error("المرحلة غير موجودة"), { status: 404 });
       if (current.status !== "done") {
         throw Object.assign(new Error("لا يمكن إعادة فتح مرحلة غير مكتملة"), { status: 400 });
+      }
+      if (Number(ctx.order.resourceCostingVersion) >= 1) {
+        const [frozen] = await tx.select({ id: productionStageResourceCostsTable.id })
+          .from(productionStageResourceCostsTable)
+          .where(and(
+            eq(productionStageResourceCostsTable.companyId, ctx.cid),
+            eq(productionStageResourceCostsTable.stageId, stageId),
+          )).limit(1);
+        if (frozen) {
+          throw Object.assign(
+            new Error("تكاليف موارد المرحلة مجمّدة؛ استخدم عكس أمر الإنتاج ومسار التسوية القائم للتصحيح"),
+            { status: 409 },
+          );
+        }
       }
       const [updated] = await tx
         .update(productionOrderStagesTable)

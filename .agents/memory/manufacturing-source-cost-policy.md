@@ -16,6 +16,12 @@ Remember only category selection modes as manufacturing wizard preferences, scop
 
 **How to apply:** Historical completed-order review reads saved snapshots only; missing historical fields stay explicitly unavailable instead of being rebuilt from today's catalog or preferences.
 
+Machine kWh × tariff is usage evidence, not an additional posted expense. Resource-based costing must not become available merely because a machine estimate can be calculated: actual utility-source allocation, estimate reconciliation, and reversal must have one accounting owner.
+
+**Why:** The existing monthly overhead close consumes posted source allocations, so adding machine estimates to WIP independently can charge the electricity twice. Payroll aggregate approved hours also cannot silently become person-hours for legacy orders.
+
+**How to apply:** Version-gate new resource semantics, freeze source rates, preserve legacy operator and quantity payloads, and require end-to-end source settlement verification before enabling the new costing mode.
+
 Execution inputs must be directly discoverable in the compact order detail, not only in the advanced detail route. Preserve approved time-based source allocation rules when adding operational workforce fields; do not implicitly multiply existing allocations by headcount.
 
 **Why:** The user could see only the routing preview and explicitly required per-stage employee entry while prohibiting changes to the existing linked cost calculations.
