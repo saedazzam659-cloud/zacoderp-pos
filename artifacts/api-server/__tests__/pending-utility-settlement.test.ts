@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   allocatePendingUtilityAvailableAmount,
+  assertPostedCompletedSettlementEntries,
   assertPendingUtilityClaimSnapshot,
   assertPendingUtilityFinishedGoodsFacts,
   pendingUtilityBlocksOrderTransition,
@@ -103,4 +104,13 @@ test("active utility claims block destination-changing order transitions", () =>
   assert.equal(pendingUtilityBlocksOrderTransition("cancelled"), true);
   assert.equal(pendingUtilityBlocksOrderTransition("reversed"), true);
   assert.equal(pendingUtilityBlocksOrderTransition("quality_check"), false);
+});
+
+test("completed utility settlement rejects draft issue or receipt journals", () => {
+  const postedIssue = { entryType: "production_issue", status: "posted" };
+  const postedReceipt = { entryType: "production_receipt", status: "posted" };
+  assert.doesNotThrow(() => assertPostedCompletedSettlementEntries("PRD-1", postedIssue, postedReceipt));
+  assert.throws(() => assertPostedCompletedSettlementEntries(
+    "PRD-1", postedIssue, { ...postedReceipt, status: "draft" },
+  ), /يجب أن يكون قيدا الصرف والاستلام الأصليان مرحّلين/);
 });

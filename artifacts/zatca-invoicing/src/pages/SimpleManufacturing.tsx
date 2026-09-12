@@ -359,6 +359,7 @@ export default function SimpleManufacturing() {
     defaultWipAccountId: number | null;
     defaultRawInventoryAccountId: number | null;
     defaultFinishedGoodsAccountId: number | null;
+    defaultOverheadAccountId: number | null;
     defaultWasteAccountId: number | null;
     electricityTariffPerKwh?: number | null;
   }) => {
@@ -423,6 +424,7 @@ export default function SimpleManufacturing() {
                 permissionKey="simple_manufacturing"
                 isSimple
                 resourceCostingVersion={selectedOrder.resourceCostingVersion}
+                overheadAccountId={selectedOrder.overheadAccountId}
                 onReload={() => { void openOrder(selectedOrder); }}
               />
             ) : null}

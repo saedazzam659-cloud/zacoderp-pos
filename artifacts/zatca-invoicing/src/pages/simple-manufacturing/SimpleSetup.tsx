@@ -523,7 +523,7 @@ export function SimpleSetup({
                               {(() => {
                                 const machine = (catalog.machines ?? []).find(row => String(row.id) === stage.resourceId);
                                 if (!machine?.electricityEnabled) return null;
-                                return <p className="text-[11px] leading-5 text-amber-800">كهرباء مفعلة ({machine.electricityKw ?? "—"} kW): عند تنفيذ أمر v1 تُجمّد ساعات الآلة وkWh/التعريفة كلقطة استخدام. تُحدّد فاتورة الكهرباء الصناعية والمصنع ومركز التكلفة لاحقاً صراحةً في إقفال المصادر؛ ليست التعريفة مصروفاً مستقلاً.</p>;
+                                 return <p className="text-[11px] leading-5 text-amber-800">كهرباء مفعلة ({machine.electricityKw ?? "—"} kW): عند تنفيذ أمر v1 تُجمّد ساعات الآلة وkWh/التعريفة. مع فاتورة صناعية مرتبطة تبقى المعالجة مرتبطة بالمصدر؛ بلا فاتورة يرسمل الخادم التقدير المجمد في الاستلام بحساب الاستحقاق/الامتصاص ثم تُحدّد الفاتورة والمصنع ومركز التكلفة صراحةً في الإقفال لتصفية التقدير وتسوية الفرق فقط.</p>;
                               })()}
                            </div>
                          )}

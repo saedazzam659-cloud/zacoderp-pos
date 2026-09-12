@@ -24,6 +24,11 @@ import UnitCodeSelect from "@/components/UnitCodeSelect";
 import { DateField } from "@/components/ui/date-field";
 import { ProductionStageExecution } from "@/components/ProductionStageExecution";
 import { ProductionCostTrace } from "@/components/ProductionCostTrace";
+import {
+  additionalHeaderWaste,
+  formatWasteQuantity,
+  stageWasteSummary,
+} from "./simple-manufacturing/wasteSummary";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -244,13 +249,8 @@ function stageCompletionMetrics(stages: ProductionStageSummary[]) {
     ? finiteQuantity(lastCompleted.outputQty)
       * finiteQuantity(lastCompleted.quantityUnitFactor ?? 1, 1)
     : 0;
-  const stageWasteQty = ordered.reduce(
-    (sum, stage) => sum
-      + Math.max(0, finiteQuantity(stage.wasteQty))
-        * finiteQuantity(stage.wasteUnitFactor ?? 1, 1),
-    0,
-  );
-  return { producedQty, stageWasteQty, lastCompleted };
+  const waste = stageWasteSummary(ordered);
+  return { producedQty, stageWasteQty: waste.total, normalWasteQty: waste.normal, abnormalWasteQty: waste.abnormal, lastCompleted };
 }
 
 // Status → list of allowed transitions, each rendered as a coloured action
@@ -1029,10 +1029,16 @@ export default function ProductionOrderDetail() {
     [stages],
   );
   const headerWasteQty = finiteQuantity(completion.wasteQty);
-  const extraUnclassifiedWaste = Math.max(
-    0,
-    headerWasteQty - completionStageMetrics.stageWasteQty,
-  );
+  const extraUnclassifiedWaste = additionalHeaderWaste(headerWasteQty, stages);
+
+  function updateAdditionalHeaderWaste(value: string) {
+    completionWasteTouchedRef.current = true;
+    const additional = Math.max(0, finiteQuantity(value));
+    setCompletion((previous) => ({
+      ...previous,
+      wasteQty: formatWasteQuantity(completionStageMetrics.stageWasteQty + additional),
+    }));
+  }
 
   function guardCompletion(): boolean {
     if (stagesLoading || !stagesLoaded || stagesError) {
@@ -1242,7 +1248,7 @@ export default function ProductionOrderDetail() {
                   />
                 </div>
                 <div>
-                  <Label className="text-xs">إجمالي الهالك (هالك المراحل + الإضافي غير المصنف)</Label>
+                  <Label className="text-xs">إجمالي الهالك المحفوظ</Label>
                   <Input
                     type="number" step="0.01"
                     value={completion.wasteQty}
@@ -1253,16 +1259,33 @@ export default function ProductionOrderDetail() {
                     data-testid="input-waste-qty" className="mt-1"
                   />
                   {stagesLoaded && stages.length > 0 && (
-                    <div className="mt-1 space-y-0.5 text-[11px] text-slate-600">
+                    <div className="mt-2 space-y-2 text-[11px] text-slate-600">
                       <div>
-                        الحد الأدنى لهالك المراحل بعد التحويل (يشمل المصنف عادي/غير عادي):{" "}
+                        هالك المراحل بعد التحويل:{" "}
                         <span className="font-semibold">{completionStageMetrics.stageWasteQty.toLocaleString("en-US")} {order.unitCode}</span>
-                      </div>
-                      <div>
-                        الهالك الإضافي غير المصنف على رأس الأمر:{" "}
-                        <span className="font-semibold">{extraUnclassifiedWaste.toLocaleString("en-US")} {order.unitCode}</span>
                         {" — "}
-                        إجمالي الحقل أعلاه لا يكرر هالك المراحل.
+                        طبيعي: <span className="font-semibold text-emerald-700">{completionStageMetrics.normalWasteQty.toLocaleString("en-US")}</span>
+                        {" — "}
+                        غير طبيعي: <span className="font-semibold text-rose-700">{completionStageMetrics.abnormalWasteQty.toLocaleString("en-US")}</span>
+                      </div>
+                      <div className="rounded-md border border-amber-200 bg-amber-50/60 p-2">
+                        <Label htmlFor="input-additional-waste-qty" className="text-[11px] font-semibold text-amber-900">
+                          هالك إضافي غير مصنف على رأس الأمر ({order.unitCode})
+                        </Label>
+                        <Input
+                          id="input-additional-waste-qty"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={formatWasteQuantity(extraUnclassifiedWaste)}
+                          onChange={(e) => updateAdditionalHeaderWaste(e.target.value)}
+                          data-testid="input-additional-waste-qty"
+                          className="mt-1 h-8 bg-white text-xs"
+                          disabled={transitioning}
+                        />
+                        <div className="mt-1 text-[10px] text-amber-800">
+                          لا يُستنتج من الفرق بين المخطط والمنتج؛ يضاف صراحةً إلى هالك المراحل فقط.
+                        </div>
                       </div>
                     </div>
                   )}

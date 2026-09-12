@@ -74,10 +74,19 @@ export type Catalog = {
       defaultWipAccountId?: number | null;
       defaultRawInventoryAccountId?: number | null;
       defaultFinishedGoodsAccountId?: number | null;
+      defaultOverheadAccountId?: number | null;
       defaultWasteAccountId?: number | null;
         electricityTariffPerKwh?: string | number | null;
     } | null;
     accounts: Array<{
+      id: number;
+      code: string;
+      nameAr: string;
+      nameEn?: string | null;
+      accountType?: string | null;
+      isPosting?: boolean;
+    }>;
+    overheadAccounts?: Array<{
       id: number;
       code: string;
       nameAr: string;
@@ -95,6 +104,8 @@ export type Order = {
   status: string;
   plannedQty: string | number;
   producedQty: string | number;
+  wasteQty?: string | number | null;
+  unitCode?: string | null;
   estimatedCost: string | number;
   actualCost: string | number;
   resourceCostingVersion?: number;

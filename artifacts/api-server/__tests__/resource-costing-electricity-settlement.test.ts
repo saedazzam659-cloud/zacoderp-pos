@@ -5,7 +5,10 @@ import { readFile } from "node:fs/promises";
 import {
   isMachineElectricityAllocation,
   machineElectricityEstimate,
+  provisionalResourceReceiptBalance,
   requireSingleMachineElectricityAllocation,
+  settleProvisionalResourceCost,
+  splitProvisionalResourceSettlement,
 } from "../src/lib/resourceCosting.js";
 
 const electricityAllocation = {
@@ -51,7 +54,29 @@ test("machine electricity rejects ambiguous, excluded, or non-machine-hour utili
   assert.throws(() => machineElectricityEstimate(0, 2, 0.18), /قدرة kW/);
 });
 
-test("v1 route freezes source-linked kWh evidence and settles it with existing driver reconciliation", async () => {
+test("actual utility settlement clears provisional accrual and capitalizes only the delta", () => {
+  assert.equal(provisionalResourceReceiptBalance(5_000, 500), 5_500);
+  assert.deepEqual(settleProvisionalResourceCost(550, 500), {
+    actualAmount: 550, accruedAmount: 500, deltaAmount: 50,
+  });
+  assert.deepEqual(settleProvisionalResourceCost(450, 500), {
+    actualAmount: 450, accruedAmount: 500, deltaAmount: -50,
+  });
+  assert.throws(() => settleProvisionalResourceCost(550, -1), /غير صالح/);
+});
+
+test("utility delta follows frozen FG and abnormal-waste receipt allocation", () => {
+  assert.deepEqual(splitProvisionalResourceSettlement(550, 500, 900, 100), {
+    actualAmount: 550, accruedAmount: 500, deltaAmount: 50,
+    finishedGoodsDelta: 45, abnormalWasteDelta: 5,
+  });
+  assert.deepEqual(splitProvisionalResourceSettlement(450, 500, 900, 100), {
+    actualAmount: 450, accruedAmount: 500, deltaAmount: -50,
+    finishedGoodsDelta: -45, abnormalWasteDelta: -5,
+  });
+});
+
+test("v1 route freezes source-linked kWh evidence and provisional pending utility accrual facts", async () => {
   const source = await readFile(
     new URL("../src/routes/production.ts", import.meta.url),
     "utf8",
@@ -66,7 +91,8 @@ test("v1 route freezes source-linked kWh evidence and settles it with existing d
   assert.match(freeze, /machineElectricityEstimate\(kw, hours, tariff\)/);
   assert.match(freeze, /pendingUtilitySettlement: electricityAllocation == null/);
   assert.match(freeze, /sourceAllocationId: electricityAllocation\?\.id \?\? null/);
-  assert.match(freeze, /accountingTreatment: "estimate_evidence_only/);
+  assert.match(freeze, /provisionalAccrualAccountId: electricityAllocation \? null : order\.overheadAccountId/);
+  assert.match(freeze, /provisional_wip_accrual_cleared_by_actual_utility_source/);
   assert.doesNotMatch(freeze, /sourceType: "machine_electricity_tariff"/);
 
   const reconciliation = source.slice(reconcileStart, reconcileEnd);

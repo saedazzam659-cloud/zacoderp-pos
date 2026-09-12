@@ -95,7 +95,7 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
     </div>
     {selectedMachine?.fixedAssetId && <p className="text-xs text-violet-700">مرتبطة بالأصل: {linkedAsset?.nameAr || linkedAsset?.name || `#${selectedMachine.fixedAssetId}`} — الربط لا ينشئ إهلاكًا أو تحميلًا إضافيًا.</p>}
     {selectedMachine?.electricityEnabled && (
-      <p className="text-xs text-amber-800">استهلاك الكهرباء مفعل بقدرة {selectedMachine.electricityKw ?? "—"} kW وفق تعريفة الشركة وساعات تشغيل المرحلة.</p>
+      <p className="text-xs text-amber-800">استهلاك الكهرباء مفعل بقدرة {selectedMachine.electricityKw ?? "—"} kW وفق تعريفة الشركة وساعات تشغيل المرحلة. بلا فاتورة صناعية مرحّلة، يرسمل الخادم التقدير المجمد في الاستلام باستخدام حساب الاستحقاق/الامتصاص ثم يسوّيه بفارق الفاتورة الفعلية.</p>
     )}
     <Dialog open={kind !== null} onOpenChange={value => { if (!value && !saving) setKind(null); }}>
       <DialogContent dir="rtl">
@@ -126,7 +126,7 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
                   onChange={event => setElectricityKw(event.target.value)} disabled={saving}
                   placeholder="مثال: 7.5" />
               </div>
-              <p className="text-xs leading-5 text-amber-900">تقدير الكهرباء = kW × ساعات تشغيل المرحلة × تعريفة الكهرباء المحفوظة. لا توجد ساعات كهرباء مستقلة. يُجمّد كتتبع استخدام، ثم تُختار فاتورة الكهرباء الصناعية والمصنع ومركز التكلفة صراحةً في إقفال المصادر الشهري.</p>
+               <p className="text-xs leading-5 text-amber-900">تقدير الكهرباء = kW × ساعات تشغيل المرحلة × تعريفة الكهرباء المحفوظة. لا توجد ساعات كهرباء مستقلة. بلا فاتورة صناعية مرحّلة، يُجمّد التقدير ويُرسمل في استلام الإنتاج عبر حساب الاستحقاق/الامتصاص، ثم تُختار الفاتورة والمصنع ومركز التكلفة صراحةً في الإقفال الشهري لتصفية التقدير وتسوية الفرق فقط.</p>
             </div>
             <p className="text-xs text-slate-500">لن يتم نسخ الأصل أو إنشاء إهلاك جديد. مصادر الإهلاك وتحميل الساعات تظل كما هي. ربط عداد/IoT مرجع مستقبلي فقط وليس اتصالاً مباشراً.</p>
           </>}

@@ -16,11 +16,17 @@ Remember only category selection modes as manufacturing wizard preferences, scop
 
 **How to apply:** Historical completed-order review reads saved snapshots only; missing historical fields stay explicitly unavailable instead of being rebuilt from today's catalog or preferences.
 
-Machine kWh × tariff is usage evidence, not an additional posted expense. Resource-based costing must not become available merely because a machine estimate can be calculated: actual utility-source allocation, estimate reconciliation, and reversal must have one accounting owner.
+Machine kWh × tariff must contribute to finished-product cost before the invoice arrives through provisional WIP absorption against an explicit accrual account, not a duplicate utility expense. Actual utility-source allocation, estimate reconciliation, and reversal must have one accounting owner. Historical evidence-only snapshots must not be reinterpreted automatically.
 
-**Why:** The existing monthly overhead close consumes posted source allocations, so adding machine estimates to WIP independently can charge the electricity twice. Payroll aggregate approved hours also cannot silently become person-hours for legacy orders.
+**Why:** The user explicitly rejected material-only receipts despite recorded operating hours. Simply displaying an estimate does not meet this requirement; charging the later invoice in full on top of the estimate would double-count. Payroll aggregate approved hours also cannot silently become person-hours for legacy orders.
 
 **How to apply:** Version-gate new resource semantics, freeze source rates, preserve legacy operator and quantity payloads, and require end-to-end source settlement verification before enabling the new costing mode.
+
+Actual settlement clears the original posted accrual and capitalizes only actual minus accrued. Split completed-order differences between FG and abnormal waste using the immutable original receipt allocation, including negative differences.
+
+**Why:** Assigning all later variance to FG overvalues retained stock when completion already expensed abnormal waste; clearing a draft-only accrual creates a posted debit without a posted credit.
+
+**How to apply:** Require posted original issue and receipt journals before completed-order settlement. Normal waste remains absorbed in good production; display its quantity even when its separate expense is zero.
 
 Late utility settlement must not guess FG/COGS distribution after consumption. Require provably isolated, fully retained finished goods; otherwise reject explicitly. A posted WIP utility settlement must be reversed before completing, cancelling, or reversing its order until destination migration is supported.
 

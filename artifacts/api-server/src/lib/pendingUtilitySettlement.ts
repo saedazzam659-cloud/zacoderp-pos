@@ -14,6 +14,7 @@ import {
 } from "@workspace/db";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getPostedIndustrialPurchaseCosts } from "./industrialPurchaseCosts.js";
+import { settleProvisionalResourceCost, splitProvisionalResourceSettlement } from "./resourceCosting.js";
 import { refreshItemCost } from "./stockHelpers.js";
 
 const money = (value: unknown) => Math.round(Number(value ?? 0) * 100) / 100;
@@ -33,6 +34,8 @@ type ProposalLine = {
   orderId: number;
   kwh: number;
   allocatedAmount: number;
+  provisionalAccrualAmount?: number;
+  provisionalAccrualAccountId?: number;
 };
 
 type SettlementSnapshot = {
@@ -66,7 +69,7 @@ export function isPendingUtilityClosure(value: unknown): boolean {
 /** Deterministic cent allocation shared by proposal creation and unit tests. */
 export function allocatePendingUtilityAvailableAmount(
   availableAmount: number,
-  stages: Array<Pick<ProposalLine, "stageResourceCostId" | "orderId" | "kwh">>,
+  stages: Array<Omit<ProposalLine, "allocatedAmount">>,
 ): ProposalLine[] {
   const available = money(availableAmount);
   const seen = new Set<number>();
@@ -147,6 +150,17 @@ export function pendingUtilityLifecycleAttempt(
 
 export function pendingUtilityBlocksOrderTransition(target: string): boolean {
   return ["completed", "cancelled", "reversed"].includes(target);
+}
+
+export function assertPostedCompletedSettlementEntries(
+  orderNumber: string,
+  issue?: { entryType: string; status: string },
+  receipt?: { entryType: string; status: string },
+) {
+  if (!issue || issue.entryType !== "production_issue" || issue.status !== "posted" ||
+      !receipt || receipt.entryType !== "production_receipt" || receipt.status !== "posted") {
+    throw failure(`لا يمكن تسوية الأمر المكتمل ${orderNumber}: يجب أن يكون قيدا الصرف والاستلام الأصليان مرحّلين`, 422);
+  }
 }
 
 async function assertSourceNotInAnotherActiveClose(
@@ -296,6 +310,7 @@ export async function buildPendingUtilityProposal(
     id: productionStageResourceCostsTable.id,
     orderId: productionStageResourceCostsTable.orderId,
     sourceType: productionStageResourceCostsTable.sourceType,
+    amount: productionStageResourceCostsTable.amount,
     snapshot: productionStageResourceCostsTable.snapshot,
   }).from(productionStageResourceCostsTable).where(and(
     eq(productionStageResourceCostsTable.companyId, companyId),
@@ -309,7 +324,15 @@ export async function buildPendingUtilityProposal(
     const kwh = qty(snapshot.kwh);
     if (snapshot.pendingUtilitySettlement !== true || periodByOrder.get(row.orderId) !== period || !(kwh > 0)) continue;
     const values = byOrder.get(row.orderId) ?? [];
-    values.push({ stageResourceCostId: row.id, orderId: row.orderId, kwh, allocatedAmount: 0 });
+    const provisionalAccrualAccountId = Number(snapshot.provisionalAccrualAccountId);
+    const provisionalAccrualAmount = qty(snapshot.provisionalAccrualAmount ?? row.amount);
+    values.push({
+      stageResourceCostId: row.id, orderId: row.orderId, kwh, allocatedAmount: 0,
+      ...(Number.isInteger(provisionalAccrualAccountId) && provisionalAccrualAccountId > 0 &&
+          provisionalAccrualAmount > 0
+        ? { provisionalAccrualAccountId, provisionalAccrualAmount }
+        : {}),
+    });
     byOrder.set(row.orderId, values);
   }
   if (ids.some((id) => !(byOrder.get(id)?.length))) {
@@ -430,6 +453,39 @@ async function settlementClaims(tx: any, companyId: number, closureId: number) {
   )).for("update");
 }
 
+async function postedCompletedReceiptAllocation(tx: any, companyId: number, order: any) {
+  if (!order.issueJournalEntryId || !order.receiptJournalEntryId) {
+    throw failure(`لا يمكن تسوية الأمر المكتمل ${order.orderNumber}: قيد الصرف أو الاستلام الأصلي غير موجود`, 422);
+  }
+  const entries = await tx.select({
+    id: journalEntriesTable.id,
+    entryType: journalEntriesTable.entryType,
+    status: journalEntriesTable.status,
+  }).from(journalEntriesTable).where(and(
+    eq(journalEntriesTable.companyId, companyId),
+    inArray(journalEntriesTable.id, [order.issueJournalEntryId, order.receiptJournalEntryId]),
+  )).for("update");
+  const issue = entries.find((entry: any) => entry.id === order.issueJournalEntryId);
+  const receipt = entries.find((entry: any) => entry.id === order.receiptJournalEntryId);
+  assertPostedCompletedSettlementEntries(order.orderNumber, issue, receipt);
+  const rows = await tx.execute(sql`
+    select account_id as "accountId", debit
+    from journal_entry_lines where entry_id = ${order.receiptJournalEntryId}
+  `);
+  const finishedGoods = (rows.rows ?? []).filter((line: any) =>
+    Number(line.accountId) === Number(order.finishedGoodsAccountId))
+    .reduce((sum: number, line: any) => sum + qty(line.debit), 0);
+  const wasteAccountId = order.wasteAccountId ?? order.varianceAccountId;
+  const abnormalWaste = wasteAccountId
+    ? (rows.rows ?? []).filter((line: any) => Number(line.accountId) === Number(wasteAccountId))
+      .reduce((sum: number, line: any) => sum + qty(line.debit), 0)
+    : 0;
+  if (!(finishedGoods > 0) || !(finishedGoods + abnormalWaste > 0)) {
+    throw failure(`لا يمكن تسوية الأمر المكتمل ${order.orderNumber}: توزيع استلام البضاعة التامة/الهالك الأصلي غير قابل للإثبات`, 422);
+  }
+  return { finishedGoods, abnormalWaste, wasteAccountId };
+}
+
 export async function postPendingUtilitySettlement(
   tx: any, companyId: number, closure: any, req: any, deps: HelperDeps,
 ) {
@@ -447,6 +503,7 @@ export async function postPendingUtilitySettlement(
   assertPendingUtilityClaimSnapshot(claims, snapshot);
   const evidence = await tx.select({
     id: productionStageResourceCostsTable.id,
+    amount: productionStageResourceCostsTable.amount,
     snapshot: productionStageResourceCostsTable.snapshot,
   }).from(productionStageResourceCostsTable).where(and(
     eq(productionStageResourceCostsTable.companyId, companyId),
@@ -479,37 +536,77 @@ export async function postPendingUtilitySettlement(
   )).for("update");
   if (orders.length !== orderIds.length) throw failure("أحد أوامر التسوية لم يعد موجوداً");
   const amountByOrder = new Map<number, number>();
+  const provisionalByOrder = new Map<number, { amount: number; accountId: number }>();
   for (const row of snapshot.allocations) {
     amountByOrder.set(row.orderId, money((amountByOrder.get(row.orderId) ?? 0) + row.allocatedAmount));
+    const frozen = evidenceById.get(row.stageResourceCostId);
+    const values = (frozen?.snapshot ?? {}) as Record<string, unknown>;
+    const accountId = Number(values.provisionalAccrualAccountId);
+    const accrued = qty(values.provisionalAccrualAmount ?? frozen?.amount);
+    // Only new v1 provisional snapshots carry this account. Historical
+    // evidence-only stages have no liability to clear and are not rewritten.
+    if (Number.isInteger(accountId) && accountId > 0 && accrued > 0) {
+      const current = provisionalByOrder.get(row.orderId);
+      if (current && current.accountId !== accountId) {
+        throw failure("استحقاقات كهرباء الأمر المؤقتة تستخدم حسابات امتصاص مختلفة", 422);
+      }
+      provisionalByOrder.set(row.orderId, {
+        accountId, amount: money((current?.amount ?? 0) + accrued),
+      });
+    }
   }
   const lines: JournalLine[] = [];
   for (const order of orders) {
     const amount = amountByOrder.get(order.id) ?? 0;
     if (!(amount > 0) || order.branchId !== closure.branchId) throw failure("أمر التسوية أو فرعه لا يطابق لقطة الإغلاق", 422);
+    const provisional = provisionalByOrder.get(order.id);
+    const settlement = settleProvisionalResourceCost(amount,
+      order.status === "completed" ? (provisional?.amount ?? 0) : 0);
     if (order.status === "completed") {
-      const balance = await assertCompletedFgOnHand(tx, companyId, order, amount, deps);
-      const newAvg = (qty(balance.avgCost) * qty(balance.qty) + amount) / qty(balance.qty);
+      const destination = await postedCompletedReceiptAllocation(tx, companyId, order);
+      const split = splitProvisionalResourceSettlement(
+        settlement.actualAmount, settlement.accruedAmount,
+        destination.finishedGoods, destination.abnormalWaste,
+      );
+      const balance = await assertCompletedFgOnHand(tx, companyId, order, split.finishedGoodsDelta, deps);
+      const newAvg = (qty(balance.avgCost) * qty(balance.qty) + split.finishedGoodsDelta) / qty(balance.qty);
+      if (!(newAvg >= 0)) throw failure(`لا يمكن تسوية الأمر ${order.orderNumber}: تكلفة البضاعة التامة الناتجة غير صالحة`, 422);
       await tx.update(stockBalanceTable).set({ avgCost: String(newAvg.toFixed(4)), updatedAt: new Date() })
         .where(eq(stockBalanceTable.id, balance.id));
       await refreshItemCost(companyId, order.productItemId, tx);
       await deps.addStockLedgerEntry({
         companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
         txDate: closure.correctionDate, txType: "production_receipt", qty: "0",
-        costPrice: String(newAvg.toFixed(4)), totalCost: String(amount.toFixed(2)),
+        costPrice: String(newAvg.toFixed(4)), totalCost: String(split.finishedGoodsDelta.toFixed(2)),
         balanceQty: String(balance.qty), refId: closure.id,
         refType: "production_pending_utility_settlement", batchNumber: order.batchNumber,
         notes: `تعديل تكلفة كهرباء معلقة لأمر ${order.orderNumber}`,
       }, tx);
-      lines.push({ accountId: order.finishedGoodsAccountId, debit: amount, description: `كهرباء فعلية معلقة — بضاعة تامة ${order.orderNumber}`, costCenter: order.costCenter });
+      if (settlement.accruedAmount > 0) lines.push({
+        accountId: provisional!.accountId, debit: settlement.accruedAmount,
+        description: `إطفاء استحقاق كهرباء آلة مؤقت — ${order.orderNumber}`, costCenter: order.costCenter,
+      });
+      lines.push({
+        accountId: order.finishedGoodsAccountId,
+        debit: split.finishedGoodsDelta > 0 ? split.finishedGoodsDelta : 0,
+        credit: split.finishedGoodsDelta < 0 ? Math.abs(split.finishedGoodsDelta) : 0,
+        description: `فرق كهرباء فعلية معلقة — بضاعة تامة ${order.orderNumber}`, costCenter: order.costCenter,
+      });
+      if (Math.abs(split.abnormalWasteDelta) >= 0.005 && destination.wasteAccountId) lines.push({
+        accountId: destination.wasteAccountId,
+        debit: split.abnormalWasteDelta > 0 ? split.abnormalWasteDelta : 0,
+        credit: split.abnormalWasteDelta < 0 ? Math.abs(split.abnormalWasteDelta) : 0,
+        description: `فرق كهرباء فعلية معلقة — هالك غير طبيعي ${order.orderNumber}`, costCenter: order.costCenter,
+      });
     } else {
       if (!["in_production", "paused", "quality_check"].includes(String(order.status)) ||
           !order.issueJournalEntryId || !order.wipAccountId) {
         throw failure(`لا يمكن تسوية الأمر ${order.orderNumber}: ليس نشطاً في WIP أو مكتمل المخزون قابل للإثبات`, 422);
       }
-      lines.push({ accountId: order.wipAccountId, debit: amount, description: `كهرباء فعلية معلقة — WIP ${order.orderNumber}`, costCenter: order.costCenter });
+      lines.push({ accountId: order.wipAccountId, debit: settlement.actualAmount, description: `كهرباء فعلية معلقة — WIP ${order.orderNumber}`, costCenter: order.costCenter });
     }
     await tx.update(productionOrdersTable).set({
-      actualCost: String(money(qty(order.actualCost) + amount).toFixed(2)), updatedAt: new Date(),
+      actualCost: String(money(qty(order.actualCost) + (order.status === "completed" ? settlement.deltaAmount : settlement.actualAmount)).toFixed(2)), updatedAt: new Date(),
     }).where(and(eq(productionOrdersTable.id, order.id), eq(productionOrdersTable.companyId, companyId)));
   }
   const total = money([...amountByOrder.values()].reduce((sum, amount) => sum + amount, 0));
@@ -547,12 +644,25 @@ export async function reversePendingUtilitySettlement(
     eq(productionOrdersTable.companyId, companyId), inArray(productionOrdersTable.id, orderIds),
   )).for("update");
   const amounts = new Map<number, number>();
+  const provisionalByOrder = new Map<number, number>();
   for (const row of snapshot.allocations) amounts.set(row.orderId, money((amounts.get(row.orderId) ?? 0) + row.allocatedAmount));
+  for (const row of snapshot.allocations) {
+    if (Number.isInteger(row.provisionalAccrualAccountId) && (row.provisionalAccrualAmount ?? 0) > 0) {
+      provisionalByOrder.set(row.orderId, money((provisionalByOrder.get(row.orderId) ?? 0) + row.provisionalAccrualAmount!));
+    }
+  }
   for (const order of orders) {
     const amount = amounts.get(order.id) ?? 0;
+    const settlement = settleProvisionalResourceCost(amount,
+      order.status === "completed" ? (provisionalByOrder.get(order.id) ?? 0) : 0);
     if (order.status === "completed") {
-      const balance = await assertCompletedFgOnHand(tx, companyId, order, amount, deps, closure.id);
-      const newAvg = (qty(balance.avgCost) * qty(balance.qty) - amount) / qty(balance.qty);
+      const destination = await postedCompletedReceiptAllocation(tx, companyId, order);
+      const split = splitProvisionalResourceSettlement(
+        settlement.actualAmount, settlement.accruedAmount,
+        destination.finishedGoods, destination.abnormalWaste,
+      );
+      const balance = await assertCompletedFgOnHand(tx, companyId, order, split.finishedGoodsDelta, deps, closure.id);
+      const newAvg = (qty(balance.avgCost) * qty(balance.qty) - split.finishedGoodsDelta) / qty(balance.qty);
       if (!(newAvg >= 0)) throw failure(`لا يمكن عكس تسوية الأمر ${order.orderNumber}: تكلفة المخزون الناتجة غير صالحة`);
       await tx.update(stockBalanceTable).set({ avgCost: String(newAvg.toFixed(4)), updatedAt: new Date() })
         .where(eq(stockBalanceTable.id, balance.id));
@@ -560,7 +670,7 @@ export async function reversePendingUtilitySettlement(
       await deps.addStockLedgerEntry({
         companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
         txDate: reversalDate, txType: "production_issue", qty: "0",
-        costPrice: String(newAvg.toFixed(4)), totalCost: String((-amount).toFixed(2)),
+        costPrice: String(newAvg.toFixed(4)), totalCost: String((-split.finishedGoodsDelta).toFixed(2)),
         balanceQty: String(balance.qty), refId: closure.id,
         refType: "production_pending_utility_settlement_reversal", batchNumber: order.batchNumber,
         notes: `عكس تعديل تكلفة كهرباء معلقة لأمر ${order.orderNumber}`,
@@ -568,9 +678,10 @@ export async function reversePendingUtilitySettlement(
     } else if (!["in_production", "paused", "quality_check"].includes(String(order.status))) {
       throw failure(`لا يمكن عكس تسوية الأمر ${order.orderNumber}: تغيرت وجهة WIP بعد الترحيل`);
     }
-    if (qty(order.actualCost) + 0.005 < amount) throw failure(`لا يمكن عكس تسوية الأمر ${order.orderNumber}: تكلفة الأمر الحالية لا تثبت مبلغ التسوية`);
+    const appliedAmount = order.status === "completed" ? settlement.deltaAmount : settlement.actualAmount;
+    if (qty(order.actualCost) + 0.005 < appliedAmount) throw failure(`لا يمكن عكس تسوية الأمر ${order.orderNumber}: تكلفة الأمر الحالية لا تثبت مبلغ التسوية`);
     await tx.update(productionOrdersTable).set({
-      actualCost: String(money(qty(order.actualCost) - amount).toFixed(2)), updatedAt: new Date(),
+      actualCost: String(money(qty(order.actualCost) - appliedAmount).toFixed(2)), updatedAt: new Date(),
     }).where(and(eq(productionOrdersTable.id, order.id), eq(productionOrdersTable.companyId, companyId)));
   }
   const journalLines = await tx.execute(sql`

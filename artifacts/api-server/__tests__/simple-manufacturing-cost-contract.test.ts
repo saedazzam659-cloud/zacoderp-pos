@@ -35,6 +35,9 @@ test("simple cost drilldown keeps the shared lifecycle response contract", async
     "materials:",
     "labor: { amount:",
     "overhead: { amount:",
+    "stageWaste",
+    "wasteSummary:",
+    "financialCostStatus:",
     "quality:",
   ]) {
     assert.match(handler, new RegExp(field.replace(/[{}]/g, "\\$&")));

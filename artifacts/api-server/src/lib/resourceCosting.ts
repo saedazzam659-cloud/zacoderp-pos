@@ -56,3 +56,46 @@ export function machineElectricityEstimate(
   const kwh = Number((kw * hours).toFixed(6));
   return { kwh, amount: Number((kwh * tariffPerKwh).toFixed(2)) };
 }
+
+/** Actual source cost less the provisional tariff accrual already in WIP/FG. */
+export function settleProvisionalResourceCost(actualAmount: number, accruedAmount: number) {
+  if (![actualAmount, accruedAmount].every((value) => Number.isFinite(value) && value >= 0)) {
+    throw Object.assign(new Error("مبلغ المصدر الفعلي أو الاستحقاق المؤقت غير صالح"), { status: 422 });
+  }
+  const actual = Number(actualAmount.toFixed(2));
+  const accrued = Number(accruedAmount.toFixed(2));
+  return {
+    actualAmount: actual,
+    accruedAmount: accrued,
+    deltaAmount: Number((actual - accrued).toFixed(2)),
+  };
+}
+
+export function provisionalResourceReceiptBalance(materialWip: number, resourceAccrual: number) {
+  if (![materialWip, resourceAccrual].every((value) => Number.isFinite(value) && value >= 0)) {
+    throw Object.assign(new Error("رصيد WIP أو استحقاق المورد غير صالح"), { status: 422 });
+  }
+  return Number((materialWip + resourceAccrual).toFixed(2));
+}
+
+/** Split an actual-vs-accrued utility delta by the immutable original receipt. */
+export function splitProvisionalResourceSettlement(
+  actualAmount: number,
+  accruedAmount: number,
+  finishedGoodsReceiptAmount: number,
+  abnormalWasteReceiptAmount: number,
+) {
+  const base = provisionalResourceReceiptBalance(
+    finishedGoodsReceiptAmount, abnormalWasteReceiptAmount,
+  );
+  const settlement = settleProvisionalResourceCost(actualAmount, accruedAmount);
+  if (!(base > 0)) {
+    throw Object.assign(new Error("توزيع استلام البضاعة التامة/الهالك الأصلي غير صالح"), { status: 422 });
+  }
+  const finishedGoodsDelta = Number((settlement.deltaAmount * finishedGoodsReceiptAmount / base).toFixed(2));
+  return {
+    ...settlement,
+    finishedGoodsDelta,
+    abnormalWasteDelta: Number((settlement.deltaAmount - finishedGoodsDelta).toFixed(2)),
+  };
+}

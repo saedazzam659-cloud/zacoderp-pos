@@ -23,6 +23,7 @@ type StageExecutionProps = {
   permissionKey: string;
   isSimple: boolean;
   resourceCostingVersion?: number;
+  overheadAccountId?: number | null;
   onReload?: () => void;
 };
 
@@ -53,7 +54,7 @@ type Stage = {
   notes: string;
 };
 
-export function ProductionStageExecution({ orderId, orderStatus, plannedQty, token, apiBase, permissionKey, isSimple, resourceCostingVersion = 0, onReload }: StageExecutionProps) {
+export function ProductionStageExecution({ orderId, orderStatus, plannedQty, token, apiBase, permissionKey, isSimple, resourceCostingVersion = 0, overheadAccountId, onReload }: StageExecutionProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { actingCompanyId } = useAuth();
@@ -584,6 +585,12 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                             placeholder="ابحث..." />
                         </div>
                       </div>}
+                       {isResourceCostingV1 && (activeStage.resourceMode === "labor" || activeStage.resourceMode === "both") && (
+                         <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs leading-5 text-violet-950">
+                           <p className="font-semibold">جاهزية تكلفة العمالة</p>
+                           <p>قبل إنهاء المرحلة، يجب أن يحتوي الأمر على تخصيص رواتب واحد فقط، مرحّل ومضمّن في التصنيع، مع «ساعات شخص-تصنيع معتمدة» موجبة في إعداد تشغيل الرواتب. لا تُحتسب تكلفة من راتب أو إعداد موارد بشرية غير مرحّل؛ سيعرض الخادم سبب المنع الدقيق إن لم تكتمل الجاهزية.</p>
+                         </div>
+                       )}
                       
                       {(!isResourceCostingV1 || activeStage.resourceMode === "machine" || activeStage.resourceMode === "both") && <ProductionResourcePicker
                         workCenterId={activeStage.workCenterId}
@@ -606,7 +613,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                          if (!machine?.electricityEnabled) return null;
                          return <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-950">
                            <p className="font-semibold">كهرباء الآلة مفعّلة ({machine.electricityKw ?? "—"} kW)</p>
-                           <p>سيُجمّد الخادم kWh والتعريفة كسجل استخدام عند الإنهاء، دون مصروف إضافي. تُختار فاتورة الكهرباء الصناعية والمصنع ومركز التكلفة لاحقاً صراحةً في إقفال المصادر الشهري؛ لا توجد ساعات كهرباء منفصلة.</p>
+                            <p>لا توجد ساعات كهرباء منفصلة. عند وجود فاتورة صناعية مرحّلة مرتبطة، تبقى المعالجة مرتبطة بالمصدر وساعات الآلة الفعلية. من دونها، يجمّد الخادم kWh والتعريفة ويستلزم حساب امتصاص/استحقاق صناعي: يُرسمل التقدير في استلام الإنتاج ثم يُصفّى ويُسوّى فرق الفاتورة الفعلية في الإقفال الشهري. {Number(overheadAccountId) > 0 ? `الحساب المحفوظ للأمر: #${overheadAccountId}.` : "حساب الاستحقاق/الامتصاص غير محفوظ للأمر؛ اضبطه قبل الإنهاء."} ستظهر رسالة الخادم الدقيقة إن كان الحساب غير مضبوط.</p>
                          </div>;
                        })()}
                     </div>

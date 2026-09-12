@@ -11,6 +11,7 @@ import { getContextModuleKey, setContextModuleKey } from "../lib/requestContext.
 import {
   isMachineElectricityAllocation,
   machineElectricityEstimate,
+  provisionalResourceReceiptBalance,
   requireSingleMachineElectricityAllocation,
 } from "../lib/resourceCosting.js";
 import {
@@ -1805,9 +1806,46 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
     const salePriceSnapshot = (order.meta as any)?.salePriceSnapshot;
     const snapshotUnitSalePrice = salePriceSnapshot == null ? null : num(salePriceSnapshot);
     const selling = snapshotUnitSalePrice == null ? null : snapshotUnitSalePrice * produced;
+    const completedStages = stages.filter((stage) => stage.status === "done");
+    const stageWasteSummary = stageWasteTotals(completedStages);
+    const stageWaste = completedStages
+      .map((stage) => {
+        const wasteUnitFactor = canonicalStageUnitFactor(
+          stage.wasteUnit,
+          stage.wasteUnitFactor ?? 1,
+          "عامل وحدة الهالك",
+        );
+        const qty = num(stage.wasteQty);
+        const convertedQty = qty * wasteUnitFactor;
+        return {
+          stageId: stage.id,
+          stageName: stage.nameAr,
+          classification: stage.wasteClassification === "normal" ? "normal" : "abnormal",
+          qty,
+          unitCode: stage.wasteUnit ?? order.unitCode,
+          unitFactor: wasteUnitFactor,
+          convertedQty,
+          // Stage execution persists quantity evidence only. The approved
+          // source-allocation/posting path owns financial cost.
+          financialCost: null,
+          financialCostStatus: "not_separately_measured",
+          accountingTreatment: stage.wasteClassification === "normal"
+            ? "capitalized_in_wip"
+            : "waste_expense_outside_stage_trace",
+        };
+      })
+      .filter((stage) => stage.convertedQty > 0);
+    const headerWasteQty = num(order.wasteQty);
+    const additionalHeaderWasteQty = Math.max(0, headerWasteQty - stageWasteSummary.total);
+    const recordedWasteFinancialCostRows = waste.filter((row) => row.costImpact != null);
+    const recordedWasteFinancialCost = recordedWasteFinancialCostRows.reduce(
+      (sum, row) => sum + num(row.costImpact),
+      0,
+    );
     res.json({
       order: { id: order.id, orderNumber: order.orderNumber, status: order.status,
-        product: product[0] ?? null, producedQty: produced },
+        product: product[0] ?? null, producedQty: produced,
+        wasteQty: headerWasteQty, unitCode: order.unitCode },
       layers: {
         financialManufacturing: actual, managementManufacturing: actual,
         operating: actual + operatingAdd,
@@ -1890,10 +1928,27 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
         }),
         waste: waste.map((x) => ({
           id: x.id, reason: x.reason, type: x.wasteType,
-          classification: x.wasteClassification, amount: num(x.costImpact), qty: num(x.qty),
+          classification: x.wasteClassification,
+          amount: x.costImpact == null ? null : num(x.costImpact),
+          financialCost: x.costImpact == null ? null : num(x.costImpact),
+          financialCostStatus: x.costImpact == null ? "not_recorded" : "recorded",
+          qty: num(x.qty),
           unitCode: x.unitCode, unitFactor: num(x.unitFactor, 1),
-           convertedQty: multiplyQuantity(String(x.qty ?? 0), String(num(x.unitFactor, 1))),
+          convertedQty: multiplyQuantity(String(x.qty ?? 0), String(num(x.unitFactor, 1))),
         })),
+        stageWaste,
+        wasteSummary: {
+          headerWasteQty,
+          stageWasteQty: stageWasteSummary.total,
+          normalStageWasteQty: stageWasteSummary.normal,
+          abnormalStageWasteQty: stageWasteSummary.abnormal,
+          additionalHeaderWasteQty,
+          additionalHeaderWasteClassification: "unclassified",
+          additionalHeaderWasteAccountingTreatment: "waste_expense",
+          recordedWasteFinancialCost,
+          recordedWasteFinancialCostRows: recordedWasteFinancialCostRows.length,
+          stageWasteFinancialCostStatus: "not_separately_measured",
+        },
         quality: { checks: checks.length, failed: checks.filter((x) => x.result === "fail").length },
          allocations,
          manualCosts,
@@ -7409,7 +7464,39 @@ export async function productionStatusHandler(req: any, res: any) {
       const driverDelta = await reconcileFinalStageDrivers(
         tx, cid, order, producedQty, req.authUser!.id, req,
       );
-      const wipBalance = Number((num(order.actualCost) + driverDelta).toFixed(2));
+      // Pending utility evidence for v1 has no posted invoice to reclassify.
+      // Capitalize its frozen tariff amount in this same receipt JE (DR WIP /
+      // CR configured absorption-accrual). Source-linked payroll/depreciation
+      // and source-linked electricity deliberately do not enter this map:
+      // those amounts already reached WIP through the source allocation +
+      // driver-reconciliation path.
+      const provisionalAccruals = new Map<number, number>();
+      if (Number(order.resourceCostingVersion) >= 1) {
+        const resourceEvidence = await tx.select({
+          amount: productionStageResourceCostsTable.amount,
+          snapshot: productionStageResourceCostsTable.snapshot,
+        }).from(productionStageResourceCostsTable).where(and(
+          eq(productionStageResourceCostsTable.companyId, cid),
+          eq(productionStageResourceCostsTable.orderId, order.id),
+          eq(productionStageResourceCostsTable.sourceType, "pending_machine_electricity"),
+        ));
+        for (const evidence of resourceEvidence) {
+          const snapshot = (evidence.snapshot ?? {}) as Record<string, unknown>;
+          const accountId = Number(snapshot.provisionalAccrualAccountId);
+          const amount = num(snapshot.provisionalAccrualAmount ?? evidence.amount);
+          // Older posted/evidence-only stages intentionally remain untouched:
+          // v0 and historical v1 orders are never rewritten by this release.
+          if (!Number.isInteger(accountId) || !(amount > 0)) continue;
+          await validatePostingAccount(tx, cid, accountId);
+          provisionalAccruals.set(accountId, Number(((provisionalAccruals.get(accountId) ?? 0) + amount).toFixed(2)));
+        }
+      }
+      const provisionalTotal = [...provisionalAccruals.values()]
+        .reduce((sum, amount) => Number((sum + amount).toFixed(2)), 0);
+      const wipBalance = provisionalResourceReceiptBalance(
+        Number((num(order.actualCost) + driverDelta).toFixed(2)),
+        provisionalTotal,
+      );
       if (!(wipBalance > 0)) {
         res.status(400).json({
           error:
@@ -7494,6 +7581,18 @@ export async function productionStatusHandler(req: any, res: any) {
         costCenter: order.costCenter ?? null,
         description: `إذن إضافة بضاعة تامة من أمر إنتاج ${order.orderNumber} — ${order.title}`,
         lines: [
+          ...[...provisionalAccruals.entries()].flatMap(([accountId, amount]) => [
+            {
+              accountId: order.wipAccountId!,
+              debit: amount,
+              description: "استحقاق مؤقت لتكلفة مورد إنتاج",
+            } satisfies JLine,
+            {
+              accountId,
+              credit: amount,
+              description: "استحقاق كهرباء آلة مؤقت",
+            } satisfies JLine,
+          ]),
           {
             accountId: order.finishedGoodsAccountId,
             debit: fgCost,
@@ -9711,6 +9810,16 @@ async function freezeStageResourceCosts(
         ? requireSingleMachineElectricityAllocation(electricityAllocations)
         : null;
       const estimate = machineElectricityEstimate(kw, hours, tariff);
+      // A source-linked allocation is already reclassified at issue and later
+      // reconciled by its driver. A missing invoice is different: freeze an
+      // explicit provisional liability account now so the completion receipt
+      // can capitalize the tariff estimate without inventing a zero-cost path.
+      if (!electricityAllocation && !order.overheadAccountId) {
+        throw Object.assign(
+          new Error("كهرباء الآلة المعلقة تحتاج حساب استحقاق/امتصاص التكاليف الصناعية قبل إكمال المرحلة"),
+          { status: 422 },
+        );
+      }
       rows.push({
         companyId: cid, orderId: order.id, stageId: stage.id, component: "electricity",
         sourceType: electricityAllocation?.sourceType ?? "pending_machine_electricity",
@@ -9726,7 +9835,11 @@ async function freezeStageResourceCosts(
           kwh: estimate.kwh,
           tariffPerKwh: tariff,
           formula: "kW × hours × tariff",
-          accountingTreatment: "estimate_evidence_only; posted_source_reconciled_by_actual_machine_hours",
+          provisionalAccrualAccountId: electricityAllocation ? null : order.overheadAccountId,
+          provisionalAccrualAmount: electricityAllocation ? 0 : estimate.amount,
+          accountingTreatment: electricityAllocation
+            ? "posted_source_reconciled_by_actual_machine_hours"
+            : "provisional_wip_accrual_cleared_by_actual_utility_source",
         },
         createdBy: actorId,
       });

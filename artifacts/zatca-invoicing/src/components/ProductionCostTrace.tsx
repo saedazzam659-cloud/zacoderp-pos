@@ -30,6 +30,19 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
   const labor = trace.labor && typeof trace.labor === "object" ? trace.labor : null;
   const overhead = trace.overhead && typeof trace.overhead === "object" ? trace.overhead : null;
   const waste = Array.isArray(trace.waste) ? trace.waste : [];
+  const stageWaste = Array.isArray(trace.stageWaste) ? trace.stageWaste : [];
+  const savedStages = Array.isArray(trace.stages) ? trace.stages : [];
+  const wasteSummary = trace.wasteSummary && typeof trace.wasteSummary === "object"
+    ? trace.wasteSummary
+    : null;
+  const resourceCosts = trace.resourceCosts && typeof trace.resourceCosts === "object" ? trace.resourceCosts : null;
+  const resourceTotals = resourceCosts?.totals;
+  const hasProvisionalElectricityAccrual = (Array.isArray(resourceCosts?.stages) ? resourceCosts.stages : [])
+    .some((stage: any) => (Array.isArray(stage?.snapshot) ? stage.snapshot : []).some((component: any) => {
+      const snapshot = component?.component === "electricity" ? component?.snapshot : null;
+      return Number(snapshot?.provisionalAccrualAccountId) > 0 &&
+        Number(snapshot?.provisionalAccrualAmount) > 0;
+    }));
 
   const totals = costDrilldown.totals || {};
   const act = Number(totals.actual || 0);
@@ -42,6 +55,59 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
     const num = Number(val);
     return Number.isFinite(num) ? num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
   };
+  const formatQuantity = (val: any) => {
+    const num = Number(val);
+    return Number.isFinite(num) ? num.toLocaleString("en-US", { maximumFractionDigits: 6 }) : "—";
+  };
+  const fallbackStageWaste = stageWaste.length > 0
+    ? stageWaste
+    : savedStages
+      .filter((stage: any) => stage.status === "done" && Number(stage.wasteQty || 0) > 0)
+      .map((stage: any) => ({
+        stageId: stage.id,
+        stageName: stage.name,
+        classification: stage.wasteClassification === "normal" ? "normal" : "abnormal",
+        qty: Number(stage.wasteQty || 0),
+        unitCode: stage.wasteUnit,
+        unitFactor: Number(stage.wasteUnitFactor || 1),
+        convertedQty: Number(stage.convertedWasteQty ?? stage.wasteQty ?? 0),
+        financialCost: null,
+        financialCostStatus: "not_separately_measured",
+      }));
+  const stageWasteQty = Number.isFinite(Number(wasteSummary?.stageWasteQty))
+    ? Number(wasteSummary.stageWasteQty)
+    : fallbackStageWaste.reduce((sum: number, row: any) => sum + Number(row.convertedQty || 0), 0);
+  const normalStageWasteQty = Number.isFinite(Number(wasteSummary?.normalStageWasteQty))
+    ? Number(wasteSummary.normalStageWasteQty)
+    : fallbackStageWaste
+      .filter((row: any) => row.classification === "normal")
+      .reduce((sum: number, row: any) => sum + Number(row.convertedQty || 0), 0);
+  const abnormalStageWasteQty = Number.isFinite(Number(wasteSummary?.abnormalStageWasteQty))
+    ? Number(wasteSummary.abnormalStageWasteQty)
+    : Math.max(0, stageWasteQty - normalStageWasteQty);
+  const headerWasteQty = Number.isFinite(Number(wasteSummary?.headerWasteQty))
+    ? Number(wasteSummary.headerWasteQty)
+    : Number(costDrilldown.order?.wasteQty || 0);
+  const additionalHeaderWasteQty = Number.isFinite(Number(wasteSummary?.additionalHeaderWasteQty))
+    ? Number(wasteSummary.additionalHeaderWasteQty)
+    : Math.max(0, headerWasteQty - stageWasteQty);
+  const financialCostValue = (row: any) =>
+    row.financialCost !== undefined ? row.financialCost : row.amount;
+  const financialCostKnown = (row: any) => {
+    const value = financialCostValue(row);
+    return value != null && Number.isFinite(Number(value));
+  };
+  const recordedWasteFinancialCostRows = waste.filter(financialCostKnown);
+  const recordedWasteFinancialCost = Number.isFinite(Number(wasteSummary?.recordedWasteFinancialCost))
+    ? Number(wasteSummary.recordedWasteFinancialCost)
+    : recordedWasteFinancialCostRows.reduce(
+      (sum: number, row: any) => sum + Number(financialCostValue(row) || 0),
+      0,
+    );
+  const wasteFinancialCostAvailable = recordedWasteFinancialCostRows.length > 0 ||
+    Number(wasteSummary?.recordedWasteFinancialCostRows || 0) > 0;
+  const financialCostText = (row: any) =>
+    financialCostKnown(row) ? formatMoney(financialCostValue(row)) : "غير متاح";
 
   return (
     <div className="space-y-6">
@@ -102,6 +168,26 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
             )}
           </div>
 
+          {Number(resourceCosts?.version) >= 1 && (
+            <div className="p-4 hover:bg-slate-50/50 transition-colors">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-semibold text-slate-800">مكونات موارد التنفيذ المجمدة</div>
+                <div className="font-bold text-slate-800">{formatMoney(resourceTotals?.total)}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+                <div className="rounded border bg-white p-2">عمالة: <b>{formatMoney(resourceTotals?.labor)}</b></div>
+                <div className="rounded border bg-white p-2">إهلاك: <b>{formatMoney(resourceTotals?.depreciation)}</b></div>
+                <div className="rounded border bg-white p-2">كهرباء: <b>{formatMoney(resourceTotals?.electricity)}</b></div>
+                <div className="rounded border bg-white p-2">عبء مصنع: <b>{formatMoney(resourceTotals?.factoryOverhead)}</b></div>
+              </div>
+              <div className="mt-2 text-xs leading-5 text-slate-500">
+                هذه تفصيلة لقطات خادم وليست جمعاً جديداً فوق إجمالي التكلفة الفعلية. {hasProvisionalElectricityAccrual
+                  ? "تحمل الكهرباء المعلّقة استحقاقاً مؤقتاً مرسملًا ضمن استلام الإنتاج؛ التسوية اللاحقة تزيل الاستحقاق وتطبّق فرق الفاتورة الفعلية فقط."
+                  : "تظل الكهرباء المرتبطة بمصدر مرحّل ضمن مسار المصدر، أما اللقطات التاريخية بلا استحقاق فتبقى أدلة استخدام فقط."}
+              </div>
+            </div>
+          )}
+
           {/* Labor */}
           <div className="p-4 hover:bg-slate-50/50 transition-colors">
             <div className="flex items-center justify-between mb-2">
@@ -139,27 +225,81 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
           {/* Waste */}
           <div className="p-4 hover:bg-slate-50/50 transition-colors">
             <div className="flex items-center justify-between mb-2">
-              <div className="font-semibold text-rose-700 flex items-center gap-1.5"><AlertCircle className="h-4 w-4" /> تكلفة الهالك (Waste)</div>
-              <div className="font-bold text-rose-700">{formatMoney(waste.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0))}</div>
+              <div className="font-semibold text-rose-700 flex items-center gap-1.5"><AlertCircle className="h-4 w-4" /> التكلفة المالية المسجلة للهالك</div>
+              <div className="font-bold text-rose-700">
+                {wasteFinancialCostAvailable ? formatMoney(recordedWasteFinancialCost) : "غير متاح"}
+              </div>
             </div>
             <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-md border border-slate-100 mb-3 leading-relaxed">
               <strong>تكلفة الهالك الطبيعي (Normal Waste)</strong> تُرسمل (Capitalized) وتبقى كجزء من تكلفة مخزون المنتج التام (WIP).<br/>
               <strong>الهالك غير الطبيعي (Abnormal) والهالك غير المصنف (Unclassified Header Waste)</strong> يُقيد مباشرة كمصروف خسارة ويُحمل على حساب فروقات تكلفة الإنتاج (Variance/Waste Expense Account).
             </div>
-            
-            {waste.length > 0 ? (
+            <div className="mb-3 rounded-md border border-rose-100 bg-rose-50/40 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <strong className="text-rose-900">الكميات الفعلية المحفوظة</strong>
+                <span className="text-[11px] text-slate-500">لا تُستنتج من المخطط ناقص المنتج</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-5">
+                <div className="rounded border bg-white p-2">
+                  هالك المراحل
+                  <b className="mt-1 block">{formatQuantity(stageWasteQty)}</b>
+                </div>
+                <div className="rounded border bg-white p-2">
+                  طبيعي
+                  <b className="mt-1 block text-emerald-700">{formatQuantity(normalStageWasteQty)}</b>
+                </div>
+                <div className="rounded border bg-white p-2">
+                  غير طبيعي
+                  <b className="mt-1 block text-rose-700">{formatQuantity(abnormalStageWasteQty)}</b>
+                </div>
+                <div className="rounded border bg-white p-2">
+                  رأس الأمر
+                  <b className="mt-1 block">{formatQuantity(headerWasteQty)}</b>
+                </div>
+                <div className="rounded border border-amber-200 bg-amber-50 p-2">
+                  إضافي غير مصنف
+                  <b className="mt-1 block text-amber-700">{formatQuantity(additionalHeaderWasteQty)}</b>
+                </div>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-600">
+                قيمة التكلفة المالية المعروضة أعلاه تخص سجلات تكلفة الهالك فقط:
+                {" "}
+                {wasteFinancialCostAvailable
+                  ? `${recordedWasteFinancialCostRows.length || Number(wasteSummary?.recordedWasteFinancialCostRows || 0)} سجل`
+                  : "لا توجد قيمة مالية مسجلة"}
+                . أما كمية الهالك الطبيعي فتبقى ظاهرة هنا حتى عندما لا تحمل صف تكلفة مستقل بقيمة 0.
+              </div>
+            </div>
+
+            {waste.length > 0 || fallbackStageWaste.length > 0 || additionalHeaderWasteQty > 0 ? (
               <div className="grid md:grid-cols-2 gap-2 text-xs">
                 {waste.map((w: any, i: number) => (
-                  <div key={i} className={`border rounded p-2 flex flex-col gap-1 ${w.classification === "abnormal" ? "bg-rose-50/50 border-rose-200" : "bg-white"}`}>
+                  <div key={`record-${w.id ?? i}`} className={`border rounded p-2 flex flex-col gap-1 ${
+                    w.classification === "abnormal"
+                      ? "bg-rose-50/50 border-rose-200"
+                      : w.classification === "normal"
+                        ? "bg-white"
+                        : "bg-amber-50/50 border-amber-200"
+                  }`}>
                     <div className="flex justify-between font-semibold">
-                      <span className={w.classification === "abnormal" ? "text-rose-700" : "text-slate-700"}>
-                        {w.classification === "abnormal" ? "هالك غير طبيعي (استثنائي)" : "هالك طبيعي (مخطط)"}
+                      <span className={
+                        w.classification === "abnormal"
+                          ? "text-rose-700"
+                          : w.classification === "normal"
+                            ? "text-slate-700"
+                            : "text-amber-800"
+                      }>
+                        {w.classification === "abnormal"
+                          ? "هالك غير طبيعي (سجل)"
+                          : w.classification === "normal"
+                            ? "هالك طبيعي (سجل)"
+                            : "هالك غير مصنف (سجل)"}
                       </span>
-                      <span>{formatMoney(w.amount)}</span>
+                      <span>{financialCostText(w)}</span>
                     </div>
                     {w.qty != null && (
                       <div className="text-slate-500">
-                        الكمية: {Number(w.qty).toLocaleString()} {w.unitCode || ""}
+                        الكمية: {formatQuantity(w.convertedQty ?? w.qty)} {w.unitCode || ""}
                       </div>
                     )}
                     {w.reason && (
@@ -167,9 +307,33 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
                     )}
                   </div>
                 ))}
+                {fallbackStageWaste.map((w: any, i: number) => (
+                  <div key={`stage-${w.stageId ?? i}`} className={`border rounded p-2 flex flex-col gap-1 ${w.classification === "abnormal" ? "bg-rose-50/50 border-rose-200" : "bg-emerald-50/30 border-emerald-200"}`}>
+                    <div className="flex justify-between font-semibold">
+                      <span className={w.classification === "abnormal" ? "text-rose-700" : "text-emerald-700"}>
+                        {w.classification === "abnormal" ? "هالك مرحلة غير طبيعي" : "هالك مرحلة طبيعي"}
+                      </span>
+                      <span>{financialCostText(w)}</span>
+                    </div>
+                    <div className="text-slate-500">
+                      المرحلة: {w.stageName || `#${w.stageId ?? "—"}`} — الكمية المحولة: {formatQuantity(w.convertedQty ?? w.qty)} {w.unitCode || ""}
+                    </div>
+                    <div className="text-[11px] text-slate-500">الهالك محفوظ ككمية تنفيذ؛ لا يمثل غياب صف التكلفة غياب الهالك.</div>
+                  </div>
+                ))}
+                {additionalHeaderWasteQty > 0 && (
+                  <div className="border border-amber-200 bg-amber-50/50 rounded p-2 flex flex-col gap-1">
+                    <div className="flex justify-between font-semibold text-amber-800">
+                      <span>هالك إضافي غير مصنف (رأس الأمر)</span>
+                      <span>غير متاح</span>
+                    </div>
+                    <div className="text-slate-600">الكمية: {formatQuantity(additionalHeaderWasteQty)} {costDrilldown.order?.unitCode || ""}</div>
+                    <div className="text-[11px] text-amber-800">مصروف هالك منفصل؛ لا تُخمن له تكلفة من الفرق بين الكميات.</div>
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="text-xs text-slate-400">لا توجد تكلفة هالك مسجلة.</div>
+              <div className="text-xs text-slate-400">لا توجد كمية هالك محفوظة أو تكلفة هالك مسجلة.</div>
             )}
           </div>
         </div>

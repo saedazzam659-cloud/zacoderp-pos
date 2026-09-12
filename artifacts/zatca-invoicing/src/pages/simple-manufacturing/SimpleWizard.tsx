@@ -42,6 +42,7 @@ export function SimpleWizard({
     defaultWipAccountId: number | null;
     defaultRawInventoryAccountId: number | null;
     defaultFinishedGoodsAccountId: number | null;
+    defaultOverheadAccountId: number | null;
     defaultWasteAccountId: number | null;
     electricityTariffPerKwh?: number | null;
   }) => Promise<unknown>;
@@ -93,6 +94,7 @@ export function SimpleWizard({
     defaultWipAccountId: "",
     defaultRawInventoryAccountId: "",
     defaultFinishedGoodsAccountId: "",
+    defaultOverheadAccountId: "",
     defaultWasteAccountId: "",
     electricityTariffPerKwh: "",
   });
@@ -291,6 +293,7 @@ export function SimpleWizard({
       defaultWipAccountId: settings.defaultWipAccountId ? String(settings.defaultWipAccountId) : "",
       defaultRawInventoryAccountId: settings.defaultRawInventoryAccountId ? String(settings.defaultRawInventoryAccountId) : "",
       defaultFinishedGoodsAccountId: settings.defaultFinishedGoodsAccountId ? String(settings.defaultFinishedGoodsAccountId) : "",
+      defaultOverheadAccountId: settings.defaultOverheadAccountId ? String(settings.defaultOverheadAccountId) : "",
       defaultWasteAccountId: settings.defaultWasteAccountId ? String(settings.defaultWasteAccountId) : "",
       electricityTariffPerKwh: settings.electricityTariffPerKwh == null ? "" : String(settings.electricityTariffPerKwh),
     });
@@ -328,6 +331,26 @@ export function SimpleWizard({
     !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature),
   );
   const selectedProduct = catalog.items.find(i => String(i.id) === form.productItemId);
+  const routingUsesStageResources = (routingPreview?.stages ?? []).some((stage: any) =>
+    stage?.resourceMode === "labor" || stage?.resourceMode === "machine" || stage?.resourceMode === "both",
+  );
+  // Resource-aware routings carry immutable v1 execution snapshots.  A compact
+  // order that copies one must use that contract, while direct/resource-free
+  // flows remain v0 unless the user explicitly opts in.
+  const resourceCostingEnabled = resourceCostReadiness.ready &&
+    (form.resourceCostingVersion || routingUsesStageResources);
+  const routingHasElectricityMachine = (routingPreview?.stages ?? []).some((stage: any) => {
+    if (stage?.resourceMode !== "machine" && stage?.resourceMode !== "both") return false;
+    return catalog.machines?.some(machine =>
+      String(machine.id) === String(stage?.resourceId) && machine.electricityEnabled,
+    );
+  });
+  const selectedPostedElectricitySource = costSources.some(source => {
+    const key = `${source.sourceType}:${source.sourceRecordId}`;
+    return source.sourceType === "purchase_invoice" &&
+      allocations[key] === "1" &&
+      source.meta?.costType === "electricity";
+  });
   const plannedLaborPersonHours = (routingPreview?.stages ?? [])
     .filter((stage: any) => stage.resourceMode === "labor" || stage.resourceMode === "both")
     .reduce((sum: number, stage: any) =>
@@ -580,11 +603,32 @@ export function SimpleWizard({
       setTab("materials");
       return;
     }
+    if (routingUsesStageResources && !resourceCostReadiness.ready) {
+      toast({
+        title: "تكلفة موارد المراحل غير جاهزة",
+        description: resourceCostReadiness.loading
+          ? "انتظر اكتمال التحقق من جاهزية تكلفة الموارد قبل إنشاء أمر بمسار موارد."
+          : resourceCostReadiness.reason || "لا يمكن إنشاء أمر بمسار موارد كأمر v0. أكمل إعداد تكلفة الموارد أو استخدم مساراً بلا موارد.",
+        variant: "destructive",
+      });
+      setTab("resources");
+      return;
+    }
     if (mode === "execute" &&
         (!accountSettings.defaultWipAccountId || !accountSettings.defaultRawInventoryAccountId)) {
       toast({
         title: "إعداد الحسابات مطلوب قبل البدء",
         description: "حدّد حساب إنتاج تحت التشغيل WIP وحساب مخزون الخامات في قسم إعداد حسابات التصنيع داخل تبويب الموارد ثم احفظهما.",
+        variant: "destructive",
+      });
+      setTab("resources");
+      return;
+    }
+    if (mode === "execute" && resourceCostingEnabled && routingHasElectricityMachine &&
+        !selectedPostedElectricitySource && !accountSettings.defaultOverheadAccountId) {
+      toast({
+        title: "حساب استحقاق الكهرباء مطلوب",
+        description: "المسار يحتوي آلة كهرباؤها مفعّلة ولا توجد فاتورة كهرباء صناعية مرحّلة مختارة. اختر حساب التزام امتصاص/استحقاق في تبويب الموارد واحفظه قبل البدء؛ سيُرسمل تقدير الكهرباء المجمد ثم تُسوّى الفاتورة لاحقاً.",
         variant: "destructive",
       });
       setTab("resources");
@@ -596,6 +640,7 @@ export function SimpleWizard({
       String(configuredSettings?.defaultWipAccountId ?? "") !== accountSettings.defaultWipAccountId ||
       String(configuredSettings?.defaultRawInventoryAccountId ?? "") !== accountSettings.defaultRawInventoryAccountId ||
       String(configuredSettings?.defaultFinishedGoodsAccountId ?? "") !== accountSettings.defaultFinishedGoodsAccountId ||
+      String(configuredSettings?.defaultOverheadAccountId ?? "") !== accountSettings.defaultOverheadAccountId ||
       String(configuredSettings?.defaultWasteAccountId ?? "") !== accountSettings.defaultWasteAccountId
     );
     if (accountingChanged) {
@@ -604,6 +649,7 @@ export function SimpleWizard({
           defaultWipAccountId: accountSettings.defaultWipAccountId ? Number(accountSettings.defaultWipAccountId) : null,
           defaultRawInventoryAccountId: accountSettings.defaultRawInventoryAccountId ? Number(accountSettings.defaultRawInventoryAccountId) : null,
           defaultFinishedGoodsAccountId: accountSettings.defaultFinishedGoodsAccountId ? Number(accountSettings.defaultFinishedGoodsAccountId) : null,
+          defaultOverheadAccountId: accountSettings.defaultOverheadAccountId ? Number(accountSettings.defaultOverheadAccountId) : null,
           defaultWasteAccountId: accountSettings.defaultWasteAccountId ? Number(accountSettings.defaultWasteAccountId) : null,
         });
       } catch {
@@ -614,7 +660,7 @@ export function SimpleWizard({
     const selectedPayrollSource = costModes.payroll === "linked" && costSources.some(source =>
       source.sourceType === "payroll" && allocations[`${source.sourceType}:${source.sourceRecordId}`] === "1",
     );
-    if (form.resourceCostingVersion && selectedPayrollSource && !(plannedLaborPersonHours > 0)) {
+    if (resourceCostingEnabled && selectedPayrollSource && !(plannedLaborPersonHours > 0)) {
       toast({
         title: "محرك ساعات العمالة المخططة مطلوب",
         description: "حدّد مدة متوقعة وعدد عمال موجباً لمراحل العمالة في مسار الإنتاج قبل ربط مصدر الرواتب.",
@@ -637,7 +683,7 @@ export function SimpleWizard({
       finishedWarehouseId: Number(form.finishedWarehouseId) || null,
       workCenterId: Number(form.workCenterId) || null,
       plannedHours: Number(form.plannedHours) || 0,
-      ...(form.resourceCostingVersion && resourceCostReadiness.ready ? {
+      ...(resourceCostingEnabled ? {
         resourceCostingVersion: 1,
         ...(selectedPayrollSource ? { plannedLaborPersonHours } : {}),
       } : {}),
@@ -690,6 +736,8 @@ export function SimpleWizard({
       defaultRawInventoryAccountId: Number(accountSettings.defaultRawInventoryAccountId),
       defaultFinishedGoodsAccountId: accountSettings.defaultFinishedGoodsAccountId
         ? Number(accountSettings.defaultFinishedGoodsAccountId) : null,
+      defaultOverheadAccountId: accountSettings.defaultOverheadAccountId
+        ? Number(accountSettings.defaultOverheadAccountId) : null,
       defaultWasteAccountId: accountSettings.defaultWasteAccountId
         ? Number(accountSettings.defaultWasteAccountId) : null,
       electricityTariffPerKwh: accountSettings.electricityTariffPerKwh
@@ -769,6 +817,8 @@ export function SimpleWizard({
     .filter(account => account.accountType === "asset");
   const wasteAccounts = postingAccounts
     .filter(account => account.accountType === "expense");
+  const overheadAccounts = (catalog.accounting?.overheadAccounts ?? postingAccounts)
+    .filter(account => account.accountType === "liability");
   const hasRequiredAccounting =
     !!accountSettings.defaultWipAccountId && !!accountSettings.defaultRawInventoryAccountId;
 
@@ -1069,7 +1119,7 @@ export function SimpleWizard({
                   <CardTitle className="text-base text-amber-900">إعداد حسابات ترحيل التصنيع</CardTitle>
                   <CardDescription className="text-amber-800">
                      تُستخدم حسابات الشركة الموجودة والقابلة للترحيل فقط؛ لا ينشئ هذا النموذج حسابات تلقائياً.
-                     حفظ المسودة لا يرحّل قيداً ولا يحتاج حساب WIP، لكن يلزم حفظ حساب إنتاج تحت التشغيل وحساب مخزون الخامات قبل بدء الإنتاج. حساب الإنتاج التام مطلوب عند الإقفال، وحساب الهالك مطلوب فقط إذا أدخلت كمية هالك موجبة.
+                     حفظ المسودة لا يرحّل قيداً ولا يحتاج حساب WIP، لكن يلزم حفظ حساب إنتاج تحت التشغيل وحساب مخزون الخامات قبل بدء الإنتاج. حساب الإنتاج التام مطلوب عند الإقفال، وحساب الهالك مطلوب فقط إذا أدخلت كمية هالك موجبة. يلزم حساب امتصاص/استحقاق التكاليف الصناعية عند إكمال آلة كهرباؤها معلّقة بلا فاتورة مصدر مرحّلة.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-3 space-y-4">
@@ -1097,6 +1147,12 @@ export function SimpleWizard({
                            label: "مخزون الإنتاج التام — أصل المنتج (مطلوب قبل الإقفال)",
                           required: false,
                           accounts: accountingAccounts,
+                        },
+                        {
+                          key: "defaultOverheadAccountId" as const,
+                          label: "حساب امتصاص/استحقاق الكهرباء الصناعية (للكهرباء المعلّقة)",
+                          required: false,
+                          accounts: overheadAccounts,
                         },
                         {
                           key: "defaultWasteAccountId" as const,
@@ -1131,6 +1187,8 @@ export function SimpleWizard({
                                 ? `المحدد: ${(field.accounts ?? accountingAccounts).find(account => String(account.id) === accountSettings[field.key])?.code ?? `#${accountSettings[field.key]}`}`
                                 : field.key === "defaultWasteAccountId"
                                   ? "اختر حساب مصروف نشطاً وقابلاً للترحيل عند تسجيل هالك موجب."
+                                  : field.key === "defaultOverheadAccountId"
+                                    ? "يُستخدم فقط عند غياب فاتورة كهرباء صناعية مرحّلة: يُرسمل التقدير المجمد ثم يُصفّى عند تسوية الفاتورة الفعلية."
                                   : "اختر حساباً موجوداً من دليل الشركة؛ لا يتم إنشاء حساب جديد هنا."}
                            </p>
                         </div>
@@ -1209,25 +1267,28 @@ export function SimpleWizard({
                   <p className="text-xs text-slate-500">يُستخدم هذا الرقم لتوزيع تكلفة الإهلاك والإيجار على الأمر بدقة.</p>
                 </div>
               </div>
-              {resourceCostReadiness.ready ? <Card className={`shadow-none ${form.resourceCostingVersion ? "border-violet-300 bg-violet-50/40" : "border-slate-200"}`}>
+              {resourceCostReadiness.ready ? <Card className={`shadow-none ${resourceCostingEnabled ? "border-violet-300 bg-violet-50/40" : "border-slate-200"}`}>
                 <CardContent className="space-y-3 pt-5">
                   <label className="flex cursor-pointer items-start gap-3">
                     <input
                       type="checkbox"
                       className="mt-1 h-4 w-4 rounded text-violet-600"
-                      checked={form.resourceCostingVersion}
+                      checked={resourceCostingEnabled}
+                      disabled={routingUsesStageResources}
                       onChange={event => setForm(current => ({ ...current, resourceCostingVersion: event.target.checked }))}
                     />
                     <span>
                       <span className="block text-sm font-semibold text-slate-800">تفعيل تكلفة موارد المرحلة لهذا الأمر</span>
                       <span className="mt-1 block text-xs leading-6 text-slate-600">
-                        خيار اختياري للأوامر الجديدة فقط. يستخدم ساعات تشغيل المرحلة الواحدة لحساب العمالة أو الإهلاك والكهرباء حسب المورد؛ لا يغيّر تكاليف أو أوامر سابقة.
+                        {routingUsesStageResources
+                          ? "مفعّل تلقائياً لهذا الأمر لأن المسار يحتوي موارد مراحل. يستخدم ساعات تشغيل المرحلة الواحدة لحساب العمالة أو الإهلاك والكهرباء حسب المورد؛ لا يغيّر أوامر سابقة."
+                          : "خيار اختياري للأوامر الجديدة فقط. يستخدم ساعات تشغيل المرحلة الواحدة لحساب العمالة أو الإهلاك والكهرباء حسب المورد؛ لا يغيّر تكاليف أو أوامر سابقة."}
                       </span>
                     </span>
                   </label>
-                  {form.resourceCostingVersion && (
+                  {resourceCostingEnabled && (
                     <div className="rounded-md border border-violet-200 bg-white p-3 text-xs leading-6 text-violet-950">
-                      أكمل إعداد نوع المورد والآلة/عدد العمال في مسار الإنتاج. يحسب مصدر الرواتب المعتمد بساعات الشخص المخططة، بينما تحفظ نتائج المراحل كلقطات مصدرية ولا تُنشأ مصروفات مكررة.
+                       أكمل إعداد نوع المورد والآلة/عدد العمال في مسار الإنتاج. مرحلة العمالة تحتاج عند الإنهاء تخصيص رواتب مرحّلاً واحداً ومضمناً في التصنيع مع ساعات شخص-تصنيع معتمدة؛ لا تُستنتج تكلفة من راتب غير مرحّل. كهرباء الآلة بلا فاتورة مصدر مرحّلة تُرسمل كتقدير مجمّد في الاستلام ثم تُصفّى وتُسوّى بفارق الفاتورة الفعلية في الإقفال الشهري.
                     </div>
                   )}
                 </CardContent>

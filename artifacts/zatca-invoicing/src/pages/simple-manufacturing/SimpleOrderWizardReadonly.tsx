@@ -162,6 +162,14 @@ export function SimpleOrderWizardReadonly({
   const costPolicy = savedObject(meta.costPolicy);
   const productId = savedOrder.productItemId ?? order.productItemId;
   const resourceStages = Array.isArray(resourceCost?.stages) ? resourceCost.stages : [];
+  const hasProvisionalElectricityAccrual = resourceStages.some((stage: any) =>
+    (Array.isArray(stage?.snapshot) ? stage.snapshot : []).some((component: any) => {
+      const snapshot = savedObject(component?.snapshot);
+      return component?.component === "electricity" &&
+        Number(snapshot?.provisionalAccrualAccountId) > 0 &&
+        Number(snapshot?.provisionalAccrualAmount) > 0;
+    }),
+  );
 
   const renderBasic = () => (
     <div className="space-y-5">
@@ -310,6 +318,7 @@ export function SimpleOrderWizardReadonly({
           <Field label="حساب WIP" value={savedOrder.wipAccountId == null ? NOT_SAVED : `#${savedOrder.wipAccountId}`} />
           <Field label="حساب مخزون الخامات" value={savedOrder.rawInventoryAccountId == null ? NOT_SAVED : `#${savedOrder.rawInventoryAccountId}`} />
           <Field label="حساب مخزون الإنتاج التام" value={savedOrder.finishedGoodsAccountId == null ? NOT_SAVED : `#${savedOrder.finishedGoodsAccountId}`} />
+           <Field label="حساب امتصاص/استحقاق الكهرباء الصناعية" value={savedOrder.overheadAccountId == null ? NOT_SAVED : `#${savedOrder.overheadAccountId}`} />
           <Field label="حساب الهالك/الفروق" value={savedOrder.wasteAccountId == null ? NOT_SAVED : `#${savedOrder.wasteAccountId}`} />
         </div>
       </div>
@@ -328,7 +337,11 @@ export function SimpleOrderWizardReadonly({
       {Number(resourceCost?.version) >= 1 && (
         <div className="rounded-lg border border-violet-200 bg-white p-3">
           <div className="mb-2 text-sm font-semibold text-violet-950">لقطة تكلفة المورد المحفوظة</div>
-          <p className="mb-3 text-xs text-slate-600">هذه الأرقام وردت من لقطة الخادم ولا تستند إلى أسعار المورد الحالية. الكهرباء دليل استخدام تقديري فقط؛ يختار المستخدم فاتورة صناعية مرحّلة والمصنع ومركز التكلفة لاحقاً في الإقفال، ثم تطابق ساعات الآلات الفعلية. لا تجمع لقطة الكهرباء مع WIP/FG/COGS مرة أخرى.</p>
+           <p className="mb-3 text-xs text-slate-600">
+             {hasProvisionalElectricityAccrual
+               ? "هذه الأرقام وردت من لقطة الخادم ولا تستند إلى أسعار المورد الحالية. تحمل الكهرباء المعلّقة أدناه حساب استحقاق ومبلغاً مجمداً؛ يُرسمل في استلام الإنتاج ثم يُصفّى عند تسوية الفاتورة الفعلية ويطبّق فرقها فقط. لا تضف اللقطة يدوياً مرة أخرى إلى WIP/FG/COGS."
+               : "هذه الأرقام وردت من لقطة الخادم ولا تستند إلى أسعار المورد الحالية. الكهرباء المرتبطة بمصدر مرحّل تتبع مسار المصدر، واللقطات التاريخية بلا حساب استحقاق تبقى دليلاً للاستخدام فقط؛ لا يعاد تفسيرها أو إضافتها إلى WIP/FG/COGS."}
+           </p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
             <SnapshotValue label="عمالة" value={savedNumber(resourceCost?.totals?.labor)} />
             <SnapshotValue label="إهلاك" value={savedNumber(resourceCost?.totals?.depreciation)} />
@@ -341,6 +354,10 @@ export function SimpleOrderWizardReadonly({
               <div className="text-xs font-semibold text-violet-950">تفصيل لقطات المراحل المجمدة</div>
               {resourceStages.map((stage: any) => {
                 const components = Array.isArray(stage.snapshot) ? stage.snapshot : [];
+                 const electricitySnapshot = savedObject(components.find((component: any) =>
+                   component?.component === "electricity")?.snapshot);
+                 const provisional = Number(electricitySnapshot?.provisionalAccrualAccountId) > 0 &&
+                   Number(electricitySnapshot?.provisionalAccrualAmount) > 0;
                 return <div key={stage.stageId} className="rounded-md border border-violet-100 bg-violet-50/30 p-3">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-800">
                     <span>مرحلة #{valueOrNotSaved(stage.stageId)} — {stage.resourceMode === "both" ? "آلة + عمالة" : stage.resourceMode === "machine" ? "آلة" : "عمالة"}</span>
@@ -355,6 +372,23 @@ export function SimpleOrderWizardReadonly({
                       />
                     ))}
                   </div>
+                   {electricitySnapshot && (
+                     <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                       <SnapshotValue
+                         label="معالجة كهرباء المرحلة المحفوظة"
+                         value={provisional
+                           ? "استحقاق مؤقت مرسمل في الاستلام"
+                           : electricitySnapshot.sourceAllocationId
+                             ? "مصدر مرحّل — تسوية بساعات الآلة"
+                             : "دليل استخدام تاريخي فقط"}
+                       />
+                       {provisional && <>
+                         <SnapshotValue label="مبلغ الاستحقاق المؤقت المجمد" value={savedNumber(electricitySnapshot.provisionalAccrualAmount)} />
+                         <SnapshotValue label="حساب الاستحقاق/الامتصاص المجمد" value={`#${valueOrNotSaved(electricitySnapshot.provisionalAccrualAccountId)}`} />
+                         <SnapshotValue label="معالجة التسوية المحفوظة" value={valueOrNotSaved(electricitySnapshot.accountingTreatment)} />
+                       </>}
+                     </div>
+                   )}
                 </div>;
               })}
             </div>

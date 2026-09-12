@@ -8,6 +8,15 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
   // It is deliberately displayed as-is; no browser-side financial rollup is made.
   const resourceCost = trace?.resourceCost ?? trace?.resourceCosts ?? null;
   const resourceStages = Array.isArray(resourceCost?.stages) ? resourceCost.stages : [];
+  const electricityEvidence = resourceStages.flatMap((stage: any) =>
+    (Array.isArray(stage?.snapshot) ? stage.snapshot : [])
+      .filter((component: any) => component?.component === "electricity")
+      .map((component: any) => component?.snapshot ?? {}),
+  );
+  const hasProvisionalElectricityAccrual = electricityEvidence.some((snapshot: any) =>
+    Number(snapshot?.provisionalAccrualAccountId) > 0 &&
+    Number(snapshot?.provisionalAccrualAmount) > 0,
+  );
   const hours = stages.reduce((sum: number, stage: any) => sum + Number(stage.actualDurationMinutes ?? 0) / 60, 0);
   const fmt = (value: unknown) => Number(value ?? 0).toLocaleString("en-US", { maximumFractionDigits: 4 });
   const money = (value: unknown) => value == null ? "—" : Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -40,24 +49,39 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
             <h4 className="text-sm font-semibold text-violet-950">لقطة تكلفة موارد المراحل</h4>
             <span className="text-[11px] text-violet-700">إصدار اللقطة {resourceCost.version}</span>
           </div>
-          <p className="text-xs leading-5 text-amber-900">الكهرباء أدناه لقطة تقدير استخدام (kW × ساعات المرحلة × التعريفة المجمدة) وليست مصروفاً ثانياً. تختار تسوية الإقفال لاحقاً فاتورة الكهرباء الصناعية والمصنع ومركز التكلفة صراحةً، ثم تطابق ساعات الآلات الفعلية مرة واحدة؛ لا تجمع هذه اللقطة مع WIP/FG/COGS.</p>
+          <p className="text-xs leading-5 text-amber-900">
+            {hasProvisionalElectricityAccrual
+              ? "تتضمن اللقطة كهرباء معلّقة تحمل حساب استحقاق ومبلغاً مجمداً من الخادم. يُرسمل هذا المبلغ في استلام الإنتاج/FG ثم تُصفّيه تسوية الفاتورة الفعلية وتحمّل فرقها فقط. لا يضاف مرة ثانية يدوياً إلى WIP أو FG أو COGS."
+              : "الكهرباء أدناه لقطة استخدام مجمّدة من الخادم. عند ربطها بمصدر كهرباء صناعي مرحّل تبقى المعالجة مرتبطة بالمصدر وساعات الآلة الفعلية. اللقطات التاريخية التي لا تحمل حساب استحقاق تبقى دليل استخدام فقط ولا يعاد تفسيرها أو إضافتها إلى WIP/FG/COGS."}
+          </p>
           {resourceStages.length > 0 ? <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-xs">
               <thead><tr className="border-b text-slate-500">
-                <th className="p-2 text-start">المرحلة</th><th className="p-2 text-start">نمط المورد</th><th className="p-2 text-start">عمالة</th><th className="p-2 text-start">إهلاك</th><th className="p-2 text-start">كهرباء (تقدير)</th><th className="p-2 text-start">عبء مصنع</th><th className="p-2 text-start">إجمالي لقطة الاستخدام</th>
+                <th className="p-2 text-start">المرحلة</th><th className="p-2 text-start">نمط المورد</th><th className="p-2 text-start">عمالة</th><th className="p-2 text-start">إهلاك</th><th className="p-2 text-start">كهرباء</th><th className="p-2 text-start">معالجة الكهرباء المحفوظة</th><th className="p-2 text-start">عبء مصنع</th><th className="p-2 text-start">إجمالي لقطة الاستخدام</th>
               </tr></thead>
               <tbody>{resourceStages.map((stage: any) => {
                 const routeStage = stages.find((candidate: any) => String(candidate.id) === String(stage.stageId));
                 const modeLabel = stage.resourceMode === "both" ? "آلة + عمالة" : stage.resourceMode === "machine" ? "آلة" : "عمالة";
+                const electricity = (Array.isArray(stage.snapshot) ? stage.snapshot : [])
+                  .find((component: any) => component?.component === "electricity")?.snapshot ?? null;
+                const provisionalAmount = Number(electricity?.provisionalAccrualAmount);
+                const isProvisional = Number(electricity?.provisionalAccrualAccountId) > 0 && provisionalAmount > 0;
+                const electricityTreatment = isProvisional
+                  ? `استحقاق مؤقت مرسمل ${money(electricity.provisionalAccrualAmount)} / حساب #${electricity.provisionalAccrualAccountId}`
+                  : electricity?.sourceAllocationId
+                    ? "مصدر مرحّل — تسوية بمحرك ساعات الآلة"
+                    : electricity
+                      ? "دليل استخدام تاريخي فقط"
+                      : "—";
                 return <tr key={stage.stageId} className="border-b last:border-0">
                   <td className="p-2 font-medium">{routeStage?.name ?? `#${stage.stageId}`}</td>
                   <td className="p-2">{modeLabel}</td><td className="p-2">{money(stage.labor)}</td><td className="p-2">{money(stage.depreciation)}</td>
-                  <td className="p-2">{money(stage.electricity)}</td><td className="p-2">{money(stage.factoryOverhead)}</td><td className="p-2 font-semibold">{money(stage.total)}</td>
+                  <td className="p-2">{money(stage.electricity)}</td><td className="p-2">{electricityTreatment}</td><td className="p-2">{money(stage.factoryOverhead)}</td><td className="p-2 font-semibold">{money(stage.total)}</td>
                 </tr>;
               })}</tbody>
               {resourceCost?.totals && <tfoot><tr className="border-t-2 border-violet-200 font-semibold text-violet-950">
-                <td className="p-2" colSpan={2}>إجمالي لقطة الاستخدام (كهرباء تقديرية غير مضافة ثانية)</td><td className="p-2">{money(resourceCost.totals.labor)}</td><td className="p-2">{money(resourceCost.totals.depreciation)}</td>
-                <td className="p-2">{money(resourceCost.totals.electricity)}</td><td className="p-2">{money(resourceCost.totals.factoryOverhead)}</td><td className="p-2">{money(resourceCost.totals.total)}</td>
+                <td className="p-2" colSpan={2}>إجمالي لقطة الخادم</td><td className="p-2">{money(resourceCost.totals.labor)}</td><td className="p-2">{money(resourceCost.totals.depreciation)}</td>
+                <td className="p-2">{money(resourceCost.totals.electricity)}</td><td className="p-2">—</td><td className="p-2">{money(resourceCost.totals.factoryOverhead)}</td><td className="p-2">{money(resourceCost.totals.total)}</td>
               </tr></tfoot>}
             </table>
           </div> : <p className="text-xs text-slate-500">لا توجد لقطة تكلفة مرحلة مكتملة بعد.</p>}

@@ -6,6 +6,7 @@ import { Link } from "wouter";
 import type { Order, Catalog } from "./types";
 import { ProductionTimeCosts } from "@/components/ProductionTimeCosts";
 import { SimpleOrderWizardReadonly } from "./SimpleOrderWizardReadonly";
+import { additionalHeaderWaste, stageWasteSummary } from "./wasteSummary";
 
 function statusLabel(status: string) {
   return ({
@@ -64,6 +65,12 @@ export function SimpleOrderList({
     ? ["in_production", "paused", "quality_check", "completed", "reversed"].includes(selectedOrder.status) &&
       (selectedOrder.issueJournalEntryId != null || selectedOrder.receiptJournalEntryId != null)
     : false;
+  const selectedStages = Array.isArray(selectedOrder?.detail?.stages)
+    ? selectedOrder.detail.stages
+    : [];
+  const selectedStageWaste = stageWasteSummary(selectedStages);
+  const selectedHeaderWaste = Number(selectedOrder?.wasteQty ?? 0);
+  const selectedAdditionalWaste = additionalHeaderWaste(selectedHeaderWaste, selectedStages);
 
   return (
     <div className="space-y-4">
@@ -96,6 +103,40 @@ export function SimpleOrderList({
                 <div><Badge className="text-sm px-2 py-0.5">{statusLabel(selectedOrder.status)}</Badge></div>
               </div>
             </div>
+
+            {(selectedOrder.producedQty != null || selectedStages.length > 0) && (
+              <div
+                className="mb-5 rounded-xl border border-rose-200 bg-rose-50/40 p-4"
+                data-testid="simple-waste-summary"
+              >
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="font-semibold text-rose-900">ملخص الإنتاج والهالك المحفوظ</div>
+                  <span className="text-xs text-slate-500">لا يُستنتج الهالك من المخطط ناقص الفعلي</span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
+                  <div>
+                    <span className="block text-xs text-slate-500">الإنتاج الفعلي</span>
+                    <b>{formatMoney(selectedOrder.producedQty)} {selectedOrder.unitCode || ""}</b>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-slate-500">إجمالي هالك رأس الأمر</span>
+                    <b>{formatMoney(selectedOrder.wasteQty)} {selectedOrder.unitCode || ""}</b>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-slate-500">هالك مراحل طبيعي</span>
+                    <b className="text-emerald-700">{formatMoney(selectedStageWaste.normal)} {selectedOrder.unitCode || ""}</b>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-slate-500">هالك مراحل غير طبيعي</span>
+                    <b className="text-rose-700">{formatMoney(selectedStageWaste.abnormal)} {selectedOrder.unitCode || ""}</b>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-slate-500">هالك إضافي غير مصنف</span>
+                    <b className="text-amber-700">{formatMoney(selectedAdditionalWaste)} {selectedOrder.unitCode || ""}</b>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {executionPanel && (
               <section className="my-5 rounded-xl border border-violet-200 p-4 bg-violet-50/30">
