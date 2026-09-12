@@ -6048,6 +6048,10 @@
     "units": {
       "title": "Units of Measure",
       "fromUnit": "From Unit (Source)",
+      "initializeReferenceAsBase": "Use the reference as the base if none is set (only for items without historical activity)",
+      "saveError": "Unable to save unit relationship",
+      "missingBaseError": "The item needs exactly one base unit. Set it in the item details, or explicitly use the reference as the base when creating the first relationship.",
+      "baseChangeBlockedError": "The base cannot be changed with existing relationships or historical activity, or replaced with a different base here.",
       "itemUnitsTitle": "Unit Relationships and Conversion",
       "saveItemFirst": "Please save the item first to manage its units.",
       "toUnit": "To Unit (Reference)",

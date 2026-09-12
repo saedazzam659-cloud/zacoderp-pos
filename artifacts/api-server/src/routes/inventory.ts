@@ -1558,11 +1558,21 @@ router.post("/items/:id/units", async (req, res) => {
         throw new UnitConversionError("DUPLICATE_UNIT", "This unit is already linked to the item");
       }
       const values = await unitRowValues(req.body, null, item, unitId);
+      // Explicit opt-in only: never infer a stock base from the catalog factor.
+      if (req.body.initializeReferenceAsBase === true && !values.isBase) {
+        if (item.unitId != null && item.unitId !== values.referenceUnitId) {
+          throw new UnitConversionError("BASE_CHANGE_BLOCKED", "الصنف لديه وحدة أساسية مختلفة؛ لا يمكن استبدالها من علاقة تحويل.");
+        }
+        if (item.unitId == null) {
+          await changeItemBaseUnit(tx, cid, itemId, null, values.referenceUnitId, rows);
+          item.unitId = values.referenceUnitId;
+        }
+      }
       if (values.isBase && rows.length > 0) {
         throw new UnitConversionError("BASE_CHANGE_REQUIRES_EDIT", "Choose an existing linked unit when changing the base unit");
       }
-      if (!values.isBase && item.unitId === null) {
-        throw new UnitConversionError("MISSING_BASE", "Create a base unit before adding a conversion");
+      if (!values.isBase && item.unitId == null) {
+        throw new UnitConversionError("MISSING_BASE", "حدد الوحدة الأساسية للصنف أولًا، أو اختر اعتماد الوحدة المرجعية كوحدة أساسية عند إنشاء أول علاقة.");
       }
       if (values.referenceUnitId !== null) await assertCatalogUnit(tx, cid, values.referenceUnitId);
       const [row] = await tx.insert(itemUnitPricesTable).values({

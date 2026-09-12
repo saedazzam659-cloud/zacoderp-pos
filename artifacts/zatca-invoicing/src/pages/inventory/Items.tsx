@@ -813,9 +813,24 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
   const [editUpId, setEditUpId] = useState<number | null>(null);
   const [showUnitForm, setShowUnitForm] = useState(false);
   const [previewQty, setPreviewQty] = useState<string>("1");
-  const unitMutationError = (error: Error) => toast({ title: "تعذر حفظ علاقة الوحدة", description: error.message, variant: "destructive" });
+  const unitMutationError = (error: Error) => {
+    let description = error.message;
+    try {
+      const body = JSON.parse(description);
+      const key = ({
+        AMBIGUOUS_BASE: "missingBaseError",
+        MISSING_BASE: "missingBaseError",
+        BASE_CHANGE_BLOCKED: "baseChangeBlockedError",
+      } as Record<string, string>)[body.code];
+      description = key ? t(`inventoryMaster.units.${key}`) : body.error || description;
+    } catch { /* Non-JSON errors remain readable. */ }
+    toast({ title: t("inventoryMaster.units.saveError"), description, variant: "destructive" });
+  };
 
-  const inv = () => qc.invalidateQueries({ queryKey: ["item-units", itemId] });
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: ["item-units", itemId] });
+    qc.invalidateQueries({ queryKey: ["items"] });
+  };
   const addMut = useMutation({
     mutationFn: (data: any) => inventoryApi.addItemUnit(itemId, data),
     onError: unitMutationError,
@@ -917,6 +932,13 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
                   className="h-8 text-xs"
                 />
                 <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.units.baseUnitHint", { defaultValue: "Usually the item's base unit. Leave empty to use factor standalone." })}</p>
+                {!editUpId && unitPrices.length === 0 && !form.isBase && (
+                  <label className="flex items-start gap-2 text-xs">
+                    <input type="checkbox" checked={form.initializeReferenceAsBase === true}
+                      onChange={e => setForm((p: any) => ({ ...p, initializeReferenceAsBase: e.target.checked }))} />
+                    {t("inventoryMaster.units.initializeReferenceAsBase")}
+                  </label>
+                )}
               </div>
 
               <div className="space-y-1.5">
