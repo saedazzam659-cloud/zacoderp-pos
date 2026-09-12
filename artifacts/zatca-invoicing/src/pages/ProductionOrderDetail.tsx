@@ -100,6 +100,16 @@ type Order = {
   qrToken: string | null;
   fgExpiryDate: string | null;
 };
+type ProductionStageSummary = {
+  id: number | string;
+  sequence?: number | string | null;
+  nameAr?: string | null;
+  status?: string | null;
+  outputQty?: number | string | null;
+  wasteQty?: number | string | null;
+  quantityUnitFactor?: number | string | null;
+  wasteUnitFactor?: number | string | null;
+};
 type WasteRecord = {
   id: number;
   wasteType: string;
@@ -201,6 +211,48 @@ function packagingMetadataFromVersion(version: any): PackagingMetadata {
   };
 }
 
+const EMPTY_COMPLETION = { producedQty: "", wasteQty: "", fgExpiryDate: "" };
+
+function finiteQuantity(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function formatCompletionQuantity(value: number): string {
+  return String(Number(value.toFixed(6)));
+}
+
+function stageIsDone(stage: ProductionStageSummary): boolean {
+  return stage.status === "done" || stage.status === "completed";
+}
+
+function stageRowsFromResponse(payload: unknown): ProductionStageSummary[] | null {
+  if (Array.isArray(payload)) return payload as ProductionStageSummary[];
+  if (payload && typeof payload === "object" && Array.isArray((payload as any).stages)) {
+    return (payload as any).stages as ProductionStageSummary[];
+  }
+  return null;
+}
+
+function stageCompletionMetrics(stages: ProductionStageSummary[]) {
+  const ordered = [...stages].sort(
+    (a, b) => finiteQuantity(a.sequence, 0) - finiteQuantity(b.sequence, 0),
+  );
+  const completed = ordered.filter((stage) => stageIsDone(stage) && stage.status !== "skipped");
+  const lastCompleted = completed[completed.length - 1] ?? null;
+  const producedQty = lastCompleted
+    ? finiteQuantity(lastCompleted.outputQty)
+      * finiteQuantity(lastCompleted.quantityUnitFactor ?? 1, 1)
+    : 0;
+  const stageWasteQty = ordered.reduce(
+    (sum, stage) => sum
+      + Math.max(0, finiteQuantity(stage.wasteQty))
+        * finiteQuantity(stage.wasteUnitFactor ?? 1, 1),
+    0,
+  );
+  return { producedQty, stageWasteQty, lastCompleted };
+}
+
 // Status → list of allowed transitions, each rendered as a coloured action
 // button. Mirrors the server-side PRODUCTION_STATUS_TRANSITIONS map. Keep the
 // two in sync: if you add a transition here, add it on the backend too.
@@ -258,8 +310,14 @@ export default function ProductionOrderDetail() {
   const listRoute = simpleFacade ? routePrefix : `${routePrefix}/orders`;
   const apiPrefix = `${API}/api${routePrefix}`;
   const { t } = useTranslation();
-  const { token } = useAuth() as any;
+  const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
+  const tenantKey = actingCompanyId ?? user?.companyId ?? user?.company?.id ?? "current";
+  const orderIdentity = `${tenantKey}:${orderId}`;
+  const requestHeaders = useMemo(() => ({
+    Authorization: `Bearer ${token}`,
+    ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+  }), [token, actingCompanyId]);
   const [order, setOrder] = useState<Order | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
@@ -274,7 +332,11 @@ export default function ProductionOrderDetail() {
   const [itemRefs, setItemRefs] = useState<ItemRef[]>([]);
   const [workCenters, setWorkCenters] = useState<WorkCenterRef[]>([]);
   const [savingWip, setSavingWip] = useState(false);
-  const [completion, setCompletion] = useState({ producedQty: "", wasteQty: "", fgExpiryDate: "" });
+  const [completion, setCompletion] = useState(EMPTY_COMPLETION);
+  const [stages, setStages] = useState<ProductionStageSummary[]>([]);
+  const [stagesLoading, setStagesLoading] = useState(true);
+  const [stagesLoaded, setStagesLoaded] = useState(false);
+  const [stagesError, setStagesError] = useState<string | null>(null);
   const [wasteRecords, setWasteRecords] = useState<WasteRecord[]>([]);
   const [costDrilldown, setCostDrilldown] = useState<any>(null);
   const [commercialLifecycle, setCommercialLifecycle] = useState<any[]>([]);
@@ -316,6 +378,26 @@ export default function ProductionOrderDetail() {
   const itemTriggerRef = useRef<HTMLButtonElement>(null);
   const itemPanelRef = useRef<HTMLDivElement>(null);
   const firstItemFieldRef = useRef<HTMLInputElement>(null);
+  const activeIdentityRef = useRef(orderIdentity);
+  const stageSignatureRef = useRef<string | null>(null);
+  const stageWasteBaselineRef = useRef(0);
+  const completionWasteTouchedRef = useRef(false);
+  const completionExpiryTouchedRef = useRef(false);
+
+  // A detail route can remain mounted while the acting company or order
+  // changes. Never carry completion inputs or stage facts across that boundary.
+  useEffect(() => {
+    activeIdentityRef.current = orderIdentity;
+    setCompletion(EMPTY_COMPLETION);
+    setStages([]);
+    setStagesLoading(true);
+    setStagesLoaded(false);
+    setStagesError(null);
+    stageSignatureRef.current = null;
+    stageWasteBaselineRef.current = 0;
+    completionWasteTouchedRef.current = false;
+    completionExpiryTouchedRef.current = false;
+  }, [orderIdentity]);
 
   function closeItemPanel() {
     setOpenItem(false);
@@ -340,29 +422,107 @@ export default function ProductionOrderDetail() {
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
+    setStagesLoading(true);
     try {
-      const headers = { Authorization: `Bearer ${token}` };
-      const [r, costResponse, lifecycleResponse] = await Promise.all([
-        fetch(`${apiPrefix}/orders/${orderId}`, { headers }),
-        fetch(`${apiPrefix}/orders/${orderId}/cost-drilldown`, { headers }),
-        fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle`, { headers }),
+      const identityAtStart = orderIdentity;
+      const [orderResult, costResult, lifecycleResult, stagesResult] = await Promise.allSettled([
+        fetch(`${apiPrefix}/orders/${orderId}`, { headers: requestHeaders }),
+        fetch(`${apiPrefix}/orders/${orderId}/cost-drilldown`, { headers: requestHeaders }),
+        fetch(`${apiPrefix}/orders/${orderId}/commercial-lifecycle`, { headers: requestHeaders }),
+        fetch(`${apiPrefix}/orders/${orderId}/stages`, { headers: requestHeaders }),
       ]);
+      if (activeIdentityRef.current !== identityAtStart) return;
+      if (orderResult.status === "rejected") throw orderResult.reason;
+      const r = orderResult.value;
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       setOrder(j.order);
       setItems(j.items ?? []);
       setEvents(j.events ?? []);
       setWasteRecords(j.wasteRecords ?? []);
-      if (costResponse.ok) setCostDrilldown(await costResponse.json());
-      if (lifecycleResponse.ok) {
-        const lifecycle = await lifecycleResponse.json();
+      if (costResult.status === "fulfilled" && costResult.value.ok) {
+        setCostDrilldown(await costResult.value.json());
+      }
+      if (lifecycleResult.status === "fulfilled" && lifecycleResult.value.ok) {
+        const lifecycle = await lifecycleResult.value.json();
         setCommercialLifecycle(lifecycle.records ?? []);
         setCommercialAccruals(lifecycle.accruals ?? []);
+      }
+      if (stagesResult.status === "rejected") {
+        throw Object.assign(new Error(stagesResult.reason?.message || "تعذر تحميل مراحل التنفيذ"), {
+          stageLoadFailure: true,
+        });
+      }
+      const stagesResponse = stagesResult.value;
+      if (!stagesResponse.ok) {
+        const errorBody = await stagesResponse.json().catch(() => ({}));
+        throw Object.assign(
+          new Error(errorBody?.error || `تعذر تحميل مراحل التنفيذ (HTTP ${stagesResponse.status})`),
+          { stageLoadFailure: true },
+        );
+      }
+      let stagePayload: unknown;
+      try {
+        stagePayload = await stagesResponse.json();
+      } catch {
+        throw Object.assign(new Error("تعذر قراءة استجابة مراحل التنفيذ"), { stageLoadFailure: true });
+      }
+      const nextStages = stageRowsFromResponse(stagePayload);
+      if (!nextStages) {
+        throw Object.assign(new Error("استجابة مراحل التنفيذ غير صالحة"), { stageLoadFailure: true });
+      }
+      const nextStageSignature = JSON.stringify(nextStages.map((stage) => ({
+        id: stage.id,
+        sequence: stage.sequence ?? null,
+        status: stage.status ?? null,
+        outputQty: stage.outputQty ?? null,
+        wasteQty: stage.wasteQty ?? null,
+        quantityUnitFactor: stage.quantityUnitFactor ?? 1,
+        wasteUnitFactor: stage.wasteUnitFactor ?? 1,
+      })));
+      const stageFactsChanged =
+        stageSignatureRef.current !== nextStageSignature;
+      setStages(nextStages);
+      setStagesLoaded(true);
+      setStagesError(null);
+      if (stageFactsChanged) {
+        const metrics = stageCompletionMetrics(nextStages);
+        // Capture the prior stage basis before scheduling the functional
+        // update. React may run that updater after this callback returns.
+        const previousStageWaste = stageWasteBaselineRef.current;
+        const wasWasteTouched = completionWasteTouchedRef.current;
+        setCompletion((previous) => {
+          // Before the user touches the form, the persisted header waste can
+          // already contain an unclassified excess over the stage total.
+          const previousHeaderWaste = Math.max(
+            finiteQuantity(previous.wasteQty),
+            wasWasteTouched ? 0 : finiteQuantity(j.order?.wasteQty),
+          );
+          const extraUnclassifiedWaste = Math.max(0, previousHeaderWaste - previousStageWaste);
+          const hasStages = nextStages.length > 0;
+          const nextProducedQty = hasStages
+            ? formatCompletionQuantity(metrics.producedQty)
+            : (finiteQuantity(j.order?.producedQty) > 0
+              ? String(j.order.producedQty)
+              : String(j.order?.plannedQty ?? ""));
+          const nextWasteQty = hasStages
+            ? formatCompletionQuantity(metrics.stageWasteQty + extraUnclassifiedWaste)
+            : String(j.order?.wasteQty ?? "0");
+          return {
+            producedQty: nextProducedQty,
+            wasteQty: nextWasteQty,
+            fgExpiryDate: completionExpiryTouchedRef.current
+              ? previous.fgExpiryDate
+              : (previous.fgExpiryDate || j.order?.fgExpiryDate || ""),
+          };
+        });
+        stageWasteBaselineRef.current = stageCompletionMetrics(nextStages).stageWasteQty;
+        stageSignatureRef.current = nextStageSignature;
       }
       if (!simpleFacade && j.order?.productItemId) {
         const packagingResponse = await fetch(
           `${API}/api/production/packaging/specifications?productItemId=${j.order.productItemId}`,
-          { headers },
+          { headers: requestHeaders },
         );
         if (packagingResponse.ok) {
           const specs = await packagingResponse.json();
@@ -379,7 +539,7 @@ export default function ProductionOrderDetail() {
               try {
                 const archiveResponse = await fetch(
                   `${API}/api/document-archives?screenKey=packaging_specifications&docKey=${encodeURIComponent(`packaging:${version.id}`)}`,
-                  { headers },
+                  { headers: requestHeaders },
                 );
                 const files = archiveResponse.ok ? await archiveResponse.json() : [];
                 return [version.id, (Array.isArray(files) ? files : []) as PackagingArchiveFile[]] as const;
@@ -394,11 +554,27 @@ export default function ProductionOrderDetail() {
         }
       }
     } catch (e: any) {
+      if (e?.stageLoadFailure) {
+        setStages([]);
+        setStagesLoaded(false);
+        setStagesError(e.message || "تعذر تحميل مراحل التنفيذ");
+        stageSignatureRef.current = null;
+      }
       toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
     } finally {
       setLoading(false);
+      setStagesLoading(false);
     }
-  }, [apiPrefix, orderId, token, t, toast]);
+  }, [
+    apiPrefix,
+    orderId,
+    orderIdentity,
+    requestHeaders,
+    simpleFacade,
+    t,
+    toast,
+    token,
+  ]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -407,7 +583,7 @@ export default function ProductionOrderDetail() {
   // or accounts from other screens appear here without a manual refresh.
   const loadLookups = useCallback(async () => {
     if (!token) return;
-    const h = { Authorization: `Bearer ${token}` };
+    const h = requestHeaders;
     try {
       const [whs, accs, its, wcs, sups] = await Promise.all([
         fetch(`${API}/api/inventory/warehouses`, { headers: h }).then((r) => r.ok ? r.json() : []),
@@ -424,20 +600,9 @@ export default function ProductionOrderDetail() {
     } catch {
       /* silent */
     }
-  }, [apiPrefix, simpleFacade, token]);
+  }, [apiPrefix, requestHeaders, simpleFacade, token]);
   useEffect(() => { void loadLookups(); }, [loadLookups]);
   useRefetchOnFocus(loadLookups);
-
-  // Initialize completion form when status reaches quality_check.
-  useEffect(() => {
-    if (order && order.status === "quality_check" && !completion.producedQty) {
-      setCompletion({
-        producedQty: order.producedQty && Number(order.producedQty) > 0 ? order.producedQty : order.plannedQty,
-        wasteQty: order.wasteQty || "0",
-        fgExpiryDate: order.fgExpiryDate ?? "",
-      });
-    }
-  }, [order?.status]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function transitionTo(target: string, extra: Record<string, unknown> = {}) {
     if (target === "reversed" && !confirm("سيتم عكس مخزون المنتج والخامات والقيود في معاملة واحدة. لن ينجح العكس إذا تحركت التشغيلة. هل تريد المتابعة؟")) return;
@@ -855,6 +1020,64 @@ export default function ProductionOrderDetail() {
     }
   }
 
+  const completionStageMetrics = useMemo(
+    () => stageCompletionMetrics(stages),
+    [stages],
+  );
+  const unfinishedStages = useMemo(
+    () => stages.filter((stage) => !stageIsDone(stage) && stage.status !== "skipped"),
+    [stages],
+  );
+  const headerWasteQty = finiteQuantity(completion.wasteQty);
+  const extraUnclassifiedWaste = Math.max(
+    0,
+    headerWasteQty - completionStageMetrics.stageWasteQty,
+  );
+
+  function guardCompletion(): boolean {
+    if (stagesLoading || !stagesLoaded || stagesError) {
+      toast({
+        title: t("production.errorOccurred"),
+        description: stagesError
+          ? `تعذر تحميل مراحل التنفيذ: ${stagesError}. أعد المحاولة قبل الإقفال.`
+          : "جارٍ تحميل مراحل التنفيذ؛ لا يمكن الإقفال قبل اكتمال القراءة.",
+        variant: "destructive",
+      });
+      return false;
+    }
+    if (stages.length > 0 && unfinishedStages.length > 0) {
+      const names = unfinishedStages
+        .slice(0, 3)
+        .map((stage) => stage.nameAr || `#${stage.id}`)
+        .join("، ");
+      toast({
+        title: t("production.errorOccurred"),
+        description: `لا يمكن إقفال أمر الإنتاج قبل إكمال أو تخطي المراحل غير المكتملة: ${names}.`,
+        variant: "destructive",
+      });
+      return false;
+    }
+    if (stages.length > 0 && (!completionStageMetrics.lastCompleted ||
+        !(completionStageMetrics.producedQty > 0))) {
+      toast({
+        title: t("production.errorOccurred"),
+        description: "مخرجات المرحلة الأخيرة صفر أو غير صالحة؛ أكمل المرحلة الأخيرة بكمية إخراج أكبر من صفر قبل الإقفال.",
+        variant: "destructive",
+      });
+      return false;
+    }
+    if (stages.length > 0 &&
+        headerWasteQty + 0.00005 < completionStageMetrics.stageWasteQty) {
+      toast({
+        title: t("production.errorOccurred"),
+        description: `الهالك على رأس الأمر (${headerWasteQty}) أقل من الحد الأدنى لهالك المراحل المحوّل (${completionStageMetrics.stageWasteQty}); لا يمكن الإقفال قبل تصحيح الكمية.`,
+        variant: "destructive",
+      });
+      return false;
+    }
+    return true;
+  }
+
   if (loading && !order) {
     return (
       <div className="space-y-3">
@@ -895,6 +1118,7 @@ export default function ProductionOrderDetail() {
               key={tr.to}
               onClick={() => {
                 if (tr.to === "completed") {
+                  if (!guardCompletion()) return;
                   const pq = Number(completion.producedQty) || 0;
                   const wq = Number(completion.wasteQty) || 0;
                   if (!(pq > 0)) {
@@ -994,6 +1218,19 @@ export default function ProductionOrderDetail() {
               <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300 mb-2">
                 <Flag className="h-4 w-4 inline me-1" /> كميات الإقفال
               </div>
+              {stagesLoading && (
+                <div className="mb-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                  جارٍ تحميل مراحل التنفيذ لحساب اقتراحات الإقفال…
+                </div>
+              )}
+              {stagesError && (
+                <div role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  <div>تعذر تحميل مراحل التنفيذ، ولذلك تم تعطيل الإقفال حتى تنجح إعادة التحميل: {stagesError}</div>
+                  <Button type="button" size="sm" variant="outline" className="mt-2" disabled={stagesLoading} onClick={() => void load()}>
+                    إعادة تحميل المراحل
+                  </Button>
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <Label className="text-xs">الكمية المنتَجة (تدخل لمخزن البضاعة التامة)</Label>
@@ -1005,20 +1242,40 @@ export default function ProductionOrderDetail() {
                   />
                 </div>
                 <div>
-                  <Label className="text-xs">الهالك (هالك الأمر غير المصنف، يرحل للمصروف)</Label>
+                  <Label className="text-xs">إجمالي الهالك (هالك المراحل + الإضافي غير المصنف)</Label>
                   <Input
                     type="number" step="0.01"
                     value={completion.wasteQty}
-                    onChange={(e) => setCompletion({ ...completion, wasteQty: e.target.value })}
+                    onChange={(e) => {
+                      completionWasteTouchedRef.current = true;
+                      setCompletion((previous) => ({ ...previous, wasteQty: e.target.value }));
+                    }}
                     data-testid="input-waste-qty" className="mt-1"
                   />
+                  {stagesLoaded && stages.length > 0 && (
+                    <div className="mt-1 space-y-0.5 text-[11px] text-slate-600">
+                      <div>
+                        الحد الأدنى لهالك المراحل بعد التحويل (يشمل المصنف عادي/غير عادي):{" "}
+                        <span className="font-semibold">{completionStageMetrics.stageWasteQty.toLocaleString("en-US")} {order.unitCode}</span>
+                      </div>
+                      <div>
+                        الهالك الإضافي غير المصنف على رأس الأمر:{" "}
+                        <span className="font-semibold">{extraUnclassifiedWaste.toLocaleString("en-US")} {order.unitCode}</span>
+                        {" — "}
+                        إجمالي الحقل أعلاه لا يكرر هالك المراحل.
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {/* PHASE D — Optional FG expiry stamped on the receipt batch */}
                 <div>
                   <Label className="text-xs">تاريخ انتهاء البضاعة التامة (اختياري)</Label>
                   <DateField
                     value={completion.fgExpiryDate}
-                    onChange={(e) => setCompletion({ ...completion, fgExpiryDate: e.target.value })}
+                    onChange={(e) => {
+                      completionExpiryTouchedRef.current = true;
+                      setCompletion((previous) => ({ ...previous, fgExpiryDate: e.target.value }));
+                    }}
                     data-testid="input-fg-expiry" className="mt-1"
                   />
                 </div>

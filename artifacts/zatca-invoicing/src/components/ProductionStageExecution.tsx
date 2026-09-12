@@ -8,12 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Badge } from "@/components/ui/badge";
-import { Play, Pause, Square, Clock, ArrowDownToLine, ArrowUpFromLine, Activity, User, Cog, Save, AlertTriangle } from "lucide-react";
+import { Play, Square, Clock, ArrowDownToLine, ArrowUpFromLine, Activity, User, Save, AlertTriangle, RotateCcw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import { ProductionResourcePicker, type ResourceCatalog } from "@/components/ProductionResourcePicker";
-
-const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+import { StageUnitSelector, type StageUnitCatalogOption } from "@/components/StageUnitSelector";
 
 type StageExecutionProps = {
   orderId: number;
@@ -34,7 +33,14 @@ type Stage = {
   workerCount: number;
   inputQty: number;
   outputQty: number;
+  quantityUnit: string | null;
+  quantityUnitFactor: number;
+  quantityUnitCustomMode: boolean;
   wasteQty: number;
+  wasteUnit: string | null;
+  wasteUnitFactor: number;
+  wasteUnitCustomMode: boolean;
+  wasteUnitExplicit: boolean;
   wasteReason: string;
   wasteType: string;
   wasteClassification: "normal" | "abnormal";
@@ -57,12 +63,28 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
   const [stages, setStages] = useState<Stage[]>([]);
   const [users, setUsers] = useState<{value: string, label: string}[]>([]);
   const [resourceCatalog, setResourceCatalog] = useState<ResourceCatalog>({ workCenters: [], machines: [], assets: [] });
+  const [orderUnitCode, setOrderUnitCode] = useState("");
+  const [unitCatalog, setUnitCatalog] = useState<StageUnitCatalogOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const dirtyStages = useRef(new Set<string>());
   
   const isExecuting = ["in_production", "quality_check"].includes(orderStatus);
+
+  const normalizeStageUnitFactor = (unit: string | null, factor: unknown): number => {
+    // A null unit is the legacy/order unit, whose conversion is intrinsically
+    // one. Explicit units never receive an invented kg/piece-style fallback.
+    if (!unit) return 1;
+    const parsed = Number(factor);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  };
+
+  const normalizeStageUnit = (value: unknown): string | null => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed || null;
+  };
 
   const fetchStages = useCallback(async (savedStageId?: string) => {
     if (!token) return;
@@ -76,7 +98,12 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         throw new Error(error.error || "تعذر تحميل مراحل التنفيذ");
       }
       const data = await response.json();
-      const latest = mapStages(Array.isArray(data) ? data : data.stages || []);
+      const rows = Array.isArray(data) ? data : (Array.isArray(data?.stages) ? data.stages : []);
+      if (data && !Array.isArray(data)) {
+        if (typeof data.orderUnitCode === "string") setOrderUnitCode(data.orderUnitCode.trim());
+        if (Array.isArray(data.unitCatalog)) setUnitCatalog(data.unitCatalog);
+      }
+      const latest = mapStages(rows);
       if (savedStageId) dirtyStages.current.delete(savedStageId);
       setStages(previous => latest.map(stage => dirtyStages.current.has(stage.id)
         ? previous.find(row => row.id === stage.id) ?? stage : stage));
@@ -86,7 +113,19 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
   }, [apiBase, orderId, headers]);
 
   const mapStages = (rawStages: any[]): Stage[] => {
-    return rawStages.map(s => ({
+    return rawStages.map(s => {
+      const quantityUnit = normalizeStageUnit(s.quantityUnit);
+      const quantityUnitFactor = normalizeStageUnitFactor(quantityUnit, s.quantityUnitFactor);
+      const rawWasteUnit = normalizeStageUnit(s.wasteUnit);
+      // Null is deliberately the order's base unit, never an alias for the
+      // stage unit. A stage-unit inheritance choice is persisted as the
+      // concrete unit and factor, so it will remain visible after reload.
+      const wasteUnit = rawWasteUnit;
+      const wasteUnitFactor = rawWasteUnit
+        ? normalizeStageUnitFactor(rawWasteUnit, s.wasteUnitFactor)
+        : 1;
+      const wasteUnitExplicit = rawWasteUnit !== null;
+      return {
       id: String(s.id),
       nameAr: s.nameAr || "مرحلة",
       status: s.status || "pending",
@@ -94,7 +133,14 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       workerCount: Number(s.workerCount ?? 0),
       inputQty: Number(s.inputQty ?? plannedQty),
       outputQty: Number(s.outputQty ?? 0),
+      quantityUnit,
+      quantityUnitFactor,
+      quantityUnitCustomMode: Boolean(quantityUnit && !/^[A-Za-z0-9._-]+$/.test(quantityUnit)),
       wasteQty: Number(s.wasteQty ?? 0),
+      wasteUnit,
+      wasteUnitFactor,
+      wasteUnitCustomMode: Boolean(rawWasteUnit && !/^[A-Za-z0-9._-]+$/.test(rawWasteUnit)),
+      wasteUnitExplicit,
       wasteReason: s.wasteReason || "",
       wasteType: s.wasteType || "",
       wasteClassification: s.wasteClassification === "abnormal" ? "abnormal" : "normal",
@@ -102,7 +148,8 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       machineId: s.machineId ? String(s.machineId) : s.resourceId ? String(s.resourceId) : "",
       workCenterId: s.workCenterId ? String(s.workCenterId) : "",
       notes: s.notes || ""
-    }));
+      };
+    });
   };
 
   const fetchLookups = useCallback(async () => {
@@ -144,8 +191,77 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     setStages(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
   };
 
+  const handleStageUnitChange = (
+    id: string,
+    kind: "quantity" | "waste",
+    unit: string | null,
+    factor: number,
+    customMode: boolean,
+  ) => {
+    dirtyStages.current.add(id);
+    setStages(prev => prev.map(stage => {
+      if (stage.id !== id) return stage;
+      if (kind === "waste") {
+        return {
+          ...stage,
+          wasteUnit: unit,
+          wasteUnitFactor: factor,
+          wasteUnitCustomMode: customMode,
+          wasteUnitExplicit: true,
+        };
+      }
+      const next = {
+        ...stage,
+        quantityUnit: unit,
+        quantityUnitFactor: factor,
+        quantityUnitCustomMode: customMode,
+      };
+      // Waste follows the stage unit until the operator changes the waste
+      // selector or its factor separately.
+      if (!stage.wasteUnitExplicit) {
+        next.wasteUnit = unit;
+        next.wasteUnitFactor = factor;
+        next.wasteUnitCustomMode = customMode;
+      }
+      return next;
+    }));
+  };
+
+  const handleStageUnitFactorChange = (
+    id: string,
+    kind: "quantity" | "waste",
+    factor: number,
+  ) => {
+    dirtyStages.current.add(id);
+    setStages(prev => prev.map(stage => {
+      if (stage.id !== id) return stage;
+      if (kind === "waste") {
+        return { ...stage, wasteUnitFactor: factor, wasteUnitExplicit: true };
+      }
+      const next = { ...stage, quantityUnitFactor: factor };
+      if (!stage.wasteUnitExplicit) next.wasteUnitFactor = factor;
+      return next;
+    }));
+  };
+
+  const stageUnitIsValid = (unit: string | null, factor: number) =>
+    (!unit || (Number.isFinite(factor) && factor > 0));
+
   const sendStageAction = async (stageId: string, action: "start" | "complete" | "update", stageData: Stage) => {
     if (!canEdit || !isExecuting) return;
+    if (
+      (stageData.quantityUnitCustomMode && !stageData.quantityUnit) ||
+      (stageData.wasteUnitCustomMode && !stageData.wasteUnit) ||
+      !stageUnitIsValid(stageData.quantityUnit, stageData.quantityUnitFactor) ||
+      !stageUnitIsValid(stageData.wasteUnit, stageData.wasteUnitFactor)
+    ) {
+      toast({
+        title: "معامل التحويل مطلوب",
+        description: "أدخل معامل تحويل موجباً لكل وحدة مخصصة قبل حفظ المرحلة.",
+        variant: "destructive",
+      });
+      return;
+    }
     setBusyStage(stageId);
     try {
       const payload = {
@@ -153,7 +269,11 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         workerCount: stageData.workerCount,
         inputQty: stageData.inputQty || 0,
         outputQty: stageData.outputQty || 0,
+        quantityUnit: stageData.quantityUnit || null,
+        quantityUnitFactor: stageData.quantityUnit ? stageData.quantityUnitFactor : 1,
         wasteQty: stageData.wasteQty || 0,
+        wasteUnit: stageData.wasteUnit || null,
+        wasteUnitFactor: stageData.wasteUnit ? stageData.wasteUnitFactor : 1,
         workerUserId: stageData.workerUserId ? Number(stageData.workerUserId) : null,
         machineId: stageData.machineId ? Number(stageData.machineId) : null,
         workCenterId: stageData.workCenterId ? Number(stageData.workCenterId) : null,
@@ -188,6 +308,27 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       if (onReload) onReload();
     } catch (e: any) {
       toast({ title: "خطأ", description: e.message, variant: "destructive" });
+    } finally {
+      setBusyStage(null);
+    }
+  };
+
+  const reopenStage = async (stage: Stage) => {
+    if (!canEdit || !isExecuting || !["done", "skipped"].includes(stage.status)) return;
+    if (!window.confirm("ستُعاد المرحلة للتصحيح وقد تتأثر مراحل لاحقة. هل تريد إعادة فتحها؟")) return;
+    setBusyStage(stage.id);
+    try {
+      const res = await fetch(`${apiBase}/orders/${orderId}/stages/${stage.id}/reopen`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+      toast({ title: "تمت إعادة فتح المرحلة للتصحيح" });
+      await fetchStages(stage.id);
+      if (onReload) onReload();
+    } catch (e: any) {
+      toast({ title: "تعذر إعادة فتح المرحلة", description: e.message, variant: "destructive" });
     } finally {
       setBusyStage(null);
     }
@@ -235,6 +376,18 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                 </Badge>
               </div>
               <div className="flex gap-2">
+                {(stage.status === "done" || stage.status === "skipped") && isExecuting && canEdit && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 bg-white border-amber-200 text-amber-700 hover:bg-amber-50"
+                    disabled={busyStage === stage.id}
+                    onClick={(e) => { e.stopPropagation(); void reopenStage(stage); }}
+                    data-testid={`button-reopen-stage-${stage.id}`}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5 me-1" /> إعادة فتح للتصحيح
+                  </Button>
+                )}
                 {stage.status !== "done" && stage.status !== "skipped" && isExecuting && canEdit && (
                   <>
                     {(stage.status === "pending") && (
@@ -265,6 +418,21 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
               <div className="p-4 border-t border-slate-100 grid md:grid-cols-2 gap-6 animate-in slide-in-from-top-2">
                 
                 <div className="space-y-4">
+                  <StageUnitSelector
+                    value={stage.quantityUnit}
+                    factor={stage.quantityUnitFactor}
+                    baseUnit={orderUnitCode}
+                    unitCatalog={unitCatalog}
+                    amount={stage.inputQty}
+                    label="وحدة كميات المرحلة"
+                    kind="quantity"
+                    stageId={stage.id}
+                    customMode={stage.quantityUnitCustomMode}
+                    onUnitChange={(unit, factor, customMode) => handleStageUnitChange(stage.id, "quantity", unit, factor, customMode)}
+                    onFactorChange={factor => handleStageUnitFactorChange(stage.id, "quantity", factor)}
+                    onCustomModeChange={customMode => handleUpdateStage(stage.id, { quantityUnitCustomMode: customMode })}
+                    disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped" || busyStage === stage.id}
+                  />
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <Label className="text-xs text-slate-500 flex items-center gap-1.5"><ArrowDownToLine className="h-3.5 w-3.5" /> الكمية المدخلة</Label>
@@ -322,28 +490,43 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                 <div className="space-y-4">
                   <div className="rounded-lg border border-rose-100 bg-rose-50/30 p-3 space-y-3">
                     <div className="font-semibold text-sm text-rose-800 flex items-center gap-1.5">
-                      <Activity className="h-4 w-4" /> تسجيل الهالك (هذه المرحلة)
+                      <Activity className="h-4 w-4" /> فاقد العملية (هذه المرحلة — لا ينشئ مصروفاً مستقلاً)
                     </div>
+                    <StageUnitSelector
+                      value={stage.wasteUnit}
+                      factor={stage.wasteUnitFactor}
+                      baseUnit={orderUnitCode}
+                      unitCatalog={unitCatalog}
+                      amount={stage.wasteQty}
+                      label="وحدة كمية الهالك"
+                      kind="waste"
+                      stageId={stage.id}
+                      customMode={stage.wasteUnitCustomMode}
+                      onUnitChange={(unit, factor, customMode) => handleStageUnitChange(stage.id, "waste", unit, factor, customMode)}
+                      onFactorChange={factor => handleStageUnitFactorChange(stage.id, "waste", factor)}
+                      onCustomModeChange={customMode => handleUpdateStage(stage.id, { wasteUnitCustomMode: customMode, wasteUnitExplicit: true })}
+                      disabled={!isExecuting || !canEdit || stage.status === "done" || stage.status === "skipped" || busyStage === stage.id}
+                    />
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1.5">
                         <Label className="text-xs">كمية الهالك</Label>
                         <Input type="number" step="0.01" value={stage.wasteQty} onChange={e => handleUpdateStage(stage.id, { wasteQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")} className="bg-white border-rose-200" />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs">التصنيف</Label>
+                        <Label className="text-xs">طبيعي أم تالف</Label>
                         <SearchCombobox 
                           value={stage.wasteClassification} 
                           onValueChange={(val: any) => handleUpdateStage(stage.id, { wasteClassification: val })} 
                           items={[
-                            { value: "normal", label: "طبيعي (مخطط)" },
-                            { value: "abnormal", label: "غير طبيعي (استثنائي)" }
+                             { value: "normal", label: "فاقد طبيعي (مخطط — بلا مصروف مستقل)" },
+                             { value: "abnormal", label: "تالف/فاقد غير طبيعي (استثنائي)" }
                           ]}
                           disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")}
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs">النوع (كود/تصنيف فرعي)</Label>
-                        <Input placeholder="مثال: تلف خام" value={stage.wasteType} onChange={e => handleUpdateStage(stage.id, { wasteType: e.target.value })} disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")} className="bg-white border-rose-200" />
+                        <Label className="text-xs">نوع الفاقد/التالف (wasteType)</Label>
+                        <Input placeholder="مثال: تلف خام أو فاقد حراري" value={stage.wasteType} onChange={e => handleUpdateStage(stage.id, { wasteType: e.target.value })} disabled={!isExecuting || !canEdit || (stage.status === "done" || stage.status === "skipped")} className="bg-white border-rose-200" />
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs">سبب الهالك</Label>

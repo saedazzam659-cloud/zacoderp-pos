@@ -2,6 +2,12 @@
 name: Manufacturing source cost policy
 description: Single-screen wizard and accounting ownership of allocated manufacturing costs.
 ---
+Stage input/output and waste may use different operational units, but every conversion must be frozen relative to the order's finished-product unit. Never infer weight-to-piece conversion from unit names; use an explicit approved factor. Convert stage waste exactly once before close/accounting, preserving additional header-only waste separately.
+
+**Why:** A carton-based order can lose individual pieces in the oven or weight during preparation; summing raw quantities misstates both stock and waste cost. Saved execution and closure must not remain independent quantity sources.
+
+**How to apply:** Use the final stage's converted output for routed-order closure and sum converted stage waste by classification. A pending stage may be saved before its output is known; zero-output checks belong at completion, not ordinary operational saves.
+
 Use one invoice-style tabbed manufacturing form over the existing core, not a separate execution engine. Source linkage configuration belongs in existing assets, payroll, and prepaid-expense screens.
 
 Execution inputs must be directly discoverable in the compact order detail, not only in the advanced detail route. Preserve approved time-based source allocation rules when adding operational workforce fields; do not implicitly multiply existing allocations by headcount.

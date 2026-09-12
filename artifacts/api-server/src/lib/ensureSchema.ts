@@ -800,9 +800,14 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS resource_id INTEGER REFERENCES production_resources(id) ON DELETE SET NULL;
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_reason TEXT;
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_type TEXT;
-          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_classification TEXT` },
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_classification TEXT;
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS quantity_unit TEXT;
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS quantity_unit_factor NUMERIC(14,8) NOT NULL DEFAULT 1;
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_unit TEXT;
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_unit_factor NUMERIC(14,8) NOT NULL DEFAULT 1` },
   { label: "production_waste_records classification",
-    sql: `ALTER TABLE production_waste_records ADD COLUMN IF NOT EXISTS waste_classification TEXT NOT NULL DEFAULT 'normal'` },
+    sql: `ALTER TABLE production_waste_records ADD COLUMN IF NOT EXISTS waste_classification TEXT NOT NULL DEFAULT 'normal';
+          ALTER TABLE production_waste_records ADD COLUMN IF NOT EXISTS unit_factor NUMERIC(14,8) NOT NULL DEFAULT 1` },
   { label: "production overhead closure workflow",
     sql: `CREATE TABLE IF NOT EXISTS production_overhead_closures (
       id SERIAL PRIMARY KEY,

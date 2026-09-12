@@ -120,6 +120,11 @@ import {
 } from "../lib/manualManufacturingCosts.js";
 import {
   normalizeStageExecutionPayload,
+  canonicalStageUnitFactor,
+  nextStageInputQuantity,
+  positiveFiniteFactor,
+  resolvedStageInputQuantity,
+  stageWasteTotals,
   STAGE_WASTE_CLASSIFICATIONS,
 } from "../lib/stageExecution.js";
 import { getPostedIndustrialPurchaseCosts } from "../lib/industrialPurchaseCosts.js";
@@ -1461,21 +1466,42 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
         overhead: { amount: num(order.overheadCost), source: allocations.filter((x) =>
           x.sourceType !== "payroll" && (x.snapshotMeta as any)?.includeInManufacturing !== false) },
         analyticalSources: analytical,
-        stages: stages.map((x) => ({
-          id: x.id, name: x.nameAr, standard: num(x.expectedCost), status: x.status,
+        stages: stages.map((x) => {
+          const quantityUnitFactor = canonicalStageUnitFactor(
+            x.quantityUnit,
+            x.quantityUnitFactor ?? 1,
+            "عامل وحدة الكمية",
+          );
+          const wasteUnitFactor = canonicalStageUnitFactor(
+            x.wasteUnit,
+            x.wasteUnitFactor ?? 1,
+            "عامل وحدة الهالك",
+          );
+          return {
+           id: x.id, name: x.nameAr, standard: num(x.expectedCost), status: x.status,
           // Routing expectedCost is a legacy planning/reference value only.
           // It is excluded from order WIP, source allocations, and close JEs;
           // actual source snapshots remain the sole capitalization path.
           standardEstimateOnly: true,
           inputQty: num(x.inputQty), outputQty: num(x.outputQty), wasteQty: num(x.wasteQty),
+          quantityUnit: x.quantityUnit ?? null,
+          quantityUnitFactor,
+          wasteUnit: x.wasteUnit ?? null,
+          wasteUnitFactor,
+          convertedInputQty: num(x.inputQty) * quantityUnitFactor,
+          convertedOutputQty: num(x.outputQty) * quantityUnitFactor,
+          convertedWasteQty: num(x.wasteQty) * wasteUnitFactor,
            actualDurationMinutes: x.actualDurationMinutes, workerUserId: x.operatorUserId,
            workerCount: x.workerCount,
           machineId: x.resourceId, wasteReason: x.wasteReason, wasteType: x.wasteType,
           wasteClassification: x.wasteClassification, notes: x.notes,
-        })),
+          };
+        }),
         waste: waste.map((x) => ({
           id: x.id, reason: x.reason, type: x.wasteType,
           classification: x.wasteClassification, amount: num(x.costImpact), qty: num(x.qty),
+          unitCode: x.unitCode, unitFactor: num(x.unitFactor, 1),
+          convertedQty: num(x.qty) * num(x.unitFactor, 1),
         })),
         quality: { checks: checks.length, failed: checks.filter((x) => x.result === "fail").length },
          allocations,
@@ -4813,12 +4839,19 @@ export async function productionOrderDetailHandler(req: any, res: any) {
         eq(productionCostAllocationsTable.orderId, id)))
       .orderBy(asc(productionCostAllocationsTable.id)),
     ]);
+    const unitCatalog = await loadStageUnitCatalog(cid, order);
     res.json({
       order,
       items,
-      stages,
+      stages: stages.map(stageApiRow),
+      unitCatalog,
+      orderUnitCode: order.unitCode ?? null,
       events,
-      wasteRecords,
+      wasteRecords: wasteRecords.map((row) => ({
+        ...row,
+        unitFactor: num(row.unitFactor, 1),
+        convertedQty: num(row.qty) * positiveFiniteFactor(row.unitFactor ?? 1, "عامل وحدة الهالك"),
+      })),
       costAllocations,
       manualCosts: manualCostEntries(order.meta),
       costConfiguration: sanitizeManufacturingCostConfiguration(
@@ -5545,6 +5578,7 @@ router.patch("/orders/:id", async (req, res) => {
       .select({
         branchId: productionOrdersTable.branchId,
         status: productionOrdersTable.status,
+        receiptJournalEntryId: productionOrdersTable.receiptJournalEntryId,
         workCenterId: productionOrdersTable.workCenterId,
         plannedHours: productionOrdersTable.plannedHours,
         meta: productionOrdersTable.meta,
@@ -5566,6 +5600,19 @@ router.patch("/orders/:id", async (req, res) => {
     }
     if (existingOrder.status === "paused") {
       res.status(409).json({ error: "الأمر متوقف مؤقتاً؛ استأنف الإنتاج قبل تعديل بياناته" });
+      return;
+    }
+    // A legacy completed row with no receipt journal can be repaired before
+    // close. Once a receipt exists, changing its quantities would diverge
+    // stock/GL from the immutable completion snapshot.
+    if (
+      existingOrder.status === "completed" &&
+      existingOrder.receiptJournalEntryId &&
+      (b.producedQty !== undefined || b.wasteQty !== undefined)
+    ) {
+      res.status(409).json({
+        error: "لا يمكن تعديل كميات أمر مكتمل بعد ترحيل إذن الاستلام",
+      });
       return;
     }
     // HIGH fix #3 — validate resourceId ownership on update too
@@ -5716,21 +5763,25 @@ router.patch("/orders/:id", async (req, res) => {
       if (b.overheadCost === undefined) updates.overheadCost = String(computedOverhead);
     }
 
-    const [row] = await db
-      .update(productionOrdersTable)
-      .set(updates)
-      .where(
-        and(
-          eq(productionOrdersTable.id, id),
-          eq(productionOrdersTable.companyId, cid),
-        ),
-      )
-      .returning();
+    const row = await db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(productionOrdersTable)
+        .set(updates)
+        .where(
+          and(
+            eq(productionOrdersTable.id, id),
+            eq(productionOrdersTable.companyId, cid),
+          ),
+        )
+        .returning();
+      if (!updated) return null;
+      await writeEvent(cid, id, "updated", { changed: Object.keys(updates) }, req.authUser!.id, false, tx);
+      return updated;
+    });
     if (!row) {
       res.status(404).json({ error: "أمر الإنتاج غير موجود" });
       return;
     }
-    await writeEvent(cid, id, "updated", { changed: Object.keys(updates) }, req.authUser!.id);
     res.json(row);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -6352,16 +6403,137 @@ export async function productionStatusHandler(req: any, res: any) {
         const usageV = await checkItemsUsable(cid, "finished_goods", [order.productItemId], (req as any).authUser, "post");
         if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
       }
-      // Allow client to send produced/waste qty along with the transition;
-      // otherwise fall back to whatever's already stored.
-      const producedQty =
-        req.body?.producedQty !== undefined
-          ? num(req.body.producedQty)
-          : Number(order.producedQty);
-      const wasteQty =
-        req.body?.wasteQty !== undefined
-          ? num(req.body.wasteQty)
-          : Number(order.wasteQty);
+      // A routed order closes from its immutable stage snapshot. Header
+      // quantities are an explicit reconciliation surface, not a second
+      // source of stage output/waste that may be counted again.
+      const closingStages = await tx
+        .select()
+        .from(productionOrderStagesTable)
+        .where(eq(productionOrderStagesTable.orderId, id))
+        .orderBy(asc(productionOrderStagesTable.sequence));
+      const hasStageRoute = closingStages.length > 0;
+      let stageWasteSummary = { total: 0, normal: 0, abnormal: 0 };
+      let stageFinalOutputQty: number | null = null;
+      if (hasStageRoute) {
+        const unfinished = closingStages.filter(
+          (stage) => !["done", "skipped"].includes(String(stage.status)),
+        );
+        if (unfinished.length) {
+          throw new TransactionFailure(409, {
+            error: "لا يمكن إقفال أمر الإنتاج قبل إكمال كل مراحل المسار أو تخطيها",
+            unfinishedStages: unfinished.map((stage) => ({
+              id: stage.id,
+              sequence: stage.sequence,
+              code: stage.code,
+              status: stage.status,
+            })),
+          });
+        }
+        const doneStages = closingStages.filter((stage) => stage.status === "done");
+        for (const doneStage of doneStages) {
+          const quantityUnitFactor = canonicalStageUnitFactor(
+            doneStage.quantityUnit,
+            doneStage.quantityUnitFactor ?? 1,
+            "عامل وحدة كمية المرحلة",
+          );
+          const wasteUnitFactor = canonicalStageUnitFactor(
+            doneStage.wasteUnit,
+            doneStage.wasteUnitFactor ?? 1,
+            "عامل وحدة هالك المرحلة",
+          );
+          const inputQty = num(doneStage.inputQty);
+          const outputQty = num(doneStage.outputQty);
+          const wasteQty = num(doneStage.wasteQty);
+          // Re-check every completed stage at close. A legacy PATCH may have
+          // produced a done row without passing the complete endpoint.
+          assertStageQuantityConservation(
+            inputQty,
+            outputQty,
+            wasteQty,
+            quantityUnitFactor,
+            wasteUnitFactor,
+          );
+          if (
+            inputQty > 0 &&
+            outputQty === 0 &&
+            wasteQty * wasteUnitFactor < inputQty * quantityUnitFactor - 0.00005
+          ) {
+            throw new TransactionFailure(409, {
+              error: "لا يمكن إقفال الأمر: مرحلة مكتملة بإخراج صفر دون حساب كامل الإدخال كهالك",
+              stageId: doneStage.id,
+              stageCode: doneStage.code,
+            });
+          }
+        }
+        stageWasteSummary = stageWasteTotals(doneStages.map((stage) => ({
+          wasteQty: stage.wasteQty,
+          wasteUnit: stage.wasteUnit,
+          wasteUnitFactor: stage.wasteUnitFactor,
+          wasteClassification: stage.wasteClassification,
+        })));
+        const finalDoneStage = [...doneStages]
+          .reverse()
+          .find((stage) => stage.status === "done");
+        if (finalDoneStage) {
+          const finalQuantityUnitFactor = canonicalStageUnitFactor(
+            finalDoneStage.quantityUnit,
+            finalDoneStage.quantityUnitFactor ?? 1,
+            "عامل وحدة إخراج المرحلة النهائية",
+          );
+          stageFinalOutputQty =
+            num(finalDoneStage.outputQty) * finalQuantityUnitFactor;
+        } else {
+          stageFinalOutputQty = 0;
+        }
+      }
+      const hasExplicitProducedQty = req.body?.producedQty !== undefined;
+      const hasExplicitWasteQty = req.body?.wasteQty !== undefined;
+      const rawProducedQty = hasExplicitProducedQty
+        ? Number(req.body.producedQty)
+        : Number(order.producedQty);
+      const rawWasteQty = hasExplicitWasteQty
+        ? Number(req.body.wasteQty)
+        : Number(order.wasteQty);
+      if (!Number.isFinite(rawProducedQty) || rawProducedQty < 0) {
+        throw new TransactionFailure(400, {
+          error: "كمية المنتج المنتَج يجب أن تكون رقماً غير سالب",
+        });
+      }
+      if (!Number.isFinite(rawWasteQty) || rawWasteQty < 0) {
+        throw new TransactionFailure(400, {
+          error: "كمية الهالك يجب أن تكون رقماً غير سالب",
+        });
+      }
+      let producedQty = rawProducedQty;
+      if (hasStageRoute) {
+        if (
+          stageFinalOutputQty == null ||
+          Math.abs(rawProducedQty - stageFinalOutputQty) > 0.00005
+        ) {
+          if (hasExplicitProducedQty || rawProducedQty > 0) {
+            throw new TransactionFailure(409, {
+              error: "كمية المنتج على رأس الأمر لا تطابق لقطة إخراج المرحلة النهائية المحوّلة",
+              headerProducedQty: rawProducedQty,
+              stageFinalOutputQty,
+            });
+          }
+        }
+        // A zero/legacy header is repaired from the final stage snapshot.
+        producedQty = stageFinalOutputQty ?? rawProducedQty;
+      }
+      let wasteQty = rawWasteQty;
+      if (hasStageRoute && stageWasteSummary.total > rawWasteQty + 0.00005) {
+        if (hasExplicitWasteQty) {
+          throw new TransactionFailure(409, {
+            error: "كمية هالك المراحل المحوّلة تتجاوز هالك رأس الأمر؛ راجع الفرق صراحةً قبل الإقفال",
+            headerWasteQty: rawWasteQty,
+            stageWasteQty: stageWasteSummary.total,
+          });
+        }
+        // Legacy/default header values may be reconciled upward, but a
+        // positive user/header amount is never silently reduced or replaced.
+        wasteQty = stageWasteSummary.total;
+      }
       if (!(producedQty > 0)) {
         res
           .status(400)
@@ -6395,29 +6567,14 @@ export async function productionStatusHandler(req: any, res: any) {
       }
       // Stage execution owns the waste classification. Normal production loss
       // remains in the cost of good output; only abnormal loss is expensed.
-      // A legacy order with a header-only waste quantity retains the old,
-      // conservative treatment (abnormal) until its stages are classified.
-      const completedStages = await tx.select({
-        wasteQty: productionOrderStagesTable.wasteQty,
-        wasteClassification: productionOrderStagesTable.wasteClassification,
-      }).from(productionOrderStagesTable)
-        .where(eq(productionOrderStagesTable.orderId, id));
-      const stagedWasteQty = completedStages.reduce(
-        (sum, stage) => sum + num(stage.wasteQty),
+      // Abnormal stage loss and any
+      // explicit header-only addition are expensed. Each stage waste is
+      // converted exactly once here from its stored waste-unit factor.
+      const stagedWasteQty = stageWasteSummary.total;
+      const abnormalWasteQty = Math.max(
         0,
+        stageWasteSummary.abnormal + Math.max(0, wasteQty - stagedWasteQty),
       );
-      if (stagedWasteQty > wasteQty + 0.00005) {
-        res.status(409).json({
-          error: "كمية هالك مراحل الأمر تتجاوز كمية الهالك على رأس أمر الإنتاج",
-        });
-        return;
-      }
-      const normalWasteQty = completedStages.reduce((sum, stage) =>
-        stage.wasteClassification === "normal" ? sum + num(stage.wasteQty) : sum,
-      0);
-      // Any unclassified/header-only difference is abnormal by design: it
-      // must not be silently capitalized into finished goods.
-      const abnormalWasteQty = Math.max(0, wasteQty - normalWasteQty);
       const totalOut = producedQty + wasteQty;
       const wasteCost = wipBalance * (abnormalWasteQty / totalOut);
       const fgCost = wipBalance - wasteCost;
@@ -8353,29 +8510,90 @@ function assertStageQuantityConservation(
   inputQty: unknown,
   outputQty: number | undefined,
   wasteQty: number | undefined,
+  quantityUnitFactor = 1,
+  wasteUnitFactor = 1,
 ) {
   const input = num(inputQty);
-  if (input > 0 && outputQty !== undefined && wasteQty !== undefined &&
-      outputQty + wasteQty > input + 0.00005) {
+  const inputFactor = positiveFiniteFactor(quantityUnitFactor, "عامل وحدة الكمية");
+  const wasteFactor = positiveFiniteFactor(wasteUnitFactor, "عامل وحدة الهالك");
+  if (outputQty !== undefined && wasteQty !== undefined &&
+      outputQty * inputFactor + wasteQty * wasteFactor >
+        input * inputFactor + 0.00005) {
     throw Object.assign(
-      new Error("كمية الإخراج والهالك لا يمكن أن تتجاوز كمية إدخال المرحلة"),
+      new Error("كمية الإخراج والهالك بعد التحويل لا يمكن أن تتجاوز كمية إدخال المرحلة"),
       { status: 400 },
     );
   }
+}
+
+function stageApiRow<T extends Record<string, any>>(stage: T): T {
+  const quantityUnit = stage.quantityUnit ?? null;
+  const wasteUnit = stage.wasteUnit ?? null;
+  return {
+    ...stage,
+    quantityUnit,
+    quantityUnitFactor: canonicalStageUnitFactor(
+      quantityUnit,
+      stage.quantityUnitFactor ?? 1,
+      "عامل وحدة الكمية",
+    ),
+    wasteUnit,
+    wasteUnitFactor: canonicalStageUnitFactor(
+      wasteUnit,
+      stage.wasteUnitFactor ?? 1,
+      "عامل وحدة الهالك",
+    ),
+  };
+}
+
+async function loadStageUnitCatalog(cid: number, order: { unitCode?: string | null }) {
+  const rows = await db
+    .select({
+      code: unitsTable.code,
+      nameAr: unitsTable.nameAr,
+      nameEn: unitsTable.nameEn,
+      conversionFactor: unitsTable.conversionFactor,
+    })
+    .from(unitsTable)
+    .where(eq(unitsTable.companyId, cid))
+    .orderBy(asc(unitsTable.code));
+  const catalog = rows.map((unit) => ({
+    code: unit.code,
+    nameAr: unit.nameAr,
+    nameEn: unit.nameEn,
+    // This is display metadata only. Stage conversion still requires the
+    // explicit stage factor and never guesses from this value.
+    conversionFactor: num(unit.conversionFactor, 1),
+  }));
+  const orderUnitCode = order.unitCode ?? null;
+  if (orderUnitCode && !catalog.some((unit) => unit.code === orderUnitCode)) {
+    catalog.unshift({
+      code: orderUnitCode,
+      nameAr: orderUnitCode,
+      nameEn: orderUnitCode,
+      conversionFactor: 1,
+    });
+  }
+  return catalog;
 }
 
 // Actual minutes remain a non-monetary driver. Keep the order aggregate in
 // sync with the per-stage snapshots so every downstream approved-basis
 // reconciliation reads one authoritative execution total rather than a UI
 // supplied hours field.
-async function refreshOrderActualHours(cid: number, orderId: number, actorId: number) {
-  const stages = await db.select({
+async function refreshOrderActualHours(
+  cid: number,
+  orderId: number,
+  actorId: number,
+  executor: any = db,
+) {
+  const stages = await executor.select({
     actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
   }).from(productionOrderStagesTable)
     .where(eq(productionOrderStagesTable.orderId, orderId));
   const actualMinutes = stages.reduce((sum, stage) => sum + Number(stage.actualDurationMinutes ?? 0), 0);
   const actualHours = Number((actualMinutes / 60).toFixed(4));
-  const [order] = await db.select({
+  const [order] = await executor.select({
     meta: productionOrdersTable.meta,
     actualHours: productionOrdersTable.actualHours,
   }).from(productionOrdersTable).where(and(
@@ -8384,7 +8602,7 @@ async function refreshOrderActualHours(cid: number, orderId: number, actorId: nu
   )).limit(1);
   if (!order) return actualHours;
   const prior = (order.meta && typeof order.meta === "object" ? order.meta : {}) as Record<string, unknown>;
-  await db.update(productionOrdersTable).set({
+  await executor.update(productionOrdersTable).set({
     actualHours: String(actualHours),
     meta: {
       ...prior,
@@ -8405,7 +8623,7 @@ async function refreshOrderActualHours(cid: number, orderId: number, actorId: nu
       actualMinutes,
       actualHours,
       driver: "stage_duration",
-    }, actorId);
+    }, actorId, false, executor);
   }
   return actualHours;
 }
@@ -8682,7 +8900,12 @@ productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
       .from(productionOrderStagesTable)
       .where(eq(productionOrderStagesTable.orderId, ctx.order.id))
       .orderBy(asc(productionOrderStagesTable.sequence));
-    res.json(stages);
+    const unitCatalog = await loadStageUnitCatalog(ctx.cid, ctx.order);
+    res.json({
+      stages: stages.map(stageApiRow),
+      unitCatalog,
+      orderUnitCode: ctx.order.unitCode ?? null,
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -8752,42 +8975,47 @@ productionExecutionRouter.post("/orders/:id/stages/seed", async (req, res) => {
       res.status(400).json({ error: "القالب لا يحتوي على مراحل" });
       return;
     }
-    if (existing.length > 0) {
-      await db
-        .delete(productionOrderStagesTable)
-        .where(eq(productionOrderStagesTable.orderId, order.id));
-    }
-    await db.insert(productionOrderStagesTable).values(
-      rs.map((s, idx) => ({
-        orderId: order.id,
-        sequence: s.sequence,
-        code: s.code,
-        nameAr: s.nameAr,
-        nameEn: s.nameEn,
-        workCenterId: s.workCenterId,
-        expectedWasteRatio: s.expectedWasteRatio,
-        expectedDurationMinutes: s.expectedDurationMinutes,
-        // Routing-stage cost fields are tenant-validated already (only
-        // company-scoped routings can be loaded above), so a direct copy
-        // is safe here.
-        expectedCost: s.expectedCost,
-        expectedCostAccountId: s.expectedCostAccountId,
-        icon: s.icon,
-        color: s.color,
-        status: "pending" as const,
-        inputQty: idx === 0 ? String(num(order.plannedQty)) : "0",
-        outputQty: "0",
-        wasteQty: "0",
-        fromRoutingId: routing.id,
-      })),
-    );
-    await writeEvent(
-      cid,
-      order.id,
-      "routing_loaded",
-      { routingId: routing.id, stages: rs.length, manual: true },
-      req.authUser!.id,
-    );
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${order.id})`);
+      if (existing.length > 0) {
+        await tx
+          .delete(productionOrderStagesTable)
+          .where(eq(productionOrderStagesTable.orderId, order.id));
+      }
+      await tx.insert(productionOrderStagesTable).values(
+        rs.map((s, idx) => ({
+          orderId: order.id,
+          sequence: s.sequence,
+          code: s.code,
+          nameAr: s.nameAr,
+          nameEn: s.nameEn,
+          workCenterId: s.workCenterId,
+          expectedWasteRatio: s.expectedWasteRatio,
+          expectedDurationMinutes: s.expectedDurationMinutes,
+          // Routing-stage cost fields are tenant-validated already (only
+          // company-scoped routings can be loaded above), so a direct copy
+          // is safe here.
+          expectedCost: s.expectedCost,
+          expectedCostAccountId: s.expectedCostAccountId,
+          icon: s.icon,
+          color: s.color,
+          status: "pending" as const,
+          inputQty: idx === 0 ? String(num(order.plannedQty)) : "0",
+          outputQty: "0",
+          wasteQty: "0",
+          fromRoutingId: routing.id,
+        })),
+      );
+      await writeEvent(
+        cid,
+        order.id,
+        "routing_loaded",
+        { routingId: routing.id, stages: rs.length, manual: true },
+        req.authUser!.id,
+        false,
+        tx,
+      );
+    });
     res.json({ ok: true, stages: rs.length, routingId: routing.id });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -8835,44 +9063,74 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
     }
     const execution = normalizeStageExecutionPayload(req.body);
     await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId, stage);
-    const inputQty =
-      execution.inputQty !== undefined
-        ? String(execution.inputQty)
-        : Number(stage.inputQty) > 0
-          ? stage.inputQty
-          : String(num(ctx.order.plannedQty));
-    const [updated] = await db
-      .update(productionOrderStagesTable)
-      .set({
-        status: "in_progress" as const,
-        startedAt: stage.startedAt ?? new Date(),
-        inputQty,
-        actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
-        workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-        resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
-        workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
-        notes: execution.notes !== undefined ? execution.notes : stage.notes,
-        operatorUserId: execution.operatorUserId !== undefined
-          ? execution.operatorUserId
-          : (stage.operatorUserId ?? req.authUser!.id),
-      })
-      .where(eq(productionOrderStagesTable.id, stageId))
-      .returning();
-    await writeEvent(
-      ctx.cid,
-      ctx.order.id,
-      "stage_started",
-      { stageId, code: stage.code, inputQty, actualDurationMinutes: execution.actualDurationMinutes ?? null,
-        workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-        resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
-        workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
-        workerUserId: execution.operatorUserId ?? null },
-      req.authUser!.id,
+    const inputQty = execution.inputQty !== undefined
+      ? String(execution.inputQty)
+      : String(resolvedStageInputQuantity(
+        stage.inputQty,
+        num(ctx.order.plannedQty),
+        !prevStages.some((s) => s.sequence < stage.sequence),
+      ));
+    const quantityUnitFactor = canonicalStageUnitFactor(
+      execution.quantityUnit ?? stage.quantityUnit,
+      execution.quantityUnitFactor ?? stage.quantityUnitFactor ?? 1,
+      "عامل وحدة الكمية",
     );
-    if (execution.actualDurationMinutes !== undefined) {
-      await refreshOrderActualHours(ctx.cid, ctx.order.id, req.authUser!.id);
-    }
-    res.json(updated);
+    const wasteUnitFactor = canonicalStageUnitFactor(
+      execution.wasteUnit ?? stage.wasteUnit,
+      execution.wasteUnitFactor ?? stage.wasteUnitFactor ?? 1,
+      "عامل وحدة الهالك",
+    );
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${ctx.cid}, ${ctx.order.id})`);
+      const [updated] = await tx
+        .update(productionOrderStagesTable)
+        .set({
+          status: "in_progress" as const,
+          startedAt: stage.startedAt ?? new Date(),
+          inputQty,
+          quantityUnit: execution.quantityUnit !== undefined
+            ? execution.quantityUnit : stage.quantityUnit,
+          quantityUnitFactor: String(quantityUnitFactor),
+          wasteUnit: execution.wasteUnit !== undefined
+            ? execution.wasteUnit : stage.wasteUnit,
+          wasteUnitFactor: String(wasteUnitFactor),
+          actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
+          workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
+          resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+          workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
+          notes: execution.notes !== undefined ? execution.notes : stage.notes,
+          operatorUserId: execution.operatorUserId !== undefined
+            ? execution.operatorUserId
+            : (stage.operatorUserId ?? req.authUser!.id),
+        })
+        .where(eq(productionOrderStagesTable.id, stageId))
+        .returning();
+      if (!updated) {
+        throw Object.assign(new Error("المرحلة غير موجودة أو أصبحت نهائية أثناء التحديث"), { status: 409 });
+      }
+      await writeEvent(
+        ctx.cid,
+        ctx.order.id,
+        "stage_started",
+        { stageId, code: stage.code, inputQty, actualDurationMinutes: execution.actualDurationMinutes ?? null,
+          workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
+          resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+          workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
+          quantityUnit: updated.quantityUnit,
+          quantityUnitFactor,
+          wasteUnit: updated.wasteUnit,
+          wasteUnitFactor,
+          workerUserId: execution.operatorUserId ?? null },
+        req.authUser!.id,
+        false,
+        tx,
+      );
+      const actualHours = execution.actualDurationMinutes !== undefined
+        ? await refreshOrderActualHours(ctx.cid, ctx.order.id, req.authUser!.id, tx)
+        : undefined;
+      return { updated, actualHours };
+    });
+    res.json(stageApiRow(result.updated));
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e.message });
   }
@@ -8909,7 +9167,33 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
     await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId, stage);
     const outputQty = execution.outputQty!;
     const wasteQty = execution.wasteQty ?? num(stage.wasteQty);
-    assertStageQuantityConservation(stage.inputQty, outputQty, wasteQty);
+    const inputQty = execution.inputQty ?? num(stage.inputQty);
+    const quantityUnitFactor = canonicalStageUnitFactor(
+      execution.quantityUnit ?? stage.quantityUnit,
+      execution.quantityUnitFactor ?? stage.quantityUnitFactor ?? 1,
+      "عامل وحدة الكمية",
+    );
+    const wasteUnitFactor = canonicalStageUnitFactor(
+      execution.wasteUnit ?? stage.wasteUnit,
+      execution.wasteUnitFactor ?? stage.wasteUnitFactor ?? 1,
+      "عامل وحدة الهالك",
+    );
+    assertStageQuantityConservation(
+      inputQty,
+      outputQty,
+      wasteQty,
+      quantityUnitFactor,
+      wasteUnitFactor,
+    );
+    if (
+      inputQty > 0 &&
+      outputQty === 0 &&
+      wasteQty * wasteUnitFactor < inputQty * quantityUnitFactor - 0.00005
+    ) {
+      return void res.status(400).json({
+        error: "لا يمكن إكمال مرحلة بإخراج صفر قبل حساب كامل الإدخال كهالك",
+      });
+    }
     const wasteReason = execution.wasteReason !== undefined ? execution.wasteReason : stage.wasteReason;
     const wasteType = execution.wasteType !== undefined ? execution.wasteType : stage.wasteType;
     const wasteClassification = execution.wasteClassification !== undefined
@@ -8919,61 +9203,101 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
         error: "سبب ونوع وتصنيف الهالك (normal أو abnormal) مطلوبة عند تسجيل هالك مرحلة",
       });
     }
-    const [updated] = await db
-      .update(productionOrderStagesTable)
-      .set({
-        status: "done" as const,
-        outputQty: String(outputQty),
-        wasteQty: String(wasteQty),
-        completedAt: new Date(),
-        startedAt: stage.startedAt ?? new Date(),
-        actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
-        workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-        resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
-        workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
-        wasteReason,
-        wasteType,
-        wasteClassification,
-        notes: execution.notes !== undefined ? execution.notes : stage.notes,
-        operatorUserId: execution.operatorUserId !== undefined
-          ? execution.operatorUserId
-          : (stage.operatorUserId ?? req.authUser!.id),
-      })
-      .where(eq(productionOrderStagesTable.id, stageId))
-      .returning();
-
-    // تمرير الكمية للمرحلة التالية تلقائياً (إلا إذا حُدّدت يدوياً)
-    const allStages = await db
-      .select()
-      .from(productionOrderStagesTable)
-      .where(eq(productionOrderStagesTable.orderId, ctx.order.id))
-      .orderBy(asc(productionOrderStagesTable.sequence));
-    const idx = allStages.findIndex((s) => s.id === stageId);
-    const next = idx >= 0 ? allStages[idx + 1] : undefined;
-    if (next && next.status === "pending" && Number(next.inputQty) === 0) {
-      await db
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${ctx.cid}, ${ctx.order.id})`);
+      const [updated] = await tx
         .update(productionOrderStagesTable)
-        .set({ inputQty: String(outputQty) })
-        .where(eq(productionOrderStagesTable.id, next.id));
-    }
-    const actualHours = await refreshOrderActualHours(ctx.cid, ctx.order.id, req.authUser!.id);
+        .set({
+          status: "done" as const,
+          inputQty: String(inputQty),
+          outputQty: String(outputQty),
+          wasteQty: String(wasteQty),
+          quantityUnit: execution.quantityUnit !== undefined
+            ? execution.quantityUnit : stage.quantityUnit,
+          quantityUnitFactor: String(quantityUnitFactor),
+          wasteUnit: execution.wasteUnit !== undefined
+            ? execution.wasteUnit : stage.wasteUnit,
+          wasteUnitFactor: String(wasteUnitFactor),
+          completedAt: new Date(),
+          startedAt: stage.startedAt ?? new Date(),
+          actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
+          workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
+          resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+          workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
+          wasteReason,
+          wasteType,
+          wasteClassification,
+          notes: execution.notes !== undefined ? execution.notes : stage.notes,
+          operatorUserId: execution.operatorUserId !== undefined
+            ? execution.operatorUserId
+            : (stage.operatorUserId ?? req.authUser!.id),
+        })
+        .where(eq(productionOrderStagesTable.id, stageId))
+        .returning();
+      if (!updated) {
+        throw Object.assign(new Error("المرحلة غير موجودة أو أصبحت نهائية أثناء التحديث"), { status: 409 });
+      }
 
-    await writeEvent(
-      ctx.cid,
-      ctx.order.id,
-      "stage_completed",
-      { stageId, code: stage.code, outputQty, wasteQty,
-        actualDurationMinutes: execution.actualDurationMinutes ?? num(stage.actualDurationMinutes),
-        workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
-         resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
-         workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
-        workerUserId: execution.operatorUserId ?? stage.operatorUserId ?? null,
-        wasteReason: wasteReason ?? null,
-        wasteType: wasteType ?? null,
-        wasteClassification: wasteClassification ?? null, actualHours },
-      req.authUser!.id,
-    );
-    res.json(updated);
+      // Propagate order-unit output into the next stage's unit. Existing
+      // non-zero/manual input is authoritative and is never overwritten.
+      const allStages = await tx
+        .select()
+        .from(productionOrderStagesTable)
+        .where(eq(productionOrderStagesTable.orderId, ctx.order.id))
+        .orderBy(asc(productionOrderStagesTable.sequence));
+      const idx = allStages.findIndex((s) => s.id === stageId);
+      const next = idx >= 0 ? allStages[idx + 1] : undefined;
+      let propagatedInputQty: number | null = null;
+      if (next && next.status === "pending" && num(next.inputQty) === 0) {
+        const nextInputFactor = canonicalStageUnitFactor(
+          next.quantityUnit,
+          next.quantityUnitFactor ?? 1,
+          "عامل وحدة كمية المرحلة التالية",
+        );
+        propagatedInputQty = nextStageInputQuantity(
+          outputQty,
+          quantityUnitFactor,
+          nextInputFactor,
+        );
+        await tx
+          .update(productionOrderStagesTable)
+          .set({ inputQty: String(propagatedInputQty) })
+          .where(eq(productionOrderStagesTable.id, next.id));
+      }
+      const actualHours = await refreshOrderActualHours(
+        ctx.cid,
+        ctx.order.id,
+        req.authUser!.id,
+        tx,
+      );
+
+      await writeEvent(
+        ctx.cid,
+        ctx.order.id,
+        "stage_completed",
+        { stageId, code: stage.code, outputQty, wasteQty, inputQty,
+          quantityUnit: updated.quantityUnit,
+          quantityUnitFactor,
+          wasteUnit: updated.wasteUnit,
+          wasteUnitFactor,
+          convertedOutputQty: outputQty * quantityUnitFactor,
+          convertedWasteQty: wasteQty * wasteUnitFactor,
+          propagatedInputQty,
+          actualDurationMinutes: execution.actualDurationMinutes ?? num(stage.actualDurationMinutes),
+          workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
+           resourceId: execution.resourceId !== undefined ? execution.resourceId : stage.resourceId,
+           workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : stage.workCenterId,
+          workerUserId: execution.operatorUserId ?? stage.operatorUserId ?? null,
+          wasteReason: wasteReason ?? null,
+          wasteType: wasteType ?? null,
+          wasteClassification: wasteClassification ?? null, actualHours },
+        req.authUser!.id,
+        false,
+        tx,
+      );
+      return { updated, actualHours };
+    });
+    res.json(stageApiRow(result.updated));
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e.message });
   }
@@ -8994,12 +9318,28 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (!current) return void res.status(404).json({ error: "المرحلة غير موجودة" });
     await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId, current);
     if (["done", "completed", "skipped"].includes(String(current.status))) {
-      return void res.status(409).json({ error: "لا يمكن تعديل مرحلة مكتملة أو متخطاة" });
+      return void res.status(409).json({ error: "لا يمكن تعديل مرحلة مكتملة أو متخطاة؛ أعد فتحها أولاً" });
     }
+    const resultingQuantityUnitFactor = canonicalStageUnitFactor(
+      execution.quantityUnit !== undefined
+        ? execution.quantityUnit
+        : current.quantityUnit,
+      execution.quantityUnitFactor ?? current.quantityUnitFactor ?? 1,
+      "عامل وحدة الكمية",
+    );
+    const resultingWasteUnitFactor = canonicalStageUnitFactor(
+      execution.wasteUnit !== undefined
+        ? execution.wasteUnit
+        : current.wasteUnit,
+      execution.wasteUnitFactor ?? current.wasteUnitFactor ?? 1,
+      "عامل وحدة الهالك",
+    );
     assertStageQuantityConservation(
       execution.inputQty ?? current.inputQty,
       execution.outputQty ?? num(current.outputQty),
       execution.wasteQty ?? num(current.wasteQty),
+      resultingQuantityUnitFactor,
+      resultingWasteUnitFactor,
     );
     const resultingWasteQty = execution.wasteQty ?? num(current.wasteQty);
     const resultingWasteReason = execution.wasteReason !== undefined
@@ -9018,6 +9358,12 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (execution.inputQty !== undefined) updates.inputQty = String(execution.inputQty);
     if (execution.outputQty !== undefined) updates.outputQty = String(execution.outputQty);
     if (execution.wasteQty !== undefined) updates.wasteQty = String(execution.wasteQty);
+    if (execution.quantityUnit !== undefined) updates.quantityUnit = execution.quantityUnit;
+    if (execution.quantityUnitFactor !== undefined)
+      updates.quantityUnitFactor = String(resultingQuantityUnitFactor);
+    if (execution.wasteUnit !== undefined) updates.wasteUnit = execution.wasteUnit;
+    if (execution.wasteUnitFactor !== undefined)
+      updates.wasteUnitFactor = String(resultingWasteUnitFactor);
     if (execution.actualDurationMinutes !== undefined)
       updates.actualDurationMinutes = execution.actualDurationMinutes;
     if (execution.workerCount !== undefined) updates.workerCount = execution.workerCount;
@@ -9045,35 +9391,98 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
       res.status(400).json({ error: "لا يوجد تحديث" });
       return;
     }
-    const [updated] = await db
-      .update(productionOrderStagesTable)
-      .set(updates)
-      .where(
-        and(
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${ctx.cid}, ${ctx.order.id})`);
+      const [updated] = await tx
+        .update(productionOrderStagesTable)
+        .set(updates)
+        .where(
+          and(
+            eq(productionOrderStagesTable.id, stageId),
+            eq(productionOrderStagesTable.orderId, ctx.order.id),
+            ne(productionOrderStagesTable.status, "done"),
+            ne(productionOrderStagesTable.status, "completed"),
+            ne(productionOrderStagesTable.status, "skipped"),
+          ),
+        )
+        .returning();
+      if (!updated) {
+        throw Object.assign(new Error("المرحلة غير موجودة أو أصبحت نهائية أثناء التحديث"), { status: 409 });
+      }
+      await writeEvent(ctx.cid, ctx.order.id, "stage_execution_updated", {
+        stageId,
+        fields: Object.keys(updates).sort(),
+        actualDurationMinutes: updated.actualDurationMinutes,
+        workerCount: updated.workerCount,
+        inputQty: updated.inputQty,
+        outputQty: updated.outputQty,
+        wasteQty: updated.wasteQty,
+        quantityUnit: updated.quantityUnit,
+        quantityUnitFactor: num(updated.quantityUnitFactor, 1),
+        wasteUnit: updated.wasteUnit,
+        wasteUnitFactor: num(updated.wasteUnitFactor, 1),
+        convertedOutputQty: num(updated.outputQty) * num(updated.quantityUnitFactor, 1),
+        convertedWasteQty: num(updated.wasteQty) * num(updated.wasteUnitFactor, 1),
+        wasteClassification: updated.wasteClassification,
+      }, req.authUser!.id, false, tx);
+      await refreshOrderActualHours(ctx.cid, ctx.order.id, req.authUser!.id, tx);
+      return updated;
+    });
+    res.json(stageApiRow(result));
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+// Re-open a completed stage for a corrective execution. Generic PATCH must
+// never turn a done row into an unvalidated done row; correction goes through
+// this explicit transition and then the complete endpoint.
+productionExecutionRouter.post("/orders/:id/stages/:stageId/reopen", async (req, res) => {
+  try {
+    const ctx = await loadOrderForStages(req, res);
+    if (!ctx) return;
+    assertStageExecutionMutable(ctx.order);
+    const stageId = Number(req.params.stageId);
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${ctx.cid}, ${ctx.order.id})`);
+      const [current] = await tx
+        .select()
+        .from(productionOrderStagesTable)
+        .where(and(
           eq(productionOrderStagesTable.id, stageId),
           eq(productionOrderStagesTable.orderId, ctx.order.id),
-          ne(productionOrderStagesTable.status, "done"),
-          ne(productionOrderStagesTable.status, "completed"),
-          ne(productionOrderStagesTable.status, "skipped"),
-        ),
-      )
-      .returning();
-    if (!updated) {
-      res.status(409).json({ error: "المرحلة غير موجودة أو أصبحت نهائية أثناء التحديث" });
-      return;
-    }
-    await writeEvent(ctx.cid, ctx.order.id, "stage_execution_updated", {
-      stageId,
-      fields: Object.keys(updates).sort(),
-      actualDurationMinutes: updated.actualDurationMinutes,
-      workerCount: updated.workerCount,
-      inputQty: updated.inputQty,
-      outputQty: updated.outputQty,
-      wasteQty: updated.wasteQty,
-      wasteClassification: updated.wasteClassification,
-    }, req.authUser!.id);
-    await refreshOrderActualHours(ctx.cid, ctx.order.id, req.authUser!.id);
-    res.json(updated);
+        ))
+        .limit(1);
+      if (!current) throw Object.assign(new Error("المرحلة غير موجودة"), { status: 404 });
+      if (current.status !== "done") {
+        throw Object.assign(new Error("لا يمكن إعادة فتح مرحلة غير مكتملة"), { status: 400 });
+      }
+      const [updated] = await tx
+        .update(productionOrderStagesTable)
+        .set({
+          status: "in_progress" as const,
+          outputQty: "0",
+          wasteQty: "0",
+          completedAt: null,
+          wasteReason: null,
+          wasteType: null,
+          wasteClassification: null,
+        })
+        .where(and(
+          eq(productionOrderStagesTable.id, stageId),
+          eq(productionOrderStagesTable.orderId, ctx.order.id),
+          eq(productionOrderStagesTable.status, "done"),
+        ))
+        .returning();
+      if (!updated) throw Object.assign(new Error("المرحلة أصبحت نهائية أثناء إعادة الفتح"), { status: 409 });
+      await writeEvent(ctx.cid, ctx.order.id, "stage_reopened", {
+        stageId,
+        previousOutputQty: current.outputQty,
+        previousWasteQty: current.wasteQty,
+      }, req.authUser!.id, false, tx);
+      return updated;
+    });
+    res.json(stageApiRow(result));
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e.message });
   }
@@ -9629,8 +10038,8 @@ router.get("/operators/performance", async (req, res) => {
           // distinguish "operator has 0 duration data" from "operator has data
           // averaging 0" (so we don't bias the company mean either direction).
           stagesWithDuration: sql<number>`COUNT(*) FILTER (WHERE ${productionOrderStagesTable.completedAt} IS NOT NULL AND ${productionOrderStagesTable.startedAt} IS NOT NULL)::int`,
-          totalOutput: sql<number>`COALESCE(SUM(${productionOrderStagesTable.outputQty}),0)::float`,
-          stageWasteQty: sql<number>`COALESCE(SUM(${productionOrderStagesTable.wasteQty}),0)::float`,
+          totalOutput: sql<number>`COALESCE(SUM(${productionOrderStagesTable.outputQty} * ${productionOrderStagesTable.quantityUnitFactor}),0)::float`,
+          stageWasteQty: sql<number>`COALESCE(SUM(${productionOrderStagesTable.wasteQty} * ${productionOrderStagesTable.wasteUnitFactor}),0)::float`,
         })
         .from(productionOrderStagesTable)
         .innerJoin(
@@ -9671,7 +10080,7 @@ router.get("/operators/performance", async (req, res) => {
         .select({
           operatorUserId: productionWasteRecordsTable.operatorUserId,
           wasteEvents: sql<number>`COUNT(*)::int`,
-          wasteQty: sql<number>`COALESCE(SUM(${productionWasteRecordsTable.qty}),0)::float`,
+          wasteQty: sql<number>`COALESCE(SUM(${productionWasteRecordsTable.qty} * ${productionWasteRecordsTable.unitFactor}),0)::float`,
           wasteCost: sql<number>`COALESCE(SUM(${productionWasteRecordsTable.costImpact}),0)::float`,
         })
         .from(productionWasteRecordsTable)
@@ -10428,12 +10837,19 @@ productionExecutionRouter.get("/orders/:id/waste-records", async (req, res) => {
     for (const r of rows) {
       const k = r.wasteType;
       const t = byType[k] ?? { qty: 0, cost: 0, count: 0 };
-      t.qty += Number(r.qty);
+      t.qty += Number(r.qty) * positiveFiniteFactor(r.unitFactor ?? 1, "عامل وحدة الهالك");
       t.cost += Number(r.costImpact);
       t.count += 1;
       byType[k] = t;
     }
-    res.json({ records: rows, summary: { byType, totalCount: rows.length } });
+    res.json({
+      records: rows.map((row) => ({
+        ...row,
+        unitFactor: num(row.unitFactor, 1),
+        convertedQty: num(row.qty) * positiveFiniteFactor(row.unitFactor ?? 1, "عامل وحدة الهالك"),
+      })),
+      summary: { byType, totalCount: rows.length },
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -10477,14 +10893,23 @@ productionExecutionRouter.post("/orders/:id/waste-records", async (req, res) => 
     const stageId = b.stageId ? Number(b.stageId) : null;
     const resourceId = executionReferences.resourceId ?? null;
     const workCenterId = b.workCenterId ? Number(b.workCenterId) : null;
+    let linkedStageWasteFactor: unknown = null;
     if (stageId) {
       const [s] = await db
-        .select({ id: productionOrderStagesTable.id })
+        .select({
+          id: productionOrderStagesTable.id,
+          wasteUnitFactor: productionOrderStagesTable.wasteUnitFactor,
+        })
         .from(productionOrderStagesTable)
         .where(and(eq(productionOrderStagesTable.id, stageId), eq(productionOrderStagesTable.orderId, orderId)))
         .limit(1);
       if (!s) { res.status(400).json({ error: "المرحلة المحددة لا تخص هذا الأمر" }); return; }
+      linkedStageWasteFactor = s.wasteUnitFactor;
     }
+    const unitFactor = positiveFiniteFactor(
+      b.unitFactor !== undefined ? b.unitFactor : (linkedStageWasteFactor ?? 1),
+      "عامل وحدة الهالك",
+    );
     if (workCenterId) {
       const [w] = await db
         .select({ id: workCentersTable.id })
@@ -10493,32 +10918,38 @@ productionExecutionRouter.post("/orders/:id/waste-records", async (req, res) => 
         .limit(1);
       if (!w) { res.status(400).json({ error: "مركز العمل المحدد لا يخص هذه الشركة" }); return; }
     }
-    const [row] = await db
-      .insert(productionWasteRecordsTable)
-      .values({
-        companyId: cid,
-        orderId,
-        stageId: b.stageId ? Number(b.stageId) : null,
+    const row = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(productionWasteRecordsTable)
+        .values({
+          companyId: cid,
+          orderId,
+          stageId: b.stageId ? Number(b.stageId) : null,
+          wasteType,
+          wasteClassification,
+          reason: typeof b.reason === "string" && b.reason.trim() ? b.reason.trim() : null,
+          qty: String(qty),
+          unitCode: typeof b.unitCode === "string" && b.unitCode ? b.unitCode : "PCE",
+          unitFactor: String(unitFactor),
+          costImpact: String(Number(b.costImpact ?? 0)),
+          resourceId,
+          workCenterId: b.workCenterId ? Number(b.workCenterId) : null,
+          operatorUserId: executionReferences.operatorUserId ?? null,
+          notes: typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
+          createdBy: (req as any).user?.id ?? null,
+        })
+        .returning();
+      await writeEvent(cid, orderId, "stage_waste_recorded", {
+        wasteRecordId: created.id,
+        stageId: created.stageId,
+        qty,
+        unitFactor,
+        convertedQty: qty * unitFactor,
         wasteType,
         wasteClassification,
-        reason: typeof b.reason === "string" && b.reason.trim() ? b.reason.trim() : null,
-        qty: String(qty),
-        unitCode: typeof b.unitCode === "string" && b.unitCode ? b.unitCode : "PCE",
-        costImpact: String(Number(b.costImpact ?? 0)),
-        resourceId,
-        workCenterId: b.workCenterId ? Number(b.workCenterId) : null,
-        operatorUserId: executionReferences.operatorUserId ?? null,
-        notes: typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : null,
-        createdBy: (req as any).user?.id ?? null,
-      })
-      .returning();
-    await writeEvent(cid, orderId, "stage_waste_recorded", {
-      wasteRecordId: row.id,
-      stageId: row.stageId,
-      qty,
-      wasteType,
-      wasteClassification,
-    }, req.authUser!.id);
+      }, req.authUser!.id, false, tx);
+      return created;
+    });
     res.status(201).json(row);
   } catch (e: any) {
     res.status(e.status ?? 500).json({ error: e.message });
@@ -10534,21 +10965,25 @@ productionExecutionRouter.delete("/orders/:orderId/waste-records/:id", async (re
     const scope = await assertOrderInScope(req, cid, orderId);
     if (!scope.ok) { res.status(scope.status).json({ error: scope.error }); return; }
     assertStageExecutionMutable(scope.order);
-    const result = await db
-      .delete(productionWasteRecordsTable)
-      .where(
-        and(
-          eq(productionWasteRecordsTable.id, id),
-          eq(productionWasteRecordsTable.companyId, cid),
-          eq(productionWasteRecordsTable.orderId, orderId),
-        ),
-      )
-      .returning({ id: productionWasteRecordsTable.id });
-    if (result.length === 0) {
+    const deleted = await db.transaction(async (tx) => {
+      const result = await tx
+        .delete(productionWasteRecordsTable)
+        .where(
+          and(
+            eq(productionWasteRecordsTable.id, id),
+            eq(productionWasteRecordsTable.companyId, cid),
+            eq(productionWasteRecordsTable.orderId, orderId),
+          ),
+        )
+        .returning({ id: productionWasteRecordsTable.id });
+      if (result.length === 0) return false;
+      await writeEvent(cid, orderId, "stage_waste_deleted", { wasteRecordId: id }, req.authUser!.id, false, tx);
+      return true;
+    });
+    if (!deleted) {
       res.status(404).json({ error: "السجل غير موجود" });
       return;
     }
-    await writeEvent(cid, orderId, "stage_waste_deleted", { wasteRecordId: id }, req.authUser!.id);
     res.json({ ok: true });
   } catch (e: any) {
     res.status(e.status ?? 500).json({ error: e.message });
@@ -10730,7 +11165,7 @@ router.get("/waste-records/summary", async (req, res) => {
     const rows = await db
       .select({
         wasteType: productionWasteRecordsTable.wasteType,
-        totalQty: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.qty}), 0)`,
+        totalQty: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.qty} * ${productionWasteRecordsTable.unitFactor}), 0)`,
         totalCost: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.costImpact}), 0)`,
         count: sql<number>`COUNT(*)::int`,
       })
@@ -10785,7 +11220,7 @@ router.get("/waste-records/by-reason", async (req, res) => {
     const rows = await db
       .select({
         reason: sql<string>`lower(trim(${productionWasteRecordsTable.reason}))`,
-        totalQty: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.qty}), 0)`,
+        totalQty: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.qty} * ${productionWasteRecordsTable.unitFactor}), 0)`,
         totalCost: sql<string>`COALESCE(SUM(${productionWasteRecordsTable.costImpact}), 0)`,
         count: sql<number>`COUNT(*)::int`,
       })

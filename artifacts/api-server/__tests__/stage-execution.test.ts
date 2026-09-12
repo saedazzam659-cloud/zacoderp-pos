@@ -3,7 +3,10 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 import {
+  nextStageInputQuantity,
   normalizeStageExecutionPayload,
+  resolvedStageInputQuantity,
+  stageWasteTotals,
 } from "../src/lib/stageExecution.ts";
 
 test("stage execution normalizes aliases without creating a cost amount", async () => {
@@ -78,6 +81,51 @@ test("stage execution normalizes an optional nonnegative worker count", () => {
   );
 });
 
+test("stage units validate explicit factors and convert output/waste once", () => {
+  assert.deepEqual(
+    normalizeStageExecutionPayload({
+      quantityUnit: "KG",
+      quantityUnitFactor: "0.25",
+      wasteUnit: "BAG",
+      wasteUnitFactor: 2,
+    }),
+    {
+      quantityUnit: "KG",
+      quantityUnitFactor: 0.25,
+      wasteUnit: "BAG",
+      wasteUnitFactor: 2,
+    },
+  );
+  assert.equal(nextStageInputQuantity(8, 0.25, 1), 2);
+  assert.deepEqual(
+    stageWasteTotals([
+      { wasteQty: 4, wasteUnit: "KG", wasteUnitFactor: 0.25, wasteClassification: "normal" },
+      { wasteQty: 1, wasteUnit: "BAG", wasteUnitFactor: 2, wasteClassification: "abnormal" },
+      { wasteQty: 1, wasteUnitFactor: 1, wasteClassification: null },
+    ]),
+    { total: 4, normal: 1, abnormal: 3 },
+  );
+  assert.throws(
+    () => normalizeStageExecutionPayload({ quantityUnitFactor: 0 }),
+    /عامل وحدة الكمية/,
+  );
+  assert.throws(
+    () => normalizeStageExecutionPayload({ wasteUnitFactor: "NaN" }),
+    /عامل وحدة الهالك/,
+  );
+  assert.throws(
+    () => normalizeStageExecutionPayload({ quantityUnit: null, quantityUnitFactor: 2 }),
+    /يساوي 1 عندما تكون الوحدة فارغة/,
+  );
+  assert.deepEqual(
+    normalizeStageExecutionPayload({ wasteUnit: null }),
+    { wasteUnit: null, wasteUnitFactor: 1 },
+  );
+  assert.equal(resolvedStageInputQuantity("0", 100, true), 100);
+  assert.equal(resolvedStageInputQuantity("0", 100, false), 0);
+  assert.equal(resolvedStageInputQuantity("12", 100, false), 12);
+});
+
 test("compact facade mounts the shared execution and settlement engines", async () => {
   const [facade, production, schema] = await Promise.all([
     readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8"),
@@ -92,6 +140,8 @@ test("compact facade mounts the shared execution and settlement engines", async 
   assert.match(production, /export const productionExecutionRouter = Router\(\)/);
   assert.match(production, /export const productionOverheadClosureRouter = Router\(\)/);
   assert.match(production, /productionExecutionRouter\.post\("\/orders\/:id\/stages\/:stageId\/complete"/);
+  assert.match(production, /productionExecutionRouter\.post\("\/orders\/:id\/stages\/:stageId\/reopen"/);
+  assert.match(production, /resolvedStageInputQuantity/);
   assert.match(production, /productionOverheadClosureRouter\.post\("\/overhead-closures\/:id\/post"/);
   assert.match(production, /productionOverheadClosureRouter\.post\("\/overhead-closures\/:id\/reopen"/);
   assert.match(production, /reopenedJournalEntryId/);

@@ -5,6 +5,10 @@ export type StageExecutionPayload = {
   inputQty?: number;
   outputQty?: number;
   wasteQty?: number;
+  quantityUnit?: string | null;
+  quantityUnitFactor?: number;
+  wasteUnit?: string | null;
+  wasteUnitFactor?: number;
   actualDurationMinutes?: number;
   workerCount?: number | null;
   operatorUserId?: number | null;
@@ -55,6 +59,98 @@ function optionalText(value: unknown, field: string, max = 2000): string | null 
 }
 
 /**
+ * Stage-unit factors are explicit order-unit multipliers. Do not derive a
+ * factor from a unit label: "kg", "piece", and arbitrary custom labels have
+ * no safe relationship without a user-provided factor.
+ */
+export function positiveFiniteFactor(value: unknown, field: string): number {
+  const factor = Number(value);
+  if (!Number.isFinite(factor) || factor <= 0) {
+    throw Object.assign(new Error(`${field} يجب أن يكون عاملاً موجباً ومحدداً`), { status: 400 });
+  }
+  return factor;
+}
+
+export function canonicalStageUnitFactor(
+  unit: unknown,
+  factor: unknown,
+  field: string,
+): number {
+  const parsed = positiveFiniteFactor(factor ?? 1, field);
+  // A null unit is the order unit, so accepting a different factor would
+  // create an unlabelled conversion that cannot be safely audited.
+  if ((unit == null || unit === "") && Math.abs(parsed - 1) > 0.00000001) {
+    throw Object.assign(new Error(`${field} يجب أن يساوي 1 عندما تكون الوحدة فارغة`), { status: 400 });
+  }
+  return unit == null || unit === "" ? 1 : parsed;
+}
+
+export function normalizeStageUnit(value: unknown, field: string): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") {
+    throw Object.assign(new Error(`${field} يجب أن يكون نصاً أو فارغاً`), { status: 400 });
+  }
+  const unit = value.trim();
+  if (unit.length > 100) {
+    throw Object.assign(new Error(`${field} يتجاوز الحد المسموح`), { status: 400 });
+  }
+  return unit || null;
+}
+
+export function convertedStageQuantity(quantity: number, factor: number): number {
+  return quantity * factor;
+}
+
+/**
+ * Convert a completed stage output into the next stage's explicitly selected
+ * unit. Both factors are relative to the order finished-product unit.
+ */
+export function nextStageInputQuantity(
+  outputQty: number,
+  outputFactor: number,
+  nextInputFactor: number,
+): number {
+  return convertedStageQuantity(outputQty, outputFactor) / nextInputFactor;
+}
+
+export function resolvedStageInputQuantity(
+  stageInputQty: unknown,
+  plannedQty: number,
+  isFirstStage: boolean,
+): number {
+  const stored = Number(stageInputQty);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+  if (isFirstStage) return plannedQty;
+  return Number.isFinite(stored) && stored >= 0 ? stored : 0;
+}
+
+export function stageWasteTotals(
+  stages: ReadonlyArray<{
+    wasteQty: unknown;
+    wasteUnit?: unknown;
+    wasteUnitFactor?: unknown;
+    wasteClassification?: string | null;
+  }>,
+) {
+  return stages.reduce(
+    (totals, stage) => {
+      const qty = Number(stage.wasteQty);
+      const factor = canonicalStageUnitFactor(
+        stage.wasteUnit,
+        stage.wasteUnitFactor ?? 1,
+        "عامل وحدة الهالك",
+      );
+      const converted = Number.isFinite(qty) ? qty * factor : 0;
+      totals.total += converted;
+      if (stage.wasteClassification === "normal") totals.normal += converted;
+      else totals.abnormal += converted;
+      return totals;
+    },
+    { total: 0, normal: 0, abnormal: 0 },
+  );
+}
+
+/**
  * Normalize operational stage facts without assigning a currency amount.
  * Actual minutes are persisted solely as a cost-driver input; the approved
  * source allocation engine owns all cost calculation and posting.
@@ -79,6 +175,28 @@ export function normalizeStageExecutionPayload(
   if ("inputQty" in body) result.inputQty = nonNegative(body.inputQty, "كمية الإدخال");
   if ("outputQty" in body) result.outputQty = nonNegative(body.outputQty, "كمية الإخراج");
   if ("wasteQty" in body) result.wasteQty = nonNegative(body.wasteQty, "كمية الهالك");
+  if ("quantityUnit" in body) result.quantityUnit = normalizeStageUnit(body.quantityUnit, "وحدة الكمية");
+  if ("quantityUnitFactor" in body) {
+    result.quantityUnitFactor = positiveFiniteFactor(body.quantityUnitFactor, "عامل وحدة الكمية");
+  }
+  if ("wasteUnit" in body) result.wasteUnit = normalizeStageUnit(body.wasteUnit, "وحدة الهالك");
+  if ("wasteUnitFactor" in body) {
+    result.wasteUnitFactor = positiveFiniteFactor(body.wasteUnitFactor, "عامل وحدة الهالك");
+  }
+  if ("quantityUnit" in body || "quantityUnitFactor" in body) {
+    result.quantityUnitFactor = canonicalStageUnitFactor(
+      result.quantityUnit,
+      result.quantityUnitFactor,
+      "عامل وحدة الكمية",
+    );
+  }
+  if ("wasteUnit" in body || "wasteUnitFactor" in body) {
+    result.wasteUnitFactor = canonicalStageUnitFactor(
+      result.wasteUnit,
+      result.wasteUnitFactor,
+      "عامل وحدة الهالك",
+    );
+  }
   if (options.requireOutput && result.outputQty === undefined) {
     throw Object.assign(new Error("كمية الإخراج مطلوبة"), { status: 400 });
   }
