@@ -21,6 +21,12 @@ import { assertWritableForDate } from "../lib/periodGuard.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { refreshItemCost } from "../lib/stockHelpers.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
+import {
+  resolveItemUnitConversion,
+  multiplyQuantity,
+  divideQuantity,
+  roundQuantity,
+} from "../lib/unitConversion.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -35,6 +41,65 @@ function guard(req: any, res: any): number | null {
 }
 function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+}
+
+async function resolveReceiptLineUnits(
+  companyId: number,
+  mappedLines: any[],
+  inputLines: any[] | undefined,
+  existingRows: any[] = [],
+  executor: any = db,
+): Promise<any[]> {
+  const oldById = new Map<number, any>();
+  const oldByItem = new Map<string, any[]>();
+  for (const row of existingRows) {
+    if (row?.id != null) oldById.set(Number(row.id), row);
+    const key = String(row?.itemId ?? "");
+    oldByItem.set(key, [...(oldByItem.get(key) ?? []), row]);
+  }
+  return Promise.all(mappedLines.map(async (mapped, index) => {
+    const input = inputLines?.[index] ?? {};
+    const itemId = mapped.itemId == null ? null : Number(mapped.itemId);
+    if (!itemId) {
+      mapped.unitId = null;
+      mapped.conversionFactor = "1";
+      return mapped;
+    }
+    const key = String(itemId);
+    let old: any;
+    if (existingRows.length && input?.id != null) {
+      old = oldById.get(Number(input.id));
+      if (!old || String(old.itemId ?? "") !== key) {
+        throw Object.assign(new Error("معرّف سطر إذن الاستلام غير مطابق للصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_LINE_ID_REQUIRED",
+        });
+      }
+    } else if (existingRows.length) {
+      const candidates = oldByItem.get(key) ?? [];
+      if (candidates.length > 1) {
+        throw Object.assign(new Error("يجب إرسال معرّف سطر إذن الاستلام عند تكرار الصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_LINE_ID_REQUIRED",
+        });
+      }
+      old = candidates[0];
+    }
+    const requestedUnitId = Object.prototype.hasOwnProperty.call(input, "unitId")
+      ? (input.unitId == null ? undefined : Number(input.unitId))
+      : old?.unitId == null ? undefined : Number(old.unitId);
+    const snapshot = old && (!Object.prototype.hasOwnProperty.call(input, "unitId")
+      || Number(input.unitId) === Number(old.unitId)) ? old : null;
+    const resolved = await resolveItemUnitConversion({
+      companyId,
+      itemId,
+      unitId: requestedUnitId,
+      unitCode: input.unitCode == null ? undefined : String(input.unitCode),
+      historicalFactor: snapshot?.conversionFactor == null ? undefined : String(snapshot.conversionFactor),
+      executor,
+    });
+    mapped.unitId = resolved.unitId;
+    mapped.conversionFactor = roundQuantity(String(resolved.factor), 18, "half_up");
+    return mapped;
+  }));
 }
 
 // ─── Receiving Clearing account auto-provision ───────────────────────────
@@ -321,24 +386,25 @@ router.post("/", async (req, res) => {
 
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-      await db.insert(goodsReceiptLinesTable).values(
+      const mappedLines = await resolveReceiptLineUnits(
+        cid,
         lines.map((l: any) => ({
           receiptId: gr.id, companyId: cid,
           itemId: l.itemId ? Number(l.itemId) : null,
-          itemName: l.itemName, itemCode: l.itemCode || null,
-          unit: l.unit || null,
+          itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
           unitId: l.unitId ? Number(l.unitId) : null,
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          qty: String(l.qty || "1"),
-          unitPrice: String(l.unitPrice || "0"),
+          qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-          vatRate: String(l.vatRate || resolvedRate),
-          lineTotal: String(l.lineTotal || "0"),
+          vatRate: String(l.vatRate || resolvedRate), lineTotal: String(l.lineTotal || "0"),
           batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
-          expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
-          notes: l.notes || null,
-        }))
+          expiryDate: l.expiryDate ? String(l.expiryDate) : null, notes: l.notes || null,
+        })),
+        lines,
+      );
+      await db.insert(goodsReceiptLinesTable).values(
+        mappedLines
       );
     }
     res.status(201).json(gr);
@@ -388,27 +454,31 @@ router.put("/:id", async (req, res) => {
     }).where(and(eq(goodsReceiptsTable.id, id), eq(goodsReceiptsTable.companyId, cid))).returning();
 
     if (lines !== undefined) {
+      const previousLines = await db.select().from(goodsReceiptLinesTable)
+        .where(eq(goodsReceiptLinesTable.receiptId, id));
       await db.delete(goodsReceiptLinesTable).where(eq(goodsReceiptLinesTable.receiptId, id));
       if (lines.length) {
         const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-        await db.insert(goodsReceiptLinesTable).values(
+        const mappedLines = await resolveReceiptLineUnits(
+          cid,
           lines.map((l: any) => ({
             receiptId: id, companyId: cid,
             itemId: l.itemId ? Number(l.itemId) : null,
-            itemName: l.itemName, itemCode: l.itemCode || null,
-            unit: l.unit || null,
+            itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
             unitId: l.unitId ? Number(l.unitId) : null,
             conversionFactor: String(l.conversionFactor || "1"),
             warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-            qty: String(l.qty || "1"),
-            unitPrice: String(l.unitPrice || "0"),
+            qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-            vatRate: String(l.vatRate || resolvedRate),
-            lineTotal: String(l.lineTotal || "0"),
+            vatRate: String(l.vatRate || resolvedRate), lineTotal: String(l.lineTotal || "0"),
             batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
-            expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
-            notes: l.notes || null,
-          }))
+            expiryDate: l.expiryDate ? String(l.expiryDate) : null, notes: l.notes || null,
+          })),
+          lines,
+          previousLines,
+        );
+        await db.insert(goodsReceiptLinesTable).values(
+          mappedLines
         );
       }
     }
@@ -482,8 +552,8 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
     const goodsByWh: Record<number, number> = {};
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
-      const factor   = Number(line.conversionFactor || "1") || 1;
-      const qtyBase  = Number(line.qty) * factor;
+      const factor   = String(line.conversionFactor || "1");
+      const qtyBase  = Number(multiplyQuantity(String(line.qty || "0"), factor));
       const unitPrice = Number(line.unitPrice);
       const discPct = Number(line.discount || 0) / 100;
       const lineGross = Number(line.qty) * unitPrice * (1 - discPct);
@@ -492,7 +562,9 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
       // on the purchase invoice JE, not the GRN.
       const vatRate = Number(line.vatRate || 0) / 100;
       const goodsNet = gr.priceIncludesVat && vatRate > -1 ? lineGross / (1 + vatRate) : lineGross;
-      const costUnit = qtyBase > 0 ? goodsNet / qtyBase : unitPrice / factor;
+      const costUnit = qtyBase > 0
+        ? Number(roundQuantity(divideQuantity(String(goodsNet), String(qtyBase)), 18, "half_up"))
+        : Number(roundQuantity(divideQuantity(String(unitPrice), factor), 18, "half_up"));
 
       goodsByWh[line.warehouseId] = (goodsByWh[line.warehouseId] ?? 0) + goodsNet;
       computed.push({

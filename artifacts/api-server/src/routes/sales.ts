@@ -60,6 +60,12 @@ import {
   getInvoiceAccelerationMode,
   recordInvoiceSampleOnFinish,
 } from "../lib/agentInvoiceAcceleration.js";
+import {
+  resolveItemUnitConversion,
+  multiplyQuantity,
+  divideQuantity,
+  roundQuantity,
+} from "../lib/unitConversion.js";
 
 /**
  * Persist the only safe product-cost attribution: the posted document's own
@@ -1440,7 +1446,10 @@ router.get("/sales-invoices/:id/returned-by-item", async (req, res) => {
       }).from(salesReturnLinesTable).where(inArray(salesReturnLinesTable.returnId, ids));
       for (const r of rows) {
         if (r.itemId == null) continue;
-        const base = Number(r.qty || 0) * Number(r.conversionFactor || 1);
+        const base = Number(multiplyQuantity(
+          String(r.qty || "0"),
+          String(r.conversionFactor || "1"),
+        ));
         const k = String(r.itemId);
         byItem[k] = (byItem[k] || 0) + base;
       }
@@ -1481,6 +1490,109 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number, fallbackRate = "
     brandId:   l.brandId ? Number(l.brandId) : null,
     brandName: l.brandName || null,
   };
+}
+
+/**
+ * Unit selections are input only.  The catalog relation and its active state
+ * are authoritative, and the factor is always stamped by the API.  The only
+ * exception is an existing line (or a source-document line for a return):
+ * its already persisted factor is passed as a server-side historical
+ * snapshot so editing a draft cannot silently re-price an old document after
+ * the item-unit catalog changes.
+ */
+async function resolveSalesLineUnits(
+  companyId: number,
+  mappedLines: any[],
+  inputLines: any[] | undefined,
+  existingRows: any[] = [],
+  sourceRows: any[] = [],
+  executor: any = db,
+): Promise<any[]> {
+  const oldById = new Map<number, any>();
+  const oldByItem = new Map<string, any[]>();
+  for (const row of existingRows) {
+    if (row?.id != null) oldById.set(Number(row.id), row);
+    const key = String(row?.itemId ?? "");
+    oldByItem.set(key, [...(oldByItem.get(key) ?? []), row]);
+  }
+  const sourceByItem = new Map<string, any[]>();
+  for (const row of sourceRows) {
+    const key = String(row?.itemId ?? "");
+    sourceByItem.set(key, [...(sourceByItem.get(key) ?? []), row]);
+  }
+  return Promise.all(mappedLines.map(async (mapped, index) => {
+    const input = inputLines?.[index] ?? {};
+    const itemId = mapped.itemId == null ? null : Number(mapped.itemId);
+    if (!itemId) {
+      mapped.unitId = null;
+      mapped.conversionFactor = "1";
+      return mapped;
+    }
+    const key = String(itemId);
+    let old: any;
+    if (existingRows.length && input?.id != null) {
+      old = oldById.get(Number(input.id));
+      if (!old || String(old.itemId ?? "") !== key) {
+        throw Object.assign(new Error("معرّف سطر الفاتورة غير مطابق للصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_LINE_ID_REQUIRED",
+        });
+      }
+    } else if (existingRows.length) {
+      const candidates = oldByItem.get(key) ?? [];
+      if (candidates.length > 1) {
+        throw Object.assign(new Error("يجب إرسال معرّف سطر الفاتورة عند تكرار الصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_LINE_ID_REQUIRED",
+        });
+      }
+      old = candidates[0];
+    }
+    let source: any;
+    if (sourceRows.length && input?.sourceLineId != null) {
+      source = sourceRows.find((row) => Number(row?.id) === Number(input.sourceLineId));
+      if (!source || String(source.itemId ?? "") !== key) {
+        throw Object.assign(new Error("معرّف سطر الفاتورة المصدر غير مطابق للصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_SOURCE_LINE_ID_REQUIRED",
+        });
+      }
+    } else {
+      const candidates = sourceByItem.get(key) ?? [];
+      if (candidates.length > 1) {
+        throw Object.assign(new Error("يجب إرسال معرّف سطر الفاتورة المصدر عند تكرار الصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_SOURCE_LINE_ID_REQUIRED",
+        });
+      }
+      source = candidates[0];
+    }
+    const sourceUnitUnchanged = !!source
+      && input.unitCode == null
+      && (input.unitId == null || Number(input.unitId) === Number(source.unitId));
+    const snapshot = sourceUnitUnchanged ? source : (
+      old && (!Object.prototype.hasOwnProperty.call(input, "unitId")
+        || Number(input.unitId) === Number(old.unitId))
+        ? old
+        : null
+    );
+    const requestedUnitId = source && input.unitId == null && input.unitCode == null
+      ? source.unitId
+      : Object.prototype.hasOwnProperty.call(input, "unitId")
+        ? (input.unitId == null ? undefined : Number(input.unitId))
+        : old?.unitId == null ? undefined : Number(old.unitId);
+    const resolved = await resolveItemUnitConversion({
+      companyId,
+      itemId,
+      unitId: requestedUnitId,
+      unitCode: source && input.unitId == null && input.unitCode == null
+        ? undefined
+        : (input.unitCode == null ? undefined : String(input.unitCode)),
+      historicalFactor: snapshot?.conversionFactor == null
+        ? undefined
+        : String(snapshot.conversionFactor),
+      executor,
+    });
+    mapped.unitId = resolved.unitId;
+    mapped.conversionFactor = roundQuantity(String(resolved.factor), 18, "half_up");
+    return mapped;
+  }));
 }
 
 // Bumps the `times_used` counter for every distinct offer id given. Safe to
@@ -1761,6 +1873,7 @@ async function enforceMobileSalesRights(
   }
   const unchangedProtectedUnitLines = new Set<any>();
   const protectedUnitPriceByLine = new Map<any, number>();
+  const historicalUnitByLine = new Map<any, { unitId: number | null; factor: number }>();
   // PUT replaces all line rows.  Before that happens, merge omitted protected
   // fields from the stored row and reject explicit changes.  Mobile clients
   // historically did not retain line ids, so match an id when available and
@@ -1810,6 +1923,10 @@ async function enforceMobileSalesRights(
           }
           continue;
         }
+        historicalUnitByLine.set(line, {
+          unitId: old.unitId == null ? null : Number(old.unitId),
+          factor: n(old.conversionFactor, 1),
+        });
         const protectedNumber = (key: "freeQty" | "discount" | "discountAmount", permission: string) => {
           const oldValue = n(old[key]);
           if (!has(line, key)) { line[key] = oldValue; return true; }
@@ -1886,6 +2003,17 @@ async function enforceMobileSalesRights(
     if (!item) continue;
     const sentUnitId = line?.unitId == null ? null : Number(line.unitId);
     const sentFactor = n(line?.conversionFactor, 1);
+    const historical = historicalUnitByLine.get(line);
+    // Re-saving an existing line must retain its persisted factor even if the
+    // catalog was edited after the original document was saved. The writer
+    // below still resolves/validates the unit; this branch only prevents the
+    // mobile permission gate from treating a historical snapshot as a forged
+    // client factor.
+    if (historical
+      && sentUnitId === historical.unitId
+      && Math.abs(sentFactor - historical.factor) <= 0.000001) {
+      continue;
+    }
     if (!unitSelectionAllowed) {
       if (unchangedProtectedUnitLines.has(line)) continue;
       if ((sentUnitId != null && sentUnitId !== Number(item.unitId)) ||
@@ -1895,14 +2023,20 @@ async function enforceMobileSalesRights(
       }
       continue;
     }
-    const configured = sentUnitId == null || sentUnitId === Number(item.unitId)
-      ? null
-      : configuredUnitByKey.get(`${item.id}:${sentUnitId}`);
-    if (sentUnitId != null && sentUnitId !== Number(item.unitId) && !configured) {
+    let resolvedUnit: Awaited<ReturnType<typeof resolveItemUnitConversion>>;
+    try {
+      resolvedUnit = await resolveItemUnitConversion({
+        companyId: cid,
+        itemId: item.id,
+        unitId: sentUnitId == null ? undefined : sentUnitId,
+        unitCode: line?.unitCode == null ? undefined : String(line.unitCode),
+        historicalFactor: historical ? String(historical.factor) : undefined,
+      });
+    } catch {
       res.status(403).json({ error: "وحدة الصنف المختارة غير معتمدة لتطبيق الموبايل" });
       return false;
     }
-    const expectedFactor = configured ? n(configured.conversionFactor, 1) : 1;
+    const expectedFactor = n(roundQuantity(String(resolvedUnit.factor), 18, "half_up"), 1);
     if (Math.abs(sentFactor - expectedFactor) > 0.000001) {
       res.status(403).json({ error: "معامل تحويل وحدة الصنف غير صحيح" });
       return false;
@@ -2345,7 +2479,12 @@ router.post("/sales-invoices", async (req, res) => {
       [inv] = await db.insert(salesInvoicesTable).values(invoiceValues).returning();
     }
     if (lines?.length) {
-      await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, inv.id, cid, resolvedRate)));
+      const mappedLines = await resolveSalesLineUnits(
+        cid,
+        lines.map((l: any) => mapInvoiceLine(l, inv.id, cid, resolvedRate)),
+        lines,
+      );
+      await db.insert(salesInvoiceLinesTable).values(mappedLines);
     }
     timing?.mark("invoice-and-lines-write");
     // Bump times_used once per distinct offer that influenced this invoice
@@ -2451,7 +2590,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     // is immutable from the edit screen. The user must explicitly call the
     // unpost endpoint (admin-only) before any further changes are accepted.
     // This is the server-side gate; the UI also disables the form.
-    const [existing] = await db.select({ status: salesInvoicesTable.status })
+      const [existing] = await db.select({ status: salesInvoicesTable.status })
       .from(salesInvoicesTable)
       .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
@@ -2579,7 +2718,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     const resolvedLineTaxRate = fastReads
       ? await readCaptured(fastReads.lineTaxRate)
       : await loadLineTaxRate();
-    const inv = await db.transaction(async (tx) => {
+      const inv = await db.transaction(async (tx) => {
       const [locked] = await tx.select({ status: salesInvoicesTable.status })
         .from(salesInvoicesTable)
         .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)))
@@ -2638,10 +2777,20 @@ router.put("/sales-invoices/:id", async (req, res) => {
         throw err;
       }
       if (lines !== undefined) {
+        const previousLines = await tx.select().from(salesInvoiceLinesTable)
+          .where(eq(salesInvoiceLinesTable.invoiceId, id));
         await tx.delete(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, id));
         if (lines.length) {
-          await tx.insert(salesInvoiceLinesTable).values(
+          const mappedLines = await resolveSalesLineUnits(
+            cid,
             lines.map((l: any) => mapInvoiceLine(l, id, cid, resolvedLineTaxRate ?? "15")),
+            lines,
+            previousLines,
+            [],
+            tx,
+          );
+          await tx.insert(salesInvoiceLinesTable).values(
+            mappedLines,
           );
         }
       }
@@ -2802,8 +2951,11 @@ async function postSalesInvoiceHandler(
     if (!gdnSourced) {
       for (const line of lines) {
         if (!line.itemId || !line.warehouseId || isServiceLine(line)) continue;
-        const factor = Number(line.conversionFactor || "1") || 1;
-        const qty = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
+        const factor = String(line.conversionFactor || "1");
+        const qty = Number(multiplyQuantity(
+          String(line.qty || "0"),
+          factor,
+        )) + Number(multiplyQuantity(String(line.freeQty || "0"), factor));
         if (qty <= 0) continue;
         const key = `${line.itemId}:${line.warehouseId}`;
         const current = demandByPair.get(key);
@@ -2928,11 +3080,12 @@ async function postSalesInvoiceHandler(
       for (const line of lines) {
         if (!line.itemId || !line.warehouseId) continue;
         if (isServiceLine(line)) continue; // SERVICE items never move stock / accrue COGS
-        const factor  = Number(line.conversionFactor || "1") || 1;
+        const factor  = String(line.conversionFactor || "1");
         // Free qty consumes inventory at the same avg cost as paid qty —
         // both legs add to COGS so the inventory credit matches the actual
         // units leaving the warehouse. Revenue stays on `qty` only.
-        const qty     = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
+        const qty     = Number(multiplyQuantity(String(line.qty || "0"), factor))
+          + Number(multiplyQuantity(String(line.freeQty || "0"), factor));
         // Skip non-positive effective qty: a zero/negative line has nothing
         // to issue and would either write a no-op ledger row or (worse)
         // *increase* stock on a sale via the `-op.qty` upsertBalance below.
@@ -2958,7 +3111,7 @@ async function postSalesInvoiceHandler(
           const lineCost = picks.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
           avgCost = qty > 0 ? lineCost / qty : 0;
         }
-        const lineCogs = qty * avgCost;
+        const lineCogs = Number(multiplyQuantity(String(qty), String(avgCost)));
         totalCogs += lineCogs;
         cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
         stockOps.push({ sourceLineId: line.id, itemId: line.itemId, warehouseId: line.warehouseId, qty, avgCost, notes: line.notes ?? null, picks });
@@ -3837,16 +3990,26 @@ async function validateSalesReturnPayload(
   if (invoiceId) {
     const invId = Number(invoiceId);
     if (Number.isFinite(invId)) {
-      const srcLines = await db.select({
+       const srcLines = await db.select({
+         id: salesInvoiceLinesTable.id,
         itemId: salesInvoiceLinesTable.itemId,
         qty: salesInvoiceLinesTable.qty,
         freeQty: salesInvoiceLinesTable.freeQty,
+         unitId: salesInvoiceLinesTable.unitId,
         conversionFactor: salesInvoiceLinesTable.conversionFactor,
       }).from(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, invId));
+       const srcByItem = new Map<number, typeof srcLines>();
+       const srcById = new Map<number, typeof srcLines[number]>();
+       for (const row of srcLines) {
+         if (row.itemId == null) continue;
+         srcByItem.set(row.itemId, [...(srcByItem.get(row.itemId) ?? []), row]);
+         srcById.set(row.id, row);
+       }
       const soldBase = new Map<number, number>();
       for (const sl of srcLines) {
         if (sl.itemId == null) continue;
-         const base = (Number(sl.qty || 0) + Number(sl.freeQty || 0)) * Number(sl.conversionFactor || 1);
+         const base = Number(multiplyQuantity(String(sl.qty || "0"), String(sl.conversionFactor || "1")))
+           + Number(multiplyQuantity(String(sl.freeQty || "0"), String(sl.conversionFactor || "1")));
         soldBase.set(sl.itemId, (soldBase.get(sl.itemId) || 0) + base);
       }
       const priorWhere = [
@@ -3867,15 +4030,39 @@ async function validateSalesReturnPayload(
         }).from(salesReturnLinesTable).where(inArray(salesReturnLinesTable.returnId, priorIds));
         for (const pl of prior) {
           if (pl.itemId == null) continue;
-           const base = (Number(pl.qty || 0) + Number(pl.freeQty || 0)) * Number(pl.conversionFactor || 1);
+           const base = Number(multiplyQuantity(String(pl.qty || "0"), String(pl.conversionFactor || "1")))
+             + Number(multiplyQuantity(String(pl.freeQty || "0"), String(pl.conversionFactor || "1")));
           returnedBase.set(pl.itemId, (returnedBase.get(pl.itemId) || 0) + base);
         }
       }
-      const currBase = new Map<number, { base: number; rawQty: number }>();
-      for (const l of lines) {
+       const currBase = new Map<number, { base: number; rawQty: number }>();
+       for (const l of lines) {
         const iid = Number(l.itemId);
         if (!Number.isFinite(iid) || !iid) continue;
-         const base = (Number(l.qty || 0) + Number(l.freeQty || 0)) * Number(l.conversionFactor || 1);
+         let source: typeof srcLines[number] | undefined;
+         if (l.sourceLineId != null) {
+           source = srcById.get(Number(l.sourceLineId));
+           if (!source || source.itemId !== iid) {
+             res.status(400).json({
+               error: `السطر ${iid}: معرّف سطر الفاتورة المصدر غير مطابق للصنف`,
+               field: "lines.sourceLineId", itemId: iid,
+             }); return false;
+           }
+         } else {
+           const candidates = srcByItem.get(iid) ?? [];
+           if (candidates.length > 1) {
+             res.status(400).json({
+               error: `الصنف #${iid}: يجب إرسال معرّف سطر الفاتورة المصدر عند تكرار الصنف`,
+               field: "lines.sourceLineId", itemId: iid,
+             }); return false;
+           }
+           source = candidates[0];
+         }
+         // A linked return is measured using the source document's immutable
+         // factor, never a factor supplied by the client.
+         const factor = String(source?.conversionFactor || "1");
+         const base = Number(multiplyQuantity(String(l.qty || "0"), factor))
+           + Number(multiplyQuantity(String(l.freeQty || "0"), factor));
         const cur = currBase.get(iid) || { base: 0, rawQty: 0 };
         cur.base += base; cur.rawQty += Number(l.qty || 0);
         currBase.set(iid, cur);
@@ -3953,6 +4140,16 @@ router.post("/sales-returns", async (req, res) => {
       res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return;
     }
     if (!resolvedBranchId) { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع", field: "branchId" }); return; }
+    // For linked returns, source lines are the historical unit snapshot.  A
+    // return may not re-read the current catalog (or trust a client factor).
+    const sourceReturnLines = invoiceId
+      ? await db.select().from(salesInvoiceLinesTable)
+          .where(and(
+            eq(salesInvoiceLinesTable.invoiceId, Number(invoiceId)),
+            eq(salesInvoiceLinesTable.companyId, cid),
+          ))
+          .orderBy(asc(salesInvoiceLinesTable.id))
+      : [];
     // Validate sales rep belongs to current tenant (prevents cross-tenant FK assignment).
     let resolvedRepId: number | null = null;
     if (salesRepId) {
@@ -4072,22 +4269,28 @@ router.post("/sales-returns", async (req, res) => {
     }
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-      await db.insert(salesReturnLinesTable).values(
+      const mappedLines = await resolveSalesLineUnits(
+        cid,
         lines.map((l: any) => ({
           returnId: ret.id, companyId: cid,
-          itemId:   l.itemId   ? Number(l.itemId)   : null,
+          itemId: l.itemId ? Number(l.itemId) : null,
           itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
-          unitId:   l.unitId   ? Number(l.unitId)   : null,
+          unitId: l.unitId ? Number(l.unitId) : null,
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          qty: String(l.qty || "1"),
-          freeQty: String(l.freeQty || "0"),
+          qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
           vatRate: String(l.vatRate || resolvedRate),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
-        }))
+        })),
+        lines,
+        [],
+        sourceReturnLines,
+      );
+      await db.insert(salesReturnLinesTable).values(
+        mappedLines
       );
     }
     res.status(201).json(ret);
@@ -4169,25 +4372,41 @@ router.put("/sales-returns/:id", async (req, res) => {
       updatedAt: new Date(),
     }).where(eq(salesReturnsTable.id, id)).returning();
 
+    const previousReturnLines = await db.select().from(salesReturnLinesTable)
+      .where(eq(salesReturnLinesTable.returnId, id));
+    const sourceReturnLines = invoiceId
+      ? await db.select().from(salesInvoiceLinesTable)
+          .where(and(
+            eq(salesInvoiceLinesTable.invoiceId, Number(invoiceId)),
+            eq(salesInvoiceLinesTable.companyId, cid),
+          ))
+          .orderBy(asc(salesInvoiceLinesTable.id))
+      : [];
     await db.delete(salesReturnLinesTable).where(eq(salesReturnLinesTable.returnId, id));
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-      await db.insert(salesReturnLinesTable).values(
+      const mappedLines = await resolveSalesLineUnits(
+        cid,
         lines.map((l: any) => ({
           returnId: id, companyId: cid,
-          itemId:   l.itemId   ? Number(l.itemId)   : null,
+          itemId: l.itemId ? Number(l.itemId) : null,
           itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
-          unitId:   l.unitId   ? Number(l.unitId)   : null,
+          unitId: l.unitId ? Number(l.unitId) : null,
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          qty: String(l.qty || "1"),
-          freeQty: String(l.freeQty || "0"),
+          qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
           vatRate: String(l.vatRate || resolvedRate),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
-        }))
+        })),
+        lines,
+        previousReturnLines,
+        sourceReturnLines,
+      );
+      await db.insert(salesReturnLinesTable).values(
+        mappedLines
       );
     }
     res.json(ret);
@@ -4368,15 +4587,17 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
       const consumedThisDoc = new Map<string, number>();
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
-      const factor  = Number(line.conversionFactor || "1") || 1;
+      const factor  = String(line.conversionFactor || "1");
       // Sales return mirrors the original sale: paid qty + free qty came back, so
       // both must be added back to stock and refunded into COGS reversal.
-      const qty     = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
+      const qty     = Number(multiplyQuantity(String(line.qty || "0"), factor))
+        + Number(multiplyQuantity(String(line.freeQty || "0"), factor));
       if (qty <= 0) continue; // skip non-positive returns (mirror /post guard)
       const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId, tx);
       // If item never existed in warehouse, fall back to the line's price as cost.
       // unitPrice is in the SELECTED unit, so divide by factor to get base-unit cost.
-      const costUnit = avgCost > 0 ? avgCost : (Number(line.unitPrice) / factor);
+      const costUnit = avgCost > 0 ? avgCost
+        : Number(roundQuantity(divideQuantity(String(line.unitPrice || "0"), factor), 18, "half_up"));
 
       const mode = retModeById.get(line.itemId) ?? "none";
       const canBatchRestore = mode !== "none" && !!ret.invoiceId;
@@ -5071,14 +5292,19 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
     }).returning();
 
     if (lines.length) {
-      await db.insert(salesInvoiceLinesTable).values(lines.map(l => ({
-        invoiceId: inv.id, companyId: cid,
-        itemId: l.itemId, itemName: l.itemName, itemCode: l.itemCode,
-        unit: l.unit, unitId: l.unitId, warehouseId: null,
-        qty: l.qty, freeQty: l.freeQty, unitPrice: l.unitPrice, discount: l.discount,
-        discountAmount: String(Math.max(0, Number((l as any).discountAmount) || 0)),
-        vatRate: l.vatRate, lineTotal: l.lineTotal, notes: l.notes,
-      })));
+      const mappedLines = await resolveSalesLineUnits(
+        cid,
+        lines.map(l => ({
+          invoiceId: inv.id, companyId: cid,
+          itemId: l.itemId, itemName: l.itemName, itemCode: l.itemCode,
+          unit: l.unit, unitId: l.unitId, conversionFactor: "1", warehouseId: null,
+          qty: l.qty, freeQty: l.freeQty, unitPrice: l.unitPrice, discount: l.discount,
+          discountAmount: String(Math.max(0, Number((l as any).discountAmount) || 0)),
+          vatRate: l.vatRate, lineTotal: l.lineTotal, notes: l.notes,
+        })),
+        lines as any[],
+      );
+      await db.insert(salesInvoiceLinesTable).values(mappedLines);
     }
 
     await db.update(salesQuotationsTable)
@@ -5235,8 +5461,13 @@ router.post("/sales-orders", async (req, res) => {
 
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
+      const mappedLines = await resolveSalesLineUnits(
+        cid,
+        lines.map((l: any) => mapOrderLine(l, o.id, cid, resolvedRate)),
+        lines,
+      );
       await db.insert(salesOrderLinesTable).values(
-        lines.map((l: any) => mapOrderLine(l, o.id, cid, resolvedRate))
+        mappedLines
       );
     }
 
@@ -5296,11 +5527,19 @@ router.put("/sales-orders/:id", async (req, res) => {
     if (!o) { res.status(404).json({ error: "أمر البيع غير موجود" }); return; }
 
     if (lines !== undefined) {
+      const previousLines = await db.select().from(salesOrderLinesTable)
+        .where(eq(salesOrderLinesTable.orderId, id));
       await db.delete(salesOrderLinesTable).where(eq(salesOrderLinesTable.orderId, id));
       if (lines.length) {
         const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
+        const mappedLines = await resolveSalesLineUnits(
+          cid,
+          lines.map((l: any) => mapOrderLine(l, id, cid, resolvedRate)),
+          lines,
+          previousLines,
+        );
         await db.insert(salesOrderLinesTable).values(
-          lines.map((l: any) => mapOrderLine(l, id, cid, resolvedRate))
+          mappedLines
         );
       }
     }

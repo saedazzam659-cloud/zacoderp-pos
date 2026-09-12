@@ -54,6 +54,13 @@ import { cn } from "@/lib/utils";
 import { safeLogoSrc, exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import {
+  catalogUnitsWithHistoricalSelection,
+  isActiveItemUnit,
+  itemUnitsWithHistoricalSelection,
+  serializeDocumentLine,
+  sourceLineIdForLine,
+} from "@/lib/documentLineUnits";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -86,6 +93,10 @@ type AuditResponse = {
 
 interface ReturnLine {
   _id: string;
+  /** Persisted database line id; absent on a newly created return. */
+  id?: number;
+  /** Actual source invoice line id; never the UI row key. */
+  sourceLineId?: number;
   itemId: string;
   itemName: string;
   itemCode: string;
@@ -576,9 +587,19 @@ export default function SalesReturns() {
         discountAccountId:  r.discountAccountId  ? String(r.discountAccountId)  : "",
       });
       setHeaderTaxId((r as any).taxId != null ? String((r as any).taxId) : "");
+      let sourceLines: any[] = [];
+      if (r.invoiceId) {
+        try {
+          const sourceRes = await fetch(`${API}/api/sales/sales-invoices/${r.invoiceId}?companyId=${cid}`, { headers: authH });
+          if (sourceRes.ok) sourceLines = (await sourceRes.json()).lines ?? [];
+        } catch { /* sourceLineId validation will surface a clear API error */ }
+      }
+      const usedSourceIds = new Set<number>();
       setLines((r.lines ?? []).length
         ? r.lines.map((l: any) => ({
             _id: `e-${l.id}-${Math.random().toString(36).slice(2,7)}`,
+            id: Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
+            sourceLineId: sourceLineIdForLine(l, sourceLines, usedSourceIds),
             itemId: l.itemId ? String(l.itemId) : "",
             itemName: l.itemName ?? "",
             itemCode: l.itemCode ?? "",
@@ -645,6 +666,14 @@ export default function SalesReturns() {
       const res = await fetch(`${API}/api/sales/sales-returns/${id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
       if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || t("salesReturns.loadFailed")); }
       const r = await res.json();
+      let sourceLines: any[] = [];
+      if (r.invoiceId) {
+        try {
+          const sourceRes = await fetch(`${API}/api/sales/sales-invoices/${r.invoiceId}?companyId=${cid}`, { headers: authH });
+          if (sourceRes.ok) sourceLines = (await sourceRes.json()).lines ?? [];
+        } catch { /* sourceLineId validation will surface a clear API error */ }
+      }
+      const usedSourceIds = new Set<number>();
       setEditingId(null);
       setForm({
         docNumber: "",
@@ -670,6 +699,7 @@ export default function SalesReturns() {
       setLines((r.lines ?? []).length
         ? r.lines.map((l: any) => ({
             _id: crypto.randomUUID(),
+            sourceLineId: sourceLineIdForLine(l, sourceLines, usedSourceIds),
             itemId: l.itemId ? String(l.itemId) : "",
             itemName: l.itemName ?? "",
             itemCode: l.itemCode ?? "",
@@ -914,6 +944,7 @@ export default function SalesReturns() {
       const effPrice = useEffective ? r.effectiveUnitPrice : Number(l.unitPrice ?? 0);
       const base: ReturnLine = {
         _id: crypto.randomUUID(),
+        sourceLineId: Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
         itemId:      l.itemId      ? String(l.itemId)      : "",
         itemName:    l.itemName    ?? "",
         itemCode:    l.itemCode    ?? "",
@@ -1034,7 +1065,7 @@ export default function SalesReturns() {
     (async () => {
       const us = await fetchItemUnits(qaItemId);
       if (cancelled) return;
-      const base = us.find((u: any) => u.isBase) ?? us[0];
+      const base = us.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? us.find(isActiveItemUnit);
       setQaUnitId(base?.unitId != null ? String(base.unitId) : "");
     })();
     return () => { cancelled = true; };
@@ -1060,7 +1091,7 @@ export default function SalesReturns() {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) return;
     const itemUnits = await fetchItemUnits(itemId);
-    const base = itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
+    const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
     let chosenPrice: string = String(base?.salePrice ?? item.sellPrice ?? item.price ?? "0");
     const code = form.currencyCode;
@@ -1098,7 +1129,7 @@ export default function SalesReturns() {
       if (isDefault) {
         const itemUnits = await fetchItemUnits(l.itemId);
         const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
-          ?? itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
+          ?? itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
         const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
         const v = row?.salePrice ?? item?.sellPrice ?? item?.price;
         if (v != null) np = String(v);
@@ -1222,7 +1253,7 @@ export default function SalesReturns() {
       vatAmount:   vatAmount.toFixed(2),
       discountAmount: docDiscountAmt.toFixed(2),
       taxId: headerTaxId ? Number(headerTaxId) : null,
-      lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined, _pricingNote: undefined })),
+      lines: lines.filter(l => l.itemName).map(l => serializeDocumentLine(l)),
     });
   }
 
@@ -1318,15 +1349,16 @@ export default function SalesReturns() {
           <label className="text-[11px] text-muted-foreground">{t("salesReturns.colUnit")}</label>
           {(() => {
             const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
-            const opts = iu.map((u: any) => ({
+            const opts = itemUnitsWithHistoricalSelection(iu, qaUnitId).map((u: any) => ({
               value: String(u.unitId),
               label: `${u.unit?.nameAr ?? ""}${Number(u.conversionFactor) !== 1 ? ` (×${u.conversionFactor})` : ""}`,
+              disabled: u.isActive === false || u.unit?.isActive === false,
             }));
             return (
               <Select value={qaUnitId || undefined} onValueChange={setQaUnitId} disabled={opts.length === 0}>
                 <SelectTrigger className="h-9 text-xs"><SelectValue placeholder={t("salesReturns.colUnit")} /></SelectTrigger>
                 <SelectContent>
-                  {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                  {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             );
@@ -2461,16 +2493,18 @@ ${sections}
                     {(() => {
                       const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
                       const opts = itemUnits.length > 0
-                        ? itemUnits.map((iu: any) => ({
+                        ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
                             value: String(iu.unitId),
                             label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
+                            disabled: iu.isActive === false || iu.unit?.isActive === false,
                           }))
-                        : (units as any[]).map((u: any) => ({ value: String(u.id), label: u.nameAr }));
+                        : catalogUnitsWithHistoricalSelection(units as any[], l.unitId)
+                          .map((u: any) => ({ value: String(u.id), label: u.nameAr ?? u.nameEn ?? `#${u.id}`, disabled: u.isActive === false }));
                       return units.length > 0 ? (
                         <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
                           <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t("salesReturns.colUnit")} /></SelectTrigger>
                           <SelectContent>
-                            {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                            {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       ) : (

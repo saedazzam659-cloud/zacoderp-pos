@@ -48,12 +48,20 @@ import {
 import { safeLogoSrc } from "@/lib/export";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import {
+  catalogUnitsWithHistoricalSelection,
+  isActiveItemUnit,
+  itemUnitsWithHistoricalSelection,
+  serializeDocumentLine,
+} from "@/lib/documentLineUnits";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
 interface ReceiptLine {
   _id: string;
+  /** Persisted database line id; absent on newly added/duplicated lines. */
+  id?: number;
   itemId: string;
   itemName: string;
   itemCode: string;
@@ -396,6 +404,7 @@ export default function GoodsReceipts() {
       setHeaderTaxId((full as any).taxId != null ? String((full as any).taxId) : "");
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
         _id:         crypto.randomUUID(),
+        id:          Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
         itemId:      l.itemId      ? String(l.itemId)      : "",
         itemName:    l.itemName    ?? "",
         itemCode:    l.itemCode    ?? "",
@@ -412,6 +421,13 @@ export default function GoodsReceipts() {
         expiryDate:  l.expiryDate  ?? "",
         notes:       l.notes ?? "",
       })) : [newLine()]);
+      void Promise.all(
+        (full.lines ?? [])
+          .map((l: any) => l.itemId ? String(l.itemId) : "")
+          .filter(Boolean)
+          .filter((id: string, i: number, ids: string[]) => ids.indexOf(id) === i)
+          .map((id: string) => fetchItemUnits(id)),
+      );
       setShowForm(true);
     } catch (e: any) {
       toast({ title: e.message || tr("toasts.loadError"), variant: "destructive" });
@@ -454,6 +470,13 @@ export default function GoodsReceipts() {
         expiryDate:  l.expiryDate  ?? "",
         notes:       l.notes ?? "",
       })) : [newLine()]);
+      void Promise.all(
+        (full.lines ?? [])
+          .map((l: any) => l.itemId ? String(l.itemId) : "")
+          .filter(Boolean)
+          .filter((id: string, i: number, ids: string[]) => ids.indexOf(id) === i)
+          .map((id: string) => fetchItemUnits(id)),
+      );
       setShowForm(true);
       toast({ title: tr("toasts.duplicated") });
     } catch (e: any) {
@@ -535,7 +558,7 @@ export default function GoodsReceipts() {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) return;
     const itemUnits = await fetchItemUnits(itemId);
-    const base = itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
+    const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
@@ -577,7 +600,7 @@ export default function GoodsReceipts() {
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
       taxId: headerTaxId ? Number(headerTaxId) : null,
-      lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
+      lines: lines.filter(l => l.itemName).map(l => serializeDocumentLine(l)),
     });
   }
 
@@ -1250,16 +1273,18 @@ ${sections}
                         {(() => {
                           const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
                           const opts = itemUnits.length > 0
-                            ? itemUnits.map((iu: any) => ({
+                            ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
                                 value: String(iu.unitId),
                                 label: `${unitName(iu.unit)}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
+                                disabled: iu.isActive === false || iu.unit?.isActive === false,
                               }))
-                            : (units as any[]).map((u: any) => ({ value: String(u.id), label: unitName(u) }));
+                            : catalogUnitsWithHistoricalSelection(units as any[], l.unitId)
+                              .map((u: any) => ({ value: String(u.id), label: unitName(u), disabled: u.isActive === false }));
                           return units.length > 0 ? (
                             <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
                               <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>
                               <SelectContent>
-                                {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                                {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                               </SelectContent>
                             </Select>
                           ) : (

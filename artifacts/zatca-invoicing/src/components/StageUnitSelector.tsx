@@ -12,6 +12,8 @@ export type StageUnitCatalogOption = {
   nameAr: string;
   nameEn?: string | null;
   conversionFactor?: number;
+  factor?: string | number;
+  baseUnitCode?: string | null;
 };
 
 export type StageUnitSelectorProps = {
@@ -40,8 +42,9 @@ function displayNumber(value: number): string {
 
 /**
  * A stage quantity unit is deliberately independent from the item's stock unit.
- * Catalog entries provide the readable Arabic names, but the operator must
- * explicitly enter the conversion to the finished-order unit.
+ * Catalog entries are item-specific links resolved by the central conversion
+ * engine. Existing custom/manual rows remain readable, but a new selection
+ * cannot invent a factor or use an unrelated company unit.
  */
 export function StageUnitSelector({
   value,
@@ -97,15 +100,18 @@ export function StageUnitSelector({
         description: "الوحدة الأساسية للمنتج النهائي (المعامل = 1)",
       },
       ...catalogItems,
-      {
+      ...(effectiveCustomMode ? [{
         value: CUSTOM_UNIT_VALUE,
-        label: effectiveCustomMode && value ? `مخصص — ${value}` : "وحدة مخصصة — اكتب الاسم",
-        description: "لا تستخدم الوحدة المخصصة قبل إدخال معامل تحويل موجب",
-      },
+        label: value ? `وحدة تاريخية — ${value}` : "وحدة مخصصة — اكتب الاسم",
+        description: "وحدة محفوظة تاريخياً؛ الوحدات الجديدة يجب أن تكون مرتبطة بالصنف",
+      }] : []),
     ];
   }, [baseLabel, baseUnit, effectiveCustomMode, i18n.language, unitCatalog, value]);
 
   const selectedValue = effectiveCustomMode ? CUSTOM_UNIT_VALUE : (value ?? ORDER_UNIT_VALUE);
+  const selectedCatalogOption = value
+    ? unitCatalog.find((unit) => unit.code === value)
+    : undefined;
   const unitName = effectiveCustomMode
     ? (customDraft.trim() || "الوحدة المخصصة")
     : (value ? (unitCatalog.find((unit) => unit.code === value)
@@ -127,11 +133,15 @@ export function StageUnitSelector({
       onUnitChange(null, 1, false);
       return;
     }
-    // A catalog name does not imply a weight/count conversion. Require the
-    // operator to provide it rather than guessing (for example, kg = piece).
-    // The tenant catalog's conversionFactor is reference metadata, not a
-    // finished-order conversion. Keep the stage factor explicit.
-    onUnitChange(next, 0, false);
+    const option = unitCatalog.find((unit) => unit.code === next);
+    const directFactor = Number(option?.factor);
+    const resolvedFactor = positiveNumber(directFactor)
+      ? directFactor
+      : Number(option?.conversionFactor);
+    // The API validates this same item-specific relation. Passing the
+    // catalog snapshot keeps the preview responsive while the API remains
+    // authoritative and re-resolves a changed unit.
+    onUnitChange(next, positiveNumber(resolvedFactor) ? resolvedFactor : 0, false);
   };
 
   return (
@@ -173,7 +183,7 @@ export function StageUnitSelector({
             step="any"
             value={positiveNumber(factor) ? factor : ""}
             onChange={(event) => onFactorChange(Number(event.target.value) || 0)}
-            disabled={disabled}
+            disabled={disabled || (!!selectedCatalogOption && !effectiveCustomMode)}
             data-testid={`input-${testPrefix}-factor`}
             aria-label={`معامل تحويل ${label}`}
           />

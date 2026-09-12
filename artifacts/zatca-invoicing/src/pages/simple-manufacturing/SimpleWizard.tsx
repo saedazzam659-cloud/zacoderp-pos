@@ -5,7 +5,6 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ClipboardList, Boxes, GitBranch, Cog, Calculator, CheckCircle2, Save, Play, Plus, Trash2 } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import UnitCodeSelect from "@/components/UnitCodeSelect";
 import { DateField } from "@/components/ui/date-field";
 import type {
   WizardState,
@@ -131,6 +130,12 @@ export function SimpleWizard({
   ];
   const materialItems = catalog.items.filter(i =>
     !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature),
+  );
+  const selectedProduct = catalog.items.find(i => String(i.id) === form.productItemId);
+  const productUnitOptions = selectedProduct?.unitOptions ?? (
+    selectedProduct?.unitCode
+      ? [{ code: selectedProduct.unitCode, nameAr: selectedProduct.unitCode, isBase: true }]
+      : []
   );
 
   // Fetch the simple-facade envelopes and their details when product changes.
@@ -274,7 +279,7 @@ export function SimpleWizard({
       title: conf.title || f.title,
       productItemId: conf.productItemId ? String(conf.productItemId) : f.productItemId,
       plannedQty: conf.plannedQty ? String(conf.plannedQty) : f.plannedQty,
-      unitCode: conf.unitCode || it?.unitCode || f.unitCode,
+      unitCode: conf.unitCode || it?.unitOptions?.find(unit => unit.isBase)?.code || it?.unitCode || f.unitCode,
       rawWarehouseId: conf.rawWarehouseId ? String(conf.rawWarehouseId) : f.rawWarehouseId,
       finishedWarehouseId: conf.finishedWarehouseId ? String(conf.finishedWarehouseId) : f.finishedWarehouseId,
       plannedHours: conf.plannedHoursPerUnit && Number(nextPlannedQty) > 0 ? String(Number(conf.plannedHoursPerUnit) * Number(nextPlannedQty)) : f.plannedHours,
@@ -533,7 +538,12 @@ export function SimpleWizard({
                     items={fgComboItems}
                     onValueChange={v => {
                       const it = catalog.items.find(x => String(x.id) === v);
-                       setForm(f => ({ ...f, productItemId: v, title: f.title.trim() ? f.title : (it?.nameAr ?? f.title), unitCode: it?.unitCode || f.unitCode }));
+                       setForm(f => ({
+                         ...f,
+                         productItemId: v,
+                         title: f.title.trim() ? f.title : (it?.nameAr ?? f.title),
+                         unitCode: it?.unitOptions?.find(unit => unit.isBase)?.code || it?.unitCode || f.unitCode,
+                       }));
                     }}
                     placeholder="ابحث عن المنتج..."
                   />
@@ -545,7 +555,23 @@ export function SimpleWizard({
                   </div>
                   <div className="space-y-2">
                     <Label>وحدة القياس</Label>
-                    <UnitCodeSelect value={form.unitCode} onChange={v => setForm({...form, unitCode: v})} className="h-10" />
+                     <SearchCombobox
+                       value={form.unitCode}
+                       className="h-10"
+                       placeholder="اختر وحدة مرتبطة بالمنتج..."
+                       searchPlaceholder="ابحث عن وحدة..."
+                       items={[
+                         { value: "", label: "اختر وحدة..." },
+                         ...productUnitOptions.map(unit => ({
+                           value: unit.code,
+                           code: unit.code,
+                           label: unit.nameAr || unit.code,
+                           labelEn: unit.nameEn || undefined,
+                           description: unit.factor != null ? `المعامل إلى الأساسية ×${unit.factor}` : undefined,
+                         })),
+                       ]}
+                       onValueChange={value => setForm({ ...form, unitCode: value })}
+                     />
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -610,8 +636,11 @@ export function SimpleWizard({
                                 })),
                               ]}
                               onValueChange={value => {
-                                setNewBomLines(lines => lines.map((line, index) => index === i
-                                  ? { ...line, itemId: value }
+                                 const selected = catalog.items.find(item => String(item.id) === value);
+                                 const baseCode = selected?.unitOptions?.find(unit => unit.isBase)?.code
+                                   || selected?.unitCode || "";
+                                 setNewBomLines(lines => lines.map((line, index) => index === i
+                                   ? { ...line, itemId: value, unitCode: baseCode }
                                   : line));
                               }}
                             />
@@ -633,11 +662,16 @@ export function SimpleWizard({
                               searchPlaceholder="ابحث عن الوحدة..."
                               items={[
                                 { value: "", label: "(افتراضي)" },
-                                ...(catalog.units ?? []).map(u => ({
-                                  value: u.code,
-                                  code: u.code,
-                                  label: u.nameAr,
-                                })),
+                                ...((catalog.items.find(item => String(item.id) === line.itemId)?.unitOptions
+                                  ?? []).map(u => ({
+                                    value: u.code,
+                                    code: u.code,
+                                    label: u.nameAr || u.code,
+                                    labelEn: u.nameEn || undefined,
+                                    description: u.factor != null
+                                      ? `المعامل إلى الأساسية ×${u.factor}`
+                                      : undefined,
+                                  }))),
                               ]}
                               onValueChange={value => {
                                 setNewBomLines(lines => lines.map((line, index) => index === i
@@ -682,21 +716,21 @@ export function SimpleWizard({
                            </span>
                           <div className="flex flex-col items-end gap-1">
                             <span className="font-mono bg-emerald-50 text-emerald-900 px-2 py-0.5 rounded border border-emerald-200" data-testid={`material-required-${l.itemId}`}>
-                              {materialScale != null && Number.isFinite(Number(l.quantity))
-                                ? (Number(l.quantity) * materialScale).toLocaleString("en-US", { maximumFractionDigits: 4 })
-                                : "—"} {l.unitCode}
+                               {materialScale != null && Number.isFinite(Number(l.quantity)) && l.usageFactor != null
+                                 ? (Number(l.quantity) * materialScale * Number(l.usageFactorNumeric ?? l.usageFactor)).toLocaleString("en-US", { maximumFractionDigits: 6 })
+                                 : "—"} {l.baseUnitCode || l.usageUnitCode || l.unitCode}
                             </span>
                             <span className="text-slate-400 text-xs">
-                              أساس الوصفة: {Number(l.quantity).toLocaleString("en-US", { maximumFractionDigits: 4 })} {l.unitCode} لكل {Number.isFinite(recipeOutputQty) && recipeOutputQty > 0
-                                ? bomPreview.outputQty
-                                : "—"} {recipeOutputUnit}
+                               أساس الاستخدام: {Number(l.quantity).toLocaleString("en-US", { maximumFractionDigits: 4 })} {l.usageUnitCode || l.unitCode}
+                               {l.usageFactor != null ? ` × ${l.usageFactor} = ${(Number(l.quantity) * Number(l.usageFactorNumeric ?? l.usageFactor)).toLocaleString("en-US", { maximumFractionDigits: 6 })} ${l.baseUnitCode || ""}` : " — لا يوجد ارتباط تحويل صالح"}
+                               {" لكل "}{Number.isFinite(recipeOutputQty) && recipeOutputQty > 0 ? bomPreview.outputQty : "—"} {recipeOutputUnit}
                             </span>
                           </div>
                         </div>
                       ))}
                     </div>
                     <p className="mt-3 text-xs text-slate-500">
-                      المطلوب = كمية الخامة الأساسية × (الكمية المخططة ÷ كمية أساس الوصفة). لا تتغير الوصفة المحفوظة، ولا تُحوّل وحدات القياس تلقائياً.
+                       المطلوب للمخزون = كمية الاستخدام × معامل وحدة الصنف × (الكمية المخططة ÷ كمية أساس الوصفة). لا تتغير الوصفة المحفوظة؛ تُحفظ كمية الاستخدام ووحدتها ومعاملها كلقطة تاريخية.
                     </p>
                   </CardContent>
                 </Card>
@@ -1132,9 +1166,9 @@ export function SimpleWizard({
                            <span>{line.itemNameAr || line.description || `صنف #${line.itemId}`}</span>
                            <span className="font-mono font-semibold">
                              {Number.isFinite(Number(line.quantity))
-                               ? (Number(line.quantity) * materialScale).toLocaleString(undefined, { maximumFractionDigits: 4 })
+                                ? (Number(line.quantity) * materialScale * Number(line.usageFactorNumeric ?? line.usageFactor)).toLocaleString(undefined, { maximumFractionDigits: 6 })
                                : "—"}
-                             {" "}{line.unitCode || ""}
+                              {" "}{line.baseUnitCode || line.unitCode || ""}
                            </span>
                          </div>
                        ))}

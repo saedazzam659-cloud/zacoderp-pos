@@ -10,7 +10,9 @@ import { useToast } from "@/hooks/use-toast";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { Plus, Pencil, Trash2, Ruler, Search, Info, ArrowRight } from "lucide-react";
+import { Plus, Pencil, Trash2, Ruler, Search, Info, ArrowRight, Package } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 
 const EMPTY = { code: "", nameAr: "", nameEn: "", conversionFactor: "1" };
 
@@ -31,8 +33,8 @@ export default function Units() {
   const tr = (k: string, opts?: any) => t(`inventoryMaster.units.${k}`, opts) as string;
   const pickName = (ar?: string | null, en?: string | null) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
 
-  const { user } = useAuth();
-  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const { user, actingCompanyId } = useAuth();
+  const cid = actingCompanyId ?? user?.company?.id;
   const qc = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -45,20 +47,26 @@ export default function Units() {
     queryFn: () => inventoryApi.getUnits(cid),
   });
 
+  const { data: itemsData } = useQuery({
+    queryKey: ["items", cid],
+    queryFn: () => inventoryApi.getItems(cid),
+  });
+  const [, setLocation] = useLocation();
+
   const invalidate = () => qc.invalidateQueries({ queryKey: ["units"] });
   const createMut = useMutation({ mutationFn: inventoryApi.createUnit, onSuccess: () => { invalidate(); reset(); toast({ title: tr("savedToast") }); } });
   const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateUnit(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: tr("savedToast") }); } });
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteUnit, onSuccess: () => { invalidate(); toast({ title: tr("deletedToast") }); } });
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); }
-  function handleEdit(u: any) { setForm({ ...u, conversionFactor: String(Math.max(1, Math.trunc(Number(u.conversionFactor) || 1))) }); setEditId(u.id); setShowForm(true); }
+  function handleEdit(u: any) { setForm({ ...u, conversionFactor: String(Number(u.conversionFactor) || 1) }); setEditId(u.id); setShowForm(true); }
   function handlePreset(p: typeof PRESETS[0]) {
     setForm({ code: p.code, nameAr: p.nameAr, nameEn: p.nameEn, conversionFactor: p.conversionFactor });
     setShowForm(true);
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const factor = Math.max(1, Math.trunc(Number(form.conversionFactor) || 1));
+    const factor = Math.max(0, Number(form.conversionFactor) || 1);
     const payload = { ...form, conversionFactor: String(factor) };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else createMut.mutate(payload);
@@ -88,6 +96,25 @@ export default function Units() {
           <div className="space-y-2">
             <p className="text-sm font-semibold text-blue-800">{tr("infoTitle")}</p>
             <p className="text-xs text-blue-700">{tr("infoBody")}</p>
+            
+            <div className="bg-blue-100/50 p-3 rounded border border-blue-200 mt-2 space-y-2">
+              <p className="text-sm font-semibold text-blue-900">{t("inventoryMaster.units.perItemTitle", { defaultValue: "Per-Item Unit Conversion" })}</p>
+              <p className="text-xs text-blue-800">
+                {t("inventoryMaster.units.perItemDesc", { defaultValue: "You can define accurate, multi-level unit conversions specific to each item directly inside the item card. This ensures exact stock calculation for components and sales." })}
+              </p>
+              <div className="pt-2 flex items-center gap-2 max-w-sm">
+                <SearchCombobox
+                  items={(itemsData || []).map((i: any) => ({
+                    value: String(i.id),
+                    label: isRtl ? (i.nameAr || i.nameEn || i.code) : (i.nameEn || i.nameAr || i.code)
+                  }))}
+                  value=""
+                  onValueChange={(v) => { if (v) setLocation(`/inventory/items?edit=${v}&tab=units`); }}
+                  placeholder={t("inventoryMaster.units.searchItemToConvert", { defaultValue: "Find item to manage units..." })}
+                />
+              </div>
+            </div>
+
             <div className="flex flex-wrap gap-3 mt-1">
               <div className="bg-white border border-blue-200 rounded-lg px-3 py-2 text-xs">
                 <p className="font-semibold text-blue-800 mb-1">{tr("exampleTitle")}</p>
@@ -150,7 +177,7 @@ export default function Units() {
               <Input placeholder={tr("nameEnPh")} dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
             </Field>
             <Field label={tr("conversionFactor")} hint={tr("conversionHint")}>
-              <Input type="number" step="1" min="1" placeholder="1" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value.replace(/[^0-9]/g, "") }))} />
+              <Input type="number" step="any" min="0.00001" placeholder="1" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value.replace(/[^0-9.]/g, "") }))} />
             </Field>
           </FormGrid>
         </FormPanel>

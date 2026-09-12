@@ -137,7 +137,7 @@ export const unitsTable = pgTable("units", {
   code:             text("code").notNull(),
   nameAr:           text("name_ar").notNull(),
   nameEn:           text("name_en"),
-  conversionFactor: numeric("conversion_factor", { precision: 14, scale: 6 }).default("1").notNull(),
+  conversionFactor: numeric("conversion_factor", { precision: 30, scale: 18 }).default("1").notNull(),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -317,10 +317,22 @@ export const itemUnitPricesTable = pgTable("item_unit_prices", {
   companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
   itemId:           integer("item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
   unitId:           integer("unit_id").notNull().references(() => unitsTable.id, { onDelete: "cascade" }),
-  conversionFactor: numeric("conversion_factor", { precision: 14, scale: 6 }).notNull().default("1"),
+  // Compatibility cache resolved from this unit to the item's base unit.
+  // The authoritative edge is referenceUnitId + relationFactor.
+  conversionFactor: numeric("conversion_factor", { precision: 30, scale: 18 }).notNull().default("1"),
   costPrice:        numeric("cost_price",  { precision: 14, scale: 4 }).notNull().default("0"),
   salePrice:        numeric("sale_price",  { precision: 14, scale: 4 }).notNull().default("0"),
   isBase:           boolean("is_base").notNull().default(false),
+  // One directed edge per source unit: 1 source = relationFactor reference.
+  // A base row has no reference and relationFactor = 1.
+  referenceUnitId:  integer("reference_unit_id").references(() => unitsTable.id),
+  relationFactor:   numeric("relation_factor", { precision: 30, scale: 18 }).notNull().default("1"),
+  isActive:         boolean("is_active").notNull().default(true),
+  decimalPlaces:    integer("decimal_places").notNull().default(2),
+  roundingMode:     text("rounding_mode").notNull().default("half_up"),
+  // Legacy installations can contain multiple/no base markers. Preserve
+  // those rows and surface the conflict instead of silently rebasing them.
+  legacyConversionConflict: boolean("legacy_conversion_conflict").notNull().default(false),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -461,6 +473,8 @@ export const stockTransferItemsTable = pgTable("stock_transfer_items", {
   itemId:     integer("item_id").notNull().references(() => itemsTable.id),
   unitId:     integer("unit_id").references(() => unitsTable.id),
   qty:        numeric("qty",        { precision: 18, scale: 4 }).notNull(),
+  // Immutable unit conversion captured with the movement.
+  conversionFactor: numeric("conversion_factor", { precision: 30, scale: 18 }).notNull().default("1"),
   costPrice:  numeric("cost_price", { precision: 14, scale: 4 }).default("0").notNull(),
 });
 
@@ -493,6 +507,8 @@ export const stockAdjustmentItemsTable = pgTable("stock_adjustment_items", {
   itemId:       integer("item_id").notNull().references(() => itemsTable.id),
   unitId:       integer("unit_id").references(() => unitsTable.id),
   qty:          numeric("qty",        { precision: 18, scale: 4 }).notNull(),
+  // Immutable unit conversion captured with the adjustment.
+  conversionFactor: numeric("conversion_factor", { precision: 30, scale: 18 }).notNull().default("1"),
   costPrice:    numeric("cost_price", { precision: 14, scale: 4 }).default("0").notNull(),
   notes:        text("notes"),
 });

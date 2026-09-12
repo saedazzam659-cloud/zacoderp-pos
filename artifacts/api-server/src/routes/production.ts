@@ -25,6 +25,7 @@ import {
   warehousesTable,
   itemsTable,
   unitsTable,
+  itemUnitPricesTable,
   stockBalanceTable,
   stockLedgerTable,
   accountsTable,
@@ -130,6 +131,15 @@ import {
 import { getPostedIndustrialPurchaseCosts } from "../lib/industrialPurchaseCosts.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
+// Manufacturing deliberately consumes the central item-unit engine.  Keep
+// this import at the route boundary so recipe/stage/stock paths cannot drift
+// back to the legacy global units.conversionFactor field.
+import {
+  resolveItemUnitConversion,
+  multiplyQuantity,
+  divideQuantity,
+  roundQuantity,
+} from "../lib/unitConversion.js";
 
 // ─── Journal entry helper (mirrors sales.ts / purchasing.ts) ─────────────────
 // Keeps production posting consistent with how invoices/vouchers post:
@@ -528,6 +538,197 @@ function num(v: unknown, def = 0): number {
   return Number.isFinite(n) ? n : def;
 }
 
+// Exact conversion results may be rational (for example 1/3). Numeric
+// compatibility fields must round explicitly before crossing the JS-number
+// boundary; never use Number(exactString) directly.
+function numericQuantity(value: string | number): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  return Number(roundQuantity(value, 18, "half_up"));
+}
+
+type ProductionUnitResolution = {
+  factor: string;
+  unitId: number | null;
+  unitCode: string;
+  baseUnitId: number | null;
+  baseUnitCode: string;
+  source?: string;
+};
+
+/**
+ * Resolve a manufacturing usage unit against the item's own unit graph.
+ *
+ * `unitCode` is intentionally resolved through the central engine rather than
+ * by reading units.conversionFactor.  The latter is company-wide display
+ * metadata and cannot describe an item's inverse or multi-level relation.
+ */
+export async function resolveProductionItemUnit(
+  cid: number,
+  itemId: number,
+  unitCode: string | null | undefined,
+  executor: any = db,
+): Promise<ProductionUnitResolution> {
+  const [item] = await executor.select({
+    itemId: itemsTable.id,
+    baseUnitId: itemsTable.unitId,
+    baseUnitCode: unitsTable.code,
+  }).from(itemsTable)
+    .leftJoin(unitsTable, and(
+      eq(itemsTable.unitId, unitsTable.id),
+      eq(unitsTable.companyId, cid),
+    ))
+    .where(and(
+      eq(itemsTable.id, itemId),
+      eq(itemsTable.companyId, cid),
+      eq(itemsTable.status, "active"),
+    ))
+    .limit(1);
+  if (!item) {
+    throw Object.assign(new Error("الصنف غير موجود أو غير نشط في هذه الشركة"), { status: 400 });
+  }
+  const requested = String(unitCode ?? item.baseUnitCode ?? "").trim();
+  if (!requested) {
+    throw Object.assign(new Error("الصنف لا يملك وحدة أساسية صالحة"), { status: 400 });
+  }
+  let resolved: Awaited<ReturnType<typeof resolveItemUnitConversion>>;
+  try {
+    resolved = await resolveItemUnitConversion({
+      companyId: cid,
+      itemId,
+      unitCode: requested,
+      executor,
+    });
+  } catch (error: any) {
+    // Conversion graph failures are client data errors at manufacturing
+    // boundaries (most importantly unrelated units), not server failures.
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+      status: Number(error?.status) || 400,
+    });
+  }
+  const factor = String(resolved?.factor ?? "");
+  const compatibilityFactor = factor ? numericQuantity(factor) : 0;
+  if (!factor || !Number.isFinite(compatibilityFactor) || compatibilityFactor <= 0) {
+    throw Object.assign(new Error(`معامل الوحدة "${requested}" غير صالح للصنف`), { status: 400 });
+  }
+  return {
+    factor,
+    unitId: resolved?.unitId == null ? null : Number(resolved.unitId),
+    unitCode: String(resolved?.unitCode ?? requested),
+    baseUnitId: resolved?.baseUnitId == null ? (item.baseUnitId ?? null) : Number(resolved.baseUnitId),
+    baseUnitCode: String(item.baseUnitCode ?? requested),
+  };
+}
+
+async function normalizeProductionRawQuantity(
+  cid: number,
+  itemId: number,
+  quantity: string | number,
+  unitCode: string | null | undefined,
+  executor: any = db,
+) {
+  const usageQuantity = String(quantity);
+  const resolution = await resolveProductionItemUnit(cid, itemId, unitCode, executor);
+  const baseQuantity = multiplyQuantity(usageQuantity, resolution.factor);
+  return {
+    ...resolution,
+    usageQuantity,
+    usageUnitCode: resolution.unitCode,
+    baseQuantity,
+  };
+}
+
+export async function loadItemUnitOptions(
+  cid: number,
+  itemId: number,
+  executor: any = db,
+) {
+  const [item] = await executor.select({
+    itemId: itemsTable.id,
+    baseUnitId: itemsTable.unitId,
+    baseUnitCode: unitsTable.code,
+    baseUnitNameAr: unitsTable.nameAr,
+    baseUnitNameEn: unitsTable.nameEn,
+  }).from(itemsTable)
+    .leftJoin(unitsTable, and(
+      eq(itemsTable.unitId, unitsTable.id),
+      eq(unitsTable.companyId, cid),
+    ))
+    .where(and(
+      eq(itemsTable.id, itemId),
+      eq(itemsTable.companyId, cid),
+      eq(itemsTable.status, "active"),
+    ))
+    .limit(1);
+  if (!item) return [];
+
+  const linked = await executor.select({
+    unitId: itemUnitPricesTable.unitId,
+    code: unitsTable.code,
+    nameAr: unitsTable.nameAr,
+    nameEn: unitsTable.nameEn,
+    isBase: itemUnitPricesTable.isBase,
+    isActive: itemUnitPricesTable.isActive,
+  }).from(itemUnitPricesTable)
+    .innerJoin(unitsTable, and(
+      eq(itemUnitPricesTable.unitId, unitsTable.id),
+      eq(unitsTable.companyId, cid),
+    ))
+    .where(and(
+      eq(itemUnitPricesTable.companyId, cid),
+      eq(itemUnitPricesTable.itemId, itemId),
+      eq(itemUnitPricesTable.isActive, true),
+    ))
+    .orderBy(asc(unitsTable.code));
+
+  const options: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+  const add = async (row: {
+    unitId: number | null;
+    code: string | null;
+    nameAr: string | null;
+    nameEn: string | null;
+    isBase?: boolean;
+  }) => {
+    const code = String(row.code ?? "").trim();
+    if (!code || seen.has(code.toLowerCase())) return;
+    let resolution: ProductionUnitResolution;
+    try {
+      resolution = await resolveProductionItemUnit(cid, itemId, code, executor);
+    } catch {
+      // Keep a conflicted/legacy link out of the new-selection catalogue.
+      // Existing saved stage rows remain readable through their persisted
+      // unit/factor snapshot.
+      return;
+    }
+    seen.add(code.toLowerCase());
+    options.push({
+      unitId: row.unitId,
+      code,
+      nameAr: row.nameAr || code,
+      nameEn: row.nameEn || code,
+      isBase: Boolean(row.isBase) || code === item.baseUnitCode,
+      factor: resolution.factor,
+      // Keep conversionFactor as a compatibility alias for older clients, but
+      // never source it from units.conversionFactor.
+      conversionFactor: numericQuantity(resolution.factor),
+      baseUnitCode: resolution.baseUnitCode,
+    });
+  };
+  if (item.baseUnitCode) {
+    await add({
+      unitId: item.baseUnitId ?? null,
+      code: item.baseUnitCode,
+      nameAr: item.baseUnitNameAr,
+      nameEn: item.baseUnitNameEn,
+      isBase: true,
+    });
+  }
+  for (const row of linked) {
+    await add(row);
+  }
+  return options;
+}
+
 type BomQuantityBasis = {
   kind: "bom_template_output";
   templateId: number;
@@ -578,6 +779,13 @@ function bomLineSnapshotMeta(
   template: { id: number; outputUnitCode?: string | null },
   line: { quantity: unknown; unitCode?: string | null },
   outputQuantity: number,
+  usage?: {
+    usageQuantity: string;
+    usageUnitCode: string;
+    factor: string;
+    baseQuantity: string;
+    baseUnitCode: string;
+  },
 ): Record<string, unknown> {
   return {
     fromBomTemplateId: template.id,
@@ -586,6 +794,15 @@ function bomLineSnapshotMeta(
     bomLineUnitCode: String(line.unitCode ?? "").trim(),
     bomOutputQuantity: outputQuantity,
     bomOutputUnitCode: String(template.outputUnitCode ?? "").trim(),
+    ...(usage ? {
+      quantityNormalization: "item_unit_engine",
+      quantityStoredInBase: true,
+      usageQuantity: usage.usageQuantity,
+      usageUnitCode: usage.usageUnitCode,
+      usageFactor: usage.factor,
+      baseQuantity: usage.baseQuantity,
+      baseUnitCode: usage.baseUnitCode,
+    } : {}),
   };
 }
 
@@ -1488,9 +1705,9 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
           quantityUnitFactor,
           wasteUnit: x.wasteUnit ?? null,
           wasteUnitFactor,
-          convertedInputQty: num(x.inputQty) * quantityUnitFactor,
-          convertedOutputQty: num(x.outputQty) * quantityUnitFactor,
-          convertedWasteQty: num(x.wasteQty) * wasteUnitFactor,
+           convertedInputQty: multiplyQuantity(String(x.inputQty ?? 0), String(quantityUnitFactor)),
+           convertedOutputQty: multiplyQuantity(String(x.outputQty ?? 0), String(quantityUnitFactor)),
+           convertedWasteQty: multiplyQuantity(String(x.wasteQty ?? 0), String(wasteUnitFactor)),
            actualDurationMinutes: x.actualDurationMinutes, workerUserId: x.operatorUserId,
            workerCount: x.workerCount,
           machineId: x.resourceId, wasteReason: x.wasteReason, wasteType: x.wasteType,
@@ -1501,7 +1718,7 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
           id: x.id, reason: x.reason, type: x.wasteType,
           classification: x.wasteClassification, amount: num(x.costImpact), qty: num(x.qty),
           unitCode: x.unitCode, unitFactor: num(x.unitFactor, 1),
-          convertedQty: num(x.qty) * num(x.unitFactor, 1),
+           convertedQty: multiplyQuantity(String(x.qty ?? 0), String(num(x.unitFactor, 1))),
         })),
         quality: { checks: checks.length, failed: checks.filter((x) => x.result === "fail").length },
          allocations,
@@ -4839,7 +5056,10 @@ export async function productionOrderDetailHandler(req: any, res: any) {
         eq(productionCostAllocationsTable.orderId, id)))
       .orderBy(asc(productionCostAllocationsTable.id)),
     ]);
-    const unitCatalog = await loadStageUnitCatalog(cid, order);
+    const unitCatalog = await loadStageUnitCatalog(cid, {
+      unitCode: order.unitCode,
+      productItemId: order.productItemId,
+    });
     res.json({
       order,
       items,
@@ -5151,7 +5371,11 @@ export async function productionWizardHandler(req: any, res: any) {
       if (!(recipeOutputQty > 0)) {
         throw Object.assign(new Error("قالب المكونات النشط يحتوي كمية ناتج غير صالحة"), { status: 400 });
       }
+      // Keep the legacy numeric planning scale for event/UI compatibility;
+      // material quantities below use scaleExact so recurring decimals never
+      // pass through JavaScript arithmetic.
       const scale = plannedQty / recipeOutputQty;
+      const scaleExact = divideQuantity(String(plannedQty), String(recipeOutputQty));
       let rawCost = 0;
       const itemRows: any[] = [];
       for (const line of bomLines) {
@@ -5162,11 +5386,26 @@ export async function productionWizardHandler(req: any, res: any) {
               eq(stockBalanceTable.warehouseId, rawWarehouseId))).limit(1);
           unitCost = num(bal?.avgCost);
         }
-        const quantity = num(line.quantity) * scale;
+        const usage = await normalizeProductionRawQuantity(
+          cid,
+          Number(line.itemId),
+          multiplyQuantity(String(line.quantity), scaleExact),
+          line.unitCode,
+          tx,
+        );
+        // Order-material rows are always stored in the material's base unit.
+        // The usage quantity/unit/factor remain in meta as an immutable BOM
+        // snapshot, so issue and close paths never convert the same row twice.
+        const quantity = numericQuantity(usage.baseQuantity);
         const total = Number((quantity * unitCost).toFixed(2)); rawCost += total;
         itemRows.push({ kind: "raw", itemId: line.itemId, description: line.description,
-          quantity: String(quantity), unitCode: line.unitCode, unitCost: String(unitCost),
-          totalCost: String(total), meta: bomLineSnapshotMeta(tmpl, line, recipeOutputQty) });
+          quantity: roundQuantity(usage.baseQuantity, 18, "half_up"),
+          unitCode: usage.baseUnitCode, unitCost: String(unitCost),
+          totalCost: String(total), meta: bomLineSnapshotMeta(tmpl, {
+            ...line,
+            quantity: usage.usageQuantity,
+            unitCode: usage.usageUnitCode,
+          }, recipeOutputQty, usage) });
       }
       const wcLabor = wc && plannedHours > 0 ? plannedHours * num(wc.laborRatePerHour) : 0;
       const wcOverhead = wc && plannedHours > 0 ? plannedHours * num(wc.overheadRatePerHour) : 0;
@@ -5443,7 +5682,8 @@ router.post("/orders", async (req, res) => {
           if (!Number.isFinite(output) || output <= 0) {
             throw new Error("قالب المكونات النشط يحتوي كمية ناتج غير صالحة");
           }
-          const scale = planned / output;
+          const scaleExact = divideQuantity(String(planned), String(output));
+          const scale = numericQuantity(scaleExact);
           const inserts = await Promise.all(
             lines.map(async (l) => {
               // Pull current avg cost from any warehouse for the item to
@@ -5463,17 +5703,30 @@ router.post("/orders", async (req, res) => {
                   .limit(1);
                 if (bal) unitCost = Number(bal.avgCost) || 0;
               }
-              const qty = Number(l.quantity) * scale;
+              if (!l.itemId) {
+                throw Object.assign(new Error("قالب المكونات يحتوي سطراً بلا صنف"), { status: 400 });
+              }
+              const usage = await normalizeProductionRawQuantity(
+                cid,
+                Number(l.itemId),
+                multiplyQuantity(String(l.quantity), scaleExact),
+                l.unitCode,
+              );
+              const qty = numericQuantity(usage.baseQuantity);
               return {
                 orderId: row.id,
                 kind: "raw" as const,
                 itemId: l.itemId,
                 description: l.description,
-                quantity: String(qty),
-                unitCode: l.unitCode,
+                quantity: roundQuantity(usage.baseQuantity, 18, "half_up"),
+                unitCode: usage.baseUnitCode,
                 unitCost: String(unitCost),
                 totalCost: String((qty * unitCost).toFixed(2)),
-                meta: bomLineSnapshotMeta(tmpl, l, output),
+                meta: bomLineSnapshotMeta(tmpl, {
+                  ...l,
+                  quantity: usage.usageQuantity,
+                  unitCode: usage.usageUnitCode,
+                }, output, usage),
               };
             }),
           );
@@ -6480,8 +6733,10 @@ export async function productionStatusHandler(req: any, res: any) {
             finalDoneStage.quantityUnitFactor ?? 1,
             "عامل وحدة إخراج المرحلة النهائية",
           );
-          stageFinalOutputQty =
-            num(finalDoneStage.outputQty) * finalQuantityUnitFactor;
+           stageFinalOutputQty = num(multiplyQuantity(
+             String(finalDoneStage.outputQty ?? 0),
+             String(finalQuantityUnitFactor),
+           ));
         } else {
           stageFinalOutputQty = 0;
         }
@@ -7142,7 +7397,17 @@ router.post("/orders/:id/items", async (req, res) => {
     }
     const qty = num(b.quantity);
     const unitCost = num(b.unitCost);
-    const totalCost = qty * unitCost;
+    const usage = b.kind === "raw" && b.itemId
+      ? await normalizeProductionRawQuantity(
+          cid,
+          Number(b.itemId),
+          String(b.quantity),
+          b.unitCode,
+        )
+      : null;
+    const storedQuantity = usage ? numericQuantity(usage.baseQuantity) : qty;
+    const storedUnitCode = usage?.baseUnitCode ?? (b.unitCode || "PCE");
+    const totalCost = storedQuantity * unitCost;
     const [row] = await db
       .insert(productionOrderItemsTable)
       .values({
@@ -7150,23 +7415,34 @@ router.post("/orders/:id/items", async (req, res) => {
         kind: b.kind || "raw",
         itemId: b.itemId ? Number(b.itemId) : null,
         description: b.description.trim(),
-        quantity: String(qty),
-        unitCode: b.unitCode || "PCE",
+        quantity: usage ? roundQuantity(usage.baseQuantity, 18, "half_up") : String(qty),
+        unitCode: storedUnitCode,
         unitCost: String(unitCost),
         totalCost: String(totalCost),
-        meta: b.meta && typeof b.meta === "object" ? b.meta : {},
+        meta: {
+          ...(b.meta && typeof b.meta === "object" ? b.meta : {}),
+          ...(usage ? {
+            quantityNormalization: "item_unit_engine",
+            quantityStoredInBase: true,
+            usageQuantity: usage.usageQuantity,
+            usageUnitCode: usage.usageUnitCode,
+            usageFactor: usage.factor,
+            baseQuantity: usage.baseQuantity,
+            baseUnitCode: usage.baseUnitCode,
+          } : {}),
+        },
       })
       .returning();
     await writeEvent(
       cid,
       orderId,
       "item_added",
-      { kind: row.kind, description: row.description, quantity: qty },
+      { kind: row.kind, description: row.description, quantity: row.quantity, unitCode: row.unitCode },
       req.authUser!.id,
     );
     res.status(201).json(row);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -7632,7 +7908,32 @@ export async function getBomTemplate(q: any, cid: number, id: number) {
       eq(itemsTable.companyId, cid),
     ))
     .where(eq(bomTemplateLinesTable.templateId, id));
-  return { ...template, lines };
+  const normalizedLines = await Promise.all(lines.map(async (line: any) => {
+    try {
+      if (!line.itemId) throw new Error("لا يوجد صنف");
+      const resolved = await resolveProductionItemUnit(cid, line.itemId, line.unitCode, q);
+      return {
+        ...line,
+        usageUnitCode: resolved.unitCode,
+        usageFactor: resolved.factor,
+        usageFactorNumeric: numericQuantity(resolved.factor),
+        baseUnitCode: resolved.baseUnitCode,
+        conversionAvailable: true,
+      };
+    } catch {
+      // Historical recipes remain readable even when their old unit is no
+      // longer linked. Creation/posting paths still reject that unit.
+      return {
+        ...line,
+        usageUnitCode: line.unitCode,
+        usageFactor: null,
+        usageFactorNumeric: null,
+        baseUnitCode: null,
+        conversionAvailable: false,
+      };
+    }
+  }));
+  return { ...template, lines: normalizedLines };
 }
 
 export async function getRoutings(
@@ -8506,6 +8807,47 @@ async function validateStageExecutionReferences(
   }
 }
 
+/**
+ * Resolve only when the stage unit changed.  A persisted factor is an
+ * accounting snapshot: re-reading today's item-unit graph for the same unit
+ * would rewrite historical quantities after an administrator edits a link.
+ */
+async function resolveStageFactor(
+  cid: number,
+  productItemId: number | null,
+  requestedUnit: string | null | undefined,
+  requestedFactor: unknown,
+  currentUnit: string | null | undefined,
+  currentFactor: unknown,
+  executor: any = db,
+): Promise<number> {
+  const unit = requestedUnit ?? null;
+  const current = currentUnit ?? null;
+  if (unit === current) {
+    const factorValue = requestedFactor ?? currentFactor ?? 1;
+    return canonicalStageUnitFactor(
+      unit,
+      numericQuantity(String(factorValue)),
+      "عامل وحدة المرحلة",
+    );
+  }
+  if (!unit) {
+    return canonicalStageUnitFactor(
+      unit,
+      numericQuantity(String(requestedFactor ?? 1)),
+      "عامل وحدة المرحلة",
+    );
+  }
+  if (!productItemId) {
+    throw Object.assign(new Error("لا يمكن اختيار وحدة مرحلة قبل ربط المنتج بصنف"), { status: 400 });
+  }
+  const resolved = await resolveProductionItemUnit(cid, productItemId, unit, executor);
+  return positiveFiniteFactor(
+    numericQuantity(resolved.factor),
+    "عامل وحدة المرحلة",
+  );
+}
+
 function assertStageQuantityConservation(
   inputQty: unknown,
   outputQty: number | undefined,
@@ -8546,34 +8888,16 @@ function stageApiRow<T extends Record<string, any>>(stage: T): T {
   };
 }
 
-async function loadStageUnitCatalog(cid: number, order: { unitCode?: string | null }) {
-  const rows = await db
-    .select({
-      code: unitsTable.code,
-      nameAr: unitsTable.nameAr,
-      nameEn: unitsTable.nameEn,
-      conversionFactor: unitsTable.conversionFactor,
-    })
-    .from(unitsTable)
-    .where(eq(unitsTable.companyId, cid))
-    .orderBy(asc(unitsTable.code));
-  const catalog = rows.map((unit) => ({
-    code: unit.code,
-    nameAr: unit.nameAr,
-    nameEn: unit.nameEn,
-    // This is display metadata only. Stage conversion still requires the
-    // explicit stage factor and never guesses from this value.
-    conversionFactor: num(unit.conversionFactor, 1),
-  }));
-  const orderUnitCode = order.unitCode ?? null;
-  if (orderUnitCode && !catalog.some((unit) => unit.code === orderUnitCode)) {
-    catalog.unshift({
-      code: orderUnitCode,
-      nameAr: orderUnitCode,
-      nameEn: orderUnitCode,
-      conversionFactor: 1,
-    });
-  }
+async function loadStageUnitCatalog(
+  cid: number,
+  order: { unitCode?: string | null; productItemId?: number | null },
+) {
+  // Stage units are units of the order's product, not every unit in the
+  // company catalogue.  This prevents an unrelated kg/piece (or another
+  // item's carton) from becoming a valid production conversion.
+  const catalog = order.productItemId
+    ? await loadItemUnitOptions(cid, order.productItemId)
+    : [];
   return catalog;
 }
 
@@ -8900,7 +9224,10 @@ productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
       .from(productionOrderStagesTable)
       .where(eq(productionOrderStagesTable.orderId, ctx.order.id))
       .orderBy(asc(productionOrderStagesTable.sequence));
-    const unitCatalog = await loadStageUnitCatalog(ctx.cid, ctx.order);
+    const unitCatalog = await loadStageUnitCatalog(ctx.cid, {
+      unitCode: ctx.order.unitCode,
+      productItemId: ctx.order.productItemId,
+    });
     res.json({
       stages: stages.map(stageApiRow),
       unitCatalog,
@@ -9070,15 +9397,25 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
         num(ctx.order.plannedQty),
         !prevStages.some((s) => s.sequence < stage.sequence),
       ));
-    const quantityUnitFactor = canonicalStageUnitFactor(
-      execution.quantityUnit ?? stage.quantityUnit,
-      execution.quantityUnitFactor ?? stage.quantityUnitFactor ?? 1,
-      "عامل وحدة الكمية",
+    const quantityUnit = execution.quantityUnit !== undefined
+      ? execution.quantityUnit : stage.quantityUnit;
+    const wasteUnit = execution.wasteUnit !== undefined
+      ? execution.wasteUnit : stage.wasteUnit;
+    const quantityUnitFactor = await resolveStageFactor(
+      ctx.cid,
+      ctx.order.productItemId,
+      quantityUnit,
+      execution.quantityUnitFactor,
+      stage.quantityUnit,
+      stage.quantityUnitFactor,
     );
-    const wasteUnitFactor = canonicalStageUnitFactor(
-      execution.wasteUnit ?? stage.wasteUnit,
-      execution.wasteUnitFactor ?? stage.wasteUnitFactor ?? 1,
-      "عامل وحدة الهالك",
+    const wasteUnitFactor = await resolveStageFactor(
+      ctx.cid,
+      ctx.order.productItemId,
+      wasteUnit,
+      execution.wasteUnitFactor,
+      stage.wasteUnit,
+      stage.wasteUnitFactor,
     );
     const result = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(${ctx.cid}, ${ctx.order.id})`);
@@ -9088,11 +9425,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
           status: "in_progress" as const,
           startedAt: stage.startedAt ?? new Date(),
           inputQty,
-          quantityUnit: execution.quantityUnit !== undefined
-            ? execution.quantityUnit : stage.quantityUnit,
+           quantityUnit,
           quantityUnitFactor: String(quantityUnitFactor),
-          wasteUnit: execution.wasteUnit !== undefined
-            ? execution.wasteUnit : stage.wasteUnit,
+           wasteUnit,
           wasteUnitFactor: String(wasteUnitFactor),
           actualDurationMinutes: execution.actualDurationMinutes ?? stage.actualDurationMinutes,
           workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
@@ -9168,15 +9503,25 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
     const outputQty = execution.outputQty!;
     const wasteQty = execution.wasteQty ?? num(stage.wasteQty);
     const inputQty = execution.inputQty ?? num(stage.inputQty);
-    const quantityUnitFactor = canonicalStageUnitFactor(
-      execution.quantityUnit ?? stage.quantityUnit,
-      execution.quantityUnitFactor ?? stage.quantityUnitFactor ?? 1,
-      "عامل وحدة الكمية",
+    const quantityUnit = execution.quantityUnit !== undefined
+      ? execution.quantityUnit : stage.quantityUnit;
+    const wasteUnit = execution.wasteUnit !== undefined
+      ? execution.wasteUnit : stage.wasteUnit;
+    const quantityUnitFactor = await resolveStageFactor(
+      ctx.cid,
+      ctx.order.productItemId,
+      quantityUnit,
+      execution.quantityUnitFactor,
+      stage.quantityUnit,
+      stage.quantityUnitFactor,
     );
-    const wasteUnitFactor = canonicalStageUnitFactor(
-      execution.wasteUnit ?? stage.wasteUnit,
-      execution.wasteUnitFactor ?? stage.wasteUnitFactor ?? 1,
-      "عامل وحدة الهالك",
+    const wasteUnitFactor = await resolveStageFactor(
+      ctx.cid,
+      ctx.order.productItemId,
+      wasteUnit,
+      execution.wasteUnitFactor,
+      stage.wasteUnit,
+      stage.wasteUnitFactor,
     );
     assertStageQuantityConservation(
       inputQty,
@@ -9212,11 +9557,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           inputQty: String(inputQty),
           outputQty: String(outputQty),
           wasteQty: String(wasteQty),
-          quantityUnit: execution.quantityUnit !== undefined
-            ? execution.quantityUnit : stage.quantityUnit,
+           quantityUnit,
           quantityUnitFactor: String(quantityUnitFactor),
-          wasteUnit: execution.wasteUnit !== undefined
-            ? execution.wasteUnit : stage.wasteUnit,
+           wasteUnit,
           wasteUnitFactor: String(wasteUnitFactor),
           completedAt: new Date(),
           startedAt: stage.startedAt ?? new Date(),
@@ -9280,8 +9623,8 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           quantityUnitFactor,
           wasteUnit: updated.wasteUnit,
           wasteUnitFactor,
-          convertedOutputQty: outputQty * quantityUnitFactor,
-          convertedWasteQty: wasteQty * wasteUnitFactor,
+          convertedOutputQty: multiplyQuantity(String(outputQty), String(quantityUnitFactor)),
+          convertedWasteQty: multiplyQuantity(String(wasteQty), String(wasteUnitFactor)),
           propagatedInputQty,
           actualDurationMinutes: execution.actualDurationMinutes ?? num(stage.actualDurationMinutes),
           workerCount: execution.workerCount !== undefined ? execution.workerCount : stage.workerCount,
@@ -9320,19 +9663,25 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (["done", "completed", "skipped"].includes(String(current.status))) {
       return void res.status(409).json({ error: "لا يمكن تعديل مرحلة مكتملة أو متخطاة؛ أعد فتحها أولاً" });
     }
-    const resultingQuantityUnitFactor = canonicalStageUnitFactor(
-      execution.quantityUnit !== undefined
-        ? execution.quantityUnit
-        : current.quantityUnit,
-      execution.quantityUnitFactor ?? current.quantityUnitFactor ?? 1,
-      "عامل وحدة الكمية",
+    const resultingQuantityUnit = execution.quantityUnit !== undefined
+      ? execution.quantityUnit : current.quantityUnit;
+    const resultingWasteUnit = execution.wasteUnit !== undefined
+      ? execution.wasteUnit : current.wasteUnit;
+    const resultingQuantityUnitFactor = await resolveStageFactor(
+      ctx.cid,
+      ctx.order.productItemId,
+      resultingQuantityUnit,
+      execution.quantityUnitFactor,
+      current.quantityUnit,
+      current.quantityUnitFactor,
     );
-    const resultingWasteUnitFactor = canonicalStageUnitFactor(
-      execution.wasteUnit !== undefined
-        ? execution.wasteUnit
-        : current.wasteUnit,
-      execution.wasteUnitFactor ?? current.wasteUnitFactor ?? 1,
-      "عامل وحدة الهالك",
+    const resultingWasteUnitFactor = await resolveStageFactor(
+      ctx.cid,
+      ctx.order.productItemId,
+      resultingWasteUnit,
+      execution.wasteUnitFactor,
+      current.wasteUnit,
+      current.wasteUnitFactor,
     );
     assertStageQuantityConservation(
       execution.inputQty ?? current.inputQty,
@@ -9358,10 +9707,10 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (execution.inputQty !== undefined) updates.inputQty = String(execution.inputQty);
     if (execution.outputQty !== undefined) updates.outputQty = String(execution.outputQty);
     if (execution.wasteQty !== undefined) updates.wasteQty = String(execution.wasteQty);
-    if (execution.quantityUnit !== undefined) updates.quantityUnit = execution.quantityUnit;
+    if (execution.quantityUnit !== undefined) updates.quantityUnit = resultingQuantityUnit;
     if (execution.quantityUnitFactor !== undefined)
       updates.quantityUnitFactor = String(resultingQuantityUnitFactor);
-    if (execution.wasteUnit !== undefined) updates.wasteUnit = execution.wasteUnit;
+    if (execution.wasteUnit !== undefined) updates.wasteUnit = resultingWasteUnit;
     if (execution.wasteUnitFactor !== undefined)
       updates.wasteUnitFactor = String(resultingWasteUnitFactor);
     if (execution.actualDurationMinutes !== undefined)
@@ -13579,6 +13928,9 @@ router.get("/cost-rollup", async (req, res) => {
       qty: number;
       unitCost: number;
       totalCost: number;
+      usageUnitCode?: string | null;
+      baseUnitCode?: string | null;
+      usageFactor?: string;
     }> = [];
     let materialsCost = 0;
 
@@ -13590,6 +13942,7 @@ router.get("/cost-rollup", async (req, res) => {
           itemId: bomTemplateLinesTable.itemId,
           description: bomTemplateLinesTable.description,
           quantity: bomTemplateLinesTable.quantity,
+          unitCode: bomTemplateLinesTable.unitCode,
           itemNameAr: itemsTable.nameAr,
           itemSku: itemsTable.code,
         })
@@ -13631,7 +13984,20 @@ router.get("/cost-rollup", async (req, res) => {
       }
 
       for (const rl of rawLines) {
-        const scaledQty = (Number(rl.quantity) || 0) / tplOutput;
+        let scaledQty = (Number(rl.quantity) || 0) / tplOutput;
+        let usageFactor = "1";
+        let baseUnitCode: string | null = rl.unitCode;
+        if (rl.itemId) {
+          const usage = await normalizeProductionRawQuantity(
+            cid,
+            rl.itemId,
+            divideQuantity(String(rl.quantity), String(tplOutput)),
+            rl.unitCode,
+          );
+          scaledQty = numericQuantity(usage.baseQuantity);
+          usageFactor = usage.factor;
+          baseUnitCode = usage.baseUnitCode;
+        }
         const unitCost = rl.itemId ? costMap.get(rl.itemId) ?? 0 : 0;
         const totalCost = scaledQty * unitCost;
         materialsCost += totalCost;
@@ -13642,6 +14008,9 @@ router.get("/cost-rollup", async (req, res) => {
           qty: Number(scaledQty.toFixed(4)),
           unitCost: Number(unitCost.toFixed(4)),
           totalCost: Number(totalCost.toFixed(4)),
+          usageUnitCode: rl.unitCode,
+          baseUnitCode,
+          usageFactor,
         });
       }
     }

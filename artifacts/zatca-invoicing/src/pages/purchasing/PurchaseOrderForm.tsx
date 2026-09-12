@@ -49,12 +49,20 @@ import {
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
 import PurchaseOrderDetails from "./PurchaseOrderDetails";
+import {
+  catalogUnitsWithHistoricalSelection,
+  isActiveItemUnit,
+  itemUnitsWithHistoricalSelection,
+  serializeDocumentLine,
+} from "@/lib/documentLineUnits";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
 interface OrderLine {
   _id: string;
+  /** Persisted database line id; absent on newly added/duplicated lines. */
+  id?: number;
   itemId: string;
   itemName: string;
   itemCode: string;
@@ -356,6 +364,7 @@ export default function PurchaseOrderForm() {
     setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
       freeQty:     String(l.freeQty ?? "0"),
       _id: crypto.randomUUID(),
+      id: Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
       itemId:      l.itemId      ? String(l.itemId)      : "",
       itemName:    l.itemName    ?? "",
       itemCode:    l.itemCode    ?? "",
@@ -370,6 +379,13 @@ export default function PurchaseOrderForm() {
       lineTotal:   String(l.lineTotal),
       notes:       l.notes ?? "",
     })) : (useTabbedLayout ? [] : [newLine()]));
+    void Promise.all(
+      (existing.lines ?? [])
+        .map((l: any) => l.itemId ? String(l.itemId) : "")
+        .filter(Boolean)
+        .filter((id: string, i: number, ids: string[]) => ids.indexOf(id) === i)
+        .map((id: string) => fetchItemUnits(id)),
+    );
   }, [existing]);
 
   // ── Duplicate from another purchase order (?from=<id> on /new) ──
@@ -444,7 +460,7 @@ export default function PurchaseOrderForm() {
     (async () => {
       const us = await fetchItemUnits(qaItemId);
       if (cancelled) return;
-      const base = us.find((u: any) => u.isBase) ?? us[0];
+      const base = us.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? us.find(isActiveItemUnit);
       setQaUnitId(base?.unitId != null ? String(base.unitId) : "");
     })();
     return () => { cancelled = true; };
@@ -489,7 +505,7 @@ export default function PurchaseOrderForm() {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
     const itemUnits = await fetchItemUnits(itemId);
-    const base = itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
+    const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
     let chosenPrice: string = String(base?.costPrice ?? item.costPrice ?? "0");
     if (currencyCode && defaultCurrency && currencyCode !== defaultCurrency.code) {
@@ -527,7 +543,7 @@ export default function PurchaseOrderForm() {
       if (isDefault) {
         const itemUnits = await fetchItemUnits(l.itemId);
         const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
-          ?? itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
+          ?? itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
         const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
         const v = row?.costPrice ?? item?.costPrice;
         if (v != null) np = String(v);
@@ -671,7 +687,7 @@ export default function PurchaseOrderForm() {
       totalAmount: totalAmount.toFixed(2),
       priceIncludesVat,
       notes: notes || null,
-      lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
+       lines: lines.filter(l => l.itemName).map(l => serializeDocumentLine(l)),
     });
   }
 
@@ -710,7 +726,9 @@ export default function PurchaseOrderForm() {
       label: itemNameOf(i),
     })),
   ], usageModes);
-  const unitItems = units.map((u: any) => ({ value: String(u.id), label: unitNameOf(u) }));
+  const unitItems = units
+    .filter((u: any) => u.isActive !== false)
+    .map((u: any) => ({ value: String(u.id), label: unitNameOf(u) }));
 
   // 11-column lines grid — same column widths as the invoice form, minus the
   // weight / expenses / finalCost columns that have no meaning for an order.
@@ -885,15 +903,16 @@ export default function PurchaseOrderForm() {
           <label className="text-[11px] text-muted-foreground">{tr("lineCols.unit")}</label>
           {(() => {
             const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
-            const opts = iu.map((u: any) => ({
+            const opts = itemUnitsWithHistoricalSelection(iu, qaUnitId).map((u: any) => ({
               value: String(u.unitId),
               label: `${unitNameOf(u.unit)}${Number(u.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(u.conversionFactor)})` : ""}`,
+              disabled: u.isActive === false || u.unit?.isActive === false,
             }));
             return (
               <Select value={qaUnitId || undefined} onValueChange={setQaUnitId} disabled={opts.length === 0}>
                 <SelectTrigger className="h-9 text-xs"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>
                 <SelectContent>
-                  {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                   {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             );
@@ -1248,16 +1267,22 @@ export default function PurchaseOrderForm() {
                       {(() => {
                         const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
                         const opts = itemUnits.length > 0
-                          ? itemUnits.map((iu: any) => ({
+                          ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
                               value: String(iu.unitId),
                               label: `${unitNameOf(iu.unit)}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                              disabled: iu.isActive === false || iu.unit?.isActive === false,
                             }))
-                          : unitItems;
+                          : [
+                              ...unitItems,
+                              ...catalogUnitsWithHistoricalSelection(units, l.unitId)
+                                .filter((u: any) => !unitItems.some((x: any) => x.value === String(u.id)))
+                                .map((u: any) => ({ value: String(u.id), label: unitNameOf(u) || `#${u.id}`, disabled: u.isActive === false })),
+                            ];
                         return units.length > 0 ? (
                           <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
                             <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>
                             <SelectContent>
-                              {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                             {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         ) : (

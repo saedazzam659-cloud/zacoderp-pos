@@ -82,10 +82,6 @@ export default function StockTransfer() {
     queryKey: ["items", cid],
     queryFn: () => inventoryApi.getItems(cid),
   });
-  const { data: units = [] } = useQuery({
-    queryKey: ["units", cid],
-    queryFn: () => inventoryApi.getUnits(cid),
-  });
   const { data: trDetail } = useQuery({
     queryKey: ["transfer-detail", expandedId],
     queryFn: () => inventoryApi.getTransfer(expandedId!),
@@ -176,12 +172,14 @@ export default function StockTransfer() {
       prev.map((l, idx) => {
         if (idx !== lineIdx) return l;
         const ups: any[] = itemUnitsMap[l.itemId] ?? [];
-        const up = ups.find((u: any) => String(u.unitId) === unitId);
+        const up = unitId
+          ? ups.find((u: any) => String(u.unitId) === unitId)
+          : ups.find((u: any) => u.isBase || Number(u.conversionFactor ?? 1) === 1);
         return {
           ...l,
-          unitId,
+          unitId: unitId || (up ? String(up.unitId) : ""),
           costPrice: up ? String(up.costPrice) : l.costPrice,
-          conversionFactor: up ? String(up.conversionFactor) : "1",
+          conversionFactor: up ? String(up.conversionFactor ?? 1) : "1",
         };
       })
     );
@@ -219,18 +217,20 @@ export default function StockTransfer() {
     });
   }
 
-  // Get available units for a line's item (from cache or fall back to global)
+  // Get only units linked to this item's active unit-price rows.
   function getLineUnits(line: any): { id: number; nameAr?: string | null; nameEn?: string | null; code?: string }[] {
     const cached = itemUnitsMap[line.itemId];
     if (cached && cached.length > 0) {
-      return cached.map((u: any) => ({
+      return cached.filter((u: any) => u.isActive !== false).map((u: any) => ({
         id: u.unitId,
         nameAr: u.unit?.nameAr ?? null,
         nameEn: u.unit?.nameEn ?? null,
         code: u.unit?.code,
       }));
     }
-    return (units as any[]).map((u: any) => ({ id: u.id, nameAr: u.nameAr, nameEn: u.nameEn, code: u.code }));
+    // Never fall back to the company's global unit list: a transaction unit
+    // must be linked to this item so the central engine can resolve it.
+    return [];
   }
 
   // Check if the current unit has an auto-filled price
@@ -570,6 +570,13 @@ export default function StockTransfer() {
                                             {t("stockTransferPage.autoBadge")}
                                           </span>
                                         )}
+                                        {cf !== 1 && (
+                                          <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                                            {t("stockTransferPage.baseCostHint", {
+                                              cost: fmt(Number(line.costPrice || 0) / cf),
+                                            })}
+                                          </p>
+                                        )}
                                       </div>
 
                                       {/* الإجمالي */}
@@ -866,8 +873,27 @@ export default function StockTransfer() {
                                       <tr key={l.id}>
                                         <td className="py-1.5 pr-0">{pickName(l.item?.nameAr, l.item?.nameEn) || l.itemId}</td>
                                         <td className="py-1.5">{pickName(l.unit?.nameAr, l.unit?.nameEn) || t("stockTransferPage.baseUnit")}</td>
-                                        <td className="py-1.5 tabular-nums">{fmtQty(l.qty)}</td>
-                                        <td className="py-1.5 tabular-nums">{fmt(l.costPrice)}</td>
+                                        <td className="py-1.5 tabular-nums">
+                                          <div>{fmtQty(l.qty)}</div>
+                                          {Number(l.conversionFactor ?? 1) !== 1 && (
+                                            <div className="text-[10px] text-purple-600">
+                                              {t("stockTransferPage.baseQtyHint", {
+                                                cf: l.conversionFactor,
+                                                qty: fmtQty(Number(l.qty) * Number(l.conversionFactor)),
+                                              })}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="py-1.5 tabular-nums">
+                                          <div>{fmt(l.costPrice)}</div>
+                                          {Number(l.conversionFactor ?? 1) !== 1 && (
+                                            <div className="text-[10px] text-muted-foreground">
+                                              {t("stockTransferPage.baseCostHint", {
+                                                cost: fmt(Number(l.costPrice) / Number(l.conversionFactor)),
+                                              })}
+                                            </div>
+                                          )}
+                                        </td>
                                         <td className="py-1.5 tabular-nums font-medium">
                                           {fmt(Number(l.qty) * Number(l.costPrice))}
                                         </td>

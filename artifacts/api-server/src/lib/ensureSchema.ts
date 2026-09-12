@@ -244,6 +244,197 @@ async function ensureIndustrialPurchaseCostCompatibility(): Promise<void> {
   }
 }
 
+/**
+ * The item-unit table predates the graph model.  Keep this migration additive:
+ * it only derives edges when the old row has one unambiguous base marker (or
+ * the existing item.unit_id identifies that marker).  Multiple/no candidates
+ * are preserved and flagged, never silently rebased.  The guard that all
+ * reference_unit_id values are still NULL makes the backfill idempotent and
+ * prevents a later boot from overwriting a user-edited graph.
+ */
+const ITEM_UNIT_CONVERSION_COMPATIBILITY_DDL = [
+  `ALTER TABLE IF EXISTS units
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS sales_invoice_lines
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS sales_return_lines
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS purchase_invoice_lines
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS purchase_order_lines
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS purchase_return_lines
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS sales_order_lines
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS goods_receipt_lines
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS goods_delivery_lines
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS production_order_stages
+     ALTER COLUMN quantity_unit_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS production_order_stages
+     ALTER COLUMN waste_unit_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS production_waste_records
+     ALTER COLUMN unit_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS item_unit_prices
+     ALTER COLUMN conversion_factor TYPE NUMERIC(30,18)`,
+  `ALTER TABLE IF EXISTS item_unit_prices
+     ADD COLUMN IF NOT EXISTS reference_unit_id INTEGER`,
+  `ALTER TABLE IF EXISTS item_unit_prices
+     ADD COLUMN IF NOT EXISTS relation_factor NUMERIC(30,18) NOT NULL DEFAULT 1`,
+  `ALTER TABLE IF EXISTS item_unit_prices
+     ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE`,
+  `ALTER TABLE IF EXISTS item_unit_prices
+     ADD COLUMN IF NOT EXISTS decimal_places INTEGER NOT NULL DEFAULT 2`,
+  `ALTER TABLE IF EXISTS item_unit_prices
+     ADD COLUMN IF NOT EXISTS rounding_mode TEXT NOT NULL DEFAULT 'half_up'`,
+  `ALTER TABLE IF EXISTS item_unit_prices
+     ADD COLUMN IF NOT EXISTS legacy_conversion_conflict BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE IF EXISTS stock_transfer_items
+     ADD COLUMN IF NOT EXISTS conversion_factor NUMERIC(30,18) NOT NULL DEFAULT 1`,
+  `ALTER TABLE IF EXISTS stock_adjustment_items
+     ADD COLUMN IF NOT EXISTS conversion_factor NUMERIC(30,18) NOT NULL DEFAULT 1`,
+  `DO $unit_conversion_migration$
+  DECLARE
+    item_row RECORD;
+    candidate_base INTEGER;
+    base_count INTEGER;
+    has_other_edge BOOLEAN;
+    has_unmigrated_row BOOLEAN;
+  BEGIN
+    IF to_regclass('public.item_unit_prices') IS NULL THEN
+      RETURN;
+    END IF;
+    FOR item_row IN
+      SELECT DISTINCT company_id, item_id
+        FROM item_unit_prices
+    LOOP
+      candidate_base := NULL;
+      IF EXISTS (
+        SELECT 1
+          FROM item_unit_prices
+         WHERE company_id = item_row.company_id
+           AND item_id = item_row.item_id
+         GROUP BY unit_id
+        HAVING COUNT(*) > 1
+      ) THEN
+        UPDATE item_unit_prices
+           SET legacy_conversion_conflict = TRUE
+         WHERE company_id = item_row.company_id
+           AND item_id = item_row.item_id;
+        CONTINUE;
+      END IF;
+      SELECT COUNT(*)::INTEGER, MIN(unit_id)
+        INTO base_count, candidate_base
+        FROM item_unit_prices
+       WHERE company_id = item_row.company_id
+         AND item_id = item_row.item_id
+         AND is_base = TRUE;
+
+      -- A pre-existing item.unit_id is an authoritative base only when it
+      -- points at exactly one item-unit row. This handles old imports that
+      -- did not set is_base while avoiding a guess among unrelated rows.
+      IF base_count = 0 THEN
+        SELECT i.unit_id
+          INTO candidate_base
+          FROM items i
+         WHERE i.company_id = item_row.company_id
+           AND i.id = item_row.item_id
+           AND i.unit_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM item_unit_prices u
+              WHERE u.company_id = item_row.company_id
+                AND u.item_id = item_row.item_id
+                AND u.unit_id = i.unit_id
+           );
+      END IF;
+
+      IF base_count > 1 OR (base_count = 0 AND candidate_base IS NULL) THEN
+        UPDATE item_unit_prices
+           SET legacy_conversion_conflict = TRUE
+         WHERE company_id = item_row.company_id
+           AND item_id = item_row.item_id;
+        CONTINUE;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM items i
+         WHERE i.company_id = item_row.company_id
+           AND i.id = item_row.item_id
+           AND i.unit_id IS NOT NULL
+           AND i.unit_id <> candidate_base
+      ) THEN
+        UPDATE item_unit_prices
+           SET legacy_conversion_conflict = TRUE
+         WHERE company_id = item_row.company_id
+           AND item_id = item_row.item_id;
+        CONTINUE;
+      END IF;
+
+      UPDATE items
+         SET unit_id = candidate_base
+       WHERE company_id = item_row.company_id
+         AND id = item_row.item_id
+         AND unit_id IS NULL;
+
+      -- A non-null reference means this item has already been migrated or
+      -- edited; never overwrite its relationFactor on a subsequent boot.
+      SELECT EXISTS (
+        SELECT 1 FROM item_unit_prices
+         WHERE company_id = item_row.company_id
+           AND item_id = item_row.item_id
+           AND reference_unit_id IS NOT NULL
+      ) INTO has_other_edge;
+      IF has_other_edge THEN
+        SELECT EXISTS (
+          SELECT 1 FROM item_unit_prices
+           WHERE company_id = item_row.company_id
+             AND item_id = item_row.item_id
+             AND reference_unit_id IS NULL
+        ) INTO has_unmigrated_row;
+        IF has_unmigrated_row THEN
+          UPDATE item_unit_prices
+             SET legacy_conversion_conflict = TRUE
+           WHERE company_id = item_row.company_id
+             AND item_id = item_row.item_id;
+        END IF;
+        CONTINUE;
+      END IF;
+
+      UPDATE item_unit_prices
+         SET is_base = (unit_id = candidate_base),
+             reference_unit_id = CASE WHEN unit_id = candidate_base THEN NULL ELSE candidate_base END,
+             relation_factor = CASE
+               WHEN unit_id = candidate_base THEN 1
+               WHEN conversion_factor > 0 THEN conversion_factor
+               ELSE 1
+             END,
+             conversion_factor = CASE
+               WHEN unit_id = candidate_base AND conversion_factor > 0 THEN 1
+               ELSE conversion_factor
+             END,
+             legacy_conversion_conflict = legacy_conversion_conflict
+               OR conversion_factor <= 0
+       WHERE company_id = item_row.company_id
+         AND item_id = item_row.item_id
+         AND legacy_conversion_conflict = FALSE;
+    END LOOP;
+  END
+  $unit_conversion_migration$`,
+] as const;
+
+async function ensureItemUnitConversionCompatibility(): Promise<void> {
+  for (const stmt of ITEM_UNIT_CONVERSION_COMPATIBILITY_DDL) {
+    try {
+      await execDDL(stmt);
+    } catch (err) {
+      logger.error({ err, stmt }, "ensureSchema: item-unit conversion compatibility reconciliation failed");
+      throw err;
+    }
+  }
+}
+
 // Boot-time DDL (ALTER TABLE ADD COLUMN / CREATE INDEX) must never hang forever
 // waiting on a relation lock held by another backend — most importantly the
 // PREVIOUS revision still serving traffic during an autoscale promote. A blocked
@@ -3896,6 +4087,10 @@ async function runHeal(options: {
     logger.error({ err }, "ensureSchema: column reconciliation failed");
     throw err;
   }
+  // Generic reconciliation materializes any newly declared snapshot/factor
+  // columns first; this pass then widens existing numeric columns and performs
+  // the guarded legacy item-unit backfill.
+  await ensureItemUnitConversionCompatibility();
 
   // Tenant identity indexes depend on the columns above (companies.code in
   // particular), so they must run AFTER ensureColumns.

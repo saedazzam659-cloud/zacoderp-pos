@@ -15,6 +15,7 @@ import {
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable, salesReturnLinesTable,
   purchaseInvoicesTable, purchaseReturnsTable,
+  purchaseInvoiceLinesTable, purchaseReturnLinesTable,
   goodsReceiptsTable, goodsDeliveriesTable,
   itemDocumentsTable,
   itemSuppliersTable,
@@ -61,6 +62,19 @@ import {
   INVENTORY_OPENING_CREDIT_MARKER,
   INVENTORY_OPENING_DEBIT_MARKER,
 } from "../lib/openingBalances.js";
+import {
+  UnitConversionError,
+  resolveItemUnitConversion,
+  multiplyQuantity,
+  divideQuantity,
+  formatRational,
+  isPositiveExactDecimal,
+  parseExactDecimal,
+  resolveUnitGraph,
+  roundQuantity,
+  decimalForStorage,
+  toStorageDecimal,
+} from "../lib/unitConversion.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -756,7 +770,7 @@ router.put("/items/:id/brands/:linkId", async (req, res) => {
   if (!existing) { res.status(404).json({ error: "الارتباط غير موجود" }); return; }
   const [row] = await db.update(itemBrandsTable).set(pickItemBrandBody(req.body))
     .where(and(eq(itemBrandsTable.id, linkId), eq(itemBrandsTable.companyId, cid))).returning();
-  auditSubEntity(req, "item_brands", linkId, "update", existing, row);
+  auditSubEntity(req, "item_brands", linkId, "edit", existing, row);
   res.json(row);
 });
 
@@ -778,11 +792,161 @@ router.delete("/items/:id/brands/:linkId", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 // UNITS
 // ═══════════════════════════════════════════════════════════════════
+function unitErrorResponse(res: any, error: unknown): void {
+  if (error instanceof UnitConversionError) {
+    const status = error.code === "ITEM_NOT_FOUND" || error.code === "UNIT_NOT_FOUND" || error.code === "UNIT_ROW_NOT_FOUND" ? 404
+      : ["DUPLICATE_UNIT", "CONFLICTING_BASE", "BASE_CHANGE_BLOCKED", "BASE_DISABLE_BLOCKED", "BASE_REQUIRED", "BASE_ROW_REQUIRED", "ANCESTOR_IN_USE", "BASE_CHANGE_REQUIRES_EDIT", "INACTIVE_UNIT"].includes(error.code) ? 409
+      : 400;
+    res.status(status).json({ error: error.message, code: error.code, ...(error.details ?? {}) });
+    return;
+  }
+  const candidate = error as { code?: string; message?: string } | null;
+  if (candidate?.code === "23505") {
+    res.status(409).json({ error: "يوجد رابط وحدة مكرر" });
+    return;
+  }
+  res.status(400).json({ error: candidate?.message ?? "بيانات تحويل الوحدات غير صالحة" });
+}
+
+function positiveDecimal(value: unknown, field: string): string {
+  const candidate = typeof value === "string" ? value.trim() : String(value ?? "");
+  if (!isPositiveExactDecimal(candidate)) {
+    throw new UnitConversionError("INVALID_RELATION_FACTOR", `${field} must be a positive exact decimal`);
+  }
+  return formatRational(parseExactDecimal(candidate));
+}
+
+function decimalPlacesValue(value: unknown, fallback: number): number {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 18) {
+    throw new UnitConversionError("INVALID_DECIMAL_PLACES", "decimalPlaces must be an integer from 0 to 18");
+  }
+  return value;
+}
+
+async function itemHasHistoricalUsage(executor: any, cid: number, itemId: number): Promise<boolean> {
+  const probes = await Promise.all([
+    executor.select({ id: stockLedgerTable.id }).from(stockLedgerTable)
+      .where(and(eq(stockLedgerTable.companyId, cid), eq(stockLedgerTable.itemId, itemId))).limit(1),
+    executor.select({ id: stockBalanceTable.id }).from(stockBalanceTable)
+      .where(and(eq(stockBalanceTable.companyId, cid), eq(stockBalanceTable.itemId, itemId))).limit(1),
+    executor.select({ id: salesInvoiceLinesTable.id }).from(salesInvoiceLinesTable)
+      .where(and(eq(salesInvoiceLinesTable.companyId, cid), eq(salesInvoiceLinesTable.itemId, itemId))).limit(1),
+    executor.select({ id: salesReturnLinesTable.id }).from(salesReturnLinesTable)
+      .where(and(eq(salesReturnLinesTable.companyId, cid), eq(salesReturnLinesTable.itemId, itemId))).limit(1),
+    executor.select({ id: purchaseInvoiceLinesTable.id }).from(purchaseInvoiceLinesTable)
+      .where(and(eq(purchaseInvoiceLinesTable.companyId, cid), eq(purchaseInvoiceLinesTable.itemId, itemId))).limit(1),
+    executor.select({ id: purchaseReturnLinesTable.id }).from(purchaseReturnLinesTable)
+      .where(and(eq(purchaseReturnLinesTable.companyId, cid), eq(purchaseReturnLinesTable.itemId, itemId))).limit(1),
+  ]);
+  return probes.some((rows: unknown[]) => rows.length > 0);
+}
+
+async function lockItemUnitGraph(tx: any, cid: number, itemId: number): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}::integer, hashtext(${`item-unit:${itemId}`}))`);
+}
+
+async function getItemForUnitEdit(executor: any, cid: number, itemId: number): Promise<any> {
+  const [item] = await executor.select().from(itemsTable)
+    .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
+  if (!item) throw new UnitConversionError("ITEM_NOT_FOUND", "Item does not belong to this company");
+  return item;
+}
+
+async function assertCatalogUnit(executor: any, cid: number, unitId: number): Promise<any> {
+  const [unit] = await executor.select().from(unitsTable)
+    .where(and(eq(unitsTable.id, unitId), eq(unitsTable.companyId, cid)));
+  if (!unit) throw new UnitConversionError("UNIT_NOT_FOUND", "Unit does not belong to this company");
+  return unit;
+}
+
+async function recomputeCachedItemFactors(tx: any, cid: number, itemId: number): Promise<void> {
+  const item = await getItemForUnitEdit(tx, cid, itemId);
+  const rows = await tx.select().from(itemUnitPricesTable)
+    .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.itemId, itemId)));
+  if (!rows.length) return;
+  const graph = resolveUnitGraph({ baseUnitId: item.unitId ?? null, rows });
+  for (const row of rows) {
+    const factor = graph.factors.get(row.unitId);
+    if (factor === undefined) continue;
+    // The graph factor remains exact in memory; conversionFactor is only a
+    // compatibility cache and must be a finite PostgreSQL numeric.
+    await tx.update(itemUnitPricesTable).set({ conversionFactor: decimalForStorage(factor, 18, "half_up") })
+      .where(and(eq(itemUnitPricesTable.id, row.id), eq(itemUnitPricesTable.companyId, cid)));
+  }
+}
+
+async function changeItemBaseUnit(
+  tx: any,
+  cid: number,
+  itemId: number,
+  oldBaseId: number | null,
+  newBaseId: number,
+  rows: any[],
+): Promise<void> {
+  if (oldBaseId === newBaseId) return;
+  // Re-basing would require rewriting every edge and can invalidate
+  // historical/document/production snapshots.  Unit links are intentionally
+  // immutable as a base once configured; callers may still edit relation
+  // edges without changing the item's root.
+  if (rows.length > 0) {
+    throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The base unit cannot change while item-unit relationships exist");
+  }
+  if (await itemHasHistoricalUsage(tx, cid, itemId)) {
+    throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The base unit cannot change after historical stock or usage exists");
+  }
+  await assertCatalogUnit(tx, cid, newBaseId);
+  if (oldBaseId === null) {
+    await tx.update(itemsTable).set({ unitId: newBaseId })
+      .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
+    return;
+  }
+  await tx.update(itemsTable).set({ unitId: newBaseId })
+    .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
+}
+
+async function unitRowValues(body: any, current: any | null, item: any, unitId: number): Promise<any> {
+  const currentIsBase = current?.isBase === true;
+  let isBase = body.isBase === undefined ? currentIsBase : body.isBase === true;
+  if (!current && item.unitId === unitId && body.isBase === undefined) isBase = true;
+  const referenceRaw = body.referenceUnitId !== undefined
+    ? body.referenceUnitId
+    : current?.referenceUnitId ?? item.unitId ?? null;
+  const referenceUnitId = isBase
+    ? null
+    : (referenceRaw === null || referenceRaw === "" || referenceRaw === undefined ? null : Number(referenceRaw));
+  const relationRaw = body.relationFactor !== undefined
+    ? body.relationFactor
+    : body.conversionFactor !== undefined
+      ? body.conversionFactor
+      : current?.relationFactor ?? current?.conversionFactor ?? "1";
+  const relationFactor = isBase ? "1" : positiveDecimal(relationRaw, "relationFactor");
+  if (!isBase && (!Number.isInteger(referenceUnitId) || (referenceUnitId as number) <= 0)) {
+    throw new UnitConversionError("MISSING_REFERENCE_UNIT", "A non-base unit must reference another unit");
+  }
+  const decimalPlaces = decimalPlacesValue(body.decimalPlaces, current?.decimalPlaces ?? 2);
+  const roundingMode = String(body.roundingMode ?? current?.roundingMode ?? "half_up");
+  // Validate the mode through the exact display helper without involving
+  // conversion arithmetic.
+  roundQuantity("0", decimalPlaces, roundingMode);
+  if (isBase && body.isActive === false) {
+    throw new UnitConversionError("BASE_DISABLE_BLOCKED", "The base unit cannot be inactive");
+  }
+  return {
+    relationFactor,
+    referenceUnitId,
+    isBase,
+    isActive: body.isActive === undefined ? current?.isActive !== false : body.isActive !== false,
+    decimalPlaces,
+    roundingMode,
+  };
+}
+
 router.get("/units", async (req, res) => {
-  const cid = getCompanyId(req);
-  const rows = cid
-    ? await db.select().from(unitsTable).where(eq(unitsTable.companyId, cid)).orderBy(asc(unitsTable.code))
-    : await db.select().from(unitsTable).orderBy(asc(unitsTable.code));
+  const cid = guard(req, res); if (!cid) return;
+  const rows = await db.select().from(unitsTable)
+    .where(eq(unitsTable.companyId, cid))
+    .orderBy(asc(unitsTable.code));
   res.json(rows);
 });
 
@@ -798,8 +962,13 @@ router.post("/units", async (req, res) => {
   if (existing.some(u => u.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
     res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لوحدة أخرى` }); return;
   }
-  const [row] = await db.insert(unitsTable).values({ companyId: cid, code, nameAr, nameEn, conversionFactor: conversionFactor || "1" }).returning();
-  res.status(201).json(row);
+  try {
+    const factor = conversionFactor === undefined ? "1" : positiveDecimal(conversionFactor, "conversionFactor");
+    const [row] = await db.insert(unitsTable).values({ companyId: cid, code, nameAr, nameEn, conversionFactor: factor }).returning();
+    res.status(201).json(row);
+  } catch (error) {
+    unitErrorResponse(res, error);
+  }
 });
 
 router.put("/units/:id", async (req, res) => {
@@ -813,14 +982,34 @@ router.put("/units/:id", async (req, res) => {
   if (nameAr && others.some(u => u.id !== id && u.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
     res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لوحدة أخرى` }); return;
   }
-  const [row] = await db.update(unitsTable).set({ code, nameAr, nameEn, conversionFactor: conversionFactor || "1" }).where(and(eq(unitsTable.id, id), eq(unitsTable.companyId, cid))).returning();
-  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
-  res.json(row);
+  const [existing] = await db.select().from(unitsTable)
+    .where(and(eq(unitsTable.id, id), eq(unitsTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  try {
+    const factor = conversionFactor === undefined ? existing.conversionFactor : positiveDecimal(conversionFactor, "conversionFactor");
+    const [row] = await db.update(unitsTable).set({ code, nameAr, nameEn, conversionFactor: factor })
+      .where(and(eq(unitsTable.id, id), eq(unitsTable.companyId, cid))).returning();
+    res.json(row);
+  } catch (error) {
+    unitErrorResponse(res, error);
+  }
 });
 
 router.delete("/units/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  await db.delete(unitsTable).where(and(eq(unitsTable.id, Number(req.params.id)), eq(unitsTable.companyId, cid)));
+  const id = Number(req.params.id);
+  const [baseUse] = await db.select({ id: itemsTable.id }).from(itemsTable)
+    .where(and(eq(itemsTable.companyId, cid), eq(itemsTable.unitId, id))).limit(1);
+  const [itemUse] = await db.select({ id: itemUnitPricesTable.id }).from(itemUnitPricesTable)
+    .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.unitId, id))).limit(1);
+  const [referenceUse] = await db.select({ id: itemUnitPricesTable.id }).from(itemUnitPricesTable)
+    .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.referenceUnitId, id))).limit(1);
+  if (baseUse || itemUse || referenceUse) {
+    res.status(409).json({ error: "لا يمكن حذف وحدة مستخدمة في صنف أو علاقة تحويل" }); return;
+  }
+  const deleted = await db.delete(unitsTable)
+    .where(and(eq(unitsTable.id, id), eq(unitsTable.companyId, cid))).returning({ id: unitsTable.id });
+  if (!deleted.length) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json({ ok: true });
 });
 
@@ -1088,6 +1277,15 @@ router.post("/items", async (req, res) => {
   if (!variantAttrsCheck.ok) { res.status(400).json({ error: variantAttrsCheck.error }); return; }
   const normalizedTags = normalizeTags(tags);
   const disc = normalizeDiscount(discountType, discountValue);
+  if (unitId !== undefined && unitId !== null && unitId !== "") {
+    const normalizedUnitId = Number(unitId);
+    if (!Number.isInteger(normalizedUnitId) || normalizedUnitId <= 0) {
+      res.status(400).json({ error: "وحدة الصنف غير صالحة" }); return;
+    }
+    const [ownedUnit] = await db.select({ id: unitsTable.id }).from(unitsTable)
+      .where(and(eq(unitsTable.id, normalizedUnitId), eq(unitsTable.companyId, cid)));
+    if (!ownedUnit) { res.status(400).json({ error: "وحدة الصنف لا تنتمي للشركة" }); return; }
+  }
   const [row] = await db.insert(itemsTable).values({
     companyId: cid, code, nameAr, nameEn, barcode,
     itemType: itemType || parentRowForVariant?.itemType || "stock",
@@ -1160,6 +1358,28 @@ router.put("/items/:id", async (req, res) => {
   }
   // Snapshot the existing row BEFORE mutating so we can compute a precise diff.
   const existing = others.find(i => i.id === id) ?? null;
+  if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (unitId !== undefined) {
+    const requestedUnitId = unitId === null || unitId === "" ? null : Number(unitId);
+    if (requestedUnitId !== null && (!Number.isInteger(requestedUnitId) || requestedUnitId <= 0)) {
+      res.status(400).json({ error: "وحدة الصنف غير صالحة" }); return;
+    }
+    if (requestedUnitId !== null) {
+      const [ownedUnit] = await db.select({ id: unitsTable.id }).from(unitsTable)
+        .where(and(eq(unitsTable.id, requestedUnitId), eq(unitsTable.companyId, cid)));
+      if (!ownedUnit) { res.status(400).json({ error: "وحدة الصنف لا تنتمي للشركة" }); return; }
+    }
+    if (requestedUnitId !== existing.unitId) {
+      const links = await db.select({ id: itemUnitPricesTable.id }).from(itemUnitPricesTable)
+        .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.itemId, id)));
+      if (links.length) {
+        res.status(409).json({ error: "لا تغيّر قاعدة الصنف مباشرة؛ عدّل رابط الوحدة عبر /items/:id/units" }); return;
+      }
+      if (await itemHasHistoricalUsage(db, cid, id)) {
+        res.status(409).json({ error: "لا يمكن تغيير وحدة الأساس بعد وجود استخدام أو مخزون تاريخي", code: "BASE_CHANGE_BLOCKED" }); return;
+      }
+    }
+  }
   // PRO Extension #20 — a variant (parentItemId IS NOT NULL) cannot also
   // be a bundle. The bundle/variant axes are intentionally orthogonal.
   if (isBundle === true && existing?.parentItemId) {
@@ -1175,7 +1395,7 @@ router.put("/items/:id", async (req, res) => {
   const [row] = await db.update(itemsTable).set({
     code, nameAr, nameEn, barcode, itemType: itemType || "stock",
     ...(["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? { itemNature } : {}),
-    groupId: groupId || null, unitId: unitId || null,
+    groupId: groupId || null, unitId: unitId === undefined ? existing.unitId : (unitId || null),
     costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
     reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
     costMethod: costMethod || "weighted_avg", description,
@@ -1323,45 +1543,186 @@ router.get("/items/:id/units/:unitId", async (req, res) => {
 router.post("/items/:id/units", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const itemId = Number(req.params.id);
-  const { unitId, conversionFactor, costPrice, salePrice, isBase } = req.body;
-  if (!unitId) { res.status(400).json({ error: "وحدة القياس مطلوبة" }); return; }
-  // If setting as base, clear other base flags first
-  if (isBase) {
-    await db.update(itemUnitPricesTable).set({ isBase: false }).where(and(eq(itemUnitPricesTable.itemId, itemId), eq(itemUnitPricesTable.companyId, cid)));
+  const unitId = Number(req.body.unitId);
+  if (!Number.isInteger(unitId) || unitId <= 0) {
+    res.status(400).json({ error: "وحدة القياس مطلوبة" }); return;
   }
-  const [row] = await db.insert(itemUnitPricesTable).values({
-    companyId: cid, itemId, unitId: Number(unitId),
-    conversionFactor: String(conversionFactor || "1"),
-    costPrice: String(costPrice || "0"),
-    salePrice: String(salePrice || "0"),
-    isBase: !!isBase,
-  }).returning();
-  res.status(201).json(row);
+  try {
+    await db.transaction(async (tx) => {
+      await lockItemUnitGraph(tx, cid, itemId);
+      const item = await getItemForUnitEdit(tx, cid, itemId);
+      await assertCatalogUnit(tx, cid, unitId);
+      const rows = await tx.select().from(itemUnitPricesTable)
+        .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.itemId, itemId)));
+      if (rows.some((row: any) => row.unitId === unitId)) {
+        throw new UnitConversionError("DUPLICATE_UNIT", "This unit is already linked to the item");
+      }
+      const values = await unitRowValues(req.body, null, item, unitId);
+      if (values.isBase && rows.length > 0) {
+        throw new UnitConversionError("BASE_CHANGE_REQUIRES_EDIT", "Choose an existing linked unit when changing the base unit");
+      }
+      if (!values.isBase && item.unitId === null) {
+        throw new UnitConversionError("MISSING_BASE", "Create a base unit before adding a conversion");
+      }
+      if (values.referenceUnitId !== null) await assertCatalogUnit(tx, cid, values.referenceUnitId);
+      const [row] = await tx.insert(itemUnitPricesTable).values({
+        companyId: cid,
+        itemId,
+        unitId,
+        conversionFactor: "1",
+        relationFactor: values.relationFactor,
+        referenceUnitId: values.referenceUnitId,
+        costPrice: String(req.body.costPrice ?? "0"),
+        salePrice: String(req.body.salePrice ?? "0"),
+        isBase: values.isBase,
+        isActive: values.isActive,
+        decimalPlaces: values.decimalPlaces,
+        roundingMode: values.roundingMode,
+      }).returning();
+      if (values.isBase) {
+        await tx.update(itemsTable).set({ unitId })
+          .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
+      }
+      await recomputeCachedItemFactors(tx, cid, itemId);
+      auditSubEntity(req, "item_unit_prices", row.id, "create", null, row);
+      res.status(201).json(row);
+    });
+  } catch (error) {
+    unitErrorResponse(res, error);
+  }
 });
 
 router.put("/items/:id/units/:upId", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const itemId = Number(req.params.id);
   const upId = Number(req.params.upId);
-  const { unitId, conversionFactor, costPrice, salePrice, isBase } = req.body;
-  if (isBase) {
-    await db.update(itemUnitPricesTable).set({ isBase: false }).where(and(eq(itemUnitPricesTable.itemId, itemId), eq(itemUnitPricesTable.companyId, cid)));
+  try {
+    await db.transaction(async (tx) => {
+      await lockItemUnitGraph(tx, cid, itemId);
+      const item = await getItemForUnitEdit(tx, cid, itemId);
+      const [current] = await tx.select().from(itemUnitPricesTable).where(and(
+        eq(itemUnitPricesTable.id, upId),
+        eq(itemUnitPricesTable.itemId, itemId),
+        eq(itemUnitPricesTable.companyId, cid),
+      ));
+      if (!current) throw new UnitConversionError("UNIT_ROW_NOT_FOUND", "غير موجود");
+      const rows = await tx.select().from(itemUnitPricesTable)
+        .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.itemId, itemId)));
+      const unitId = req.body.unitId === undefined ? current.unitId : Number(req.body.unitId);
+      if (!Number.isInteger(unitId) || unitId <= 0) throw new UnitConversionError("UNIT_NOT_FOUND", "وحدة القياس غير صالحة");
+      await assertCatalogUnit(tx, cid, unitId);
+      if (rows.some((row: any) => row.id !== upId && row.unitId === unitId)) {
+        throw new UnitConversionError("DUPLICATE_UNIT", "This unit is already linked to the item");
+      }
+      const values = await unitRowValues(req.body, current, item, unitId);
+      if (!values.isActive && current.isBase) {
+        throw new UnitConversionError("BASE_DISABLE_BLOCKED", "The base unit cannot be disabled");
+      }
+      const child = rows.find((row: any) => row.isActive !== false && row.referenceUnitId === current.unitId && row.id !== current.id);
+      if (!values.isActive && child) {
+        throw new UnitConversionError("ANCESTOR_IN_USE", "Cannot disable a unit referenced by another active unit");
+      }
+      const changingBase = values.isBase && (item.unitId !== unitId || !current.isBase);
+      if (changingBase) await changeItemBaseUnit(tx, cid, itemId, item.unitId ?? null, unitId, rows);
+      if (!values.isBase && current.isBase) {
+        throw new UnitConversionError("BASE_REQUIRED", "Select another base unit before disabling this base link");
+      }
+      if (!values.isBase && values.referenceUnitId !== null) await assertCatalogUnit(tx, cid, values.referenceUnitId);
+      const [row] = await tx.update(itemUnitPricesTable).set({
+        unitId,
+        relationFactor: values.relationFactor,
+        referenceUnitId: values.referenceUnitId,
+        conversionFactor: "1",
+        costPrice: req.body.costPrice === undefined ? current.costPrice : String(req.body.costPrice),
+        salePrice: req.body.salePrice === undefined ? current.salePrice : String(req.body.salePrice),
+        isBase: values.isBase,
+        isActive: values.isActive,
+        decimalPlaces: values.decimalPlaces,
+        roundingMode: values.roundingMode,
+        legacyConversionConflict: false,
+      }).where(and(eq(itemUnitPricesTable.id, upId), eq(itemUnitPricesTable.companyId, cid))).returning();
+      await recomputeCachedItemFactors(tx, cid, itemId);
+      auditSubEntity(req, "item_unit_prices", upId, "edit", current, row);
+      res.json(row);
+    });
+  } catch (error) {
+    unitErrorResponse(res, error);
   }
-  const [row] = await db.update(itemUnitPricesTable).set({
-    unitId: unitId ? Number(unitId) : undefined,
-    conversionFactor: String(conversionFactor || "1"),
-    costPrice: String(costPrice || "0"),
-    salePrice: String(salePrice || "0"),
-    isBase: !!isBase,
-  }).where(and(eq(itemUnitPricesTable.id, upId), eq(itemUnitPricesTable.companyId, cid))).returning();
-  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
-  res.json(row);
 });
 
 router.delete("/items/:id/units/:upId", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  await db.delete(itemUnitPricesTable).where(and(eq(itemUnitPricesTable.id, Number(req.params.upId)), eq(itemUnitPricesTable.companyId, cid)));
-  res.json({ ok: true });
+  const itemId = Number(req.params.id);
+  const upId = Number(req.params.upId);
+  try {
+    await db.transaction(async (tx) => {
+      await lockItemUnitGraph(tx, cid, itemId);
+      const [current] = await tx.select().from(itemUnitPricesTable).where(and(
+        eq(itemUnitPricesTable.id, upId),
+        eq(itemUnitPricesTable.itemId, itemId),
+        eq(itemUnitPricesTable.companyId, cid),
+      ));
+      if (!current) throw new UnitConversionError("UNIT_ROW_NOT_FOUND", "غير موجود");
+      const rows = await tx.select().from(itemUnitPricesTable)
+        .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.itemId, itemId)));
+      const child = rows.find((row: any) => row.isActive !== false && row.referenceUnitId === current.unitId && row.id !== current.id);
+      if (child) throw new UnitConversionError("ANCESTOR_IN_USE", "Cannot delete a unit referenced by another active unit");
+      if (current.isBase && rows.some((row: any) => row.id !== current.id && row.isActive !== false)) {
+        throw new UnitConversionError("BASE_REQUIRED", "Change the base unit before deleting it");
+      }
+      await tx.delete(itemUnitPricesTable).where(and(eq(itemUnitPricesTable.id, upId), eq(itemUnitPricesTable.companyId, cid)));
+      await recomputeCachedItemFactors(tx, cid, itemId);
+      auditSubEntity(req, "item_unit_prices", upId, "delete", current, null);
+      res.json({ ok: true });
+    });
+  } catch (error) {
+    unitErrorResponse(res, error);
+  }
+});
+
+// Convert a quantity using only the item's explicit unit graph. The HTTP
+// boundary intentionally has no historicalFactor escape hatch.
+router.post("/items/:id/convert", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const itemId = Number(req.params.id);
+  const fromUnitId = Number(req.body.fromUnitId);
+  const toUnitId = Number(req.body.toUnitId);
+  if (!Number.isInteger(fromUnitId) || !Number.isInteger(toUnitId) || fromUnitId <= 0 || toUnitId <= 0) {
+    res.status(400).json({ error: "fromUnitId و toUnitId مطلوبان" }); return;
+  }
+  if (typeof req.body.quantity !== "string" && typeof req.body.quantity !== "number") {
+    res.status(400).json({ error: "quantity must be an exact decimal string" }); return;
+  }
+  try {
+    const from = await resolveItemUnitConversion({ companyId: cid, itemId, unitId: fromUnitId });
+    const to = await resolveItemUnitConversion({ companyId: cid, itemId, unitId: toUnitId });
+    const baseQuantity = multiplyQuantity(String(req.body.quantity), from.factor);
+    const exactQuantity = divideQuantity(baseQuantity, to.factor);
+    // Keep the public quantity compatible with JSON/SQL numeric consumers.
+    // exactQuantity is the lossless rational metadata for callers that need
+    // to carry a non-terminating result without a floating-point conversion.
+    const preciseQuantity = decimalForStorage(exactQuantity, 18, "half_up");
+    const result: Record<string, unknown> = {
+      quantity: preciseQuantity,
+      preciseQuantity,
+      exactQuantity,
+      fromUnitId,
+      toUnitId,
+      baseUnitId: from.baseUnitId,
+      fromFactor: from.factor,
+      toFactor: to.factor,
+    };
+    if (req.body.roundedDisplay === true || req.body.round === true) {
+      const decimalPlaces = typeof req.body.decimalPlaces === "number"
+        ? decimalPlacesValue(req.body.decimalPlaces, 2)
+        : (to.decimalPlaces ?? 2);
+      result.roundedQuantity = roundQuantity(preciseQuantity, decimalPlaces, String(req.body.roundingMode ?? to.roundingMode ?? "half_up"));
+      result.displayQuantity = result.roundedQuantity;
+    }
+    res.json(result);
+  } catch (error) {
+    unitErrorResponse(res, error);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1420,6 +1781,41 @@ async function assertCompanyOwned(cid: number, ids: { warehouses?: number[]; acc
   }
 }
 
+/**
+ * Resolve the usage-unit edge through the central unit engine.  The client
+ * conversionFactor is deliberately never trusted here: drafts receive a
+ * fresh snapshot from the active item-unit link, while an unchanged legacy
+ * line can explicitly carry its already-frozen snapshot forward.
+ */
+async function movementUnitSnapshot(
+  cid: number,
+  itemId: number,
+  line: any,
+  executor: any,
+  historicalFactor?: string | null,
+) {
+  const unitId = line?.unitId ? Number(line.unitId) : undefined;
+  const result = await resolveItemUnitConversion({
+    companyId: cid,
+    itemId,
+    unitId,
+    unitCode: line?.unitCode ? String(line.unitCode) : undefined,
+    historicalFactor: historicalFactor ?? undefined,
+    executor,
+  });
+  const factor = decimalForStorage(String(result?.factor ?? historicalFactor ?? "1"), 18, "half_up");
+  if (!isPositiveExactDecimal(factor)) throw new Error(`معامل تحويل غير صالح للصنف #${itemId}`);
+  return {
+    // Keep the persisted unit identity for a historical line, including a
+    // legacy NULL unit. The current item's base-unit id must not be stamped
+    // onto an otherwise unchanged old row.
+    unitId: historicalFactor !== undefined
+      ? (unitId ?? null)
+      : (result?.unitId ?? (unitId ?? null)),
+    conversionFactor: factor,
+  };
+}
+
 router.post("/stock-transfers", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { transferNumber, transferDate, fromWarehouseId, toWarehouseId, accountId, fromAccountId, toAccountId, notes, items } = req.body;
@@ -1455,15 +1851,39 @@ router.post("/stock-transfers", async (req, res) => {
     res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم التحويل" });
     return;
   }
-  const [tr] = await db.insert(stockTransfersTable).values({
-    companyId: cid, transferNumber: num, transferDate, fromWarehouseId, toWarehouseId,
-    accountId: accountId || null,
-    fromAccountId: fromAccountId || null,
-    toAccountId: toAccountId || null,
-    notes, status: "draft",
-  }).returning();
-  if (items?.length) {
-    await db.insert(stockTransferItemsTable).values(items.map((it: any) => ({ transferId: tr.id, itemId: it.itemId, unitId: it.unitId || null, qty: String(it.qty), costPrice: String(it.costPrice || 0) })));
+  let tr: any;
+  try {
+    tr = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(stockTransfersTable).values({
+        companyId: cid, transferNumber: num, transferDate, fromWarehouseId, toWarehouseId,
+        accountId: accountId || null,
+        fromAccountId: fromAccountId || null,
+        toAccountId: toAccountId || null,
+        notes, status: "draft",
+      }).returning();
+      if (items?.length) {
+        const itemRows: any[] = [];
+        for (const it of items) {
+          const itemId = Number(it.itemId);
+          const snapshot = await movementUnitSnapshot(cid, itemId, it, tx);
+          itemRows.push({
+            transferId: created.id,
+            itemId,
+            unitId: snapshot.unitId,
+            qty: toStorageDecimal(String(it.qty), 4, "half_up"),
+            // Cost is entered in the selected usage unit. It is converted to
+            // base cost exactly once when the movement is posted.
+            conversionFactor: snapshot.conversionFactor,
+            costPrice: toStorageDecimal(String(it.costPrice || 0), 4, "half_up"),
+          });
+        }
+        await tx.insert(stockTransferItemsTable).values(itemRows);
+      }
+      return created;
+    });
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "تعذر حفظ التحويل" });
+    return;
   }
   res.status(201).json(tr);
 });
@@ -1480,15 +1900,69 @@ router.put("/stock-transfers/:id", async (req, res) => {
       accounts:   [fromAccountId, toAccountId].map(Number).filter(Boolean) as number[],
     });
   } catch (e: any) { res.status(400).json({ error: e.message }); return; }
-  await db.update(stockTransfersTable).set({
-    transferDate, fromWarehouseId, toWarehouseId,
-    fromAccountId: fromAccountId || null,
-    toAccountId: toAccountId || null,
-    notes, updatedAt: new Date(),
-  }).where(eq(stockTransfersTable.id, id));
-  if (items) {
-    await db.delete(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
-    if (items.length) await db.insert(stockTransferItemsTable).values(items.map((it: any) => ({ transferId: id, itemId: it.itemId, unitId: it.unitId || null, qty: String(it.qty), costPrice: String(it.costPrice || 0) })));
+  try {
+    await db.transaction(async (tx) => {
+      const oldLines = await tx.select().from(stockTransferItemsTable)
+        .where(eq(stockTransferItemsTable.transferId, id))
+        .orderBy(asc(stockTransferItemsTable.id));
+      await tx.update(stockTransfersTable).set({
+        transferDate, fromWarehouseId, toWarehouseId,
+        fromAccountId: fromAccountId || null,
+        toAccountId: toAccountId || null,
+        notes, updatedAt: new Date(),
+      }).where(eq(stockTransfersTable.id, id));
+      if (items) {
+        await tx.delete(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
+        if (items.length) {
+          const itemRows: any[] = [];
+          const matchedOldIds = new Set<number>();
+          for (const it of items) {
+            const itemId = Number(it.itemId);
+            const requestedUnitId = it.unitId ? Number(it.unitId) : null;
+            let old = it.id
+              ? oldLines.find(row => row.id === Number(it.id))
+              : undefined;
+            if (it.id && (!old || matchedOldIds.has(old.id))) {
+              throw new Error("معرّف سطر التحويل غير صالح أو مكرر");
+            }
+            if (!it.id) {
+              const candidates = oldLines.filter(row =>
+                !matchedOldIds.has(row.id) &&
+                row.itemId === itemId &&
+                (row.unitId ?? null) === requestedUnitId,
+              );
+              if (candidates.length > 1) {
+                throw new Error(`لا يمكن مطابقة سطر التحويل للصنف #${itemId}: توجد أسطر قديمة متطابقة`);
+              }
+              old = candidates[0];
+            }
+            const unchanged = !!old &&
+              old.itemId === itemId &&
+              (old.unitId ?? null) === requestedUnitId;
+            if (old) matchedOldIds.add(old.id);
+            const snapshot = await movementUnitSnapshot(
+              cid,
+              itemId,
+              it,
+              tx,
+              unchanged ? String(old!.conversionFactor ?? "1") : undefined,
+            );
+            itemRows.push({
+              transferId: id,
+              itemId,
+              unitId: snapshot.unitId,
+              qty: toStorageDecimal(String(it.qty), 4, "half_up"),
+              conversionFactor: snapshot.conversionFactor,
+              costPrice: toStorageDecimal(String(it.costPrice || 0), 4, "half_up"),
+            });
+          }
+          await tx.insert(stockTransferItemsTable).values(itemRows);
+        }
+      }
+    });
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "تعذر تعديل التحويل" });
+    return;
   }
   res.json({ ok: true });
 });
@@ -1571,13 +2045,30 @@ router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), asyn
       let realTotalCost = 0;
 
       for (const line of lines) {
-        const qty = Number(line.qty);
+        const baseQtyText = toStorageDecimal(
+          multiplyQuantity(
+            String(line.qty),
+            String(line.conversionFactor ?? "1"),
+          ),
+          4,
+          "half_up",
+        );
+        const qty = Number(baseQtyText);
         if (qty <= 0) continue;
         const mode = modeById.get(line.itemId) ?? "none";
 
         if (mode === "none") {
           // Legacy single-row WAC issue at the line's recorded cost.
-          const cost = Number(line.costPrice);
+          // Cost is stored in the selected usage unit; convert it to the
+          // item's base-unit price exactly once at posting time.
+          const cost = Number(toStorageDecimal(
+            divideQuantity(
+              String(line.costPrice),
+              String(line.conversionFactor ?? "1"),
+            ),
+            4,
+            "half_up",
+          ));
           const lineCost = qty * cost;
           realTotalCost += lineCost;
           await upsertBalance(cid, line.itemId, tr.fromWarehouseId, -qty, cost, tx);
@@ -1753,28 +2244,45 @@ router.post("/stock-adjustments", async (req, res) => {
     res.status(400).json({ error: "تحتوي التسوية على صنف غير صالح" }); return;
   }
   for (const it of items) {
-    const qty = Number(it.qty);
-    const cost = Number(it.costPrice);
+    const qty = Number(toStorageDecimal(String(it.qty), 4, "half_up"));
+    const cost = Number(toStorageDecimal(String(it.costPrice), 4, "half_up"));
     if (!Number.isFinite(qty) || qty === 0 || !Number.isFinite(cost) || cost < 0) {
       res.status(400).json({ error: "الكمية يجب ألا تكون صفراً والتكلفة يجب أن تكون رقماً موجباً أو صفراً" }); return;
     }
   }
-  const adj = await db.transaction(async (tx) => {
-    const [created] = await tx.insert(stockAdjustmentsTable).values({
-      companyId: cid, adjustmentNumber: num, adjustmentDate, warehouseId,
-      accountId: accountId || null,
-      inventoryAccountId: inventoryAccountId || null,
-      adjustmentAccountId: adjustmentAccountId || null,
-      reason, notes, status: "draft",
-    }).returning();
-    await tx.insert(stockAdjustmentItemsTable).values(items.map((it: any) => ({
-      adjustmentId: created.id, itemId: Number(it.itemId),
-      unitId: it.unitId ? Number(it.unitId) : null,
-      qty: String(Number(it.qty)), costPrice: String(Number(it.costPrice)),
-      notes: it.notes,
-    })));
-    return created;
-  });
+  let adj: any;
+  try {
+    adj = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(stockAdjustmentsTable).values({
+        companyId: cid, adjustmentNumber: num, adjustmentDate, warehouseId,
+        accountId: accountId || null,
+        inventoryAccountId: inventoryAccountId || null,
+        adjustmentAccountId: adjustmentAccountId || null,
+        reason, notes, status: "draft",
+      }).returning();
+      const itemRows: any[] = [];
+      for (const it of items) {
+        const itemId = Number(it.itemId);
+        const snapshot = await movementUnitSnapshot(cid, itemId, it, tx);
+        itemRows.push({
+          adjustmentId: created.id,
+          itemId,
+          unitId: snapshot.unitId,
+          qty: toStorageDecimal(String(it.qty), 4, "half_up"),
+          // Keep the entered price in the selected usage unit. Posting
+          // converts this price to the base-unit price once.
+          conversionFactor: snapshot.conversionFactor,
+          costPrice: toStorageDecimal(String(it.costPrice), 4, "half_up"),
+          notes: it.notes,
+        });
+      }
+      await tx.insert(stockAdjustmentItemsTable).values(itemRows);
+      return created;
+    });
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "تعذر حفظ التسوية" });
+    return;
+  }
   res.status(201).json(adj);
 });
 
@@ -1791,23 +2299,69 @@ router.put("/stock-adjustments/:id", async (req, res) => {
     });
   } catch (e: any) { res.status(400).json({ error: e.message }); return; }
   if (items && (!Array.isArray(items) || !items.length)) { res.status(400).json({ error: "أضف صنفاً واحداً على الأقل" }); return; }
-  await db.transaction(async (tx) => {
-    await tx.update(stockAdjustmentsTable).set({
-      adjustmentDate, warehouseId, reason, notes,
-      inventoryAccountId: inventoryAccountId || null,
-      adjustmentAccountId: adjustmentAccountId || null,
-      updatedAt: new Date(),
-    }).where(and(eq(stockAdjustmentsTable.id, id), eq(stockAdjustmentsTable.companyId, cid)));
-    if (items) {
-      await tx.delete(stockAdjustmentItemsTable).where(eq(stockAdjustmentItemsTable.adjustmentId, id));
-      await tx.insert(stockAdjustmentItemsTable).values(items.map((it: any) => ({
-        adjustmentId: id, itemId: Number(it.itemId),
-        unitId: it.unitId ? Number(it.unitId) : null,
-        qty: String(Number(it.qty)), costPrice: String(Number(it.costPrice || 0)),
-        notes: it.notes,
-      })));
-    }
-  });
+  try {
+    await db.transaction(async (tx) => {
+      const oldLines = await tx.select().from(stockAdjustmentItemsTable)
+        .where(eq(stockAdjustmentItemsTable.adjustmentId, id))
+        .orderBy(asc(stockAdjustmentItemsTable.id));
+      await tx.update(stockAdjustmentsTable).set({
+        adjustmentDate, warehouseId, reason, notes,
+        inventoryAccountId: inventoryAccountId || null,
+        adjustmentAccountId: adjustmentAccountId || null,
+        updatedAt: new Date(),
+      }).where(and(eq(stockAdjustmentsTable.id, id), eq(stockAdjustmentsTable.companyId, cid)));
+      if (items) {
+        await tx.delete(stockAdjustmentItemsTable).where(eq(stockAdjustmentItemsTable.adjustmentId, id));
+        const itemRows: any[] = [];
+        const matchedOldIds = new Set<number>();
+        for (const it of items) {
+          const itemId = Number(it.itemId);
+          const requestedUnitId = it.unitId ? Number(it.unitId) : null;
+          let old = it.id
+            ? oldLines.find(row => row.id === Number(it.id))
+            : undefined;
+          if (it.id && (!old || matchedOldIds.has(old.id))) {
+            throw new Error("معرّف سطر التسوية غير صالح أو مكرر");
+          }
+          if (!it.id) {
+            const candidates = oldLines.filter(row =>
+              !matchedOldIds.has(row.id) &&
+              row.itemId === itemId &&
+              (row.unitId ?? null) === requestedUnitId,
+            );
+            if (candidates.length > 1) {
+              throw new Error(`لا يمكن مطابقة سطر التسوية للصنف #${itemId}: توجد أسطر قديمة متطابقة`);
+            }
+            old = candidates[0];
+          }
+          const unchanged = !!old &&
+            old.itemId === itemId &&
+            (old.unitId ?? null) === requestedUnitId;
+          if (old) matchedOldIds.add(old.id);
+          const snapshot = await movementUnitSnapshot(
+            cid,
+            itemId,
+            it,
+            tx,
+            unchanged ? String(old!.conversionFactor ?? "1") : undefined,
+          );
+          itemRows.push({
+            adjustmentId: id,
+            itemId,
+            unitId: snapshot.unitId,
+            qty: toStorageDecimal(String(it.qty), 4, "half_up"),
+            conversionFactor: snapshot.conversionFactor,
+            costPrice: toStorageDecimal(String(it.costPrice || 0), 4, "half_up"),
+            notes: it.notes,
+          });
+        }
+        await tx.insert(stockAdjustmentItemsTable).values(itemRows);
+      }
+    });
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "تعذر تعديل التسوية" });
+    return;
+  }
   res.json({ ok: true });
 });
 
@@ -1855,8 +2409,22 @@ router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), as
         companyId: cid, itemId: line.itemId, warehouseId: adj.warehouseId,
       })), tx);
       for (const line of lines) {
-        const qty = Number(line.qty);
-        const enteredCost = Number(line.costPrice);
+        const qty = Number(toStorageDecimal(
+          multiplyQuantity(
+            String(line.qty),
+            String(line.conversionFactor ?? "1"),
+          ),
+          4,
+          "half_up",
+        ));
+        const enteredCost = Number(toStorageDecimal(
+          divideQuantity(
+            String(line.costPrice),
+            String(line.conversionFactor ?? "1"),
+          ),
+          4,
+          "half_up",
+        ));
         if (!Number.isFinite(qty) || qty === 0) throw new HttpError(400, `كمية الصنف #${line.itemId} يجب ألا تكون صفراً`);
         if (!Number.isFinite(enteredCost) || enteredCost < 0) throw new HttpError(400, `تكلفة الصنف #${line.itemId} غير صحيحة`);
 
@@ -1993,7 +2561,8 @@ router.post("/stock-adjustments/:id/reverse", async (req, res) => {
         adjustmentId: created.id,
         itemId: line.itemId,
         unitId: line.unitId,
-        qty: String(-Number(line.qty)),
+         qty: toStorageDecimal(multiplyQuantity("-1", String(line.qty)), 4, "half_up"),
+         conversionFactor: String(line.conversionFactor ?? "1"),
         costPrice: line.costPrice,
         notes: `عكس بند من ${source.adjustmentNumber}${line.notes ? ` — ${line.notes}` : ""}`,
       })));
@@ -2081,15 +2650,26 @@ router.post("/stock-counts", async (req, res) => {
       notes, status: "draft",
     }).returning();
     if (stockItems.length) {
-      await tx.insert(stockCountItemsTable).values(stockItems.map(item => {
+      const countRows: any[] = [];
+      for (const item of stockItems) {
+        // Count sheets are intentionally base-unit only. Resolve through the
+        // central engine with an explicit factor-1 historical snapshot,
+        // without inventing an arbitrary usage unit.
+        await resolveItemUnitConversion({
+          companyId: cid,
+          itemId: item.id,
+          historicalFactor: "1",
+          executor: tx,
+        });
         const balance = balanceByItem.get(item.id);
         const systemQty = balance?.qty ?? "0";
-        return {
+        countRows.push({
           countId: created.id, itemId: item.id,
           systemQty, actualQty: systemQty, diff: "0",
           costPrice: balance?.avgCost ?? item.costPrice ?? "0",
-        };
-      }));
+        });
+      }
+      await tx.insert(stockCountItemsTable).values(countRows);
     }
     return created;
   });
@@ -2116,7 +2696,7 @@ router.put("/stock-counts/:id", async (req, res) => {
       for (const it of items) {
         const row = storedById.get(Number(it.id));
         if (!row) continue;
-        const actualQty = Number(it.actualQty);
+         const actualQty = Number(toStorageDecimal(String(it.actualQty), 4, "half_up"));
         if (!Number.isFinite(actualQty) || actualQty < 0) throw new Error("الكمية الفعلية يجب أن تكون صفراً أو رقماً موجباً");
         const diff = actualQty - Number(row.systemQty);
         await tx.update(stockCountItemsTable)
@@ -2164,6 +2744,15 @@ router.post("/stock-counts/:id/post", requirePostRight("stockMovement"), async (
         companyId: cid, itemId: line.itemId, warehouseId: cnt.warehouseId,
       })), tx);
       for (const line of lines) {
+        // Counts remain base-unit only; explicitly route that invariant
+        // through the central unit engine rather than linking an arbitrary
+        // usage unit to the count schema.
+        await resolveItemUnitConversion({
+          companyId: cid,
+          itemId: line.itemId,
+          historicalFactor: "1",
+          executor: tx,
+        });
         const actualQty = Number(line.actualQty);
         if (!Number.isFinite(actualQty) || actualQty < 0) throw new HttpError(400, `الكمية الفعلية للصنف #${line.itemId} غير صحيحة`);
         const [currentRow] = await tx.select().from(stockBalanceTable).where(and(
@@ -3581,6 +4170,22 @@ router.post("/import/items", async (req, res) => {
 
       const groupId = r.groupCode ? groupByCode.get(String(r.groupCode).trim().toLowerCase()) ?? null : null;
       const unitId  = r.unitCode  ? unitByCode.get(String(r.unitCode).trim().toLowerCase())   ?? null : null;
+      if (r.unitCode && unitId === null) {
+        errors.push({ row: i + 2, error: "وحدة القياس غير موجودة في هذه الشركة" }); continue;
+      }
+      const existingRow = itemByCode.get(code.toLowerCase());
+      // A bulk import is another item master writer. It may not silently
+      // rebase an item that already has unit links or historical movement.
+      if (existingRow && r.unitCode !== undefined && unitId !== existingRow.unitId) {
+        const links = await db.select({ id: itemUnitPricesTable.id }).from(itemUnitPricesTable)
+          .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.itemId, existingRow.id)));
+        if (links.length) {
+          errors.push({ row: i + 2, error: "لا يمكن تغيير وحدة أساس مرتبطة؛ استخدم روابط وحدات الصنف" }); continue;
+        }
+        if (await itemHasHistoricalUsage(db, cid, existingRow.id)) {
+          errors.push({ row: i + 2, error: "لا يمكن تغيير وحدة الأساس بعد وجود استخدام أو مخزون تاريخي" }); continue;
+        }
+      }
       // Honor discount columns when present in the spreadsheet, otherwise
       // default to "none"/0 (matches the column default and keeps existing
       // imports backward-compatible).
@@ -3590,7 +4195,7 @@ router.post("/import/items", async (req, res) => {
         nameEn:       r.nameEn       != null && r.nameEn   !== "" ? String(r.nameEn)   : null,
         barcode:      r.barcode      != null && r.barcode  !== "" ? String(r.barcode)  : null,
         itemType:     ((r.itemType === "service" || r.itemType === "fixed_asset" || r.itemType === "prepaid_expense") ? r.itemType : "stock") as any,
-        groupId, unitId,
+         groupId, unitId,
         costPrice:    String(Number(r.costPrice    ?? 0) || 0),
         salePrice:    String(Number(r.salePrice    ?? 0) || 0),
         vatRate:      String(Number(r.vatRate      ?? 15) || 0),
@@ -3601,9 +4206,9 @@ router.post("/import/items", async (req, res) => {
         discountValue: importDisc.value,
       };
 
-      const existingRow = itemByCode.get(code.toLowerCase());
       if (existingRow) {
         const { companyId, ...upd } = values as any;
+        if (r.unitCode === undefined) delete (upd as any).unitId;
         const [updatedRow] = await db.update(itemsTable).set({ ...upd, updatedAt: new Date() })
           .where(and(eq(itemsTable.id, existingRow.id), eq(itemsTable.companyId, cid)))
           .returning();
@@ -4024,7 +4629,7 @@ router.put("/items/:id/currency-prices/:rowId", async (req, res) => {
 
   const [updated] = await db.update(itemCurrencyPricesTable).set(patch)
     .where(eq(itemCurrencyPricesTable.id, rowId)).returning();
-  auditSubEntity(req, "inventory_items", id, "update", { currencyPrice: existing }, { currencyPrice: updated });
+  auditSubEntity(req, "inventory_items", id, "edit", { currencyPrice: existing }, { currencyPrice: updated });
   res.json(updated);
 });
 
@@ -4127,7 +4732,7 @@ router.put("/items/:id/branch-stock/:branchId", async (req, res) => {
       notes,
       updatedAt: new Date(),
     }).where(eq(itemBranchStockTable.id, before[0].id)).returning();
-    auditSubEntity(req, "inventory_items", id, "update",
+    auditSubEntity(req, "inventory_items", id, "edit",
       { branchStock: before[0] }, { branchStock: row });
   } else {
     [row] = await db.insert(itemBranchStockTable).values({
@@ -4294,7 +4899,7 @@ router.get("/items/:id/batches", async (req, res) => {
     .where(and(
       eq(stockLedgerTable.companyId, cid),
       eq(stockLedgerTable.itemId, id),
-      inArray(stockLedgerTable.txType, INBOUND_TX as unknown as string[]),
+      inArray(stockLedgerTable.txType, INBOUND_TX),
       sql`${stockLedgerTable.batchNumber} is not null`,
       sql`length(trim(${stockLedgerTable.batchNumber})) > 0`,
     ))
@@ -4467,7 +5072,7 @@ router.put("/items/:id/bom-steps/:stepId", async (req, res) => {
 
   const [updated] = await db.update(itemBomStepsTable).set(patch)
     .where(eq(itemBomStepsTable.id, stepId)).returning();
-  auditSubEntity(req, "inventory_items", id, "update", { bomStep: existing }, { bomStep: updated });
+  auditSubEntity(req, "inventory_items", id, "edit", { bomStep: existing }, { bomStep: updated });
   res.json(updated);
 });
 

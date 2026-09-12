@@ -277,12 +277,14 @@ export default function StockAdjustment() {
       prev.map((l, idx) => {
         if (idx !== lineIdx) return l;
         const ups: any[] = itemUnitsMap[l.itemId] ?? [];
-        const up = ups.find((u: any) => String(u.unitId) === unitId);
+        const up = unitId
+          ? ups.find((u: any) => String(u.unitId) === unitId)
+          : ups.find((u: any) => u.isBase || Number(u.conversionFactor ?? 1) === 1);
         return {
           ...l,
-          unitId,
+          unitId: unitId || (up ? String(up.unitId) : ""),
           costPrice: up ? String(up.costPrice) : l.costPrice,
-          conversionFactor: up ? String(up.conversionFactor) : "1",
+          conversionFactor: up ? String(up.conversionFactor ?? 1) : "1",
         };
       })
     );
@@ -324,13 +326,15 @@ export default function StockAdjustment() {
   function getLineUnits(line: any): { id: number; nameAr: string; code?: string }[] {
     const cached = itemUnitsMap[line.itemId];
     if (cached && cached.length > 0) {
-      return cached.map((u: any) => ({
+      return cached.filter((u: any) => u.isActive !== false).map((u: any) => ({
         id: u.unitId,
         nameAr: pickName(u.unit?.nameAr, u.unit?.nameEn) || "—",
         code: u.unit?.code,
       }));
     }
-    return (units as any[]).map((u: any) => ({ id: u.id, nameAr: pickName(u.nameAr, u.nameEn), code: u.code }));
+    // Do not offer unrelated company units. Every selectable unit must be
+    // linked to the selected item for central conversion to resolve it.
+    return [];
   }
 
   function isAutoFilled(line: any): boolean {
@@ -710,6 +714,13 @@ export default function StockAdjustment() {
                                   {t("stockAdjustmentPage.autoBadge")}
                                 </span>
                               )}
+                              {cf !== 1 && (
+                                <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                                  {t("stockAdjustmentPage.baseCostHint", {
+                                    cost: fmt(Number(line.costPrice || 0) / cf),
+                                  })}
+                                </p>
+                              )}
                             </div>
                           </td>
 
@@ -893,9 +904,26 @@ export default function StockAdjustment() {
                                           "py-1.5 tabular-nums font-medium",
                                           Number(l.qty) >= 0 ? "text-green-600" : "text-red-600"
                                         )}>
-                                          {Number(l.qty) >= 0 ? "+" : ""}{fmtQty(l.qty)}
+                                          <div>{Number(l.qty) >= 0 ? "+" : ""}{fmtQty(l.qty)}</div>
+                                          {Number(l.conversionFactor ?? 1) !== 1 && (
+                                            <div className="text-[10px] text-purple-600 font-normal">
+                                              {t("stockAdjustmentPage.baseQtyHint", {
+                                                factor: l.conversionFactor,
+                                                qty: fmtQty(Number(l.qty) * Number(l.conversionFactor)),
+                                              })}
+                                            </div>
+                                          )}
                                         </td>
-                                        <td className="py-1.5 tabular-nums">{fmt(l.costPrice)}</td>
+                                        <td className="py-1.5 tabular-nums">
+                                          <div>{fmt(l.costPrice)}</div>
+                                          {Number(l.conversionFactor ?? 1) !== 1 && (
+                                            <div className="text-[10px] text-muted-foreground">
+                                              {t("stockAdjustmentPage.baseCostHint", {
+                                                cost: fmt(Number(l.costPrice) / Number(l.conversionFactor)),
+                                              })}
+                                            </div>
+                                          )}
+                                        </td>
                                         <td className="py-1.5 text-muted-foreground">{l.notes ?? "—"}</td>
                                       </tr>
                                     ))}

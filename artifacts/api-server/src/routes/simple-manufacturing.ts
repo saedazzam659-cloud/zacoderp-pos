@@ -55,6 +55,8 @@ import {
   getRoutings,
   getRouting,
   getWorkCenters,
+  loadItemUnitOptions,
+  resolveProductionItemUnit,
 } from "./production.js";
 
 const router = Router();
@@ -268,8 +270,12 @@ router.get("/catalog", view, async (req, res) => {
         : productNameById.get(routing.productItemId) ?? null,
       stages: stagesByRouting.get(routing.id) ?? [],
     }));
+    const itemsWithUnitOptions = await Promise.all(items.map(async (item) => ({
+      ...item,
+      unitOptions: await loadItemUnitOptions(cid, item.id),
+    })));
     res.json({
-      items,
+      items: itemsWithUnitOptions,
       warehouses,
       templates,
       bomTemplates,
@@ -947,31 +953,32 @@ async function normalizeSetupBom(cid: number, body: any) {
     throw setupError("إحدى المواد غير موجودة أو غير نشطة في هذه الشركة");
   }
 
-  const permittedUnits = await db.select({ code: unitsTable.code })
-    .from(unitsTable)
-    .where(eq(unitsTable.companyId, cid));
-  const unitByCode = new Map<string, string>();
-  for (const unit of permittedUnits) {
-    const code = String(unit.code ?? "").trim();
-    if (code && !unitByCode.has(code.toLowerCase())) unitByCode.set(code.toLowerCase(), code);
-  }
   const ownedByItem = new Map(owned.map((item) => [item.id, item]));
   for (const line of normalizedLines) {
     const item = ownedByItem.get(line.itemId);
     const requestedCode = line.unitCode || item?.unitCode || "PCE";
-    const actualCode = unitByCode.get(requestedCode.toLowerCase());
-    if (!actualCode) {
-      throw setupError(`وحدة القياس "${requestedCode}" غير موجودة في كتالوج الشركة`);
+    try {
+      const resolved = await resolveProductionItemUnit(cid, line.itemId, requestedCode);
+      line.unitCode = resolved.unitCode;
+    } catch (e: any) {
+      throw setupError(
+        e?.message ?? `وحدة القياس "${requestedCode}" غير مرتبطة بالصنف`,
+        e?.status ?? 400,
+      );
     }
-    line.unitCode = actualCode;
   }
 
   const requestedOutputCode = body?.outputUnitCode == null
     ? "" : String(body.outputUnitCode).trim();
   const outputCode = requestedOutputCode || product.unitCode || "PCE";
-  const actualOutputCode = unitByCode.get(outputCode.toLowerCase());
-  if (!actualOutputCode) {
-    throw setupError(`وحدة الناتج "${outputCode}" غير موجودة في كتالوج الشركة`);
+  let actualOutputCode: string;
+  try {
+    actualOutputCode = (await resolveProductionItemUnit(cid, productItemId, outputCode)).unitCode;
+  } catch (e: any) {
+    throw setupError(
+      e?.message ?? `وحدة الناتج "${outputCode}" غير مرتبطة بالمنتج`,
+      e?.status ?? 400,
+    );
   }
   const outputQty = Number(body?.outputQty ?? 1);
   if (!Number.isFinite(outputQty) || outputQty <= 0) {
@@ -1089,108 +1096,19 @@ async function normalizeSetupRouting(cid: number, body: any) {
 router.post("/setup/bom", edit, async (req, res) => {
   const cid = companyId(req, res);
   if (!cid) return;
-  const productItemId = Number(req.body?.productItemId);
-  const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
-  if (!Number.isInteger(productItemId) || !lines.length) {
-    return void res.status(400).json({ error: "المنتج النهائي وسطور المواد مطلوبان" });
-  }
   try {
     await validateSetupBranch(req, cid, req.body?.branchId);
-    const [product] = await db.select({
-      id: itemsTable.id,
-      unitCode: unitsTable.code,
-    }).from(itemsTable)
-      .leftJoin(unitsTable, and(
-        eq(itemsTable.unitId, unitsTable.id),
-        eq(unitsTable.companyId, cid),
-      ))
-      .where(and(
-        eq(itemsTable.id, productItemId),
-        eq(itemsTable.companyId, cid),
-        eq(itemsTable.status, "active"),
-      )).limit(1);
-    if (!product) return void res.status(400).json({ error: "المنتج النهائي غير موجود" });
-    const normalizedLines = lines.map((x: any) => ({
-      itemId: Number(x?.itemId ?? x?.item?.id),
-      quantity: Number(x?.quantity),
-      description: String(x?.description || "مادة خام").trim(),
-      unitCode: x?.unitCode == null ? "" : String(x.unitCode).trim(),
-      notes: x?.notes ? String(x.notes) : null,
-    }));
-    if (normalizedLines.some((x: any) =>
-      !Number.isInteger(x.itemId) || x.itemId <= 0 ||
-      !Number.isFinite(x.quantity) || x.quantity <= 0 ||
-      !x.description
-    )) {
-      return void res.status(400).json({ error: "كل سطر في قائمة المواد يحتاج صنفاً وكمية أكبر من صفر" });
-    }
-    const itemIds = normalizedLines.map((x: any) => x.itemId);
-    const uniqueItemIds: number[] = [...new Set<number>(itemIds)];
-    const owned = uniqueItemIds.length ? await db.select({
-      id: itemsTable.id,
-      unitCode: unitsTable.code,
-    }).from(itemsTable)
-      .leftJoin(unitsTable, and(
-        eq(itemsTable.unitId, unitsTable.id),
-        eq(unitsTable.companyId, cid),
-      ))
-      .where(and(
-        eq(itemsTable.companyId, cid),
-        eq(itemsTable.status, "active"),
-        inArray(itemsTable.id, uniqueItemIds),
-      )) : [];
-    if (owned.length !== uniqueItemIds.length) {
-      return void res.status(400).json({ error: "إحدى المواد غير موجودة أو غير نشطة في هذه الشركة" });
-    }
-    // Unit codes are metadata on the existing BOM tables. Do not infer a
-    // conversion or manufacture a code that is not in this tenant's catalog.
-    // A blank line code uses that component's base unit when one exists; PCE
-    // remains the legacy fallback, but is accepted only when it is a real
-    // permitted unit for this company.
-    const permittedUnits = await db.select({ code: unitsTable.code })
-      .from(unitsTable)
-      .where(eq(unitsTable.companyId, cid));
-    const unitByCode = new Map<string, string>();
-    for (const unit of permittedUnits) {
-      const code = String(unit.code ?? "").trim();
-      if (code && !unitByCode.has(code.toLowerCase())) unitByCode.set(code.toLowerCase(), code);
-    }
-    const ownedByItem = new Map(owned.map((item) => [item.id, item]));
-    for (const line of normalizedLines) {
-      const item = ownedByItem.get(line.itemId);
-      const requestedCode = line.unitCode || item?.unitCode || "PCE";
-      const actualCode = unitByCode.get(requestedCode.toLowerCase());
-      if (!actualCode) {
-        return void res.status(400).json({
-          error: `وحدة القياس "${requestedCode}" غير موجودة في كتالوج الشركة`,
-        });
-      }
-      line.unitCode = actualCode;
-    }
-    const requestedOutputCode = req.body?.outputUnitCode == null
-      ? ""
-      : String(req.body.outputUnitCode).trim();
-    const outputCode = requestedOutputCode || product.unitCode || "PCE";
-    const actualOutputCode = unitByCode.get(outputCode.toLowerCase());
-    if (!actualOutputCode) {
-      return void res.status(400).json({
-        error: `وحدة الناتج "${outputCode}" غير موجودة في كتالوج الشركة`,
-      });
-    }
-    const outputQty = Number(req.body?.outputQty ?? 1);
-    if (!Number.isFinite(outputQty) || outputQty <= 0) {
-      return void res.status(400).json({ error: "كمية الناتج يجب أن تكون أكبر من صفر" });
-    }
+    const normalized = await normalizeSetupBom(cid, req.body);
     const bom = await db.transaction(async (tx) => {
       const [row] = await tx.insert(bomTemplatesTable).values({
-        companyId: cid, productItemId, nameAr: String(req.body?.nameAr || "قائمة مواد مبسطة"),
-        nameEn: req.body?.nameEn ? String(req.body.nameEn) : null,
-        outputQty: String(outputQty),
-        outputUnitCode: actualOutputCode,
+        companyId: cid, productItemId: normalized.productItemId, nameAr: normalized.nameAr,
+        nameEn: normalized.nameEn,
+        outputQty: String(normalized.outputQty),
+        outputUnitCode: normalized.actualOutputCode,
         isActive: true,
-        notes: req.body?.notes ? String(req.body.notes) : null,
+        notes: normalized.notes,
       }).returning();
-      await tx.insert(bomTemplateLinesTable).values(normalizedLines.map((x: any) => ({
+      await tx.insert(bomTemplateLinesTable).values(normalized.normalizedLines.map((x: any) => ({
         templateId: row.id, itemId: x.itemId,
         description: x.description,
         quantity: String(x.quantity),

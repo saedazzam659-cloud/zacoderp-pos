@@ -14,7 +14,7 @@ import { db } from "@workspace/db";
 import {
   branchesTable,
   warehousesTable, warehouseGroupsTable,
-  itemsTable, itemGroupsTable, unitsTable,
+  itemsTable, itemGroupsTable, unitsTable, itemUnitPricesTable,
   customersTable, suppliersTable, supplierGroupsTable,
   accountsTable,
   cashBoxesTable, bankAccountsTable,
@@ -27,6 +27,7 @@ import * as XLSX from "xlsx";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { resolveUnitGraph, toStorageDecimal } from "../lib/unitConversion.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -124,6 +125,8 @@ interface EntityDef {
   table: any;
   hasCompanyId: boolean;
   businessKeys: string[]; // priority order; first non-empty value used as upsert key
+  /** Explicit all-of composite key (e.g. itemId + unitId). */
+  businessKeyGroups?: string[][];
   fields: FieldDef[];
   /** When true, the entity is hidden from the public /entities listing
    * (used only as an FK lookup target — e.g. `currencies` for cashBoxes/bankAccounts). */
@@ -145,6 +148,395 @@ interface EntityDef {
     groupKey: string;
     validateBalanced?: boolean;
   };
+}
+
+function buildBusinessKey(
+  entity: EntityDef,
+  row: any,
+  fkMaps?: Record<string, Map<string, number>>,
+): string | null {
+  const groups = entity.businessKeyGroups ?? entity.businessKeys.map((field) => [field]);
+  for (const group of groups) {
+    const values: Array<{ field: string; value: any }> = [];
+    for (const field of group) {
+      let value = row?.[field];
+      if (value == null || String(value).trim() === "") {
+        // The import schema intentionally exposes tenant-resolved FK codes
+        // (itemCode/unitCode), while persisted rows use itemId/unitId.
+        const virtualField = field.replace(/Id$/, "Code");
+        const virtualValue = row?.[virtualField];
+        const resolved = fkMaps?.[virtualField]?.get(String(virtualValue ?? "").trim());
+        if (resolved != null) value = resolved;
+      }
+      if (value == null || String(value).trim() === "") {
+        values.length = 0;
+        break;
+      }
+      values.push({ field, value });
+    }
+    if (values.length !== group.length) continue;
+    return values.map(({ field, value }) => `${field}:${String(value).trim()}`).join("|");
+  }
+  return null;
+}
+
+/**
+ * Unit/base mutations are deliberately serialized with the same logical
+ * item-scoped advisory lock used by the unit-conversion core.  Keep this
+ * lock namespace stable: generic imports can run concurrently with inventory writes,
+ * and a company-wide lock would unnecessarily serialize unrelated items.
+ *
+ * The core resolver is intentionally the authority for conversions.  The
+ * importer only uses this small fallback guard because it must protect a
+ * mutation before the generic upsert reaches the table.
+ */
+type SqlExecutor = {
+  execute: (query: any) => Promise<any>;
+};
+
+type UnitBaseMutation = {
+  itemId: number;
+  previousBaseUnitId: number | null;
+  nextBaseUnitId: number | null;
+  /**
+   * Optional unit-price row change.  These are kept separate from the item
+   * master mutation so unit-price imports cannot silently rebase historical
+   * stock/documents either.
+   */
+  previousFactor?: string | null;
+  nextFactor?: string | null;
+  previousRelationFactor?: string | null;
+  nextRelationFactor?: string | null;
+  previousIsBase?: boolean | null;
+  nextIsBase?: boolean | null;
+};
+
+export class GenericImportUnitInvariantError extends Error {
+  readonly code = "UNIT_BASE_MUTATION_BLOCKED";
+  readonly itemId: number;
+
+  constructor(itemId: number, reason: string) {
+    super(`لا يمكن تغيير وحدة الأساس للصنف ${itemId}: ${reason}`);
+    this.name = "GenericImportUnitInvariantError";
+    this.itemId = itemId;
+  }
+}
+
+function sqlBoolean(row: any, key: string): boolean {
+  return row?.[key] === true || row?.[key] === "t" || row?.[key] === 1 || row?.[key] === "1";
+}
+
+/**
+ * Check only records that actually carry an item identity.  Some legacy
+ * invoice rows have no itemId and therefore cannot be safely linked to a
+ * unit; they are intentionally out of scope rather than being assigned an
+ * invented item/base conversion.
+ */
+async function assertItemBaseMutationSafe(
+  tx: SqlExecutor,
+  companyId: number,
+  mutation: UnitBaseMutation,
+): Promise<void> {
+  const baseChanged = mutation.previousBaseUnitId !== mutation.nextBaseUnitId;
+  const factorChanged = mutation.previousFactor !== undefined
+    && mutation.nextFactor !== undefined
+    && String(mutation.previousFactor ?? "1") !== String(mutation.nextFactor ?? "1");
+  const relationChanged = mutation.previousRelationFactor !== undefined
+    && mutation.nextRelationFactor !== undefined
+    && String(mutation.previousRelationFactor ?? "1") !== String(mutation.nextRelationFactor ?? "1");
+  const baseMarkerChanged = mutation.previousIsBase !== undefined
+    && mutation.nextIsBase !== undefined
+    && Boolean(mutation.previousIsBase) !== Boolean(mutation.nextIsBase);
+  if (!baseChanged && !factorChanged && !relationChanged && !baseMarkerChanged) return;
+
+  // Keep this key byte-for-byte aligned with inventory's unit graph writer.
+  // pg_advisory_xact_lock is transaction scoped and releases automatically on
+  // commit/rollback.
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(
+    ${companyId}::integer,
+    hashtext(${`item-unit:${mutation.itemId}`})
+  )`);
+
+  const result = await tx.execute(sql`
+    SELECT
+      EXISTS (
+        SELECT 1 FROM item_unit_prices
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_item_unit_prices,
+      EXISTS (
+        SELECT 1 FROM stock_balance
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_stock_balance,
+      EXISTS (
+        SELECT 1 FROM stock_ledger
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_stock_ledger,
+      EXISTS (
+        SELECT 1 FROM item_branch_stock
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_branch_stock,
+      EXISTS (
+        SELECT 1 FROM sales_invoice_lines
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_sales_documents,
+      EXISTS (
+        SELECT 1 FROM sales_return_lines
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_sales_returns,
+      EXISTS (
+        SELECT 1 FROM sales_quotation_lines
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_sales_quotes,
+      EXISTS (
+        SELECT 1 FROM sales_order_lines
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_sales_orders,
+      EXISTS (
+        SELECT 1 FROM purchase_invoice_lines
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_purchase_documents,
+      EXISTS (
+        SELECT 1 FROM purchase_return_lines
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_purchase_returns,
+      EXISTS (
+        SELECT 1 FROM purchase_order_lines
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_purchase_orders,
+      EXISTS (
+        SELECT 1 FROM goods_receipt_lines
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_goods_receipts,
+      EXISTS (
+        SELECT 1 FROM goods_delivery_lines
+        WHERE company_id = ${companyId} AND item_id = ${mutation.itemId}
+      ) AS has_goods_deliveries,
+      EXISTS (
+        SELECT 1 FROM stock_transfer_items
+        WHERE item_id = ${mutation.itemId}
+      ) AS has_stock_transfers,
+      EXISTS (
+        SELECT 1 FROM stock_adjustment_items
+        WHERE item_id = ${mutation.itemId}
+      ) AS has_stock_adjustments,
+      EXISTS (
+        SELECT 1 FROM stock_count_items
+        WHERE item_id = ${mutation.itemId}
+      ) AS has_stock_counts
+  `);
+  const row = (result as any)?.rows?.[0] ?? (result as any)?.[0] ?? {};
+  const hasDependentData = [
+    "has_item_unit_prices",
+    "has_stock_balance",
+    "has_stock_ledger",
+    "has_branch_stock",
+    "has_sales_documents",
+    "has_sales_returns",
+    "has_sales_quotes",
+    "has_sales_orders",
+    "has_purchase_documents",
+    "has_purchase_returns",
+    "has_purchase_orders",
+    "has_goods_receipts",
+    "has_goods_deliveries",
+    "has_stock_transfers",
+    "has_stock_adjustments",
+    "has_stock_counts",
+  ].some((key) => sqlBoolean(row, key));
+  if (!hasDependentData) return;
+
+  const reasons: string[] = [];
+  if (sqlBoolean(row, "has_item_unit_prices")) reasons.push("أسعار الوحدات المرتبطة");
+  if (
+    sqlBoolean(row, "has_stock_balance")
+    || sqlBoolean(row, "has_stock_ledger")
+    || sqlBoolean(row, "has_branch_stock")
+  ) reasons.push("أرصدة أو حركات المخزون");
+  if (
+    sqlBoolean(row, "has_sales_documents")
+    || sqlBoolean(row, "has_sales_returns")
+    || sqlBoolean(row, "has_sales_quotes")
+    || sqlBoolean(row, "has_sales_orders")
+    || sqlBoolean(row, "has_purchase_documents")
+    || sqlBoolean(row, "has_purchase_returns")
+    || sqlBoolean(row, "has_purchase_orders")
+    || sqlBoolean(row, "has_goods_receipts")
+    || sqlBoolean(row, "has_goods_deliveries")
+  ) reasons.push("مستندات مرتبطة بوحدة الأساس");
+  if (
+    sqlBoolean(row, "has_stock_transfers")
+    || sqlBoolean(row, "has_stock_adjustments")
+    || sqlBoolean(row, "has_stock_counts")
+  ) reasons.push("مستندات المخزون");
+  throw new GenericImportUnitInvariantError(mutation.itemId, reasons.join("، "));
+}
+
+async function assertGenericImportUnitInvariant(args: {
+  tx: SqlExecutor & { select: (...args: any[]) => any };
+  entity: EntityDef;
+  companyId: number;
+  cleaned: any;
+  existingId: number | null;
+}): Promise<void> {
+  const { tx, entity, companyId, cleaned, existingId } = args;
+  if (entity.key === "items" && existingId != null && Object.prototype.hasOwnProperty.call(cleaned, "unitId")) {
+    const [before] = await tx.select({ unitId: itemsTable.unitId })
+      .from(itemsTable)
+      .where(and(eq(itemsTable.id, existingId), eq(itemsTable.companyId, companyId)));
+    if (before && Number(before.unitId ?? 0) !== Number(cleaned.unitId ?? 0)) {
+      await assertItemBaseMutationSafe(tx, companyId, {
+        itemId: existingId,
+        previousBaseUnitId: before.unitId == null ? null : Number(before.unitId),
+        nextBaseUnitId: cleaned.unitId == null ? null : Number(cleaned.unitId),
+      });
+    }
+    return;
+  }
+
+  if (entity.key === "units" && existingId != null && Object.prototype.hasOwnProperty.call(cleaned, "conversionFactor")) {
+    const [before] = await tx.select({
+      conversionFactor: unitsTable.conversionFactor,
+    }).from(unitsTable).where(and(eq(unitsTable.id, existingId), eq(unitsTable.companyId, companyId)));
+    if (!before || String(before.conversionFactor ?? "1") === String(cleaned.conversionFactor ?? "1")) return;
+
+    // A catalog unit can be referenced by the item master or by a unit-price
+    // edge. Lock/check every affected item, not just the first one returned.
+    const affected = await tx.execute(sql`
+      SELECT DISTINCT item_id
+      FROM (
+        SELECT item_id FROM item_unit_prices
+        WHERE company_id = ${companyId} AND unit_id = ${existingId}
+        UNION
+        SELECT id AS item_id FROM items
+        WHERE company_id = ${companyId} AND unit_id = ${existingId}
+      ) AS linked_items
+      WHERE item_id IS NOT NULL
+    `);
+    const affectedRows = (affected as any)?.rows ?? affected ?? [];
+    for (const row of affectedRows as any[]) {
+      const itemId = Number(row?.item_id);
+      if (!Number.isInteger(itemId) || itemId <= 0) continue;
+      await assertItemBaseMutationSafe(tx, companyId, {
+        itemId,
+        previousBaseUnitId: existingId,
+        nextBaseUnitId: existingId,
+        previousFactor: String(before.conversionFactor ?? "1"),
+        nextFactor: String(cleaned.conversionFactor ?? "1"),
+      });
+    }
+    return;
+  }
+
+  if (entity.key !== "itemUnitPrices") return;
+
+  const itemId = cleaned.itemId == null ? null : Number(cleaned.itemId);
+  if (itemId === null || !Number.isInteger(itemId) || itemId <= 0) return;
+  let before: any = null;
+  if (existingId != null) {
+    [before] = await tx.select().from(itemUnitPricesTable).where(and(
+      eq(itemUnitPricesTable.id, existingId),
+      eq(itemUnitPricesTable.companyId, companyId),
+    ));
+  }
+  if (!before) {
+    // Adding a second base marker is also a base mutation.  Non-base links
+    // can be added without rewriting historical quantities.
+    if (Boolean(cleaned.isBase)) {
+      const [item] = await tx.select({ unitId: itemsTable.unitId }).from(itemsTable).where(and(
+        eq(itemsTable.id, itemId),
+        eq(itemsTable.companyId, companyId),
+      ));
+      await assertItemBaseMutationSafe(tx, companyId, {
+        itemId,
+        previousBaseUnitId: item?.unitId == null ? null : Number(item.unitId),
+        nextBaseUnitId: item?.unitId == null ? null : Number(item.unitId),
+        previousIsBase: false,
+        nextIsBase: true,
+      });
+    }
+    return;
+  }
+
+  // Re-linking a price edge or changing either factor changes the graph seen
+  // by future documents. Existing stock/document snapshots are immutable, so
+  // reject the mutation instead of rewriting their historical factors.
+  await assertItemBaseMutationSafe(tx, companyId, {
+    itemId: Number(before.itemId),
+    previousBaseUnitId: Number(before.unitId),
+    nextBaseUnitId: Number(cleaned.unitId ?? before.unitId),
+    previousFactor: String(before.conversionFactor ?? "1"),
+    nextFactor: String(cleaned.conversionFactor ?? before.conversionFactor ?? "1"),
+    previousRelationFactor: String(before.relationFactor ?? "1"),
+    nextRelationFactor: String(cleaned.relationFactor ?? before.relationFactor ?? "1"),
+    previousIsBase: Boolean(before.isBase),
+    nextIsBase: cleaned.isBase == null ? Boolean(before.isBase) : Boolean(cleaned.isBase),
+  });
+  if (Number(before.itemId) !== itemId) {
+    await assertItemBaseMutationSafe(tx, companyId, {
+      itemId,
+      previousBaseUnitId: null,
+      nextBaseUnitId: Number(cleaned.unitId),
+      previousIsBase: false,
+      nextIsBase: Boolean(cleaned.isBase),
+    });
+  }
+}
+
+class GenericImportUnitGraphError extends Error {
+  readonly code = "UNIT_GRAPH_IMPORT_REJECTED";
+
+  constructor(itemId: number, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : "invalid unit relationship graph";
+    super(
+      `لا يمكن استيراد علاقات وحدات الصنف ${itemId} من مركز البيانات العام: ${detail}. `
+      + "استخدم واجهة علاقات وحدات الأصناف المخصصة.",
+    );
+    this.name = "GenericImportUnitGraphError";
+  }
+}
+
+async function validateImportedUnitGraphs(
+  tx: SqlExecutor & { select: (...args: any[]) => any; update: (...args: any[]) => any },
+  companyId: number,
+  itemIds: number[],
+): Promise<void> {
+  for (const itemId of [...new Set(itemIds)].sort((a, b) => a - b)) {
+    // This is intentionally the same lock used by inventory's unit graph
+    // writer (routes/inventory.ts::lockItemUnitGraph).
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(
+      ${companyId}::integer,
+      hashtext(${`item-unit:${itemId}`})
+    )`);
+    const [item] = await tx.select({ unitId: itemsTable.unitId }).from(itemsTable).where(and(
+      eq(itemsTable.id, itemId),
+      eq(itemsTable.companyId, companyId),
+    ));
+    if (!item) continue;
+    const rows = await tx.select().from(itemUnitPricesTable).where(and(
+      eq(itemUnitPricesTable.companyId, companyId),
+      eq(itemUnitPricesTable.itemId, itemId),
+    ));
+    try {
+      const graph = resolveUnitGraph({ baseUnitId: item.unitId ?? null, rows });
+      // conversionFactor is a compatibility cache; the directed edge and
+      // exact graph result remain authoritative. Keep the cache coherent
+      // without touching any historical stock/document snapshot.
+      for (const row of rows) {
+        const factor = graph.factors.get(row.unitId);
+        if (factor === undefined) continue;
+        const cached = toStorageDecimal(factor, 18, "half_up");
+        if (row.id == null || String(row.conversionFactor ?? "1") === cached) continue;
+        await tx.update(itemUnitPricesTable)
+          .set({ conversionFactor: cached })
+          .where(and(
+            eq(itemUnitPricesTable.id, row.id),
+            eq(itemUnitPricesTable.companyId, companyId),
+          ));
+      }
+    } catch (error) {
+      throw new GenericImportUnitGraphError(itemId, error);
+    }
+  }
 }
 
 const ENTITIES: Record<string, EntityDef> = {
@@ -251,6 +643,12 @@ const ENTITIES: Record<string, EntityDef> = {
       { name: "itemType",   labelAr: "نوع الصنف", labelEn: "Item Type", type: "string", default: "stock",
         enum: ["stock", "service"],
         aliases: ["type", "نوع", "kind"] },
+      // `unitId` is the item's base unit.  The import surface accepts the
+      // tenant-scoped unit code and resolves it to the FK without exposing
+      // arbitrary cross-company ids to the client.
+      { name: "unitCode",   labelAr: "كود وحدة الأساس", labelEn: "Base Unit Code", type: "fk",
+        fkRef: "units", fkLookupBy: "code",
+        aliases: ["unit", "unit code", "base unit", "وحدة", "وحدة الأساس"] },
       { name: "costPrice",  labelAr: "سعر التكلفة", labelEn: "Cost Price", type: "number", default: 0,
         aliases: ["cost", "purchase price", "سعر التكلفة", "سعر الشراء"] },
       { name: "salePrice",  labelAr: "سعر البيع", labelEn: "Sale Price", type: "number", default: 0,
@@ -259,6 +657,63 @@ const ENTITIES: Record<string, EntityDef> = {
         aliases: ["vat", "tax", "نسبة", "ضريبة"] },
       { name: "reorderLevel", labelAr: "حد الطلب", labelEn: "Reorder Level", type: "number", aliases: ["min", "reorder", "حد الطلب"] },
       { name: "description",  labelAr: "الوصف", labelEn: "Description", type: "string", aliases: ["description", "وصف", "notes", "ملاحظة"] },
+    ],
+  },
+  units: {
+    key: "units",
+    labelAr: "وحدات القياس",
+    labelEn: "Units of Measure",
+    table: unitsTable,
+    hasCompanyId: true,
+    businessKeys: ["code"],
+    fields: [
+      { name: "code",             labelAr: "كود الوحدة", labelEn: "Unit Code", type: "string", required: true,
+        aliases: ["code", "unit code", "uom", "كود"] },
+      { name: "nameAr",           labelAr: "اسم الوحدة بالعربي", labelEn: "Name (Arabic)", type: "string", required: true,
+        aliases: ["name", "unit name", "اسم", "الوحدة"] },
+      { name: "nameEn",           labelAr: "اسم الوحدة بالإنجليزي", labelEn: "Name (English)", type: "string",
+        aliases: ["english name", "name en"] },
+      { name: "conversionFactor", labelAr: "معامل التحويل القديم", labelEn: "Legacy Conversion Factor", type: "number",
+        aliases: ["factor", "conversion", "conversion factor", "معامل التحويل"] },
+    ],
+  },
+  /**
+   * Unit-price rows are exposed as a separate import entity so a data
+   * round-trip can restore item unit graphs.  itemCode/unitCode are virtual
+   * FK fields; commit persists itemId/unitId only after tenant-scoped lookup.
+   */
+  itemUnitPrices: {
+    key: "itemUnitPrices",
+    labelAr: "أسعار وحدات الأصناف",
+    labelEn: "Item Unit Prices",
+    table: itemUnitPricesTable,
+    hasCompanyId: true,
+    businessKeys: ["itemId", "unitId"],
+    businessKeyGroups: [["itemId", "unitId"]],
+    fields: [
+      { name: "itemCode",        labelAr: "كود الصنف", labelEn: "Item Code", type: "fk", required: true,
+        fkRef: "items", fkLookupBy: "code", aliases: ["item", "item code", "sku", "الصنف"] },
+      { name: "unitCode",        labelAr: "كود الوحدة", labelEn: "Unit Code", type: "fk", required: true,
+        fkRef: "units", fkLookupBy: "code", aliases: ["unit", "unit code", "uom", "الوحدة"] },
+      { name: "conversionFactor", labelAr: "معامل التحويل", labelEn: "Conversion Factor", type: "number",
+        aliases: ["factor", "conversion", "معامل التحويل"] },
+      { name: "referenceUnitCode", labelAr: "كود الوحدة المرجعية", labelEn: "Reference Unit Code", type: "fk",
+        fkRef: "units", fkLookupBy: "code",
+        aliases: ["reference unit", "reference unit code", "الوحدة المرجعية"] },
+      { name: "relationFactor",  labelAr: "معامل العلاقة", labelEn: "Relation Factor", type: "number",
+        aliases: ["relation", "relation factor", "معامل العلاقة"] },
+      { name: "costPrice",       labelAr: "سعر التكلفة", labelEn: "Cost Price", type: "number",
+        aliases: ["cost", "سعر التكلفة"] },
+      { name: "salePrice",       labelAr: "سعر البيع", labelEn: "Sale Price", type: "number",
+        aliases: ["price", "sale price", "سعر البيع"] },
+      { name: "isBase",          labelAr: "وحدة أساس", labelEn: "Base Unit", type: "boolean",
+        aliases: ["base", "is base", "الأساس"] },
+      { name: "isActive",        labelAr: "نشط", labelEn: "Active", type: "boolean",
+        aliases: ["active", "نشط"] },
+      { name: "decimalPlaces",   labelAr: "المنازل العشرية", labelEn: "Decimal Places", type: "number",
+        aliases: ["decimals", "decimal places", "المنازل"] },
+      { name: "roundingMode",    labelAr: "طريقة التقريب", labelEn: "Rounding Mode", type: "string",
+        aliases: ["rounding", "rounding mode", "التقريب"] },
     ],
   },
   warehouses: {
@@ -623,7 +1078,7 @@ ${JSON.stringify(sample.slice(0, 5))}
         if (v.field && validFieldNames.has(v.field) && !used.has(v.field)) {
           field = v.field;
           confidence = Math.max(0, Math.min(1, Number(v.confidence ?? 0.7)));
-          used.add(field);
+          used.add(field!);
         }
       }
       out[h] = { field, confidence };
@@ -646,6 +1101,7 @@ router.get("/entities", (_req, res) => {
       labelAr: e.labelAr,
       labelEn: e.labelEn,
       businessKeys: e.businessKeys,
+      ...(e.businessKeyGroups ? { businessKeyGroups: e.businessKeyGroups } : {}),
       fields: e.fields.map((f) => ({
         name: f.name, labelAr: f.labelAr, labelEn: f.labelEn,
         type: f.type, required: !!f.required, enum: f.enum,
@@ -670,6 +1126,39 @@ router.get("/entities", (_req, res) => {
 // (Tenants with very large tables should use a future async/streaming export.)
 const EXPORT_MAX_ENTITIES = 12;
 const EXPORT_MAX_ROWS_PER_ENTITY = 50_000;
+
+async function materializeExportVirtualFields(
+  entityKey: string,
+  rows: any[],
+  companyId: number,
+): Promise<any[]> {
+  if (entityKey === "items") {
+    const units = await db.select({ id: unitsTable.id, code: unitsTable.code })
+      .from(unitsTable)
+      .where(eq(unitsTable.companyId, companyId));
+    const byId = new Map(units.map((unit) => [unit.id, unit.code]));
+    return rows.map((row) => ({ ...row, unitCode: row.unitId == null ? null : byId.get(row.unitId) ?? null }));
+  }
+  if (entityKey === "itemUnitPrices") {
+    const [items, units] = await Promise.all([
+      db.select({ id: itemsTable.id, code: itemsTable.code })
+        .from(itemsTable)
+        .where(eq(itemsTable.companyId, companyId)),
+      db.select({ id: unitsTable.id, code: unitsTable.code })
+        .from(unitsTable)
+        .where(eq(unitsTable.companyId, companyId)),
+    ]);
+    const itemsById = new Map(items.map((item) => [item.id, item.code]));
+    const unitsById = new Map(units.map((unit) => [unit.id, unit.code]));
+    return rows.map((row) => ({
+      ...row,
+      itemCode: row.itemId == null ? null : itemsById.get(row.itemId) ?? null,
+      unitCode: row.unitId == null ? null : unitsById.get(row.unitId) ?? null,
+      referenceUnitCode: row.referenceUnitId == null ? null : unitsById.get(row.referenceUnitId) ?? null,
+    }));
+  }
+  return rows;
+}
 
 router.post("/export", async (req, res) => {
   try {
@@ -777,9 +1266,9 @@ router.post("/export", async (req, res) => {
         : await db.select().from(ent.table).limit(limit);
       if (rows.length > EXPORT_MAX_ROWS_PER_ENTITY) {
         truncated[t] = EXPORT_MAX_ROWS_PER_ENTITY;
-        data[t] = rows.slice(0, EXPORT_MAX_ROWS_PER_ENTITY);
+        data[t] = await materializeExportVirtualFields(t, rows.slice(0, EXPORT_MAX_ROWS_PER_ENTITY), cid);
       } else {
-        data[t] = rows;
+        data[t] = await materializeExportVirtualFields(t, rows, cid);
       }
     }
 
@@ -944,13 +1433,8 @@ router.post("/import/process", async (req, res) => {
         ? await db.select().from(ent.table).where(eq(ent.table.companyId, cid))
         : await db.select().from(ent.table);
       for (const r of existing) {
-        for (const k of ent.businessKeys) {
-          const v = (r as any)[k];
-          if (v != null && String(v).trim() !== "") {
-            existingByKey.set(`${k}:${String(v).trim()}`, (r as any).id);
-            break;
-          }
-        }
+        const key = buildBusinessKey(ent, r);
+        if (key) existingByKey.set(key, (r as any).id);
       }
     }
 
@@ -1032,11 +1516,7 @@ router.post("/import/process", async (req, res) => {
       }
 
       // Duplicate detection (vs existing DB + within file)
-      let bizKey: string | null = null;
-      for (const k of ent.businessKeys) {
-        const v = targetRow[k];
-        if (v != null && String(v).trim() !== "") { bizKey = `${k}:${String(v).trim()}`; break; }
-      }
+      const bizKey = buildBusinessKey(ent, targetRow, fkMaps);
       if (bizKey) {
         if (existingByKey.has(bizKey)) {
           targetRow.__existingId = existingByKey.get(bizKey);
@@ -1117,13 +1597,8 @@ async function commitComposite(args: {
   if (ent.businessKeys.length > 0) {
     const existing = await db.select().from(ent.table).where(eq(ent.table.companyId, cid));
     for (const ex of existing) {
-      for (const k of ent.businessKeys) {
-        const v = (ex as any)[k];
-        if (v != null && String(v).trim() !== "") {
-          existingByKey.set(`${k}:${String(v).trim()}`, (ex as any).id);
-          break;
-        }
-      }
+      const key = buildBusinessKey(ent, ex);
+      if (key) existingByKey.set(key, (ex as any).id);
     }
   }
 
@@ -1421,13 +1896,8 @@ router.post("/import/commit", async (req, res) => {
         ? await db.select().from(ent.table).where(eq(ent.table.companyId, cid))
         : await db.select().from(ent.table);
       for (const ex of existing) {
-        for (const k of ent.businessKeys) {
-          const v = (ex as any)[k];
-          if (v != null && String(v).trim() !== "") {
-            existingByKey.set(`${k}:${String(v).trim()}`, (ex as any).id);
-            break;
-          }
-        }
+        const key = buildBusinessKey(ent, ex);
+        if (key) existingByKey.set(key, (ex as any).id);
       }
     }
 
@@ -1447,15 +1917,35 @@ router.post("/import/commit", async (req, res) => {
     // any client-supplied *Id values and reject cross-tenant id smuggling
     // (e.g., a forged payload with parentId or currencyId pointing at another company's row).
     const fkValidIds: Record<string, Set<number>> = {};
+    const fkLookupMaps: Record<string, Map<string, number>> = {};
     for (const f of ent.fields) {
       if (f.type !== "fk" || !f.fkRef) continue;
       const refEnt = ENTITIES[f.fkRef];
       if (!refEnt) continue;
       const rows = refEnt.hasCompanyId
-        ? await db.select({ id: refEnt.table.id }).from(refEnt.table).where(eq(refEnt.table.companyId, cid))
-        : await db.select({ id: refEnt.table.id }).from(refEnt.table);
+        ? await db.select().from(refEnt.table).where(eq(refEnt.table.companyId, cid))
+        : await db.select().from(refEnt.table);
       fkValidIds[f.name.replace(/Code$/, "Id")] = new Set(rows.map((r) => (r as any).id as number));
+      if (f.fkLookupBy) {
+        const lookup = new Map<string, number>();
+        for (const row of rows) {
+          const value = (row as any)[f.fkLookupBy];
+          if (value != null && String(value).trim() !== "") lookup.set(String(value).trim(), (row as any).id);
+        }
+        fkLookupMaps[f.name] = lookup;
+      }
     }
+
+    const importedUnitItemIds = ent.key === "itemUnitPrices"
+      ? validRows
+        .map(({ row }) => {
+          const direct = Number(row.itemId);
+          if (Number.isInteger(direct) && direct > 0) return direct;
+          const resolved = fkLookupMaps.itemCode?.get(String(row.itemCode ?? "").trim());
+          return resolved == null ? null : Number(resolved);
+        })
+        .filter((id): id is number => id != null && Number.isInteger(id) && id > 0)
+      : [];
 
     function cleanRow(r: any): { row: any; warnings: string[] } {
       const out: any = {};
@@ -1487,6 +1977,14 @@ router.post("/import/commit", async (req, res) => {
     }
 
     await db.transaction(async (tx) => {
+      // Acquire graph locks in a stable order before changing any relationship
+      // rows, matching the lock used by inventory's dedicated unit editor.
+      for (const itemId of [...new Set(importedUnitItemIds)].sort((a, b) => a - b)) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(
+          ${cid}::integer,
+          hashtext(${`item-unit:${itemId}`})
+        )`);
+      }
       // Process in chunks of 200 to avoid huge single statements
       const CHUNK = 200;
       for (let i = 0; i < validRows.length; i += CHUNK) {
@@ -1494,19 +1992,35 @@ router.post("/import/commit", async (req, res) => {
         for (const { row, idx } of slice) {
           try {
             const { row: cleaned, warnings } = cleanRow(row);
+            if (
+              ent.key === "itemUnitPrices"
+              && Object.prototype.hasOwnProperty.call(cleaned, "conversionFactor")
+              && !Object.prototype.hasOwnProperty.call(cleaned, "relationFactor")
+            ) {
+              throw new GenericImportUnitGraphError(
+                Number(cleaned.itemId ?? 0),
+                new Error("conversionFactor is a derived cache; relationFactor must be imported with the reference edge"),
+              );
+            }
             // SECURITY: re-derive existingId from server-side businessKey lookup,
             // *not* from row.__existingId (which the client could spoof to point at
             // another tenant's row).
             let serverExistingId: number | null = null;
             if (!allowDuplicates) {
-              for (const k of ent.businessKeys) {
-                const v = cleaned[k];
-                if (v != null && String(v).trim() !== "") {
-                  const id = existingByKey.get(`${k}:${String(v).trim()}`);
-                  if (id != null) { serverExistingId = id; break; }
-                }
-              }
+              const key = buildBusinessKey(ent, cleaned);
+              if (key) serverExistingId = existingByKey.get(key) ?? null;
             }
+
+            // Unit/base changes are checked inside the same transaction as
+            // the eventual upsert. This prevents a concurrent stock/document
+            // write from slipping between a preflight read and UPDATE.
+            await assertGenericImportUnitInvariant({
+              tx,
+              entity: ent,
+              companyId: cid,
+              cleaned,
+              existingId: serverExistingId,
+            });
 
             const reasonSuffix = warnings.length > 0 ? ` | ${warnings.join("؛ ")}` : "";
 
@@ -1531,15 +2045,11 @@ router.post("/import/commit", async (req, res) => {
               log.push({ rowIndex: idx, status: "inserted", id: newId, ...(warnings.length ? { reason: `تم الإدراج${reasonSuffix}` } : {}) });
               // keep the in-memory map current so duplicates within the same batch
               // upsert correctly instead of inserting twice.
-              for (const k of ent.businessKeys) {
-                const v = cleaned[k];
-                if (v != null && String(v).trim() !== "" && newId != null) {
-                  existingByKey.set(`${k}:${String(v).trim()}`, newId);
-                  break;
-                }
-              }
+              const key = buildBusinessKey(ent, cleaned);
+              if (key && newId != null) existingByKey.set(key, newId);
             }
           } catch (e: any) {
+            if (e instanceof GenericImportUnitGraphError) throw e;
             if (skipErrors) {
               skipped++;
               log.push({ rowIndex: idx, status: "skipped", reason: e?.message?.slice(0, 200) ?? "خطأ غير معروف" });
@@ -1555,15 +2065,28 @@ router.post("/import/commit", async (req, res) => {
           }
         }
       }
+      if (ent.key === "itemUnitPrices" && importedUnitItemIds.length > 0) {
+        await validateImportedUnitGraphs(tx, cid, importedUnitItemIds);
+      }
     });
 
-    res.json({
+    return res.json({
       entity: ent.key,
       summary: { inserted, updated, skipped, errors, total: rows.length },
       log,
       committedAt: new Date().toISOString(),
     });
   } catch (e: any) {
+    if (e instanceof GenericImportUnitGraphError) {
+      return res.status(422).json({
+        entity: req.body?.entity,
+        summary: { inserted: 0, updated: 0, skipped: 0, errors: 1, total: rows?.length ?? 0 },
+        log,
+        aborted: true,
+        reason: e.code,
+        error: e.message,
+      });
+    }
     if (e?.__strictTxFailure) {
       return res.status(422).json({
         entity: req.body?.entity,
@@ -1574,7 +2097,7 @@ router.post("/import/commit", async (req, res) => {
         error: e?.message?.slice(0, 200) ?? "فشل التنفيذ ضمن الوضع الصارم",
       });
     }
-    res.status(500).json({ error: e?.message ?? "فشل التنفيذ" });
+    return res.status(500).json({ error: e?.message ?? "فشل التنفيذ" });
   }
 });
 

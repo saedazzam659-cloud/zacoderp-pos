@@ -47,12 +47,20 @@ import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { DateField } from "@/components/ui/date-field";
 import SalesDocumentDetails from "@/pages/sales/SalesDocumentDetails";
+import {
+  catalogUnitsWithHistoricalSelection,
+  isActiveItemUnit,
+  itemUnitsWithHistoricalSelection,
+  serializeDocumentLine,
+} from "@/lib/documentLineUnits";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
 interface DocLine {
   _id: string;
+  /** Persisted database line id; absent on newly added/duplicated lines. */
+  id?: number;
   itemId: string;
   itemName: string;
   itemCode: string;
@@ -859,6 +867,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     }
     setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
       _id: crypto.randomUUID(),
+      id: Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
       itemId:      l.itemId      ? String(l.itemId)      : "",
       itemName:    l.itemName    ?? "",
       itemCode:    l.itemCode    ?? "",
@@ -895,6 +904,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       brandId:          l.brandId != null ? Number(l.brandId) : null,
       brandName:        l.brandName ?? "",
     })) : [newLine()]);
+    void Promise.all(
+      (existing.lines ?? [])
+        .map((l: any) => l.itemId ? String(l.itemId) : "")
+        .filter(Boolean)
+        .filter((id: string, i: number, ids: string[]) => ids.indexOf(id) === i)
+        .map((id: string) => fetchItemUnits(id)),
+    );
     if (isInvoice) {
       setDocumentOfferId(existing.documentOfferId ? Number(existing.documentOfferId) : null);
       setDocumentOfferName(existing.documentOfferName ? String(existing.documentOfferName) : null);
@@ -1055,7 +1071,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     (async () => {
       const us = await fetchItemUnits(qaItemId);
       if (cancelled) return;
-      const base = us.find((u: any) => u.isBase) ?? us[0];
+      const base = us.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? us.find(isActiveItemUnit);
       setQaUnitId(base?.unitId != null ? String(base.unitId) : "");
     })();
     return () => { cancelled = true; };
@@ -1086,7 +1102,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (!item) { updateLine(lineId, "itemId", ""); return; }
     const itemUnits = await fetchItemUnits(itemId);
     // Pick base unit (or first configured, or fallback to item's default unit)
-    const base = itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
+    const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
     const chosenUnitId = base?.unitId ?? item.unitId ?? null;
     const chosenUnitName = base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "";
@@ -1657,8 +1673,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // Strip the local-only `_id` and `appliedOfferName` (display-only) but
       // keep `appliedOfferId` so the server persists the audit-trail FK.
       lines: lines.filter(l => l.itemName).map(l => ({
-        ...l,
-        _id: undefined,
+        ...serializeDocumentLine(l),
         appliedOfferName: undefined,
       })),
     };
@@ -1736,7 +1751,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     { value: "", label: t("salesDocForm.selectItem") },
     ...inventoryItems.map((i: any) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? i.nameEn ?? `#${i.id}` })),
   ], usageModes);
-  const unitItems = units.map((u: any) => ({ value: String(u.id), label: u.nameAr }));
+  const unitItems = units
+    .filter((u: any) => u.isActive !== false)
+    .map((u: any) => ({ value: String(u.id), label: u.nameAr }));
 
   const Icon  = isInvoice ? ShoppingBag : isOrder ? ClipboardList : FileSignature;
   const title = isNew
@@ -1954,15 +1971,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colUnit")}</label>
           {(() => {
             const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
-            const opts = iu.map((u: any) => ({
+            const opts = itemUnitsWithHistoricalSelection(iu, qaUnitId).map((u: any) => ({
               value: String(u.unitId),
               label: `${u.unit?.nameAr ?? ""}${Number(u.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(u.conversionFactor)})` : ""}`,
+              disabled: u.isActive === false || u.unit?.isActive === false,
             }));
             return (
               <Select value={qaUnitId || undefined} onValueChange={setQaUnitId} disabled={opts.length === 0}>
                 <SelectTrigger className="h-9 text-xs"><SelectValue placeholder={t("salesDocForm.colUnit")} /></SelectTrigger>
                 <SelectContent>
-                  {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                  {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             );
@@ -2057,11 +2075,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 const dMode = lineDiscMode[l._id] ?? "pct";
                 const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
                 const unitOpts = itemUnits.length > 0
-                  ? itemUnits.map((iu: any) => ({
+                  ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
                       value: String(iu.unitId),
                       label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                      disabled: iu.isActive === false || iu.unit?.isActive === false,
                     }))
-                  : unitItems;
+                  : [
+                      ...unitItems,
+                      ...catalogUnitsWithHistoricalSelection(units, l.unitId)
+                        .filter((u: any) => !unitItems.some((x: any) => x.value === String(u.id)))
+                        .map((u: any) => ({ value: String(u.id), label: u.nameAr ?? u.nameEn ?? `#${u.id}`, disabled: u.isActive === false })),
+                    ];
                 return (
                 <div key={l._id} className="px-3 py-2 text-xs hover:bg-muted/30 transition-colors">
                   <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: gridCols }}>
@@ -2088,7 +2112,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
                         <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t("salesDocForm.colUnit")} /></SelectTrigger>
                         <SelectContent>
-                          {unitOpts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                          {unitOpts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     ) : (
@@ -2290,17 +2314,23 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       )}
                       {(() => {
                         const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
-                        const opts = itemUnits.length > 0
-                          ? itemUnits.map((iu: any) => ({
+                    const opts = itemUnits.length > 0
+                          ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
                               value: String(iu.unitId),
                               label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                              disabled: iu.isActive === false || iu.unit?.isActive === false,
                             }))
-                          : unitItems;
+                          : [
+                              ...unitItems,
+                              ...catalogUnitsWithHistoricalSelection(units, l.unitId)
+                                .filter((u: any) => !unitItems.some((x: any) => x.value === String(u.id)))
+                                .map((u: any) => ({ value: String(u.id), label: u.nameAr ?? u.nameEn ?? `#${u.id}`, disabled: u.isActive === false })),
+                            ];
                         return units.length > 0 ? (
                           <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
                             <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t("salesDocForm.colUnit")} /></SelectTrigger>
                             <SelectContent>
-                              {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                          {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         ) : (

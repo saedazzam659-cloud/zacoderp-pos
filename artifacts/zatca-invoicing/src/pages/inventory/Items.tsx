@@ -1,6 +1,7 @@
 import { useState, Fragment, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocation } from "wouter";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { aiApi, type ItemFieldsSuggestion } from "@/lib/aiApi";
 import { parseError } from "@/lib/parseError";
@@ -23,7 +24,7 @@ import {
   ScanLine, FileText, Upload, ExternalLink,
   Truck, Check, Boxes, Layers,
   Building2, Cog, Bell, Store, FlaskConical,
-  Bookmark,
+  Bookmark, Info,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import BulkLabelDialog from "@/components/BulkLabelDialog";
@@ -718,7 +719,7 @@ function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: str
     </div>
   );
 }
-const UNIT_EMPTY = { unitId: "", conversionFactor: "1", costPrice: "0", salePrice: "0", isBase: false };
+const UNIT_EMPTY = { unitId: "", referenceUnitId: "", conversionFactor: "1", costPrice: "0", salePrice: "0", isBase: false, isActive: true, decimalPlaces: "2", roundingMode: "half_up" };
 
 // ─── Item Unit Prices Panel ──────────────────────────────────────────────────
 // PRO Extension #5 — Per-item Analytics panel.
@@ -786,47 +787,86 @@ function ItemAnalyticsPanel({ itemId, unitCode }: { itemId: number; unitCode: st
 }
 
 function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
+  const canCreateUnit = usePermission("items", "create");
+  const canEditUnit = usePermission("items", "edit");
+  const canDeleteUnit = usePermission("items", "delete");
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, actingCompanyId } = useAuth();
   const { fmt } = useFmt();
-  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const cid = actingCompanyId ?? user?.company?.id;
 
   const { data: allUnits = [] } = useQuery({ queryKey: ["units", cid], queryFn: () => inventoryApi.getUnits(cid) });
   const { data: unitPrices = [], isLoading } = useQuery({
-    queryKey: ["item-units", itemId],
+    queryKey: ["item-units", itemId, cid],
     queryFn: () => inventoryApi.getItemUnits(itemId),
   });
 
   const [form, setForm] = useState<any>(UNIT_EMPTY);
   const [editUpId, setEditUpId] = useState<number | null>(null);
   const [showUnitForm, setShowUnitForm] = useState(false);
+  const [previewQty, setPreviewQty] = useState<string>("1");
+  const unitMutationError = (error: Error) => toast({ title: "تعذر حفظ علاقة الوحدة", description: error.message, variant: "destructive" });
 
   const inv = () => qc.invalidateQueries({ queryKey: ["item-units", itemId] });
   const addMut = useMutation({
     mutationFn: (data: any) => inventoryApi.addItemUnit(itemId, data),
+    onError: unitMutationError,
     onSuccess: () => { inv(); setForm(UNIT_EMPTY); setShowUnitForm(false); toast({ title: t("pages.items.unitAdded") }); },
   });
   const updMut = useMutation({
     mutationFn: ({ upId, data }: any) => inventoryApi.updateItemUnit(itemId, upId, data),
+    onError: unitMutationError,
     onSuccess: () => { inv(); setForm(UNIT_EMPTY); setEditUpId(null); setShowUnitForm(false); toast({ title: t("pages.items.updated") }); },
   });
   const delMut = useMutation({
     mutationFn: (upId: number) => inventoryApi.deleteItemUnit(itemId, upId),
+    onError: unitMutationError,
     onSuccess: () => { inv(); toast({ title: t("pages.items.deleted") }); },
   });
 
+  const { data: previewData, isFetching: previewLoading, isError: previewError } = useQuery({
+    queryKey: ["item-unit-convert", itemId, cid, form?.unitId, form?.referenceUnitId, previewQty],
+    queryFn: () => inventoryApi.convertItemUnit(itemId, {
+      fromUnitId: Number(form.unitId),
+      toUnitId: Number(form.referenceUnitId),
+      quantity: String(previewQty),
+      roundedDisplay: true,
+    }),
+    enabled: !!(itemId && form?.unitId && form?.referenceUnitId && Number(previewQty) > 0),
+    retry: false
+  });
+
   function handleEditUp(up: any) {
-    setForm({ unitId: String(up.unitId), conversionFactor: up.conversionFactor ?? "1", costPrice: up.costPrice ?? "0", salePrice: up.salePrice ?? "0", isBase: up.isBase });
+    setForm({
+      unitId: String(up.unitId),
+      referenceUnitId: up.referenceUnitId ? String(up.referenceUnitId) : "",
+      conversionFactor: up.relationFactor ?? up.conversionFactor ?? "1",
+      costPrice: up.costPrice ?? "0",
+      salePrice: up.salePrice ?? "0",
+      isBase: up.isBase,
+      isActive: up.isActive ?? true,
+      decimalPlaces: String(up.decimalPlaces || 2),
+      roundingMode: up.roundingMode || "half_up"
+    });
     setEditUpId(up.id);
     setShowUnitForm(true);
   }
   function handleSubmitUp(e: React.FormEvent) {
     e.preventDefault();
-    const data = { ...form, unitId: Number(form.unitId), conversionFactor: form.conversionFactor, costPrice: form.costPrice, salePrice: form.salePrice, isBase: form.isBase };
+    if (editUpId ? !canEditUnit : !canCreateUnit) return;
+    const data = {
+      ...form,
+      unitId: Number(form.unitId),
+      referenceUnitId: form.referenceUnitId ? Number(form.referenceUnitId) : undefined,
+      relationFactor: String(form.conversionFactor),
+      isActive: form.isActive,
+      decimalPlaces: Number(form.decimalPlaces),
+      roundingMode: form.roundingMode
+    };
     if (editUpId) updMut.mutate({ upId: editUpId, data });
     else addMut.mutate(data);
   }
@@ -842,7 +882,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
           {t("pages.items.unitPricesDescription")}
         </p>
         {!showUnitForm && (
-          <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => { setForm(UNIT_EMPTY); setEditUpId(null); setShowUnitForm(true); }}>
+          <Button disabled={!canCreateUnit} size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => { setForm(UNIT_EMPTY); setEditUpId(null); setShowUnitForm(true); }}>
             <Plus className="h-3.5 w-3.5" />{t("pages.items.addUnit")}
           </Button>
         )}
@@ -852,22 +892,64 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
       {showUnitForm && (
         <div className="rounded-lg border bg-background p-4">
           <form onSubmit={handleSubmitUp} className="space-y-3">
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">{t("pages.items.unitLabel")}</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 border-b pb-3 border-muted">
+              <div className="space-y-1.5 lg:col-span-2">
+                <Label className="text-xs font-semibold">{t("inventoryMaster.units.fromUnit", { defaultValue: "From Unit (Source)" })}</Label>
                 <SearchCombobox
-                  items={availableUnits.map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))}
+                  items={availableUnits.map((u: any) => ({ value: String(u.id), code: u.code, label: pickName(u.nameAr, u.nameEn) || u.code }))}
                   value={form.unitId}
                   onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))}
                   placeholder={t("pages.items.chooseUnit")}
                   className="h-8 text-xs"
                 />
               </div>
+              <div className="space-y-1.5 lg:col-span-2">
+                <Label className="text-xs font-semibold">{t("inventoryMaster.units.toUnit", { defaultValue: "To Unit (Reference)" })}</Label>
+                <SearchCombobox
+                  items={allUnits.map((u: any) => ({ value: String(u.id), code: u.code, label: pickName(u.nameAr, u.nameEn) || u.code }))}
+                  value={form.referenceUnitId}
+                  onValueChange={v => setForm((p: any) => ({ ...p, referenceUnitId: v }))}
+                  placeholder={t("common.select", { defaultValue: "Select..." })}
+                  className="h-8 text-xs"
+                />
+                <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.units.baseUnitHint", { defaultValue: "Usually the item's base unit. Leave empty to use factor standalone." })}</p>
+              </div>
+
               <div className="space-y-1.5">
                 <Label className="text-xs">{t("pages.items.conversionFactorLabel")}</Label>
-                <Input className="h-8 text-xs" type="number" step="any" min="0.000001" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value }))} required />
-                <p className="text-[10px] text-muted-foreground">{t("pages.items.conversionFactorHint")}</p>
+                <Input className="h-8 text-xs font-mono" type="number" step="any" min="0.000001" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value }))} required />
               </div>
+              
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("inventoryMaster.units.decimalPlaces", { defaultValue: "Decimals" })}</Label>
+                <Input className="h-8 text-xs" type="number" step="1" min="0" max="6" value={form.decimalPlaces} onChange={e => setForm((p: any) => ({ ...p, decimalPlaces: e.target.value }))} />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("inventoryMaster.units.roundingMode", { defaultValue: "Rounding" })}</Label>
+                <select
+                  value={form.roundingMode}
+                  onChange={(e) => setForm((p: any) => ({ ...p, roundingMode: e.target.value }))}
+                  className="w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs shadow-sm h-8"
+                >
+                  <option value="half_up">{t("inventoryMaster.units.roundHalfUp", { defaultValue: "Half Up (Standard)" })}</option>
+                  <option value="half_even">{t("inventoryMaster.units.roundHalfEven", { defaultValue: "Half Even (Bankers)" })}</option>
+                  <option value="ceil">{t("inventoryMaster.units.roundUp", { defaultValue: "Round Up" })}</option>
+                  <option value="floor">{t("inventoryMaster.units.roundDown", { defaultValue: "Round Down" })}</option>
+                  <option value="truncate">{t("inventoryMaster.units.truncate", { defaultValue: "Truncate" })}</option>
+                </select>
+              </div>
+              
+              <div className="space-y-1.5">
+                <Label className="text-xs">&nbsp;</Label>
+                <div className="flex items-center gap-2 h-8">
+                  <input type="checkbox" id="unit-active" checked={form.isActive} onChange={e => setForm((p: any) => ({ ...p, isActive: e.target.checked }))} className="rounded" />
+                  <label htmlFor="unit-active" className="text-xs text-muted-foreground">{t("common.active", { defaultValue: "Active" })}</label>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">{t("pages.items.costPriceLabel")}</Label>
                 <Input className="h-8 text-xs" type="number" step="any" value={form.costPrice} onChange={e => setForm((p: any) => ({ ...p, costPrice: e.target.value }))} />
@@ -884,15 +966,64 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
                 </div>
               </div>
             </div>
-            {/* Preview */}
-            {form.unitId && form.conversionFactor && (
+
+            {/* Preview Section */}
+            {(form.unitId && form.referenceUnitId && form.conversionFactor) && (
+              <div className="bg-muted/30 border rounded-lg p-3 space-y-2 mt-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-muted-foreground">{t("inventoryMaster.units.previewConversion", { defaultValue: "Conversion Preview" })}</p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs">{t("inventoryMaster.units.testQty", { defaultValue: "Test Qty:" })}</span>
+                    <Input
+                      type="number" step="any" min="0" className="w-24 h-7 text-xs font-mono"
+                      value={previewQty} onChange={e => setPreviewQty(e.target.value)}
+                    />
+                  </div>
+                </div>
+                
+                {previewLoading ? (
+                  <div className="text-xs text-muted-foreground flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" /> {t("common.loading", { defaultValue: "Loading..." })}</div>
+                ) : previewError ? (
+                  <div className="text-xs text-destructive flex items-center gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    {t("inventoryMaster.units.previewError", { defaultValue: "Preview failed to load. Check factor validity." })}
+                  </div>
+                ) : previewData ? (
+                  <div className="flex flex-col gap-1.5 text-sm">
+                    <div className="flex items-center gap-3">
+                      <Badge variant="outline" className="font-mono bg-background">{previewQty} {allUnits.find((u: any) => String(u.id) === String(previewData.fromUnitId))?.code}</Badge>
+                      <ArrowRight className={`h-4 w-4 text-muted-foreground ${isRtl ? 'rotate-180' : ''}`} />
+                      <Badge className="font-mono bg-green-100 text-green-800 hover:bg-green-100 border-green-200">
+                        {previewData.roundedQuantity ?? previewData.preciseQuantity} {allUnits.find((u: any) => String(u.id) === String(previewData.toUnitId))?.code}
+                      </Badge>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-1.5 text-sm">
+                    <div className="flex items-center gap-3 opacity-70">
+                      <Badge variant="outline" className="font-mono bg-background">{trimTrailingZeros(previewQty)} {allUnits.find((u: any) => String(u.id) === String(form.unitId))?.code || "—"}</Badge>
+                      <ArrowRight className={`h-4 w-4 text-muted-foreground ${isRtl ? 'rotate-180' : ''}`} />
+                      <Badge className="font-mono bg-muted text-muted-foreground border-border">
+                        {trimTrailingZeros(Number(previewQty) * Number(form.conversionFactor))} {allUnits.find((u: any) => String(u.id) === String(form.referenceUnitId))?.code || "—"}
+                      </Badge>
+                    </div>
+                    <p className="text-[9px] text-muted-foreground italic flex items-center gap-1">
+                      <Info className="h-3 w-3" />
+                      {t("inventoryMaster.units.previewLocalOnly", { defaultValue: "Local estimate only. Save to see exact API rounding." })}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            {!form.referenceUnitId && form.unitId && form.conversionFactor && (
               <div className="text-xs bg-amber-50 border border-amber-100 rounded px-3 py-2 text-amber-800">
                 {t("pages.items.unitConversionPreview", { factor: trimTrailingZeros(form.conversionFactor) })}
               </div>
             )}
-            <div className="flex gap-2 justify-end">
+
+            <div className="flex gap-2 justify-end mt-2">
               <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowUnitForm(false); setEditUpId(null); }}>{t("common.cancel")}</Button>
-              <Button type="submit" size="sm" className="h-7 text-xs" disabled={addMut.isPending || updMut.isPending}>{editUpId ? t("common.save") : t("common.add")}</Button>
+              <Button type="submit" size="sm" className="h-7 text-xs" disabled={addMut.isPending || updMut.isPending || (editUpId ? !canEditUnit : !canCreateUnit)}>{editUpId ? t("common.save") : t("common.add")}</Button>
             </div>
           </form>
         </div>
@@ -908,16 +1039,30 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
           {(unitPrices as any[]).map((up: any) => (
-            <div key={up.id} className={cn("rounded-lg border p-3 bg-background flex flex-col gap-1 relative", up.isBase && "border-green-300 bg-green-50/40")}>
+            <div key={up.id} className={cn("rounded-lg border p-3 bg-background flex flex-col gap-1 relative", up.isBase && "border-green-300 bg-green-50/40", up.isActive === false && "opacity-50 grayscale")}>
               {up.isBase && (
                 <span className="absolute top-2 left-2 flex items-center gap-0.5 text-[9px] font-bold text-green-700 bg-green-100 rounded-full px-1.5 py-0.5">
                   <Star className="h-2.5 w-2.5" />{t("pages.items.base")}
                 </span>
               )}
-              <div className="flex items-center gap-1.5 mb-0.5">
+              {up.isActive === false && (
+                <span className="absolute top-2 right-2 flex items-center gap-0.5 text-[9px] font-bold text-slate-500 bg-slate-100 rounded-full px-1.5 py-0.5">
+                  {t("common.inactive", { defaultValue: "Inactive" })}
+                </span>
+              )}
+              <div className="flex items-center gap-1.5 mb-0.5 mt-4">
                 <span className="text-xs font-bold font-mono text-primary">{up.unit?.code ?? "—"}</span>
                 <span className="text-xs font-medium">{pickName(up.unit?.nameAr, up.unit?.nameEn) || "—"}</span>
               </div>
+              
+              {up.referenceUnitId && (
+                <div className="text-[10px] text-muted-foreground flex items-center gap-1 mb-1">
+                  <span className="bg-muted px-1 rounded">1 {up.unit?.code}</span>
+                  <ArrowRight className={`h-2.5 w-2.5 ${isRtl ? 'rotate-180' : ''}`} />
+                  <span className="bg-green-100 text-green-800 px-1 rounded">{trimTrailingZeros(up.relationFactor ?? up.conversionFactor)} {up.referenceUnit?.code || t("pages.items.base")}</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-3 gap-1 text-[10px]">
                 <div className="bg-muted/50 rounded px-1.5 py-1 text-center">
                   <p className="text-muted-foreground">{t("pages.items.factor")}</p>
@@ -932,9 +1077,17 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
                   <p className="font-bold tabular-nums text-blue-800">{fmt(up.salePrice)}</p>
                 </div>
               </div>
+              
+              {(up.decimalPlaces > 0 || (up.roundingMode && up.roundingMode !== 'none')) && (
+                <div className="flex gap-2 mt-1">
+                  {up.decimalPlaces > 0 && <span className="text-[9px] bg-slate-100 text-slate-600 px-1 rounded border border-slate-200">{t("inventoryMaster.units.decimalPlaces", { defaultValue: "Decimals" })}: {up.decimalPlaces}</span>}
+                  {up.roundingMode && up.roundingMode !== 'none' && <span className="text-[9px] bg-slate-100 text-slate-600 px-1 rounded border border-slate-200">{t("inventoryMaster.units.roundingMode", { defaultValue: "Rounding" })}: {up.roundingMode}</span>}
+                </div>
+              )}
+
               <div className="flex gap-1 justify-end mt-1">
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditUp(up)}><Pencil className="h-3 w-3" /></Button>
-                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => { if (confirm(t("pages.items.deleteUnitPriceConfirm"))) delMut.mutate(up.id); }}><Trash2 className="h-3 w-3" /></Button>
+                <Button disabled={!canEditUnit} variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditUp(up)}><Pencil className="h-3 w-3" /></Button>
+                <Button disabled={!canDeleteUnit} variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => { if (canDeleteUnit && confirm(t("pages.items.deleteUnitPriceConfirm"))) delMut.mutate(up.id); }}><Trash2 className="h-3 w-3" /></Button>
               </div>
             </div>
           ))}
@@ -1161,6 +1314,8 @@ function AIAssistDialog({
   );
 }
 
+// deleted new item units panel here
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function Items() {
     const gate = useDemoActionGate();
@@ -1245,6 +1400,25 @@ export default function Items() {
     onError: errToast(t("inventoryMaster.items.updateItemFailed")),
   });
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItem, onSuccess: () => { invalidate(); toast({ title: t("pages.items.deleted") }); }, onError: errToast(t("inventoryMaster.items.deleteItemFailed")) });
+
+  // Handle URL deep linking (e.g. from units page: /inventory/items?edit=[id]&tab=pricing)
+  const [location, setLocation] = useLocation();
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const editParam = searchParams.get("edit");
+    const tabParam = searchParams.get("tab");
+    
+    if (editParam && items.length > 0) {
+      const id = Number(editParam);
+      const i = items.find((x: any) => x.id === id);
+      if (i && editId !== id) {
+        handleEdit(i);
+        if (tabParam) setActiveItemTab(tabParam);
+        // Clean URL to base
+        setLocation("/inventory/items", { replace: true });
+      }
+    }
+  }, [location, items, setLocation, editId]);
   // PRO Extension #15 — manual low-stock scan that creates broadcast
   // notifications. Server is idempotent per-item per-day so re-clicking
   // a few seconds later is safe and the toast clearly explains the result.
@@ -1529,6 +1703,7 @@ export default function Items() {
             <TabsList className="w-full h-auto flex-wrap justify-start gap-1 mb-5 bg-muted/50 p-1">
               <TabsTrigger value="basic"      className="text-xs gap-1.5"><Package    className="h-3.5 w-3.5" />{t("pages.items.basicData")}</TabsTrigger>
               <TabsTrigger value="pricing"    className="text-xs gap-1.5"><DollarSign className="h-3.5 w-3.5" />{t("pages.items.pricingAndQuantities")}</TabsTrigger>
+              <TabsTrigger value="units"      className="text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />{t("inventoryMaster.units.itemUnitsTitle", { defaultValue: "ربط وحدات القياس والتحويل" })}</TabsTrigger>
               <TabsTrigger value="accounts"   className="text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{t("pages.items.accountingLink")}</TabsTrigger>
               <TabsTrigger value="inventory"  className="text-xs gap-1.5"><Warehouse  className="h-3.5 w-3.5" />{t("pages.items.inventoryAndWarehouses")}</TabsTrigger>
               <TabsTrigger value="additional" className="text-xs gap-1.5"><Layers     className="h-3.5 w-3.5" />{t("pages.items.additionalData")}</TabsTrigger>
@@ -1712,6 +1887,16 @@ export default function Items() {
               </div>
               </>)}
             </TabsContent>
+            <TabsContent value="units" className="mt-0">
+              {editId ? (
+                <ItemUnitPricesPanel itemId={editId} />
+              ) : (
+                <div className="text-sm text-muted-foreground p-4 text-center border rounded-lg bg-muted/30">
+                  {t("inventoryMaster.units.saveItemFirst", { defaultValue: "Please save the item first to manage units." })}
+                </div>
+              )}
+            </TabsContent>
+
             <TabsContent value="accounts" className="mt-0">
               <FormGrid cols={3}>
                 <Field label={t("pages.items.costAccount")} required={form.itemType === "prepaid_expense"} hint={form.itemType === "prepaid_expense" ? t("inventoryMaster.items.prepaidCostAccountRequired") : undefined}>

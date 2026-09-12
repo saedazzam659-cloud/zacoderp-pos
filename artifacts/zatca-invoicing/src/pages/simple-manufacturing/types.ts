@@ -10,6 +10,16 @@ export type Catalog = {
     itemNature?: string | null;
     unitId?: number | null;
     unitCode?: string | null;
+    unitOptions?: Array<{
+      unitId?: number | null;
+      code: string;
+      nameAr: string;
+      nameEn?: string | null;
+      isBase?: boolean;
+      factor?: string | number;
+      conversionFactor?: number;
+      baseUnitCode?: string | null;
+    }>;
   }>;
   units?: Array<{
     id: number;

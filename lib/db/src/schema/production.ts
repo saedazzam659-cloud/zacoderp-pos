@@ -932,15 +932,15 @@ export const productionOrderStagesTable = pgTable(
     // relative to that order unit (never an inferred kg/piece conversion).
     quantityUnit: text("quantity_unit"),
     quantityUnitFactor: numeric("quantity_unit_factor", {
-      precision: 14,
-      scale: 8,
+      precision: 30,
+      scale: 18,
     })
       .notNull()
       .default("1"),
     wasteUnit: text("waste_unit"),
     wasteUnitFactor: numeric("waste_unit_factor", {
-      precision: 14,
-      scale: 8,
+      precision: 30,
+      scale: 18,
     })
       .notNull()
       .default("1"),
@@ -1223,7 +1223,7 @@ export const productionWasteRecordsTable = pgTable(
     unitCode: text("unit_code").notNull().default("PCE"),
     // Explicit order-unit conversion for this forensic record. Legacy rows
     // default to 1; no conversion is inferred from unit names.
-    unitFactor: numeric("unit_factor", { precision: 14, scale: 8 })
+  unitFactor: numeric("unit_factor", { precision: 30, scale: 18 })
       .notNull()
       .default("1"),
     costImpact: numeric("cost_impact", { precision: 14, scale: 2 })

@@ -1,0 +1,21 @@
+---
+name: Web central unit conversion
+description: Item-specific conversion ownership and historical quantity preservation.
+---
+Unit relationships belong to each item, not to the global unit catalog. A catalog factor is only a default/reference; it cannot establish that every carton contains the same count, or infer a weight-to-piece relationship.
+
+**Why:** The user explicitly requested one central conversion service for the web ERP, extending existing unit and item-unit records rather than duplicating tables or screens.
+
+**How to apply:** Maintain one base unit and an unambiguous rooted relationship graph per item. Resolve new operations through that graph. Reject unlinked, inactive, cyclic, or conflicting relationships instead of guessing a factor.
+
+Stored document and stage conversion snapshots are authoritative for historical operations. Updating item relationships must never rebase existing stock, journal costs, or saved document quantities. Ambiguous legacy base declarations require explicit repair, not automatic selection.
+
+**Why:** A correct new graph must not retroactively change the meaning of purchases, sales, manufacturing consumption, reversals, or stock counts.
+
+**How to apply:** Only trusted persisted rows may supply historical factors to the resolver. Use exact arithmetic through conversion and a documented decimal boundary for existing numeric storage; never pass rational fraction strings directly to PostgreSQL numeric or JavaScript Number.
+
+Historical factors must follow stable persisted line identities, never array position or the first matching item.
+
+**Why:** The same item can appear twice with different units or saved factors; reordering those lines can otherwise silently change stock and cost.
+
+**How to apply:** Carry database line IDs through edit forms and source-line IDs through returns. When legacy data cannot identify a unique match, reject the ambiguous operation rather than guessing. UI-generated temporary IDs are not database identities.

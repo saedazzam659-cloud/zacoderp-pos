@@ -168,6 +168,18 @@ export const inventoryApi = {
   addItemUnit:     (itemId: number, data: any)       => post<any>(`/items/${itemId}/units`, data),
   updateItemUnit:  (itemId: number, upId: number, data: any) => put<any>(`/items/${itemId}/units/${upId}`, data),
   deleteItemUnit:  (itemId: number, upId: number)    => del(`/items/${itemId}/units/${upId}`),
+  convertItemUnit: (itemId: number, data: { fromUnitId: number; toUnitId: number; quantity: number | string; roundedDisplay?: boolean }) =>
+    post<{
+      fromUnitId: number;
+      toUnitId: number;
+      quantity: string;
+      preciseQuantity: string;
+      exactQuantity: string;
+      roundedQuantity?: string;
+      baseUnitId: number | null;
+      fromFactor: string;
+      toFactor: string;
+    }>(`/items/${itemId}/convert`, data),
   // Stock Transfers
   getTransfers:   (cid?: number) => get<any[]>(`/stock-transfers${cid ? `?companyId=${cid}` : ""}`),
   getTransfer:    (id: number)   => get<any>(`/stock-transfers/${id}`),

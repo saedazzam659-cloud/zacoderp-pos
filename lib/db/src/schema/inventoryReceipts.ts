@@ -49,7 +49,7 @@ export const goodsReceiptLinesTable = pgTable("goods_receipt_lines", {
   itemCode:         text("item_code"),
   unit:             text("unit"),
   unitId:           integer("unit_id"),
-  conversionFactor: numeric("conversion_factor", { precision: 15, scale: 6 }).default("1"),
+  conversionFactor: numeric("conversion_factor", { precision: 30, scale: 18 }).default("1"),
   warehouseId:      integer("warehouse_id"),
   qty:              numeric("qty",        { precision: 15, scale: 4 }).notNull().default("1"),
   unitPrice:        numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),

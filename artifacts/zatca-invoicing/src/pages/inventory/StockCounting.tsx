@@ -341,9 +341,9 @@ export default function StockCounting() {
                                   columns={[
                                     { key: "itemCode",   header: tr("colItemCode"),   width: 16 },
                                     { key: "itemNameAr", header: tr("colItemName"),   width: 30 },
-                                    { key: "systemQty",  header: tr("colSystemQty"),  width: 18 },
-                                    { key: "actualQty",  header: tr("colActualQty"),  width: 18 },
-                                    { key: "diff",       header: tr("colDiff"),       width: 14 },
+                                     { key: "systemQty",  header: `${tr("colSystemQty")} (${tr("baseUnit")})`,  width: 18 },
+                                     { key: "actualQty",  header: `${tr("colActualQty")} (${tr("baseUnit")})`,  width: 18 },
+                                     { key: "diff",       header: `${tr("colDiff")} (${tr("baseUnit")})`,       width: 14 },
                                     { key: "costPrice",  header: tr("colCostPrice"),  width: 16 },
                                     { key: "totalDiff",  header: tr("colTotalDiff"),  width: 16 },
                                   ]}
@@ -360,9 +360,9 @@ export default function StockCounting() {
                                   <thead className="bg-muted/50 border-b">
                                     <tr>
                                       <th className="px-3 py-2 text-right font-semibold text-muted-foreground">{tr("colItem")}</th>
-                                      <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-28">{tr("colSystemQty")}</th>
-                                      <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-32">{tr("colActualQty")}</th>
-                                      <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-24">{tr("colDiff")}</th>
+                                       <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-28">{tr("colSystemQty")} ({tr("baseUnit")})</th>
+                                       <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-32">{tr("colActualQty")} ({tr("baseUnit")})</th>
+                                       <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-24">{tr("colDiff")} ({tr("baseUnit")})</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y">

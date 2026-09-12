@@ -55,6 +55,12 @@ import {
   readIndustrialCostSourceFacts,
   normalizeIndustrialCostTag,
 } from "../lib/industrialPurchaseCosts.js";
+import {
+  resolveItemUnitConversion,
+  multiplyQuantity,
+  divideQuantity,
+  roundQuantity,
+} from "../lib/unitConversion.js";
 
 function purchasingWriteError(error: any, documentName: string): { status: number; message: string } {
   const code = String(postgresErrorField(error, "code") ?? "");
@@ -162,6 +168,101 @@ type PurchaseWriteReferences = {
   headerCostCenter?: unknown;
   lines?: any[];
 };
+
+async function resolvePurchaseLineUnits(
+  companyId: number,
+  mappedLines: any[],
+  inputLines: any[] | undefined,
+  existingRows: any[] = [],
+  sourceRows: any[] = [],
+  executor: any = db,
+): Promise<any[]> {
+  const oldById = new Map<number, any>();
+  const oldByItem = new Map<string, any[]>();
+  for (const row of existingRows) {
+    if (row?.id != null) oldById.set(Number(row.id), row);
+    const key = String(row?.itemId ?? "");
+    oldByItem.set(key, [...(oldByItem.get(key) ?? []), row]);
+  }
+  const sourceByItem = new Map<string, any[]>();
+  for (const row of sourceRows) {
+    const key = String(row?.itemId ?? "");
+    sourceByItem.set(key, [...(sourceByItem.get(key) ?? []), row]);
+  }
+  return Promise.all(mappedLines.map(async (mapped, index) => {
+    const input = inputLines?.[index] ?? {};
+    const itemId = mapped.itemId == null ? null : Number(mapped.itemId);
+    if (!itemId) {
+      mapped.unitId = null;
+      mapped.conversionFactor = "1";
+      return mapped;
+    }
+    const key = String(itemId);
+    let old: any;
+    if (existingRows.length && input?.id != null) {
+      old = oldById.get(Number(input.id));
+      if (!old || String(old.itemId ?? "") !== key) {
+        throw Object.assign(new Error("معرّف سطر فاتورة الشراء غير مطابق للصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_LINE_ID_REQUIRED",
+        });
+      }
+    } else if (existingRows.length) {
+      const candidates = oldByItem.get(key) ?? [];
+      if (candidates.length > 1) {
+        throw Object.assign(new Error("يجب إرسال معرّف سطر فاتورة الشراء عند تكرار الصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_LINE_ID_REQUIRED",
+        });
+      }
+      old = candidates[0];
+    }
+    let source: any;
+    if (sourceRows.length && input?.sourceLineId != null) {
+      source = sourceRows.find((row) => Number(row?.id) === Number(input.sourceLineId));
+      if (!source || String(source.itemId ?? "") !== key) {
+        throw Object.assign(new Error("معرّف سطر فاتورة الشراء المصدر غير مطابق للصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_SOURCE_LINE_ID_REQUIRED",
+        });
+      }
+    } else {
+      const candidates = sourceByItem.get(key) ?? [];
+      if (candidates.length > 1) {
+        throw Object.assign(new Error("يجب إرسال معرّف سطر فاتورة الشراء المصدر عند تكرار الصنف؛ حدّث الصفحة وأعد المحاولة"), {
+          status: 400, code: "UNIT_SOURCE_LINE_ID_REQUIRED",
+        });
+      }
+      source = candidates[0];
+    }
+    const sourceUnitUnchanged = !!source
+      && input.unitCode == null
+      && (input.unitId == null || Number(input.unitId) === Number(source.unitId));
+    const snapshot = sourceUnitUnchanged ? source : (
+      old && (!Object.prototype.hasOwnProperty.call(input, "unitId")
+        || Number(input.unitId) === Number(old.unitId))
+        ? old
+        : null
+    );
+    const requestedUnitId = source && input.unitId == null && input.unitCode == null
+      ? source.unitId
+      : Object.prototype.hasOwnProperty.call(input, "unitId")
+        ? (input.unitId == null ? undefined : Number(input.unitId))
+        : old?.unitId == null ? undefined : Number(old.unitId);
+    const resolved = await resolveItemUnitConversion({
+      companyId,
+      itemId,
+      unitId: requestedUnitId,
+      unitCode: source && input.unitId == null && input.unitCode == null
+        ? undefined
+        : (input.unitCode == null ? undefined : String(input.unitCode)),
+      historicalFactor: snapshot?.conversionFactor == null
+        ? undefined
+        : String(snapshot.conversionFactor),
+      executor,
+    });
+    mapped.unitId = resolved.unitId;
+    mapped.conversionFactor = roundQuantity(String(resolved.factor), 18, "half_up");
+    return mapped;
+  }));
+}
 
 /**
  * Validate every business reference persisted by purchase create/conversion.
@@ -1537,33 +1638,33 @@ router.post("/purchase-invoices", async (req, res) => {
     });
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-      await db.insert(purchaseInvoiceLinesTable).values(
+      const mappedLines = await resolvePurchaseLineUnits(
+        cid,
         lines.map((l: any) => ({
           invoiceId: inv.id, companyId: cid,
           itemId: l.itemId ? Number(l.itemId) : null,
           itemName: l.itemName, itemCode: l.itemCode || null,
-          unit: l.unit || null,
-          unitId: l.unitId ? Number(l.unitId) : null,
+          unit: l.unit || null, unitId: l.unitId ? Number(l.unitId) : null,
           conversionFactor: String(l.conversionFactor || "1"),
-          qty: String(l.qty || "1"),
-          freeQty: String(l.freeQty || "0"),
-          weight: String(l.weight || "0"),
-          unitPrice: String(l.unitPrice || "0"),
-          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || resolvedRate),
-           discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-          lineTotal: String(l.lineTotal || "0"),
-          expenseShare: String(l.expenseShare || "0"),
+          qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
+          weight: String(l.weight || "0"), unitPrice: String(l.unitPrice || "0"),
+          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+          vatRate: String(l.vatRate || resolvedRate),
+          discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
+          lineTotal: String(l.lineTotal || "0"), expenseShare: String(l.expenseShare || "0"),
           finalCost: String(l.finalCost || "0"),
           accountId: l.accountId ? Number(l.accountId) : null,
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          // OPTIONAL per-line cost-center CODE — JE/reporting only.
           costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
           batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
-          expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
-          notes: l.notes || null,
-          ...deferredLineFields(l),
-           industrialCost: normalizeIndustrialCostTag(l.industrialCost),
-        }))
+          expiryDate: l.expiryDate ? String(l.expiryDate) : null,
+          notes: l.notes || null, ...deferredLineFields(l),
+          industrialCost: normalizeIndustrialCostTag(l.industrialCost),
+        })),
+        lines,
+      );
+      await db.insert(purchaseInvoiceLinesTable).values(
+        mappedLines
       );
     }
     res.status(201).json(inv);
@@ -1644,6 +1745,8 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       // (their periodic JEs are drafts holding their docNumbers), so the
       // link must survive the delete+reinsert or re-posting would mint a
       // duplicate adjustment. Matched back by itemId (first unclaimed).
+      const previousLines = await db.select().from(purchaseInvoiceLinesTable)
+        .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
       const oldDeferredLinks = (await db.select({
         itemId: purchaseInvoiceLinesTable.itemId,
         deferredAdjustmentId: purchaseInvoiceLinesTable.deferredAdjustmentId,
@@ -1653,33 +1756,34 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       await db.delete(purchaseInvoiceLinesTable).where(eq(purchaseInvoiceLinesTable.invoiceId, id));
       if (lines.length) {
         const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-        await db.insert(purchaseInvoiceLinesTable).values(
+        const mappedLines = await resolvePurchaseLineUnits(
+          cid,
           lines.map((l: any) => ({
             invoiceId: id, companyId: cid,
             itemId: l.itemId ? Number(l.itemId) : null,
             itemName: l.itemName, itemCode: l.itemCode || null,
-            unit: l.unit || null,
-            unitId: l.unitId ? Number(l.unitId) : null,
+            unit: l.unit || null, unitId: l.unitId ? Number(l.unitId) : null,
             conversionFactor: String(l.conversionFactor || "1"),
-            qty: String(l.qty || "1"),
-            freeQty: String(l.freeQty || "0"),
-            weight: String(l.weight || "0"),
-            unitPrice: String(l.unitPrice || "0"),
-            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || resolvedRate),
+            qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
+            weight: String(l.weight || "0"), unitPrice: String(l.unitPrice || "0"),
+            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+            vatRate: String(l.vatRate || resolvedRate),
             discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-            lineTotal: String(l.lineTotal || "0"),
-            expenseShare: String(l.expenseShare || "0"),
+            lineTotal: String(l.lineTotal || "0"), expenseShare: String(l.expenseShare || "0"),
             finalCost: String(l.finalCost || "0"),
             accountId: l.accountId ? Number(l.accountId) : null,
             warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-            // OPTIONAL per-line cost-center CODE — JE/reporting only.
             costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
             batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
-            expiryDate:  l.expiryDate  ? String(l.expiryDate)  : null,
-            notes: l.notes || null,
-            ...deferredLineFields(l),
-             industrialCost: normalizeIndustrialCostTag(l.industrialCost),
-          }))
+            expiryDate: l.expiryDate ? String(l.expiryDate) : null,
+            notes: l.notes || null, ...deferredLineFields(l),
+            industrialCost: normalizeIndustrialCostTag(l.industrialCost),
+          })),
+          lines,
+          previousLines,
+        );
+        await db.insert(purchaseInvoiceLinesTable).values(
+          mappedLines
         );
         // Re-attach the surviving deferred-adjustment links: for each old
         // link, claim the FIRST re-inserted deferred line of the same item
@@ -1963,14 +2067,17 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
         continue;
       }
       if (!line.warehouseId) continue;
-      const factor   = Number(line.conversionFactor || "1") || 1;
+      const factor   = String(line.conversionFactor || "1");
       // Stock receives paid qty + free qty (supplier bonus units), but the
       // cost paid (finalCost) covers only the paid qty — so free units land
       // in inventory at zero marginal cost, lowering the weighted avg cost.
       // Example: buy 10 @ 100 + 2 free ⇒ 12 units for 1000 ⇒ 83.33 avg.
-      const qty      = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
+      const qty      = Number(multiplyQuantity(String(line.qty || "0"), factor))
+        + Number(multiplyQuantity(String(line.freeQty || "0"), factor));
       const cost     = Number(line.finalCost || line.unitPrice);
-      const costUnit = qty > 0 ? cost / qty : Number(line.unitPrice) / factor;
+      const costUnit = qty > 0
+        ? Number(roundQuantity(divideQuantity(String(cost), String(qty)), 18, "half_up"))
+        : Number(roundQuantity(divideQuantity(String(line.unitPrice || "0"), factor), 18, "half_up"));
       // فئة مخزون: debit the CATEGORY's own inventory account instead of the
       // warehouse-derived one (stock movement below is identical either way).
       const invRouting = groupRoutingForItem(line.itemId);
@@ -2864,25 +2971,25 @@ router.post("/purchase-orders", async (req, res) => {
     }).returning();
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-      await db.insert(purchaseOrderLinesTable).values(
+      const mappedLines = await resolvePurchaseLineUnits(
+        cid,
         lines.map((l: any) => ({
           orderId: ord.id, companyId: cid,
           itemId: l.itemId ? Number(l.itemId) : null,
-          itemName: l.itemName, itemCode: l.itemCode || null,
-          unit: l.unit || null,
+          itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
           unitId: l.unitId ? Number(l.unitId) : null,
           conversionFactor: String(l.conversionFactor || "1"),
-          qty: String(l.qty || "1"),
-          freeQty: String(l.freeQty || "0"),
-          weight: String(l.weight || "0"),
-          unitPrice: String(l.unitPrice || "0"),
+          qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
+          weight: String(l.weight || "0"), unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-          vatRate: String(l.vatRate || resolvedRate),
-          lineTotal: String(l.lineTotal || "0"),
-          warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          notes: l.notes || null,
-        }))
+          vatRate: String(l.vatRate || resolvedRate), lineTotal: String(l.lineTotal || "0"),
+          warehouseId: l.warehouseId ? Number(l.warehouseId) : null, notes: l.notes || null,
+        })),
+        lines,
+      );
+      await db.insert(purchaseOrderLinesTable).values(
+        mappedLines
       );
     }
     res.status(201).json(ord);
@@ -2927,28 +3034,31 @@ router.put("/purchase-orders/:id", async (req, res) => {
     }).where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid))).returning();
     if (!ord) { res.status(404).json({ error: "أمر الشراء غير موجود" }); return; }
     if (lines !== undefined) {
+      const previousLines = await db.select().from(purchaseOrderLinesTable)
+        .where(eq(purchaseOrderLinesTable.orderId, id));
       await db.delete(purchaseOrderLinesTable).where(eq(purchaseOrderLinesTable.orderId, id));
       if (lines.length) {
         const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-        await db.insert(purchaseOrderLinesTable).values(
+        const mappedLines = await resolvePurchaseLineUnits(
+          cid,
           lines.map((l: any) => ({
             orderId: id, companyId: cid,
             itemId: l.itemId ? Number(l.itemId) : null,
-            itemName: l.itemName, itemCode: l.itemCode || null,
-            unit: l.unit || null,
+            itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
             unitId: l.unitId ? Number(l.unitId) : null,
             conversionFactor: String(l.conversionFactor || "1"),
-            qty: String(l.qty || "1"),
-            freeQty: String(l.freeQty || "0"),
-            weight: String(l.weight || "0"),
-            unitPrice: String(l.unitPrice || "0"),
+            qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
+            weight: String(l.weight || "0"), unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
             discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-            vatRate: String(l.vatRate || resolvedRate),
-            lineTotal: String(l.lineTotal || "0"),
-            warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-            notes: l.notes || null,
-          }))
+            vatRate: String(l.vatRate || resolvedRate), lineTotal: String(l.lineTotal || "0"),
+            warehouseId: l.warehouseId ? Number(l.warehouseId) : null, notes: l.notes || null,
+          })),
+          lines,
+          previousLines,
+        );
+        await db.insert(purchaseOrderLinesTable).values(
+          mappedLines
         );
       }
     }
@@ -3319,7 +3429,16 @@ router.post("/purchase-returns", async (req, res) => {
     });
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-      await db.insert(purchaseReturnLinesTable).values(
+      const sourceReturnLines = invoiceId
+        ? await db.select().from(purchaseInvoiceLinesTable)
+            .where(and(
+              eq(purchaseInvoiceLinesTable.invoiceId, Number(invoiceId)),
+              eq(purchaseInvoiceLinesTable.companyId, cid),
+            ))
+            .orderBy(asc(purchaseInvoiceLinesTable.id))
+        : [];
+      const mappedLines = await resolvePurchaseLineUnits(
+        cid,
         lines.map((l: any) => ({
           returnId: ret.id, companyId: cid,
           itemId: l.itemId ? Number(l.itemId) : null,
@@ -3327,17 +3446,20 @@ router.post("/purchase-returns", async (req, res) => {
           unitId: l.unitId ? Number(l.unitId) : null,
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          qty: String(l.qty || "1"),
-          freeQty: String(l.freeQty || "0"),
+          qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-          vatRate: String(l.vatRate || resolvedRate),
-          lineTotal: String(l.lineTotal || "0"),
-          // OPTIONAL per-line cost-center CODE — JE/reporting only.
+          vatRate: String(l.vatRate || resolvedRate), lineTotal: String(l.lineTotal || "0"),
           costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
-           industrialCost: normalizeIndustrialCostTag(l.industrialCost),
+          industrialCost: normalizeIndustrialCostTag(l.industrialCost),
           notes: l.notes || null,
-        }))
+        })),
+        lines,
+        [],
+        sourceReturnLines,
+      );
+      await db.insert(purchaseReturnLinesTable).values(
+        mappedLines
       );
     }
     res.status(201).json(ret);
@@ -3397,10 +3519,21 @@ router.put("/purchase-returns/:id", async (req, res) => {
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid))).returning();
     if (lines !== undefined) {
+      const previousReturnLines = await db.select().from(purchaseReturnLinesTable)
+        .where(eq(purchaseReturnLinesTable.returnId, id));
+      const sourceReturnLines = invoiceId
+        ? await db.select().from(purchaseInvoiceLinesTable)
+            .where(and(
+              eq(purchaseInvoiceLinesTable.invoiceId, Number(invoiceId)),
+              eq(purchaseInvoiceLinesTable.companyId, cid),
+            ))
+            .orderBy(asc(purchaseInvoiceLinesTable.id))
+        : [];
       await db.delete(purchaseReturnLinesTable).where(eq(purchaseReturnLinesTable.returnId, id));
       if (lines.length) {
         const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-        await db.insert(purchaseReturnLinesTable).values(
+        const mappedLines = await resolvePurchaseLineUnits(
+          cid,
           lines.map((l: any) => ({
             returnId: id, companyId: cid,
             itemId: l.itemId ? Number(l.itemId) : null,
@@ -3408,17 +3541,20 @@ router.put("/purchase-returns/:id", async (req, res) => {
             unitId: l.unitId ? Number(l.unitId) : null,
             conversionFactor: String(l.conversionFactor || "1"),
             warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-            qty: String(l.qty || "1"),
-            freeQty: String(l.freeQty || "0"),
+            qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-            vatRate: String(l.vatRate || resolvedRate),
-            lineTotal: String(l.lineTotal || "0"),
-            // OPTIONAL per-line cost-center CODE — JE/reporting only.
+            vatRate: String(l.vatRate || resolvedRate), lineTotal: String(l.lineTotal || "0"),
             costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
-             industrialCost: normalizeIndustrialCostTag(l.industrialCost),
+            industrialCost: normalizeIndustrialCostTag(l.industrialCost),
             notes: l.notes || null,
-          }))
+          })),
+          lines,
+          previousReturnLines,
+          sourceReturnLines,
+        );
+        await db.insert(purchaseReturnLinesTable).values(
+          mappedLines
         );
       }
     }
@@ -3514,8 +3650,9 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
         if (!line.itemId || !line.warehouseId || isSvcLine(line)) continue;
         const wh = whInfo[line.warehouseId];
         if (wh?.allowNegative) continue;
-        const factor = Number(line.conversionFactor || "1") || 1;
-        const qty = (Number(line.qty) + Number(line.freeQty || 0)) * factor;
+        const factor = String(line.conversionFactor || "1");
+        const qty = Number(multiplyQuantity(String(line.qty || "0"), factor))
+          + Number(multiplyQuantity(String(line.freeQty || "0"), factor));
         if (qty <= 0) continue;
         const k = `${line.itemId}|${line.warehouseId}`;
         const prev = reqByKey.get(k);
@@ -3566,18 +3703,23 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     const consumedThisDoc = new Map<string, number>();
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId || isSvcLine(line)) continue;
-      const factor   = Number(line.conversionFactor || "1") || 1;
+      const factor   = String(line.conversionFactor || "1");
       // Inventory credit covers BOTH paid and free units leaving the warehouse.
       // Cost-per-unit for the JE is derived from the paid line value spread
       // across the full physical quantity (paid + free) — same averaging
       // principle as the purchase-invoice posting that received them.
-      const paidQty  = Number(line.qty) * factor;
-      const freeQ    = Number(line.freeQty || 0) * factor;
+      const paidQty  = Number(multiplyQuantity(String(line.qty || "0"), factor));
+      const freeQ    = Number(multiplyQuantity(String(line.freeQty || "0"), factor));
       const qty      = paidQty + freeQ;
       if (qty <= 0) continue; // skip non-positive returns
       const lineDisc = Math.max(0, Math.min(100, Number((line as any).discount) || 0));
-      const paidLineValue = Number(line.unitPrice) * Number(line.qty) * (1 - lineDisc / 100);
-      const costUnit = qty > 0 ? paidLineValue / qty : 0;
+      const paidLineValue = Number(multiplyQuantity(
+        String(line.unitPrice || "0"),
+        String(paidQty),
+      )) * (1 - lineDisc / 100);
+      const costUnit = qty > 0
+        ? Number(roundQuantity(divideQuantity(String(paidLineValue), String(qty)), 18, "half_up"))
+        : 0;
 
       const mode = retModeById.get(line.itemId) ?? "none";
       const canBatchTrace = mode !== "none" && !!ret.invoiceId;
