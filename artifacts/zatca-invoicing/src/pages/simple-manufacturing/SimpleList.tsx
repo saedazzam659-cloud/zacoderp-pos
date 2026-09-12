@@ -5,6 +5,7 @@ import { ChevronLeft, Play, Pause, RotateCcw, Boxes } from "lucide-react";
 import { Link } from "wouter";
 import type { Order, Catalog } from "./types";
 import { ProductionTimeCosts } from "@/components/ProductionTimeCosts";
+import { SimpleOrderWizardReadonly } from "./SimpleOrderWizardReadonly";
 
 function statusLabel(status: string) {
   return ({
@@ -102,6 +103,12 @@ export function SimpleOrderList({
                 <p className="text-sm text-slate-600 mb-4">سجّل الوقت الفعلي والعمالة والكميات والهالك، ثم احفظ بيانات كل مرحلة.</p>
                 {executionPanel}
               </section>
+            )}
+            {selectedOrder.status === "completed" && (
+              <SimpleOrderWizardReadonly
+                order={selectedOrder}
+                catalog={catalog}
+              />
             )}
             <div className="flex gap-2 flex-wrap mb-6">
               {nextStatus(selectedOrder.status) && (

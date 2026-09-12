@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { ClipboardList, Boxes, GitBranch, Cog, Calculator, CheckCircle2, Save, Play, Plus, Trash2 } from "lucide-react";
+import { ClipboardList, Boxes, GitBranch, Cog, Calculator, CheckCircle2, Save, Play, Plus, Trash2, RefreshCw } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { DateField } from "@/components/ui/date-field";
 import type {
@@ -17,6 +17,13 @@ import type {
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import { useAuth } from "@/contexts/AuthContext";
+import { saveUiPrefs } from "@/lib/uiPrefsApi";
+import {
+  DEFAULT_SIMPLE_MANUFACTURING_COST_MODES,
+  sanitizeSimpleManufacturingCostModes,
+  serializeSimpleManufacturingCostModes,
+  simpleManufacturingCostPrefsScreen,
+} from "./costPreferences";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -41,7 +48,7 @@ export function SimpleWizard({
   onCancel: () => void;
 }) {
   const { toast } = useToast();
-  const { actingCompanyId } = useAuth();
+  const { actingCompanyId, user, setUser } = useAuth();
   const [tab, setTab] = useState<"basic" | "materials" | "routing" | "resources" | "costs" | "review">("basic");
   const [form, setForm] = useState<WizardState>({
     title: "", productItemId: "", plannedQty: "1", unitCode: "PCE", notes: "",
@@ -59,10 +66,20 @@ export function SimpleWizard({
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [sourceTreatments, setSourceTreatments] = useState<Record<string, string>>({});
   const [costModes, setCostModes] = useState<Record<ManufacturingCostCategory, ManufacturingCostMode>>({
-    payroll: "none",
-    fixed_asset_depreciation: "none",
-    prepaid_amortization: "none",
+    ...DEFAULT_SIMPLE_MANUFACTURING_COST_MODES,
   });
+  const [costSourcesState, setCostSourcesState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [costSourcesError, setCostSourcesError] = useState<string | null>(null);
+  const [costSourcesRefreshKey, setCostSourcesRefreshKey] = useState(0);
+  const [costPrefsHydratedKey, setCostPrefsHydratedKey] = useState<string | null>(null);
+  const [costPrefsSaveState, setCostPrefsSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [costPrefsAutosaveRevision, setCostPrefsAutosaveRevision] = useState(0);
+  const costPrefsLastSavedRef = useRef<string | null>(null);
+  const costPrefsContextRef = useRef<string | null>(null);
+  const costPrefsHydratedKeyRef = useRef<string | null>(null);
+  const costPrefsSerializedRef = useRef<string | null>(null);
+  const costPrefsSaveInFlightRef = useRef<string | null>(null);
+  const costPrefsOperationRef = useRef(0);
   const [manualCosts, setManualCosts] = useState<ManufacturingCostConfiguration>({
     payroll: { mode: "manual", amount: "", description: "", counterpartAccountId: "" },
     fixed_asset_depreciation: { mode: "manual", amount: "", description: "", counterpartAccountId: "" },
@@ -86,9 +103,181 @@ export function SimpleWizard({
   const productRequestRef = useRef(0);
   const costRequestRef = useRef(0);
 
+  const costPrefsTenantId = actingCompanyId ?? user?.companyId ?? null;
+  const costPrefsScope = user
+    ? `${String(user.id)}:${String(costPrefsTenantId ?? "none")}`
+    : null;
+  const costPrefsScreen = simpleManufacturingCostPrefsScreen(user?.id, costPrefsTenantId);
+  const costPrefsContext = costPrefsScope && costPrefsScreen
+    ? `${costPrefsScope}:${costPrefsScreen}`
+    : null;
+  costPrefsContextRef.current = costPrefsContext;
+  costPrefsHydratedKeyRef.current = costPrefsHydratedKey;
+  const serializedCostModes = JSON.stringify(sanitizeSimpleManufacturingCostModes(costModes));
+  costPrefsSerializedRef.current = serializedCostModes;
+  const costPrefsHydrated = !!costPrefsScope && costPrefsHydratedKey === costPrefsScope;
+  const costPrefsDirty = costPrefsHydrated &&
+    costPrefsLastSavedRef.current !== serializedCostModes;
+
   const canCreate = usePermission("simple_manufacturing", "create");
   const canEdit = usePermission("simple_manufacturing", "edit");
   const canPost = usePermission("simple_manufacturing", "post");
+
+  // Durable cost-mode hydration is explicitly scoped to the authenticated
+  // user + effective tenant. The key guard prevents an acting-company switch
+  // from applying (or saving) another tenant's modes.
+  useEffect(() => {
+    if (!user || !costPrefsScope || !costPrefsScreen) {
+      setCostPrefsHydratedKey(null);
+      costPrefsLastSavedRef.current = null;
+      return;
+    }
+    if (costPrefsHydratedKey === costPrefsScope) return;
+    const persisted = user.uiPreferences?.[costPrefsScreen];
+    const modes = sanitizeSimpleManufacturingCostModes(persisted);
+    setCostModes(modes);
+    costPrefsLastSavedRef.current = JSON.stringify(modes);
+    setCostPrefsSaveState("idle");
+    setCostPrefsHydratedKey(costPrefsScope);
+  }, [user, costPrefsScope, costPrefsScreen, costPrefsHydratedKey]);
+
+  // A request cannot be aborted through the small shared prefs client. Mark
+  // the old operation stale immediately when the tenant/user context changes
+  // so it cannot block a save in the new context.
+  useEffect(() => {
+    costPrefsSaveInFlightRef.current = null;
+  }, [costPrefsContext]);
+
+  const persistCostPreferences = useCallback(async (showSuccessToast: boolean) => {
+    const operationContext = costPrefsContextRef.current;
+    const operationScope = costPrefsScope;
+    const operationScreen = costPrefsScreen;
+    if (
+      !user ||
+      !operationContext ||
+      !operationScope ||
+      !operationScreen ||
+      costPrefsHydratedKeyRef.current !== operationScope
+    ) {
+      if (showSuccessToast) {
+        toast({
+          title: "لم تكتمل تهيئة اختيارات التكاليف",
+          description: "انتظر تحميل تفضيلات المستخدم ثم حاول الحفظ مرة أخرى.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+    if (costPrefsSaveInFlightRef.current) return;
+
+    const modes = sanitizeSimpleManufacturingCostModes(costModes);
+    const payload = serializeSimpleManufacturingCostModes(modes);
+    const serialized = JSON.stringify(modes);
+    const operationId = `${operationContext}:${++costPrefsOperationRef.current}`;
+    costPrefsSaveInFlightRef.current = operationId;
+    setCostPrefsSaveState("saving");
+    let succeeded = false;
+    const isCurrentOperation = () =>
+      costPrefsSaveInFlightRef.current === operationId &&
+      costPrefsContextRef.current === operationContext &&
+      costPrefsHydratedKeyRef.current === operationScope;
+
+    try {
+      // saveUiPrefs throws for every non-2xx response; an automatic failure is
+      // intentionally left dirty for the explicit button, with no auto-retry.
+      await saveUiPrefs(operationScreen, payload);
+      if (!isCurrentOperation()) return;
+      costPrefsLastSavedRef.current = serialized;
+      // Keep a newly opened wizard in this same session in sync before the
+      // next /auth/me refresh. The functional guard prevents a stale request
+      // from writing an old tenant/user blob into a newly active context.
+      setUser(current => {
+        if (!isCurrentOperation()) return current;
+        return current
+          ? {
+              ...current,
+              uiPreferences: {
+                ...(current.uiPreferences ?? {}),
+                [operationScreen]: payload,
+              },
+            }
+          : current;
+      });
+      succeeded = true;
+      setCostPrefsSaveState("saved");
+      if (showSuccessToast) toast({ title: "تم حفظ اختيارات طرق التكاليف" });
+    } catch (error: any) {
+      if (!isCurrentOperation()) return;
+      setCostPrefsSaveState("error");
+      if (showSuccessToast) {
+        toast({
+          title: "تعذر حفظ اختيارات التكاليف",
+          description: error?.message || "حاول مرة أخرى.",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      if (costPrefsSaveInFlightRef.current === operationId) {
+        costPrefsSaveInFlightRef.current = null;
+        // A user may change modes while the previous request is in flight.
+        // Re-arm one debounced pass after a successful save, but never turn a
+        // failed automatic save into a retry loop.
+        if (
+          succeeded &&
+          costPrefsContextRef.current === operationContext &&
+          costPrefsHydratedKeyRef.current === operationScope &&
+          costPrefsLastSavedRef.current !== costPrefsSerializedRef.current
+        ) {
+          setCostPrefsAutosaveRevision(value => value + 1);
+        }
+      }
+    }
+  }, [
+    user,
+    costPrefsScope,
+    costPrefsScreen,
+    costModes,
+    setUser,
+    toast,
+  ]);
+
+  // Remember mode choices without making the user press a button each time.
+  // Hydration and tenant/user context are hard gates; the explicit button
+  // remains available for immediate confirmation and for retrying an error.
+  useEffect(() => {
+    if (
+      !user ||
+      !costPrefsContext ||
+      !costPrefsScope ||
+      !costPrefsScreen ||
+      costPrefsHydratedKey !== costPrefsScope ||
+      costPrefsLastSavedRef.current === serializedCostModes
+    ) {
+      return;
+    }
+    const operationContext = costPrefsContext;
+    const serialized = serializedCostModes;
+    const timeout = setTimeout(() => {
+      if (
+        costPrefsContextRef.current !== operationContext ||
+        costPrefsHydratedKeyRef.current !== costPrefsScope ||
+        costPrefsLastSavedRef.current === serialized
+      ) {
+        return;
+      }
+      void persistCostPreferences(false);
+    }, 800);
+    return () => clearTimeout(timeout);
+  }, [
+    user,
+    costPrefsContext,
+    costPrefsScope,
+    costPrefsScreen,
+    costPrefsHydratedKey,
+    serializedCostModes,
+    costPrefsAutosaveRevision,
+    persistCostPreferences,
+  ]);
 
   useEffect(() => {
     const settings = catalog.accounting?.settings;
@@ -193,8 +382,15 @@ export function SimpleWizard({
     const controller = new AbortController();
     if (!token || !form.costPeriod) {
       setCostSources([]);
+      setCostSourcesError(null);
+      setCostSourcesState("idle");
       return () => controller.abort();
     }
+    setCostSourcesState("loading");
+    setCostSourcesError(null);
+    setCostSources([]);
+    setAllocations({});
+    setSourceTreatments({});
     const load = async () => {
       try {
         const data = await request(
@@ -206,19 +402,23 @@ export function SimpleWizard({
           setCostSources(data);
           setAllocations({});
           setSourceTreatments({});
+           setCostSourcesError(null);
+           setCostSourcesState("loaded");
         }
       } catch (e: any) {
         if (e?.name !== "AbortError" && requestId === costRequestRef.current) {
           setCostSources([]);
           setAllocations({});
           setSourceTreatments({});
+          setCostSourcesError(e?.message || "تعذر تحميل مصادر التكلفة");
+          setCostSourcesState("error");
           toast({ title: "تعذر تحميل مصادر التكلفة", description: e.message, variant: "destructive" });
         }
       }
     };
     void load();
     return () => controller.abort();
-  }, [request, token, form.costPeriod, toast]);
+  }, [request, token, form.costPeriod, costSourcesRefreshKey, toast]);
 
   const handleCreateBom = async () => {
     if (!form.productItemId || newBomLines.length === 0) return;
@@ -933,11 +1133,91 @@ export function SimpleWizard({
                   <h4 className="font-semibold text-violet-900">التكاليف الإضافية الفعلية</h4>
                   <p className="text-xs text-violet-700/80">اختر طريقة واحدة لكل بطاقة. لا تُرحّل أي تكلفة عند اختيار «بدون».</p>
                 </div>
-                <div className="w-full md:w-48 space-y-1">
-                  <Label className="text-xs text-violet-800">فترة المصادر المرتبطة</Label>
-                  <Input type="month" value={form.costPeriod} onChange={e => setForm({...form, costPeriod: e.target.value})} className="h-9 border-violet-200" />
+                <div className="flex w-full flex-col gap-3 md:w-auto md:items-end">
+                  <div className="flex w-full flex-wrap items-end justify-end gap-2">
+                    <div className="w-full space-y-1 md:w-48">
+                      <Label className="text-xs text-violet-800">فترة المصادر المرتبطة</Label>
+                      <Input type="month" value={form.costPeriod} onChange={e => setForm({...form, costPeriod: e.target.value})} className="h-9 border-violet-200" />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCostSourcesRefreshKey(value => value + 1)}
+                      disabled={costSourcesState === "loading" || !form.costPeriod}
+                      className="border-violet-200 bg-white text-violet-800 hover:bg-violet-100"
+                    >
+                      <RefreshCw className={`ml-2 h-4 w-4 ${costSourcesState === "loading" ? "animate-spin" : ""}`} />
+                      تحديث المصادر
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void persistCostPreferences(true)}
+                      disabled={!costPrefsHydrated || costPrefsSaveState === "saving"}
+                      className="border-violet-300 bg-white text-violet-900 hover:bg-violet-100"
+                    >
+                      <Save className="ml-2 h-4 w-4" />
+                      {costPrefsSaveState === "saving" ? "جاري حفظ الاختيارات..." : "حفظ طرق التكاليف"}
+                    </Button>
+                    <span className="text-[11px] text-violet-700/80">
+                      {!costPrefsHydrated
+                        ? "جاري تحميل اختياراتك السابقة..."
+                        : costPrefsSaveState === "error"
+                          ? "تعذر الحفظ التلقائي؛ اضغط حفظ للمحاولة"
+                        : costPrefsDirty
+                          ? "توجد تغييرات غير محفوظة"
+                          : "الاختيارات محفوظة لهذا المستخدم والشركة الحالية"}
+                    </span>
+                  </div>
                 </div>
               </div>
+              {costSourcesState === "loading" && (
+                <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">
+                  جاري تحميل المصادر المرحّلة المؤهلة للفترة {form.costPeriod}...
+                </div>
+              )}
+              {costSourcesState === "error" && (
+                <div className="flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-semibold">تعذر تحميل مصادر التكلفة</p>
+                    <p className="mt-1 text-xs">{costSourcesError || "حدث خطأ أثناء قراءة المصادر المرحّلة."}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCostSourcesRefreshKey(value => value + 1)}
+                    className="border-red-300 bg-white text-red-900 hover:bg-red-100"
+                  >
+                    <RefreshCw className="ml-2 h-4 w-4" />
+                    إعادة المحاولة
+                  </Button>
+                </div>
+              )}
+              {costSourcesState === "loaded" && costSources.length === 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                  <p className="font-semibold">لا توجد مصادر مؤهلة للفترة {form.costPeriod}</p>
+                  <p className="mt-1 text-xs leading-6">
+                    يعرض الخادم فقط المصروفات المرحّلة بقيد مرحّل، والمؤهلة للتصنيع، وداخل شركتك وفروعك المسموح بها.
+                    الرواتب تحتاج مسيرة منشورة/مدفوعة وساعات تصنيع معتمدة، والإهلاك يحتاج أصلاً مؤهلاً ومحرك توزيع صالحاً،
+                    والمصروفات المقدمة تحتاج قسطاً مرحّلاً ومحرك كمية إنتاج صالحاً. لا يتم تجاوز قواعد الترحيل أو الشركة أو الفرع.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCostSourcesRefreshKey(value => value + 1)}
+                    className="mt-2 border-amber-300 bg-white text-amber-950 hover:bg-amber-100"
+                  >
+                    <RefreshCw className="ml-2 h-4 w-4" />
+                    تحديث بعد إكمال الترحيل
+                  </Button>
+                </div>
+              )}
               {!canPost && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   لا تملك صلاحية ترحيل التصنيع الذكي؛ ستظل بيانات المصادر للقراءة فقط.
@@ -993,9 +1273,17 @@ export function SimpleWizard({
                         )}
                         {mode === "linked" && (
                           <div className="space-y-2">
-                            {!rows.length ? (
+                            {costSourcesState === "loading" ? (
+                              <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs text-violet-800">
+                                جاري تحميل المصادر المؤهلة للفترة...
+                              </div>
+                            ) : costSourcesState === "error" ? (
+                              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                                تعذر تحميل المصادر. استخدم زر إعادة المحاولة أعلاه لمعرفة النتيجة الفعلية.
+                              </div>
+                            ) : !rows.length ? (
                               <div className="rounded-lg border border-dashed p-3 text-xs text-slate-500">
-                                لا توجد مصادر مرحّلة ومؤهلة للفترة {form.costPeriod}.
+                                لا يوجد مصدر من فئة {title} مرحّل ومؤهل للفترة {form.costPeriod}.
                               </div>
                             ) : rows.map(source => {
                               const key = `${source.sourceType}:${source.sourceRecordId}`;

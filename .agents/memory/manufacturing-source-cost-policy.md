@@ -10,6 +10,12 @@ Stage input/output and waste may use different operational units, but every conv
 
 Use one invoice-style tabbed manufacturing form over the existing core, not a separate execution engine. Source linkage configuration belongs in existing assets, payroll, and prepaid-expense screens.
 
+Remember only category selection modes as manufacturing wizard preferences, scoped to user and effective company; never carry source IDs, amounts, accounts, or periods into a new order as remembered defaults.
+
+**Why:** The user wants the last selection remembered, but copying accounting facts can silently reuse a consumed source or charge an unrelated period.
+
+**How to apply:** Historical completed-order review reads saved snapshots only; missing historical fields stay explicitly unavailable instead of being rebuilt from today's catalog or preferences.
+
 Execution inputs must be directly discoverable in the compact order detail, not only in the advanced detail route. Preserve approved time-based source allocation rules when adding operational workforce fields; do not implicitly multiply existing allocations by headcount.
 
 **Why:** The user could see only the routing preview and explicitly required per-stage employee entry while prohibiting changes to the existing linked cost calculations.
