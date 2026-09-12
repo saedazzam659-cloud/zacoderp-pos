@@ -720,6 +720,10 @@ function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: str
   );
 }
 const UNIT_EMPTY = { unitId: "", referenceUnitId: "", conversionFactor: "1", costPrice: "0", salePrice: "0", isBase: false, isActive: true, decimalPlaces: "2", roundingMode: "half_up" };
+const UNIT_ROUNDING_LABELS: Record<string, string> = {
+  half_up: "roundHalfUp", half_even: "roundHalfEven", bankers: "roundHalfEven",
+  half_down: "roundHalfDown", ceil: "roundUp", floor: "roundDown", truncate: "truncate",
+};
 
 // ─── Item Unit Prices Panel ──────────────────────────────────────────────────
 // PRO Extension #5 — Per-item Analytics panel.
@@ -909,7 +913,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
                   items={allUnits.map((u: any) => ({ value: String(u.id), code: u.code, label: pickName(u.nameAr, u.nameEn) || u.code }))}
                   value={form.referenceUnitId}
                   onValueChange={v => setForm((p: any) => ({ ...p, referenceUnitId: v }))}
-                  placeholder={t("common.select", { defaultValue: "Select..." })}
+                  placeholder={t("inventoryMaster.units.select")}
                   className="h-8 text-xs"
                 />
                 <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.units.baseUnitHint", { defaultValue: "Usually the item's base unit. Leave empty to use factor standalone." })}</p>
@@ -944,7 +948,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
                 <Label className="text-xs">&nbsp;</Label>
                 <div className="flex items-center gap-2 h-8">
                   <input type="checkbox" id="unit-active" checked={form.isActive} onChange={e => setForm((p: any) => ({ ...p, isActive: e.target.checked }))} className="rounded" />
-                  <label htmlFor="unit-active" className="text-xs text-muted-foreground">{t("common.active", { defaultValue: "Active" })}</label>
+                  <label htmlFor="unit-active" className="text-xs text-muted-foreground">{t("inventoryMaster.units.active")}</label>
                 </div>
               </div>
             </div>
@@ -1047,7 +1051,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
               )}
               {up.isActive === false && (
                 <span className="absolute top-2 right-2 flex items-center gap-0.5 text-[9px] font-bold text-slate-500 bg-slate-100 rounded-full px-1.5 py-0.5">
-                  {t("common.inactive", { defaultValue: "Inactive" })}
+                  {t("inventoryMaster.units.inactive")}
                 </span>
               )}
               <div className="flex items-center gap-1.5 mb-0.5 mt-4">
@@ -1081,7 +1085,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
               {(up.decimalPlaces > 0 || (up.roundingMode && up.roundingMode !== 'none')) && (
                 <div className="flex gap-2 mt-1">
                   {up.decimalPlaces > 0 && <span className="text-[9px] bg-slate-100 text-slate-600 px-1 rounded border border-slate-200">{t("inventoryMaster.units.decimalPlaces", { defaultValue: "Decimals" })}: {up.decimalPlaces}</span>}
-                  {up.roundingMode && up.roundingMode !== 'none' && <span className="text-[9px] bg-slate-100 text-slate-600 px-1 rounded border border-slate-200">{t("inventoryMaster.units.roundingMode", { defaultValue: "Rounding" })}: {up.roundingMode}</span>}
+                  {up.roundingMode && up.roundingMode !== 'none' && <span className="text-[9px] bg-slate-100 text-slate-600 px-1 rounded border border-slate-200">{t("inventoryMaster.units.roundingMode")}: {t(`inventoryMaster.units.${UNIT_ROUNDING_LABELS[up.roundingMode] ?? "unknownRounding"}`)}</span>}
                 </div>
               )}
 
