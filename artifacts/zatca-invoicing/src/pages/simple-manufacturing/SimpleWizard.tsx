@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { manufacturingProducts } from "./productOptions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -122,8 +123,8 @@ export function SimpleWizard({
     return body;
   }, [token, actingCompanyId]);
 
-  // Filter finished goods for the product combobox
-  const fgItems = catalog.items.filter(i => !i.itemNature || i.itemNature === "finished" || i.itemNature === "semi");
+  // Include configured BOM/routing/template outputs, not just nature labels.
+  const fgItems = manufacturingProducts(catalog, form.productItemId);
   const fgComboItems = [
     { value: "", label: "—" },
     ...fgItems.map(i => ({ value: String(i.id), code: i.code, label: i.nameAr }))

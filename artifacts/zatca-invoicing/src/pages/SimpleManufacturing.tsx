@@ -320,8 +320,11 @@ export default function SimpleManufacturing() {
   };
 
   const handleSaveTemplate = async (data: any) => {
-    return mutate(() => request("/api/simple-manufacturing/templates", {
-      method: "POST",
+    const path = data.id
+      ? `/api/simple-manufacturing/templates/${Number(data.id)}`
+      : "/api/simple-manufacturing/templates";
+    return mutate(() => request(path, {
+      method: data.id ? "PATCH" : "POST",
       body: JSON.stringify({
         name: data.name || "قالب تصنيع",
         configuration: {
@@ -330,7 +333,7 @@ export default function SimpleManufacturing() {
           ...(data.unitCode ? { unitCode: data.unitCode } : {}),
         },
       }),
-    }), "تم حفظ القالب");
+    }), data.id ? "تم تحديث القالب" : "تم حفظ القالب");
   };
 
   const canCreate = usePermission("simple_manufacturing", "create");

@@ -100,7 +100,7 @@ router.get("/", view, (_req, res) => {
       "/catalog", "/execution-catalog", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
       "/orders", "/templates", "/setup/materials", "/setup/products",
       "/setup/warehouses", "/setup/accounting", "/setup/bom", "/setup/bom/:id",
-      "/setup/routing", "/setup/routing/:id", "/reports",
+      "/setup/routing", "/setup/routing/:id", "/templates/:id", "/reports",
       "/orders/:id/stages", "/orders/:id/stages/:stageId/start",
       "/orders/:id/stages/:stageId/complete", "/orders/:id/waste-records",
       "/overhead-closures", "/overhead-closures/:id/reopen",
@@ -828,22 +828,71 @@ router.post("/templates", create, async (req, res) => {
   try {
     const bid = intersectBranchRequest(req, req.body?.branchId ?? null);
     if (bid === "deny") return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
-    const configuration = req.body?.configuration;
-    if (!configuration || typeof configuration !== "object" || Array.isArray(configuration)) {
-      return void res.status(400).json({ error: "إعدادات القالب مطلوبة" });
-    }
+    const configuration = await normalizeSimpleTemplateConfiguration(cid, req.body?.configuration);
     // Configuration-only invariant: no document number, actuals, journals,
     // stock movements, or source allocation data can be stored here.
     const [row] = await db.insert(productionWizardTemplatesTable).values({
       companyId: cid,
       branchId: typeof bid === "number" ? bid : null,
-      name,
+      name: name.slice(0, 250),
       configuration,
       createdBy: req.authUser!.id,
     }).returning();
     res.status(201).json(row);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+router.patch("/templates/:id", edit, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return void res.status(400).json({ error: "id غير صحيح" });
+  }
+  const name = String(req.body?.name ?? "").trim();
+  if (!name) return void res.status(400).json({ error: "اسم القالب مطلوب" });
+  try {
+    const [existing] = await db.select({
+      id: productionWizardTemplatesTable.id,
+      branchId: productionWizardTemplatesTable.branchId,
+      configuration: productionWizardTemplatesTable.configuration,
+    }).from(productionWizardTemplatesTable).where(and(
+      eq(productionWizardTemplatesTable.id, id),
+      eq(productionWizardTemplatesTable.companyId, cid),
+      eq(productionWizardTemplatesTable.isActive, true),
+    )).limit(1);
+    if (!existing) return void res.status(404).json({ error: "القالب غير موجود" });
+
+    // A template is company-wide or branch-scoped, but never editable through
+    // a branch the caller cannot access. The company predicate above prevents
+    // cross-tenant updates even when a valid id is supplied.
+    const branchResult = effectiveBranchCondition(
+      req,
+      productionWizardTemplatesTable.branchId,
+      existing.branchId,
+    );
+    if ("deny" in branchResult) {
+      return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    }
+    const configuration = {
+      ...(existing.configuration ?? {}),
+      ...(await normalizeSimpleTemplateConfiguration(cid, req.body?.configuration)),
+    };
+    const [row] = await db.update(productionWizardTemplatesTable).set({
+      name: name.slice(0, 250),
+      configuration,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(productionWizardTemplatesTable.id, id),
+      eq(productionWizardTemplatesTable.companyId, cid),
+      eq(productionWizardTemplatesTable.isActive, true),
+    )).returning();
+    if (!row) return void res.status(404).json({ error: "القالب غير موجود" });
+    res.json(row);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -874,6 +923,61 @@ function setupError(message: string, status = 400): Error & { status: number } {
   const error = new Error(message) as Error & { status: number };
   error.status = status;
   return error;
+}
+
+/**
+ * Quick-order templates only store reusable configuration. Normalize the
+ * fields owned by the compact screen at the API boundary and verify the
+ * product/unit against the current tenant before either creating or editing a
+ * row. Other configuration keys are retained for compatibility with templates
+ * created by the visual setup flow.
+ */
+async function normalizeSimpleTemplateConfiguration(cid: number, value: unknown) {
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  if (!raw) throw setupError("إعدادات القالب مطلوبة");
+
+  const productItemId = Number(raw.productItemId);
+  if (!Number.isInteger(productItemId) || productItemId <= 0) {
+    throw setupError("منتج القالب مطلوب");
+  }
+  const plannedQty = Number(raw.plannedQty ?? 1);
+  if (!Number.isFinite(plannedQty) || plannedQty <= 0) {
+    throw setupError("كمية القالب يجب أن تكون أكبر من صفر");
+  }
+
+  const [product] = await db.select({
+    id: itemsTable.id,
+    unitCode: unitsTable.code,
+  }).from(itemsTable).leftJoin(unitsTable, and(
+    eq(itemsTable.unitId, unitsTable.id),
+    eq(unitsTable.companyId, cid),
+  )).where(and(
+    eq(itemsTable.id, productItemId),
+    eq(itemsTable.companyId, cid),
+    eq(itemsTable.status, "active"),
+  )).limit(1);
+  if (!product) throw setupError("منتج القالب غير موجود أو غير نشط في هذه الشركة");
+
+  const requestedUnitCode = typeof raw.unitCode === "string" ? raw.unitCode.trim() : "";
+  const unitCode = requestedUnitCode || product.unitCode || "PCE";
+  let canonicalUnitCode: string;
+  try {
+    canonicalUnitCode = (await resolveProductionItemUnit(cid, productItemId, unitCode)).unitCode;
+  } catch (e: any) {
+    throw setupError(
+      e?.message ?? `وحدة القياس "${unitCode}" غير مرتبطة بالمنتج`,
+      e?.status ?? 400,
+    );
+  }
+
+  return {
+    ...raw,
+    productItemId,
+    plannedQty,
+    unitCode: canonicalUnitCode,
+  };
 }
 
 /**

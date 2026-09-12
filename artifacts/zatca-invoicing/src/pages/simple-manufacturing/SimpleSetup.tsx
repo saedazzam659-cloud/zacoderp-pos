@@ -29,7 +29,7 @@ export function SimpleSetup({
   onLoadBom: (id: number) => Promise<any>;
   onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null }> }) => Promise<unknown>;
   onLoadRouting: (id: number) => Promise<any>;
-  onSaveTemplate: (data: { name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
+  onSaveTemplate: (data: { id?: number; name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
   onSaveWarehouse: (data: { code: string; nameAr: string; isDefault: boolean }) => Promise<unknown>;
 }) {
   const [material, setMaterial] = useState({ code: "", nameAr: "", itemNature: "raw", unitId: "" });
@@ -58,6 +58,7 @@ export function SimpleSetup({
   const [openWarehouse, setOpenWarehouse] = useState(false);
   const [editingBomId, setEditingBomId] = useState<number | null>(null);
   const [editingRoutingId, setEditingRoutingId] = useState<number | null>(null);
+  const [editingTemplateId, setEditingTemplateId] = useState<number | null>(null);
   const [loadingBomId, setLoadingBomId] = useState<number | null>(null);
   const [loadingRoutingId, setLoadingRoutingId] = useState<number | null>(null);
 
@@ -73,6 +74,11 @@ export function SimpleSetup({
     setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0 }]);
   };
 
+  const resetTemplate = () => {
+    setEditingTemplateId(null);
+    setTemplate({ name: "", productItemId: "", plannedQty: "1", unitCode: "" });
+  };
+
   const startBomCreate = () => {
     resetBom();
     setOpenBom(true);
@@ -81,6 +87,23 @@ export function SimpleSetup({
   const startRoutingCreate = () => {
     resetRouting();
     setOpenRouting(true);
+  };
+
+  const startTemplateCreate = () => {
+    resetTemplate();
+    setOpenTemplate(true);
+  };
+
+  const openTemplateForEdit = (row: Catalog["templates"][number]) => {
+    const configuration = row.configuration ?? {};
+    setEditingTemplateId(row.id);
+    setTemplate({
+      name: String(row.name ?? ""),
+      productItemId: String(configuration.productItemId ?? ""),
+      plannedQty: String(configuration.plannedQty ?? "1"),
+      unitCode: configuration.unitCode ? String(configuration.unitCode) : "",
+    });
+    setOpenTemplate(true);
   };
 
   const openBomForEdit = async (id: number) => {
@@ -519,12 +542,12 @@ export function SimpleSetup({
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-6 space-y-4">
-          <Dialog open={openTemplate} onOpenChange={setOpenTemplate}>
+          <Dialog open={openTemplate} onOpenChange={open => { setOpenTemplate(open); if (!open) resetTemplate(); }}>
             <DialogTrigger asChild>
-              <Button variant="outline" className="w-full justify-start" disabled={!canCreate}><Plus className="mr-2 h-4 w-4" /> قالب أمر جديد</Button>
+              <Button variant="outline" className="w-full justify-start" disabled={!canCreate} onClick={startTemplateCreate}><Plus className="mr-2 h-4 w-4" /> قالب أمر جديد</Button>
             </DialogTrigger>
             <DialogContent dir="rtl">
-              <DialogHeader><DialogTitle>حفظ كقالب متكرر</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>{editingTemplateId ? "تعديل قالب الأمر" : "حفظ كقالب متكرر"}</DialogTitle></DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
                   <label className="text-sm font-semibold">اسم القالب</label>
@@ -578,15 +601,38 @@ export function SimpleSetup({
                   </div>
                 </div>
                 <div className="bg-slate-50 p-2 text-xs text-slate-500 rounded border">ملاحظة: إذا تركت الوحدة فارغة سيتم استخدام وحدة القياس الأساسية للصنف عند تطبيق القالب.</div>
-                <Button disabled={busy || !canCreate || !template.productItemId || !template.name} onClick={async () => { await onSaveTemplate(template); setOpenTemplate(false); setTemplate({ name: "", productItemId: "", plannedQty: "1", unitCode: "" }); }} className="w-full">
-                  حفظ القالب
+                <Button
+                  disabled={busy || (editingTemplateId ? !canEdit : !canCreate) || !template.productItemId || !template.name}
+                  onClick={async () => {
+                    try {
+                      await onSaveTemplate({ ...template, id: editingTemplateId ?? undefined });
+                      setOpenTemplate(false);
+                      resetTemplate();
+                    } catch { /* The parent displays the error; keep edits open. */ }
+                  }}
+                  className="w-full"
+                >
+                  {editingTemplateId ? "تحديث القالب" : "حفظ القالب"}
                 </Button>
               </div>
             </DialogContent>
           </Dialog>
           <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
             {catalog.templates.map(t => (
-              <div key={t.id} className="text-sm bg-white text-violet-900 p-3 rounded-md border border-violet-100 shadow-sm flex flex-col">
+              <div
+                key={t.id}
+                className={`text-sm bg-white text-violet-900 p-3 rounded-md border border-violet-100 shadow-sm flex flex-col ${canEdit ? "cursor-pointer hover:border-violet-300 hover:bg-violet-50/30" : ""}`}
+                onDoubleClick={() => { if (canEdit) openTemplateForEdit(t); }}
+                onKeyDown={e => {
+                  if (canEdit && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault();
+                    openTemplateForEdit(t);
+                  }
+                }}
+                data-testid={`card-template-${t.id}`}
+                role={canEdit ? "button" : undefined}
+                tabIndex={canEdit ? 0 : undefined}
+              >
                 <span className="font-semibold">{t.name}</span>
                 <span className="text-xs text-slate-500 mt-1">الكمية: {t.configuration?.plannedQty || 1} {t.configuration?.unitCode ? `(${t.configuration.unitCode})` : ""}</span>
               </div>
