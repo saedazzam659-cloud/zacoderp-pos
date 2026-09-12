@@ -3,6 +3,29 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { TransactionFailure, transactionFailureResponse } from "../src/lib/transactionFailure.js";
 
+test("source allocation save uses its transaction and includes unreversed driver capacity", async () => {
+  const source = await readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8");
+  const start = source.indexOf("for (const a of requested)");
+  const end = source.indexOf("snapshots.push(", start);
+  assert.ok(start > 0 && end > start);
+  const save = source.slice(start, end);
+  assert.doesNotMatch(save, /\bq\.select|\brange\.|\ballocationRows\b/);
+  assert.match(save, /usedDeltas[\s\S]*?await tx\.select/);
+  assert.match(save, /isNull\(productionDriverReconciliationsTable\.reversalJournalEntryId\)/);
+  assert.match(save, /assertAllocationCapacity\(source\.sourceAmount, num\(used\?\.amount\) \+ num\(usedDeltas\?\.amount\), amount\)/);
+});
+
+test("overhead closure counts each active driver delta without mutating planned allocations", async () => {
+  const source = await readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8");
+  const start = source.indexOf("async function buildOverheadClosureSnapshot");
+  const end = source.indexOf("const journalIds = sourceJournalIds", start);
+  const closure = source.slice(start, end);
+  assert.match(closure, /inArray\(productionDriverReconciliationsTable\.baseAllocationId, allocationIds\)/);
+  assert.match(closure, /isNull\(productionDriverReconciliationsTable\.reversalJournalEntryId\)/);
+  assert.match(closure, /current\.amount = round2[\s\S]*?driverDeltaByAllocation\.get\(Number\(row\.allocationId\)\)/);
+  assert.doesNotMatch(closure, /row\.allocatedAmount\s*=/);
+});
+
 test("validation rejection throws so transaction rolls back and preserves HTTP details", async () => {
   let committed = false;
   let rolledBack = false;

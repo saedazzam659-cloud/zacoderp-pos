@@ -3883,10 +3883,28 @@ async function buildOverheadClosureSnapshot(
     amount: number;
     treatments: Set<string>;
   }>();
+  // Apply immutable, unreversed driver deltas once to this closure snapshot,
+  // never to the persisted planned allocations or the order-create handler.
+  const driverReconciliations = allocationIds.length
+    ? await q.select({
+        baseAllocationId: productionDriverReconciliationsTable.baseAllocationId,
+        deltaAmount: productionDriverReconciliationsTable.deltaAmount,
+      }).from(productionDriverReconciliationsTable).where(and(
+        eq(productionDriverReconciliationsTable.companyId, cid),
+        inArray(productionDriverReconciliationsTable.baseAllocationId, allocationIds),
+        isNull(productionDriverReconciliationsTable.reversalJournalEntryId),
+      )).for("update")
+    : [];
+  const driverDeltaByAllocation = new Map<number, number>();
+  for (const row of driverReconciliations) {
+    driverDeltaByAllocation.set(Number(row.baseAllocationId),
+      (driverDeltaByAllocation.get(Number(row.baseAllocationId)) ?? 0) + num(row.deltaAmount));
+  }
   for (const row of allocationRows) {
     const key = overheadSourceKey(row.sourceType, row.sourceRecordId);
     const current = appliedBySource.get(key) ?? { amount: 0, treatments: new Set<string>() };
-    current.amount = round2(current.amount + num(row.allocatedAmount));
+    current.amount = round2(current.amount + num(row.allocatedAmount)
+      + (driverDeltaByAllocation.get(Number(row.allocationId)) ?? 0));
     current.treatments.add(String(row.costTreatment ?? ""));
     appliedBySource.set(key, current);
   }
@@ -5294,24 +5312,20 @@ export async function productionWizardHandler(req: any, res: any) {
             eq(productionCostAllocationsTable.sourceRecordId, source.sourceRecordId),
             sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
           ));
-  const driverReconciliations = await q.select({
-    baseAllocationId: productionDriverReconciliationsTable.baseAllocationId,
-    deltaAmount: productionDriverReconciliationsTable.deltaAmount,
-  }).from(productionDriverReconciliationsTable).where(and(
-    eq(productionDriverReconciliationsTable.companyId, cid),
-    eq(productionDriverReconciliationsTable.periodStart, range.start),
-    eq(productionDriverReconciliationsTable.periodEnd, range.end),
-  )).for("update");
-  const driverDeltaByAllocation = new Map<number, number>();
-  for (const row of driverReconciliations) {
-    driverDeltaByAllocation.set(Number(row.baseAllocationId),
-      (driverDeltaByAllocation.get(Number(row.baseAllocationId)) ?? 0) + num(row.deltaAmount));
-  }
-  for (const row of allocationRows) {
-    row.allocatedAmount = String(num(row.allocatedAmount) +
-      (driverDeltaByAllocation.get(Number(row.allocationId)) ?? 0));
-  }
-        try { assertAllocationCapacity(source.sourceAmount, num(used?.amount), amount); }
+        const [usedDeltas] = await tx.select({
+          amount: sql<string>`coalesce(sum(${productionDriverReconciliationsTable.deltaAmount}), 0)`,
+        }).from(productionDriverReconciliationsTable)
+          .innerJoin(productionOrdersTable, and(
+            eq(productionDriverReconciliationsTable.orderId, productionOrdersTable.id),
+            eq(productionOrdersTable.companyId, cid),
+          )).where(and(
+            eq(productionDriverReconciliationsTable.companyId, cid),
+            eq(productionDriverReconciliationsTable.sourceType, source.sourceType),
+            eq(productionDriverReconciliationsTable.sourceRecordId, source.sourceRecordId),
+            isNull(productionDriverReconciliationsTable.reversalJournalEntryId),
+            sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
+          ));
+        try { assertAllocationCapacity(source.sourceAmount, num(used?.amount) + num(usedDeltas?.amount), amount); }
         catch { throw Object.assign(new Error(`تجاوز توزيع المصدر المتاح: ${source.label}`), { status: 409 }); }
         const treatment = COST_TREATMENTS.has(String(a.treatment))
           ? String(a.treatment) : "manufacturing_overhead";
@@ -6091,7 +6105,8 @@ async function reconcileFinalStageDrivers(
   // Company-wide source capacity includes every branch's original allocations
   // and previously frozen driver deltas.
   for (const row of rows.filter((r) => r.delta > 0)) {
-    await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${row.allocation.sourceRecordId})`);
+    const sourceLockKey = `${row.allocation.sourceType}:${Number(row.allocation.sourceRecordId)}`;
+    await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${sourceLockKey}))`);
     const [base, deltas] = await Promise.all([
       tx.select({ amount: productionCostAllocationsTable.allocatedAmount })
         .from(productionCostAllocationsTable).where(and(
