@@ -969,7 +969,7 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
       period_end DATE NOT NULL,
       basis TEXT NOT NULL,
       source_amount NUMERIC(18,2) NOT NULL,
-      share_pct NUMERIC(9,6) NOT NULL CHECK (share_pct > 0 AND share_pct <= 100),
+      share_pct NUMERIC(9,6) NOT NULL CHECK (share_pct >= 0 AND share_pct <= 100),
       allocated_amount NUMERIC(18,2) NOT NULL CHECK (allocated_amount >= 0),
       snapshot_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -981,7 +981,10 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     BEGIN RAISE EXCEPTION 'production cost allocation snapshots are immutable'; END; $$ LANGUAGE plpgsql;
     DROP TRIGGER IF EXISTS production_cost_allocations_no_mutation ON production_cost_allocations;
     CREATE TRIGGER production_cost_allocations_no_mutation BEFORE UPDATE OR DELETE ON production_cost_allocations
-      FOR EACH ROW EXECUTE FUNCTION reject_production_cost_allocation_mutation();` },
+      FOR EACH ROW EXECUTE FUNCTION reject_production_cost_allocation_mutation();
+    ALTER TABLE production_cost_allocations DROP CONSTRAINT IF EXISTS production_cost_allocations_share_pct_check;
+    ALTER TABLE production_cost_allocations ADD CONSTRAINT production_cost_allocations_share_pct_check
+      CHECK (share_pct >= 0 AND share_pct <= 100);` },
   // Frozen calculation evidence only. This deliberately has no journal entry:
   // the linked payroll/asset source allocation owns capitalization and its
   // delta/reversal lifecycle.

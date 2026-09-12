@@ -36,6 +36,12 @@ Late utility settlement must not guess FG/COGS distribution after consumption. R
 
 Execution inputs must be directly discoverable in the compact order detail, not only in the advanced detail route. Preserve approved time-based source allocation rules when adding operational workforce fields; do not implicitly multiply existing allocations by headcount.
 
+Actual stage hours and worker counts are entered during execution, not prerequisites for creating or starting an order. A linked eligible source can carry a zero planned allocation until actual stage drivers are known; validate those drivers during execution and reconcile from that baseline.
+
+**Why:** Requiring positive planned person-hours stranded the user on a read-only routing preview. The user explicitly rejected adding another hours/headcount editor to order creation.
+
+**How to apply:** Do not invent planned hours, default workers to manufacture a cost, or silently downgrade resource-aware orders to legacy costing when runtime inputs are absent.
+
 **Why:** The user could see only the routing preview and explicitly required per-stage employee entry while prohibiting changes to the existing linked cost calculations.
 
 Work centers and machines are separate operational selections. Machines may reference an existing fixed asset or remain unlinked (including rented equipment); adding a machine never copies an asset or creates depreciation.

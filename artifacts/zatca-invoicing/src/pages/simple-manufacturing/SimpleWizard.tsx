@@ -657,19 +657,6 @@ export function SimpleWizard({
         return;
       }
     }
-    const selectedPayrollSource = costModes.payroll === "linked" && costSources.some(source =>
-      source.sourceType === "payroll" && allocations[`${source.sourceType}:${source.sourceRecordId}`] === "1",
-    );
-    if (resourceCostingEnabled && selectedPayrollSource && !(plannedLaborPersonHours > 0)) {
-      toast({
-        title: "محرك ساعات العمالة المخططة مطلوب",
-        description: "حدّد مدة متوقعة وعدد عمال موجباً لمراحل العمالة في مسار الإنتاج قبل ربط مصدر الرواتب.",
-        variant: "destructive",
-      });
-      setTab("routing");
-      return;
-    }
-
     const payload = {
       wizardRequestId: wizardRequestIdRef.current,
       title: form.title.trim(),
@@ -685,7 +672,6 @@ export function SimpleWizard({
       plannedHours: Number(form.plannedHours) || 0,
       ...(resourceCostingEnabled ? {
         resourceCostingVersion: 1,
-        ...(selectedPayrollSource ? { plannedLaborPersonHours } : {}),
       } : {}),
       costPeriod: form.costPeriod,
       templateId: form.templateId ? Number(form.templateId) : null,
@@ -773,6 +759,20 @@ export function SimpleWizard({
       amount = denominator > 0 ? sourceAmount * plannedHours / denominator : 0;
     }
     return Number.isFinite(amount) ? Number(amount.toFixed(2)) : 0;
+  };
+
+  const allocationDisplayForSource = (source: any): string => {
+    const method = source.meta?.allocationMethod || source.basis;
+    const plannedDriver = method === "production_quantity"
+      ? Number(form.plannedQty || 0)
+      : method === "labor_hours"
+        ? plannedLaborPersonHours
+        : method === "machine_hours"
+          ? Number(form.plannedHours || 0)
+          : 0;
+    return plannedDriver > 0
+      ? allocatedAmountForSource(source).toLocaleString(undefined, { maximumFractionDigits: 2 })
+      : "يحدد أثناء التنفيذ";
   };
 
   const manualAmountForCategory = (category: ManufacturingCostCategory): number => {
@@ -1078,7 +1078,7 @@ export function SimpleWizard({
                 تُنسخ المراحل من مسار الإنتاج النشط كـ لقطة (Snapshot) مستقلة للأمر، فلا تغيّر التعديلات اللاحقة على المسار تاريخ هذا الأمر.
                 <br/><strong className="text-slate-900 mt-2 block">ملاحظة: يمكنك متابعة الأمر بدون مراحل إذا كان الإنتاج بسيطاً ويتم بخطوة واحدة.</strong>
                 <p className="mt-3 rounded-md border border-violet-200 bg-violet-50 p-3 text-violet-900">
-                  هذه معاينة قبل إنشاء الأمر، وليست تسجيل التنفيذ الفعلي. بعد «مراجعة وبدء الإنتاج» ستفتح تفاصيل الأمر هنا، وفيها لكل مرحلة: ساعات تشغيل واحدة، عدد العمالة، الآلة، الكميات، والهالك وسببه وتصنيفه، مع زر حفظ وبدء وإنهاء المرحلة.
+                  هذه معاينة قبل إنشاء الأمر، وليست تسجيل التنفيذ الفعلي. تُدخل ساعات التشغيل الفعلية وعدد العمال الفعليين لكل مرحلة بعد البدء فقط من شاشة تنفيذ المرحلة.
                 </p>
               </div>
 
@@ -1482,7 +1482,6 @@ export function SimpleWizard({
                               const available = Number(source.availableAmount ?? 0);
                               const applied = Number(source.allocatedAmount ?? 0);
                                const method = source.meta?.allocationMethod || source.basis;
-                               const actual = allocatedAmountForSource(source);
                               return (
                                 <div key={key} className={`rounded-lg border p-3 space-y-2 ${selected ? "bg-violet-50/60 border-violet-200" : "bg-white"}`}>
                                   <label className="flex gap-2 items-start text-xs">
@@ -1498,7 +1497,7 @@ export function SimpleWizard({
                                     <span>الأساس: {method}</span>
                                     <span>المتاح: <b className="text-slate-700">{available.toLocaleString()}</b></span>
                                     <span>المطبق سابقاً: <b className="text-slate-700">{applied.toLocaleString()}</b></span>
-                                    <span className="col-span-2">المبلغ الفعلي لهذا الأمر: <b className="text-violet-700">{actual.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b></span>
+                                    <span className="col-span-2">توزيع هذا الأمر: <b className="text-violet-700">{allocationDisplayForSource(source)}</b></span>
                                   </div>
                                   {selected && (
                                     <SearchCombobox
@@ -1579,7 +1578,6 @@ export function SimpleWizard({
                       const selectable = source.sourceType === "purchase_invoice" &&
                         ["machine_hours", "labor_hours", "production_quantity"].includes(driver) &&
                         Number(source.availableAmount ?? 0) > 0;
-                      const actual = allocatedAmountForSource(source);
                       return (
                         <div key={key} className={`rounded-lg border p-3 text-xs space-y-2 ${allocations[key] === "1" ? "border-indigo-300 bg-white" : "bg-white/70"}`}>
                           <label className="flex items-start gap-2">
@@ -1596,7 +1594,7 @@ export function SimpleWizard({
                             <span>النوع: {costType}</span>
                             <span>المحرك: {driver}</span>
                             <span>المتاح: {Number(source.availableAmount ?? 0).toLocaleString()}</span>
-                            <span>نصيب الأمر المخطط: {actual.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                            <span>توزيع هذا الأمر: {allocationDisplayForSource(source)}</span>
                           </div>
                           {!selectable && (
                             <p className="rounded bg-amber-50 p-2 leading-5 text-amber-900">

@@ -14,8 +14,8 @@ export function calculateFormulaAllocation(
 ): number {
   if (!Number.isFinite(sourceAmount) || sourceAmount < 0)
     throw new Error("sourceAmount must be a non-negative number");
-  if (!Number.isFinite(numerator) || numerator <= 0)
-    throw new Error("allocation numerator must be greater than zero");
+  if (!Number.isFinite(numerator) || numerator < 0)
+    throw new Error("allocation numerator must be non-negative");
   if (!Number.isFinite(denominatorOrRate) || denominatorOrRate <= 0)
     throw new Error("allocation denominator or rate must be greater than zero");
   const amount = method === "fixed_hourly_rate"

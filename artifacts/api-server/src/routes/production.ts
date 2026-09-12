@@ -5758,7 +5758,7 @@ export async function productionWizardHandler(req: any, res: any) {
               ? plannedLaborPersonHours
               : plannedHours;
           denominator = num((source.meta as any).approvedAllocationDriverTotal);
-          if (!(industrialNumerator > 0 && denominator > 0)) {
+          if (!(industrialNumerator >= 0 && denominator > 0)) {
             throw Object.assign(
               new Error(`مصدر ${source.label} يحتاج إجمالي محرك توزيع معتمداً للفترة`),
               { status: 400 },
@@ -5779,13 +5779,13 @@ export async function productionWizardHandler(req: any, res: any) {
           const numerator = source.sourceType === "payroll"
             ? plannedLaborPersonHours
             : plannedHours;
-          if (!(numerator > 0 && denominator > 0))
+          if (!(numerator >= 0 && denominator > 0))
             throw Object.assign(new Error(`ساعات الأمر والساعات المعتمدة مطلوبة لتوزيع ${source.label}`), { status: 400 });
           formulaMethod = "operating_hours";
           amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, numerator, denominator);
         } else if (source.sourceType === "fixed_asset_depreciation" && method === "fixed_hourly_rate") {
           denominator = num(source.meta.fixedManufacturingRate);
-          if (!(plannedHours > 0 && denominator > 0))
+          if (!(plannedHours >= 0 && denominator > 0))
             throw Object.assign(new Error(`ساعات الأمر ومعدل الساعة مطلوبان لتوزيع ${source.label}`), { status: 400 });
           formulaMethod = "fixed_hourly_rate";
           amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, plannedHours, denominator);
@@ -5799,7 +5799,14 @@ export async function productionWizardHandler(req: any, res: any) {
           throw Object.assign(new Error(`طريقة توزيع غير مدعومة للمصدر: ${source.label}`), { status: 400 });
         }
         const sharePct = source.sourceAmount > 0 ? Number((amount / source.sourceAmount * 100).toFixed(6)) : 0;
-        if (!(amount > 0 && sharePct > 0))
+        // v1 execution facts are intentionally entered only at stage
+        // completion. A selected hourly source therefore starts with a
+        // zero-reserved immutable identity/rate and is capitalized later by
+        // its actual driver delta. v0 retains its existing positive baseline.
+        const zeroExecutionBaseline = resourceCostingVersion >= 1 && amount === 0 &&
+          (source.sourceType === "payroll" || source.sourceType === "fixed_asset_depreciation" ||
+            (source.sourceType === "purchase_invoice" && ["machine_hours", "labor_hours"].includes(method)));
+        if (!(amount > 0 && sharePct > 0) && !zeroExecutionBaseline)
           throw Object.assign(new Error(`ناتج توزيع صفري للمصدر: ${source.label}`), { status: 400 });
         const reclassificationAccounts = (source.meta.reclassificationAccounts as WeightedAccount[] | undefined) ?? [];
         try { allocateToSourceAccounts(0.01, reclassificationAccounts); }

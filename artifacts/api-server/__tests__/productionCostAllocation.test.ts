@@ -52,5 +52,12 @@ test("final execution hours derive immutable delta targets from one approved sou
 
 test("formula allocation rejects invalid approved inputs", () => {
   assert.throws(() => calculateFormulaAllocation("operating_hours", 100, 2, 0));
-  assert.throws(() => calculateFormulaAllocation("production_quantity", 100, 0, 20));
+  assert.throws(() => calculateFormulaAllocation("production_quantity", 100, -1, 20));
+});
+
+test("v1 execution sources may reserve a zero baseline until stage actuals exist", () => {
+  assert.equal(calculateFormulaAllocation("operating_hours", 10_000, 0, 200), 0);
+  assert.equal(calculateFormulaAllocation("fixed_hourly_rate", 10_000, 0, 37.5), 0);
+  assert.doesNotThrow(() => assertAllocationCapacity(10_000, 0, 0));
+  assert.deepEqual(allocateToSourceAccounts(0, [{ accountId: 10, weight: 1 }]), []);
 });
