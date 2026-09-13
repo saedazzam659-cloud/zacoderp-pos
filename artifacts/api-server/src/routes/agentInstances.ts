@@ -36,7 +36,7 @@ import {
   agentPlatformLinkInvitesTable, agentControllerLinksTable,
   companiesTable, zatcaRegistrationTransfersTable,
 } from "@workspace/db";
-import { eq, desc, and, or, ne, lt, sql } from "drizzle-orm";
+import { eq, desc, and, or, ne, lt, sql, inArray, isNull, asc } from "drizzle-orm";
 import { z } from "zod/v4";
 import { PgPool, type PgPoolType } from "@workspace/db";
 import net from "node:net";
@@ -131,6 +131,24 @@ import {
   mintHandoffToken,
   verifyHandoffToken,
 } from "../lib/controllerHandoff.js";
+import {
+  assertControllerTokenMatchesVerifier,
+  buildShellControllerSyncScript,
+  shellControllerSyncDiagnostic,
+  type ShellControllerState,
+} from "../lib/shellControllerSync.js";
+import { decideControllerLinkReconcile } from "../lib/controllerLinkReconcile.js";
+import {
+  assertManagementOperation,
+  assertPlatformControlToken,
+  assertSourceManagementAccess,
+  assertLiveInstanceMatchesLink,
+  assertTargetManagementAccess,
+  assertPublicControllerOrigin,
+  managementRequestPayload,
+  managementResponse,
+  safeManagementValue,
+} from "../lib/controllerManagementBridge.js";
 
 /**
  * SSRF guard for agent-server probes: the SA may point tests at any PUBLIC
@@ -2673,9 +2691,20 @@ async function buildSetupKit(
     eq(agentControllerLinksTable.localAgentId, inst.id),
     eq(agentControllerLinksTable.direction, "outbound"),
   ));
+  const seenControllerTargets = new Set<string>();
+  for (const row of outboundLinks) {
+    if (seenControllerTargets.has(row.targetPlatformId)) throw new Error("duplicate_outbound_controller_link");
+    seenControllerTargets.add(row.targetPlatformId);
+    const token = row.controllerTokenEnc ? decryptSecret(row.controllerTokenEnc) : "";
+    assertControllerTokenMatchesVerifier(token, row.controllerTokenVerifier);
+  }
   const newestLeadership = outboundLinks.reduce<typeof outboundLinks[number] | null>(
     (best, row) => !best || row.controllerEpoch > best.controllerEpoch ? row : best, null,
   );
+  if (outboundLinks.some(row =>
+    row.controllerEpoch !== (newestLeadership?.controllerEpoch ?? 0) ||
+    row.activeControllerId !== (newestLeadership?.activeControllerId ?? controller.platformId),
+  )) throw new Error("controller_registry_inconsistent");
   const controllerOrigins = [
     { platformId: controller.platformId, origin: controller.origin, auth: "license" },
     ...outboundLinks.map(row => ({ platformId: row.targetPlatformId, origin: row.targetOrigin,
@@ -2702,6 +2731,13 @@ async function buildSetupKit(
 # zacod agent heartbeat — validates license/identity with the central platform.
 # On a definitive 403 (suspended / revoked license) the local proxy is stopped.
 CFG=/opt/zacod/config.json
+# Serialise the heartbeat's atomic state read/write with controller handoff
+# repairs. Without the shared lock, a heartbeat started from a stale config
+# could overwrite a just-synced epoch/token list.
+CONTROLLER_CONFIG_LOCK=/var/lock/zacod-controller-config.lock
+command -v flock >/dev/null 2>&1 || exit 0
+exec 9>"$CONTROLLER_CONFIG_LOCK"
+flock -w 30 9 || exit 0
 # Every controller receives monitoring heartbeats. Only the active controller's
 # definitive 403 can suspend this shell. A newer signed/controller state from
 # either controller is adopted atomically without a service restart.
@@ -3098,35 +3134,93 @@ async function sshRunScript(
   return { ...result, hostKeyFp: seenHostKeyFp };
 }
 
-/** Best-effort only: synchronises controller metadata, never DB credentials or
- * service state. The caller intentionally does not restart the shell. */
+/** Synchronises controller metadata only. It never changes DB credentials or
+ * service state; the heartbeat reads this file on its next run, so the caller
+ * intentionally does not restart the application service. */
 async function syncShellControllerConfig(inst: typeof agentInstancesTable.$inferSelect): Promise<void> {
   const local = localPlatformIdentity();
   const links = await db.select().from(agentControllerLinksTable).where(and(
     eq(agentControllerLinksTable.localAgentId, inst.id), eq(agentControllerLinksTable.direction, "outbound"),
   ));
-  const lead = links.reduce<typeof links[number] | null>((best, row) =>
-    !best || row.controllerEpoch > best.controllerEpoch ? row : best, null);
-  const controllers = [{ platformId: local.platformId, origin: local.origin, auth: "license" },
+
+  // Two outbound rows for one target cannot be represented safely in the
+  // agent config (the platform id is the config key). Do not silently pick
+  // one token: doing so could leave the other paired platform with a token
+  // that is no longer accepted, and would make handoff state ambiguous.
+  const seenTargets = new Set<string>();
+  for (const row of links) {
+    const targetKey = row.targetPlatformId;
+    if (seenTargets.has(targetKey)) {
+      const error = new Error("shell_controller_sync_failed");
+      Object.assign(error, { syncDetail: "duplicate_outbound_controller_link", syncInDoubt: false });
+      throw error;
+    }
+    seenTargets.add(targetKey);
+    const token = row.controllerTokenEnc ? decryptSecret(row.controllerTokenEnc) : "";
+    try {
+      assertControllerTokenMatchesVerifier(token, row.controllerTokenVerifier);
+    } catch {
+      const error = new Error("shell_controller_sync_failed");
+      Object.assign(error, { syncDetail: "controller_link_credentials_unavailable", syncInDoubt: false });
+      throw error;
+    }
+  }
+
+  const lead = links.length
+    ? { controllerEpoch: links[0].controllerEpoch, activeControllerId: links[0].activeControllerId }
+    : { controllerEpoch: 0, activeControllerId: local.platformId };
+  const validControllerIds = [local.platformId, ...links.map(x => x.targetPlatformId)];
+  if (!validControllerIds.includes(lead.activeControllerId) ||
+      links.some(x => x.controllerEpoch !== lead.controllerEpoch || x.activeControllerId !== lead.activeControllerId)) {
+    const error = new Error("shell_controller_sync_failed");
+    Object.assign(error, { syncDetail: "controller_registry_inconsistent", syncInDoubt: false });
+    throw error;
+  }
+  const controllers: ShellControllerState["controllerOrigins"] = [{ platformId: local.platformId, origin: local.origin, auth: "license" },
     ...links.map(x => ({ platformId: x.targetPlatformId, origin: x.targetOrigin, auth: "controllerToken",
       controllerToken: x.controllerTokenEnc ? decryptSecret(x.controllerTokenEnc) : "" }))]
     .filter((x, i, a) => a.findIndex(y => y.platformId === x.platformId) === i);
-  const state = Buffer.from(JSON.stringify({
+  const state = {
     controllerOrigins: controllers,
-    activeControllerId: lead?.activeControllerId ?? local.platformId,
-    controllerEpoch: lead?.controllerEpoch ?? 0,
-  })).toString("base64");
-  const result = await sshRunScript(inst, `set -e
-STATE_B64='${state}' node - <<'NODE'
-const fs=require("node:fs"); const p="/opt/zacod/config.json";
-const add=JSON.parse(Buffer.from(process.env.STATE_B64,"base64").toString("utf8"));
-const old=JSON.parse(fs.readFileSync(p,"utf8")); Object.assign(old,add);
-const tmp=p+".tmp-"+process.pid; fs.writeFileSync(tmp,JSON.stringify(old,null,2),{mode:0o600}); fs.renameSync(tmp,p);
-NODE
-echo ZACOD_CONTROLLER_SYNCED`);
-  if (result.code !== 0 || !result.out.includes("ZACOD_CONTROLLER_SYNCED")) {
-    throw new Error("shell_controller_sync_failed");
+    activeControllerId: lead.activeControllerId,
+    controllerEpoch: lead.controllerEpoch,
+  } as const;
+  let result: { code: number; out: string; hostKeyFp: string };
+  try {
+    result = await sshRunScript(inst, buildShellControllerSyncScript(state));
+  } catch (cause: any) {
+    const error = new Error("shell_controller_sync_failed");
+    Object.assign(error, {
+      syncDetail: shellControllerSyncDiagnostic(255, String(cause?.message ?? cause)),
+      syncInDoubt: true,
+    });
+    throw error;
   }
+  if (result.code !== 0 || !result.out.includes("ZACOD_CONTROLLER_SYNCED")) {
+    const error = new Error("shell_controller_sync_failed");
+    const syncDetail = shellControllerSyncDiagnostic(result.code, result.out);
+    Object.assign(error, {
+      syncDetail,
+      // These checks fail before opening/replacing config.json. Network
+      // failures and any later script failure remain ambiguous by design.
+      syncInDoubt: ![
+        "agent_controller_config_missing",
+        "agent_python_runtime_missing",
+        "agent_controller_config_permission_denied",
+        "agent_flock_runtime_missing",
+        "agent_controller_config_busy",
+      ].includes(syncDetail),
+    });
+    throw error;
+  }
+  // sshRunScript allows TOFU only on first contact; persist that fingerprint
+  // after the marker proves the config write completed so later repairs use
+  // strict host-key verification.
+  await pinHostKey(inst, result.hostKeyFp);
+}
+
+function controllerSyncErrorDetail(error: any): string {
+  return String(error?.syncDetail ?? error?.message ?? "shell_controller_sync_failed").slice(0, 600);
 }
 
 const REMOTE_CONTROL_LOCK = "/var/lock/zacod-control.lock";
@@ -5781,9 +5875,34 @@ router.post("/:id/controller-links/export", async (req, res) => {
     const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
     if (!inst || !inst.licenseKey) { res.status(404).json({ error: "agent_or_license_not_found" }); return; }
     const source = localPlatformIdentity();
+    if (invite.targetPlatformId === source.platformId || invite.targetOrigin === source.origin) {
+      throw Object.assign(new Error("target_must_be_different"), { httpStatus: 409 });
+    }
     const existing = await db.select().from(agentControllerLinksTable).where(and(
       eq(agentControllerLinksTable.localAgentId, inst.id), eq(agentControllerLinksTable.direction, "outbound"),
     ));
+    const duplicateLinks = existing.filter(row => row.targetPlatformId === invite.targetPlatformId);
+    if (duplicateLinks.length) {
+      // A target platform is a config key on the shell. Creating another
+      // outbound row would either overwrite its token or make the registry
+      // non-deterministic, so failed exports remain repairable instead of
+      // accumulating duplicate epoch-0 rows.
+      res.status(409).json({
+        error: "controller_link_already_exists",
+        code: "DUPLICATE_OUTBOUND_CONTROLLER_LINK",
+        serverMessage: "duplicate_outbound_controller_link_reconcile_required",
+        targetPlatformId: invite.targetPlatformId,
+        targetOrigin: invite.targetOrigin,
+        recoveryCandidates: duplicateLinks.map(row => ({
+          linkId: row.linkId,
+          targetPlatformId: row.targetPlatformId,
+          targetOrigin: row.targetOrigin,
+          controllerEpoch: row.controllerEpoch,
+          activeControllerId: row.activeControllerId,
+        })),
+      });
+      return;
+    }
     const previous = existing.length ? highestControllerState(existing, [
       source.platformId, invite.targetPlatformId, ...existing.map(x => x.targetPlatformId),
     ]) : null;
@@ -5834,15 +5953,50 @@ router.post("/:id/controller-links/export", async (req, res) => {
       status: inst.status, packageSource: inst.packageSource, controllerEpoch: epoch,
       activeControllerId,
     });
-    const shell = await syncShellControllerConfig(inst).then(() => ({ shellSynced: true })).catch((e: any) => ({
-      shellSynced: false, shellSyncError: String(e?.message ?? e).slice(0, 160),
-    }));
+    try {
+      await syncShellControllerConfig(inst);
+    } catch (e: any) {
+      // Do not return a portable file when the agent shell did not accept the
+      // exact registry state. The row is intentionally retained: an SSH
+      // timeout is ambiguous and deleting it could leave a valid remote
+      // token orphaned. Remote failures are in-doubt and require repair/retry;
+      // local validation failures are rolled back without changing epochs.
+      const inDoubt = e?.syncInDoubt === true;
+      let registryCleanupFailed = false;
+      if (!inDoubt) {
+        // No SSH mutation happened for local registry validation failures.
+        // Remove only the row created by this request; never touch another
+        // link or advance any controller epoch.
+        try {
+          await db.delete(agentControllerLinksTable).where(and(
+            eq(agentControllerLinksTable.localAgentId, inst.id),
+            eq(agentControllerLinksTable.direction, "outbound"),
+            eq(agentControllerLinksTable.linkId, linkId),
+          ));
+        } catch {
+          registryCleanupFailed = true;
+        }
+      }
+      await logAgentEvent(inst.id, "controller_link_shell_sync_failed", {
+        linkId, targetPlatformId: invite.targetPlatformId,
+        diagnostic: String(e?.syncDetail ?? "shell_controller_sync_failed").slice(0, 600),
+      }, req);
+      const diagnostic = String(e?.syncDetail ?? "shell_controller_sync_failed").slice(0, 600);
+      res.status(503).json({
+        error: "shell_controller_sync_failed",
+        code: "SHELL_CONTROLLER_SYNC_FAILED",
+        serverMessage: registryCleanupFailed ? "controller_link_registry_cleanup_failed" : diagnostic,
+        linkId,
+        inDoubt: inDoubt || registryCleanupFailed,
+      });
+      return;
+    }
     await logAgentEvent(inst.id, "controller_link_exported", {
       linkId, inviteId: invite.inviteId, targetPlatformId: invite.targetPlatformId,
     }, req);
-    res.status(201).json({ file, ...shell });
+    res.status(201).json({ file, shellSynced: true });
   } catch (error: any) {
-    res.status(400).json({ error: String(error?.message ?? error).slice(0, 200) });
+    res.status(Number(error?.httpStatus) || 400).json({ error: String(error?.message ?? error).slice(0, 200) });
   }
 });
 
@@ -5948,8 +6102,8 @@ async function controllerStateRequest(link: typeof agentControllerLinksTable.$in
   action: "prepare" | "readback" | "commit"; expectedEpoch: number; expectedActiveControllerId: string;
   requestedEpoch?: number; requestedActiveControllerId?: string;
 }): Promise<{ status: number; body: any }> {
-  const origin = normalizeHttpsOrigin(link.targetOrigin);
-  const u = new URL(origin);
+  const u = assertPublicControllerOrigin(link.targetOrigin);
+  const origin = u.origin;
   const approved = await resolvePublicControllerAddress(u.hostname);
   const token = link.platformControlTokenEnc ? decryptSecret(link.platformControlTokenEnc) : "";
   if (!token || !link.platformControlTokenVerifier || !link.sourceSigningPublicKey) throw new Error("platform_control_credentials_unavailable");
@@ -5996,6 +6150,258 @@ async function controllerStateRequest(link: typeof agentControllerLinksTable.$in
     request.end(body);
   });
 }
+
+// ── Imported-agent management bridge ───────────────────────────────────────
+//
+// A controller link is deliberately not an HTTP proxy.  These are the only
+// operations that may cross the link and the source re-checks the link,
+// installation, epoch and active-controller binding before opening its own
+// business database.  In particular, the target platform never receives the
+// source database URL, a source user session, or a branding/logo payload.
+function managementOperation(value: unknown): string {
+  return assertManagementOperation(value);
+}
+
+/**
+ * Invoke one of the existing admin routers without making an internal HTTP
+ * request.  This keeps company/user validation and side effects identical to
+ * the normal screens while the caller supplies only a synthetic SuperAdmin
+ * identity after the capability checks above have completed.
+ */
+async function dispatchManagementRouter(
+  route: any,
+  method: string,
+  pathName: string,
+  body: unknown,
+  authUser: Record<string, unknown>,
+): Promise<{ status: number; body: any }> {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (status: number, responseBody: any) => {
+      if (settled) return;
+      settled = true;
+      resolve({ status, body: responseBody });
+    };
+    const req: any = {
+      method, url: pathName, originalUrl: pathName, path: pathName,
+      baseUrl: "", body: body ?? {}, query: {}, params: {},
+      headers: { host: "localhost" }, socket: { remoteAddress: "" },
+      authUser, isKiosk: false,
+      // Internal dispatch is performed only after the bridge's capability and
+      // SuperAdmin checks. Registration uses this marker because a synthetic
+      // request intentionally does not carry the browser's bearer token.
+      callerIsSuperAdminCentral: authUser.role === "superadmin",
+      get(name: string) { return this.headers[String(name).toLowerCase()]; },
+    };
+    const res: any = {
+      statusCode: 200, headersSent: false, locals: {},
+      status(code: number) { this.statusCode = code; return this; },
+      setHeader() { return this; },
+      getHeader() { return undefined; },
+      json(value: any) { this.headersSent = true; finish(this.statusCode, value); return this; },
+      send(value: any) { this.headersSent = true; finish(this.statusCode, value); return this; },
+      end(value?: any) { this.headersSent = true; finish(this.statusCode, value); return this; },
+    };
+    try {
+      route.handle(req, res, (error?: unknown) => {
+        if (error) reject(error);
+        else if (!settled) finish(res.statusCode ?? 404, undefined);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+async function executeManagementOperation(operation: string, payload: any, businessDb: any): Promise<any> {
+  const { branchesTable, usersTable } = await import("@workspace/db");
+  if (operation === "company.list") {
+    return await businessDb.select().from(companiesTable)
+      .where(and(isNull(companiesTable.deletedAt), eq(companiesTable.isInternalDemoWorkspace, false)))
+      .orderBy(asc(companiesTable.createdAt));
+  }
+  if (operation === "company.get") {
+    const id = Number(payload?.id);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("invalid_company_id");
+    const [company] = await businessDb.select().from(companiesTable)
+      .where(and(eq(companiesTable.id, id), isNull(companiesTable.deletedAt))).limit(1);
+    if (!company) throw Object.assign(new Error("company_not_found"), { httpStatus: 404 });
+    return company;
+  }
+  if (operation === "company.create") {
+    // Reuse the complete registration flow (subscription, defaults, fiscal
+    // year, admin account and template data), rather than creating a partial
+    // company row that cannot be used to log in.
+    const { default: authRouter } = await import("./auth.js");
+    const result = await dispatchManagementRouter(
+      authRouter, "POST", "/register",
+      { ...(payload ?? {}), agentInstanceId: undefined },
+      { id: 0, username: "linked-superadmin", role: "superadmin", companyId: null, viewAllBranches: true, branchIds: [] },
+    );
+    if (result.status >= 400) {
+      throw Object.assign(new Error(String(result.body?.error ?? "company_create_failed")), { httpStatus: result.status });
+    }
+    return result.body;
+  }
+  if (operation === "company.update") {
+    const id = Number(payload?.id);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("invalid_company_id");
+    const { default: companiesRouter } = await import("./companies.js");
+    const { id: _id, ...fields } = payload ?? {};
+    const result = await dispatchManagementRouter(companiesRouter, "PUT", `/${id}`, fields,
+      { id: 0, username: "linked-superadmin", role: "superadmin", companyId: null, viewAllBranches: true, branchIds: [] });
+    if (result.status >= 400) {
+      throw Object.assign(new Error(String(result.body?.error ?? "company_update_failed")), { httpStatus: result.status });
+    }
+    return result.body;
+  }
+  if (operation === "company.status") {
+    const id = Number(payload?.id);
+    const status = typeof payload?.status === "string" ? payload.status : "";
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("invalid_company_id");
+    if (!["active", "pending", "rejected", "suspended"].includes(status)) throw new Error("invalid_company_status");
+    const [company] = await businessDb.update(companiesTable).set({
+      status, rejectionReason: status === "rejected" ? (payload?.reason || "تم رفض الطلب") : null,
+      updatedAt: new Date(),
+    }).where(and(eq(companiesTable.id, id), isNull(companiesTable.deletedAt))).returning();
+    if (!company) throw Object.assign(new Error("company_not_found"), { httpStatus: 404 });
+    if (status === "active") {
+      await businessDb.update(usersTable).set({ isActive: true, updatedAt: new Date() }).where(eq(usersTable.companyId, id));
+    } else if (status === "rejected" || status === "suspended") {
+      await businessDb.update(usersTable).set({ isActive: false, sessionToken: null, sessionId: null, updatedAt: new Date() })
+        .where(eq(usersTable.companyId, id));
+    }
+    return company;
+  }
+  if (operation === "company.delete") {
+    const id = Number(payload?.id);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("invalid_company_id");
+    // Reuse the existing, reviewed soft-delete transaction. It only marks
+    // deletedAt and force-logs out tenant users; irreversible relation
+    // deletion remains behind the existing recycle-bin/audit flow.
+    const { default: companiesRouter } = await import("./companies.js");
+    const result = await dispatchManagementRouter(companiesRouter, "DELETE", `/${id}`, {},
+      { id: 0, username: "linked-superadmin", role: "superadmin", companyId: null, viewAllBranches: true, branchIds: [] });
+    if (result.status >= 400) {
+      throw Object.assign(new Error(String(result.body?.error ?? "company_delete_failed")), { httpStatus: result.status });
+    }
+    return { ok: true };
+  }
+  if (operation === "branch.list") {
+    const companyId = Number(payload?.companyId);
+    if (!Number.isSafeInteger(companyId) || companyId <= 0) throw new Error("invalid_company_id");
+    return await businessDb.select().from(branchesTable).where(eq(branchesTable.companyId, companyId)).orderBy(asc(branchesTable.id));
+  }
+
+  const companyId = Number(payload?.companyId);
+  if (!Number.isSafeInteger(companyId) || companyId <= 0) throw new Error("invalid_company_id");
+  const userId = payload?.id == null ? null : Number(payload.id);
+  if (operation === "user.status") {
+    const statusUserId = Number(payload?.id);
+    if (!Number.isSafeInteger(statusUserId) || statusUserId <= 0 || typeof payload?.isActive !== "boolean") throw new Error("invalid_user_status");
+    const { id: _id, companyId: _companyId, ...statusBody } = payload;
+    const { default: usersRouter } = await import("./users.js");
+    const result = await dispatchManagementRouter(usersRouter, "PATCH", `/${statusUserId}`,
+      { ...statusBody, companyId }, { id: 0, username: "linked-superadmin", role: "superadmin", companyId: null, viewAllBranches: true, branchIds: [] });
+    if (result.status >= 400) throw Object.assign(new Error(String(result.body?.error ?? "user_status_failed")), { httpStatus: result.status });
+    return result.body;
+  }
+  const { default: usersRouter } = await import("./users.js");
+  const routeMethod = operation === "user.list" ? "GET"
+    : operation === "user.get" ? "GET"
+    : operation === "user.create" ? "POST"
+    : operation === "user.update" ? "PATCH"
+    : "DELETE";
+  const pathName = operation === "user.list" ? "/"
+    : operation === "user.get" ? `/${userId}`
+    : operation === "user.create" ? "/"
+    : `/${userId}`;
+  const result = await dispatchManagementRouter(usersRouter, routeMethod, pathName,
+    { ...(payload ?? {}), companyId }, { id: 0, username: "linked-superadmin", role: "superadmin", companyId: null, viewAllBranches: true, branchIds: [] });
+  if (result.status >= 400) throw Object.assign(new Error(String(result.body?.error ?? "user_operation_failed")), { httpStatus: result.status });
+  return result.body;
+}
+
+function managementErrorStatus(error: any): number {
+  const status = Number(error?.httpStatus);
+  return Number.isInteger(status) && status >= 400 && status <= 599 ? status : 400;
+}
+
+/**
+ * Target-side endpoint.  It is inside the existing SuperAdmin router, so the
+ * browser must have an explicitly authenticated local SuperAdmin session.
+ */
+router.post("/platform-links/:linkId/management", async (req, res) => {
+  try {
+    const linkId = String(req.params.linkId ?? "");
+    const operation = managementOperation(req.body?.operation);
+    if (JSON.stringify(req.body?.payload ?? {}).length > 300_000) throw new Error("management_payload_too_large");
+    const identity = localPlatformIdentity();
+    const actor = (req as any).authUser;
+    const [link] = await db.select().from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.linkId, linkId), eq(agentControllerLinksTable.direction, "imported"),
+    )).limit(1);
+    if (!link) throw Object.assign(new Error("controller_link_not_found"), { httpStatus: 404 });
+    assertTargetManagementAccess({ actor, link, identity });
+    const token = link.platformControlTokenEnc ? decryptSecret(link.platformControlTokenEnc) : "";
+    if (!token || !link.platformControlTokenVerifier) {
+      throw Object.assign(new Error("platform_control_credentials_unavailable"), { httpStatus: 503 });
+    }
+    try {
+      assertPlatformControlToken(token, link.platformControlTokenVerifier);
+    } catch {
+      throw Object.assign(new Error("platform_control_credentials_unavailable"), { httpStatus: 503 });
+    }
+    const origin = assertPublicControllerOrigin(link.sourceOrigin).origin;
+    const endpoint = new URL("/api/agent/controller-management", origin);
+    const approved = await resolvePublicControllerAddress(endpoint.hostname);
+    const body = JSON.stringify({
+      linkId: link.linkId,
+      installationId: link.installationId,
+      domain: link.domain,
+      dbFingerprint: link.dbFingerprint ?? "",
+      platformControlToken: token,
+      requesterPlatformId: identity.platformId,
+      requesterOrigin: identity.origin,
+      controllerEpoch: link.controllerEpoch,
+      activeControllerId: link.activeControllerId,
+      operation,
+      payload: req.body?.payload ?? {},
+      audit: { userId: actor?.id ?? null, username: actor?.username ?? null, role: "superadmin" },
+    });
+    const remote = await new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const request = httpsRequest({
+        protocol: "https:", hostname: endpoint.hostname, servername: endpoint.hostname,
+        port: endpoint.port || 443, path: endpoint.pathname, method: "POST", timeout: 15_000,
+        headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+        lookup: ((_host: string, options: any, callback: any) => {
+          if (typeof options === "function") options(null, approved.address, approved.family);
+          else if (options?.all) callback(null, [{ address: approved.address, family: approved.family }]);
+          else callback(null, approved.address, approved.family);
+        }) as any,
+      }, response => {
+        let raw = "";
+        response.setEncoding("utf8");
+        response.on("data", chunk => { raw = (raw + chunk).slice(0, 350_000); });
+        response.on("end", () => {
+          let parsed: any; try { parsed = JSON.parse(raw); } catch { parsed = { error: "invalid_controller_response" }; }
+          resolve({ status: response.statusCode ?? 502, body: safeManagementValue(parsed) });
+        });
+      });
+      request.on("timeout", () => request.destroy(new Error("source_controller_timeout")));
+      request.on("error", reject);
+      request.end(body);
+    });
+    await logAgentEvent(null, "controller_management_request", {
+      linkId: link.linkId, operation, controllerEpoch: link.controllerEpoch,
+      actorUserId: actor?.id ?? null, actorUsername: actor?.username ?? null,
+      success: remote.status >= 200 && remote.status < 300,
+    }, req);
+    res.status(remote.status).json(remote.body);
+  } catch (error: any) {
+    res.status(managementErrorStatus(error)).json({ error: String(error?.message ?? error).slice(0, 220) });
+  }
+});
 
 // Two-step, source-side leadership transfer.  This deliberately changes only
 // control-plane link rows and the shell config: business databases are never
@@ -6062,7 +6468,7 @@ router.post("/:id/controller-handoff/commit", async (req, res) => {
       try { await syncShellControllerConfig(inst); }
       catch (repairError: any) {
         await logAgentEvent(agentId, "controller_handoff_compensation_repair_failed", { linkId: link.linkId, compensationEpoch: epoch }, req);
-        res.status(503).json({ error: "controller_handoff_source_shell_repair_failed", code: "CONTROLLER_HANDOFF_SOURCE_REPAIR_REQUIRED", serverMessage: String(repairError?.message ?? repairError).slice(0, 160), inDoubt: true, compensated: true });
+        res.status(503).json({ error: "controller_handoff_source_shell_repair_failed", code: "CONTROLLER_HANDOFF_SOURCE_REPAIR_REQUIRED", serverMessage: controllerSyncErrorDetail(repairError), inDoubt: true, compensated: true });
         return;
       }
       await logAgentEvent(agentId, "controller_handoff_compensation_repaired", {
@@ -6111,9 +6517,9 @@ router.post("/:id/controller-handoff/commit", async (req, res) => {
       const compensated = !repairError;
       await logAgentEvent(agentId, "controller_handoff_compensated", { linkId: link.linkId, failedEpoch: nextEpoch, compensationEpoch, compensated }, req);
       if (repairError) {
-        res.status(503).json({ error: "controller_handoff_source_shell_repair_failed", code: "CONTROLLER_HANDOFF_SOURCE_REPAIR_REQUIRED", serverMessage: String(repairError?.message ?? repairError).slice(0, 160), inDoubt: true, compensated: true });
+        res.status(503).json({ error: "controller_handoff_source_shell_repair_failed", code: "CONTROLLER_HANDOFF_SOURCE_REPAIR_REQUIRED", serverMessage: controllerSyncErrorDetail(repairError), inDoubt: true, compensated: true });
       } else {
-        res.status(409).json({ error: "transfer_not_committed_but_source_restored", serverMessage: String(syncError?.message ?? syncError).slice(0, 160), compensated: true, controllerEpoch: compensationEpoch });
+        res.status(409).json({ error: "transfer_not_committed_but_source_restored", serverMessage: controllerSyncErrorDetail(syncError), compensated: true, controllerEpoch: compensationEpoch });
       }
       return;
     }
@@ -6155,7 +6561,7 @@ router.post("/:id/controller-handoff/commit", async (req, res) => {
         let repairError: any = null; try { await syncShellControllerConfig(inst); } catch (e) { repairError = e; }
         await logAgentEvent(agentId, "controller_handoff_target_rejected_compensated", { linkId: link.linkId, compensationEpoch, compensated: !repairError }, req);
         if (repairError) {
-          res.status(503).json({ error: "controller_handoff_source_shell_repair_failed", code: "CONTROLLER_HANDOFF_SOURCE_REPAIR_REQUIRED", serverMessage: String(repairError?.message ?? repairError).slice(0, 160), inDoubt: true, compensated: true });
+          res.status(503).json({ error: "controller_handoff_source_shell_repair_failed", code: "CONTROLLER_HANDOFF_SOURCE_REPAIR_REQUIRED", serverMessage: controllerSyncErrorDetail(repairError), inDoubt: true, compensated: true });
         } else {
           res.status(409).json({ error: "transfer_not_committed_but_source_restored", serverMessage: String(remote.body?.error ?? readback?.body?.error ?? "target rejected").slice(0, 160), compensated: true, controllerEpoch: compensationEpoch });
         }
@@ -6197,7 +6603,7 @@ router.post("/:id/controller-handoff/rollback", async (req, res) => {
             error: "rollback_shell_sync_in_doubt",
             inDoubt: true,
             controllerEpoch: epoch,
-            serverMessage: String(syncError?.message ?? syncError).slice(0, 160),
+            serverMessage: controllerSyncErrorDetail(syncError),
           });
           return;
         }
@@ -6238,7 +6644,7 @@ router.post("/:id/controller-handoff/rollback", async (req, res) => {
         error: "rollback_shell_sync_in_doubt",
         inDoubt: true,
         controllerEpoch: nextEpoch,
-        serverMessage: String(e?.message ?? e).slice(0, 160),
+        serverMessage: controllerSyncErrorDetail(e),
       });
       return;
     }
@@ -6257,6 +6663,149 @@ router.get("/:id/controller-links", async (req, res) => {
   res.json(rows.map(({ licenseVerifier: _v, controllerTokenVerifier: _tv, controllerTokenEnc: _te,
     platformControlTokenVerifier: _pv, platformControlTokenEnc: _pe,
     sourceSigningPublicKey: _sp, sourceSigningPrivateKeyEnc: _sk, ...safe }) => safe));
+});
+
+// Reconcile a pre-existing duplicate outbound registry only after each
+// candidate is checked against the target's exact linkId. This never changes
+// leadership; it only removes rows proven absent and retries shell sync.
+router.post("/:id/controller-links/:linkId/reconcile", async (req, res) => {
+  const agentId = Number(req.params.id);
+  const requestedLinkId = String(req.params.linkId ?? "");
+  try {
+    const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, agentId)).limit(1);
+    if (!inst) { res.status(404).json({ error: "agent_not_found" }); return; }
+    const source = localPlatformIdentity();
+    const links = await db.select().from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.localAgentId, agentId),
+      eq(agentControllerLinksTable.direction, "outbound"),
+    ));
+    const selected = links.find(row => row.linkId === requestedLinkId);
+    if (!selected) { res.status(404).json({ error: "controller_link_not_found" }); return; }
+    const candidates = links.filter(row => row.targetPlatformId === selected.targetPlatformId);
+    if (candidates.some(row => row.targetOrigin !== selected.targetOrigin)) {
+      res.status(409).json({
+        error: "controller_link_reconcile_target_conflict",
+        serverMessage: "target_origin_conflict; no rows changed",
+        inDoubt: false,
+      });
+      return;
+    }
+    if (candidates.some(row =>
+      row.sourcePlatformId !== source.platformId ||
+      row.controllerEpoch !== 0 ||
+      row.activeControllerId !== source.platformId,
+    )) {
+      res.status(409).json({
+        error: "controller_link_reconcile_state_not_supported",
+        serverMessage: "reconcile_requires_all_candidates_epoch_0_source_active; no rows changed",
+        inDoubt: false,
+      });
+      return;
+    }
+
+    const observations = await Promise.all(candidates.map(async row => {
+      try {
+        const readback = await controllerStateRequest(row, inst, {
+          action: "readback",
+          expectedEpoch: 0,
+          expectedActiveControllerId: source.platformId,
+        });
+        return {
+          linkId: row.linkId,
+          status: readback.status,
+          ok: readback.body?.ok === true,
+          controllerEpoch: Number(readback.body?.controllerEpoch),
+          activeControllerId: String(readback.body?.activeControllerId ?? ""),
+          error: String(readback.body?.error ?? ""),
+        };
+      } catch {
+        // A timeout, DNS/TLS failure, or SSRF/address failure is unknown.
+        // It must never be treated as proof that a row is absent.
+        return { linkId: row.linkId, status: 0, ok: false, error: "target_readback_unavailable" };
+      }
+    }));
+    const decision = decideControllerLinkReconcile(observations, 0, source.platformId);
+    if (decision.kind === "no_verified_pair") {
+      res.status(409).json({
+        error: "controller_pairing_not_proven",
+        serverMessage: "cannot_prove_paired_link; no rows changed",
+        inDoubt: false,
+      });
+      return;
+    }
+    if (decision.kind === "ambiguous") {
+      res.status(409).json({
+        error: "controller_pairing_ambiguous",
+        serverMessage: "multiple_target_readbacks_verified; no rows changed",
+        pairedLinkIds: decision.winnerLinkIds,
+        inDoubt: false,
+      });
+      return;
+    }
+    if (decision.kind === "unproven") {
+      res.status(503).json({
+        error: "controller_pairing_not_proven",
+        serverMessage: "target_readback_incomplete_or_not_absent; no rows changed",
+        unknownLinkIds: decision.unknownLinkIds,
+        inDoubt: false,
+      });
+      return;
+    }
+    if (decision.winnerLinkId !== selected.linkId) {
+      res.status(409).json({
+        error: "selected_link_not_paired",
+        serverMessage: "selected_link_is_not_the_verified_target_pair; select the paired link and retry",
+        pairedLinkId: decision.winnerLinkId,
+        inDoubt: false,
+      });
+      return;
+    }
+
+    if (decision.deleteLinkIds.length) {
+      await db.transaction(async tx => {
+        const removed = await tx.delete(agentControllerLinksTable).where(and(
+          eq(agentControllerLinksTable.localAgentId, agentId),
+          eq(agentControllerLinksTable.direction, "outbound"),
+          eq(agentControllerLinksTable.controllerEpoch, 0),
+          eq(agentControllerLinksTable.activeControllerId, source.platformId),
+          inArray(agentControllerLinksTable.linkId, decision.deleteLinkIds),
+        )).returning({ linkId: agentControllerLinksTable.linkId });
+        if (removed.length !== decision.deleteLinkIds.length) throw new Error("controller_reconcile_stale_registry");
+      });
+    }
+    try {
+      await syncShellControllerConfig(inst);
+    } catch (error: any) {
+      res.status(503).json({
+        error: "shell_controller_sync_failed",
+        serverMessage: controllerSyncErrorDetail(error),
+        pairedLinkId: decision.winnerLinkId,
+        inDoubt: true,
+      });
+      return;
+    }
+    await logAgentEvent(agentId, "controller_link_duplicates_reconciled", {
+      pairedLinkId: decision.winnerLinkId,
+      removedLinkIds: decision.deleteLinkIds,
+      controllerEpoch: 0,
+      activeControllerId: source.platformId,
+    }, req);
+    res.json({
+      ok: true,
+      reconciled: decision.deleteLinkIds.length > 0,
+      pairedLinkId: decision.winnerLinkId,
+      removedLinkIds: decision.deleteLinkIds,
+      shellSynced: true,
+      controllerEpoch: 0,
+      activeControllerId: source.platformId,
+    });
+  } catch (error: any) {
+    res.status(409).json({
+      error: String(error?.message ?? error).slice(0, 200),
+      serverMessage: `${String(error?.message ?? error).slice(0, 200)}; no rows changed`,
+      inDoubt: false,
+    });
+  }
 });
 
 router.get("/platform-links/imported", async (_req, res) => {
@@ -6557,6 +7106,84 @@ agentPublicRouter.post("/agent/controller-state", async (req, res) => {
     res.json({ ok: true, committed: true, controllerEpoch: requestedEpoch, activeControllerId: requestedActive });
   } catch (error: any) {
     res.status(403).json({ error: String(error?.message ?? error).slice(0, 160) });
+  }
+});
+
+// Capability-authenticated source-side management endpoint.  This is mounted
+// on the public agent router because the target controller has no user session
+// on the source platform; the encrypted platform-control token is the
+// capability, and every request is additionally pinned to the active epoch.
+agentPublicRouter.post("/agent/controller-management", async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const operation = managementOperation(body.operation);
+    if (JSON.stringify(body.payload ?? {}).length > 300_000) throw new Error("management_payload_too_large");
+    const payload = managementRequestPayload(operation, body.payload ?? {});
+    const requesterPlatformId = platformId(String(body.requesterPlatformId ?? ""));
+    const requesterOrigin = normalizeHttpsOrigin(String(body.requesterOrigin ?? ""));
+    const [link] = await db.select().from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.linkId, String(body.linkId ?? "")),
+      eq(agentControllerLinksTable.direction, "outbound"),
+    )).limit(1);
+    if (!link) throw Object.assign(new Error("controller_link_not_found"), { httpStatus: 404 });
+    const token = typeof body.platformControlToken === "string" ? body.platformControlToken : "";
+    assertPlatformControlToken(token, link.platformControlTokenVerifier);
+    const local = localPlatformIdentity();
+    assertSourceManagementAccess({
+      link,
+      localPlatformId: local.platformId,
+      requesterPlatformId,
+      requesterOrigin,
+      installationId: body.installationId,
+      domain: normalizeHost(String(body.domain ?? "")),
+      dbFingerprint: body.dbFingerprint,
+      controllerEpoch: body.controllerEpoch,
+      activeControllerId: body.activeControllerId,
+    });
+    if (!link.localAgentId) throw Object.assign(new Error("linked_agent_not_found"), { httpStatus: 409 });
+    const [instance] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, link.localAgentId)).limit(1);
+    if (!instance) throw Object.assign(new Error("linked_agent_not_found"), { httpStatus: 409 });
+    // The request identity above only proves the copied link fields. Fence
+    // the live registry row as well, before its encrypted dbUrlEnc is ever
+    // passed to getAgentDbContext; a repointed instance must fail closed.
+    assertLiveInstanceMatchesLink({ instance, link });
+    if (instance.status !== "active") throw Object.assign(new Error("inactive_agent"), { httpStatus: 403 });
+    if (instance.dbStatus !== "initialized" || !instance.dbUrlEnc) {
+      throw Object.assign(new Error("agent_database_unavailable"), { httpStatus: 503 });
+    }
+    if (instance.licenseExpiresAt && instance.licenseExpiresAt < new Date()) {
+      throw Object.assign(new Error("license_expired"), { httpStatus: 403 });
+    }
+    const { getAgentDbContext } = await import("../lib/agentDb.js");
+    const { db: businessDb, runWithExternalDb } = await import("@workspace/db");
+    const ctx = getAgentDbContext(instance.id, instance.dbUrlEnc);
+    const result = await runWithExternalDb(ctx, async () =>
+      executeManagementOperation(operation, payload, businessDb));
+    // Never serialize ORM rows across the link. The operation-specific DTO
+    // is an allowlist; the generic sanitizer remains only for controller
+    // responses/errors that are not business rows.
+    const safeResult = managementResponse(operation, result);
+    const audit = body.audit && typeof body.audit === "object" ? body.audit : {};
+    await logAgentEvent(instance.id, "controller_management_operation", {
+      linkId: link.linkId,
+      operation,
+      controllerEpoch: link.controllerEpoch,
+      targetPlatformId: requesterPlatformId,
+      actorUserId: Number.isSafeInteger(Number(audit.userId)) ? Number(audit.userId) : null,
+      actorUsername: typeof audit.username === "string" ? audit.username.slice(0, 120) : null,
+      success: true,
+    }, req);
+    res.json(safeResult);
+  } catch (error: any) {
+    const status = managementErrorStatus(error);
+    const [link] = await db.select({ localAgentId: agentControllerLinksTable.localAgentId })
+      .from(agentControllerLinksTable)
+      .where(eq(agentControllerLinksTable.linkId, String(req.body?.linkId ?? ""))).limit(1).catch(() => []);
+    await logAgentEvent(link?.localAgentId ?? null, "controller_management_failed", {
+      operation: typeof req.body?.operation === "string" ? req.body.operation : null,
+      error: String(error?.message ?? error).slice(0, 180),
+    }, req);
+    res.status(status).json({ error: String(error?.message ?? error).slice(0, 220) });
   }
 });
 

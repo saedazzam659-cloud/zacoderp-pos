@@ -20,3 +20,9 @@ Keep controller transfer separate from package replacement: preserving runtime m
 **Why:** Operators need to change the managing platform without migrating business data or replacing a centrally supplied application. Package provenance is not an appropriate gate for opening that workflow.
 
 **How to apply:** Offer the handoff entry point independently of package-specific controls; retain backend readiness checks and explicit confirmation before transfer.
+
+Delegated business management must keep database credentials on the source platform and use explicit operation and field allowlists. Bind authorization to both link state and the live installation/domain/database fingerprint before opening the agent database.
+
+**Why:** Copying management metadata is not proof that the underlying database identity has remained unchanged. Serializing complete company rows can disclose SMTP or OTP material even with a broad secret-name filter.
+
+**How to apply:** Reject stale identity or leadership, project explicit management DTOs, and preserve branding. This delegation depends on source-platform availability; it is not a standalone migration away from the source.

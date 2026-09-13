@@ -32,8 +32,12 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
       const res = await fetch(`${API}/api/admin/agent-instances/${agentId}/controller-links/export`, {
         method: "POST", headers, body: JSON.stringify({ invite })
       });
-      if (!res.ok) throw new Error("ملف الدعوة غير صالح أو منتهي");
-      return res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.serverMessage || data.error || "ملف الدعوة غير صالح أو منتهي");
+      if (data.shellSynced !== true || !data.file) {
+        throw new Error(data.serverMessage || data.shellSyncError || "لم تتم مزامنة إعدادات سيرفر الوكيل؛ لم يتم تنزيل رابط صالح");
+      }
+      return data;
     },
     onSuccess: (data) => {
       const blob = new Blob([JSON.stringify(data.file, null, 2)], { type: "application/json" });
@@ -43,15 +47,31 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
       a.download = `portable-link-${agentId}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      
-      if (data.shellSyncError) {
-        toast({ title: "تم التصدير مع خطأ في تزامن السيرفر", description: data.shellSyncError, variant: "destructive" });
-      } else {
-        toast({ title: "تم تصدير ملف الربط بنجاح", description: "أرسل هذا الملف للمنصة الهدف لاستيراده." });
-      }
+      toast({ title: "تم تصدير ملف الربط بنجاح", description: "أرسل هذا الملف للمنصة الهدف لاستيراده." });
       qc.invalidateQueries({ queryKey: ["agent-platform-links", agentId] });
     },
     onError: (err: any) => toast({ title: "خطأ في التصدير", description: err.message, variant: "destructive" })
+  });
+
+  const reconcileMut = useMutation({
+    mutationFn: async (linkId: string) => {
+      const res = await fetch(`${API}/api/admin/agent-instances/${agentId}/controller-links/${encodeURIComponent(linkId)}/reconcile`, {
+        method: "POST", headers, body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.serverMessage || data.error || "تعذر إثبات الرابط المقترن؛ لم تتغير الصفوف");
+      return data;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "تمت مطابقة الرابط المقترن",
+        description: data.removedLinkIds?.length
+          ? `تم حذف ${data.removedLinkIds.length} صفوف غير موجودة على منصة الهدف ومزامنة إعدادات السيرفر.`
+          : "تمت إعادة مزامنة إعدادات السيرفر دون تغيير القيادة.",
+      });
+      qc.invalidateQueries({ queryKey: ["agent-platform-links", agentId] });
+    },
+    onError: (err: any) => toast({ title: "تعذر إصلاح التكرار", description: err.message, variant: "destructive" }),
   });
 
   const leadMut = useMutation({
@@ -91,6 +111,10 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
   };
 
   const links = linksQ.data ?? [];
+  const duplicateCounts = links.reduce<Record<string, number>>((counts, link) => {
+    counts[link.targetPlatformId] = (counts[link.targetPlatformId] ?? 0) + 1;
+    return counts;
+  }, {});
 
   return (
     <div className="mt-4 border border-indigo-100 dark:border-indigo-900/40 rounded-lg p-3 bg-indigo-50/20 dark:bg-indigo-950/10 text-xs text-slate-600 dark:text-slate-400">
@@ -123,6 +147,11 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
                     <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 font-mono text-[10px]" dir="ltr">
                       {link.targetOrigin}
                     </Badge>
+                    {(duplicateCounts[link.targetPlatformId] ?? 0) > 1 && (
+                      <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800 text-[10px]">
+                        تكرار يحتاج تحقق
+                      </Badge>
+                    )}
                     <span className="text-[10px] text-slate-400 font-mono">Epoch: {link.controllerEpoch}</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-[10px]">
@@ -133,7 +162,19 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
                     </span>
                   </div>
                 </div>
-                <div>
+                 <div className="flex flex-wrap justify-end gap-1.5">
+                   <Button
+                     size="sm"
+                     variant="outline"
+                     className={`h-7 text-[10px] ${((duplicateCounts[link.targetPlatformId] ?? 0) > 1)
+                       ? "border-amber-300 text-amber-800 hover:bg-amber-50"
+                       : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+                     onClick={() => reconcileMut.mutate(link.linkId)}
+                     disabled={reconcileMut.isPending}
+                   >
+                     {reconcileMut.isPending ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}
+                     {(duplicateCounts[link.targetPlatformId] ?? 0) > 1 ? "تحقق وإصلاح آمن" : "إعادة مزامنة آمنة"}
+                   </Button>
                   {!isLocalActive ? (
                     <Button size="sm" className="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white" onClick={() => setConfirmSwitch({ ...link, toLocal: true })}>
                       استعادة التحكم

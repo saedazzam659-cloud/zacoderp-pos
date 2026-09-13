@@ -68,9 +68,18 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
   });
 
   const exportMut = useMutation({
-    mutationFn: async () => parseJsonResponse(await fetch(`${API}/api/admin/agent-instances/${agentId}/controller-links/export`, {
-      method: "POST", headers, body: JSON.stringify({ invite: inviteObj }),
-    })),
+    mutationFn: async () => {
+      const data = await parseJsonResponse(await fetch(`${API}/api/admin/agent-instances/${agentId}/controller-links/export`, {
+        method: "POST", headers, body: JSON.stringify({ invite: inviteObj }),
+      }));
+      // A link file is usable only after the exact shell registry state was
+      // written. Keep this guard for older API replicas that might still
+      // return HTTP 201 with a shellSyncError field.
+      if (data.shellSynced !== true || !data.file) {
+        throw new Error(data.serverMessage || data.shellSyncError || "لم تتم مزامنة إعدادات سيرفر الوكيل؛ لم يتم تنزيل رابط صالح");
+      }
+      return data;
+    },
     onSuccess: (data) => {
       const blob = new Blob([JSON.stringify(data.file, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -80,9 +89,6 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
       anchor.click();
       URL.revokeObjectURL(url);
       setExportedFile(data.file);
-      if (data.shellSyncError) {
-        toast({ title: "تعذرت مزامنة إعدادات السيرفر", description: data.shellSyncError, variant: "destructive" });
-      }
     },
     onError: (err: Error) => toast({ title: "فشل تصدير الرابط", description: err.message, variant: "destructive" }),
   });
