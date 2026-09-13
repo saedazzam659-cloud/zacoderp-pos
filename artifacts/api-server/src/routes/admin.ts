@@ -61,7 +61,10 @@ import {
   revokeDemoDevice,
 } from "../lib/demoDeviceIsolation.js";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { ensureJournalNumberClaimsTable } from "../lib/sequences.js";
+import {
+  ensureJournalNumberClaimsTable, subTypeFor, foreignSubTypeFor,
+  resolveSequencePeriodMatch, periodMatchWhereSql, periodMatchRankSql,
+} from "../lib/sequences.js";
 
 const router = Router();
   // ─────────────────────────────────────────────────────────────────────────
@@ -1604,6 +1607,387 @@ router.get("/companies/:id/journal-sequence-control", requireSuperAdmin, async (
       } : null,
       requiredReplacementSuffix,
     });
+  });
+});
+
+// ─── Invoice numbering repair (SuperAdmin only) ───────────────────────────
+// This deliberately lives beside the JE repair control rather than in the
+// tenant sequence editor.  It is an incident-response tool: scanning is
+// read-only, and writes are restricted to an unissued draft or one specific
+// sequence counter bucket.  It NEVER alters ZATCA artifacts or legal rows.
+type InvoiceKind = "sales" | "purchase";
+const INVOICE_TABLE: Record<InvoiceKind, string> = {
+  sales: "sales_invoices", purchase: "purchase_invoices",
+};
+
+function invoiceNumberParts(value: string | null | undefined) {
+  const number = String(value ?? "");
+  const match = /^(.*?)(\d+)$/.exec(number);
+  if (!match) return null;
+  const suffix = Number(match[2]);
+  return Number.isSafeInteger(suffix) ? {
+    prefix: match[1], suffix, width: match[2].length,
+    equivalent: `${match[1]}${suffix}`,
+  } : null;
+}
+function invoiceMonthPattern(pattern: string | null | undefined, date: Date) {
+  if (!pattern) return "";
+  const month = date.getMonth() + 1, year = date.getFullYear();
+  return pattern.replace(/\{MM\}/g, String(month).padStart(2, "0"))
+    .replace(/\{M\}/g, String(month))
+    .replace(/\{YYYY\}/g, String(year))
+    .replace(/\{YY\}/g, String(year).slice(-2));
+}
+function invoiceFormattedNumber(seq: any, suffix: number, effectiveDate: Date) {
+  return `${seq.prefix ?? ""}${invoiceMonthPattern(seq.month_pattern, effectiveDate)}${
+    seq.pad_length > 0 ? String(suffix).padStart(seq.pad_length, "0") : suffix
+  }`;
+}
+function invoicePeriod(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+function asDocDate(value: unknown) {
+  const d = new Date(String(value ?? ""));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Mirrors nextSequenceForPayment's priority without allocating a number. */
+async function resolveInvoiceRepairSequence(
+  tx: any, companyId: number, kind: InvoiceKind, paymentType: string,
+  isForeign: boolean, docDate: Date,
+) {
+  const base = `${kind}_invoice`;
+  const candidates = [
+    foreignSubTypeFor(base, kind === "sales" && isForeign),
+    subTypeFor(base, paymentType),
+    base,
+  ].filter((x): x is string => !!x);
+  const dateStr = `${docDate.getUTCFullYear()}-${String(docDate.getUTCMonth() + 1).padStart(2, "0")}-${String(docDate.getUTCDate()).padStart(2, "0")}`;
+  const pm = await resolveSequencePeriodMatch(tx, companyId, dateStr);
+  for (const transactionType of candidates) {
+    const rows = await tx.execute(sql`
+      SELECT id, prefix, month_pattern, start_number, end_number, pad_length,
+             current_number, monthly_reset, code
+      FROM sequences
+      WHERE company_id = ${companyId} AND is_active = TRUE
+        AND transaction_types ? ${transactionType}
+        AND ${periodMatchWhereSql(pm)}
+      ORDER BY ${periodMatchRankSql(pm)}, id ASC
+      LIMIT 1 FOR UPDATE
+    `);
+    if (rows.rows?.[0]) return { ...(rows.rows[0] as any), transactionType };
+  }
+  return null;
+}
+
+/** A log may be reclaimed only when it points at a still-deleted DRAFT
+ * snapshot. Unknown/missing/tombstoned legal records fail closed. */
+async function reclaimableInvoiceLog(tx: any, companyId: number, log: any) {
+  const table = String(log.ref_table ?? "");
+  const refId = String(log.ref_id ?? "");
+  if (!["sales_invoices", "purchase_invoices"].includes(table)) return false;
+  // Normal allocation happens before the invoice has an id, so older logs
+  // legitimately have a null ref_id. In that case the deleted draft snapshot
+  // (with the exact rendered number) is the only acceptable proof. If an id
+  // exists, first prove that it is no longer a live business row.
+  if (/^\d+$/.test(refId)) {
+    const live = await tx.execute(sql`
+      SELECT 1 FROM ${sql.raw(table)}
+      WHERE company_id = ${companyId} AND id = ${Number(refId)} LIMIT 1
+    `);
+    if (live.rows?.[0]) return false;
+  }
+  const recordWhere = /^\d+$/.test(refId) ? sql`AND record_id = ${Number(refId)}` : sql``;
+  const tombstone = await tx.execute(sql`
+    SELECT 1 FROM deleted_records
+    WHERE company_id = ${companyId} AND table_name = ${table}
+      ${recordWhere} AND restored_at IS NULL
+      AND payload->>'status' = 'draft'
+      AND COALESCE(payload->>'docNumber', payload->>'doc_number') = ${String(log.generated_number)}
+    LIMIT 1
+  `);
+  return !!tombstone.rows?.[0];
+}
+
+type InvoiceRepairScope = {
+  kind: InvoiceKind; branchId: number; bucket: string; seq: any;
+  paymentType: string; isForeign: boolean; exclude?: { kind: InvoiceKind; id: number };
+};
+async function invoiceStreamDocuments(tx: any, companyId: number, scope: InvoiceRepairScope) {
+  const table = INVOICE_TABLE[scope.kind];
+  const baseType = `${scope.kind}_invoice`;
+  const isForeignSeries = scope.kind === "sales" && scope.seq.transactionType === "sales_invoice_foreign";
+  const customerJoin = scope.kind === "sales"
+    ? sql`LEFT JOIN customers c ON c.id = i.customer_id AND c.company_id = i.company_id` : sql``;
+  const paymentWhere = scope.seq.transactionType !== baseType && !isForeignSeries
+    ? sql`AND i.payment_type = ${scope.paymentType}` : sql``;
+  const foreignWhere = isForeignSeries
+    ? sql`AND COALESCE(c.country, 'SA') <> 'SA'` : sql``;
+  const bucketWhere = scope.bucket
+    ? sql`AND to_char(i.invoice_date, 'YYYY-MM') = ${scope.bucket}` : sql``;
+  return tx.execute(sql`
+    SELECT i.id, i.status, i.doc_number FROM ${sql.raw(table)} i
+    ${customerJoin}
+    WHERE i.company_id = ${companyId} AND COALESCE(i.branch_id, 0) = ${scope.branchId}
+      ${bucketWhere} ${paymentWhere} ${foreignWhere}
+      AND i.doc_number IS NOT NULL
+  `);
+}
+async function assertInvoiceNumberAvailable(
+  tx: any, companyId: number, number: string, scope: InvoiceRepairScope,
+) {
+  // Display numbers are only unique within the sequence's real issuance
+  // stream.  Sales and purchases, independent branches, and different month
+  // buckets can legitimately show the same display number.  Do not turn the
+  // conservative repair tool into a cross-series uniqueness rule.
+  const table = INVOICE_TABLE[scope.kind];
+  const live = await invoiceStreamDocuments(tx, companyId, scope);
+  const requestedParts = invoiceNumberParts(number);
+  const blocked = (live.rows ?? []).find((r: any) => {
+    if (scope.exclude && scope.kind === scope.exclude.kind && Number(r.id) === scope.exclude.id) return false;
+    // Leading-zero variations are an unsafe collision in the same stream too.
+    const p = invoiceNumberParts(r.doc_number);
+    return r.doc_number === number || (!!requestedParts && p?.equivalent === requestedParts.equivalent);
+  });
+  if (blocked) throw Object.assign(new Error(`الرقم أو مكافئه الرقمي مستخدم في نفس مسار ${scope.kind === "sales" ? "المبيعات" : "المشتريات"} (${blocked.status})`), { status: 409 });
+
+  const logs = await tx.execute(sql`
+    SELECT ref_table, ref_id, generated_number FROM sequence_logs
+    WHERE company_id = ${companyId} AND sequence_id = ${scope.seq.id}
+  `);
+  for (const log of logs.rows ?? []) {
+    const p = invoiceNumberParts((log as any).generated_number);
+    if (String((log as any).generated_number) !== number
+      && (!requestedParts || p?.equivalent !== requestedParts.equivalent)) continue;
+    // A shared sequence may feed sales and purchases, and counters are
+    // branch-local. A log which resolves to a live row outside this scoped
+    // kind/branch/month stream is legitimate and was already deliberately
+    // excluded by the business-row query above. A missing/in-flight reference
+    // remains fail-closed, because its branch cannot be proven.
+    if (String((log as any).ref_table) === table && /^\d+$/.test(String((log as any).ref_id ?? ""))) {
+      const logLive = await tx.execute(sql`
+        SELECT 1 FROM ${sql.raw(table)}
+        WHERE company_id = ${companyId} AND id = ${Number((log as any).ref_id)} LIMIT 1
+      `);
+      if (logLive.rows?.[0]) continue;
+    } else if (String((log as any).ref_table) !== table) {
+      continue;
+    }
+    if (!await reclaimableInvoiceLog(tx, companyId, log)) {
+      throw Object.assign(new Error("الرقم له سجل إصدار قانوني أو غير قابل للتحقق؛ لا يمكن إعادة استخدامه"), { status: 409 });
+    }
+  }
+}
+
+// GET .../invoice-numbering-repair?kind=sales|purchase|all&branchId=&from=&to=
+// Finds EXACT and leading-zero numeric-equivalent duplicates. No writes.
+router.get("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const companyId = Number(req.params.id);
+    const kindFilter = String(req.query.kind ?? "all");
+    const branchId = req.query.branchId ? Number(req.query.branchId) : null;
+    const from = String(req.query.from ?? ""), to = String(req.query.to ?? "");
+    if (!Number.isInteger(companyId) || companyId <= 0 || !["sales", "purchase", "all"].includes(kindFilter)
+      || (branchId != null && (!Number.isInteger(branchId) || branchId <= 0))) {
+      res.status(400).json({ error: "فلاتر الفحص غير صحيحة" }); return;
+    }
+    const tables = (kindFilter === "all" ? ["sales", "purchase"] : [kindFilter]) as InvoiceKind[];
+    const rows: any[] = [];
+    for (const kind of tables) {
+      const table = INVOICE_TABLE[kind];
+      const dateColumn = "invoice_date";
+      const q = await db.execute(sql`
+        SELECT id, doc_number, status, branch_id, ${sql.raw(dateColumn)} AS invoice_date,
+               payment_type,
+               ${kind === "sales" ? sql`zatca_status, zatca_uuid, xml_content, invoice_hash, zatca_icv, zatca_pih, pos_session_id, source_channel, source_gdn_id, NULL::integer AS source_grn_id` : sql`NULL::text AS zatca_status, NULL::text AS zatca_uuid, NULL::text AS xml_content, NULL::text AS invoice_hash, NULL::integer AS zatca_icv, NULL::text AS zatca_pih, NULL::integer AS pos_session_id, NULL::text AS source_channel, NULL::integer AS source_gdn_id, source_grn_id`}
+        FROM ${sql.raw(table)}
+        WHERE company_id = ${companyId}
+          ${branchId ? sql`AND branch_id = ${branchId}` : sql``}
+          ${from ? sql`AND ${sql.raw(dateColumn)} >= ${from}` : sql``}
+          ${to ? sql`AND ${sql.raw(dateColumn)} <= ${to}` : sql``}
+          AND doc_number IS NOT NULL AND doc_number <> ''
+        ORDER BY id ASC
+      `);
+      rows.push(...(q.rows ?? []).map((r: any) => {
+        const signed = kind === "sales" && (
+          !!r.zatca_uuid || !!r.xml_content || !!r.invoice_hash || r.zatca_icv != null || !!r.zatca_pih
+          || ["approved", "cleared", "reported", "submitted"].includes(String(r.zatca_status ?? "").toLowerCase())
+        );
+        const unsupportedAllocator = (kind === "sales" && (r.pos_session_id != null
+          || String(r.source_channel ?? "").toLowerCase() === "mobile" || r.source_gdn_id != null))
+          || (kind === "purchase" && r.source_grn_id != null);
+        return {
+          kind, id: Number(r.id), docNumber: r.doc_number, status: r.status,
+          branchId: r.branch_id == null ? null : Number(r.branch_id), invoiceDate: r.invoice_date,
+          paymentType: r.payment_type, numericEquivalent: invoiceNumberParts(r.doc_number)?.equivalent ?? null,
+          correctionAllowed: r.status === "draft" && !signed && !unsupportedAllocator,
+          conflictReason: signed ? "موقعة/مرسلة إلى ZATCA — ممنوع التعديل" : r.status !== "draft" ? "الفاتورة المرحّلة أو الملغاة غير قابلة للتعديل" : unsupportedAllocator ? "مسار POS/الجوال/التحويل غير مدعوم في الإصلاح" : null,
+        };
+      }));
+    }
+    const group = (key: (r: any) => string) => Array.from(rows.reduce((m, r) => {
+      const k = key(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); return m;
+    }, new Map<string, any[]>()).entries())
+      .filter(([, docs]) => docs.length > 1).map(([key, docs]) => ({ key, docs }));
+    res.json({
+      companyId, scanned: rows.length,
+      exactDuplicates: group(r => `${r.kind}|${r.docNumber}`),
+      // Keep this bucket distinct from exact duplicates: it is specifically
+      // the misleading display case such as 00001 versus 0001.
+      numericEquivalentDuplicates: group(r => `${r.kind}|${r.numericEquivalent ?? `raw:${r.docNumber}`}`)
+        .filter((g: any) => new Set(g.docs.map((d: any) => d.docNumber)).size > 1),
+      documents: rows,
+      limitations: "الفحص لا يعيد ترقيم أي سجل. إعادة استخدام رقم محذوف تتطلب سجل حذف لمسودة فقط؛ السجلات القانونية أو غير القابلة للتحقق محظورة.",
+    });
+  });
+});
+
+// POST .../invoice-numbering-repair
+// mode=correct_draft changes exactly one safe draft. mode=repair_next changes
+// only the selected branch/month counter after proving the proposed stream has
+// no live or legally-reserved high-water above it.
+router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const companyId = Number(req.params.id), mode = String(req.body?.mode ?? "");
+    const kind = String(req.body?.kind ?? "") as InvoiceKind;
+    const requestedNumber = String(req.body?.number ?? "").trim();
+    if (!Number.isInteger(companyId) || companyId <= 0 || !["sales", "purchase"].includes(kind)
+      || !["correct_draft", "repair_next"].includes(mode) || !requestedNumber) {
+      res.status(400).json({ error: "بيانات الإصلاح غير صحيحة" }); return;
+    }
+    try {
+      const result = await db.transaction(async (tx) => {
+        let invoice: any = null;
+        if (mode === "correct_draft") {
+          const id = Number(req.body?.invoiceId);
+          if (!Number.isInteger(id) || id <= 0) throw Object.assign(new Error("معرّف الفاتورة مطلوب"), { status: 400 });
+          const table = INVOICE_TABLE[kind];
+          const q = await tx.execute(sql`
+            SELECT i.*, ${kind === "sales" ? sql`COALESCE(c.country, 'SA') <> 'SA' AS is_foreign` : sql`FALSE AS is_foreign`}
+            FROM ${sql.raw(table)} i
+            ${kind === "sales" ? sql`LEFT JOIN customers c ON c.id = i.customer_id AND c.company_id = i.company_id` : sql``}
+            WHERE i.id = ${id} AND i.company_id = ${companyId} FOR UPDATE OF i
+          `);
+          invoice = q.rows?.[0];
+          if (!invoice) throw Object.assign(new Error("الفاتورة غير موجودة ضمن الشركة"), { status: 404 });
+          const signed = kind === "sales" && (!!invoice.zatca_uuid || !!invoice.xml_content || !!invoice.invoice_hash
+            || invoice.zatca_icv != null || !!invoice.zatca_pih
+            || ["approved", "cleared", "reported", "submitted"].includes(String(invoice.zatca_status ?? "").toLowerCase()));
+          if (invoice.status !== "draft" || signed) {
+            throw Object.assign(new Error("يسمح بتعديل مسودة غير موقعة فقط؛ لا تُمس ICV/UUID/hash/chain"), { status: 409 });
+          }
+          // POS/mobile and converted sales documents can select a different
+          // allocator (station/mobile/converted flow). Do not guess their
+          // sequence context in a repair operation.
+          if ((kind === "sales" && (invoice.pos_session_id != null
+            || String(invoice.source_channel ?? "").toLowerCase() === "mobile"
+            || invoice.source_gdn_id != null)) || (kind === "purchase" && invoice.source_grn_id != null)) {
+            throw Object.assign(new Error("مسودات POS أو الجوال أو المحوّلة غير مدعومة في إصلاح الترقيم؛ استخدم مسار الإصدار المتخصص"), { status: 409 });
+          }
+        }
+        const branchId = invoice ? (Number(invoice.branch_id) || 0) : (Number(req.body?.branchId) || 0);
+        if (!Number.isInteger(branchId) || branchId < 0) throw Object.assign(new Error("الفرع غير صحيح"), { status: 400 });
+        if (branchId > 0) {
+          const ownedBranch = await tx.execute(sql`
+            SELECT 1 FROM branches WHERE id = ${branchId} AND company_id = ${companyId} LIMIT 1
+          `);
+          if (!ownedBranch.rows?.[0]) throw Object.assign(new Error("الفرع لا يتبع الشركة المحددة"), { status: 409 });
+        }
+        if (mode === "repair_next" && (typeof req.body?.paymentType !== "string"
+          || (kind === "sales" && typeof req.body?.isForeign !== "boolean"))) {
+          throw Object.assign(new Error("إصلاح العداد يتطلب اختيار نوع الدفع وخيار العميل الأجنبي صراحةً"), { status: 400 });
+        }
+        const docDate = asDocDate(invoice?.invoice_date ?? req.body?.invoiceDate);
+        if (!docDate) throw Object.assign(new Error("تاريخ الفاتورة مطلوب بصيغة صحيحة"), { status: 400 });
+        const paymentType = String(invoice?.payment_type ?? req.body?.paymentType ?? "");
+        const isForeign = !!(invoice?.is_foreign ?? req.body?.isForeign);
+        const seq = await resolveInvoiceRepairSequence(tx, companyId, kind, paymentType, isForeign, docDate);
+        if (!seq) throw Object.assign(new Error("لا يوجد مسلسل نشط يطابق نوع الفاتورة/الدفع/الفترة"), { status: 409 });
+        const cfg = await tx.execute(sql`SELECT sequence_date_source FROM companies WHERE id = ${companyId} FOR UPDATE`);
+        const effectiveDate = cfg.rows?.[0]?.sequence_date_source === "document" ? docDate : new Date();
+        const parts = invoiceNumberParts(requestedNumber);
+        if (!parts || parts.suffix < Number(seq.start_number) || parts.suffix > Number(seq.end_number)
+          || requestedNumber !== invoiceFormattedNumber(seq, parts.suffix, effectiveDate)) {
+          throw Object.assign(new Error("الرقم لا يطابق بادئة/تعبئة/شهر المسلسل أو يقع خارج نطاقه"), { status: 409 });
+        }
+        const bucket = seq.monthly_reset ? invoicePeriod(effectiveDate) : "";
+        const repairScope: InvoiceRepairScope = {
+          kind, branchId, bucket, seq, paymentType, isForeign,
+          exclude: invoice ? { kind, id: Number(invoice.id) } : undefined,
+        };
+        await assertInvoiceNumberAvailable(tx, companyId, requestedNumber, repairScope);
+        const counter = await tx.execute(sql`
+          SELECT id, current_number FROM sequence_counters
+          WHERE sequence_id = ${seq.id} AND branch_id = ${branchId} AND period = ${bucket}
+          FOR UPDATE
+        `);
+        if (mode === "repair_next") {
+          // Do not rewind below any protected real/logged number in this stream.
+          // Checking only the requested number would be unsafe: if 0015 is a
+          // live invoice and an accidentally-high counter were rewound to
+          // 0012, normal issuance would eventually collide at 0015.  Consider
+          // every live sales/purchase display number with this exact rendered
+          // prefix a protected high-water, regardless of which legacy path
+          // originally created it.
+          const streamDocs = await invoiceStreamDocuments(tx, companyId, repairScope);
+          const scopedLiveIds = new Set((streamDocs.rows ?? []).map((r: any) => Number(r.id)));
+          const streamPrefix = `${seq.prefix ?? ""}${invoiceMonthPattern(seq.month_pattern, effectiveDate)}`;
+          if ((streamDocs.rows ?? []).some((row: any) => {
+            const p = invoiceNumberParts(row.doc_number);
+            return p?.prefix === streamPrefix && p.suffix >= parts.suffix;
+          })) {
+            throw Object.assign(new Error("لا يمكن إرجاع العداد: توجد فاتورة حية أعلى أو مساوية للرقم المقترح"), { status: 409 });
+          }
+          const streamLogs = await tx.execute(sql`
+            SELECT ref_table, ref_id, generated_number FROM sequence_logs
+            WHERE company_id = ${companyId} AND sequence_id = ${seq.id}
+          `);
+          for (const log of streamLogs.rows ?? []) {
+            const lp = invoiceNumberParts((log as any).generated_number);
+            if (String((log as any).ref_table) !== INVOICE_TABLE[kind]) continue;
+            const logRefId = String((log as any).ref_id ?? "");
+            if (/^\d+$/.test(logRefId) && !scopedLiveIds.has(Number(logRefId))) continue;
+            if (lp && lp.prefix === streamPrefix && lp.suffix >= parts.suffix
+              && !await reclaimableInvoiceLog(tx, companyId, log)) {
+              throw Object.assign(new Error("لا يمكن إرجاع العداد: يوجد إصدار حي/قانوني أعلى أو مساوٍ للرقم المقترح"), { status: 409 });
+            }
+          }
+        }
+        // A draft correction may advance an old/stale counter, but must NEVER
+        // lower it: allocation can already have reserved a later number in
+        // sequence_logs while its invoice insert is still in flight.
+        const currentCounter = Number(counter.rows?.[0]?.current_number ?? seq.start_number);
+        const next = mode === "correct_draft"
+          ? Math.max(currentCounter, parts.suffix + 1)
+          : parts.suffix;
+        if (counter.rows?.[0]) {
+          await tx.execute(sql`UPDATE sequence_counters SET current_number = ${next}, updated_at = NOW() WHERE id = ${(counter.rows[0] as any).id}`);
+        } else {
+          await tx.execute(sql`
+            INSERT INTO sequence_counters (sequence_id, branch_id, period, current_number, last_period, created_at, updated_at)
+            VALUES (${seq.id}, ${branchId}, ${bucket}, ${next}, ${bucket || null}, NOW(), NOW())
+          `);
+        }
+        if (invoice) await tx.execute(sql`
+          UPDATE ${sql.raw(INVOICE_TABLE[kind])} SET doc_number = ${requestedNumber}, updated_at = NOW()
+          WHERE id = ${Number(invoice.id)} AND company_id = ${companyId}
+        `);
+        return { mode, kind, invoiceId: invoice ? Number(invoice.id) : null, oldNumber: invoice?.doc_number ?? null,
+          number: requestedNumber, nextNumber: invoiceFormattedNumber(seq, next, effectiveDate),
+          sequenceCode: seq.code, branchId, bucket };
+      });
+      await writeAudit({
+        userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null, role: "superadmin",
+        companyId, module: "invoice_numbering", action: "superadmin_sequence_repair",
+        method: req.method, path: req.originalUrl, entityType: `${kind}_invoice`,
+        entityId: result.invoiceId ? String(result.invoiceId) : null, statusCode: 200, metadata: result,
+      });
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(Number(e?.status) || 500).json({ error: Number(e?.status) ? String(e.message) : "تعذر إصلاح ترقيم الفواتير" });
+    }
   });
 });
 

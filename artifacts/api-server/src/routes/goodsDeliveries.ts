@@ -25,6 +25,7 @@ import {
   multiplyQuantity,
   roundQuantity,
 } from "../lib/unitConversion.js";
+import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -869,6 +870,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
 
     const lines = await db.select().from(goodsDeliveryLinesTable)
       .where(eq(goodsDeliveryLinesTable.deliveryId, id));
+    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة المبيعات");
 
     // Foreign-customer numbering: a non-SA buyer draws from the separate
     // "sales_invoice_foreign" series (when configured). paymentType is passed as
@@ -957,7 +959,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
     res.status(201).json(inv);
   } catch (e: any) {
     req.log?.error?.({ err: e }, "goods-deliveries: convert-to-invoice failed");
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 

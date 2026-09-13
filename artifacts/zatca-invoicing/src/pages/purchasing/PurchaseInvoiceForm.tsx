@@ -942,7 +942,7 @@ export default function PurchaseInvoiceForm() {
       return;
     }
     // Per-line gate: item name + unit + qty + price required on every row.
-    const lineCheck = validateInvoiceLines(lines);
+    const lineCheck = validateInvoiceLines(lines, { requireRealItem: true });
     if (!lineCheck.ok) {
       toast({ title: lineCheck.title, description: lineCheck.description, variant: "destructive" });
       return;

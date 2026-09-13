@@ -37,13 +37,26 @@ export interface LineValidationResult {
   description?: string;
 }
 
-export function validateInvoiceLines(lines: InvoiceLineLike[]): LineValidationResult {
+export function validateInvoiceLines(
+  lines: InvoiceLineLike[],
+  options: { requireRealItem?: boolean } = {},
+): LineValidationResult {
   const nonEmpty = lines.filter(l => !isEmptyLine(l));
   if (nonEmpty.length === 0) {
     return {
       ok: false,
       title: "⚠️ لا يمكن الحفظ — أضف صنفًا واحدًا على الأقل",
       description: "يجب إدخال سطر واحد على الأقل يحتوي على اسم الصنف ووحدة القياس والكمية وسعر البيع.",
+    };
+  }
+  if (options.requireRealItem && !lines.some(l => {
+    const itemId = Number(l.itemId);
+    return Number.isInteger(itemId) && itemId > 0;
+  })) {
+    return {
+      ok: false,
+      title: "⚠️ لا يمكن الحفظ — أضف صنفًا واحدًا على الأقل",
+      description: "يجب اختيار صنف حقيقي من قائمة الأصناف. كتابة الوصف وحده لا تُنشئ سطر صنف.",
     };
   }
   const errors: string[] = [];

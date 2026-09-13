@@ -61,6 +61,24 @@ import {
   divideQuantity,
   roundQuantity,
 } from "../lib/unitConversion.js";
+import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
+import { tombstoneAndDeleteDraftInvoice } from "../lib/invoiceDeletionTombstone.js";
+
+function hasPurchaseZatcaArtifacts(invoice: any): boolean {
+  const zatcaStatus = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
+  if (zatcaStatus && zatcaStatus !== "pending") return true;
+  return [
+    invoice?.zatcaSubmittedAt,
+    invoice?.zatcaUuid,
+    invoice?.xmlContent,
+    invoice?.invoiceHash,
+    invoice?.zatcaIcv,
+    invoice?.zatcaPih,
+    invoice?.zatcaResponseCode,
+    invoice?.zatcaErrorMessages,
+    invoice?.zatcaWarningMessages,
+  ].some((value) => value !== null && value !== undefined && String(value).trim() !== "");
+}
 
 function purchasingWriteError(error: any, documentName: string): { status: number; message: string } {
   const code = String(postgresErrorField(error, "code") ?? "");
@@ -611,29 +629,31 @@ async function cleanupDocArtifacts(opts: {
   refType: string;
   refId: number;
   journalEntryId?: number | null;
+  executor?: any;
 }) {
   const { companyId: cid, refType, refId, journalEntryId } = opts;
+  const executor = opts.executor ?? db;
 
-  const ledger = await db.select().from(stockLedgerTable).where(and(
+  const ledger = await executor.select().from(stockLedgerTable).where(and(
     eq(stockLedgerTable.companyId, cid),
     eq(stockLedgerTable.refType, refType),
     eq(stockLedgerTable.refId,   refId),
   ));
   for (const row of ledger) {
     const qty = Number(row.qty);
-    const [bal] = await db.select().from(stockBalanceTable).where(and(
+    const [bal] = await executor.select().from(stockBalanceTable).where(and(
       eq(stockBalanceTable.companyId,   cid),
       eq(stockBalanceTable.itemId,      row.itemId),
       eq(stockBalanceTable.warehouseId, row.warehouseId),
     ));
     if (bal) {
-      await db.update(stockBalanceTable)
+      await executor.update(stockBalanceTable)
         .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
         .where(eq(stockBalanceTable.id, bal.id));
     }
   }
   if (ledger.length) {
-    await db.delete(stockLedgerTable).where(and(
+    await executor.delete(stockLedgerTable).where(and(
       eq(stockLedgerTable.companyId, cid),
       eq(stockLedgerTable.refType, refType),
       eq(stockLedgerTable.refId,   refId),
@@ -645,12 +665,12 @@ async function cleanupDocArtifacts(opts: {
   const refNum = (opts as any).refNumber as string | null | undefined;
   const candidates = [String(refId), refNum].filter(Boolean) as string[];
   for (const rn of candidates) {
-    await db.delete(receiptVouchersTable).where(and(
+    await executor.delete(receiptVouchersTable).where(and(
       eq(receiptVouchersTable.companyId, cid),
       eq(receiptVouchersTable.refType, refType),
       eq(receiptVouchersTable.refNumber, rn),
     ));
-    await db.delete(paymentVouchersTable).where(and(
+    await executor.delete(paymentVouchersTable).where(and(
       eq(paymentVouchersTable.companyId, cid),
       eq(paymentVouchersTable.refType, refType),
       eq(paymentVouchersTable.refNumber, rn),
@@ -658,8 +678,8 @@ async function cleanupDocArtifacts(opts: {
   }
 
   if (journalEntryId) {
-    await db.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, journalEntryId));
-    await db.delete(journalEntriesTable).where(and(
+    await executor.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, journalEntryId));
+    await executor.delete(journalEntriesTable).where(and(
       eq(journalEntriesTable.id, journalEntryId),
       eq(journalEntriesTable.companyId, cid),
     ));
@@ -1541,6 +1561,7 @@ router.post("/purchase-invoices", async (req, res) => {
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
+    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة الشراء");
     await assertPurchaseWriteReferences(cid, {
       supplierId, branchId, cashBoxId, bankAccountId, lcId, taxId,
       headerCostCenter: costCenter,
@@ -1694,6 +1715,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
+    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة الشراء");
     // Same required-fields gate as the POST path so a stale-draft PUT
     // can't strip supplier/branch off an existing purchase invoice.
     if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
@@ -2747,8 +2769,12 @@ router.delete("/purchase-invoices/:id", async (req, res) => {
     const [inv] = await db.select().from(purchaseInvoicesTable)
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
-    if (inv.status === "posted") {
-      res.status(400).json({ error: "لا يمكن حذف فاتورة مُرحَّلة. قم بإلغاء الترحيل أولاً ثم احذفها." });
+    if (inv.status !== "draft") {
+      res.status(400).json({ error: "لا يمكن حذف فاتورة غير مسودة. قم بإلغاء الترحيل أولاً ثم احذف المسودة." });
+      return;
+    }
+    if (hasPurchaseZatcaArtifacts(inv)) {
+      res.status(409).json({ error: "لا يمكن حذف فاتورة لها آثار أو محاولة إرسال إلى هيئة الزكاة والضريبة (ZATCA)." });
       return;
     }
     // Block deletion when purchase returns reference this invoice (FK has no
@@ -2764,40 +2790,60 @@ router.delete("/purchase-invoices/:id", async (req, res) => {
       res.status(409).json({ error: `لا يمكن حذف هذه الفاتورة لأنها مرتبطة بمرتجع/مرتجعات مشتريات: ${refs}. يرجى حذف المرتجع أولاً.` });
       return;
     }
-    await cleanupDocArtifacts({ companyId: cid, refType: "purchase_invoice", refId: id, journalEntryId: (inv as any).journalEntryId });
+    // Restore source documents, write the DRAFT tombstone, and delete the
+    // invoice in one transaction. The snapshot carries the tenant, rendered
+    // number, and status required by the numbering reclamation worker.
+    let sourcePOs: Array<{ id: number }> = [];
+    await db.transaction(async (tx) => {
+      const [lockedInv] = await tx.select().from(purchaseInvoicesTable)
+        .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)))
+        .for("update");
+      if (!lockedInv) throw Object.assign(new Error("الفاتورة غير موجودة"), { status: 404 });
+      if (lockedInv.status !== "draft" || hasPurchaseZatcaArtifacts(lockedInv)) {
+        throw Object.assign(new Error("تغيّرت حالة الفاتورة أو ظهرت آثار ZATCA، أعد تحميل الصفحة قبل الحذف"), { status: 409 });
+      }
+      await cleanupDocArtifacts({
+        companyId: cid,
+        refType: "purchase_invoice",
+        refId: id,
+        journalEntryId: (lockedInv as any).journalEntryId,
+        executor: tx,
+      });
 
-    // If this draft invoice was created from a GRN, restore the GRN to
-    // posted (un-link it) so the user can re-issue an invoice or unpost
-    // the GRN itself. Without this, a deleted draft would leave the GRN
-    // permanently stuck in "invoiced" status.
-    const grnId = (inv as any).sourceGrnId as number | null | undefined;
-    if (grnId) {
-      await db.update(goodsReceiptsTable)
-        .set({ status: "posted", linkedInvoiceId: null, updatedAt: new Date() })
-        .where(and(eq(goodsReceiptsTable.id, grnId), eq(goodsReceiptsTable.companyId, cid)));
-    }
+      // If this draft invoice was created from a GRN, restore the GRN to
+      // posted (un-link it) so it can be invoiced again.
+      const grnId = (lockedInv as any).sourceGrnId as number | null | undefined;
+      if (grnId) {
+        await tx.update(goodsReceiptsTable)
+          .set({ status: "posted", linkedInvoiceId: null, updatedAt: new Date() })
+          .where(and(eq(goodsReceiptsTable.id, grnId), eq(goodsReceiptsTable.companyId, cid)));
+      }
 
-    // If this invoice was created by converting a purchase order, snap that
-    // PO back to "confirmed" and clear its convertedInvoiceId so it doesn't
-    // dangle pointing at a non-existent invoice. Without this fix the source
-    // PO is stuck in "converted" forever (status badge shows "محوّلة") even
-    // though no real invoice exists, blocking unconfirm / re-convert.
-    const sourcePOs = await db.select({ id: purchaseOrdersTable.id })
-      .from(purchaseOrdersTable)
-      .where(and(
-        eq(purchaseOrdersTable.companyId, cid),
-        eq(purchaseOrdersTable.convertedInvoiceId, id),
-      ));
-    if (sourcePOs.length) {
-      await db.update(purchaseOrdersTable)
-        .set({ status: "confirmed", convertedInvoiceId: null, updatedAt: new Date() })
+      // If converted from a purchase order, restore the source order and
+      // clear its back-link in the same transaction as invoice deletion.
+      sourcePOs = await tx.select({ id: purchaseOrdersTable.id })
+        .from(purchaseOrdersTable)
         .where(and(
           eq(purchaseOrdersTable.companyId, cid),
           eq(purchaseOrdersTable.convertedInvoiceId, id),
         ));
-    }
+      if (sourcePOs.length) {
+        await tx.update(purchaseOrdersTable)
+          .set({ status: "confirmed", convertedInvoiceId: null, updatedAt: new Date() })
+          .where(and(
+            eq(purchaseOrdersTable.companyId, cid),
+            eq(purchaseOrdersTable.convertedInvoiceId, id),
+          ));
+      }
 
-    await db.delete(purchaseInvoicesTable).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
+      await tombstoneAndDeleteDraftInvoice(tx, purchaseInvoicesTable, "purchase_invoices", lockedInv, {
+        companyId: cid,
+        recordId: id,
+        deletedBy: req.authUser?.id ?? null,
+        deletedByUsername: req.authUser?.username ?? null,
+        reason: "حذف فاتورة شراء مسودة",
+      });
+    });
     res.json({ ok: true, restoredPurchaseOrderIds: sourcePOs.map(p => p.id) });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
@@ -3121,6 +3167,7 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
         eq(purchaseOrderLinesTable.companyId, cid),
       ))
       .orderBy(asc(purchaseOrderLinesTable.id));
+      await assertInvoiceHasRealItemLine(cid, lines, tx, "فاتورة الشراء");
       await assertPurchaseWriteReferences(cid, {
         supplierId: ord.supplierId,
         branchId: ord.branchId,

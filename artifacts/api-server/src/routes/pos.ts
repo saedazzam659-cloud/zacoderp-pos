@@ -10,6 +10,7 @@ import {
 } from "@workspace/db";
 import { and, eq, sql, desc, gte, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { persistPosSyncInvoice } from "../lib/posSyncPersistence.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -81,56 +82,9 @@ router.post("/sync", async (req, res) => {
           results.push({ clientId: op.clientId, ok: false, error: "نوع غير مدعوم" });
           continue;
         }
-        // Idempotency: if a sales_invoice with notes containing the clientId exists, skip
-        const existing = await db.select({ id: salesInvoicesTable.id })
-          .from(salesInvoicesTable)
-          .where(and(
-            eq(salesInvoicesTable.companyId, cid),
-            sql`${salesInvoicesTable.notes} LIKE ${`%[offline:${op.clientId}]%`}`,
-          )).limit(1);
-        if (existing.length) {
-          results.push({ clientId: op.clientId, ok: true, id: existing[0].id, duplicate: true });
-          continue;
-        }
         const p = op.payload || {};
-        const noteTag = `[offline:${op.clientId}]`;
-        const notes = p.notes ? `${p.notes} ${noteTag}` : noteTag;
-        const [inv] = await db.insert(salesInvoicesTable).values({
-          companyId: cid,
-          customerId: p.customerId ?? null,
-          branchId: p.branchId ?? null,
-          invoiceDate: p.invoiceDate,
-          paymentType: p.paymentType ?? "cash",
-          cashBoxId: p.cashBoxId ?? null,
-          bankAccountId: p.bankAccountId ?? null,
-          currencyCode: p.currencyCode ?? "SAR",
-          subtotal: String(p.subtotal ?? 0),
-          vatAmount: String(p.vatAmount ?? 0),
-          discountAmount: String(p.discountAmount ?? 0),
-          totalAmount: String(p.totalAmount ?? 0),
-          priceIncludesVat: !!p.priceIncludesVat,
-          status: "draft",
-          notes,
-        }).returning({ id: salesInvoicesTable.id });
-        if (Array.isArray(p.lines) && p.lines.length) {
-          await db.insert(salesInvoiceLinesTable).values(
-            p.lines.map((l: any) => ({
-              invoiceId: inv.id,
-              itemId: l.itemId ?? null,
-              itemName: l.itemName,
-              itemCode: l.itemCode ?? null,
-              unit: l.unit ?? null,
-              unitId: l.unitId ?? null,
-              warehouseId: l.warehouseId ?? null,
-              qty: String(l.qty),
-              unitPrice: String(l.unitPrice),
-              discount: String(l.discount ?? 0),
-              vatRate: String(l.vatRate ?? 15),
-              lineTotal: String(l.lineTotal),
-            })),
-          );
-        }
-        results.push({ clientId: op.clientId, ok: true, id: inv.id });
+        const synced = await persistPosSyncInvoice(db, cid, op.clientId, p);
+        results.push({ clientId: op.clientId, ok: true, id: synced.id, ...(synced.duplicate ? { duplicate: true } : {}) });
       } catch (err: any) {
         results.push({ clientId: op.clientId, ok: false, error: err.message });
       }

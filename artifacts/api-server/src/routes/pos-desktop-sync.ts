@@ -28,6 +28,7 @@ import { loadMappings } from "../lib/accountingMappings.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createJournalEntry } from "./sales.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
+import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
 
 const router = Router();
 router.use(deviceAuth);
@@ -363,7 +364,7 @@ async function replayInvoice(
 
   // 3) Validate the offline payload basics.
   const lines = Array.isArray(data.lines) ? data.lines as Array<Record<string, unknown>> : [];
-  if (!lines.length) throw new Error("الفاتورة لا تحتوي على أي بنود");
+  await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة المبيعات");
   const subtotal = Number(data.subtotal ?? 0);
   const vatAmt   = Number(data.vat ?? 0);
   const grandTotal = Number(data.grandTotal ?? 0);

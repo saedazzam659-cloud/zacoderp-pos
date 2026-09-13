@@ -66,6 +66,24 @@ import {
   divideQuantity,
   roundQuantity,
 } from "../lib/unitConversion.js";
+import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
+import { tombstoneAndDeleteDraftInvoice } from "../lib/invoiceDeletionTombstone.js";
+
+function hasSalesZatcaArtifacts(invoice: any): boolean {
+  const zatcaStatus = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
+  if (zatcaStatus && zatcaStatus !== "pending") return true;
+  return [
+    invoice?.zatcaSubmittedAt,
+    invoice?.zatcaUuid,
+    invoice?.xmlContent,
+    invoice?.invoiceHash,
+    invoice?.zatcaIcv,
+    invoice?.zatcaPih,
+    invoice?.zatcaResponseCode,
+    invoice?.zatcaErrorMessages,
+    invoice?.zatcaWarningMessages,
+  ].some((value) => value !== null && value !== undefined && String(value).trim() !== "");
+}
 
 /**
  * Persist the only safe product-cost attribution: the posted document's own
@@ -914,30 +932,32 @@ async function cleanupDocArtifacts(opts: {
   refType: string;       // "sales_invoice" | "sales_return" | "purchase_invoice" | "purchase_return"
   refId: number;
   journalEntryId?: number | null;
+  executor?: any;
 }) {
   const { companyId: cid, refType, refId, journalEntryId } = opts;
+  const executor = opts.executor ?? db;
 
   // 1) Reverse stock_balance for any orphan ledger entries, then delete them
-  const ledger = await db.select().from(stockLedgerTable).where(and(
+  const ledger = await executor.select().from(stockLedgerTable).where(and(
     eq(stockLedgerTable.companyId, cid),
     eq(stockLedgerTable.refType, refType),
     eq(stockLedgerTable.refId,   refId),
   ));
   for (const row of ledger) {
     const qty = Number(row.qty);
-    const [bal] = await db.select().from(stockBalanceTable).where(and(
+    const [bal] = await executor.select().from(stockBalanceTable).where(and(
       eq(stockBalanceTable.companyId,   cid),
       eq(stockBalanceTable.itemId,      row.itemId),
       eq(stockBalanceTable.warehouseId, row.warehouseId),
     ));
     if (bal) {
-      await db.update(stockBalanceTable)
+      await executor.update(stockBalanceTable)
         .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
         .where(eq(stockBalanceTable.id, bal.id));
     }
   }
   if (ledger.length) {
-    await db.delete(stockLedgerTable).where(and(
+    await executor.delete(stockLedgerTable).where(and(
       eq(stockLedgerTable.companyId, cid),
       eq(stockLedgerTable.refType, refType),
       eq(stockLedgerTable.refId,   refId),
@@ -950,12 +970,12 @@ async function cleanupDocArtifacts(opts: {
   const refNum = (opts as any).refNumber as string | null | undefined;
   const candidates = [String(refId), refNum].filter(Boolean) as string[];
   for (const rn of candidates) {
-    await db.delete(receiptVouchersTable).where(and(
+    await executor.delete(receiptVouchersTable).where(and(
       eq(receiptVouchersTable.companyId, cid),
       eq(receiptVouchersTable.refType, refType),
       eq(receiptVouchersTable.refNumber, rn),
     ));
-    await db.delete(paymentVouchersTable).where(and(
+    await executor.delete(paymentVouchersTable).where(and(
       eq(paymentVouchersTable.companyId, cid),
       eq(paymentVouchersTable.refType, refType),
       eq(paymentVouchersTable.refNumber, rn),
@@ -964,8 +984,8 @@ async function cleanupDocArtifacts(opts: {
 
   // 3) Delete any journal entry tied to this document
   if (journalEntryId) {
-    await db.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, journalEntryId));
-    await db.delete(journalEntriesTable).where(and(
+    await executor.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, journalEntryId));
+    await executor.delete(journalEntriesTable).where(and(
       eq(journalEntriesTable.id, journalEntryId),
       eq(journalEntriesTable.companyId, cid),
     ));
@@ -2125,6 +2145,7 @@ router.post("/sales-invoices", async (req, res) => {
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
+    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة المبيعات");
     const usageIds = Array.from(new Set<number>(
       (lines ?? [])
         .map((line: any) => Number(line?.itemId))
@@ -2613,6 +2634,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             documentOfferId, costCenter, taxId } = req.body;
+    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة المبيعات");
     // Same required-fields gate as the POST path so a direct PUT (e.g.
     // from a script or a stale draft that pre-dates the policy) cannot
     // strip the customer/branch off an existing invoice on edit.
@@ -3754,16 +3776,15 @@ router.delete("/sales-invoices/:id", async (req, res) => {
     const [inv] = await db.select().from(salesInvoicesTable)
       .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
-    // ZATCA-approved invoices can never be deleted — the reported fiscal chain
-    // is sealed (this also defends against a rejected→approved edge landing on
-    // a draft-status row).
-    const _zsDel = String(inv.zatcaStatus || "").toLowerCase();
-    if (_zsDel === "approved" || _zsDel === "cleared" || _zsDel === "reported") {
-      res.status(409).json({ error: "لا يمكن حذف فاتورة معتمدة من هيئة الزكاة والضريبة (ZATCA)." });
+    // Number reclamation is safe only for an actual, never-submitted draft.
+    // This also defends against a rejected→approved edge landing on a
+    // draft-status row and keeps fiscal artifacts out of the recycle proof.
+    if (inv.status !== "draft") {
+      res.status(400).json({ error: "لا يمكن حذف فاتورة غير مسودة. قم بإلغاء الترحيل أولاً ثم احذف المسودة." });
       return;
     }
-    if (inv.status === "posted") {
-      res.status(400).json({ error: "لا يمكن حذف فاتورة مُرحَّلة. قم بإلغاء الترحيل أولاً ثم احذفها." });
+    if (hasSalesZatcaArtifacts(inv)) {
+      res.status(409).json({ error: "لا يمكن حذف فاتورة لها آثار أو محاولة إرسال إلى هيئة الزكاة والضريبة (ZATCA)." });
       return;
     }
     // Block deletion when sales returns reference this invoice (FK has no cascade).
@@ -3791,18 +3812,26 @@ router.delete("/sales-invoices/:id", async (req, res) => {
       res.status(409).json({ error: `لا يمكن حذف هذه الفاتورة لأنها ناتجة عن تحويل عرض/عروض أسعار: ${refs}. يرجى فك ربط العرض أولاً.` });
       return;
     }
-    await cleanupDocArtifacts({ companyId: cid, refType: "sales_invoice", refId: id, journalEntryId: inv.journalEntryId });
-
-    // If this draft invoice was created from a GDN, atomically restore the
-    // GDN to posted (un-link it) and delete the invoice in one transaction
-    // so a partial failure can't leave the GDN permanently stuck in
-    // "invoiced" status. The GDN revert is guarded by status='invoiced' AND
-    // linked_invoice_id = this invoice.id so concurrent state changes (e.g.
-    // someone re-linking the GDN to a different invoice) can't be silently
-    // overwritten.
-    const gdnId = (inv as any).sourceGdnId as number | null | undefined;
-    if (gdnId) {
-      await db.transaction(async (tx) => {
+    // Lock, tombstone, and delete together. The tombstone is deliberately
+    // written before DELETE and contains the tenant-scoped full row snapshot,
+    // including the DRAFT status and rendered number used by reclamation.
+    await db.transaction(async (tx) => {
+      const [lockedInv] = await tx.select().from(salesInvoicesTable)
+        .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)))
+        .for("update");
+      if (!lockedInv) throw Object.assign(new Error("الفاتورة غير موجودة"), { status: 404 });
+      if (lockedInv.status !== "draft" || hasSalesZatcaArtifacts(lockedInv)) {
+        throw Object.assign(new Error("تغيّرت حالة الفاتورة أو ظهرت آثار ZATCA، أعد تحميل الصفحة قبل الحذف"), { status: 409 });
+      }
+      await cleanupDocArtifacts({
+        companyId: cid,
+        refType: "sales_invoice",
+        refId: id,
+        journalEntryId: lockedInv.journalEntryId,
+        executor: tx,
+      });
+      const gdnId = (lockedInv as any).sourceGdnId as number | null | undefined;
+      if (gdnId) {
         const reverted = await tx.update(goodsDeliveriesTable)
           .set({ status: "posted", linkedInvoiceId: null, updatedAt: new Date() })
           .where(and(
@@ -3817,11 +3846,15 @@ router.delete("/sales-invoices/:id", async (req, res) => {
           // with the invoice delete since the link is already broken.
           req.log?.warn({ gdnId, invoiceId: id }, "sales-invoice delete: GDN revert affected 0 rows (already unlinked or in different state)");
         }
-        await tx.delete(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+      }
+      await tombstoneAndDeleteDraftInvoice(tx, salesInvoicesTable, "sales_invoices", lockedInv, {
+        companyId: cid,
+        recordId: id,
+        deletedBy: req.authUser?.id ?? null,
+        deletedByUsername: req.authUser?.username ?? null,
+        reason: "حذف فاتورة مبيعات مسودة",
       });
-    } else {
-      await db.delete(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
-    }
+    });
     res.json({ ok: true });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
@@ -5277,6 +5310,7 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
 
     const lines = await db.select().from(salesQuotationLinesTable)
       .where(eq(salesQuotationLinesTable.quotationId, id));
+    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة المبيعات");
 
     const [inv] = await db.insert(salesInvoicesTable).values({
       companyId: cid, docNumber: null, invoiceDate: new Date().toISOString().slice(0,10),
@@ -5599,6 +5633,7 @@ router.post("/sales-orders/:id/convert", async (req, res) => {
 
     const lines = await db.select().from(salesOrderLinesTable)
       .where(eq(salesOrderLinesTable.orderId, id));
+    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة المبيعات");
 
     const [inv] = await db.insert(salesInvoicesTable).values({
       companyId:        cid,

@@ -27,6 +27,7 @@ import {
   divideQuantity,
   roundQuantity,
 } from "../lib/unitConversion.js";
+import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -901,6 +902,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
 
     const lines = await db.select().from(goodsReceiptLinesTable)
       .where(eq(goodsReceiptLinesTable.receiptId, id));
+    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة الشراء");
 
     let resolvedDocNumber: string | null = null;
     try {
@@ -988,7 +990,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
     res.status(201).json(inv);
   } catch (e: any) {
     req.log?.error?.({ err: e }, "goods-receipts: convert-to-invoice failed");
-    res.status(500).json({ error: e.message });
+    res.status(e?.status ?? 500).json({ error: e.message });
   }
 });
 

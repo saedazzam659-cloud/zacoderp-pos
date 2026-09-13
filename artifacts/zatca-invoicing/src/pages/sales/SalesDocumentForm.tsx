@@ -1649,7 +1649,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // Per-line gate: item name + unit + qty + sale price must be filled
     // on every populated row. Skips completely empty rows. Mirrors the
     // server-side gate so the user sees the failure instantly.
-    const lineCheck = validateInvoiceLines(lines);
+    const lineCheck = validateInvoiceLines(lines, { requireRealItem: isInvoice });
     if (!lineCheck.ok) {
       toast({ title: lineCheck.title, description: lineCheck.description, variant: "destructive" });
       return;
