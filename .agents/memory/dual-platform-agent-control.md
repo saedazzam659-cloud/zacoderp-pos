@@ -14,3 +14,9 @@ Agent heartbeats are telemetry-only and must never mutate `controllerEpoch` or `
 **Why:** An agent shell holds its heartbeat credential and may be compromised; allowing its report to choose leadership bypasses the operator confirmation and permits split-brain or permanent epoch jumps.
 
 **How to apply:** Fence the currently active controller first so transitions may briefly have no active controller but never two. Treat ambiguous network or shell-sync outcomes as in-doubt, preserve a recognizable epoch state, and require read-back before idempotent repair.
+
+Keep controller transfer separate from package replacement: preserving runtime must not require an external-package installation.
+
+**Why:** Operators need to change the managing platform without migrating business data or replacing a centrally supplied application. Package provenance is not an appropriate gate for opening that workflow.
+
+**How to apply:** Offer the handoff entry point independently of package-specific controls; retain backend readiness checks and explicit confirmation before transfer.

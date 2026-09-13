@@ -1376,6 +1376,10 @@ export default function AgentServers() {
               </div>
 
               <AgentAccelerationCard agent={a} invalidate={invalidate} />
+              <div className="mt-4 flex items-center gap-2 flex-wrap">
+                <AgentHandoffAction agentId={a.id} agentName={a.name} agentDomain={a.domain} onComplete={invalidate} />
+                <span className="text-xs text-muted-foreground">نقل التحكم فقط دون نقل قاعدة البيانات؛ يتم التحقق من الجاهزية قبل التأكيد.</span>
+              </div>
               <LocalAgentLinks agentId={a.id} />
 
               {a.mode === "full" && a.packageSource === "external" && (
@@ -1387,7 +1391,6 @@ export default function AgentServers() {
                     </div>
                     <div className="flex items-center gap-2">
                       <ZatcaTransferAction agentId={a.id} agentName={a.name} agentDomain={a.domain} onComplete={invalidate} />
-                      <AgentHandoffAction agentId={a.id} agentName={a.name} agentDomain={a.domain} onComplete={invalidate} />
                       <Button variant="outline" size="sm" className="h-7 text-xs"
                         disabled={!a.dbUrlSet || pkgBusy === "prepare" || a.deployStatus === "deploying"}
                         onClick={() => prepareExternalPackage(a)} data-testid={`button-prepare-external-${a.id}`}>
