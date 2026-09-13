@@ -111,6 +111,7 @@ import {
   assertStoredInviteUsable,
   buildControllerLinkFile,
   constantTimeHexEqual,
+  createControllerLinkRenewalAttestation,
   createControllerSigningKeyPair,
   createPlatformLinkInvite,
   deriveControllerToken,
@@ -122,6 +123,7 @@ import {
   sha256Verifier,
   signControllerCommit,
   validateInvite,
+  verifyControllerLinkRenewalAttestation,
   verifyControllerLinkFile,
   verifyControllerCommit,
 } from "../lib/agentControllerLinks.js";
@@ -6000,6 +6002,266 @@ router.post("/:id/controller-links/export", async (req, res) => {
   }
 });
 
+/**
+ * Renew an expired portable handoff in place.  The old outbound rows are
+ * retained only after the target, authenticated by a fresh invitation, proves
+ * that none of the candidate link IDs or installation was imported.  The
+ * selected row keeps its linkId; its invitation-bound credentials and signed
+ * portable metadata are rotated, while duplicate rows are removed in the same
+ * source-side transaction.
+ */
+const controllerRenewalLocks = new Map<number, Promise<void>>();
+
+function tryAcquireControllerRenewalLock(agentId: number): (() => void) | null {
+  if (controllerRenewalLocks.has(agentId)) return null;
+  let releaseGate!: () => void;
+  const gate = new Promise<void>(resolve => { releaseGate = resolve; });
+  controllerRenewalLocks.set(agentId, gate);
+  return () => {
+    releaseGate();
+    if (controllerRenewalLocks.get(agentId) === gate) controllerRenewalLocks.delete(agentId);
+  };
+}
+
+router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
+  const agentId = Number(req.params.id);
+  const requestedLinkId = String(req.params.linkId ?? "");
+  const releaseRenewalLock = tryAcquireControllerRenewalLock(agentId);
+  if (!releaseRenewalLock) {
+    res.status(409).json({
+      error: "renewal_in_progress",
+      code: "RENEWAL_ALREADY_IN_PROGRESS",
+      serverMessage: "توجد عملية تجديد أخرى قيد التنفيذ؛ لم تتغير أي صفوف",
+      inDoubt: false,
+    });
+    return;
+  }
+  try {
+    const invite = validateInvite(req.body?.invite);
+    const source = localPlatformIdentity();
+    assertPublicControllerOrigin(source.origin);
+    if (invite.targetPlatformId === source.platformId || invite.targetOrigin === source.origin) {
+      throw Object.assign(new Error("target_must_be_different"), { httpStatus: 409 });
+    }
+    const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, agentId)).limit(1);
+    if (!inst || !inst.licenseKey) throw Object.assign(new Error("agent_or_license_not_found"), { httpStatus: 404 });
+    const links = await db.select().from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.localAgentId, agentId),
+      eq(agentControllerLinksTable.direction, "outbound"),
+    ));
+    const selected = links.find(row => row.linkId === requestedLinkId);
+    if (!selected) throw Object.assign(new Error("controller_link_not_found"), { httpStatus: 404 });
+    const candidates = links.filter(row => row.targetPlatformId === invite.targetPlatformId);
+    if (!candidates.some(row => row.linkId === selected.linkId)) {
+      throw Object.assign(new Error("renewal_link_target_mismatch"), { httpStatus: 409 });
+    }
+    if (!candidates.length || candidates.some(row =>
+      row.targetOrigin !== invite.targetOrigin ||
+      row.sourcePlatformId !== source.platformId ||
+      row.sourceOrigin !== source.origin ||
+      row.controllerEpoch !== 0 ||
+      row.activeControllerId !== source.platformId ||
+      row.installationId !== inst.installationId ||
+      row.domain !== inst.domain ||
+      (row.dbFingerprint ?? null) !== (inst.dbFingerprint ?? null),
+    )) {
+      throw Object.assign(new Error("renewal_source_state_not_supported"), { httpStatus: 409 });
+    }
+    const candidateLinkIds = candidates.map(row => row.linkId);
+    let remote: { status: number; body: any; nonce: string };
+    try {
+      remote = await controllerRenewalAttestationRequest({
+        invite, source, installationId: inst.installationId, candidateLinkIds,
+      });
+    } catch {
+      res.status(503).json({
+        error: "renewal_attestation_not_proven",
+        code: "TARGET_RENEWAL_ATTESTATION_UNAVAILABLE",
+        serverMessage: "target_renewal_attestation_failed; no rows changed",
+        inDoubt: false,
+      });
+      return;
+    }
+    if (remote.status === 409 && remote.body?.error === "controller_pairing_already_present") {
+      res.status(409).json({
+        error: "controller_pairing_already_present",
+        code: "TARGET_CONTROLLER_LINK_ALREADY_EXISTS",
+        serverMessage: "target_already_has_a_link_for_this_installation; no rows changed",
+        inDoubt: false,
+      });
+      return;
+    }
+    if (remote.status !== 200 || remote.body?.ok !== true || !remote.body?.attestation) {
+      res.status(503).json({
+        error: "renewal_attestation_not_proven",
+        code: "TARGET_RENEWAL_ATTESTATION_UNAVAILABLE",
+        serverMessage: "target_renewal_attestation_failed; no rows changed",
+        inDoubt: false,
+      });
+      return;
+    }
+    try {
+      verifyControllerLinkRenewalAttestation(remote.body.attestation, invite.inviteSecret, {
+        inviteId: invite.inviteId,
+        sourcePlatformId: source.platformId,
+        sourceOrigin: source.origin,
+        targetPlatformId: invite.targetPlatformId,
+        targetOrigin: invite.targetOrigin,
+        installationId: inst.installationId,
+        candidateLinkIds,
+        nonce: remote.nonce,
+      });
+    } catch {
+      res.status(503).json({
+        error: "renewal_attestation_not_proven",
+        code: "TARGET_RENEWAL_ATTESTATION_UNAVAILABLE",
+        serverMessage: "target_renewal_attestation_failed; no rows changed",
+        inDoubt: false,
+      });
+      return;
+    }
+
+    const signing = createControllerSigningKeyPair();
+    const controllerToken = deriveControllerToken(invite.inviteSecret, selected.linkId, invite.targetPlatformId);
+    const platformControlToken = derivePlatformControlToken(invite.inviteSecret, selected.linkId, invite.targetPlatformId);
+    const payload = {
+      schemaVersion: 1 as const,
+      linkId: selected.linkId,
+      inviteId: invite.inviteId,
+      expiresAt: invite.expiresAt,
+      agent: {
+        name: inst.name,
+        domain: inst.domain,
+        extraDomains: Array.isArray(inst.extraDomains) ? inst.extraDomains as string[] : [],
+        installationId: inst.installationId,
+        dbFingerprint: inst.dbFingerprint,
+        licenseExpiresAt: inst.licenseExpiresAt?.toISOString() ?? null,
+        maxCompanies: inst.maxCompanies,
+        version: inst.deployedVersion,
+        status: inst.status,
+        packageSource: inst.packageSource,
+        licenseVerifier: licenseKeyVerifier(inst.licenseKey),
+      },
+      source,
+      target: { platformId: invite.targetPlatformId, origin: invite.targetOrigin },
+      controllerEpoch: 0,
+      activeControllerId: source.platformId,
+      sourceSigningPublicKey: signing.publicKey,
+    };
+    const file = buildControllerLinkFile(payload, invite.inviteSecret);
+
+    await db.transaction(async tx => {
+      // Serialize renewals for this agent across API workers. The in-process
+      // lock above protects shell sync ordering; this transaction-scoped
+      // advisory lock covers separate processes/pool connections.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`controller-link-renewal:${agentId}`}))`);
+      const current = await tx.select().from(agentControllerLinksTable).where(and(
+        eq(agentControllerLinksTable.localAgentId, agentId),
+        eq(agentControllerLinksTable.direction, "outbound"),
+      ));
+      const currentCandidates = current.filter(row => row.targetPlatformId === invite.targetPlatformId);
+      if (currentCandidates.length !== candidates.length ||
+          currentCandidates.some(row => !candidateLinkIds.includes(row.linkId)) ||
+          currentCandidates.some(row =>
+            row.targetOrigin !== selected.targetOrigin ||
+            row.sourcePlatformId !== source.platformId ||
+            row.sourceOrigin !== source.origin ||
+            row.controllerEpoch !== 0 ||
+            row.activeControllerId !== source.platformId ||
+            row.installationId !== inst.installationId ||
+            row.domain !== inst.domain ||
+            (row.dbFingerprint ?? null) !== (inst.dbFingerprint ?? null),
+          )) {
+        throw new Error("renewal_stale_source_state");
+      }
+      const duplicateIds = candidates.filter(row => row.linkId !== selected.linkId).map(row => row.linkId);
+      if (duplicateIds.length) {
+        const removed = await tx.delete(agentControllerLinksTable).where(and(
+          eq(agentControllerLinksTable.localAgentId, agentId),
+          eq(agentControllerLinksTable.direction, "outbound"),
+          eq(agentControllerLinksTable.controllerEpoch, 0),
+          eq(agentControllerLinksTable.activeControllerId, source.platformId),
+          inArray(agentControllerLinksTable.linkId, duplicateIds),
+        )).returning({ linkId: agentControllerLinksTable.linkId });
+        if (removed.length !== duplicateIds.length) throw new Error("renewal_stale_source_state");
+      }
+      const changed = await tx.update(agentControllerLinksTable).set({
+        sourcePlatformId: source.platformId,
+        sourceOrigin: source.origin,
+        targetPlatformId: invite.targetPlatformId,
+        targetOrigin: invite.targetOrigin,
+        name: inst.name,
+        domain: inst.domain,
+        extraDomains: payload.agent.extraDomains,
+        installationId: inst.installationId,
+        dbFingerprint: inst.dbFingerprint,
+        licenseVerifier: payload.agent.licenseVerifier,
+        controllerTokenVerifier: sha256Verifier(controllerToken),
+        controllerTokenEnc: encryptSecret(controllerToken),
+        platformControlTokenVerifier: sha256Verifier(platformControlToken),
+        platformControlTokenEnc: encryptSecret(platformControlToken),
+        sourceSigningPublicKey: signing.publicKey,
+        sourceSigningPrivateKeyEnc: encryptSecret(signing.privateKey),
+        licenseExpiresAt: inst.licenseExpiresAt,
+        maxCompanies: inst.maxCompanies,
+        agentVersion: inst.deployedVersion,
+        status: inst.status,
+        packageSource: inst.packageSource,
+        controllerEpoch: 0,
+        activeControllerId: source.platformId,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(agentControllerLinksTable.id, selected.id),
+        eq(agentControllerLinksTable.linkId, selected.linkId),
+        eq(agentControllerLinksTable.localAgentId, agentId),
+        eq(agentControllerLinksTable.direction, "outbound"),
+        eq(agentControllerLinksTable.targetPlatformId, selected.targetPlatformId),
+        eq(agentControllerLinksTable.targetOrigin, selected.targetOrigin),
+        eq(agentControllerLinksTable.sourcePlatformId, source.platformId),
+        eq(agentControllerLinksTable.sourceOrigin, source.origin),
+        eq(agentControllerLinksTable.installationId, selected.installationId),
+        eq(agentControllerLinksTable.domain, selected.domain),
+        eq(agentControllerLinksTable.controllerTokenVerifier, selected.controllerTokenVerifier),
+        selected.platformControlTokenVerifier === null
+          ? isNull(agentControllerLinksTable.platformControlTokenVerifier)
+          : eq(agentControllerLinksTable.platformControlTokenVerifier, selected.platformControlTokenVerifier),
+        eq(agentControllerLinksTable.updatedAt, selected.updatedAt),
+        selected.dbFingerprint === null
+          ? isNull(agentControllerLinksTable.dbFingerprint)
+          : eq(agentControllerLinksTable.dbFingerprint, selected.dbFingerprint),
+        eq(agentControllerLinksTable.controllerEpoch, 0),
+        eq(agentControllerLinksTable.activeControllerId, source.platformId),
+      )).returning({ id: agentControllerLinksTable.id });
+      if (changed.length !== 1) throw new Error("renewal_stale_source_state");
+    });
+    try {
+      await syncShellControllerConfig(inst);
+    } catch (error: any) {
+      res.status(503).json({
+        error: "shell_controller_sync_failed",
+        code: "RENEWAL_SHELL_SYNC_FAILED",
+        serverMessage: controllerSyncErrorDetail(error),
+        linkId: selected.linkId,
+        inDoubt: true,
+      });
+      return;
+    }
+    await logAgentEvent(agentId, "controller_link_renewed", {
+      linkId: selected.linkId, inviteId: invite.inviteId,
+      removedLinkIds: candidates.filter(row => row.linkId !== selected.linkId).map(row => row.linkId),
+    }, req);
+    res.status(201).json({ file, shellSynced: true, renewed: true, linkId: selected.linkId });
+  } catch (error: any) {
+    res.status(Number(error?.httpStatus) || 409).json({
+      error: String(error?.message ?? error).slice(0, 200),
+      serverMessage: String(error?.message ?? error).slice(0, 200),
+      inDoubt: false,
+    });
+  } finally {
+    releaseRenewalLock();
+  }
+});
+
 async function inspectControllerImport(body: any, now = new Date()) {
   const identity = localPlatformIdentity();
   const inviteId = String(body?.file?.payload?.inviteId ?? "");
@@ -6146,6 +6408,57 @@ async function controllerStateRequest(link: typeof agentControllerLinksTable.$in
       });
     });
     request.on("timeout", () => request.destroy(new Error("target_controller_timeout")));
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
+/**
+ * Ask the target platform to prove, using a fresh invitation capability, that
+ * none of the source's exact candidate links (or this installation) was
+ * imported.  This is intentionally a separate pinned RPC from controller
+ * state: it is a renewal/recovery proof only and cannot mutate either side.
+ */
+async function controllerRenewalAttestationRequest(args: {
+  invite: ReturnType<typeof validateInvite>;
+  source: { platformId: string; origin: string };
+  installationId: string;
+  candidateLinkIds: string[];
+}): Promise<{ status: number; body: any; nonce: string }> {
+  const target = assertPublicControllerOrigin(args.invite.targetOrigin);
+  const approved = await resolvePublicControllerAddress(target.hostname);
+  const nonce = randomBytes(24).toString("base64url");
+  const body = JSON.stringify({
+    inviteId: args.invite.inviteId,
+    inviteSecret: args.invite.inviteSecret,
+    sourcePlatformId: args.source.platformId,
+    sourceOrigin: args.source.origin,
+    installationId: args.installationId,
+    candidateLinkIds: args.candidateLinkIds,
+    nonce,
+  });
+  return await new Promise((resolve, reject) => {
+    const endpoint = new URL("/api/agent/controller-link-renewal-attestation", target.origin);
+    const request = httpsRequest({
+      protocol: "https:", hostname: endpoint.hostname, servername: endpoint.hostname,
+      port: endpoint.port || 443, path: endpoint.pathname, method: "POST", timeout: 12_000,
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+      lookup: ((_host: string, options: any, callback: any) => {
+        if (typeof options === "function") options(null, approved.address, approved.family);
+        else if (options?.all) callback(null, [{ address: approved.address, family: approved.family }]);
+        else callback(null, approved.address, approved.family);
+      }) as any,
+    }, response => {
+      let raw = "";
+      response.setEncoding("utf8");
+      response.on("data", chunk => { raw = (raw + chunk).slice(0, 20_000); });
+      response.on("end", () => {
+        let parsed: any;
+        try { parsed = JSON.parse(raw); } catch { parsed = { error: "invalid_renewal_response" }; }
+        resolve({ status: response.statusCode ?? 0, body: parsed, nonce });
+      });
+    });
+    request.on("timeout", () => request.destroy(new Error("target_renewal_attestation_timeout")));
     request.on("error", reject);
     request.end(body);
   });
@@ -6430,6 +6743,13 @@ router.post("/:id/controller-handoff/preflight", async (req, res) => {
       eligible: blockers.length === 0, blockers, source, target: { platformId: targetPlatformId, origin: targetOrigin },
       agent: inst ? { id: inst.id, name: inst.name, domain: inst.domain, installationId: inst.installationId, mode: inst.mode, packageSource: inst.packageSource, status: inst.status, deployedVersion: inst.deployedVersion } : null,
       controllerEpoch: epoch, expectedConfirmationPhrase: phrase, handoffToken,
+      // Safe registry identifiers only; used by the expired-invite renewal
+      // recovery UI to select the row that will be retained.
+      renewalCandidates: links.map(row => ({
+        linkId: row.linkId, targetPlatformId: row.targetPlatformId,
+        targetOrigin: row.targetOrigin, controllerEpoch: row.controllerEpoch,
+        activeControllerId: row.activeControllerId,
+      })),
     });
   } catch (error: any) {
     res.status(400).json({ error: String(error?.message ?? error).slice(0, 200), serverMessage: String(error?.message ?? error).slice(0, 200) });
@@ -7184,6 +7504,77 @@ agentPublicRouter.post("/agent/controller-management", async (req, res) => {
       error: String(error?.message ?? error).slice(0, 180),
     }, req);
     res.status(status).json({ error: String(error?.message ?? error).slice(0, 220) });
+  }
+});
+
+// Renewal proof is authenticated by a fresh target invitation. Invalid,
+// expired, consumed, or mismatched capabilities all receive the same denial
+// response before any imported-link existence is disclosed.
+agentPublicRouter.post("/agent/controller-link-renewal-attestation", async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const inviteId = String(body.inviteId ?? "");
+    const inviteSecret = String(body.inviteSecret ?? "");
+    if (!/^[0-9a-f-]{36}$/i.test(inviteId) || !/^[A-Za-z0-9_-]{43,100}$/.test(inviteSecret)) {
+      throw new Error("renewal_attestation_denied");
+    }
+    const [stored] = await db.select().from(agentPlatformLinkInvitesTable)
+      .where(eq(agentPlatformLinkInvitesTable.inviteId, inviteId)).limit(1);
+    if (!stored || !stored.secretEnc) throw new Error("renewal_attestation_denied");
+    // Authenticate the caller-supplied capability before decrypting the
+    // server copy or checking imported rows. Otherwise any holder of an invite
+    // ID could turn this endpoint into an import-presence oracle.
+    assertStoredInviteUsable(stored, inviteSecret, new Date());
+    const secret = decryptSecret(stored.secretEnc);
+    if (!secret || !constantTimeHexEqual(sha256Verifier(secret), stored.secretVerifier)) {
+      throw new Error("renewal_attestation_denied");
+    }
+    const target = localPlatformIdentity();
+    const storedTargetOrigin = assertPublicControllerOrigin(stored.targetOrigin).origin;
+    if (stored.targetPlatformId !== target.platformId ||
+        storedTargetOrigin !== target.origin) {
+      throw new Error("renewal_attestation_denied");
+    }
+    const sourcePlatformId = platformId(String(body.sourcePlatformId ?? ""));
+    const sourceOrigin = assertPublicControllerOrigin(String(body.sourceOrigin ?? "")).origin;
+    if (sourcePlatformId === target.platformId || sourceOrigin === target.origin) {
+      throw new Error("renewal_attestation_denied");
+    }
+    const installationId = String(body.installationId ?? "");
+    if (!/^[A-Za-z0-9._-]{8,200}$/.test(installationId)) throw new Error("renewal_attestation_denied");
+    const candidateLinkIds: string[] = Array.isArray(body.candidateLinkIds) ? body.candidateLinkIds.map(String) : [];
+    if (candidateLinkIds.length < 1 || candidateLinkIds.length > 100 ||
+        candidateLinkIds.some(id => !/^[0-9a-f-]{36}$/i.test(id)) ||
+        new Set(candidateLinkIds).size !== candidateLinkIds.length) {
+      throw new Error("renewal_attestation_denied");
+    }
+    const nonce = String(body.nonce ?? "");
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(nonce)) throw new Error("renewal_attestation_denied");
+    const imported = await db.select({ id: agentControllerLinksTable.id }).from(agentControllerLinksTable).where(and(
+      eq(agentControllerLinksTable.direction, "imported"),
+      or(
+        eq(agentControllerLinksTable.installationId, installationId),
+        inArray(agentControllerLinksTable.linkId, candidateLinkIds),
+      ),
+    )).limit(1);
+    if (imported.length) {
+      res.status(409).json({ error: "controller_pairing_already_present" });
+      return;
+    }
+    const attestation = createControllerLinkRenewalAttestation({
+      inviteId,
+      sourcePlatformId,
+      sourceOrigin,
+      targetPlatformId: target.platformId,
+      targetOrigin: target.origin,
+      installationId,
+      candidateLinkIds,
+      nonce,
+      expiresAt: stored.expiresAt.toISOString(),
+    }, secret);
+    res.json({ ok: true, attestation });
+  } catch {
+    res.status(403).json({ error: "renewal_attestation_denied" });
   }
 });
 

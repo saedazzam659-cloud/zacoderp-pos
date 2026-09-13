@@ -43,6 +43,29 @@ export type ControllerLinkFile = {
   authentication: { algorithm: "HMAC-SHA256"; mac: string };
 };
 
+/** One-time renewal proof returned by the target platform.  It is deliberately
+ * separate from a portable link: it only proves that this fresh invitation
+ * was checked against the requested installation/link IDs and found no
+ * imported controller link. */
+export type ControllerLinkRenewalAttestationPayload = {
+  schemaVersion: 1;
+  kind: "controller_link_non_import";
+  inviteId: string;
+  sourcePlatformId: string;
+  sourceOrigin: string;
+  targetPlatformId: string;
+  targetOrigin: string;
+  installationId: string;
+  candidateLinkIds: string[];
+  nonce: string;
+  expiresAt: string;
+};
+
+export type ControllerLinkRenewalAttestation = {
+  payload: ControllerLinkRenewalAttestationPayload;
+  authentication: { algorithm: "HMAC-SHA256"; mac: string };
+};
+
 export function normalizeHttpsOrigin(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
@@ -170,6 +193,76 @@ export function highestControllerState(states: readonly ControllerState[], valid
 export function buildControllerLinkFile(payload: ControllerLinkPayload, inviteSecret: string): ControllerLinkFile {
   const mac = createHmac("sha256", inviteSecret).update(canonical(payload)).digest("hex");
   return { schemaVersion: 1, payload, authentication: { algorithm: "HMAC-SHA256", mac } };
+}
+
+function normalizeRenewalCandidates(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) throw new Error("invalid_renewal_candidates");
+  const ids = value.map(item => String(item));
+  if (ids.some(id => !/^[0-9a-f-]{36}$/i.test(id)) || new Set(ids).size !== ids.length) {
+    throw new Error("invalid_renewal_candidates");
+  }
+  return [...ids].sort();
+}
+
+function renewalAttestationBytes(payload: ControllerLinkRenewalAttestationPayload): Buffer {
+  return Buffer.from(canonical(payload), "utf8");
+}
+
+export function createControllerLinkRenewalAttestation(
+  payload: Omit<ControllerLinkRenewalAttestationPayload, "schemaVersion" | "kind" | "candidateLinkIds"> & {
+    candidateLinkIds: string[];
+  },
+  inviteSecret: string,
+): ControllerLinkRenewalAttestation {
+  const normalized: ControllerLinkRenewalAttestationPayload = {
+    schemaVersion: 1,
+    kind: "controller_link_non_import",
+    ...payload,
+    candidateLinkIds: normalizeRenewalCandidates(payload.candidateLinkIds),
+  };
+  const mac = createHmac("sha256", inviteSecret).update(renewalAttestationBytes(normalized)).digest("hex");
+  return { payload: normalized, authentication: { algorithm: "HMAC-SHA256", mac } };
+}
+
+export function verifyControllerLinkRenewalAttestation(
+  input: unknown,
+  inviteSecret: string,
+  expected: {
+    inviteId: string;
+    sourcePlatformId: string;
+    sourceOrigin: string;
+    targetPlatformId: string;
+    targetOrigin: string;
+    installationId: string;
+    candidateLinkIds: string[];
+    nonce: string;
+  },
+  now = new Date(),
+): ControllerLinkRenewalAttestation {
+  const file = input as ControllerLinkRenewalAttestation;
+  const payload = file?.payload;
+  if (!file || !payload || payload.schemaVersion !== 1 ||
+      payload.kind !== "controller_link_non_import" ||
+      file.authentication?.algorithm !== "HMAC-SHA256") {
+    throw new Error("invalid_renewal_attestation");
+  }
+  const expectedMac = createHmac("sha256", inviteSecret).update(renewalAttestationBytes(payload)).digest("hex");
+  if (!constantTimeHexEqual(file.authentication.mac, expectedMac)) throw new Error("invalid_renewal_attestation_mac");
+  const candidateLinkIds = normalizeRenewalCandidates(payload.candidateLinkIds);
+  const expectedCandidates = normalizeRenewalCandidates(expected.candidateLinkIds);
+  if (payload.inviteId !== expected.inviteId ||
+      payload.sourcePlatformId !== expected.sourcePlatformId ||
+      normalizeHttpsOrigin(payload.sourceOrigin) !== normalizeHttpsOrigin(expected.sourceOrigin) ||
+      payload.targetPlatformId !== expected.targetPlatformId ||
+      normalizeHttpsOrigin(payload.targetOrigin) !== normalizeHttpsOrigin(expected.targetOrigin) ||
+      payload.installationId !== expected.installationId ||
+      JSON.stringify(candidateLinkIds) !== JSON.stringify(expectedCandidates) ||
+      payload.nonce !== expected.nonce) {
+    throw new Error("renewal_attestation_binding_mismatch");
+  }
+  const expiry = Date.parse(payload.expiresAt);
+  if (!Number.isFinite(expiry) || expiry <= now.getTime()) throw new Error("renewal_attestation_expired");
+  return { payload: { ...payload, candidateLinkIds }, authentication: file.authentication };
 }
 
 export function verifyControllerLinkFile(

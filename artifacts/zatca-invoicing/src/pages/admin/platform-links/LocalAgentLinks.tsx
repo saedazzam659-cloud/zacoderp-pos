@@ -1,13 +1,43 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Loader2, Download, UploadCloud, Link as LinkIcon, RefreshCw, AlertTriangle, Play, Shield, Globe, ShieldCheck } from "lucide-react";
+import { Loader2, Download, UploadCloud, Link as LinkIcon, RefreshCw, AlertTriangle, Play, Shield, Globe, ShieldCheck, FileJson } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
+
+const LINK_ERROR_LABELS: Record<string, string> = {
+  invite_expired: "انتهت صلاحية الدعوة. ارفع دعوة جديدة من المنصة الهدف لتجديد الرابط بأمان.",
+  link_expired: "انتهت صلاحية ملف الربط. استخدم دعوة جديدة من المنصة الهدف.",
+  controller_link_already_exists: "يوجد أكثر من صف للرابط نفسه؛ ارفع دعوة جديدة لإثبات عدم الاستيراد ثم إصلاح التكرار بأمان.",
+  DUPLICATE_OUTBOUND_CONTROLLER_LINK: "يوجد رابط سابق لهذه المنصة. ارفع دعوة جديدة من الهدف لتجديده بدلاً من إنشاء رابط مكرر.",
+  controller_pairing_not_proven: "تعذر إثبات حالة المنصة الهدف؛ لم تتغير أي صفوف.",
+  controller_pairing_already_present: "وجدت المنصة الهدف رابطاً مستورداً؛ لم يتم حذف أي صف.",
+  TARGET_CONTROLLER_LINK_ALREADY_EXISTS: "وجدت المنصة الهدف رابطاً مستورداً؛ لم يتم حذف أي صف.",
+  renewal_attestation_not_proven: "تعذر إثبات عدم الاستيراد عبر الدعوة الجديدة؛ لم تتغير أي صفوف.",
+  renewal_source_state_not_supported: "تغيرت حالة الرابط أو لم تعد في Epoch 0؛ أعد تحميل الصفحة، ولم تتغير أي صفوف.",
+  renewal_stale_source_state: "تغيرت حالة الرابط أثناء التجديد؛ لم تتغير أي صفوف.",
+  RENEWAL_ALREADY_IN_PROGRESS: "توجد عملية تجديد أخرى قيد التنفيذ؛ أعد المحاولة بعد انتهائها.",
+  TARGET_RENEWAL_ATTESTATION_UNAVAILABLE: "تعذر الاتصال الموثق بالمنصة الهدف؛ أعد المحاولة، ولم تتغير أي صفوف.",
+};
+
+function linkErrorLabel(value: unknown, fallback: string): string {
+  const raw = String(value ?? "");
+  return LINK_ERROR_LABELS[raw] ?? (raw || fallback);
+}
+
+function downloadPortableFile(file: any, agentId: number): void {
+  const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `portable-link-${agentId}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export function LocalAgentLinks({ agentId }: { agentId: number }) {
   const { token } = useAuth();
@@ -16,6 +46,8 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const [confirmSwitch, setConfirmSwitch] = useState<any>(null);
+  const [renewal, setRenewal] = useState<{ invite: any; candidates: any[]; freshInvite: any | null } | null>(null);
+  const renewalInputRef = useRef<HTMLInputElement>(null);
 
   const linksQ = useQuery<any[]>({
     queryKey: ["agent-platform-links", agentId],
@@ -33,24 +65,57 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
         method: "POST", headers, body: JSON.stringify({ invite })
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.serverMessage || data.error || "ملف الدعوة غير صالح أو منتهي");
+      if (!res.ok) {
+        const key = data.code || data.error || data.serverMessage;
+        throw Object.assign(new Error(linkErrorLabel(key, "ملف الدعوة غير صالح أو منتهي")), { serverData: data });
+      }
       if (data.shellSynced !== true || !data.file) {
         throw new Error(data.serverMessage || data.shellSyncError || "لم تتم مزامنة إعدادات سيرفر الوكيل؛ لم يتم تنزيل رابط صالح");
       }
       return data;
     },
     onSuccess: (data) => {
-      const blob = new Blob([JSON.stringify(data.file, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `portable-link-${agentId}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadPortableFile(data.file, agentId);
       toast({ title: "تم تصدير ملف الربط بنجاح", description: "أرسل هذا الملف للمنصة الهدف لاستيراده." });
       qc.invalidateQueries({ queryKey: ["agent-platform-links", agentId] });
     },
-    onError: (err: any) => toast({ title: "خطأ في التصدير", description: err.message, variant: "destructive" })
+    onError: (err: any, variables: string) => {
+      const data = err.serverData ?? {};
+      const rawInvite = (() => { try { return JSON.parse(variables); } catch { return null; } })();
+      const duplicate = data.code === "DUPLICATE_OUTBOUND_CONTROLLER_LINK" ||
+        data.error === "controller_link_already_exists";
+      const expired = data.error === "invite_expired" || data.error === "link_expired";
+      if (duplicate || expired) {
+        const currentLinks = linksQ.data ?? [];
+        const candidates = data.recoveryCandidates?.length
+          ? data.recoveryCandidates
+          : currentLinks.filter(link => link.targetPlatformId === rawInvite?.targetPlatformId);
+        if (candidates.length) {
+          setRenewal({ invite: rawInvite, candidates, freshInvite: null });
+          return;
+        }
+      }
+      toast({ title: "خطأ في التصدير", description: linkErrorLabel(data.code || data.error, err.message), variant: "destructive" });
+    }
+  });
+
+  const renewMut = useMutation({
+    mutationFn: async ({ linkId, invite }: { linkId: string; invite: any }) => {
+      const res = await fetch(`${API}/api/admin/agent-instances/${agentId}/controller-links/${encodeURIComponent(linkId)}/renew`, {
+        method: "POST", headers, body: JSON.stringify({ invite }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(linkErrorLabel(data.code || data.error, "تعذر تجديد الرابط بأمان")), { serverData: data });
+      if (data.shellSynced !== true || !data.file) throw new Error("لم تتم مزامنة إعدادات السيرفر؛ لم يتم تنزيل رابط صالح");
+      return data;
+    },
+    onSuccess: (data) => {
+      downloadPortableFile(data.file, agentId);
+      setRenewal(null);
+      toast({ title: "تم تجديد الرابط بأمان", description: "أرسل الملف الجديد للمنصة الهدف ثم أكمل نقل القيادة." });
+      qc.invalidateQueries({ queryKey: ["agent-platform-links", agentId] });
+    },
+    onError: (err: any) => toast({ title: "تعذر تجديد الرابط", description: linkErrorLabel(err.serverData?.code || err.serverData?.error, err.message), variant: "destructive" }),
   });
 
   const reconcileMut = useMutation({
@@ -59,7 +124,7 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
         method: "POST", headers, body: JSON.stringify({}),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.serverMessage || data.error || "تعذر إثبات الرابط المقترن؛ لم تتغير الصفوف");
+      if (!res.ok) throw Object.assign(new Error(linkErrorLabel(data.code || data.error || data.serverMessage, "تعذر إثبات الرابط المقترن؛ لم تتغير الصفوف")), { serverData: data });
       return data;
     },
     onSuccess: (data) => {
@@ -71,7 +136,19 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
       });
       qc.invalidateQueries({ queryKey: ["agent-platform-links", agentId] });
     },
-    onError: (err: any) => toast({ title: "تعذر إصلاح التكرار", description: err.message, variant: "destructive" }),
+    onError: (err: any, linkId: string) => {
+      if (err.serverData?.error === "controller_pairing_not_proven") {
+        const selected = (linksQ.data ?? []).find(link => link.linkId === linkId);
+        const candidates = selected
+          ? (linksQ.data ?? []).filter(link => link.targetPlatformId === selected.targetPlatformId)
+          : [];
+        if (candidates.length) {
+          setRenewal({ invite: null, candidates, freshInvite: null });
+          return;
+        }
+      }
+      toast({ title: "تعذر إصلاح التكرار", description: linkErrorLabel(err.serverData?.code || err.serverData?.error, err.message), variant: "destructive" });
+    },
   });
 
   const leadMut = useMutation({
@@ -108,6 +185,23 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
     };
     reader.readAsText(file);
     e.target.value = '';
+  };
+
+  const handleRenewalInviteUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !renewal) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const invite = JSON.parse(String(reader.result ?? ""));
+        if (!invite.targetPlatformId || !invite.targetOrigin || !invite.inviteId || !invite.inviteSecret) throw new Error();
+        setRenewal({ ...renewal, freshInvite: invite });
+      } catch {
+        toast({ title: "ملف دعوة غير صالح", description: "أنشئ دعوة جديدة من المنصة الهدف ثم ارفعها هنا.", variant: "destructive" });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
   };
 
   const links = linksQ.data ?? [];
@@ -219,6 +313,43 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
               تأكيد نقل القيادة
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!renewal} onOpenChange={(o) => !o && !renewMut.isPending && setRenewal(null)}>
+        <DialogContent className="max-w-lg" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-800">
+              <FileJson className="h-5 w-5" /> تجديد رابط منتهي بأمان
+            </DialogTitle>
+            <DialogDescription>
+              لم يُثبت استيراد الملف القديم. ارفع دعوة جديدة منشأة الآن من المنصة الهدف؛ سيتحقق الخادم منها عبر HTTPS قبل حذف أي صف.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 leading-6 text-amber-950">
+              لا تُستخدم حالة عدم الاتصال أو غياب المصادقة كدليل على عدم الاستيراد. إذا كانت المنصة الهدف تحتوي رابطاً قائماً أو تعذر إثبات حالتها فسيتوقف الإجراء بلا تغييرات.
+            </div>
+            <Button variant="outline" className="w-full" onClick={() => renewalInputRef.current?.click()} disabled={renewMut.isPending}>
+              <UploadCloud className="h-4 w-4 ms-2" /> رفع دعوة جديدة من المنصة الهدف
+            </Button>
+            <input ref={renewalInputRef} type="file" accept=".json,application/json" className="hidden" onChange={handleRenewalInviteUpload} />
+            {renewal?.freshInvite && (
+              <div className="space-y-2">
+                <div className="rounded border bg-slate-50 p-2 text-xs font-mono" dir="ltr">{renewal.freshInvite.targetOrigin}</div>
+                <p className="text-xs text-muted-foreground">اختر الصف الذي سيبقى (سيُحذف فقط ما يثبت أنه غير مستورد):</p>
+                {renewal.candidates.map(candidate => (
+                  <Button key={candidate.linkId} variant="outline" className="w-full justify-between" disabled={renewMut.isPending}
+                    onClick={() => renewMut.mutate({ linkId: candidate.linkId, invite: renewal.freshInvite })}>
+                    {renewMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    <span className="font-mono text-xs" dir="ltr">{candidate.linkId}</span>
+                    <span>تجديد وإثبات عدم الاستيراد</span>
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter><Button variant="ghost" onClick={() => setRenewal(null)} disabled={renewMut.isPending}>إلغاء</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

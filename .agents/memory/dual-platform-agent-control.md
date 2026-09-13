@@ -26,3 +26,9 @@ Delegated business management must keep database credentials on the source platf
 **Why:** Copying management metadata is not proof that the underlying database identity has remained unchanged. Serializing complete company rows can disclose SMTP or OTP material even with a broad secret-name filter.
 
 **How to apply:** Reject stale identity or leadership, project explicit management DTOs, and preserve branding. This delegation depends on source-platform availability; it is not a standalone migration away from the source.
+
+Renewing expired unimported links requires fresh target-authenticated proof of absence, not merely a missing readback or timeout.
+
+**Why:** Failed exports can leave duplicate pending links, while ordinary reconciliation needs a paired winner. Blind deletion or credential rotation can invalidate a real pairing; unauthenticated presence queries expose registry information.
+
+**How to apply:** Authenticate the caller's fresh invite secret before checking target records, fail closed on uncertainty, and fence renewal with prior credential generation as well as leadership epoch. Keep renewed signed files intact and re-download locally rather than exporting again.

@@ -10,6 +10,36 @@ import { Loader2, Download, UploadCloud, Link as LinkIcon, ShieldCheck, Server, 
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
+const SERVER_ERROR_LABELS: Record<string, string> = {
+  invite_expired: "انتهت صلاحية الدعوة. أنشئ ملف دعوة جديداً من المنصة الهدف ثم أعد المحاولة.",
+  link_expired: "انتهت صلاحية ملف الربط. استخدم دعوة جديدة ولا تحاول إعادة استخدام الملف القديم.",
+  invite_already_consumed: "استهلكت هذه الدعوة مسبقاً. أنشئ دعوة جديدة لإكمال الربط.",
+  target_mismatch: "ملف الدعوة لا يطابق المنصة الهدف أو أصل HTTPS المسجل.",
+  invalid_invite: "ملف الدعوة غير صالح أو ناقص.",
+  invalid_link_mac: "ملف الربط لا يطابق الدعوة؛ أعد تصديره من المصدر.",
+  controller_link_already_exists: "يوجد رابط سابق لهذه المنصة. افتح إصلاح التكرار على المصدر وجدد الرابط بدعوة جديدة.",
+  controller_pairing_already_present: "يوجد رابط مستورد على المنصة الهدف؛ أوقف التجديد ولا تحذف أي صف.",
+  TARGET_CONTROLLER_LINK_ALREADY_EXISTS: "يوجد رابط مستورد على المنصة الهدف؛ أوقف التجديد ولا تحذف أي صف.",
+  renewal_source_state_not_supported: "تغيرت حالة الرابط أو لم تعد في Epoch 0؛ أعد تحميل الحالة ولا تحذف أي صف.",
+  renewal_stale_source_state: "تغيرت حالة الرابط أثناء التجديد؛ لم تتغير أي صفوف.",
+  RENEWAL_ALREADY_IN_PROGRESS: "توجد عملية تجديد أخرى قيد التنفيذ؛ أعد المحاولة بعد انتهائها.",
+  renewal_attestation_denied: "رفضت المنصة الهدف إثبات الدعوة الجديدة؛ لم تتغير أي صفوف.",
+};
+
+function arabicServerError(value: unknown, fallback: string): string {
+  const raw = String(value ?? "");
+  return SERVER_ERROR_LABELS[raw] ?? (raw || fallback);
+}
+
+async function parseServerResponse(res: Response, fallback: string): Promise<any> {
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const code = body?.code || body?.error || body?.serverMessage;
+    throw new Error(arabicServerError(code, fallback));
+  }
+  return body;
+}
+
 export function PlatformLinksTopLevel() {
   const { token } = useAuth();
   const { toast } = useToast();
@@ -25,8 +55,7 @@ export function PlatformLinksTopLevel() {
       const res = await fetch(`${API}/api/admin/agent-instances/platform-links/invites`, {
         method: "POST", headers, body: JSON.stringify({ lifetimeSeconds: inviteLifetime })
       });
-      if (!res.ok) throw new Error("فشل إنشاء الدعوة");
-      return res.json();
+      return parseServerResponse(res, "فشل إنشاء الدعوة");
     },
     onSuccess: (data) => {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -46,8 +75,7 @@ export function PlatformLinksTopLevel() {
       const res = await fetch(`${API}/api/admin/agent-instances/platform-links/preview`, {
         method: "POST", headers, body: JSON.stringify({ file: JSON.parse(fileContent) })
       });
-      if (!res.ok) throw new Error("ملف الربط غير صالح أو تم التلاعب به");
-      return res.json();
+      return parseServerResponse(res, "ملف الربط غير صالح أو تم التلاعب به");
     },
     onSuccess: (data, variables) => {
       setPreviewData(data);
@@ -65,8 +93,7 @@ export function PlatformLinksTopLevel() {
       const res = await fetch(`${API}/api/admin/agent-instances/platform-links/import`, {
         method: "POST", headers, body: JSON.stringify({ file: previewFile })
       });
-      if (!res.ok) throw new Error("فشل استيراد وكيل");
-      return res.json();
+      return parseServerResponse(res, "فشل استيراد وكيل");
     },
     onSuccess: () => {
       toast({ title: "تم استيراد الوكيل بنجاح", description: "يمكنك الآن إدارة السيرفر وتحديثاته من هذه المنصة." });

@@ -4,6 +4,7 @@ import {
   assertMonotonicEpoch,
   assertStoredInviteUsable,
   buildControllerLinkFile,
+  createControllerLinkRenewalAttestation,
   createControllerSigningKeyPair,
   createPlatformLinkInvite,
   deriveControllerToken,
@@ -14,6 +15,7 @@ import {
   validateInvite,
   signControllerCommit,
   verifyControllerCommit,
+  verifyControllerLinkRenewalAttestation,
   verifyControllerLinkFile,
 } from "../src/lib/agentControllerLinks.ts";
 import { controllerOriginsInOrder } from "../src/routes/localAgentUpdates.ts";
@@ -151,4 +153,46 @@ test("same epoch leadership converges by platform ID total order", () => {
     { controllerEpoch: 10, activeControllerId: "platform:A-1234" },
     { controllerEpoch: 10, activeControllerId: "platform:a-1234" },
   ], ["platform:A-1234", "platform:a-1234"]), { controllerEpoch: 10, activeControllerId: "platform:a-1234" });
+});
+
+test("renewal attestation binds the fresh invitation, installation, candidates, and nonce", () => {
+  const { invite, now } = fixture();
+  const candidateLinkIds = [
+    "81ab650b-f0ce-49cc-a9fe-fadf183a2cdd",
+    "91ab650b-f0ce-49cc-a9fe-fadf183a2cdd",
+  ];
+  const attestation = createControllerLinkRenewalAttestation({
+    inviteId: invite.inviteId,
+    sourcePlatformId: source.platformId,
+    sourceOrigin: source.origin,
+    targetPlatformId: target.platformId,
+    targetOrigin: target.origin,
+    installationId: "installation-123",
+    candidateLinkIds: [...candidateLinkIds].reverse(),
+    nonce: "n".repeat(32),
+    expiresAt: invite.expiresAt,
+  }, invite.inviteSecret);
+  assert.deepEqual(
+    verifyControllerLinkRenewalAttestation(attestation, invite.inviteSecret, {
+      inviteId: invite.inviteId, sourcePlatformId: source.platformId, sourceOrigin: source.origin,
+      targetPlatformId: target.platformId, targetOrigin: target.origin,
+      installationId: "installation-123", candidateLinkIds, nonce: "n".repeat(32),
+    }, now).payload.candidateLinkIds,
+    [...candidateLinkIds].sort(),
+  );
+  assert.throws(() => verifyControllerLinkRenewalAttestation(attestation, invite.inviteSecret, {
+    inviteId: invite.inviteId, sourcePlatformId: source.platformId, sourceOrigin: source.origin,
+    targetPlatformId: target.platformId, targetOrigin: target.origin,
+    installationId: "other-installation", candidateLinkIds, nonce: "n".repeat(32),
+  }, now), /binding_mismatch/);
+  assert.throws(() => verifyControllerLinkRenewalAttestation(attestation, "x".repeat(43), {
+    inviteId: invite.inviteId, sourcePlatformId: source.platformId, sourceOrigin: source.origin,
+    targetPlatformId: target.platformId, targetOrigin: target.origin,
+    installationId: "installation-123", candidateLinkIds, nonce: "n".repeat(32),
+  }, now), /attestation_mac/);
+  assert.throws(() => verifyControllerLinkRenewalAttestation(attestation, invite.inviteSecret, {
+    inviteId: invite.inviteId, sourcePlatformId: source.platformId, sourceOrigin: source.origin,
+    targetPlatformId: target.platformId, targetOrigin: target.origin,
+    installationId: "installation-123", candidateLinkIds, nonce: "n".repeat(32),
+  }, new Date(invite.expiresAt)), /attestation_expired/);
 });

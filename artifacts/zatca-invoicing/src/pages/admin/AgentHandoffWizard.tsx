@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
-import { ArrowLeftRight, UploadCloud, FileJson, Loader2, ShieldCheck, ShieldAlert, Play, CheckCircle2, Download, TerminalSquare, Undo2 } from "lucide-react";
+import { ArrowLeftRight, UploadCloud, FileJson, Loader2, ShieldCheck, ShieldAlert, Play, CheckCircle2, Download, TerminalSquare, Undo2, RefreshCw } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -23,8 +23,32 @@ async function parseJsonResponse(response: Response) {
   const text = await response.text();
   let data: any = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
-  if (!response.ok) throw new Error(data.serverMessage || data.error || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const labels: Record<string, string> = {
+      invite_expired: "انتهت صلاحية الدعوة. ارفع دعوة جديدة من المنصة الهدف لتجديد الرابط.",
+      link_expired: "انتهت صلاحية ملف الربط. استخدم دعوة جديدة من المنصة الهدف.",
+      controller_link_already_exists: "يوجد رابط سابق؛ ارفع دعوة جديدة لإثبات عدم الاستيراد قبل التجديد.",
+      controller_pairing_already_present: "يوجد رابط مستورد على المنصة الهدف؛ لم تتغير أي صفوف.",
+      TARGET_CONTROLLER_LINK_ALREADY_EXISTS: "يوجد رابط مستورد على المنصة الهدف؛ لم تتغير أي صفوف.",
+      renewal_source_state_not_supported: "تغيرت حالة الرابط أو لم تعد في Epoch 0؛ أعد المحاولة، ولم تتغير أي صفوف.",
+      renewal_stale_source_state: "تغيرت حالة الرابط أثناء التجديد؛ لم تتغير أي صفوف.",
+      renewal_attestation_not_proven: "تعذر إثبات عدم الاستيراد؛ لم تتغير أي صفوف.",
+      RENEWAL_ALREADY_IN_PROGRESS: "توجد عملية تجديد أخرى قيد التنفيذ؛ أعد المحاولة بعد انتهائها.",
+    };
+    const key = data.code || data.error || data.serverMessage;
+    throw Object.assign(new Error(labels[key] || key || `HTTP ${response.status}`), { serverData: data });
+  }
   return data;
+}
+
+function downloadPortableFile(file: any, agentId: number): void {
+  const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `controller-link-${agentId}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export function AgentHandoffAction(props: Props) {
@@ -51,12 +75,15 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
   const { toast } = useToast();
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const renewalFileInputRef = useRef<HTMLInputElement>(null);
   const [inviteObj, setInviteObj] = useState<any>(null);
   const [runtimeMode, setRuntimeMode] = useState<"preserve" | "target_release">("preserve");
   const [preflightData, setPreflightData] = useState<any>(null);
   const [typedPhrase, setTypedPhrase] = useState("");
   const [exportedFile, setExportedFile] = useState<any>(null);
   const [commitData, setCommitData] = useState<any>(null);
+  const [renewalRequired, setRenewalRequired] = useState(false);
+  const [renewalInviteReady, setRenewalInviteReady] = useState(false);
 
   const preflightMut = useMutation({
     mutationFn: async () => parseJsonResponse(await fetch(`${API}/api/admin/agent-instances/${agentId}/controller-handoff/preflight`, {
@@ -81,16 +108,39 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
       return data;
     },
     onSuccess: (data) => {
-      const blob = new Blob([JSON.stringify(data.file, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `controller-link-${agentId}.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      downloadPortableFile(data.file, agentId);
       setExportedFile(data.file);
     },
-    onError: (err: Error) => toast({ title: "فشل تصدير الرابط", description: err.message, variant: "destructive" }),
+    onError: (err: any) => {
+      const data = err.serverData ?? {};
+      if (data.error === "invite_expired" || data.error === "link_expired" ||
+          data.error === "controller_link_already_exists" ||
+          data.code === "DUPLICATE_OUTBOUND_CONTROLLER_LINK") {
+        setRenewalRequired(true);
+        setRenewalInviteReady(false);
+        return;
+      }
+      toast({ title: "فشل تصدير الرابط", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const renewMut = useMutation({
+    mutationFn: async ({ linkId, invite }: { linkId: string; invite: any }) => {
+      const data = await parseJsonResponse(await fetch(`${API}/api/admin/agent-instances/${agentId}/controller-links/${encodeURIComponent(linkId)}/renew`, {
+        method: "POST", headers,
+        body: JSON.stringify({ invite }),
+      }));
+      if (data.shellSynced !== true || !data.file) throw new Error("لم تتم مزامنة إعدادات السيرفر؛ لم يتم تنزيل رابط صالح");
+      return data;
+    },
+    onSuccess: (data) => {
+      downloadPortableFile(data.file, agentId);
+      setExportedFile(data.file);
+      setRenewalRequired(false);
+      setRenewalInviteReady(false);
+      toast({ title: "تم تجديد رابط النقل بأمان", description: "استورد الملف الجديد في المنصة الهدف ثم اضغط تحقق وانقل." });
+    },
+    onError: (err: Error) => toast({ title: "تعذر تجديد الرابط", description: err.message, variant: "destructive" }),
   });
 
   const commitMut = useMutation({
@@ -98,7 +148,7 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
       method: "POST", headers,
       body: JSON.stringify({
         handoffToken: preflightData.handoffToken,
-        linkId: exportedFile.linkId,
+          linkId: exportedFile.payload.linkId,
         confirmationPhrase: typedPhrase,
         confirm: true,
       }),
@@ -112,7 +162,7 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
 
   const rollbackMut = useMutation({
     mutationFn: async () => parseJsonResponse(await fetch(`${API}/api/admin/agent-instances/${agentId}/controller-handoff/rollback`, {
-      method: "POST", headers, body: JSON.stringify({ linkId: exportedFile.linkId, confirm: true }),
+      method: "POST", headers, body: JSON.stringify({ linkId: exportedFile.payload.linkId, confirm: true }),
     })),
     onSuccess: () => {
       toast({ title: "تمت استعادة التحكم للمصدر" });
@@ -134,8 +184,36 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
         setPreflightData(null);
         setExportedFile(null);
         setTypedPhrase("");
+        setRenewalRequired(false);
+        setRenewalInviteReady(false);
       } catch {
         toast({ title: "ملف دعوة غير صالح", description: "استخدم ملف الدعوة الذي تم تنزيله من منصة KARM.", variant: "destructive" });
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = "";
+  };
+
+  const handleRenewalInviteUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result ?? ""));
+        if (!parsed.targetPlatformId || !parsed.targetOrigin || !parsed.inviteId || !parsed.inviteSecret) throw new Error();
+        if (parsed.targetPlatformId !== inviteObj?.targetPlatformId || parsed.targetOrigin !== inviteObj?.targetOrigin) {
+          throw new Error("target_mismatch");
+        }
+        setInviteObj(parsed);
+        setRenewalRequired(true);
+        setRenewalInviteReady(true);
+      } catch (error: any) {
+        toast({
+          title: "دعوة التجديد غير صالحة",
+          description: error?.message === "target_mismatch" ? "يجب أن تكون الدعوة الجديدة من نفس المنصة الهدف." : "أنشئ دعوة جديدة من المنصة الهدف ثم ارفعها هنا.",
+          variant: "destructive",
+        });
       }
     };
     reader.readAsText(file);
@@ -243,13 +321,48 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
                         <Input value={typedPhrase} onChange={(event) => setTypedPhrase(event.target.value)} dir="ltr"
                           className="text-center font-mono text-xs" data-testid="input-controller-confirmation" />
                       </div>
-                      <div className="flex justify-end">
-                        <Button onClick={() => exportMut.mutate()} disabled={typedPhrase !== expectedPhrase || exportMut.isPending}
-                          data-testid="btn-export-controller-link">
-                          {exportMut.isPending ? <Loader2 className="h-4 w-4 ms-2 animate-spin" /> : <Download className="h-4 w-4 ms-2" />}
-                          إنشاء وتنزيل رابط النقل
-                        </Button>
-                      </div>
+                      {renewalRequired ? (
+                        <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                          <div className="flex items-start gap-2">
+                            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+                            <div>
+                              <strong className="block">انتهت الدعوة أو يوجد صف سابق للرابط</strong>
+                              ارفع دعوة جديدة من المنصة الهدف. سيتحقق المصدر من عدم استيراد كل المرشحين عبر نقطة هدف موثقة قبل حذف أي تكرار.
+                            </div>
+                          </div>
+                          <Button variant="outline" onClick={() => renewalFileInputRef.current?.click()} disabled={renewMut.isPending}>
+                            <UploadCloud className="h-4 w-4 ms-2" /> رفع دعوة تجديد جديدة
+                          </Button>
+                          <input ref={renewalFileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={handleRenewalInviteUpload} />
+                          {renewalInviteReady && (
+                            <div className="space-y-2">
+                              {(preflightData.renewalCandidates ?? [])
+                                .filter((candidate: any) => candidate.targetPlatformId === inviteObj.targetPlatformId)
+                                .map((candidate: any) => (
+                                  <Button key={candidate.linkId} variant="outline" className="w-full justify-between"
+                                    onClick={() => renewMut.mutate({ linkId: candidate.linkId, invite: inviteObj })} disabled={renewMut.isPending}>
+                                    {renewMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                    <span className="font-mono text-xs" dir="ltr">{candidate.linkId}</span>
+                                    <span>تجديد وإثبات عدم الاستيراد</span>
+                                  </Button>
+                                ))}
+                              {!(preflightData.renewalCandidates ?? []).some((candidate: any) => candidate.targetPlatformId === inviteObj.targetPlatformId) && (
+                                <Button onClick={() => { setRenewalRequired(false); exportMut.mutate(); }} disabled={exportMut.isPending}>
+                                  <Download className="h-4 w-4 ms-2" /> تصدير بالرابط الجديد
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex justify-end">
+                          <Button onClick={() => exportMut.mutate()} disabled={typedPhrase !== expectedPhrase || exportMut.isPending}
+                            data-testid="btn-export-controller-link">
+                            {exportMut.isPending ? <Loader2 className="h-4 w-4 ms-2 animate-spin" /> : <Download className="h-4 w-4 ms-2" />}
+                            إنشاء وتنزيل رابط النقل
+                          </Button>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -266,7 +379,7 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
                     </div>
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
-                    <Button variant="outline" onClick={() => exportMut.mutate()} disabled={exportMut.isPending}>إعادة التنزيل</Button>
+                    <Button variant="outline" onClick={() => downloadPortableFile(exportedFile, agentId)}>إعادة التنزيل</Button>
                     <Button onClick={() => commitMut.mutate()} disabled={commitMut.isPending}
                       className="bg-emerald-700 hover:bg-emerald-800" data-testid="btn-commit-controller-handoff">
                       {commitMut.isPending ? <Loader2 className="h-4 w-4 ms-2 animate-spin" /> : <Play className="h-4 w-4 ms-2" />}
