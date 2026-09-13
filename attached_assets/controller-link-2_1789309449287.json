@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "payload": {
+    "schemaVersion": 1,
+    "linkId": "5434c9c8-11f9-4ee3-b6dd-49e1623993ea",
+    "inviteId": "0cccea2d-8239-4a1d-9c99-2e8d9a09f7d0",
+    "expiresAt": "2026-09-13T14:34:37.863Z",
+    "agent": {
+      "name": "محمود",
+      "domain": "main.tafrah.com.sa",
+      "extraDomains": [],
+      "installationId": "b328f83b-a55f-4f85-a685-87d469723e0e",
+      "dbFingerprint": "66ad2e564f861166b8f2545683e2454486532598384bc0bf0ae9f561a05cae27",
+      "licenseExpiresAt": "2027-08-12T00:00:00.000Z",
+      "maxCompanies": null,
+      "version": null,
+      "status": "active",
+      "packageSource": "central",
+      "licenseVerifier": "0ccf1b89dec5f5c5e5691ae47e4709993c008143476cb2977d5a4431fdd6af45"
+    },
+    "source": {
+      "platformId": "platform:acc89fcf69061b0aef75b979",
+      "origin": "https://zacoderp.com"
+    },
+    "target": {
+      "platformId": "platform:96a47bd7aadf1428afea0779",
+      "origin": "https://karmcore.com"
+    },
+    "controllerEpoch": 0,
+    "activeControllerId": "platform:acc89fcf69061b0aef75b979",
+    "sourceSigningPublicKey": "MCowBQYDK2VwAyEAR9i9gX+Z9POFt6SJf1KwLTiIskNHjs5HbxMA5Yz3aVY="
+  },
+  "authentication": {
+    "algorithm": "HMAC-SHA256",
+    "mac": "a5ea5f4087a4c51d05b13da77dc7fc5ac968f3cb38a0ff0458f281fd7eb2141a"
+  }
+}
