@@ -8,6 +8,10 @@ Unit relationships belong to each item, not to the global unit catalog. A catalo
 
 **How to apply:** Maintain one base unit and an unambiguous rooted relationship graph per item. Resolve new operations through that graph. Reject unlinked, inactive, cyclic, or conflicting relationships instead of guessing a factor.
 
+Legacy exception: when the item has no declared base and exactly one total item-owned mapping that is active and has no reference edge, that sole mapping can deterministically be the base. Ignore a stale legacy-conflict marker only for this exact shape, in both graph resolution and final row validation.
+
+**Why:** Older single-unit items lacked explicit base markers; rejecting them blocked both sales and purchase saves. A graph-only exception was insufficient because a later conflict check rejected the same valid mapping again. Multi-row or referenced graphs still require explicit repair.
+
 Stored document and stage conversion snapshots are authoritative for historical operations. Updating item relationships must never rebase existing stock, journal costs, or saved document quantities. Ambiguous legacy base declarations require explicit repair, not automatic selection.
 
 **Why:** A correct new graph must not retroactively change the meaning of purchases, sales, manufacturing consumption, reversals, or stock counts.

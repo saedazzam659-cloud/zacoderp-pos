@@ -61,6 +61,7 @@ import {
   recordInvoiceSampleOnFinish,
 } from "../lib/agentInvoiceAcceleration.js";
 import {
+  UnitConversionError,
   resolveItemUnitConversion,
   multiplyQuantity,
   divideQuantity,
@@ -269,7 +270,18 @@ function postgresErrorField(error: any, field: string): unknown {
   return undefined;
 }
 
-function salesInvoiceWriteError(error: any): { status: number; message: string } {
+function salesInvoiceWriteError(error: any): { status: number; message: string; code?: string } {
+  if (error instanceof UnitConversionError) {
+    const baseIssue = ["AMBIGUOUS_BASE", "MISSING_BASE", "CONFLICTING_BASE", "LEGACY_CONFLICT"]
+      .includes(error.code);
+    return {
+      status: 400,
+      code: error.code,
+      message: baseIssue
+        ? "تعذر حفظ فاتورة المبيعات لأن الصنف لا يملك وحدة أساس واحدة صالحة. افتح الصنف وحدد وحدة أساس واحدة ثم أعد المحاولة."
+        : "تعذر حفظ فاتورة المبيعات لأن وحدة أحد الأصناف غير صالحة أو غير مرتبطة بالصنف. راجع وحدات الصنف ثم أعد المحاولة.",
+    };
+  }
   const code = String(postgresErrorField(error, "code") ?? "");
   const constraint = String(
     postgresErrorField(error, "constraint_name")
@@ -336,7 +348,7 @@ async function insertSalesInvoiceWithSerialRepair(values: any, executor: any = d
   }
 }
 
-function salesReturnWriteError(error: any): { status: number; message: string } {
+function salesReturnWriteError(error: any): { status: number; message: string; code?: string } {
   const classified = salesInvoiceWriteError(error);
   return {
     ...classified,
@@ -2546,6 +2558,9 @@ router.post("/sales-invoices", async (req, res) => {
           cid,
           lines.map((l: any) => mapInvoiceLine(l, inv.id, cid, resolvedRate)),
           lines,
+          [],
+          [],
+          executor,
         );
         await executor.insert(salesInvoiceLinesTable).values(mappedLines);
       }
@@ -2682,7 +2697,7 @@ router.post("/sales-invoices", async (req, res) => {
   } catch (e: any) {
     logger.error({ err: e }, "sales invoice create failed");
     const friendly = salesInvoiceWriteError(e);
-    res.status(friendly.status).json({ error: friendly.message });
+    res.status(friendly.status).json({ error: friendly.message, ...(friendly.code ? { code: friendly.code } : {}) });
   } finally {
     timing?.completeBusinessOutcome(res.statusCode);
   }
@@ -4431,7 +4446,7 @@ router.post("/sales-returns", async (req, res) => {
   } catch (e: any) {
     logger.error({ err: e }, "sales return create failed");
     const friendly = salesReturnWriteError(e);
-    res.status(friendly.status).json({ error: friendly.message });
+    res.status(friendly.status).json({ error: friendly.message, ...(friendly.code ? { code: friendly.code } : {}) });
   }
 });
 

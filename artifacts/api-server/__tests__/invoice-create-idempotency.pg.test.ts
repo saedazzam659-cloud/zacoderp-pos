@@ -9,6 +9,7 @@ import {
   companiesTable,
   customersTable,
   db,
+  itemUnitPricesTable,
   itemsTable,
   pool,
   purchaseInvoicesTable,
@@ -31,6 +32,7 @@ let branchId = 0;
 let customerId = 0;
 let supplierId = 0;
 let itemId = 0;
+let legacySingleUnitItemId = 0;
 let unitId = 0;
 let token = "";
 
@@ -135,6 +137,31 @@ before(async () => {
     unitId,
   }).returning({ id: itemsTable.id });
   itemId = item.id;
+  // This is the shape produced by a legacy import: a real item-unit mapping
+  // exists, but the legacy writer omitted both the item base and is_base.
+  // The current resolver may repair only this single proven mapping.
+  const [legacyItem] = await db.insert(itemsTable).values({
+    companyId,
+    code: `${TEST_TAG}-LEGACY-SINGLE-UNIT`,
+    nameAr: `${TEST_TAG} خدمة بوحدة قديمة`,
+    itemType: "service",
+    unitId,
+  }).returning({ id: itemsTable.id });
+  legacySingleUnitItemId = legacyItem.id;
+  await db.update(itemsTable).set({ unitId: null })
+    .where(eq(itemsTable.id, legacySingleUnitItemId));
+  await db.insert(itemUnitPricesTable).values({
+    companyId,
+    itemId: legacySingleUnitItemId,
+    unitId,
+    // Simulate a stale conflict left by the first compatibility release.
+    // It is still safe because this item has one active owned mapping only.
+    isBase: false,
+    referenceUnitId: null,
+    relationFactor: "12",
+    conversionFactor: "12",
+    legacyConversionConflict: true,
+  });
   token = `tt_tenant_admin_${randomBytes(16).toString("hex")}`;
   await db.insert(usersTable).values({
     username: `${TEST_TAG}_tenant_admin`,
@@ -174,7 +201,7 @@ after(async () => {
   }
 });
 
-test("six concurrent invoice POST retries create one draft per invoice kind", async () => {
+test("six concurrent service-default invoice POST retries create one draft per invoice kind", async () => {
   const salesKey = randomUUID();
   const purchaseKey = randomUUID();
   const [sales, purchases] = await Promise.all([
@@ -212,6 +239,72 @@ test("six concurrent invoice POST retries create one draft per invoice kind", as
   assert.equal(changedRetry.body.id, sales[0].body.id);
   assert.equal(changedRetry.body.notes, null);
   await assertOwnedTenant("after idempotency assertions");
+});
+
+test("sales and purchase saves repair a sole legacy item-unit mapping inside idempotent transactions", async () => {
+  const lines = [{
+    itemId: legacySingleUnitItemId,
+    itemName: `${TEST_TAG} خدمة بوحدة قديمة`,
+    itemCode: `${TEST_TAG}-LEGACY-SINGLE-UNIT`,
+    unitId,
+    unit: "وحدة",
+    qty: "1",
+    unitPrice: "10",
+    vatRate: "0",
+    lineTotal: "10",
+  }];
+  const salesPayload = { ...commonPayload(randomUUID()), customerId, lines };
+  const purchasePayload = { ...commonPayload(randomUUID()), supplierId, lines };
+  for (const [path, payload] of [
+    ["/api/sales/sales-invoices", salesPayload],
+    ["/api/purchasing/purchase-invoices", purchasePayload],
+  ] as const) {
+    const created = await post(path, payload);
+    assert.equal(created.status, 201, `${path}: ${JSON.stringify(created.body)}`);
+    const replay = await post(path, payload);
+    assert.equal(replay.status, 200, `${path}: ${JSON.stringify(replay.body)}`);
+    assert.equal(replay.body.id, created.body.id);
+    assert.equal(replay.body.idempotentReplay, true);
+  }
+  await assertOwnedTenant("after single-unit legacy sales and purchase saves");
+});
+
+test("sales and purchase reject an ambiguous legacy unit graph with a localized 400", async () => {
+  const [secondUnit] = await db.insert(unitsTable).values({
+    companyId, code: `${TEST_TAG}-UNIT-SECOND`, nameAr: "وحدة ثانية", nameEn: "Second unit",
+  }).returning({ id: unitsTable.id });
+  const [ambiguousItem] = await db.insert(itemsTable).values({
+    companyId,
+    code: `${TEST_TAG}-AMBIGUOUS-UNITS`,
+    nameAr: `${TEST_TAG} خدمة بوحدات متعارضة`,
+    itemType: "service",
+    unitId,
+  }).returning({ id: itemsTable.id });
+  await db.update(itemsTable).set({ unitId: null }).where(eq(itemsTable.id, ambiguousItem.id));
+  await db.insert(itemUnitPricesTable).values([
+    { companyId, itemId: ambiguousItem.id, unitId, isBase: false, referenceUnitId: null },
+    { companyId, itemId: ambiguousItem.id, unitId: secondUnit.id, isBase: false, referenceUnitId: null },
+  ]);
+  const lines = [{
+    itemId: ambiguousItem.id,
+    itemName: `${TEST_TAG} خدمة بوحدات متعارضة`,
+    itemCode: `${TEST_TAG}-AMBIGUOUS-UNITS`,
+    unitId,
+    unit: "وحدة",
+    qty: "1",
+    unitPrice: "10",
+    vatRate: "0",
+    lineTotal: "10",
+  }];
+  for (const [path, payload] of [
+    ["/api/sales/sales-invoices", { ...commonPayload(randomUUID()), customerId, lines }],
+    ["/api/purchasing/purchase-invoices", { ...commonPayload(randomUUID()), supplierId, lines }],
+  ] as const) {
+    const response = await post(path, payload);
+    assert.equal(response.status, 400, `${path}: ${JSON.stringify(response.body)}`);
+    assert.equal(response.body.code, "AMBIGUOUS_BASE");
+    assert.match(String(response.body.error), /وحدة أساس واحدة صالحة/);
+  }
 });
 
 test("concurrent source-quotation conversion rolls back the losing idempotency claim", async () => {

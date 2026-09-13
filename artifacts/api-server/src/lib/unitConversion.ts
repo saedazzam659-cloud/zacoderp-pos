@@ -267,6 +267,26 @@ export interface UnitGraphResolution {
 }
 
 /**
+ * A missing base can be repaired only when the resolver loaded exactly one
+ * item-owned mapping and that active mapping has no parent. This deliberately
+ * excludes an inactive extra link, a relationship edge, and every multi-unit
+ * graph. `resolveItemUnitConversion` calls this only after its item/company
+ * scoped database lookup, so this is never a catalog-unit fallback.
+ */
+function soleUnrootedOwnedUnit(
+  baseUnitId: number | null,
+  rows: UnitGraphRow[],
+): UnitGraphRow | null {
+  if (
+    baseUnitId !== null
+    || rows.length !== 1
+    || rows[0].isActive === false
+    || rows[0].referenceUnitId != null
+  ) return null;
+  return rows[0];
+}
+
+/**
  * Validate and resolve all active directed edges. `baseUnitId` may be null
  * only for an intentionally unresolved legacy graph; callers that need a
  * conversion should reject that conflict rather than guessing a root.
@@ -292,13 +312,22 @@ export function resolveUnitGraph(input: {
   }
 
   const baseUnitId = input.baseUnitId;
+  // Older item imports could create exactly one item-owned unit link without
+  // setting either items.unit_id or item_unit_prices.is_base. This is the one
+  // missing-root state that is not ambiguous: the sole active link can only be
+  // that item's base unit. Do not extend this to two links, an edge, or a
+  // catalog-only unit -- those require an explicit graph repair.
+  const soleLegacyUnit = soleUnrootedOwnedUnit(baseUnitId, input.rows);
   if (baseUnitId === null) {
     const marked = active.filter((row) => row.isBase && row.referenceUnitId === null);
-    if (marked.length !== 1) {
+    if (marked.length !== 1 && soleLegacyUnit === null) {
       throw new UnitConversionError("AMBIGUOUS_BASE", "The item does not have exactly one base unit");
     }
   }
-  const root = baseUnitId ?? active.find((row) => row.isBase)?.unitId ?? null;
+  const root = baseUnitId
+    ?? active.find((row) => row.isBase && row.referenceUnitId === null)?.unitId
+    ?? soleLegacyUnit?.unitId
+    ?? null;
   if (root === null) throw new UnitConversionError("MISSING_BASE", "The item has no base unit");
 
   const states = new Map<number, 0 | 1 | 2>();
@@ -329,7 +358,10 @@ export function resolveUnitGraph(input: {
 
   for (const row of active) {
     const resolved = visit(row.unitId);
-    if (row.legacyConversionConflict) {
+    // The compatibility healer may have previously marked this precise
+    // single-link shape as conflicting. It is now deterministically repaired
+    // as a base; all genuinely ambiguous legacy graphs remain blocked.
+    if (row.legacyConversionConflict && soleLegacyUnit === null) {
       throw new UnitConversionError("LEGACY_CONFLICT", "Legacy unit conversion data is ambiguous");
     }
     // A base marker on a non-root row is always stale/conflicting.
@@ -432,6 +464,7 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
     and(eq(itemUnitPricesTable.itemId, args.itemId), eq(itemUnitPricesTable.companyId, args.companyId)),
   );
   const baseUnitId = item.unitId ?? null;
+  const soleLegacyUnit = soleUnrootedOwnedUnit(baseUnitId, rows);
   const chosenId = requestedUnitId ?? baseUnitId ?? rows.find((row: UnitGraphRow) => row.isBase)?.unitId ?? null;
 
   if (rows.length === 0) {
@@ -491,7 +524,12 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
     };
   }
   if (row?.isActive === false) throw new UnitConversionError("INACTIVE_UNIT", "The item's unit link is inactive");
-  if (row?.legacyConversionConflict) throw new UnitConversionError("LEGACY_CONFLICT", "Legacy unit conversion data is ambiguous");
+  // A stale conflict marker from the original compatibility migration must
+  // not undo the only deterministic legacy repair. The helper requires the
+  // complete item-owned set to contain this one active unrooted mapping.
+  if (row?.legacyConversionConflict && soleLegacyUnit?.unitId !== row.unitId) {
+    throw new UnitConversionError("LEGACY_CONFLICT", "Legacy unit conversion data is ambiguous");
+  }
   return {
     factor: graph.factors.get(chosenId) ?? "1",
     baseUnitId: graph.baseUnitId,

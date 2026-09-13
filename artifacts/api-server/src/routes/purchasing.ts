@@ -56,6 +56,7 @@ import {
   normalizeIndustrialCostTag,
 } from "../lib/industrialPurchaseCosts.js";
 import {
+  UnitConversionError,
   resolveItemUnitConversion,
   multiplyQuantity,
   divideQuantity,
@@ -85,7 +86,18 @@ function hasPurchaseZatcaArtifacts(invoice: any): boolean {
   ].some((value) => value !== null && value !== undefined && String(value).trim() !== "");
 }
 
-function purchasingWriteError(error: any, documentName: string): { status: number; message: string } {
+function purchasingWriteError(error: any, documentName: string): { status: number; message: string; code?: string } {
+  if (error instanceof UnitConversionError) {
+    const baseIssue = ["AMBIGUOUS_BASE", "MISSING_BASE", "CONFLICTING_BASE", "LEGACY_CONFLICT"]
+      .includes(error.code);
+    return {
+      status: 400,
+      code: error.code,
+      message: baseIssue
+        ? `تعذر حفظ ${documentName} لأن الصنف لا يملك وحدة أساس واحدة صالحة. افتح الصنف وحدد وحدة أساس واحدة ثم أعد المحاولة.`
+        : `تعذر حفظ ${documentName} لأن وحدة أحد الأصناف غير صالحة أو غير مرتبطة بالصنف. راجع وحدات الصنف ثم أعد المحاولة.`,
+    };
+  }
   const code = String(postgresErrorField(error, "code") ?? "");
   const constraint = String(
     postgresErrorField(error, "constraint_name")
@@ -1704,6 +1716,9 @@ router.post("/purchase-invoices", async (req, res) => {
             industrialCost: normalizeIndustrialCostTag(l.industrialCost),
           })),
           lines,
+          [],
+          [],
+          executor,
         );
         await executor.insert(purchaseInvoiceLinesTable).values(mappedLines);
       }
@@ -1734,7 +1749,7 @@ router.post("/purchase-invoices", async (req, res) => {
   } catch (e: any) {
     logger.error({ err: e }, "purchase invoice create failed");
     const friendly = purchasingWriteError(e, "فاتورة الشراء");
-    res.status(friendly.status).json({ error: friendly.message });
+    res.status(friendly.status).json({ error: friendly.message, ...(friendly.code ? { code: friendly.code } : {}) });
   }
 });
 
@@ -3339,7 +3354,7 @@ router.post("/purchase-orders/:id/convert", async (req, res) => {
   } catch (e: any) {
     logger.error({ err: e }, "purchase order conversion failed");
     const friendly = purchasingWriteError(e, "فاتورة الشراء المحوّلة");
-    res.status(friendly.status).json({ error: friendly.message });
+    res.status(friendly.status).json({ error: friendly.message, ...(friendly.code ? { code: friendly.code } : {}) });
   }
 });
 
@@ -3555,7 +3570,7 @@ router.post("/purchase-returns", async (req, res) => {
   } catch (e: any) {
     logger.error({ err: e }, "purchase return create failed");
     const friendly = purchasingWriteError(e, "مرتجع الشراء");
-    res.status(friendly.status).json({ error: friendly.message });
+    res.status(friendly.status).json({ error: friendly.message, ...(friendly.code ? { code: friendly.code } : {}) });
   }
 });
 

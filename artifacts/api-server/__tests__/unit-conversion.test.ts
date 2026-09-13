@@ -6,6 +6,7 @@ import {
   resolveUnitGraph,
   roundQuantity,
   toStorageDecimal,
+  UnitConversionError,
 } from "../src/lib/unitConversion.js";
 
 test("carton x12 conversion and inverse stay exact", () => {
@@ -26,6 +27,36 @@ test("multi-level graph resolves every edge to one base", () => {
   assert.equal(graph.factors.get(1), "1");
   assert.equal(graph.factors.get(2), "12");
   assert.equal(graph.factors.get(3), "48");
+});
+
+test("only a sole unrooted item-unit mapping may repair a missing base", () => {
+  const repaired = resolveUnitGraph({
+    baseUnitId: null,
+    rows: [
+      // This is an item-owned row from the legacy item importer; it is not a
+      // catalog conversion and has no other item unit to be ambiguous with.
+      { unitId: 7, referenceUnitId: null, relationFactor: "12", isBase: false, legacyConversionConflict: true },
+    ],
+  });
+  assert.equal(repaired.baseUnitId, 7);
+  assert.equal(repaired.factors.get(7), "1");
+
+  for (const rows of [
+    [],
+    [
+      { unitId: 7, referenceUnitId: null, relationFactor: "1", isBase: false },
+      { unitId: 8, referenceUnitId: null, relationFactor: "1", isBase: false },
+    ],
+    [
+      { unitId: 7, referenceUnitId: null, relationFactor: "1", isBase: true },
+      { unitId: 8, referenceUnitId: null, relationFactor: "1", isBase: true },
+    ],
+  ]) {
+    assert.throws(
+      () => resolveUnitGraph({ baseUnitId: null, rows }),
+      (error: unknown) => error instanceof UnitConversionError && error.code === "AMBIGUOUS_BASE",
+    );
+  }
 });
 
 test("rational precision is not flattened by Number", () => {

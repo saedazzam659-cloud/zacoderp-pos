@@ -247,10 +247,11 @@ async function ensureIndustrialPurchaseCostCompatibility(): Promise<void> {
 /**
  * The item-unit table predates the graph model.  Keep this migration additive:
  * it only derives edges when the old row has one unambiguous base marker (or
- * the existing item.unit_id identifies that marker).  Multiple/no candidates
- * are preserved and flagged, never silently rebased.  The guard that all
- * reference_unit_id values are still NULL makes the backfill idempotent and
- * prevents a later boot from overwriting a user-edited graph.
+ * the existing item.unit_id identifies that marker). A sole active,
+ * tenant-owned item-unit row is also provably its item's base. Multiple/no
+ * candidates are preserved and flagged, never silently rebased. The guard
+ * that all reference_unit_id values are still NULL makes the backfill
+ * idempotent and prevents a later boot from overwriting a user-edited graph.
  */
 const ITEM_UNIT_CONVERSION_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS units
@@ -300,6 +301,10 @@ const ITEM_UNIT_CONVERSION_COMPATIBILITY_DDL = [
     item_row RECORD;
     candidate_base INTEGER;
     base_count INTEGER;
+     owned_unit_count INTEGER;
+     active_unit_count INTEGER;
+     sole_active_unit INTEGER;
+     sole_mapping_repair BOOLEAN := FALSE;
     has_other_edge BOOLEAN;
     has_unmigrated_row BOOLEAN;
   BEGIN
@@ -311,6 +316,7 @@ const ITEM_UNIT_CONVERSION_COMPATIBILITY_DDL = [
         FROM item_unit_prices
     LOOP
       candidate_base := NULL;
+       sole_mapping_repair := FALSE;
       IF EXISTS (
         SELECT 1
           FROM item_unit_prices
@@ -330,7 +336,9 @@ const ITEM_UNIT_CONVERSION_COMPATIBILITY_DDL = [
         FROM item_unit_prices
        WHERE company_id = item_row.company_id
          AND item_id = item_row.item_id
-         AND is_base = TRUE;
+          AND is_active = TRUE
+          AND is_base = TRUE
+          AND reference_unit_id IS NULL;
 
       -- A pre-existing item.unit_id is an authoritative base only when it
       -- points at exactly one item-unit row. This handles old imports that
@@ -347,8 +355,46 @@ const ITEM_UNIT_CONVERSION_COMPATIBILITY_DDL = [
               WHERE u.company_id = item_row.company_id
                 AND u.item_id = item_row.item_id
                 AND u.unit_id = i.unit_id
+                 AND u.is_active = TRUE
+                 AND EXISTS (
+                   SELECT 1 FROM units unit
+                    WHERE unit.id = u.unit_id
+                      AND unit.company_id = item_row.company_id
+                 )
            );
       END IF;
+
+       -- The old item editor/importer could persist one item-owned unit-price
+       -- row but omit both its base marker and items.unit_id. There is no
+       -- conversion relationship to infer in this exact shape: one active,
+       -- tenant-owned mapping is necessarily the item's base. Do not apply
+       -- this repair to two+ mappings (including inactive ones),
+       -- inactive-only rows, or a unit from another tenant; each of those
+       -- still needs an explicit repair.
+       IF base_count = 0 AND candidate_base IS NULL THEN
+         SELECT
+           COUNT(*)::INTEGER,
+           COUNT(*) FILTER (WHERE u.is_active = TRUE)::INTEGER,
+           MIN(u.unit_id) FILTER (WHERE u.is_active = TRUE)
+           INTO owned_unit_count, active_unit_count, sole_active_unit
+           FROM item_unit_prices u
+          WHERE u.company_id = item_row.company_id
+            AND u.item_id = item_row.item_id
+            AND EXISTS (
+              SELECT 1 FROM items item
+               WHERE item.id = u.item_id
+                 AND item.company_id = item_row.company_id
+            )
+            AND EXISTS (
+              SELECT 1 FROM units unit
+               WHERE unit.id = u.unit_id
+                 AND unit.company_id = item_row.company_id
+            );
+         IF owned_unit_count = 1 AND active_unit_count = 1 THEN
+           candidate_base := sole_active_unit;
+           sole_mapping_repair := TRUE;
+         END IF;
+       END IF;
 
       IF base_count > 1 OR (base_count = 0 AND candidate_base IS NULL) THEN
         UPDATE item_unit_prices
@@ -411,14 +457,23 @@ const ITEM_UNIT_CONVERSION_COMPATIBILITY_DDL = [
                ELSE 1
              END,
              conversion_factor = CASE
-               WHEN unit_id = candidate_base AND conversion_factor > 0 THEN 1
+                -- A base is always one of itself. In the deterministic
+                -- single-link repair, an old cached catalog factor is not an
+                -- item relationship and must not survive as one.
+                WHEN unit_id = candidate_base AND sole_mapping_repair THEN 1
+                WHEN unit_id = candidate_base AND conversion_factor > 0 THEN 1
                ELSE conversion_factor
              END,
-             legacy_conversion_conflict = legacy_conversion_conflict
-               OR conversion_factor <= 0
+              -- This pass reaches here only after proving one base. Clear a
+              -- stale flag left by the earlier compatibility release only
+              -- for its deterministic single-link repair. Other legacy
+              -- conflict signals must remain visible for explicit repair.
+              legacy_conversion_conflict = CASE
+                WHEN sole_mapping_repair THEN FALSE
+                ELSE legacy_conversion_conflict OR conversion_factor <= 0
+              END
        WHERE company_id = item_row.company_id
-         AND item_id = item_row.item_id
-         AND legacy_conversion_conflict = FALSE;
+          AND item_id = item_row.item_id;
     END LOOP;
   END
   $unit_conversion_migration$`,
