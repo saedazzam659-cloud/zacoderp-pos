@@ -20,6 +20,12 @@ Stored document and stage conversion snapshots are authoritative for historical 
 
 Historical factors must follow stable persisted line identities, never array position or the first matching item.
 
+First-base assignment for a used legacy item is initialization, not a base-unit change, when it has no established base and its relationships and historical unit labels are compatible with the selected unit. Unlabelled legacy quantities remain numerically unchanged; conflicting labelled history must block assignment.
+
+**Why:** Applying the used-item base-change ban to missing bases traps old items: invoices require a base, but the editor cannot supply one.
+
+**How to apply:** Keep tenant validation and transactional item/relationship synchronization. Do not rescale historical balances or infer conversions between conflicting units; an established used base remains immutable.
+
 **Why:** The same item can appear twice with different units or saved factors; reordering those lines can otherwise silently change stock and cost.
 
 **How to apply:** Carry database line IDs through edit forms and source-line IDs through returns. When legacy data cannot identify a unique match, reject the ambiguous operation rather than guessing. UI-generated temporary IDs are not database identities.

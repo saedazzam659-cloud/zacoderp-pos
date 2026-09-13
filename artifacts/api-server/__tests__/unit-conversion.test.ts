@@ -7,6 +7,8 @@ import {
   roundQuantity,
   toStorageDecimal,
   UnitConversionError,
+  validateBaseUnitAssignment,
+  assertUnitGraphTenantOwnership,
 } from "../src/lib/unitConversion.js";
 
 test("carton x12 conversion and inverse stay exact", () => {
@@ -57,6 +59,89 @@ test("only a sole unrooted item-unit mapping may repair a missing base", () => {
       (error: unknown) => error instanceof UnitConversionError && error.code === "AMBIGUOUS_BASE",
     );
   }
+});
+
+test("used legacy unitless quantities may receive their first base unit", () => {
+  const decision = validateBaseUnitAssignment({
+    currentBaseUnitId: null,
+    requestedBaseUnitId: 7,
+    rows: [],
+    historicalUsage: true,
+    historicalUnitIds: [null, 7],
+  });
+  assert.deepEqual(decision, { allowed: true, clearLegacyConflict: false });
+});
+
+test("a different historical unit still blocks an unlinked first base", () => {
+  assert.throws(
+    () => validateBaseUnitAssignment({
+      currentBaseUnitId: null,
+      requestedBaseUnitId: 7,
+      rows: [],
+      historicalUsage: true,
+      historicalUnitIds: [8],
+    }),
+    (error: unknown) => error instanceof UnitConversionError && error.code === "BASE_CHANGE_BLOCKED",
+  );
+});
+
+test("only a proven sole legacy base may clear its conflict marker", () => {
+  const decision = validateBaseUnitAssignment({
+    currentBaseUnitId: null,
+    requestedBaseUnitId: 7,
+    rows: [{
+      unitId: 7,
+      referenceUnitId: null,
+      relationFactor: "12",
+      isBase: false,
+      legacyConversionConflict: true,
+    }],
+    historicalUsage: true,
+    historicalUnitIds: [null],
+  });
+  assert.deepEqual(decision, { allowed: true, clearLegacyConflict: true });
+});
+
+test("used established base units cannot be switched", () => {
+  assert.throws(
+    () => validateBaseUnitAssignment({
+      currentBaseUnitId: 7,
+      requestedBaseUnitId: 8,
+      rows: [{ unitId: 7, referenceUnitId: null, relationFactor: "1", isBase: true }],
+      historicalUsage: true,
+      historicalUnitIds: [7],
+    }),
+    (error: unknown) => error instanceof UnitConversionError && error.code === "BASE_CHANGE_BLOCKED",
+  );
+});
+
+test("ambiguous item-unit relationships remain blocked during first assignment", () => {
+  assert.throws(
+    () => validateBaseUnitAssignment({
+      currentBaseUnitId: null,
+      requestedBaseUnitId: 7,
+      rows: [
+        { unitId: 7, referenceUnitId: null, relationFactor: "1", isBase: false },
+        { unitId: 8, referenceUnitId: null, relationFactor: "1", isBase: false },
+      ],
+      historicalUsage: true,
+      historicalUnitIds: [null],
+    }),
+    (error: unknown) => error instanceof UnitConversionError && error.code === "AMBIGUOUS_BASE",
+  );
+});
+
+test("item-unit source and reference ids must all belong to the tenant", () => {
+  assert.throws(
+    () => assertUnitGraphTenantOwnership(
+      [{ unitId: 7, referenceUnitId: 99, relationFactor: "2" }],
+      [7],
+      7,
+    ),
+    (error: unknown) => error instanceof UnitConversionError
+      && error.code === "UNIT_NOT_FOUND"
+      && error.details?.unitId === 99,
+  );
 });
 
 test("rational precision is not flattened by Number", () => {

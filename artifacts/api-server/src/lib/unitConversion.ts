@@ -1,5 +1,5 @@
 import { db, itemsTable, itemUnitPricesTable, unitsTable } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 /**
  * Unit conversion deliberately does not use JavaScript Number.  PostgreSQL
@@ -267,6 +267,128 @@ export interface UnitGraphResolution {
 }
 
 /**
+ * The first explicit base assignment is different from a re-base.  A legacy
+ * item with no declared base can safely be initialised when its persisted
+ * item-unit graph already proves the requested root, or when it has no
+ * item-unit rows at all and all historical document quantities were
+ * unlabelled.  Historical quantities carrying a unit identity must not be
+ * guessed into a new graph.
+ *
+ * This is intentionally a pure policy helper.  Callers still have to load
+ * item/unit rows through tenant-scoped queries and perform the eventual item
+ * plus item-unit writes in their own transaction.
+ */
+export interface InitialBaseAssignmentInput {
+  currentBaseUnitId: number | null;
+  requestedBaseUnitId: number;
+  rows: UnitGraphRow[];
+  historicalUsage: boolean;
+  historicalUnitIds: Array<number | null>;
+}
+
+export interface InitialBaseAssignmentDecision {
+  allowed: true;
+  clearLegacyConflict: boolean;
+}
+
+/**
+ * Validate a base-unit edit without treating a missing legacy base as a
+ * re-base.  Established bases retain the old safety rule: a used item (or an
+ * item with linked unit rows) cannot switch roots.
+ */
+export function validateBaseUnitAssignment(
+  input: InitialBaseAssignmentInput,
+): InitialBaseAssignmentDecision {
+  const {
+    currentBaseUnitId,
+    requestedBaseUnitId,
+    rows,
+    historicalUsage,
+    historicalUnitIds,
+  } = input;
+
+  if (currentBaseUnitId === requestedBaseUnitId) {
+    return { allowed: true, clearLegacyConflict: false };
+  }
+
+  if (currentBaseUnitId !== null) {
+    if (rows.length > 0 || historicalUsage) {
+      throw new UnitConversionError(
+        "BASE_CHANGE_BLOCKED",
+        "The base unit cannot change after historical stock or usage exists",
+      );
+    }
+    return { allowed: true, clearLegacyConflict: false };
+  }
+
+  if (rows.length === 0) {
+    // With no graph, an old line that names a different unit has no
+    // trustworthy relationship to validate.  Stock balances/ledgers are
+    // deliberately unlabelled and are safe; a line already labelled with the
+    // requested unit also needs no rebase.
+    // A labelled line is still safe when it already uses the requested unit:
+    // assigning that unit as the first base does not rebase the line.  A
+    // different label has no relationship to validate without an item graph.
+    if (historicalUnitIds.some((unitId) => unitId !== null && unitId !== requestedBaseUnitId)) {
+      throw new UnitConversionError(
+        "BASE_CHANGE_BLOCKED",
+        "Cannot assign a first base unit while conflicting labelled historical quantities exist",
+      );
+    }
+    return { allowed: true, clearLegacyConflict: false };
+  }
+
+  // This both rejects multiple/no base markers and validates every active
+  // relationship before allowing the item root to be filled in.
+  const graph = resolveUnitGraph({ baseUnitId: null, rows });
+  if (graph.baseUnitId !== requestedBaseUnitId) {
+    throw new UnitConversionError(
+      "BASE_CHANGE_BLOCKED",
+      "The requested base unit conflicts with the item's existing unit relationships",
+    );
+  }
+  if (historicalUnitIds.some((unitId) => unitId !== null && !graph.factors.has(unitId))) {
+    throw new UnitConversionError(
+      "BASE_CHANGE_BLOCKED",
+      "Historical quantities reference a unit outside the item's unit relationships",
+    );
+  }
+
+  // Only the exact one-row, active, unreferenced shape is a deterministic
+  // legacy repair.  Never clear a conflict marker for a multi-row graph.
+  const clearLegacyConflict =
+    rows.length === 1
+    && rows[0].isActive !== false
+    && rows[0].referenceUnitId === null
+    && rows[0].unitId === requestedBaseUnitId;
+  return { allowed: true, clearLegacyConflict };
+}
+
+/**
+ * Tenant ownership is not implied by an item-unit row's company_id: older
+ * installations did not enforce tenant ownership on reference_unit_id.
+ * Validate every source and reference unit before a graph is used.
+ */
+export function assertUnitGraphTenantOwnership(
+  rows: UnitGraphRow[],
+  ownedUnitIds: Iterable<number>,
+  requestedUnitId?: number | null,
+): void {
+  const owned = new Set(ownedUnitIds);
+  const referenced = new Set<number>();
+  for (const row of rows) {
+    referenced.add(row.unitId);
+    if (row.referenceUnitId !== null) referenced.add(row.referenceUnitId);
+  }
+  if (requestedUnitId != null) referenced.add(requestedUnitId);
+  for (const unitId of referenced) {
+    if (!owned.has(unitId)) {
+      throw new UnitConversionError("UNIT_NOT_FOUND", "Unit does not belong to this company", { unitId });
+    }
+  }
+}
+
+/**
  * A missing base can be repaired only when the resolver loaded exactly one
  * item-owned mapping and that active mapping has no parent. This deliberately
  * excludes an inactive extra link, a relationship edge, and every multi-unit
@@ -463,6 +585,26 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
   const rows = await executor.select().from(itemUnitPricesTable).where(
     and(eq(itemUnitPricesTable.itemId, args.itemId), eq(itemUnitPricesTable.companyId, args.companyId)),
   );
+  const graphUnitIds = new Set<number>();
+  if (item.unitId != null) graphUnitIds.add(item.unitId);
+  // The requested unit was already checked against this tenant above. Include
+  // it in this ownership query too, otherwise a valid catalog unit that is
+  // not linked to the item would be misreported as cross-tenant instead of
+  // reaching the normal UNLINKED_UNIT graph error below.
+  if (requestedUnitId != null) graphUnitIds.add(requestedUnitId);
+  for (const row of rows as UnitGraphRow[]) {
+    graphUnitIds.add(row.unitId);
+    if (row.referenceUnitId !== null) graphUnitIds.add(row.referenceUnitId);
+  }
+  if (graphUnitIds.size > 0) {
+    const ownedGraphUnits = await executor.select({ id: unitsTable.id }).from(unitsTable).where(and(
+      eq(unitsTable.companyId, args.companyId),
+      inArray(unitsTable.id, [...graphUnitIds]),
+    ));
+    assertUnitGraphTenantOwnership(rows, ownedGraphUnits.map((row: { id: number }) => row.id), requestedUnitId);
+  } else {
+    assertUnitGraphTenantOwnership(rows, [], requestedUnitId);
+  }
   const baseUnitId = item.unitId ?? null;
   const soleLegacyUnit = soleUnrootedOwnedUnit(baseUnitId, rows);
   const chosenId = requestedUnitId ?? baseUnitId ?? rows.find((row: UnitGraphRow) => row.isBase)?.unitId ?? null;

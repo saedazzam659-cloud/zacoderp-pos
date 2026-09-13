@@ -17,7 +17,8 @@ import {
   salesReturnsTable, salesReturnLinesTable,
   purchaseInvoicesTable, purchaseReturnsTable,
   purchaseInvoiceLinesTable, purchaseReturnLinesTable,
-  goodsReceiptsTable, goodsDeliveriesTable,
+  goodsReceiptsTable, goodsReceiptLinesTable,
+  goodsDeliveriesTable, goodsDeliveryLinesTable,
   itemDocumentsTable,
   itemSuppliersTable,
   itemBundleComponentsTable,
@@ -75,6 +76,8 @@ import {
   roundQuantity,
   decimalForStorage,
   toStorageDecimal,
+  validateBaseUnitAssignment,
+  assertUnitGraphTenantOwnership,
 } from "../lib/unitConversion.js";
 
 const router = Router();
@@ -825,22 +828,131 @@ function decimalPlacesValue(value: unknown, fallback: number): number {
   return value;
 }
 
-async function itemHasHistoricalUsage(executor: any, cid: number, itemId: number): Promise<boolean> {
+interface HistoricalItemUsage {
+  hasUsage: boolean;
+  /**
+   * Stock balances and the stock ledger pre-date unit snapshots and are
+   * intentionally represented by null here: those quantities are legacy
+   * item-base quantities with no persisted unit label.
+   */
+  unitIds: Array<number | null>;
+}
+
+async function inspectItemHistoricalUsage(
+  executor: any,
+  cid: number,
+  itemId: number,
+): Promise<HistoricalItemUsage> {
   const probes = await Promise.all([
     executor.select({ id: stockLedgerTable.id }).from(stockLedgerTable)
       .where(and(eq(stockLedgerTable.companyId, cid), eq(stockLedgerTable.itemId, itemId))).limit(1),
     executor.select({ id: stockBalanceTable.id }).from(stockBalanceTable)
       .where(and(eq(stockBalanceTable.companyId, cid), eq(stockBalanceTable.itemId, itemId))).limit(1),
-    executor.select({ id: salesInvoiceLinesTable.id }).from(salesInvoiceLinesTable)
-      .where(and(eq(salesInvoiceLinesTable.companyId, cid), eq(salesInvoiceLinesTable.itemId, itemId))).limit(1),
-    executor.select({ id: salesReturnLinesTable.id }).from(salesReturnLinesTable)
-      .where(and(eq(salesReturnLinesTable.companyId, cid), eq(salesReturnLinesTable.itemId, itemId))).limit(1),
-    executor.select({ id: purchaseInvoiceLinesTable.id }).from(purchaseInvoiceLinesTable)
-      .where(and(eq(purchaseInvoiceLinesTable.companyId, cid), eq(purchaseInvoiceLinesTable.itemId, itemId))).limit(1),
-    executor.select({ id: purchaseReturnLinesTable.id }).from(purchaseReturnLinesTable)
-      .where(and(eq(purchaseReturnLinesTable.companyId, cid), eq(purchaseReturnLinesTable.itemId, itemId))).limit(1),
+    executor.selectDistinct({ unitId: salesInvoiceLinesTable.unitId }).from(salesInvoiceLinesTable)
+      .where(and(eq(salesInvoiceLinesTable.companyId, cid), eq(salesInvoiceLinesTable.itemId, itemId))),
+    executor.selectDistinct({ unitId: salesReturnLinesTable.unitId }).from(salesReturnLinesTable)
+      .where(and(eq(salesReturnLinesTable.companyId, cid), eq(salesReturnLinesTable.itemId, itemId))),
+    executor.selectDistinct({ unitId: purchaseInvoiceLinesTable.unitId }).from(purchaseInvoiceLinesTable)
+      .where(and(eq(purchaseInvoiceLinesTable.companyId, cid), eq(purchaseInvoiceLinesTable.itemId, itemId))),
+    executor.selectDistinct({ unitId: purchaseReturnLinesTable.unitId }).from(purchaseReturnLinesTable)
+      .where(and(eq(purchaseReturnLinesTable.companyId, cid), eq(purchaseReturnLinesTable.itemId, itemId))),
+    executor.selectDistinct({ unitId: goodsReceiptLinesTable.unitId })
+      .from(goodsReceiptLinesTable)
+      .innerJoin(goodsReceiptsTable, eq(goodsReceiptLinesTable.receiptId, goodsReceiptsTable.id))
+      .where(and(eq(goodsReceiptsTable.companyId, cid), eq(goodsReceiptLinesTable.itemId, itemId))),
+    executor.selectDistinct({ unitId: goodsDeliveryLinesTable.unitId })
+      .from(goodsDeliveryLinesTable)
+      .innerJoin(goodsDeliveriesTable, eq(goodsDeliveryLinesTable.deliveryId, goodsDeliveriesTable.id))
+      .where(and(eq(goodsDeliveriesTable.companyId, cid), eq(goodsDeliveryLinesTable.itemId, itemId))),
+    executor.selectDistinct({ unitId: stockTransferItemsTable.unitId })
+      .from(stockTransferItemsTable)
+      .innerJoin(stockTransfersTable, eq(stockTransferItemsTable.transferId, stockTransfersTable.id))
+      .where(and(eq(stockTransfersTable.companyId, cid), eq(stockTransferItemsTable.itemId, itemId))),
+    executor.selectDistinct({ unitId: stockAdjustmentItemsTable.unitId })
+      .from(stockAdjustmentItemsTable)
+      .innerJoin(stockAdjustmentsTable, eq(stockAdjustmentItemsTable.adjustmentId, stockAdjustmentsTable.id))
+      .where(and(eq(stockAdjustmentsTable.companyId, cid), eq(stockAdjustmentItemsTable.itemId, itemId))),
   ]);
-  return probes.some((rows: unknown[]) => rows.length > 0);
+  const documentRows = probes.slice(2) as Array<Array<{ unitId: number | null }>>;
+  return {
+    hasUsage: probes.some((rows: unknown[]) => rows.length > 0),
+    unitIds: documentRows.flatMap((rows) => rows.map((row) => row.unitId == null ? null : Number(row.unitId))),
+  };
+}
+
+async function itemHasHistoricalUsage(executor: any, cid: number, itemId: number): Promise<boolean> {
+  return (await inspectItemHistoricalUsage(executor, cid, itemId)).hasUsage;
+}
+
+/**
+ * Validate all unit ids already present in an item graph inside the same
+ * tenant before changing the item's root.  `unit_id` has a database FK, but
+ * `reference_unit_id` was added to older installations without a tenant FK.
+ */
+async function assertItemUnitGraphTenant(
+  executor: any,
+  cid: number,
+  itemId: number,
+  rows: any[],
+  requestedUnitId?: number | null,
+): Promise<void> {
+  const ids = new Set<number>();
+  if (requestedUnitId != null) ids.add(requestedUnitId);
+  for (const row of rows) {
+    ids.add(Number(row.unitId));
+    if (row.referenceUnitId != null) ids.add(Number(row.referenceUnitId));
+  }
+  if (ids.size === 0) return;
+  const owned = await executor.select({ id: unitsTable.id }).from(unitsTable).where(and(
+    eq(unitsTable.companyId, cid),
+    inArray(unitsTable.id, [...ids]),
+  ));
+  assertUnitGraphTenantOwnership(rows, owned.map((row: any) => row.id), requestedUnitId);
+}
+
+/**
+ * Fill an item's first missing base in the caller's transaction. Existing
+ * bases continue to use the historical-use guard; a missing legacy base is
+ * only accepted when unlabelled quantities or an already-unambiguous graph
+ * prove that the assignment cannot rebase old stock.
+ */
+async function validateAndSyncItemBaseUnit(
+  tx: any,
+  cid: number,
+  itemId: number,
+  oldBaseId: number | null,
+  newBaseId: number,
+): Promise<void> {
+  await assertCatalogUnit(tx, cid, newBaseId);
+  const rows = await tx.select().from(itemUnitPricesTable).where(and(
+    eq(itemUnitPricesTable.companyId, cid),
+    eq(itemUnitPricesTable.itemId, itemId),
+  ));
+  await assertItemUnitGraphTenant(tx, cid, itemId, rows, newBaseId);
+  const history = await inspectItemHistoricalUsage(tx, cid, itemId);
+  const decision = validateBaseUnitAssignment({
+    currentBaseUnitId: oldBaseId,
+    requestedBaseUnitId: newBaseId,
+    rows,
+    historicalUsage: history.hasUsage,
+    historicalUnitIds: history.unitIds,
+  });
+
+  // The only permitted automatic item-unit repair is the exact one-row legacy
+  // shape accepted by the central resolver.  Do not clear a marker merely
+  // because an item editor save happened to touch the item.
+  if (decision.clearLegacyConflict) {
+    await tx.update(itemUnitPricesTable).set({
+      isBase: true,
+      referenceUnitId: null,
+      relationFactor: "1",
+      conversionFactor: "1",
+      legacyConversionConflict: false,
+    }).where(and(
+      eq(itemUnitPricesTable.companyId, cid),
+      eq(itemUnitPricesTable.itemId, itemId),
+    ));
+  }
 }
 
 async function lockItemUnitGraph(tx: any, cid: number, itemId: number): Promise<void> {
@@ -866,6 +978,7 @@ async function recomputeCachedItemFactors(tx: any, cid: number, itemId: number):
   const rows = await tx.select().from(itemUnitPricesTable)
     .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.itemId, itemId)));
   if (!rows.length) return;
+  await assertItemUnitGraphTenant(tx, cid, itemId, rows, item.unitId ?? null);
   const graph = resolveUnitGraph({ baseUnitId: item.unitId ?? null, rows });
   for (const row of rows) {
     const factor = graph.factors.get(row.unitId);
@@ -886,6 +999,16 @@ async function changeItemBaseUnit(
   rows: any[],
 ): Promise<void> {
   if (oldBaseId === newBaseId) return;
+  // Filling an unset legacy base is not a re-base.  In particular, old
+  // stock/ledger rows carry no unit label and remain valid after this
+  // assignment.  The central policy still rejects labelled history or an
+  // ambiguous item-unit graph.
+  if (oldBaseId === null) {
+    await validateAndSyncItemBaseUnit(tx, cid, itemId, null, newBaseId);
+    await tx.update(itemsTable).set({ unitId: newBaseId })
+      .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
+    return;
+  }
   // Re-basing would require rewriting every edge and can invalidate
   // historical/document/production snapshots.  Unit links are intentionally
   // immutable as a base once configured; callers may still edit relation
@@ -897,11 +1020,6 @@ async function changeItemBaseUnit(
     throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The base unit cannot change after historical stock or usage exists");
   }
   await assertCatalogUnit(tx, cid, newBaseId);
-  if (oldBaseId === null) {
-    await tx.update(itemsTable).set({ unitId: newBaseId })
-      .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
-    return;
-  }
   await tx.update(itemsTable).set({ unitId: newBaseId })
     .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
 }
@@ -1366,31 +1484,18 @@ router.put("/items/:id", async (req, res) => {
   // Snapshot the existing row BEFORE mutating so we can compute a precise diff.
   const existing = others.find(i => i.id === id) ?? null;
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  let requestedUnitId: number | null | undefined;
   try {
     requireItemUnit(unitId, existing.unitId);
+    requestedUnitId = unitId === undefined
+      ? existing.unitId
+      : (unitId === null || unitId === "" ? null : Number(unitId));
   } catch (error) {
     res.status(400).json({ error: (error as Error).message }); return;
   }
-  if (unitId !== undefined) {
-    const requestedUnitId = unitId === null || unitId === "" ? null : Number(unitId);
-    if (requestedUnitId !== null && (!Number.isInteger(requestedUnitId) || requestedUnitId <= 0)) {
-      res.status(400).json({ error: "وحدة الصنف غير صالحة" }); return;
-    }
-    if (requestedUnitId !== null) {
-      const [ownedUnit] = await db.select({ id: unitsTable.id }).from(unitsTable)
-        .where(and(eq(unitsTable.id, requestedUnitId), eq(unitsTable.companyId, cid)));
-      if (!ownedUnit) { res.status(400).json({ error: "وحدة الصنف لا تنتمي للشركة" }); return; }
-    }
-    if (requestedUnitId !== existing.unitId) {
-      const links = await db.select({ id: itemUnitPricesTable.id }).from(itemUnitPricesTable)
-        .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.itemId, id)));
-      if (links.length) {
-        res.status(409).json({ error: "لا تغيّر قاعدة الصنف مباشرة؛ عدّل رابط الوحدة عبر /items/:id/units" }); return;
-      }
-      if (await itemHasHistoricalUsage(db, cid, id)) {
-        res.status(409).json({ error: "لا يمكن تغيير وحدة الأساس بعد وجود استخدام أو مخزون تاريخي", code: "BASE_CHANGE_BLOCKED" }); return;
-      }
-    }
+  if (requestedUnitId !== undefined && requestedUnitId !== null
+    && (!Number.isInteger(requestedUnitId) || requestedUnitId <= 0)) {
+    res.status(400).json({ error: "وحدة الصنف غير صالحة" }); return;
   }
   // PRO Extension #20 — a variant (parentItemId IS NOT NULL) cannot also
   // be a bundle. The bundle/variant axes are intentionally orthogonal.
@@ -1404,40 +1509,72 @@ router.put("/items/:id", async (req, res) => {
   const discPatch = (discountType !== undefined || discountValue !== undefined)
     ? (() => { const d = normalizeDiscount(discountType, discountValue); return { discountType: d.type, discountValue: d.value }; })()
     : {};
-  const [row] = await db.update(itemsTable).set({
-    code, nameAr, nameEn, barcode, itemType: itemType || "stock",
-    ...(["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? { itemNature } : {}),
-    groupId: groupId || null, unitId: unitId === undefined ? existing.unitId : (unitId || null),
-    costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
-    reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
-    costMethod: costMethod || "weighted_avg", description,
-    imageUrl: imageUrl !== undefined ? (imageUrl || null) : undefined,
-    tags: normalizedTags === undefined ? undefined : normalizedTags,
-    ...discPatch,
-    // Only touch isBundle when client explicitly sends it (so partial PUTs
-    // from older clients don't accidentally flip the bundle flag). A variant
-    // (parent_item_id IS NOT NULL) is also blocked from becoming a bundle
-    // — checked below after we have `existing` in hand.
-    ...(isBundle !== undefined ? { isBundle: isBundle === true } : {}),
-    // PRO Extension #20 — only touch variantAttributes if client sent it.
-    // `null` is a valid value (clears all attributes); `undefined` skips.
-    ...(variantAttrsCheck.value !== undefined ? { variantAttributes: variantAttrsCheck.value } : {}),
-    ...(showInPos !== undefined ? { showInPos: showInPos === true } : {}),
-    ...(expiryDate !== undefined ? { expiryDate: expiryDate || null } : {}),
-    // Service-item GL links — only touch when the client sent them (partial-PUT
-    // safe). Empty-string / null clears the link; otherwise coerce to numeric id.
-    ...(costAccountId !== undefined
-      ? { costAccountId: costAccountId != null && costAccountId !== "" ? Number(costAccountId) : null }
-      : {}),
-    ...(revenueAccountId !== undefined
-      ? { revenueAccountId: revenueAccountId != null && revenueAccountId !== "" ? Number(revenueAccountId) : null }
-      : {}),
-    // PHASE E — only touch when client explicitly sent; constrained list.
-    ...(batchTrackingMode !== undefined && ["none","fifo","fefo"].includes(batchTrackingMode)
-      ? { batchTrackingMode }
-      : {}),
-    status: status || "active", updatedAt: new Date(),
-  }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
+  let row: any;
+  try {
+    [row] = await db.transaction(async (tx) => {
+      // Base assignment and any item-unit repair must commit atomically with
+      // the item edit.  The advisory lock closes the race where two editors
+      // attempt to initialise/re-base the same item concurrently.
+      await lockItemUnitGraph(tx, cid, id);
+      const [lockedExisting] = await tx.select().from(itemsTable).where(and(
+        eq(itemsTable.id, id),
+        eq(itemsTable.companyId, cid),
+      ));
+      if (!lockedExisting) throw new UnitConversionError("ITEM_NOT_FOUND", "غير موجود");
+      if (requestedUnitId !== undefined && requestedUnitId !== lockedExisting.unitId) {
+        if (requestedUnitId === null) {
+          throw new UnitConversionError("BASE_REQUIRED", "حدد الوحدة الأساسية للصنف");
+        }
+        await validateAndSyncItemBaseUnit(
+          tx,
+          cid,
+          id,
+          lockedExisting.unitId ?? null,
+          requestedUnitId,
+        );
+      } else if (requestedUnitId !== undefined && requestedUnitId !== null) {
+        // Even a no-op PUT must not accept a cross-tenant unit id.
+        await assertCatalogUnit(tx, cid, requestedUnitId);
+      }
+      return tx.update(itemsTable).set({
+        code, nameAr, nameEn, barcode, itemType: itemType || "stock",
+        ...(["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? { itemNature } : {}),
+        groupId: groupId || null, unitId: requestedUnitId === undefined ? lockedExisting.unitId : requestedUnitId,
+        costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
+        reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
+        costMethod: costMethod || "weighted_avg", description,
+        imageUrl: imageUrl !== undefined ? (imageUrl || null) : undefined,
+        tags: normalizedTags === undefined ? undefined : normalizedTags,
+        ...discPatch,
+        // Only touch isBundle when client explicitly sends it (so partial PUTs
+        // from older clients don't accidentally flip the bundle flag). A variant
+        // (parent_item_id IS NOT NULL) is also blocked from becoming a bundle
+        // — checked below after we have `existing` in hand.
+        ...(isBundle !== undefined ? { isBundle: isBundle === true } : {}),
+        // PRO Extension #20 — only touch variantAttributes if client sent it.
+        // `null` is a valid value (clears all attributes); `undefined` skips.
+        ...(variantAttrsCheck.value !== undefined ? { variantAttributes: variantAttrsCheck.value } : {}),
+        ...(showInPos !== undefined ? { showInPos: showInPos === true } : {}),
+        ...(expiryDate !== undefined ? { expiryDate: expiryDate || null } : {}),
+        // Service-item GL links — only touch when the client sent them (partial-PUT
+        // safe). Empty-string / null clears the link; otherwise coerce to numeric id.
+        ...(costAccountId !== undefined
+          ? { costAccountId: costAccountId != null && costAccountId !== "" ? Number(costAccountId) : null }
+          : {}),
+        ...(revenueAccountId !== undefined
+          ? { revenueAccountId: revenueAccountId != null && revenueAccountId !== "" ? Number(revenueAccountId) : null }
+          : {}),
+        // PHASE E — only touch when client explicitly sent; constrained list.
+        ...(batchTrackingMode !== undefined && ["none","fifo","fefo"].includes(batchTrackingMode)
+          ? { batchTrackingMode }
+          : {}),
+        status: status || "active", updatedAt: new Date(),
+      }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
+    });
+  } catch (error) {
+    unitErrorResponse(res, error);
+    return;
+  }
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   // Only audit when something actually changed (avoids "no-op save" noise).
   const changes = existing ? diffItem(existing, row) : [];
@@ -1583,6 +1720,11 @@ router.post("/items/:id/units", async (req, res) => {
       if (values.isBase && rows.length > 0) {
         throw new UnitConversionError("BASE_CHANGE_REQUIRES_EDIT", "Choose an existing linked unit when changing the base unit");
       }
+      if (values.isBase && item.unitId == null) {
+        // Creating the first linked base is still a base assignment and must
+        // use the same unlabelled-history/tenant policy as the item editor.
+        await validateAndSyncItemBaseUnit(tx, cid, itemId, null, unitId);
+      }
       if (!values.isBase && item.unitId == null) {
         throw new UnitConversionError("MISSING_BASE", "حدد الوحدة الأساسية للصنف أولًا، أو اختر اعتماد الوحدة المرجعية كوحدة أساسية عند إنشاء أول علاقة.");
       }
@@ -1650,6 +1792,15 @@ router.put("/items/:id/units/:upId", async (req, res) => {
         throw new UnitConversionError("BASE_REQUIRED", "Select another base unit before disabling this base link");
       }
       if (!values.isBase && values.referenceUnitId !== null) await assertCatalogUnit(tx, cid, values.referenceUnitId);
+      // A conflict marker is cleared only when this transaction has reduced
+      // the complete item-owned graph to the deterministic single base row.
+      // Preserve it on every other edit so ambiguous legacy data cannot be
+      // made to look repaired by changing an unrelated field.
+      const clearLegacyConflict = rows.length === 1
+        && item.unitId == null
+        && values.isBase
+        && values.isActive
+        && values.referenceUnitId === null;
       const [row] = await tx.update(itemUnitPricesTable).set({
         unitId,
         relationFactor: values.relationFactor,
@@ -1661,7 +1812,7 @@ router.put("/items/:id/units/:upId", async (req, res) => {
         isActive: values.isActive,
         decimalPlaces: values.decimalPlaces,
         roundingMode: values.roundingMode,
-        legacyConversionConflict: false,
+        legacyConversionConflict: clearLegacyConflict ? false : current.legacyConversionConflict,
       }).where(and(eq(itemUnitPricesTable.id, upId), eq(itemUnitPricesTable.companyId, cid))).returning();
       await recomputeCachedItemFactors(tx, cid, itemId);
       auditSubEntity(req, "item_unit_prices", upId, "edit", current, row);
