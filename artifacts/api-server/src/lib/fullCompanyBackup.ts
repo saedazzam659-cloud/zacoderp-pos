@@ -27,6 +27,10 @@ export const BACKUP_EXCLUDED_TABLES = new Set([
   "device_licenses", "device_invoice_ranges", "download_access_codes",
   "pos_devices",
   "sync_queue_log", "company_clone_runs", "company_templates",
+   // Operational request-replay state is intentionally local to an API
+   // deployment. It is not business data and excluding it preserves the v2
+   // exact-catalog contract for backups made before this table existed.
+   "invoice_create_idempotency",
   // Marketplace purchase/entitlement state belongs to the central extension
   // control plane. Partner/listing IDs are not portable between servers.
   "extension_purchases",

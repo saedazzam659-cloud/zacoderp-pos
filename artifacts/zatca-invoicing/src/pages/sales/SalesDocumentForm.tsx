@@ -268,6 +268,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // renders `{NaN && <Tab/>}` as a literal "NaN" chip. Only accept numeric ids.
   const _rawId = matchEdit ? String((params as any).id ?? "") : "";
   const editId = !matchNew && /^\d+$/.test(_rawId) ? Number(_rawId) : null;
+  // A route can remain `/new` while the create response is followed by a
+  // failing auto-post/navigation. Keep the id outside React state so a retry
+  // is synchronously converted to PUT before another POST can be dispatched.
+  const persistedInvoiceIdRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef(false);
+  const newInvoiceRouteRef = useRef<string | null>(null);
+  const clientRequestIdRef = useRef<string | null>(null);
+  const newInvoiceRoute = isInvoice && isNew ? `${basePath}/new` : null;
+  if (newInvoiceRoute !== newInvoiceRouteRef.current) {
+    newInvoiceRouteRef.current = newInvoiceRoute;
+    persistedInvoiceIdRef.current = null;
+    clientRequestIdRef.current = newInvoiceRoute ? crypto.randomUUID() : null;
+  }
   // View-only open (double-click from the audit grid): `?view=1` locks every
   // editable field and lands the user on the التفاصيل tab. The details tab is
   // intentionally kept OUTSIDE the read-only fieldsets so it stays interactive.
@@ -1457,9 +1470,21 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
-      const url = editId ? `${API}/api/sales/${apiPath}/${editId}` : `${API}/api/sales/${apiPath}`;
-      const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
+      // `isNew` remains true until navigation completes. Prefer the id captured
+      // from a prior successful POST so retries after a failed post/navigation
+      // update that same invoice rather than creating another draft.
+      const persistedId = isInvoice ? (persistedInvoiceIdRef.current ?? editId) : editId;
+      const method = persistedId ? "PUT" : "POST";
+      const url = persistedId
+        ? `${API}/api/sales/${apiPath}/${persistedId}`
+        : `${API}/api/sales/${apiPath}`;
+      const res = await fetch(url, { method, headers, body: JSON.stringify(data) });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
+      // This assignment must precede auto-posting. If auto-posting fails, the
+      // next explicit Save is a PUT even though the URL still says `/new`.
+      if (isInvoice && method === "POST" && j?.id) {
+        persistedInvoiceIdRef.current = Number(j.id);
+      }
 
       // Sales-invoice save policy: when the company allows draft-without-
       // warehouse, an invoice with any stock (non-service) line missing a
@@ -1551,6 +1576,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       navigate(basePath);
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onSettled: () => {
+      saveInFlightRef.current = false;
+    },
   });
 
   // ── ZATCA validators (B2B / فاتورة ضريبية) ────────────────────────────
@@ -1584,6 +1612,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   }
 
   function handleSave() {
+    // React Query's pending state updates on a render; this ref closes the
+    // same-tick double-click/Enter window before a second mutation can POST.
+    if (saveInFlightRef.current || saveMut.isPending) return;
     // Required-fields gate (mirrors the server's 400 in /sales-invoices):
     // every sales invoice must carry an explicit customer + branch. We
     // surface this as an attractive destructive toast BEFORE the network
@@ -1687,7 +1718,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // the PUT path doesn't accept it (you can't retroactively re-source
       // an existing invoice from a different quotation). Backend revalidates
       // tenancy/status/converted gates before mutating the quotation.
-      if (isNew && sourceQuotationId) base.sourceQuotationId = Number(sourceQuotationId);
+      if (isNew && !persistedInvoiceIdRef.current && sourceQuotationId) base.sourceQuotationId = Number(sourceQuotationId);
       base.paymentType = paymentType;
       base.cashBoxId = paymentType === "cash" ? (cashBoxId || null) : null;
       base.bankAccountId = paymentType === "bank" ? (bankAccountId || null) : null;
@@ -1714,6 +1745,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       base.validUntil = validUntil || null;
       base.branchId = branchId || null;
     }
+    // The backend uses this as its POST idempotency key. It survives all
+    // failures/retries for this explicit new-invoice form and is never sent on
+    // PUT (nor for quotations/orders, whose create semantics stay unchanged).
+    if (isInvoice && !persistedInvoiceIdRef.current && clientRequestIdRef.current) {
+      base.clientRequestId = clientRequestIdRef.current;
+    }
+    saveInFlightRef.current = true;
     saveMut.mutate(base);
   }
 
@@ -2994,7 +3032,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <Printer className="h-4 w-4" /> طباعة
         </Button>
         {!editLock && (
-          <Button size="sm" onClick={handleSave} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-save-top">
+          <Button size="sm" data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-save-top">
             <Save className="h-4 w-4" />
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
@@ -3709,7 +3747,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           طباعة
         </Button>
         {!editLock && (
-          <Button onClick={handleSave} disabled={saveMut.isPending}>
+          <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
         )}

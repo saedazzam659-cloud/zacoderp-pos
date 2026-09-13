@@ -68,6 +68,12 @@ import {
 } from "../lib/unitConversion.js";
 import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
 import { tombstoneAndDeleteDraftInvoice } from "../lib/invoiceDeletionTombstone.js";
+import {
+  createInvoiceIdempotently,
+  deleteInvoiceCreateReplay,
+  findInvoiceCreateReplay,
+  parseInvoiceClientRequestId,
+} from "../lib/invoiceCreateIdempotency.js";
 
 function hasSalesZatcaArtifacts(invoice: any): boolean {
   const zatcaStatus = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
@@ -297,6 +303,37 @@ function salesInvoiceWriteError(error: any): { status: number; message: string }
     status: Number(error?.status) || 500,
     message: causeMessage || safeOuterMessage || "تعذر حفظ فاتورة المبيعات بسبب خطأ في قاعدة البيانات",
   };
+}
+
+async function insertSalesInvoiceWithSerialRepair(values: any, executor: any = db) {
+  try {
+    return await executor.transaction(async (insertTx: any) => {
+      const [invoice] = await insertTx.insert(salesInvoicesTable).values(values).returning();
+      return invoice;
+    });
+  } catch (error: any) {
+    const code = String(postgresErrorField(error, "code") ?? "");
+    const constraint = String(
+      postgresErrorField(error, "constraint_name")
+        ?? postgresErrorField(error, "constraint")
+        ?? "",
+    );
+    if (code !== "23505" || !constraint.includes("pkey")) throw error;
+    // Preserve the legacy, narrowly-scoped serial repair for old imports while
+    // keeping it inside the request-id transaction when one is active.
+    return executor.transaction(async (tx: any) => {
+      await tx.execute(sql`LOCK TABLE sales_invoices IN EXCLUSIVE MODE`);
+      await tx.execute(sql`
+        SELECT setval(
+          pg_get_serial_sequence('sales_invoices', 'id'),
+          GREATEST(COALESCE((SELECT MAX(id) FROM sales_invoices), 0) + 1, 1),
+          false
+        )
+      `);
+      const [invoice] = await tx.insert(salesInvoicesTable).values(values).returning();
+      return invoice;
+    });
+  }
 }
 
 function salesReturnWriteError(error: any): { status: number; message: string } {
@@ -1618,9 +1655,9 @@ async function resolveSalesLineUnits(
 // Bumps the `times_used` counter for every distinct offer id given. Safe to
 // call with an empty array. Tenant-scoped so a malicious client can't bump
 // counters on another company's offers by sending its ids.
-async function bumpOffersTimesUsed(cid: number, offerIds: number[]) {
+async function bumpOffersTimesUsed(cid: number, offerIds: number[], executor: any = db) {
   if (!offerIds.length) return;
-  await db.update(offersTable)
+  await executor.update(offersTable)
     .set({ timesUsed: sql`${offersTable.timesUsed} + 1` })
     .where(and(inArray(offersTable.id, offerIds), eq(offersTable.companyId, cid)));
 }
@@ -2136,6 +2173,31 @@ router.post("/sales-invoices", async (req, res) => {
   const timing = timingStart.timing;
   try {
     const cid = guard(req, res); if (!cid) return;
+    const clientRequestId = parseInvoiceClientRequestId(req.body);
+    const requestWantsInlineIssue = (isMobileChannel(req) || (req as any).resolvedMobileSalesContext === true) &&
+      req.body?.mobileSaveMode === "issue";
+    // The save-and-issue path performs posting after draft creation and has
+    // its own compensation flow. Do not commit a replay claim until that
+    // lifecycle is transactionally modeled; web draft saves are the retry
+    // target for clientRequestId.
+    if (clientRequestId && requestWantsInlineIssue) {
+      res.status(400).json({ error: "معرّف طلب الإعادة غير مدعوم مع الحفظ والترحيل الفوري" });
+      return;
+    }
+    if (clientRequestId) {
+      const replayId = await findInvoiceCreateReplay(db, cid, "sales_invoice", clientRequestId);
+      if (replayId) {
+        const [replay] = await db.select().from(salesInvoicesTable).where(and(
+          eq(salesInvoicesTable.id, replayId),
+          eq(salesInvoicesTable.companyId, cid),
+        ));
+        if (replay) {
+          timing?.completeBusinessOutcome(200);
+          res.status(200).json({ ...replay, idempotentReplay: true });
+          return;
+        }
+      }
+    }
     // ─── Mobile-app rights (صلاحيات تطبيق الموبايل) ───
     // Enforced server-side for the mobile channel so a revoked right applies
     // immediately even if the app UI is stale. NULL map = all allowed.
@@ -2477,48 +2539,80 @@ router.post("/sales-invoices", async (req, res) => {
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
       taxId:              taxId ? Number(taxId) : null,
     };
-    let inv: typeof salesInvoicesTable.$inferSelect;
-    try {
-      [inv] = await db.insert(salesInvoicesTable).values(invoiceValues).returning();
-    } catch (insertError: any) {
-      const code = String(postgresErrorField(insertError, "code") ?? "");
-      const constraint = String(
-        postgresErrorField(insertError, "constraint_name")
-          ?? postgresErrorField(insertError, "constraint")
-          ?? "",
-      );
-      if (code !== "23505" || !constraint.includes("pkey")) throw insertError;
-      // Old SQL dumps can restore explicit IDs without advancing the serial
-      // sequence. Repair only this table's sequence, then retry once.
-      await db.execute(sql`
-        SELECT setval(
-          pg_get_serial_sequence('sales_invoices', 'id'),
-          GREATEST(COALESCE((SELECT MAX(id) FROM sales_invoices), 0) + 1, 1),
-          false
-        )
-      `);
-      [inv] = await db.insert(salesInvoicesTable).values(invoiceValues).returning();
+    const createInvoice = async (executor: any) => {
+      const inv = await insertSalesInvoiceWithSerialRepair(invoiceValues, executor);
+      if (lines?.length) {
+        const mappedLines = await resolveSalesLineUnits(
+          cid,
+          lines.map((l: any) => mapInvoiceLine(l, inv.id, cid, resolvedRate)),
+          lines,
+        );
+        await executor.insert(salesInvoiceLinesTable).values(mappedLines);
+      }
+      return inv;
+    };
+    const usedOfferIds = new Set<number>();
+    for (const l of (lines ?? [])) {
+      if (l?.appliedOfferId) usedOfferIds.add(Number(l.appliedOfferId));
     }
-    if (lines?.length) {
-      const mappedLines = await resolveSalesLineUnits(
-        cid,
-        lines.map((l: any) => mapInvoiceLine(l, inv.id, cid, resolvedRate)),
-        lines,
-      );
-      await db.insert(salesInvoiceLinesTable).values(mappedLines);
+    if (documentOfferId) usedOfferIds.add(Number(documentOfferId));
+    const finalizeIdempotentCreate = async (executor: any, invoice: typeof salesInvoicesTable.$inferSelect) => {
+      await bumpOffersTimesUsed(cid, [...usedOfferIds], executor);
+      if (!validatedSourceQuotation) return;
+      const updated = await executor.update(salesQuotationsTable)
+        .set({ status: "converted", convertedInvoiceId: invoice.id, updatedAt: new Date() })
+        .where(and(
+          eq(salesQuotationsTable.id, validatedSourceQuotation.id),
+          eq(salesQuotationsTable.companyId, cid),
+          eq(salesQuotationsTable.status, "accepted"),
+          isNull(salesQuotationsTable.convertedInvoiceId),
+        ))
+        .returning({ id: salesQuotationsTable.id });
+      if (updated.length === 0) {
+        // Throwing rolls back the claim, invoice, lines, and offer counter in
+        // the one transaction. A retry can then receive the true quotation
+        // conflict instead of a phantom invoice replay.
+        throw Object.assign(
+          new Error("تم تحويل عرض السعر بواسطة مستخدم آخر — أعد المحاولة"),
+          { status: 409 },
+        );
+      }
+    };
+    let inv: typeof salesInvoicesTable.$inferSelect;
+    if (clientRequestId) {
+      const createResult = await createInvoiceIdempotently(db, {
+        companyId: cid,
+        invoiceKind: "sales_invoice",
+        clientRequestId,
+        create: async (tx) => {
+          const invoice = await createInvoice(tx);
+          await finalizeIdempotentCreate(tx, invoice);
+          return invoice;
+        },
+      });
+      if (!createResult.created) {
+        const [replay] = await db.select().from(salesInvoicesTable).where(and(
+          eq(salesInvoicesTable.id, createResult.invoiceId),
+          eq(salesInvoicesTable.companyId, cid),
+        ));
+        if (!replay) throw Object.assign(new Error("تعذر استعادة الفاتورة المنشأة"), { status: 409 });
+        timing?.completeBusinessOutcome(200);
+        res.status(200).json({ ...replay, idempotentReplay: true });
+        return;
+      }
+      inv = createResult.invoice;
+    } else {
+      inv = await createInvoice(db);
     }
     timing?.mark("invoice-and-lines-write");
-    // Bump times_used once per distinct offer that influenced this invoice
-    // (line-level + the doc-level header offer). Counter increments only
-    // when an invoice is actually saved — never just by the matcher firing.
-    {
-      const usedOfferIds = new Set<number>();
-      for (const l of (lines ?? [])) {
-        if (l?.appliedOfferId) usedOfferIds.add(Number(l.appliedOfferId));
-      }
-      if (documentOfferId) usedOfferIds.add(Number(documentOfferId));
+    // Non-idempotent callers retain the historic sequence of independent
+    // writes. clientRequestId callers performed these fallible side effects
+    // inside the claim transaction above.
+    if (!clientRequestId) {
+      // Bump times_used once per distinct offer that influenced this invoice
+      // (line-level + the doc-level header offer). Counter increments only
+      // when an invoice is actually saved — never just by the matcher firing.
       await bumpOffersTimesUsed(cid, [...usedOfferIds]);
-    }
     // Mirror the /convert path: once the invoice is created from an
     // accepted quotation, mark the quotation as converted and back-link
     // it. The pre-insert validation can race — two clients hitting this
@@ -2544,9 +2638,13 @@ router.post("/sales-invoices", async (req, res) => {
           eq(salesInvoicesTable.id, inv.id),
           eq(salesInvoicesTable.companyId, cid),
         ));
+        if (clientRequestId) {
+          await deleteInvoiceCreateReplay(db, cid, "sales_invoice", clientRequestId);
+        }
         res.status(409).json({ error: "تم تحويل عرض السعر بواسطة مستخدم آخر — أعد المحاولة" });
         return;
       }
+    }
     }
     timing?.mark("post-write-links");
     if (issueInline) {
@@ -2571,6 +2669,9 @@ router.post("/sales-invoices", async (req, res) => {
             eq(salesInvoicesTable.companyId, cid),
             eq(salesInvoicesTable.status, "cancelled"),
           ));
+          if (clientRequestId) {
+            await deleteInvoiceCreateReplay(tx, cid, "sales_invoice", clientRequestId);
+          }
         });
       });
       req.params = previousParams;

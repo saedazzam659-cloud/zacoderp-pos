@@ -4108,6 +4108,7 @@ async function runHeal(options: {
   // agent package update, so a partially-upgraded agent must heal first.
   await ensureSupplierMetadataCompatibility();
   await ensureIndustrialPurchaseCostCompatibility();
+  await ensureInvoiceCreateIdempotencySchema();
 
   // These release-managed tables have complete additive DDL here, unlike
   // generic schema entities. Create them before strict missing-table
@@ -4175,6 +4176,79 @@ async function runHeal(options: {
     },
     "ensureSchema: reconciliation complete",
   );
+}
+
+/**
+ * Request ids are application data, not a control-plane facility, so this runs
+ * for both central and external tenant databases. Keep it additive: older
+ * agent databases can create the table before accepting a retried POST.
+ */
+export async function ensureInvoiceCreateIdempotencySchema(): Promise<void> {
+  const stmts = [
+    `CREATE TABLE IF NOT EXISTS invoice_create_idempotency (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      invoice_kind VARCHAR(32) NOT NULL CHECK (invoice_kind IN ('sales_invoice', 'purchase_invoice')),
+      client_request_id VARCHAR(128) NOT NULL,
+      sales_invoice_id INTEGER REFERENCES sales_invoices(id) ON DELETE CASCADE,
+      purchase_invoice_id INTEGER REFERENCES purchase_invoices(id) ON DELETE CASCADE,
+      CHECK (
+        (invoice_kind = 'sales_invoice' AND purchase_invoice_id IS NULL)
+        OR (invoice_kind = 'purchase_invoice' AND sales_invoice_id IS NULL)
+      ),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (company_id, invoice_kind, client_request_id)
+    )`,
+    // Keep an already-created early-release table compatible without a
+    // destructive rewrite. The typed FKs make invoice ids remappable during a
+    // full-company restore; the legacy generic invoice_id is intentionally
+    // left alone if it exists.
+    `ALTER TABLE invoice_create_idempotency
+       ADD COLUMN IF NOT EXISTS sales_invoice_id INTEGER REFERENCES sales_invoices(id) ON DELETE CASCADE`,
+    `ALTER TABLE invoice_create_idempotency
+       ADD COLUMN IF NOT EXISTS purchase_invoice_id INTEGER REFERENCES purchase_invoices(id) ON DELETE CASCADE`,
+    `DO $$
+     BEGIN
+       IF EXISTS (
+         SELECT 1 FROM information_schema.columns
+          WHERE table_schema = current_schema()
+            AND table_name = 'invoice_create_idempotency'
+            AND column_name = 'invoice_id'
+       ) THEN
+         UPDATE invoice_create_idempotency
+            SET sales_invoice_id = invoice_id
+          WHERE invoice_kind = 'sales_invoice'
+            AND sales_invoice_id IS NULL
+            AND invoice_id IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM sales_invoices invoice
+               WHERE invoice.id = invoice_create_idempotency.invoice_id
+                 AND invoice.company_id = invoice_create_idempotency.company_id
+            );
+         UPDATE invoice_create_idempotency
+            SET purchase_invoice_id = invoice_id
+          WHERE invoice_kind = 'purchase_invoice'
+            AND purchase_invoice_id IS NULL
+            AND invoice_id IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM purchase_invoices invoice
+               WHERE invoice.id = invoice_create_idempotency.invoice_id
+                 AND invoice.company_id = invoice_create_idempotency.company_id
+            );
+       END IF;
+     END $$`,
+    `CREATE INDEX IF NOT EXISTS invoice_create_idempotency_invoice_idx
+       ON invoice_create_idempotency
+         (company_id, invoice_kind, sales_invoice_id, purchase_invoice_id)`,
+  ];
+  for (const stmt of stmts) {
+    try {
+      await db.execute(sql.raw(stmt));
+    } catch (err) {
+      logger.error({ err }, "ensureSchema: invoice-create idempotency reconciliation failed");
+      throw err;
+    }
+  }
 }
 
 /**

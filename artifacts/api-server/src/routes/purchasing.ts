@@ -63,6 +63,11 @@ import {
 } from "../lib/unitConversion.js";
 import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
 import { tombstoneAndDeleteDraftInvoice } from "../lib/invoiceDeletionTombstone.js";
+import {
+  createInvoiceIdempotently,
+  findInvoiceCreateReplay,
+  parseInvoiceClientRequestId,
+} from "../lib/invoiceCreateIdempotency.js";
 
 function hasPurchaseZatcaArtifacts(invoice: any): boolean {
   const zatcaStatus = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
@@ -1556,6 +1561,20 @@ router.get("/purchase-invoices/:id/deferred", async (req, res) => {
 router.post("/purchase-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    const clientRequestId = parseInvoiceClientRequestId(req.body);
+    if (clientRequestId) {
+      const replayId = await findInvoiceCreateReplay(db, cid, "purchase_invoice", clientRequestId);
+      if (replayId) {
+        const [replay] = await db.select().from(purchaseInvoicesTable).where(and(
+          eq(purchaseInvoicesTable.id, replayId),
+          eq(purchaseInvoicesTable.companyId, cid),
+        ));
+        if (replay) {
+          res.status(200).json({ ...replay, idempotentReplay: true });
+          return;
+        }
+      }
+    }
     const { docNumber, supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
@@ -1632,7 +1651,7 @@ router.post("/purchase-invoices", async (req, res) => {
       const accountId = Number(value);
       return Number.isInteger(accountId) && validAccountIds.has(accountId) ? accountId : null;
     };
-    const inv = await insertPurchaseInvoiceWithSerialRepair({
+    const invoiceValues = {
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null,
       supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
@@ -1656,37 +1675,60 @@ router.post("/purchase-invoices", async (req, res) => {
       taxId:              taxId ? Number(taxId) : null,
       status: "draft", notes: notes || null,
       createdById: (req as any).authUser?.id ?? null,
-    });
-    if (lines?.length) {
-      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-      const mappedLines = await resolvePurchaseLineUnits(
-        cid,
-        lines.map((l: any) => ({
-          invoiceId: inv.id, companyId: cid,
-          itemId: l.itemId ? Number(l.itemId) : null,
-          itemName: l.itemName, itemCode: l.itemCode || null,
-          unit: l.unit || null, unitId: l.unitId ? Number(l.unitId) : null,
-          conversionFactor: String(l.conversionFactor || "1"),
-          qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
-          weight: String(l.weight || "0"), unitPrice: String(l.unitPrice || "0"),
-          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-          vatRate: String(l.vatRate || resolvedRate),
-          discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-          lineTotal: String(l.lineTotal || "0"), expenseShare: String(l.expenseShare || "0"),
-          finalCost: String(l.finalCost || "0"),
-          accountId: l.accountId ? Number(l.accountId) : null,
-          warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
-          batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
-          expiryDate: l.expiryDate ? String(l.expiryDate) : null,
-          notes: l.notes || null, ...deferredLineFields(l),
-          industrialCost: normalizeIndustrialCostTag(l.industrialCost),
-        })),
-        lines,
-      );
-      await db.insert(purchaseInvoiceLinesTable).values(
-        mappedLines
-      );
+    };
+    const createInvoice = async (executor: any) => {
+      const inv = await insertPurchaseInvoiceWithSerialRepair(invoiceValues, executor);
+      if (lines?.length) {
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
+        const mappedLines = await resolvePurchaseLineUnits(
+          cid,
+          lines.map((l: any) => ({
+            invoiceId: inv.id, companyId: cid,
+            itemId: l.itemId ? Number(l.itemId) : null,
+            itemName: l.itemName, itemCode: l.itemCode || null,
+            unit: l.unit || null, unitId: l.unitId ? Number(l.unitId) : null,
+            conversionFactor: String(l.conversionFactor || "1"),
+            qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
+            weight: String(l.weight || "0"), unitPrice: String(l.unitPrice || "0"),
+            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+            vatRate: String(l.vatRate || resolvedRate),
+            discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
+            lineTotal: String(l.lineTotal || "0"), expenseShare: String(l.expenseShare || "0"),
+            finalCost: String(l.finalCost || "0"),
+            accountId: l.accountId ? Number(l.accountId) : null,
+            warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+            costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
+            batchNumber: l.batchNumber ? String(l.batchNumber).trim() || null : null,
+            expiryDate: l.expiryDate ? String(l.expiryDate) : null,
+            notes: l.notes || null, ...deferredLineFields(l),
+            industrialCost: normalizeIndustrialCostTag(l.industrialCost),
+          })),
+          lines,
+        );
+        await executor.insert(purchaseInvoiceLinesTable).values(mappedLines);
+      }
+      return inv;
+    };
+    let inv: any;
+    if (clientRequestId) {
+      const createResult = await createInvoiceIdempotently(db, {
+        companyId: cid,
+        invoiceKind: "purchase_invoice",
+        clientRequestId,
+        create: createInvoice,
+      });
+      if (!createResult.created) {
+        const [replay] = await db.select().from(purchaseInvoicesTable).where(and(
+          eq(purchaseInvoicesTable.id, createResult.invoiceId),
+          eq(purchaseInvoicesTable.companyId, cid),
+        ));
+        if (!replay) throw Object.assign(new Error("تعذر استعادة الفاتورة المنشأة"), { status: 409 });
+        res.status(200).json({ ...replay, idempotentReplay: true });
+        return;
+      }
+      inv = createResult.invoice;
+    } else {
+      inv = await createInvoice(db);
     }
     res.status(201).json(inv);
   } catch (e: any) {

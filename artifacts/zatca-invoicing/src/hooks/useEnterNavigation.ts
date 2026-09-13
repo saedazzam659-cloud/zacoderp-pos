@@ -5,9 +5,8 @@ import { useCallback, useRef } from "react";
  *
  * - Pressing Enter on any input/select/combobox/date moves focus to the next
  *   focusable field in DOM order within the container.
- * - On the last field, Enter triggers the primary save action (either the
- *   provided `onSubmit` callback, or a click on the first element carrying
- *   `data-enter-submit="true"`).
+ * - On the last field, Enter focuses the primary save action. It never saves
+ *   implicitly: the user can then review and press Enter again on that button.
  * - Textareas keep default behavior (Enter = newline) unless Ctrl/Cmd is held.
  * - Fields inside `[data-enter-nav-container]` (e.g. invoice line items) are
  *   handled by `useEnterNavContainer` instead — we skip them here to avoid
@@ -18,11 +17,14 @@ import { useCallback, useRef } from "react";
  *   button) that you want included in the navigation order.
  *
  * Usage:
- *   const { containerRef, onKeyDown } = useEnterNavigation(() => saveMut.mutate());
+ *   const { containerRef, onKeyDown } = useEnterNavigation();
  *   <div ref={containerRef} onKeyDown={onKeyDown}> ... </div>
  */
 export function useEnterNavigation(onSubmit?: () => void) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Kept as an optional argument for existing callers. Reaching the last
+  // field must never invoke it: an accidental Enter previously created drafts.
+  void onSubmit;
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLElement>) => {
@@ -120,17 +122,14 @@ export function useEnterNavigation(onSubmit?: () => void) {
         return;
       }
 
-      // End of form — trigger save.
-      if (onSubmit) {
-        onSubmit();
-      } else {
-        const submitBtn = container.querySelector<HTMLButtonElement>(
-          '[data-enter-submit="true"]',
-        );
-        submitBtn?.click();
-      }
+      // End of form — focus save, never submit. This deliberately requires a
+      // second, explicit Enter/click to save and avoids silent draft creation.
+      const submitBtn = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[data-enter-submit="true"]'),
+      ).find((button) => !button.disabled && isVisible(button));
+      submitBtn?.focus();
     },
-    [onSubmit],
+    [],
   );
 
   return { containerRef, onKeyDown };

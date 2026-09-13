@@ -152,6 +152,18 @@ export default function PurchaseInvoiceForm() {
   // renders `{NaN && <Tab/>}` as a literal "NaN" chip. Only accept numeric ids.
   const _rawId = matchEdit ? String((params as any).id ?? "") : "";
   const editId = !matchNew && /^\d+$/.test(_rawId) ? Number(_rawId) : null;
+  // A create can succeed before auto-posting or navigation fails. Preserve the
+  // returned id synchronously so the `/new` route can only PUT on retry.
+  const persistedInvoiceIdRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef(false);
+  const newInvoiceRouteRef = useRef<string | null>(null);
+  const clientRequestIdRef = useRef<string | null>(null);
+  const newInvoiceRoute = isNew ? "/purchasing/invoices/new" : null;
+  if (newInvoiceRoute !== newInvoiceRouteRef.current) {
+    newInvoiceRouteRef.current = newInvoiceRoute;
+    persistedInvoiceIdRef.current = null;
+    clientRequestIdRef.current = newInvoiceRoute ? crypto.randomUUID() : null;
+  }
 
   // SAP-style tabbed layout (default) vs classic single-page (per-company
   // opt-out). `?view=1` forces tabbed+read-only and opens on the details tab.
@@ -856,9 +868,17 @@ export default function PurchaseInvoiceForm() {
     : _co.autoPostPurchase !== false;
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
-      const url = editId ? `${API}/api/purchasing/purchase-invoices/${editId}` : `${API}/api/purchasing/purchase-invoices`;
-      const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
+      const persistedId = persistedInvoiceIdRef.current ?? editId;
+      const method = persistedId ? "PUT" : "POST";
+      const url = persistedId
+        ? `${API}/api/purchasing/purchase-invoices/${persistedId}`
+        : `${API}/api/purchasing/purchase-invoices`;
+      const res = await fetch(url, { method, headers, body: JSON.stringify(data) });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
+      // Capture before auto-post so its failure cannot lead to a second POST.
+      if (method === "POST" && j?.id) {
+        persistedInvoiceIdRef.current = Number(j.id);
+      }
 
       if (autoPostingEnabled && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/purchasing/purchase-invoices/${j.id}/post`, {
@@ -905,6 +925,9 @@ export default function PurchaseInvoiceForm() {
       }
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onSettled: () => {
+      saveInFlightRef.current = false;
+    },
   });
 
   // فك ترحيل الفاتورة من داخل الشاشة نفسها (بدل الرجوع لقائمة الفواتير):
@@ -926,6 +949,9 @@ export default function PurchaseInvoiceForm() {
   });
 
   function handleSave() {
+    // State-based disabled buttons are asynchronous; this synchronous lock
+    // blocks duplicate click/Enter events in the same render.
+    if (saveInFlightRef.current || saveMut.isPending) return;
     // Required-fields gate (mirrors the server's 400 in /purchase-invoices):
     // every purchase invoice must carry an explicit supplier + branch.
     // Surfaced as a destructive toast BEFORE the network round-trip so the
@@ -947,7 +973,7 @@ export default function PurchaseInvoiceForm() {
       toast({ title: lineCheck.title, description: lineCheck.description, variant: "destructive" });
       return;
     }
-    saveMut.mutate({
+    const data: any = {
       companyId: cid, branchId: branchId || null,
       docNumber: docNumber || null, supplierInvoiceNumber: supplierInvoiceNumber || null, supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
       supplierId: supplierId || null, paymentType,
@@ -981,7 +1007,14 @@ export default function PurchaseInvoiceForm() {
               .map(c => ({ costCenterId: Number(c.costCenterId), pct: Number(c.pct) }))
           : null,
       })),
-    });
+    };
+    // Retain this UUID for retries until an explicit new form is opened. The
+    // backend treats it as the POST idempotency key; updates never need it.
+    if (!persistedInvoiceIdRef.current && clientRequestIdRef.current) {
+      data.clientRequestId = clientRequestIdRef.current;
+    }
+    saveInFlightRef.current = true;
+    saveMut.mutate(data);
   }
 
   // On NEW docs in the tabbed layout, drop the initial pristine seed line:
