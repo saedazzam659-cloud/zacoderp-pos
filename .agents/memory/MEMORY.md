@@ -5,3 +5,4 @@
 - [Platform and security index](platform-ops-index.md) — tenant isolation, permissions, agents, mobile/HR, storage, infrastructure, and operational safeguards.
 - [Web and shared UI index](web-shared-index.md) — browser forms, shared UI, dates, catalog, reports, and cross-cutting web behavior.
 - [Invoice save retries](invoice-save-retry-safety.md) — stable per-form keys, immediate persisted-ID capture, and atomic finalized replay prevent repeated-save duplicates.
+- [Web sale unpost provenance](web-sales-unpost-provenance.md) — preserve immutable costing references with compensating stock movements and shared balance locks.

@@ -39,6 +39,7 @@ import {
   getBalance,
   addStockLedgerEntry,
   allocateBatchPicks,
+  lockStockBalances,
   readBatchRemainingBulk,
   type BatchPick,
 } from "../lib/stockHelpers.js";
@@ -100,7 +101,7 @@ function hasSalesZatcaArtifacts(invoice: any): boolean {
  * new movement identity and therefore a new immutable snapshot while reports
  * read only the current posted movement.
  */
-async function writeSalesLineProductionAttributions(
+export async function writeSalesLineProductionAttributions(
   executor: any,
   companyId: number,
   documentType: "sales_invoice" | "sales_return",
@@ -906,6 +907,127 @@ async function applyStockBalanceDeltasBulk(
   }
 
   return balances;
+}
+
+/**
+ * Reverse a posted sales invoice's stock without deleting its original ledger
+ * identity. Immutable production-cost snapshots point at that identity with
+ * ON DELETE RESTRICT, so an unpost is represented by a compensating movement.
+ * Caller must already have locked the invoice header in the same transaction.
+ */
+export async function reverseSalesInvoiceStockForUnpost(input: {
+  executor: any;
+  companyId: number;
+  invoiceId: number;
+  reversalDate: string;
+  docNumber: string | null;
+  sourceGdnId?: number | null;
+}): Promise<void> {
+  const { executor: tx, companyId: cid, invoiceId: id } = input;
+  // GDN-sourced invoices never touched stock (the GDN did).
+  if (input.sourceGdnId) return;
+
+  const ledger: Array<typeof stockLedgerTable.$inferSelect> = await tx.select().from(stockLedgerTable)
+    .where(and(
+      eq(stockLedgerTable.companyId, cid),
+      eq(stockLedgerTable.refType, "sales_invoice"),
+      eq(stockLedgerTable.refId, id),
+    ))
+    .orderBy(asc(stockLedgerTable.id));
+  if (!ledger.length) return;
+
+  // All stock writers must use the shared stock:<company>:<item>:<warehouse>
+  // advisory namespace. `upsertBalance` already uses this helper; using it
+  // here prevents an unpost from reading a balance concurrently with an
+  // inbound receipt/adjustment and then overwriting that newer quantity.
+  await lockStockBalances(
+    ledger.map((row) => ({
+      companyId: cid,
+      itemId: row.itemId,
+      warehouseId: row.warehouseId,
+    })),
+    tx,
+  );
+  const snapshots = await loadStockSnapshots(
+    cid,
+    ledger.map((row) => ({ itemId: row.itemId, warehouseId: row.warehouseId })),
+    tx,
+    true,
+  );
+  const missingBalance = ledger.find((row) => !snapshots.has(`${row.itemId}:${row.warehouseId}`));
+  if (missingBalance) {
+    // Do not manufacture a balance from an incomplete historical ledger:
+    // that would turn a data-integrity incident into a silent stock change.
+    throw Object.assign(
+      new Error(`تعذر فك الترحيل لأن رصيد الصنف ${missingBalance.itemId} في المخزن ${missingBalance.warehouseId} مفقود. راجع سلامة المخزون ثم أعد المحاولة.`),
+      { status: 409 },
+    );
+  }
+
+  const deltas = new Map<string, StockBalanceDelta>();
+  for (const row of ledger) {
+    const key = `${row.itemId}:${row.warehouseId}`;
+    const current = deltas.get(key);
+    const deltaQty = -Number(row.qty); // inverse of the original sale issue
+    if (current) current.deltaQty += deltaQty;
+    else deltas.set(key, {
+      itemId: row.itemId,
+      warehouseId: row.warehouseId,
+      deltaQty,
+      costPrice: Number(row.costPrice),
+    });
+  }
+  const endingBalances = await applyStockBalanceDeltasBulk(
+    cid,
+    [...deltas.values()],
+    snapshots,
+    tx,
+  );
+
+  // Production-cost attributions are immutable and use ON DELETE RESTRICT to
+  // reference the outbound ledger identity. Retain/reclassify the original
+  // issue, then append exact positive reversal rows. A repost writes fresh
+  // active sales rows and fresh immutable snapshots.
+  const cursors = new Map<string, number>();
+  for (const [key, delta] of deltas) {
+    const ending = endingBalances.get(key);
+    if (ending === undefined) throw new Error(`تعذر عكس رصيد المخزون ${key}`);
+    cursors.set(key, ending - delta.deltaQty);
+  }
+  const reversalRows: Array<typeof stockLedgerTable.$inferInsert> = [];
+  for (const row of ledger) {
+    const key = `${row.itemId}:${row.warehouseId}`;
+    const reverseQty = -Number(row.qty);
+    const cursor = (cursors.get(key) ?? 0) + reverseQty;
+    cursors.set(key, cursor);
+    reversalRows.push({
+      companyId: cid,
+      itemId: row.itemId,
+      warehouseId: row.warehouseId,
+      // The historical sale remains dated at its original invoice date. This
+      // compensating adjustment is recorded on the business date of unpost,
+      // so a later receipt is never followed by a misleading old-date balance.
+      txDate: input.reversalDate,
+      txType: "adjustment",
+      qty: String(reverseQty),
+      costPrice: String(row.costPrice),
+      totalCost: String(-Number(row.totalCost)),
+      balanceQty: String(cursor),
+      refId: id,
+      refType: "sales_invoice_unpost",
+      sourceLineId: row.sourceLineId,
+      batchNumber: row.batchNumber,
+      expiryDate: row.expiryDate,
+      notes: `عكس فك ترحيل فاتورة مبيعات ${input.docNumber || id} — حركة أصلية #${row.id}`,
+    });
+  }
+  await tx.update(stockLedgerTable)
+    .set({ refType: "sales_invoice_unposted" })
+    .where(and(
+      eq(stockLedgerTable.companyId, cid),
+      inArray(stockLedgerTable.id, ledger.map((row) => row.id)),
+    ));
+  await tx.insert(stockLedgerTable).values(reversalRows);
 }
 
 const router = Router();
@@ -3820,65 +3942,75 @@ router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (r
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
 
-    // ZATCA-approved invoices are sealed fiscal documents: once cleared /
-    // reported by the authority they can NEVER be unposted (doing so would
-    // break the reported ICV/PIH chain and the legal audit trail).
-    const _zsUnpost = String(inv.zatcaStatus || "").toLowerCase();
-    if (_zsUnpost === "approved" || _zsUnpost === "cleared" || _zsUnpost === "reported") {
-      res.status(409).json({ error: "لا يمكن فك ترحيل فاتورة معتمدة من هيئة الزكاة والضريبة (ZATCA)." });
-      return;
-    }
-
-    // GDN-sourced invoices never touched stock (the GDN did), so the stock
-    // loop below would be a no-op anyway — short-circuit for clarity.
-    const gdnSourced = !!(inv as any).sourceGdnId;
-
-    // Reverse stock movements (sales reduced stock; unpost adds back)
-    const ledger = gdnSourced ? [] : await db.select().from(stockLedgerTable)
-      .where(and(
-        eq(stockLedgerTable.companyId, cid),
-        eq(stockLedgerTable.refType, "sales_invoice"),
-        eq(stockLedgerTable.refId, id),
-      ));
-    for (const row of ledger) {
-      const qty = Number(row.qty); // negative for sale; subtracting it adds back
-      const [bal] = await db.select().from(stockBalanceTable)
+    const updated = await db.transaction(async (tx) => {
+      // Claim/lock the header before touching either stock or GL.  This makes a
+      // competing post/unpost observe one complete state, never half a reversal.
+      const [lockedInv] = await tx.select().from(salesInvoicesTable)
         .where(and(
-          eq(stockBalanceTable.companyId, cid),
-          eq(stockBalanceTable.itemId, row.itemId),
-          eq(stockBalanceTable.warehouseId, row.warehouseId),
-        ));
-      if (bal) {
-        await db.update(stockBalanceTable)
-          .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
-          .where(eq(stockBalanceTable.id, bal.id));
+          eq(salesInvoicesTable.id, id),
+          eq(salesInvoicesTable.companyId, cid),
+          ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
+        ))
+        .for("update");
+      if (!lockedInv) throw Object.assign(new Error("الفاتورة غير موجودة"), { status: 404 });
+      if (lockedInv.status !== "posted") {
+        throw Object.assign(new Error("تم تغيير حالة الفاتورة بواسطة عملية أخرى"), { status: 409 });
       }
-    }
-    if (!gdnSourced) {
-      await db.delete(stockLedgerTable)
-        .where(and(
-          eq(stockLedgerTable.companyId, cid),
-          eq(stockLedgerTable.refType, "sales_invoice"),
-          eq(stockLedgerTable.refId, id),
-        ));
-    }
 
-    if (inv.journalEntryId) {
-      // Stash this JE's number so the next re-post reuses it (no gap).
-      await reserveJeNumberFromEntry(cid, "sales_invoice", id, inv.journalEntryId);
-      await db.update(journalEntryLinesTable)
-        .set({ debit: "0", credit: "0" })
-        .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
-      await db.delete(journalEntryLinesTable)
-        .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
-      await db.delete(journalEntriesTable)
-        .where(and(eq(journalEntriesTable.id, inv.journalEntryId), eq(journalEntriesTable.companyId, cid)));
-    }
+      // ZATCA-approved invoices are sealed fiscal documents: once cleared /
+      // reported by the authority they can NEVER be unposted (doing so would
+      // break the reported ICV/PIH chain and the legal audit trail).
+      const zatcaStatus = String(lockedInv.zatcaStatus || "").toLowerCase();
+      if (zatcaStatus === "approved" || zatcaStatus === "cleared" || zatcaStatus === "reported") {
+        throw Object.assign(new Error("لا يمكن فك ترحيل فاتورة معتمدة من هيئة الزكاة والضريبة (ZATCA)."), { status: 409 });
+      }
 
-    const [updated] = await db.update(salesInvoicesTable)
-      .set({ status: "draft", journalEntryId: null, postedById: null, postedAt: null, updatedAt: new Date() })
-      .where(eq(salesInvoicesTable.id, id))
-      .returning();
+      // A posted return already restores some/all of this invoice's issue.
+      // Sales-return posting locks this same source invoice, so checking while
+      // holding the header lock closes the unpost-vs-return race as well.
+      const postedReturns = await tx.select({
+        id: salesReturnsTable.id,
+        docNumber: salesReturnsTable.docNumber,
+      }).from(salesReturnsTable).where(and(
+        eq(salesReturnsTable.companyId, cid),
+        eq(salesReturnsTable.invoiceId, id),
+        eq(salesReturnsTable.status, "posted"),
+      )).limit(5);
+      if (postedReturns.length) {
+        const refs = postedReturns.map((row) => row.docNumber || `#${row.id}`).join("، ");
+        throw Object.assign(
+          new Error(`لا يمكن فك ترحيل الفاتورة لوجود مرتجع/مرتجعات مبيعات مُرحّلة مرتبطة بها: ${refs}. فك ترحيل المرتجع أولاً.`),
+          { status: 409 },
+        );
+      }
+
+      await reverseSalesInvoiceStockForUnpost({
+        executor: tx,
+        companyId: cid,
+        invoiceId: id,
+        reversalDate: new Date().toISOString().slice(0, 10),
+        docNumber: lockedInv.docNumber,
+        sourceGdnId: (lockedInv as any).sourceGdnId,
+      });
+
+      if (lockedInv.journalEntryId) {
+        // Stash this JE's number so the next re-post reuses it (no gap).
+        await reserveJeNumberFromEntry(cid, "sales_invoice", id, lockedInv.journalEntryId, tx as any);
+        await tx.update(journalEntryLinesTable)
+          .set({ debit: "0", credit: "0" })
+          .where(eq(journalEntryLinesTable.entryId, lockedInv.journalEntryId));
+        await tx.delete(journalEntryLinesTable)
+          .where(eq(journalEntryLinesTable.entryId, lockedInv.journalEntryId));
+        await tx.delete(journalEntriesTable)
+          .where(and(eq(journalEntriesTable.id, lockedInv.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+      }
+
+      const [draft] = await tx.update(salesInvoicesTable)
+        .set({ status: "draft", journalEntryId: null, postedById: null, postedAt: null, updatedAt: new Date() })
+        .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)))
+        .returning();
+      return draft;
+    });
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
@@ -3901,6 +4033,22 @@ router.delete("/sales-invoices/:id", async (req, res) => {
     }
     if (hasSalesZatcaArtifacts(inv)) {
       res.status(409).json({ error: "لا يمكن حذف فاتورة لها آثار أو محاولة إرسال إلى هيئة الزكاة والضريبة (ZATCA)." });
+      return;
+    }
+    // An unpost preserves the original stock issue and its immutable
+    // production-cost snapshot, then appends a compensating movement.  Never
+    // delete that provenance merely to make a now-draft invoice removable.
+    const [immutableStockHistory] = await db.select({
+      id: salesLineProductionCostAttributionsTable.id,
+    }).from(salesLineProductionCostAttributionsTable).where(and(
+      eq(salesLineProductionCostAttributionsTable.companyId, cid),
+      eq(salesLineProductionCostAttributionsTable.documentType, "sales_invoice"),
+      eq(salesLineProductionCostAttributionsTable.documentId, id),
+    )).limit(1);
+    if (immutableStockHistory) {
+      res.status(409).json({
+        error: "لا يمكن حذف فاتورة سبق ترحيلها ثم فك ترحيلها لأن سجل حركة المخزون وتكلفة الإنتاج محفوظان بشكل غير قابل للحذف. استخدم مستند إلغاء/تصحيح بدلاً من ذلك.",
+      });
       return;
     }
     // Block deletion when sales returns reference this invoice (FK has no cascade).
