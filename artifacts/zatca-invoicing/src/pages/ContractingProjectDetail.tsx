@@ -22,15 +22,38 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
+import ContractingAccountingPanel from "@/components/ContractingAccountingPanel";
+import ContractingBillDetailEditor from "@/components/ContractingBillDetailEditor";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { useCostCenters, type CostCenter } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import {
+  BILL_STATUS_LABEL,
+  BILL_TYPE_LABEL,
+  CONTRACT_STATUS_LABEL,
+  CONTRACT_TYPE_LABEL,
+  EVENT_SEVERITY_LABEL,
+  EVENT_TYPE_LABEL,
+  PROJECT_STATUS_LABEL,
+  PROJECT_TYPE_LABEL,
+  RESOURCE_STATUS_LABEL,
+  RESOURCE_TYPE_LABEL,
+  RISK_CATEGORY_LABEL,
+  RISK_LEVEL_LABEL,
+  RISK_STATUS_LABEL,
+  UNIT_LABEL,
+  WORK_CATEGORY_LABEL,
+  WORK_STATUS_LABEL,
+  labelEnum,
+} from "@/lib/contractingLabels";
 
 const API = import.meta.env.VITE_API_URL || "";
 
 type Project = {
   id: number; code: string; nameAr: string; nameEn: string | null;
   clientName: string | null; location: string | null; projectType: string;
+  costCenterId: number | null;
   status: string; contractValue: string; plannedBudget: string; actualCost: string;
   plannedStartDate: string | null; plannedEndDate: string | null;
   progressPercent: string; description: string | null;
@@ -44,6 +67,20 @@ type WorkItem = {
 type Resource = {
   id: number; projectId: number | null; name: string; type: string; unit: string;
   qty: string; unitCost: string; totalCost: string; status: string; notes: string | null;
+  itemId?: number | null; unitId?: number | null; warehouseId?: number | null;
+  qtyBase?: string | null; conversionFactor?: string | null;
+  itemNameAr?: string | null; itemCode?: string | null; unitNameAr?: string | null;
+  warehouseNameAr?: string | null; availableStockBase?: string | null;
+};
+type InventoryUnit = { id: number; code: string; nameAr: string; factor: string; isBase: boolean };
+type InventoryItem = {
+  id: number; code: string; nameAr: string; baseUnitId: number;
+  baseUnit: InventoryUnit; units: InventoryUnit[];
+};
+type InventoryWarehouse = { id: number; code: string; nameAr: string; branchId: number | null };
+type InventoryBalance = { itemId: number; warehouseId: number; qtyBase: string; avgCost: string | null };
+type InventoryOptions = {
+  items: InventoryItem[]; warehouses: InventoryWarehouse[]; balances: InventoryBalance[];
 };
 type Bill = {
   id: number; billNumber: string; billType: string; billDate: string;
@@ -55,6 +92,7 @@ type Bill = {
   grossAmount: string; retentionPercent: string; retentionAmount: string;
   previousPaid: string; dueAmount: string; vatAmount: string; netAmount: string;
   paidAmount: string;
+  costCenterId: number | null;
   status: string; notes: string | null;
 };
 type OwnerContract = {
@@ -118,10 +156,7 @@ const RISK_TONE:  Record<RiskLevel, string> = {
   high:   "bg-red-100     text-red-700",
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: "مسودة", in_progress: "قيد التنفيذ", on_hold: "متوقفة",
-  completed: "مكتملة", cancelled: "ملغاة",
-};
+const STATUS_LABEL = PROJECT_STATUS_LABEL;
 
 export default function ContractingProjectDetail() {
     const gate = useDemoActionGate();
@@ -170,12 +205,12 @@ export default function ContractingProjectDetail() {
         <div className="flex-1">
           <h1 className="text-2xl font-bold">{project.nameAr}</h1>
           <div className="text-sm text-slate-500">
-            {project.code} • {STATUS_LABEL[project.status] ?? project.status}
+            {project.code} • {labelEnum(STATUS_LABEL, project.status)}
             {project.location && ` • ${project.location}`}
           </div>
         </div>
         <Badge variant={project.status === "completed" ? "secondary" : project.status === "cancelled" ? "destructive" : "default"}>
-          {STATUS_LABEL[project.status] ?? project.status}
+          {labelEnum(STATUS_LABEL, project.status)}
         </Badge>
       </div>
 
@@ -187,6 +222,7 @@ export default function ContractingProjectDetail() {
           <TabsTrigger value="work-items">{t("contracting.tabs.workItems", "بنود التنفيذ")}</TabsTrigger>
           <TabsTrigger value="resources">{t("contracting.tabs.resources", "الموارد")}</TabsTrigger>
           <TabsTrigger value="bills">{t("contracting.tabs.bills", "المستخلصات")}</TabsTrigger>
+          <TabsTrigger value="accounting">{t("contracting.tabs.accounting", "المحاسبة والتسويات")}</TabsTrigger>
           <TabsTrigger value="risks">{t("contracting.tabs.risks", "المخاطر")}</TabsTrigger>
           <TabsTrigger value="events">{t("contracting.tabs.events", "الأحداث")}</TabsTrigger>
           <TabsTrigger value="ai">
@@ -204,7 +240,7 @@ export default function ContractingProjectDetail() {
           </div>
           <div className="rounded-lg border bg-white dark:bg-slate-900 p-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             <Meta label={t("contracting.projects.client", "العميل")} value={project.clientName || "—"} />
-            <Meta label={t("contracting.projects.type", "نوع المشروع")} value={project.projectType} />
+            <Meta label={t("contracting.projects.type", "نوع المشروع")} value={labelEnum(PROJECT_TYPE_LABEL, project.projectType)} />
             <Meta label={t("contracting.projects.plannedStartDate", "تاريخ البداية المخطط")} value={project.plannedStartDate || "—"} />
             <Meta label={t("contracting.projects.plannedEndDate", "تاريخ النهاية المخطط")} value={project.plannedEndDate || "—"} />
             {project.description && (
@@ -219,7 +255,8 @@ export default function ContractingProjectDetail() {
         <TabsContent value="sub-contracts"  className="mt-4"><SubContractsTab  projectId={projectId} /></TabsContent>
         <TabsContent value="work-items" className="mt-4"><WorkItemsTab projectId={projectId} onChange={loadProject} /></TabsContent>
         <TabsContent value="resources"  className="mt-4"><ResourcesTab projectId={projectId} /></TabsContent>
-        <TabsContent value="bills"      className="mt-4"><BillsTab     projectId={projectId} /></TabsContent>
+        <TabsContent value="bills"      className="mt-4"><BillsTab     projectId={projectId} projectCostCenterId={project?.costCenterId ?? null} /></TabsContent>
+        <TabsContent value="accounting" className="mt-4"><ContractingAccountingPanel projectId={projectId} /></TabsContent>
         <TabsContent value="risks"      className="mt-4"><RisksTab     projectId={projectId} /></TabsContent>
         <TabsContent value="events"     className="mt-4"><EventsTab    projectId={projectId} /></TabsContent>
         <TabsContent value="ai"         className="mt-4"><AITab        projectId={projectId} /></TabsContent>
@@ -352,12 +389,12 @@ function WorkItemsTab({ projectId, onChange }: { projectId: number; onChange: ()
           <div className="grid grid-cols-2 gap-3">
             <Field label={t("contracting.workItems.code", "الكود")}><Input value={editing.code ?? ""} onChange={e => setEditing({ ...editing, code: e.target.value })} /></Field>
             <Field label={t("contracting.workItems.name", "الاسم")} required><Input value={editing.nameAr ?? ""} onChange={e => setEditing({ ...editing, nameAr: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.unit", "الوحدة")}><Input value={editing.unit ?? "m3"} onChange={e => setEditing({ ...editing, unit: e.target.value })} /></Field>
+            <Field label={t("contracting.workItems.unit", "الوحدة")}><Input value={editing.unit ?? "m3"} onChange={e => setEditing({ ...editing, unit: e.target.value })} placeholder="م³ / م² / ساعة" /></Field>
             <Field label={t("contracting.workItems.category", "التصنيف")}>
               <Select value={editing.category ?? "other"} onValueChange={v => setEditing({ ...editing, category: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["earthworks","concrete","steel","masonry","mep","finishing","other"].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {["earthworks","excavation","concrete","steel","masonry","electrical","plumbing","mep","finishing","other"].map(c => <SelectItem key={c} value={c}>{labelEnum(WORK_CATEGORY_LABEL, c)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
@@ -369,12 +406,12 @@ function WorkItemsTab({ projectId, onChange }: { projectId: number; onChange: ()
               <Select value={editing.status ?? "pending"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["pending","in_progress","completed","blocked"].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {["pending","in_progress","completed","blocked"].map(s => <SelectItem key={s} value={s}>{labelEnum(WORK_STATUS_LABEL, s)}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </Field>
-          </div>
-          <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
+             </Field>
+           </div>
+           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button onClick={save}>{t("common.save", "حفظ")}</Button>
           </div>
@@ -399,7 +436,7 @@ function WorkItemsTab({ projectId, onChange }: { projectId: number; onChange: ()
             {rows.map(r => (
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.nameAr}<div className="text-[10px] text-slate-400">{r.code || ""}</div></TableCell>
-                <TableCell>{r.unit}</TableCell>
+                <TableCell>{UNIT_LABEL[r.unit] ?? r.unit}</TableCell>
                 <TableCell className="tabular-nums">{Number(r.plannedQty).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums">{Number(r.actualQty).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums">{Number(r.unitCost).toLocaleString("en-US")}</TableCell>
@@ -426,6 +463,8 @@ function ResourcesTab({ projectId }: { projectId: number }) {
   const [rows, setRows] = useState<Resource[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Resource> | null>(null);
+  const [inventory, setInventory] = useState<InventoryOptions>({ items: [], warehouses: [], balances: [] });
+  const [inventoryLoading, setInventoryLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -440,8 +479,27 @@ function ResourcesTab({ projectId }: { projectId: number }) {
   }, [token, projectId, toast]);
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (!token) return;
+    setInventoryLoading(true);
+    fetch(`${API}/api/contracting/resources/inventory-options?projectId=${projectId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(async (r) => {
+      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
+      return r.json();
+    }).then(setInventory).catch((e: any) => {
+      toast({ title: e?.message ?? t("common.errorOccurred", "حدث خطأ"), variant: "destructive" });
+    }).finally(() => setInventoryLoading(false));
+  }, [token, projectId, t, toast]);
+
   async function save() {
     if (!editing?.name?.trim()) { toast({ title: t("common.required", "الاسم مطلوب"), variant: "destructive" }); return; }
+    if (editing.type === "material" && (!editing.itemId || !editing.unitId || !editing.warehouseId)) {
+      toast({ title: t("contracting.resources.materialFieldsRequired", "اختر صنف المخزون والوحدة والمخزن للمواد"), variant: "destructive" }); return;
+    }
+    if (Number(editing.qty ?? 0) <= 0) {
+      toast({ title: t("contracting.resources.positiveQty", "يجب أن تكون الكمية أكبر من صفر"), variant: "destructive" }); return;
+    }
     try {
       const isEdit = (editing as any).id != null;
       const url = isEdit
@@ -467,7 +525,7 @@ function ResourcesTab({ projectId }: { projectId: number }) {
     <div className="space-y-3">
       <div className="flex justify-between">
         <h3 className="font-bold">{t("contracting.resources.title", "الموارد")} ({rows.length})</h3>
-        <Button size="sm" onClick={() => setEditing({ name: "", type: "material", unit: "hr", qty: "0", unitCost: "0", status: "planned" })}>
+        <Button size="sm" onClick={() => setEditing({ name: "", type: "material", unit: "", qty: "0", unitCost: "0", status: "planned" })}>
           <Plus className="h-4 w-4 mx-1" /> {t("contracting.resources.add", "إضافة مورد")}
         </Button>
       </div>
@@ -483,27 +541,79 @@ function ResourcesTab({ projectId }: { projectId: number }) {
             </Button>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label={t("contracting.resources.name", "اسم المورد")} required><Input value={editing.name ?? ""} onChange={e => setEditing({ ...editing, name: e.target.value })} /></Field>
+            <Field label={t("contracting.resources.name", "اسم المورد")} required>
+              <Input value={editing.name ?? ""} readOnly={editing.type === "material"} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder={editing.type === "material" ? t("contracting.resources.selectItem", "يُحدد من صنف المخزون") : ""} />
+            </Field>
             <Field label={t("contracting.resources.type", "النوع")}>
-              <Select value={editing.type ?? "material"} onValueChange={v => setEditing({ ...editing, type: v })}>
+              <Select value={editing.type ?? "material"} onValueChange={v => setEditing({ ...editing, type: v, ...(v === "material" ? {} : { itemId: null, unitId: null, warehouseId: null, unit: "hr" }) })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["labor","equipment","material","subcontractor","other"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                  {["labor","equipment","material","subcontractor","other"].map(x => <SelectItem key={x} value={x}>{labelEnum(RESOURCE_TYPE_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
-            <Field label={t("contracting.resources.unit", "الوحدة")}><Input value={editing.unit ?? "hr"} onChange={e => setEditing({ ...editing, unit: e.target.value })} /></Field>
+            {editing.type === "material" ? (
+              <>
+                <Field label={t("contracting.resources.item", "صنف المخزون")} required>
+                  <Select value={editing.itemId ? String(editing.itemId) : ""} onValueChange={v => {
+                    const item = inventory.items.find(x => x.id === Number(v));
+                    setEditing({ ...editing, itemId: Number(v), unitId: item?.baseUnitId ?? null, unit: item?.baseUnit.code ?? "", name: item?.nameAr ?? "" });
+                  }}>
+                    <SelectTrigger><SelectValue placeholder={inventoryLoading ? t("common.loading", "جار التحميل…") : t("contracting.resources.selectItem", "اختر صنفاً")} /></SelectTrigger>
+                    <SelectContent>{inventory.items.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.code} — {item.nameAr}</SelectItem>)}</SelectContent>
+                  </Select>
+                </Field>
+                <Field label={t("contracting.resources.unit", "وحدة الصنف")} required>
+                  <Select value={editing.unitId ? String(editing.unitId) : ""} onValueChange={v => {
+                    const item = inventory.items.find(x => x.id === Number(editing.itemId));
+                    const unit = item?.units.find(x => x.id === Number(v));
+                    setEditing({ ...editing, unitId: Number(v), unit: unit?.code ?? "" });
+                  }}>
+                    <SelectTrigger><SelectValue placeholder={t("contracting.resources.selectUnit", "اختر وحدة قانونية")} /></SelectTrigger>
+                    <SelectContent>
+                      {(inventory.items.find(x => x.id === Number(editing.itemId))?.units ?? []).map(unit => (
+                        <SelectItem key={unit.id} value={String(unit.id)}>{unit.nameAr || UNIT_LABEL[unit.code] || unit.code}{unit.isBase ? ` (${t("contracting.resources.baseUnit", "أساسية")})` : ""}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label={t("contracting.resources.warehouse", "المخزن")} required>
+                  <Select value={editing.warehouseId ? String(editing.warehouseId) : ""} onValueChange={v => setEditing({ ...editing, warehouseId: Number(v) })}>
+                    <SelectTrigger><SelectValue placeholder={t("contracting.resources.selectWarehouse", "اختر مخزناً")} /></SelectTrigger>
+                    <SelectContent>{inventory.warehouses.map(warehouse => <SelectItem key={warehouse.id} value={String(warehouse.id)}>{warehouse.code} — {warehouse.nameAr}</SelectItem>)}</SelectContent>
+                  </Select>
+                </Field>
+              </>
+            ) : (
+              <Field label={t("contracting.resources.unit", "الوحدة")}><Input value={editing.unit ?? "hr"} onChange={e => setEditing({ ...editing, unit: e.target.value })} placeholder="ساعة / يوم / قطعة" /></Field>
+            )}
             <Field label={t("contracting.resources.qty", "الكمية")}><Input type="number" value={editing.qty ?? "0"} onChange={e => setEditing({ ...editing, qty: e.target.value })} /></Field>
             <Field label={t("contracting.resources.unitCost", "سعر الوحدة")}><Input type="number" value={editing.unitCost ?? "0"} onChange={e => setEditing({ ...editing, unitCost: e.target.value })} /></Field>
             <Field label={t("contracting.resources.status", "الحالة")}>
               <Select value={editing.status ?? "planned"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["planned","in_use","consumed","returned"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                  {["planned","in_use","consumed","returned"].map(x => <SelectItem key={x} value={x}>{labelEnum(RESOURCE_STATUS_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
           </div>
+          {editing.type === "material" && editing.itemId && editing.unitId && editing.warehouseId && (() => {
+            const item = inventory.items.find(x => x.id === Number(editing.itemId));
+            const unit = item?.units.find(x => x.id === Number(editing.unitId));
+            const balance = inventory.balances.find(x => x.itemId === Number(editing.itemId) && x.warehouseId === Number(editing.warehouseId));
+            const availableBase = Number(balance?.qtyBase ?? 0);
+            const factor = Number(unit?.factor ?? 1);
+            return (
+              <div className="rounded-md border border-blue-200 bg-blue-50/70 dark:bg-blue-950/20 p-3 text-sm">
+                <span className="font-medium">{t("contracting.resources.availableStock", "المتاح في المخزن")}:</span>{" "}
+                {availableBase.toLocaleString("en-US")} {item?.baseUnit.nameAr ?? t("contracting.resources.baseUnit", "الوحدة الأساسية")}
+                {" · "}
+                {(factor > 0 ? availableBase / factor : 0).toLocaleString("en-US")} {unit?.nameAr ?? editing.unit}
+                <div className="text-[11px] text-slate-500 mt-1">{t("contracting.resources.planningNoIssue", "التخطيط لا يصرف المخزون ولا ينشئ حركة أو قيداً محاسبياً")}</div>
+              </div>
+            );
+          })()}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button onClick={save}>{t("common.save", "حفظ")}</Button>
@@ -527,10 +637,10 @@ function ResourcesTab({ projectId }: { projectId: number }) {
             {rows.map(r => (
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.name}</TableCell>
-                <TableCell><Badge variant="outline">{r.type}</Badge></TableCell>
-                <TableCell className="tabular-nums">{Number(r.qty).toLocaleString("en-US")} {r.unit}</TableCell>
+                 <TableCell><Badge variant="outline">{labelEnum(RESOURCE_TYPE_LABEL, r.type)}</Badge></TableCell>
+                 <TableCell className="tabular-nums">{Number(r.qty).toLocaleString("en-US")} {r.unitNameAr ?? UNIT_LABEL[r.unit] ?? r.unit}</TableCell>
                 <TableCell className="tabular-nums">{Number(r.totalCost).toLocaleString("en-US")} ر.س</TableCell>
-                <TableCell><Badge>{r.status}</Badge></TableCell>
+                 <TableCell><Badge>{labelEnum(RESOURCE_STATUS_LABEL, r.status)}</Badge></TableCell>
                 <TableCell className="text-end">
                   <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-4 w-4" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => del(r.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
@@ -545,9 +655,9 @@ function ResourcesTab({ projectId }: { projectId: number }) {
 }
 
 // ─────────────────── BILLS TAB ───────────────────
-function BillsTab({ projectId }: { projectId: number }) {
+function BillsTab({ projectId, projectCostCenterId }: { projectId: number; projectCostCenterId: number | null }) {
   const { t } = useTranslation();
-  const { token } = useAuth() as any;
+  const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
   const [direction, setDirection] = useState<"outgoing" | "incoming">("outgoing");
   const [rows, setRows] = useState<Bill[]>([]);
@@ -560,6 +670,11 @@ function BillsTab({ projectId }: { projectId: number }) {
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [ownerContracts, setOwnerContracts] = useState<OwnerContract[]>([]);
   const [subContracts,   setSubContracts]   = useState<SubContract[]>([]);
+  const companyId = actingCompanyId ?? user?.companyId ?? user?.company?.id ?? null;
+  const { data: costCenters = [], isLoading: costCentersLoading } = useCostCenters({
+    companyId,
+    includeInactive: true,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -600,10 +715,15 @@ function BillsTab({ projectId }: { projectId: number }) {
       const url = isEdit
         ? `${API}/api/contracting/bills/${(editing as any).id}`
         : `${API}/api/contracting/projects/${projectId}/bills`;
+      const payload: any = { ...editing, direction };
+      // Paid amount is owned by the accounting settlement path. Do not send
+      // the read-only value back through the legacy CRUD update, even when it
+      // is unchanged.
+      if (isEdit) delete payload.paidAmount;
       const r = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...editing, direction }),
+        body: JSON.stringify(payload),
       });
       if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
       setEditing(null); await load();
@@ -635,6 +755,7 @@ function BillsTab({ projectId }: { projectId: number }) {
       previousPaid: "0", paidAmount: "0", status: "draft",
       ownerContractId, subcontractorContractId,
       contractorId: null,
+      costCenterId: projectCostCenterId,
     });
   }
 
@@ -716,7 +837,7 @@ function BillsTab({ projectId }: { projectId: number }) {
                   <TableCell className="tabular-nums">{Number(b.dueAmount).toLocaleString("en-US")}</TableCell>
                   <TableCell className="tabular-nums font-bold">{Number(b.netAmount).toLocaleString("en-US")}</TableCell>
                   <TableCell className="tabular-nums text-emerald-600">{Number(b.paidAmount).toLocaleString("en-US")}</TableCell>
-                  <TableCell><Badge>{b.status}</Badge></TableCell>
+                   <TableCell><Badge>{labelEnum(BILL_STATUS_LABEL, b.status)}</Badge></TableCell>
                   <TableCell className="text-end">
                     <Button size="sm" variant="ghost" onClick={() => setEditing(b)}><Pencil className="h-4 w-4" /></Button>
                     <Button size="sm" variant="ghost" onClick={() => del(b.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
@@ -757,7 +878,7 @@ function BillsTab({ projectId }: { projectId: number }) {
                 <Select value={editing.ownerContractId ? String(editing.ownerContractId) : ""} onValueChange={v => setEditing({ ...editing, ownerContractId: v ? Number(v) : null })}>
                   <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                   <SelectContent>
-                    {ownerContracts.map(c => <SelectItem key={c.id} value={String(c.id)}>#{c.contractNumber} ({c.contractType})</SelectItem>)}
+                     {ownerContracts.map(c => <SelectItem key={c.id} value={String(c.id)}>#{c.contractNumber} ({labelEnum(CONTRACT_TYPE_LABEL, c.contractType)})</SelectItem>)}
                   </SelectContent>
                 </Select>
               </Field>
@@ -780,24 +901,65 @@ function BillsTab({ projectId }: { projectId: number }) {
               <Select value={editing.billType ?? "interim"} onValueChange={v => setEditing({ ...editing, billType: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["interim","final","advance","retention_release"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                   {["interim","final","advance","retention_release"].map(x => <SelectItem key={x} value={x}>{labelEnum(BILL_TYPE_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
             <Field label={t("contracting.bills.progress", "إنجاز %")}><Input type="number" value={editing.progressPercent ?? "0"} onChange={e => setEditing({ ...editing, progressPercent: e.target.value })} /></Field>
             <Field label={t("contracting.bills.gross", "إجمالي (ر.س)")} required><Input type="number" value={editing.grossAmount ?? "0"} onChange={e => setEditing({ ...editing, grossAmount: e.target.value })} /></Field>
+            <Field label={t("contracting.bills.costCenter", "مركز التكلفة")}>
+              <Select
+                value={editing.costCenterId == null ? "__none" : String(editing.costCenterId)}
+                onValueChange={value => setEditing({
+                  ...editing,
+                  costCenterId: value === "__none" ? null : Number(value),
+                })}
+                disabled={costCentersLoading}
+              >
+                <SelectTrigger><SelectValue placeholder={t("contracting.bills.noCostCenter", "بدون مركز تكلفة")} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">{t("contracting.bills.noCostCenter", "بدون مركز تكلفة")}</SelectItem>
+                  {(costCenters as CostCenter[]).map(center => {
+                    const active = center.isActive !== false;
+                    const current = editing.costCenterId === center.id;
+                    return (
+                      <SelectItem
+                        key={center.id}
+                        value={String(center.id)}
+                        disabled={!active && !current}
+                      >
+                        {center.code} — {center.nameAr || center.nameEn || `#${center.id}`}
+                        {!active ? ` (${t("contracting.bills.inactiveCostCenter", "غير نشط")})` : ""}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+              {editing.costCenterId == null && (
+                <p className="text-[11px] text-muted-foreground">
+                  {t("contracting.bills.costCenterOptional", "مركز التكلفة اختياري؛ احفظ بدون مركز عند الحاجة")}
+                </p>
+              )}
+            </Field>
             <Field label={t("contracting.bills.retentionPercent", "% محتجز")}><Input type="number" value={editing.retentionPercent ?? "10"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.bills.previousPaid", "المدفوع سابقاً")}><Input type="number" value={editing.previousPaid ?? "0"} onChange={e => setEditing({ ...editing, previousPaid: e.target.value })} /></Field>
-            <Field label={t("contracting.bills.paidAmount", "مبلغ مدفوع لهذا المستخلص")}><Input type="number" value={editing.paidAmount ?? "0"} onChange={e => setEditing({ ...editing, paidAmount: e.target.value })} /></Field>
+            <Field label={t("contracting.bills.paidAmount", "مبلغ مدفوع لهذا المستخلص")}><Input type="number" value={editing.paidAmount ?? "0"} readOnly disabled /></Field>
             <Field label={t("contracting.bills.status", "الحالة")}>
               <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["draft","submitted","approved","rejected","paid"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                   {["draft","submitted","approved","posted","partially_paid","rejected","paid"].map(x => (
+                     <SelectItem key={x} value={x} disabled={["approved","posted","partially_paid","paid"].includes(x)}>
+                       {labelEnum(BILL_STATUS_LABEL, x)}
+                     </SelectItem>
+                   ))}
                 </SelectContent>
               </Select>
             </Field>
           </div>
+          {(editing as any)?.id != null && (
+            <ContractingBillDetailEditor billId={Number((editing as any).id)} projectId={projectId} />
+          )}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button onClick={save}>{t("common.save", "حفظ")}</Button>
@@ -878,7 +1040,7 @@ function RisksTab({ projectId }: { projectId: number }) {
               <Select value={editing.category ?? "other"} onValueChange={v => setEditing({ ...editing, category: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["schedule","cost","quality","safety","environmental","contractual","other"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                   {["schedule","cost","quality","safety","environmental","contractual","other"].map(x => <SelectItem key={x} value={x}>{labelEnum(RISK_CATEGORY_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
@@ -886,7 +1048,7 @@ function RisksTab({ projectId }: { projectId: number }) {
               <Select value={editing.status ?? "open"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["open","mitigating","resolved","accepted"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                   {["open","mitigating","resolved","accepted"].map(x => <SelectItem key={x} value={x}>{labelEnum(RISK_STATUS_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
@@ -894,7 +1056,7 @@ function RisksTab({ projectId }: { projectId: number }) {
               <Select value={editing.likelihood ?? "medium"} onValueChange={v => setEditing({ ...editing, likelihood: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["low","medium","high"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                 {["low","medium","high"].map(x => <SelectItem key={x} value={x}>{labelEnum(RISK_LEVEL_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
@@ -902,7 +1064,7 @@ function RisksTab({ projectId }: { projectId: number }) {
               <Select value={editing.impact ?? "medium"} onValueChange={v => setEditing({ ...editing, impact: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["low","medium","high"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                   {["low","medium","high"].map(x => <SelectItem key={x} value={x}>{labelEnum(RISK_LEVEL_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
@@ -932,11 +1094,11 @@ function RisksTab({ projectId }: { projectId: number }) {
             {rows.map(r => (
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.title}{r.description && <div className="text-[11px] text-slate-500">{r.description}</div>}</TableCell>
-                <TableCell><Badge variant="outline">{r.category}</Badge></TableCell>
-                <TableCell>{r.likelihood}</TableCell>
-                <TableCell>{r.impact}</TableCell>
+                 <TableCell><Badge variant="outline">{labelEnum(RISK_CATEGORY_LABEL, r.category)}</Badge></TableCell>
+                 <TableCell>{labelEnum(RISK_LEVEL_LABEL, r.likelihood)}</TableCell>
+                 <TableCell>{labelEnum(RISK_LEVEL_LABEL, r.impact)}</TableCell>
                 <TableCell><span className={`px-2 py-0.5 rounded-full text-xs font-bold ${r.score >= 6 ? "bg-red-100 text-red-700" : r.score >= 4 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{r.score}</span></TableCell>
-                <TableCell><Badge>{r.status}</Badge></TableCell>
+                 <TableCell><Badge>{labelEnum(RISK_STATUS_LABEL, r.status)}</Badge></TableCell>
                 <TableCell className="text-end">
                   <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-4 w-4" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => del(r.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
@@ -980,7 +1142,7 @@ function EventsTab({ projectId }: { projectId: number }) {
               {e.description && <div className="text-[11px] text-slate-500">{e.description}</div>}
               <div className="text-[10px] text-slate-400 mt-0.5">{new Date(e.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
             </div>
-            <Badge variant="outline" className="text-[10px]">{e.eventType}</Badge>
+             <Badge variant="outline" className="text-[10px]">{labelEnum(EVENT_TYPE_LABEL, e.eventType)} · {labelEnum(EVENT_SEVERITY_LABEL, e.severity)}</Badge>
           </div>
         ))}
       </div>
@@ -1234,14 +1396,14 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
             {rows.map(c => (
               <TableRow key={c.id}>
                 <TableCell className="font-mono">{c.contractNumber}</TableCell>
-                <TableCell><Badge variant={c.contractType === "main" ? "default" : "secondary"}>{c.contractType === "main" ? t("contracting.ownerContract.main", "رئيسي") : t("contracting.ownerContract.changeOrder", "أمر تغيير")}</Badge></TableCell>
+                <TableCell><Badge variant={c.contractType === "main" ? "default" : "secondary"}>{labelEnum(CONTRACT_TYPE_LABEL, c.contractType)}</Badge></TableCell>
                 <TableCell>{c.clientName ?? "—"}</TableCell>
                 <TableCell className="tabular-nums font-bold">{Number(c.value).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums">{Number(c.advancePayment).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums">{Number(c.retentionPercent).toFixed(1)}%</TableCell>
                 <TableCell className="tabular-nums">{c.durationDays}</TableCell>
                 <TableCell>{c.signedAt ?? "—"}</TableCell>
-                <TableCell><Badge>{c.status}</Badge></TableCell>
+               <TableCell><Badge>{labelEnum(CONTRACT_STATUS_LABEL, c.status)}</Badge></TableCell>
                 <TableCell className="text-end">
                   <Button size="sm" variant="ghost" onClick={() => setEditing(c)}><Pencil className="h-4 w-4" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
@@ -1269,8 +1431,9 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
               <Select value={editing.contractType ?? "main"} onValueChange={v => setEditing({ ...editing, contractType: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="main">{t("contracting.ownerContract.main", "رئيسي")}</SelectItem>
-                  <SelectItem value="change_order">{t("contracting.ownerContract.changeOrder", "أمر تغيير")}</SelectItem>
+                  {["main", "addendum", "change_order"].map(type => (
+                    <SelectItem key={type} value={type}>{labelEnum(CONTRACT_TYPE_LABEL, type)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </Field>
@@ -1288,7 +1451,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
               <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["draft","active","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                  {["draft","active","suspended","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{labelEnum(CONTRACT_STATUS_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
@@ -1414,7 +1577,7 @@ function SubContractsTab({ projectId }: { projectId: number }) {
                   <TableCell className="tabular-nums">{Number(c.retentionPercent).toFixed(1)}%</TableCell>
                   <TableCell className="tabular-nums">{c.durationDays}</TableCell>
                   <TableCell>{c.signedAt ?? "—"}</TableCell>
-                  <TableCell><Badge>{c.status}</Badge></TableCell>
+               <TableCell><Badge>{labelEnum(CONTRACT_STATUS_LABEL, c.status)}</Badge></TableCell>
                   <TableCell className="text-end">
                     <Button size="sm" variant="ghost" onClick={() => setEditing(c)}><Pencil className="h-4 w-4" /></Button>
                     <Button size="sm" variant="ghost" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
@@ -1460,7 +1623,7 @@ function SubContractsTab({ projectId }: { projectId: number }) {
               <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["draft","active","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                  {["draft","active","suspended","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{labelEnum(CONTRACT_STATUS_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>

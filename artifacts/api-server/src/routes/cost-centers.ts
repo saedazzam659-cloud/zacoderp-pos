@@ -21,7 +21,10 @@ router.use(extractAuth);
 // still populate the picker. Read-only endpoint.
 router.get(
   "/",
-  requirePermissionAny(["accounts", "accounting_reports"], "view"),
+  // Contracting project/bill forms also use the shared catalogue picker.
+  // Keep this endpoint read-only while allowing users who can view
+  // contracting but do not have accounting-report access to load it.
+  requirePermissionAny(["accounts", "accounting_reports", "contracting"], "view"),
   async (req, res) => {
     try {
       const cid = resolveCompanyId(req, (req as any).authUser?.companyId ?? undefined);

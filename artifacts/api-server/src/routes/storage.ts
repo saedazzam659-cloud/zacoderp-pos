@@ -166,6 +166,14 @@ router.get("/storage/objects/*path", extractAuth, requireAuthed, async (req: Req
   try {
     const raw = req.params.path;
     const wildcardPath = Array.isArray(raw) ? raw.join("/") : raw;
+    // Contracting bill attachments are only readable through the bill-bound
+    // download endpoint, which checks company + bill + branch scope. Never
+    // let the generic object proxy turn their server-generated namespace into
+    // an IDOR primitive.
+    if (wildcardPath.startsWith("contracting-bills/")) {
+      res.status(403).json({ error: "Use the bill attachment download endpoint" });
+      return;
+    }
     if (!canReadPrivateObjectPath(wildcardPath, (req as any).authUser)) {
       res.status(403).json({ error: "Forbidden" });
       return;

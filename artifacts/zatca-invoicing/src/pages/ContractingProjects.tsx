@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { Briefcase, Plus, Search, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { Briefcase, Plus, Search, Pencil, Trash2, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -19,33 +19,35 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { FormPanel } from "@/components/FormPanel";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { useCostCenters, type CostCenter } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
+import { PROJECT_STATUS_LABEL, PROJECT_TYPE_LABEL, labelEnum } from "@/lib/contractingLabels";
 
 const API = import.meta.env.VITE_API_URL || "";
 
 type Project = {
   id: number; code: string; nameAr: string; nameEn: string | null;
+  customerId: number | null;
+  costCenterId: number | null;
   clientName: string | null; location: string | null; projectType: string;
   status: string; contractValue: string; plannedBudget: string; actualCost: string;
   plannedStartDate: string | null; plannedEndDate: string | null;
   progressPercent: string; description: string | null;
 };
 
-const STATUSES = ["draft", "in_progress", "on_hold", "completed", "cancelled"] as const;
-const TYPES = ["building", "infrastructure", "renovation", "maintenance", "other"] as const;
+const STATUSES = ["draft", "study", "contract", "planning", "in_progress", "on_hold", "completed", "cancelled"] as const;
+const TYPES = ["building", "road", "infrastructure", "renovation", "maintenance", "other"] as const;
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: "مسودة", in_progress: "قيد التنفيذ", on_hold: "متوقفة",
-  completed: "مكتملة", cancelled: "ملغاة",
-};
+const STATUS_LABEL = PROJECT_STATUS_LABEL;
 const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   draft: "secondary", in_progress: "default", on_hold: "outline",
   completed: "secondary", cancelled: "destructive",
 };
 
 const empty = (): Partial<Project> => ({
-  code: "", nameAr: "", nameEn: "", clientName: "", location: "",
+  code: "", nameAr: "", nameEn: "", customerId: null, costCenterId: null, clientName: "", location: "",
   projectType: "building", status: "draft", contractValue: "0",
   plannedBudget: "0", actualCost: "0", plannedStartDate: "", plannedEndDate: "",
   progressPercent: "0", description: "",
@@ -53,7 +55,7 @@ const empty = (): Partial<Project> => ({
 
 export default function ContractingProjects() {
   const { t } = useTranslation();
-  const { token } = useAuth() as any;
+  const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
@@ -66,6 +68,54 @@ export default function ContractingProjects() {
   const nextCode = useNextSequenceNumber("contracting_project", isCreating);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [customersError, setCustomersError] = useState<string | null>(null);
+  const companyId = actingCompanyId ?? user?.companyId ?? user?.company?.id ?? null;
+  const { data: costCenters = [], isLoading: costCentersLoading } = useCostCenters({
+    companyId,
+    includeInactive: true,
+  });
+  const editingOpen = editing != null;
+  const requestHeaders = useCallback((): Record<string, string> => ({
+    Authorization: `Bearer ${token}`,
+    ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+  }), [token, actingCompanyId]);
+
+  useEffect(() => {
+    if (!editingOpen || !token || !companyId) {
+      if (!editingOpen) {
+        setCustomers([]);
+        setCustomersError(null);
+      }
+      return;
+    }
+    let cancelled = false;
+    setCustomersLoading(true);
+    setCustomersError(null);
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+    if (actingCompanyId) headers["x-acting-company-id"] = String(actingCompanyId);
+    fetch(`${API}/api/customers?companyId=${encodeURIComponent(companyId)}`, { headers })
+      .then(async r => {
+        if (!r.ok) throw new Error(r.status === 403
+          ? t("contracting.projects.customerPermission", "لا تملك صلاحية عرض العملاء")
+          : `HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(rows => {
+        if (!cancelled) setCustomers(Array.isArray(rows) ? rows : []);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setCustomers([]);
+          setCustomersError(error?.message ?? t("common.errorOccurred", "حدث خطأ"));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCustomersLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [editingOpen, token, companyId, actingCompanyId, t]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -75,14 +125,14 @@ export default function ContractingProjects() {
       if (statusFilter !== "all") qs.set("status", statusFilter);
       if (search.trim()) qs.set("search", search.trim());
       const r = await fetch(`${API}/api/contracting/projects?${qs}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: requestHeaders(),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setRows(await r.json());
     } catch (e: any) {
       toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });
     } finally { setLoading(false); }
-  }, [token, statusFilter, search, t, toast]);
+  }, [token, statusFilter, search, t, toast, requestHeaders]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -105,7 +155,7 @@ export default function ContractingProjects() {
       if (!body.plannedEndDate)   delete body.plannedEndDate;
       const r = await fetch(url, {
         method,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json", ...requestHeaders() },
         body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
@@ -124,7 +174,7 @@ export default function ContractingProjects() {
     try {
       const r = await fetch(`${API}/api/contracting/projects/${deleting.id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: requestHeaders(),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       toast({ title: t("contracting.projects.deleted", "تم حذف المشروع") });
@@ -134,6 +184,68 @@ export default function ContractingProjects() {
       toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });
     }
   }
+
+  const customerItems: ComboboxItem[] = useMemo(() => {
+    const currentId = editing?.customerId == null ? null : Number(editing.customerId);
+    const seen = new Set<number>();
+    const items: ComboboxItem[] = [];
+    for (const customer of customers) {
+      const id = Number(customer?.id);
+      if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+      seen.add(id);
+      const active = customer?.isActive !== false;
+      items.push({
+        value: String(id),
+        label: customer?.nameAr || customer?.nameEn || `#${id}`,
+        labelEn: customer?.nameEn || undefined,
+        description: [customer?.vatNumber, customer?.phone].filter(Boolean).join(" · ") || undefined,
+        disabled: !active && id !== currentId,
+        disabledReason: !active ? t("contracting.projects.customerInactive", "العميل غير نشط") : undefined,
+      });
+    }
+    // A project may retain a customer that is no longer returned by the
+    // branch-scoped picker. Keep it visible as a disabled current value so
+    // editing/saving does not silently unlink it.
+    if (currentId != null && !seen.has(currentId)) {
+      items.unshift({
+        value: String(currentId),
+        label: editing?.clientName || `#${currentId}`,
+        disabled: true,
+        disabledReason: t("contracting.projects.customerLinkedUnavailable", "العميل المرتبط الحالي غير متاح للاختيار"),
+      });
+    }
+    return items;
+  }, [customers, editing?.customerId, editing?.clientName, t]);
+
+  const costCenterItems: ComboboxItem[] = useMemo(() => {
+    const currentId = editing?.costCenterId == null ? null : Number(editing.costCenterId);
+    const seen = new Set<number>();
+    const items: ComboboxItem[] = [];
+    for (const center of costCenters as CostCenter[]) {
+      const id = Number(center.id);
+      if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+      seen.add(id);
+      const active = center.isActive !== false;
+      items.push({
+        value: String(id),
+        label: `${center.code} — ${center.nameAr || center.nameEn || `#${id}`}`,
+        labelEn: center.nameEn || undefined,
+        disabled: !active && id !== currentId,
+        disabledReason: !active
+          ? t("contracting.projects.costCenterInactive", "مركز التكلفة غير نشط")
+          : undefined,
+      });
+    }
+    if (currentId != null && !seen.has(currentId)) {
+      items.unshift({
+        value: String(currentId),
+        label: `#${currentId}`,
+        disabled: true,
+        disabledReason: t("contracting.projects.costCenterUnavailable", "مركز التكلفة المرتبط الحالي غير متاح للاختيار"),
+      });
+    }
+    return items;
+  }, [costCenters, editing?.costCenterId, t]);
 
   return (
     <div className="space-y-4">
@@ -185,7 +297,89 @@ export default function ContractingProjects() {
               <Input value={editing.nameEn ?? ""} onChange={e => setEditing({ ...editing, nameEn: e.target.value })} />
             </Field>
             <Field label={t("contracting.projects.client", "العميل")}>
-              <Input value={editing.clientName ?? ""} onChange={e => setEditing({ ...editing, clientName: e.target.value })} />
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <SearchCombobox
+                    className="flex-1"
+                    items={customerItems}
+                    value={editing.customerId == null ? "" : String(editing.customerId)}
+                    onValueChange={value => {
+                      const selected = customers.find(c => String(c?.id) === value);
+                      if (!selected) return;
+                      setEditing({
+                        ...editing,
+                        customerId: Number(value),
+                        clientName: selected.nameAr || selected.nameEn || editing.clientName || "",
+                      });
+                    }}
+                    placeholder={t("contracting.projects.customerPlaceholder", "اختر عميلاً من العملاء")}
+                    searchPlaceholder={t("contracting.projects.customerSearchPlaceholder", "بحث باسم العميل أو الرقم...")}
+                    emptyText={customersError
+                      ? t("contracting.projects.customerUnavailable", "تعذر تحميل العملاء")
+                      : t("contracting.projects.noCustomers", "لا توجد نتائج")}
+                    disabled={customersLoading || !!customersError}
+                    openOnFocus={false}
+                    testId="project-customer-picker"
+                  />
+                  {editing.customerId != null && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      title={t("contracting.projects.clearCustomer", "إلغاء ارتباط العميل")}
+                      aria-label={t("contracting.projects.clearCustomer", "إلغاء ارتباط العميل")}
+                      onClick={() => setEditing({ ...editing, customerId: null })}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+                {editing.customerId == null && editing.clientName && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("contracting.projects.legacyClientName", "اسم قديم غير مرتبط محفوظ كما هو:")}{" "}
+                    <span className="font-medium">{editing.clientName}</span>
+                  </p>
+                )}
+                {customersLoading && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("contracting.projects.loadingCustomers", "جارٍ تحميل العملاء...")}
+                  </p>
+                )}
+                {customersError && (
+                  <p className="text-[11px] text-destructive">{customersError}</p>
+                )}
+              </div>
+            </Field>
+            <Field label={t("contracting.projects.costCenter", "مركز التكلفة")}>
+              <div className="flex items-center gap-2">
+                <SearchCombobox
+                  className="flex-1"
+                  items={costCenterItems}
+                  value={editing.costCenterId == null ? "" : String(editing.costCenterId)}
+                  onValueChange={value => setEditing({
+                    ...editing,
+                    costCenterId: value ? Number(value) : null,
+                  })}
+                  placeholder={t("contracting.projects.costCenterPlaceholder", "بدون مركز تكلفة")}
+                  searchPlaceholder={t("contracting.projects.costCenterSearchPlaceholder", "بحث بالكود أو الاسم...")}
+                  emptyText={t("contracting.projects.noCostCenters", "لا توجد مراكز تكلفة")}
+                  disabled={costCentersLoading}
+                  openOnFocus={false}
+                  testId="project-cost-center-picker"
+                />
+                {editing.costCenterId != null && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    title={t("contracting.projects.clearCostCenter", "إلغاء ارتباط مركز التكلفة")}
+                    aria-label={t("contracting.projects.clearCostCenter", "إلغاء ارتباط مركز التكلفة")}
+                    onClick={() => setEditing({ ...editing, costCenterId: null })}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
             </Field>
             <Field label={t("contracting.projects.location", "الموقع")}>
               <Input value={editing.location ?? ""} onChange={e => setEditing({ ...editing, location: e.target.value })} />
@@ -194,7 +388,7 @@ export default function ContractingProjects() {
               <Select value={editing.projectType ?? "building"} onValueChange={v => setEditing({ ...editing, projectType: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {TYPES.map(ty => <SelectItem key={ty} value={ty}>{ty}</SelectItem>)}
+                   {TYPES.map(ty => <SelectItem key={ty} value={ty}>{labelEnum(PROJECT_TYPE_LABEL, ty)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>
@@ -263,7 +457,7 @@ export default function ContractingProjects() {
           <div key={p.id} className="rounded-2xl bg-white border border-amber-100 shadow-sm overflow-hidden">
             <div className="bg-gradient-to-r from-amber-500 to-amber-600 px-4 py-2.5 flex items-center justify-between">
               <span className="text-white font-mono text-sm font-bold">{p.code}</span>
-              <Badge variant={STATUS_TONE[p.status] ?? "default"} className="bg-white/95 text-amber-900">{STATUS_LABEL[p.status] ?? p.status}</Badge>
+              <Badge variant={STATUS_TONE[p.status] ?? "default"} className="bg-white/95 text-amber-900">{labelEnum(STATUS_LABEL, p.status)}</Badge>
             </div>
             <div className="p-3 space-y-2">
               <div className="flex items-start gap-2">
@@ -338,7 +532,7 @@ export default function ContractingProjects() {
                   {p.location && <div className="text-[11px] text-slate-500">{p.location}</div>}
                 </TableCell>
                 <TableCell>{p.clientName || "—"}</TableCell>
-                <TableCell><Badge variant={STATUS_TONE[p.status] ?? "default"}>{STATUS_LABEL[p.status] ?? p.status}</Badge></TableCell>
+                <TableCell><Badge variant={STATUS_TONE[p.status] ?? "default"}>{labelEnum(STATUS_LABEL, p.status)}</Badge></TableCell>
                 <TableCell className="tabular-nums">{Number(p.contractValue).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums">{Number(p.actualCost).toLocaleString("en-US")}</TableCell>
                 <TableCell>

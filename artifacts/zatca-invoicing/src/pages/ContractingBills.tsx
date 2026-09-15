@@ -3,7 +3,7 @@
 // happens inside the project (تفاصيل المشروع → تبويب المستخلصات) because
 // every bill is anchored to a project.
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { Link } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { FileText, ArrowDownToLine, ArrowUpFromLine, ExternalLink, Filter, X } from "lucide-react";
@@ -18,6 +18,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { DateField } from "@/components/ui/date-field";
+import { BILL_DIRECTION_LABEL, BILL_STATUS_LABEL, BILL_TYPE_LABEL, labelEnum } from "@/lib/contractingLabels";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -46,9 +47,7 @@ type BillRow = {
 type Project   = { id: number; code: string; nameAr: string };
 type Contractor= { id: number; name: string };
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: "مسودة", submitted: "مُقدَّم", approved: "معتمد", paid: "مدفوع", rejected: "مرفوض",
-};
+const STATUS_LABEL = BILL_STATUS_LABEL;
 const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   draft: "secondary", submitted: "outline", approved: "default", paid: "default", rejected: "destructive",
 };
@@ -56,9 +55,16 @@ const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "out
 const fmt = (n: number | string) =>
   Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const parseDirection = (search: string): "" | "outgoing" | "incoming" => {
+  const value = new URLSearchParams(search).get("direction");
+  return value === "outgoing" || value === "incoming" ? value : "";
+};
+
 export default function ContractingBills() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
+  const searchString = useSearch();
+  const [, navigate] = useLocation();
 
   const [rows, setRows]               = useState<BillRow[]>([]);
   const [projects, setProjects]       = useState<Project[]>([]);
@@ -66,7 +72,10 @@ export default function ContractingBills() {
   const [loading, setLoading]         = useState(false);
 
   // Filters — all controlled. "" = no filter.
-  const [direction, setDirection]   = useState<"" | "outgoing" | "incoming">("");
+  // Direction is URL-backed so the owner/subcontractor sidebar shortcuts can
+  // reuse this component and remain correct when wouter navigates between
+  // query strings or the user presses browser-back.
+  const direction = parseDirection(searchString);
   const [status, setStatus]         = useState<string>("");
   const [projectId, setProjectId]   = useState<string>("");
   const [contractorId, setContractorId] = useState<string>("");
@@ -139,7 +148,10 @@ export default function ContractingBills() {
 
   const hasFilters = !!(direction || status || projectId || contractorId || dateFrom || dateTo || search);
   const clearFilters = () => {
-    setDirection(""); setStatus(""); setProjectId(""); setContractorId("");
+    const params = new URLSearchParams(searchString);
+    params.delete("direction");
+    navigate(`/contracting/bills${params.toString() ? `?${params.toString()}` : ""}`, { replace: true });
+    setStatus(""); setProjectId(""); setContractorId("");
     setDateFrom(""); setDateTo(""); setSearch("");
   };
 
@@ -185,11 +197,16 @@ export default function ContractingBills() {
           <FilterSelect
             label="الاتجاه"
             value={direction}
-            onChange={(v) => setDirection(v as any)}
+            onChange={(v) => {
+              const params = new URLSearchParams(searchString);
+              if (v) params.set("direction", v);
+              else params.delete("direction");
+              navigate(`/contracting/bills${params.toString() ? `?${params.toString()}` : ""}`, { replace: true });
+            }}
             placeholder="الكل"
             options={[
-              { value: "outgoing", label: "صادر للمالك" },
-              { value: "incoming", label: "وارد من الباطن" },
+               { value: "outgoing", label: labelEnum(BILL_DIRECTION_LABEL, "outgoing") },
+               { value: "incoming", label: labelEnum(BILL_DIRECTION_LABEL, "incoming") },
             ]}
             testId="filter-direction"
           />
@@ -281,16 +298,19 @@ export default function ContractingBills() {
                   <div className="font-medium">{r.projectName || "—"}</div>
                   {r.projectCode && <div className="text-xs text-muted-foreground">{r.projectCode}</div>}
                 </TableCell>
-                <TableCell className="font-mono text-sm">{r.billNumber}</TableCell>
+                 <TableCell className="font-mono text-sm">
+                   <div>{r.billNumber}</div>
+                   <div className="font-sans text-xs text-muted-foreground">{labelEnum(BILL_TYPE_LABEL, r.billType)}</div>
+                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm">{r.billDate}</TableCell>
                 <TableCell>
                   {r.direction === "incoming" ? (
                     <Badge variant="outline" className="gap-1">
-                      <ArrowDownToLine className="h-3 w-3" /> وارد
+                       <ArrowDownToLine className="h-3 w-3" /> {labelEnum(BILL_DIRECTION_LABEL, "incoming")}
                     </Badge>
                   ) : (
                     <Badge variant="default" className="gap-1 bg-emerald-600">
-                      <ArrowUpFromLine className="h-3 w-3" /> صادر
+                       <ArrowUpFromLine className="h-3 w-3" /> {labelEnum(BILL_DIRECTION_LABEL, "outgoing")}
                     </Badge>
                   )}
                 </TableCell>
@@ -301,7 +321,7 @@ export default function ContractingBills() {
                 <TableCell className="text-end font-mono">{fmt(r.paidAmount)}</TableCell>
                 <TableCell>
                   <Badge variant={STATUS_TONE[r.status] || "secondary"}>
-                    {STATUS_LABEL[r.status] || r.status}
+                     {labelEnum(STATUS_LABEL, r.status)}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-end">

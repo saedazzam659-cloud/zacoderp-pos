@@ -10,6 +10,12 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
+import {
+  EVENT_TYPE_LABEL,
+  RISK_CATEGORY_LABEL,
+  RISK_LEVEL_LABEL,
+  labelEnum,
+} from "@/lib/contractingLabels";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -129,7 +135,7 @@ export default function ContractingDashboard() {
                     <div className="flex-1">
                       <div className="font-medium text-sm">{r.title}</div>
                       <div className="text-[11px] text-slate-500 mt-0.5">
-                        {r.category} • {t("contracting.risks.likelihood", "الاحتمال")}: {r.likelihood} • {t("contracting.risks.impact", "الأثر")}: {r.impact}
+                         {labelEnum(RISK_CATEGORY_LABEL, r.category)} • {t("contracting.risks.likelihood", "الاحتمال")}: {labelEnum(RISK_LEVEL_LABEL, r.likelihood)} • {t("contracting.risks.impact", "الأثر")}: {labelEnum(RISK_LEVEL_LABEL, r.impact)}
                       </div>
                     </div>
                     <div className={`rounded-full px-2 py-0.5 text-xs font-bold ${r.score >= 6 ? "bg-red-100 text-red-700" : r.score >= 4 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
@@ -156,7 +162,8 @@ export default function ContractingDashboard() {
                     e.severity === "warn"  ? "bg-amber-500" : "bg-emerald-500"
                   }`} />
                   <div className="flex-1">
-                    <div className="font-medium">{e.title}</div>
+                     <div className="font-medium">{e.title}</div>
+                     <div className="text-[11px] text-slate-500">{labelEnum(EVENT_TYPE_LABEL, e.eventType)}</div>
                     {e.description && <div className="text-[11px] text-slate-500">{e.description}</div>}
                     <div className="text-[10px] text-slate-400 mt-0.5">{new Date(e.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</div>
                   </div>

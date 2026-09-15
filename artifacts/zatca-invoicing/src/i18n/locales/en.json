@@ -978,6 +978,8 @@
     "contractingProjects": "Projects",
     "contractingContractors": "Contractors & Suppliers",
     "contractingBills": "Progress Bills",
+    "contractingOwnerBills": "Owner Progress Bills",
+    "contractingSubcontractorBills": "Subcontractor Progress Bills",
     "contractingTabsOverview": "Overview",
     "contractingTabsWorkItems": "Work Items",
     "contractingTabsResources": "Resources",

@@ -6,6 +6,8 @@ import { branchesTable } from "./branches";
 import { customersTable } from "./customers";
 import { suppliersTable } from "./suppliers";
 import { usersTable } from "./users";
+import { itemsTable, unitsTable, warehousesTable } from "./inventory";
+import { costCentersTable } from "./costCenters";
 
 // ─────────────────────────────────────────────────────────────────────
 // Contracting / Construction ERP module (نظام إدارة المقاولات)
@@ -33,9 +35,14 @@ export const contractingProjectsTable = pgTable(
     nameEn: text("name_en"),
     // Client linkage. customerId is preferred; clientName is kept as a
     // snapshot fallback so reports keep working if the customer row is
-    // later soft-deleted or renamed.
+    // later soft-deleted or renamed. A NULL customerId is an explicit
+    // unlinked legacy value; never infer a link from clientName.
     customerId: integer("customer_id")
       .references(() => customersTable.id, { onDelete: "set null" }),
+    // Optional accounting dimension for project-level postings. The link is
+    // intentionally nullable; projects without a cost centre remain valid.
+    costCenterId: integer("cost_center_id")
+      .references(() => costCentersTable.id, { onDelete: "set null" }),
     clientName: text("client_name"),
     location: text("location"),
     // building / road / infrastructure / renovation / other
@@ -60,6 +67,8 @@ export const contractingProjectsTable = pgTable(
     byCompany:   index("ctg_proj_company_idx").on(t.companyId),
     byStatus:    index("ctg_proj_status_idx").on(t.companyId, t.status),
     byCode:      index("ctg_proj_code_idx").on(t.companyId, t.code),
+    byCustomer:  index("ctg_proj_customer_idx").on(t.companyId, t.customerId),
+    byCostCenter:index("ctg_proj_cost_center_idx").on(t.companyId, t.costCenterId),
   }),
 );
 
@@ -136,8 +145,22 @@ export const contractingResourcesTable = pgTable(
     name: text("name").notNull(),
     // labor | equipment | material
     type: text("type").notNull().default("material"),
+    // Material resources are linked to the real inventory item.  The
+    // relationship is optional for labour/equipment/subcontractor resources,
+    // which intentionally remain non-stock allocations.
+    itemId: integer("item_id")
+      .references(() => itemsTable.id, { onDelete: "set null" }),
+    unitId: integer("unit_id")
+      .references(() => unitsTable.id, { onDelete: "set null" }),
+    warehouseId: integer("warehouse_id")
+      .references(() => warehousesTable.id, { onDelete: "set null" }),
     unit: text("unit").notNull().default("hr"),
+    // `qty` is the quantity entered/displayed in `unit`; qtyBase is the
+    // immutable conversion snapshot used only for availability reporting.
+    // Planning a resource never posts a stock movement.
     qty: numeric("qty", { precision: 14, scale: 4 }).notNull().default("0"),
+    qtyBase: numeric("qty_base", { precision: 30, scale: 18 }).notNull().default("0"),
+    conversionFactor: numeric("conversion_factor", { precision: 30, scale: 18 }).notNull().default("1"),
     unitCost:  numeric("unit_cost",  { precision: 14, scale: 2 }).notNull().default("0"),
     totalCost: numeric("total_cost", { precision: 14, scale: 2 }).notNull().default("0"),
     supplierId: integer("supplier_id")
@@ -258,6 +281,10 @@ export const contractingProgressBillsTable = pgTable(
       .references(() => companiesTable.id, { onDelete: "cascade" }),
     projectId: integer("project_id").notNull()
       .references(() => contractingProjectsTable.id, { onDelete: "cascade" }),
+    // Effective centre snapshot selected when the bill is created/edited.
+    // Unlike the project default, this must not be re-derived while posting.
+    costCenterId: integer("cost_center_id")
+      .references(() => costCentersTable.id, { onDelete: "set null" }),
     // outgoing | incoming  (default outgoing for backwards compat with
     // bills created before this column existed)
     direction: text("direction").notNull().default("outgoing"),
@@ -303,6 +330,7 @@ export const contractingProgressBillsTable = pgTable(
     byProject:   index("ctg_bill_project_idx").on(t.projectId),
     byCompany:   index("ctg_bill_company_idx").on(t.companyId),
     byDirection: index("ctg_bill_direction_idx").on(t.projectId, t.direction),
+    byCostCenter:index("ctg_bill_cost_center_idx").on(t.companyId, t.costCenterId),
   }),
 );
 

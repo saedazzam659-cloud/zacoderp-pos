@@ -6,6 +6,7 @@ import { getTableConfig } from "drizzle-orm/pg-core";
 import { PgEnum } from "drizzle-orm/pg-core";
 import { logger } from "./logger";
 import { reconcilePostgresSequences } from "./postgresSequenceReconciliation.js";
+import { ensureContractingBillDetailsTables } from "./contracting-bill-details-service.js";
 
 let healPromise: Promise<void> | null = null;
 type SchemaReconciliationState =
@@ -239,6 +240,74 @@ async function ensureIndustrialPurchaseCostCompatibility(): Promise<void> {
       await execDDL(stmt);
     } catch (err) {
       logger.error({ err, stmt }, "ensureSchema: industrial purchase-cost compatibility reconciliation failed");
+      throw err;
+    }
+  }
+}
+
+// Contracting resource inventory links were added after the original
+// contracting tables shipped.  Keep this reconciliation additive for both the
+// central database and external agents: existing labour/equipment rows remain
+// valid and material planning rows gain nullable links plus a quantity
+// conversion snapshot.  Planning is deliberately not coupled to stock
+// posting; these columns are read-only allocation metadata.
+const CONTRACTING_RESOURCE_INVENTORY_COMPATIBILITY_DDL = [
+  `ALTER TABLE IF EXISTS contracting_resources ADD COLUMN IF NOT EXISTS item_id INTEGER`,
+  `ALTER TABLE IF EXISTS contracting_resources ADD COLUMN IF NOT EXISTS unit_id INTEGER`,
+  `ALTER TABLE IF EXISTS contracting_resources ADD COLUMN IF NOT EXISTS warehouse_id INTEGER`,
+  `ALTER TABLE IF EXISTS contracting_resources ADD COLUMN IF NOT EXISTS qty_base NUMERIC(30,18) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_resources ADD COLUMN IF NOT EXISTS conversion_factor NUMERIC(30,18) NOT NULL DEFAULT 1`,
+  `CREATE INDEX IF NOT EXISTS ctg_res_item_idx ON contracting_resources(company_id, item_id)`,
+  `CREATE INDEX IF NOT EXISTS ctg_res_warehouse_idx ON contracting_resources(company_id, warehouse_id)`,
+] as const;
+
+async function ensureContractingResourceInventoryCompatibility(): Promise<void> {
+  for (const stmt of CONTRACTING_RESOURCE_INVENTORY_COMPATIBILITY_DDL) {
+    try {
+      await execDDL(stmt);
+    } catch (err) {
+      logger.error({ err, stmt }, "ensureSchema: contracting resource inventory compatibility reconciliation failed");
+      throw err;
+    }
+  }
+}
+
+// Project/customer links are nullable by design: NULL + client_name is the
+// explicit unlinked legacy form. Keep the tenant lookup index available on
+// databases that were created before the customer link was introduced.
+const CONTRACTING_PROJECT_CUSTOMER_COMPATIBILITY_DDL = [
+  `ALTER TABLE IF EXISTS contracting_projects ADD COLUMN IF NOT EXISTS customer_id INTEGER`,
+  `CREATE INDEX IF NOT EXISTS ctg_proj_customer_idx ON contracting_projects(company_id, customer_id)`,
+] as const;
+
+async function ensureContractingProjectCustomerCompatibility(): Promise<void> {
+  for (const stmt of CONTRACTING_PROJECT_CUSTOMER_COMPATIBILITY_DDL) {
+    try {
+      await execDDL(stmt);
+    } catch (err) {
+      logger.error({ err, stmt }, "ensureSchema: contracting project customer compatibility reconciliation failed");
+      throw err;
+    }
+  }
+}
+
+// Cost-centre links are optional for both projects and progress bills. Keep
+// this additive so older tenant databases gain the columns without needing a
+// destructive table rebuild; the Drizzle schema owns the FK metadata for new
+// installs.
+const CONTRACTING_COST_CENTER_COMPATIBILITY_DDL = [
+  `ALTER TABLE IF EXISTS contracting_projects ADD COLUMN IF NOT EXISTS cost_center_id INTEGER`,
+  `CREATE INDEX IF NOT EXISTS ctg_proj_cost_center_idx ON contracting_projects(company_id, cost_center_id)`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills ADD COLUMN IF NOT EXISTS cost_center_id INTEGER`,
+  `CREATE INDEX IF NOT EXISTS ctg_bill_cost_center_idx ON contracting_progress_bills(company_id, cost_center_id)`,
+] as const;
+
+async function ensureContractingCostCenterCompatibility(): Promise<void> {
+  for (const stmt of CONTRACTING_COST_CENTER_COMPATIBILITY_DDL) {
+    try {
+      await execDDL(stmt);
+    } catch (err) {
+      logger.error({ err, stmt }, "ensureSchema: contracting cost-centre compatibility reconciliation failed");
       throw err;
     }
   }
@@ -4164,6 +4233,9 @@ async function runHeal(options: {
   await ensureSupplierMetadataCompatibility();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
+  await ensureContractingResourceInventoryCompatibility();
+  await ensureContractingProjectCustomerCompatibility();
+  await ensureContractingCostCenterCompatibility();
 
   // These release-managed tables have complete additive DDL here, unlike
   // generic schema entities. Create them before strict missing-table
@@ -4335,6 +4407,9 @@ export function ensureSchemaUpToDate(): Promise<void> {
         await ensureCentralDemoAnalyticsSchema();
         await ensureCentralZatcaRegistrationTransferSchema();
         await runHeal();
+        // Contracting bill detail tables are additive and depend on the
+        // base contracting tables already reconciled above.
+        await ensureContractingBillDetailsTables();
         await ensureCentralAgentInvoiceAccelerationSchema();
         schemaReconciliationState = { state: "ready", completedAt: new Date().toISOString() };
       } catch (error) {

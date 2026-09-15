@@ -937,6 +937,8 @@
     "contractingProjects": "المشاريع",
     "contractingContractors": "المقاولون والموردون",
     "contractingBills": "المستخلصات",
+    "contractingOwnerBills": "مستخلصات المالك",
+    "contractingSubcontractorBills": "مستخلصات المقاول الباطن",
     "maintenanceGroup": "إدارة الصيانة",
     "maintenanceHub": "لوحة الصيانة",
     "maintenanceAssets": "الأصول والمعدات",

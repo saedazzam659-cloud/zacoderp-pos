@@ -157,6 +157,11 @@ export async function buildOutgoingBillJournal(
     lines.push({ entryId: entry.id, accountId: vatOutAcc, debit: "0.00", credit: fix(a.vat),
       description: `ضريبة مخرجات — ${b.billNumber}`, sortOrder: i++ });
   }
+  // Store the bill's persisted effective centre on every source line. Never
+  // re-read the project default here: project edits must not move a posted
+  // bill's accounting history.
+  const costCenter = b.costCenterId == null ? null : String(b.costCenterId);
+  for (const line of lines) line.costCenter = costCenter;
 
   const dr = lines.reduce((s, l) => s + Number(l.debit  || 0), 0);
   const cr = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
@@ -251,6 +256,8 @@ export async function buildIncomingBillJournal(
     lines.push({ entryId: entry.id, accountId: retAcc, debit: "0.00", credit: fix(a.retention),
       description: `محتجزات لدى الباطن — ${b.billNumber}`, sortOrder: i++ });
   }
+  const costCenter = b.costCenterId == null ? null : String(b.costCenterId);
+  for (const line of lines) line.costCenter = costCenter;
 
   const dr = lines.reduce((s, l) => s + Number(l.debit  || 0), 0);
   const cr = lines.reduce((s, l) => s + Number(l.credit || 0), 0);

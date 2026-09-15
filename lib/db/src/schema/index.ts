@@ -56,6 +56,7 @@ export * from "./inboxMessages";
 export * from "./seoAi";
 export * from "./deletedRecords";
 export * from "./contracting";
+export * from "./contractingBillDetails";
 export * from "./kioskTokens";
 export * from "./maintenance";
 export * from "./hotel";
