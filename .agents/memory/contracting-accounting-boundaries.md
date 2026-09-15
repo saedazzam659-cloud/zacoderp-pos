@@ -21,6 +21,12 @@ Preserve legacy project customer names without automatic name matching, and exte
 
 **How to apply:** Link clients by validated IDs when explicitly selected, calculate certified amounts separately from cash paid, and use existing ledger/settlement references as authoritative.
 
+Release-managed application tables must be created in the shared active-database reconciliation pass before strict missing-table validation, not only during central startup or a lazy feature request.
+
+**Why:** External-agent upgrade and request-readiness paths can validate newly exported schema tables before central-only initialization ever reaches their database.
+
+**How to apply:** Cover startup, explicit upgrades and strict request readiness with the same additive table creation. Keep required tables required, and never share a successful initialization cache across tenant databases.
+
 Contract ceilings require both the shared adjusted-contract ceiling and the selected change order's own incremental ceiling. Never grant the base contract value separately to each change-order bucket.
 
 **Why:** Independent buckets otherwise permit billing the same base contract multiple times.

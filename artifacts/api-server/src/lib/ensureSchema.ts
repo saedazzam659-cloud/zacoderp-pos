@@ -4236,6 +4236,11 @@ async function runHeal(options: {
   await ensureContractingResourceInventoryCompatibility();
   await ensureContractingProjectCustomerCompatibility();
   await ensureContractingCostCenterCompatibility();
+  // Required application tables must exist on the active database BEFORE
+  // generic validation. Keep this in the shared pass: startup, manual agent
+  // upgrades and strict request readiness all use it (without a central-only
+  // memoized promise). Do not suppress missing tables via the optional list.
+  await ensureContractingBillDetailsTables();
 
   // These release-managed tables have complete additive DDL here, unlike
   // generic schema entities. Create them before strict missing-table
@@ -4407,9 +4412,6 @@ export function ensureSchemaUpToDate(): Promise<void> {
         await ensureCentralDemoAnalyticsSchema();
         await ensureCentralZatcaRegistrationTransferSchema();
         await runHeal();
-        // Contracting bill detail tables are additive and depend on the
-        // base contracting tables already reconciled above.
-        await ensureContractingBillDetailsTables();
         await ensureCentralAgentInvoiceAccelerationSchema();
         schemaReconciliationState = { state: "ready", completedAt: new Date().toISOString() };
       } catch (error) {
