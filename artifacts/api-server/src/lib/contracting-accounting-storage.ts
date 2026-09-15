@@ -74,16 +74,18 @@ export function ensureContractingAccountingTables(): Promise<void> {
         id SERIAL PRIMARY KEY,
         company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
         project_id INTEGER NOT NULL REFERENCES contracting_projects(id) ON DELETE RESTRICT,
+        project_branch_id INTEGER REFERENCES branches(id) ON DELETE RESTRICT,
         resource_id INTEGER REFERENCES contracting_resources(id) ON DELETE SET NULL,
         item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
         unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE RESTRICT,
         warehouse_id INTEGER NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
+        warehouse_branch_id INTEGER REFERENCES branches(id) ON DELETE RESTRICT,
         direction TEXT NOT NULL,
         movement_date DATE NOT NULL,
         qty NUMERIC(30,18) NOT NULL CHECK (qty > 0),
         qty_base NUMERIC(30,18) NOT NULL CHECK (qty_base > 0),
-        unit_cost NUMERIC(18,6) NOT NULL CHECK (unit_cost >= 0),
-        total_cost NUMERIC(18,2) NOT NULL CHECK (total_cost >= 0),
+        unit_cost NUMERIC(30,18) NOT NULL CHECK (unit_cost >= 0),
+        total_cost NUMERIC(60,36) NOT NULL CHECK (total_cost >= 0),
         source_movement_id INTEGER REFERENCES contracting_material_movements(id) ON DELETE RESTRICT,
         journal_entry_id INTEGER REFERENCES journal_entries(id) ON DELETE RESTRICT,
         idempotency_key TEXT NOT NULL,
@@ -102,12 +104,64 @@ export function ensureContractingAccountingTables(): Promise<void> {
         ADD COLUMN IF NOT EXISTS idempotency_payload_hash TEXT
     `);
     await db.execute(sql`
+      ALTER TABLE contracting_material_movements
+        ADD COLUMN IF NOT EXISTS project_branch_id INTEGER REFERENCES branches(id) ON DELETE RESTRICT,
+        ADD COLUMN IF NOT EXISTS warehouse_branch_id INTEGER REFERENCES branches(id) ON DELETE RESTRICT
+    `);
+    await db.execute(sql`
+      ALTER TABLE contracting_material_movements
+        ALTER COLUMN qty TYPE NUMERIC(30,18),
+        ALTER COLUMN qty_base TYPE NUMERIC(30,18),
+        ALTER COLUMN total_cost TYPE NUMERIC(60,36),
+        ALTER COLUMN unit_cost TYPE NUMERIC(30,18)
+    `);
+    await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS contracting_material_idempotency_idx
         ON contracting_material_movements(company_id, idempotency_key)
     `);
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS contracting_material_project_idx
         ON contracting_material_movements(company_id, project_id, movement_date DESC)
+    `);
+
+    // Immutable per-lot provenance.  An issue has one row per valuation-layer
+    // pick; a return points back to the exact issue allocation it restores.
+    // This is deliberately separate from stock_balance: lot balances remain
+    // derived from the existing stock_ledger, never synthetic balance rows.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS contracting_material_movement_allocations (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        movement_id INTEGER NOT NULL REFERENCES contracting_material_movements(id) ON DELETE RESTRICT,
+        source_movement_id INTEGER REFERENCES contracting_material_movements(id) ON DELETE RESTRICT,
+        source_allocation_id INTEGER REFERENCES contracting_material_movement_allocations(id) ON DELETE RESTRICT,
+        source_ledger_id INTEGER REFERENCES stock_ledger(id) ON DELETE RESTRICT,
+        item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
+        warehouse_id INTEGER NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
+        batch_number TEXT,
+        expiry_date DATE,
+        qty_base NUMERIC(30,18) NOT NULL CHECK (qty_base > 0),
+        unit_cost NUMERIC(30,18) NOT NULL CHECK (unit_cost >= 0),
+        total_cost NUMERIC(60,36) NOT NULL CHECK (total_cost >= 0),
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS contracting_material_alloc_movement_idx
+        ON contracting_material_movement_allocations(company_id, movement_id, id)
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS contracting_material_alloc_source_idx
+        ON contracting_material_movement_allocations(company_id, source_movement_id, source_allocation_id)
+    `);
+    await db.execute(sql`
+      CREATE OR REPLACE FUNCTION reject_contracting_material_allocation_mutation() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'contracting material cost allocations are immutable'; END; $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS contracting_material_allocations_no_mutation
+        ON contracting_material_movement_allocations;
+      CREATE TRIGGER contracting_material_allocations_no_mutation
+        BEFORE UPDATE OR DELETE ON contracting_material_movement_allocations
+        FOR EACH ROW EXECUTE FUNCTION reject_contracting_material_allocation_mutation()
     `);
 
     await db.execute(sql`

@@ -2757,7 +2757,13 @@
       "delete": "Delete",
       "post": "Post",
       "unpost": "Unpost",
-      "export": "Export"
+      "export": "Export",
+      "review": "Review",
+      "approve": "Approve",
+      "pay": "Pay",
+      "cancel": "Cancel",
+      "overrun": "Approve overrun",
+      "correct": "Posted correction"
     },
     "modules": {
       "dashboard": "Dashboard",

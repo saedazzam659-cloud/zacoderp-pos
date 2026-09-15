@@ -116,6 +116,26 @@ async function ensureOwnerContract(cid: number, projectId: number, ocId: number)
     ));
   return r ? null : "عقد المالك غير صالح";
 }
+async function ensureOwnerContractParent(
+  cid: number,
+  projectId: number,
+  parentId: number,
+  childId?: number,
+): Promise<string | null> {
+  if (!Number.isInteger(parentId) || parentId <= 0 || parentId === childId) {
+    return "العقد الأساسي لأمر التغيير غير صالح";
+  }
+  const [parent] = await db.select({
+    id: contractingOwnerContractsTable.id,
+    contractType: contractingOwnerContractsTable.contractType,
+  }).from(contractingOwnerContractsTable).where(and(
+    eq(contractingOwnerContractsTable.id, parentId),
+    eq(contractingOwnerContractsTable.companyId, cid),
+    eq(contractingOwnerContractsTable.projectId, projectId),
+  ));
+  if (!parent || parent.contractType !== "main") return "العقد الأساسي يجب أن يكون عقداً رئيسياً من نفس المشروع";
+  return null;
+}
 async function ensureCustomer(cid: number, customerId: number): Promise<string | null> {
   if (!customerId) return "العميل غير صالح";
   const [r] = await db.select({ id: customersTable.id })
@@ -1266,6 +1286,16 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
       const cusErr = await ensureCustomer(cid, Number(b.customerId));
       if (cusErr) { res.status(400).json({ error: cusErr }); return; }
     }
+    const contractType = String(b.contractType ?? "main");
+    const parentContractId = b.parentContractId == null || b.parentContractId === ""
+      ? null : Number(b.parentContractId);
+    if (parentContractId != null) {
+      if (contractType !== "change_order" && contractType !== "addendum") {
+        res.status(400).json({ error: "العقد الأساسي يخصص لأمر تغيير أو ملحق فقط" }); return;
+      }
+      const parentError = await ensureOwnerContractParent(cid, projectId, parentContractId);
+      if (parentError) { res.status(400).json({ error: parentError }); return; }
+    }
     const value = Number(b.value ?? 0);
     const advancePct = Number(b.advancePercent ?? 0);
     const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : Math.round((value * advancePct / 100) * 100) / 100;
@@ -1276,7 +1306,8 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
       contractNumber: String(b.contractNumber),
       contractDate: b.contractDate,
       signedAt: b.signedAt ?? null,
-      contractType: b.contractType ?? "main",
+      contractType,
+      parentContractId,
       value:            String(value),
       advancePayment:   String(advancePay),
       advancePercent:   String(advancePct),
@@ -1316,6 +1347,21 @@ router.put("/owner-contracts/:id", async (req, res) => {
     const upd: any = { updatedAt: new Date() };
     for (const k of ["contractNumber","contractType","status","clientName","paymentTerms","scopeOfWork","penaltiesClause","notes"]) {
       if (b[k] !== undefined) upd[k] = b[k];
+    }
+    if (b.parentContractId !== undefined) {
+      const parentContractId = b.parentContractId == null || b.parentContractId === ""
+        ? null : Number(b.parentContractId);
+      const contractType = String(b.contractType ?? cur.contractType);
+      if (parentContractId != null) {
+        if (contractType !== "change_order" && contractType !== "addendum") {
+          res.status(400).json({ error: "العقد الأساسي يخصص لأمر تغيير أو ملحق فقط" }); return;
+        }
+        const parentError = await ensureOwnerContractParent(cid, cur.projectId, parentContractId, id);
+        if (parentError) { res.status(400).json({ error: parentError }); return; }
+      }
+      upd.parentContractId = parentContractId;
+    } else if (b.contractType !== undefined && !["change_order", "addendum"].includes(String(b.contractType))) {
+      upd.parentContractId = null;
     }
     for (const k of ["contractDate","signedAt","startDate","endDate"]) {
       if (b[k] !== undefined) upd[k] = b[k] || null;

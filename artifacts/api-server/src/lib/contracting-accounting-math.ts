@@ -57,6 +57,35 @@ function centsString(value: bigint): string {
   return `${negative ? "-" : ""}${absolute / 100n}.${String(absolute % 100n).padStart(2, "0")}`;
 }
 
+/**
+ * Contract ceiling allocation is intentionally calculated in integer cents:
+ * the base contract is granted once to the whole scope, while a selected
+ * change-order line can consume only that order's delta.
+ */
+export function contractingCeilingAllocation(input: {
+  baseValue: number | string;
+  approvedOrderValues: Array<number | string>;
+  selectedOrderValue?: number | string | null;
+  priorScopeValue: number | string;
+  priorBucketValue: number | string;
+  currentValue: number | string;
+}) {
+  // Add each source as cents rather than relying on a floating sum.
+  const exactTotal = scaledCents(input.baseValue)
+    + input.approvedOrderValues.reduce((sum, value) => sum + scaledCents(value), 0n);
+  const bucketLimit = input.selectedOrderValue == null
+    ? exactTotal
+    : scaledCents(input.selectedOrderValue);
+  const scopeUsed = scaledCents(input.priorScopeValue) + scaledCents(input.currentValue);
+  const bucketUsed = scaledCents(input.priorBucketValue) + scaledCents(input.currentValue);
+  return {
+    totalLimit: centsString(exactTotal),
+    bucketLimit: centsString(bucketLimit),
+    scopeExceeded: scopeUsed > exactTotal,
+    bucketExceeded: bucketUsed > bucketLimit,
+  };
+}
+
 function percentCents(value: number | string): bigint {
   return scaledCents(value);
 }

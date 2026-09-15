@@ -1,5 +1,6 @@
 import {
   pgTable, serial, text, integer, numeric, timestamp, date, jsonb, index,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
@@ -201,6 +202,11 @@ export const contractingOwnerContractsTable = pgTable(
     signedAt: date("signed_at"),
     // main | addendum | change_order
     contractType: text("contract_type").notNull().default("main"),
+    // A change order is additive to one exact base contract.  Older rows do
+    // not have this link and remain valid; callers must use the scoped
+    // project-level additive fallback for those legacy rows.
+    parentContractId: integer("parent_contract_id")
+      .references((): AnyPgColumn => contractingOwnerContractsTable.id, { onDelete: "set null" }),
     value:            numeric("value",             { precision: 14, scale: 2 }).notNull().default("0"),
     advancePayment:   numeric("advance_payment",   { precision: 14, scale: 2 }).notNull().default("0"),
     advancePercent:   numeric("advance_percent",   { precision: 5,  scale: 2 }).notNull().default("0"),
@@ -222,6 +228,7 @@ export const contractingOwnerContractsTable = pgTable(
   (t) => ({
     byProject: index("ctg_oc_project_idx").on(t.projectId),
     byCompany: index("ctg_oc_company_idx").on(t.companyId),
+    byParent: index("ctg_oc_parent_idx").on(t.companyId, t.parentContractId),
   }),
 );
 
@@ -311,6 +318,11 @@ export const contractingProgressBillsTable = pgTable(
     vatAmount:       numeric("vat_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     netAmount:       numeric("net_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     paidAmount:      numeric("paid_amount",       { precision: 14, scale: 2 }).notNull().default("0"),
+    // Posted corrections never rewrite the source bill. They reverse this
+    // row's journal and create a new draft linked back to it.
+    correctionOfId: integer("correction_of_id")
+      .references((): AnyPgColumn => contractingProgressBillsTable.id, { onDelete: "set null" }),
+    reversalJournalEntryId: integer("reversal_journal_entry_id"),
     // Back-reference to the auto-posted JE (Phase-3 IFRS 15 wiring). NULL
     // when no JE has been posted yet (status still draft/submitted, the
     // matching auto-post toggle was off, or the account-mapping for
@@ -331,6 +343,7 @@ export const contractingProgressBillsTable = pgTable(
     byCompany:   index("ctg_bill_company_idx").on(t.companyId),
     byDirection: index("ctg_bill_direction_idx").on(t.projectId, t.direction),
     byCostCenter:index("ctg_bill_cost_center_idx").on(t.companyId, t.costCenterId),
+    byCorrection: index("ctg_bill_correction_idx").on(t.companyId, t.correctionOfId),
   }),
 );
 

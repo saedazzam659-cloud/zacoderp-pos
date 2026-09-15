@@ -3,7 +3,9 @@
 // Labels and group names are i18n keys; resolve via t(label) in the UI.
 // ─────────────────────────────────────────────────────────────────────
 
-export type Action = "view" | "create" | "edit" | "delete" | "post" | "unpost" | "export";
+export type Action =
+  | "view" | "create" | "edit" | "delete" | "post" | "unpost" | "export"
+  | "review" | "approve" | "pay" | "cancel" | "overrun" | "correct";
 
 export interface ModuleDef {
   key: string;
@@ -13,6 +15,9 @@ export interface ModuleDef {
 }
 
 const ALL: Action[] = ["view", "create", "edit", "delete", "post", "export"];
+const CONTRACTING_ACTIONS: Action[] = [
+  ...ALL, "unpost", "review", "approve", "pay", "cancel", "overrun", "correct",
+];
 const MANUFACTURING_ALL: Action[] = [...ALL, "unpost"];
 const VC:  Action[] = ["view", "create", "edit", "delete"];
 const VO:  Action[] = ["view"];
@@ -141,7 +146,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
 
   // Contracting Management — backend key is "contracting"; covers projects,
   // contractors, bills, and the contracting dashboard behind a single permission.
-  { key: "contracting",          label: "perms.modules.contracting",          group: G.contracting, actions: ALL },
+  { key: "contracting",          label: "perms.modules.contracting",          group: G.contracting, actions: CONTRACTING_ACTIONS },
 
   // Maintenance ERP — backend key is "maintenance"; covers assets, technicians,
   // work orders, and spare-parts consumption behind a single permission.
@@ -218,6 +223,12 @@ export const ACTION_LABELS: Record<Action, string> = {
   post:   "perms.actions.post",
   unpost: "perms.actions.unpost",
   export: "perms.actions.export",
+  review: "perms.actions.review",
+  approve: "perms.actions.approve",
+  pay: "perms.actions.pay",
+  cancel: "perms.actions.cancel",
+  overrun: "perms.actions.overrun",
+  correct: "perms.actions.correct",
 };
 
 export type PermissionMap = Record<string, Partial<Record<Action, boolean>>>;

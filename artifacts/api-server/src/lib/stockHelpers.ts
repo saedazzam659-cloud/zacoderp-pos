@@ -21,8 +21,13 @@ export interface BatchRemaining {
   batchNumber: string | null;
   expiryDate: string | null;
   remaining: number;
+  /** Raw PostgreSQL numerics.  Consumers that persist quantities must use
+   * these instead of the compatibility Number fields above. */
+  remainingRaw?: string;
   inboundQty: number;
+  inboundQtyRaw?: string;
   inboundCost: number;
+  inboundCostRaw?: string;
   earliestInDate: string | null;
 }
 
@@ -66,15 +71,18 @@ export async function readBatchRemaining(
       batch_number                                                    AS "batchNumber",
       expiry_date                                                     AS "expiryDate",
       SUM(qty)::numeric                                               AS "remaining",
+      SUM(qty)::text                                                  AS "remainingRaw",
       SUM(CASE WHEN qty > 0 THEN qty ELSE 0 END)::numeric             AS "inboundQty",
+      SUM(CASE WHEN qty > 0 THEN qty ELSE 0 END)::text                AS "inboundQtyRaw",
       SUM(CASE WHEN qty > 0 THEN qty * cost_price ELSE 0 END)::numeric AS "inboundCost",
+      SUM(CASE WHEN qty > 0 THEN qty * cost_price ELSE 0 END)::text    AS "inboundCostRaw",
       MIN(CASE WHEN qty > 0 THEN tx_date END)                         AS "earliestInDate"
     FROM stock_ledger
     WHERE company_id = ${companyId}
       AND item_id    = ${itemId}
       AND warehouse_id = ${warehouseId}
     GROUP BY batch_number, expiry_date
-    HAVING SUM(qty) > 0.0001
+     HAVING SUM(qty) > 0.0001
     ORDER BY
       ${mode === "fefo" ? sql`expiry_date ASC NULLS LAST,` : sql``}
       MIN(CASE WHEN qty > 0 THEN tx_date END) ASC NULLS LAST,
@@ -86,8 +94,11 @@ export async function readBatchRemaining(
     batchNumber: r.batchNumber ?? null,
     expiryDate: r.expiryDate ?? null,
     remaining: Number(r.remaining),
+    remainingRaw: String(r.remainingRaw ?? r.remaining ?? "0"),
     inboundQty: Number(r.inboundQty),
+    inboundQtyRaw: String(r.inboundQtyRaw ?? r.inboundQty ?? "0"),
     inboundCost: Number(r.inboundCost),
+    inboundCostRaw: String(r.inboundCostRaw ?? r.inboundCost ?? "0"),
     earliestInDate: r.earliestInDate ?? null,
   }));
 }
@@ -123,11 +134,17 @@ export async function readBatchRemainingBulk(
       stock_ledger.batch_number                                       AS "batchNumber",
       stock_ledger.expiry_date                                        AS "expiryDate",
       SUM(stock_ledger.qty)::numeric                                  AS "remaining",
+       SUM(stock_ledger.qty)::text                                     AS "remainingRaw",
       SUM(CASE WHEN stock_ledger.qty > 0 THEN stock_ledger.qty ELSE 0 END)::numeric
                                                                         AS "inboundQty",
+       SUM(CASE WHEN stock_ledger.qty > 0 THEN stock_ledger.qty ELSE 0 END)::text
+                                                                         AS "inboundQtyRaw",
       SUM(CASE WHEN stock_ledger.qty > 0
                THEN stock_ledger.qty * stock_ledger.cost_price ELSE 0 END)::numeric
                                                                         AS "inboundCost",
+       SUM(CASE WHEN stock_ledger.qty > 0
+                THEN stock_ledger.qty * stock_ledger.cost_price ELSE 0 END)::text
+                                                                         AS "inboundCostRaw",
       MIN(CASE WHEN stock_ledger.qty > 0 THEN stock_ledger.tx_date END) AS "earliestInDate",
       requested.mode                                                   AS "mode"
     FROM requested
@@ -141,7 +158,7 @@ export async function readBatchRemainingBulk(
       requested.mode,
       stock_ledger.batch_number,
       stock_ledger.expiry_date
-    HAVING SUM(stock_ledger.qty) > 0.0001
+     HAVING SUM(stock_ledger.qty) > 0.0001
     ORDER BY
       requested.item_id,
       requested.warehouse_id,
@@ -156,8 +173,11 @@ export async function readBatchRemainingBulk(
       batchNumber: row.batchNumber ?? null,
       expiryDate: row.expiryDate ?? null,
       remaining: Number(row.remaining),
+      remainingRaw: String(row.remainingRaw ?? row.remaining ?? "0"),
       inboundQty: Number(row.inboundQty),
+      inboundQtyRaw: String(row.inboundQtyRaw ?? row.inboundQty ?? "0"),
       inboundCost: Number(row.inboundCost),
+      inboundCostRaw: String(row.inboundCostRaw ?? row.inboundCost ?? "0"),
       earliestInDate: row.earliestInDate ?? null,
     };
     const list = out.get(key);
@@ -328,7 +348,10 @@ export async function addStockLedgerEntry(entry: {
   expiryDate?: string | null;
   notes?: string;
 }, executor: any = db) {
-  await executor.insert(stockLedgerTable).values(entry);
+  const [inserted] = await executor.insert(stockLedgerTable)
+    .values(entry)
+    .returning({ id: stockLedgerTable.id });
+  return inserted?.id ?? null;
 }
 
 // ─── ITEM-MASTER COST WRITE-BACK ─────────────────────────────────────────────

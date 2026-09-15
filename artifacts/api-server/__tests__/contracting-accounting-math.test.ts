@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   authoritativeCumulativeBillAmounts,
+  contractingCeilingAllocation,
   contractingBillRoleLines,
   idempotencyDecision,
   materialMovementCost,
@@ -132,6 +133,46 @@ test("mock executor makes duplicate settlement replay-safe and rejects a missing
   const missing = executor.postSettlement("   ");
   assert.equal(missing.state, "rejected");
   assert.match(String(missing.reason), /مفتاح العملية/);
+});
+
+test("contract ceiling grants the base once across base and multiple approved orders", () => {
+  const allocation = contractingCeilingAllocation({
+    baseValue: "100.10",
+    approvedOrderValues: ["20.20", "30.30"],
+    priorScopeValue: "100.10",
+    priorBucketValue: "0.00",
+    currentValue: "20.20",
+    selectedOrderValue: "20.20",
+  });
+  assert.deepEqual(allocation, {
+    totalLimit: "150.60",
+    bucketLimit: "20.20",
+    scopeExceeded: false,
+    bucketExceeded: false,
+  });
+  assert.equal(contractingCeilingAllocation({
+    baseValue: "100.10",
+    approvedOrderValues: ["20.20", "30.30"],
+    priorScopeValue: "120.30",
+    priorBucketValue: "20.20",
+    currentValue: "30.31",
+    selectedOrderValue: "30.30",
+  }).scopeExceeded, true);
+});
+
+test("posted correction rollback leaves reversal and source unchanged when copy fails", () => {
+  const store = { source: "posted", reversal: false, draft: false };
+  const snapshot = { ...store };
+  assert.throws(() => {
+    try {
+      store.reversal = true;
+      throw new Error("detail copy failed");
+    } catch (error) {
+      Object.assign(store, snapshot);
+      throw error;
+    }
+  }, /detail copy failed/);
+  assert.deepEqual(store, snapshot);
 });
 
 test("material issue/return uses source cost and rejects excessive returns", () => {

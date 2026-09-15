@@ -98,7 +98,7 @@ type Bill = {
 type OwnerContract = {
   id: number; projectId: number; customerId: number | null; clientName: string | null;
   contractNumber: string; contractDate: string; signedAt: string | null;
-  contractType: string;
+  contractType: string; parentContractId: number | null;
   value: string; advancePayment: string; advancePercent: string;
   retentionPercent: string; vatPercent: string;
   durationDays: number; startDate: string | null; endDate: string | null;
@@ -1428,7 +1428,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
             <Field label={t("contracting.ownerContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.date", "تاريخ العقد")} required><DateField value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.type", "النوع")}>
-              <Select value={editing.contractType ?? "main"} onValueChange={v => setEditing({ ...editing, contractType: v })}>
+              <Select value={editing.contractType ?? "main"} onValueChange={v => setEditing({ ...editing, contractType: v, ...(v === "main" ? { parentContractId: null } : {}) })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {["main", "addendum", "change_order"].map(type => (
@@ -1437,6 +1437,22 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
                 </SelectContent>
               </Select>
             </Field>
+            {["change_order", "addendum"].includes(String(editing.contractType)) && (
+              <Field label={t("contracting.ownerContract.parent", "العقد الأساسي")}>
+                <Select
+                  value={editing.parentContractId ? String(editing.parentContractId) : "__none__"}
+                  onValueChange={v => setEditing({ ...editing, parentContractId: v === "__none__" ? null : Number(v) })}
+                >
+                  <SelectTrigger><SelectValue placeholder="اختر العقد الأساسي" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">بدون ربط (legacy)</SelectItem>
+                    {rows.filter(c => c.id !== (editing as any).id && c.contractType === "main").map(c => (
+                      <SelectItem key={c.id} value={String(c.id)}>#{c.contractNumber}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
             <Field label={t("contracting.ownerContract.client", "اسم العميل")}><Input value={editing.clientName ?? ""} onChange={e => setEditing({ ...editing, clientName: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing({ ...editing, value: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.advance", "دفعة مقدمة (ر.س)")}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
@@ -1451,7 +1467,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
               <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["draft","active","suspended","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{labelEnum(CONTRACT_STATUS_LABEL, x)}</SelectItem>)}
+                  {["draft","active","approved","suspended","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{labelEnum(CONTRACT_STATUS_LABEL, x)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Field>

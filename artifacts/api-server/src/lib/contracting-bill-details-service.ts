@@ -11,6 +11,7 @@ import {
   contractingOwnerContractsTable,
   contractingProgressBillsTable,
   contractingProjectsTable,
+  contractingContractorsTable,
   contractingSubContractsTable,
   contractingWorkItemsTable,
   journalEntriesTable,
@@ -19,6 +20,7 @@ import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage.js";
 import { canAccessModule } from "../middleware/permissions.js";
 import { approveBill } from "./contracting-accounting-service.js";
 import { contractingBranchAllowed } from "./contracting-security.js";
+import { reportBillIsCertified, reportOwnerContractScope } from "./contracting-report-math.js";
 import type { AuthUser } from "../middleware/auth.js";
 
 /**
@@ -30,9 +32,9 @@ const DEDUCTION_KINDS = new Set(["advance", "retention", "materials", "settlemen
 const ATTACHMENT_CATEGORIES = new Set(["invoice", "completion_certificate", "handover", "penalty", "other"]);
 const WORKFLOW_STATES = new Set([
   "draft", "submitted", "under_review", "approved", "posted",
-  "partially_paid", "paid", "rejected",
+  "partially_paid", "paid", "rejected", "reversed",
 ]);
-const LOCKED_STATES = new Set(["approved", "posted", "partially_paid", "paid"]);
+const LOCKED_STATES = new Set(["approved", "posted", "partially_paid", "paid", "reversed"]);
 
 function error(message: string, status = 400): Error & { status: number } {
   const e = new Error(message) as Error & { status: number };
@@ -52,8 +54,23 @@ function money(value: number): string {
   return (Math.round((value + Number.EPSILON) * 100) / 100).toFixed(2);
 }
 
+function cents(value: number): bigint {
+  return BigInt(Math.round((value + Number.EPSILON) * 100));
+}
+
 function quantity(value: number): string {
   return (Math.round((value + Number.EPSILON) * 10000) / 10000).toFixed(4);
+}
+
+function canApproveOverrun(req: any): boolean {
+  const user = req?.authUser;
+  if (!user || user.role === "admin" || user.role === "superadmin") return true;
+  const permissions = user.permissions?.contracting;
+  // Existing tenants only have `post`; retain that grant when the new
+  // overrun action has not yet been saved. An explicit false always wins.
+  if (permissions?.overrun === false) return false;
+  if (permissions?.overrun === true) return true;
+  return canAccessModule(user, "contracting", "post");
 }
 
 function idFrom(value: unknown, label: string): number {
@@ -97,6 +114,27 @@ export function ensureContractingBillDetailsTables(): Promise<void> {
         UNIQUE(company_id, bill_id, work_item_id)
       )
     `);
+    // Rolling upgrade for databases created before per-line change-order
+    // allocation. NULL keeps the legacy work-item-only line semantics.
+    await db.execute(sql`
+      ALTER TABLE contracting_bill_lines
+        ADD COLUMN IF NOT EXISTS change_order_id INTEGER
+          REFERENCES contracting_owner_contracts(id) ON DELETE SET NULL
+    `);
+    await db.execute(sql`
+      ALTER TABLE contracting_bill_lines
+        DROP CONSTRAINT IF EXISTS contracting_bill_lines_company_id_bill_id_work_item_id_key
+    `);
+    await db.execute(sql`
+      DROP INDEX IF EXISTS ctg_bill_lines_bill_work_item_uidx
+    `);
+    await db.execute(sql`
+      DROP INDEX IF EXISTS contracting_bill_lines_company_id_bill_id_work_item_id_key
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS ctg_bill_lines_bill_work_item_change_uidx
+        ON contracting_bill_lines(company_id, bill_id, work_item_id, COALESCE(change_order_id, 0))
+    `);
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS ctg_bill_lines_bill_idx
         ON contracting_bill_lines(company_id, bill_id)
@@ -104,6 +142,24 @@ export function ensureContractingBillDetailsTables(): Promise<void> {
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS ctg_bill_lines_work_item_idx
         ON contracting_bill_lines(company_id, project_id, work_item_id)
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS ctg_bill_lines_change_order_idx
+        ON contracting_bill_lines(company_id, project_id, change_order_id)
+    `);
+    await db.execute(sql`
+      ALTER TABLE contracting_owner_contracts
+        ADD COLUMN IF NOT EXISTS parent_contract_id INTEGER
+          REFERENCES contracting_owner_contracts(id) ON DELETE SET NULL
+    `);
+    await db.execute(sql`
+      ALTER TABLE contracting_progress_bills
+        ADD COLUMN IF NOT EXISTS correction_of_id INTEGER
+          REFERENCES contracting_progress_bills(id) ON DELETE SET NULL
+    `);
+    await db.execute(sql`
+      ALTER TABLE contracting_progress_bills
+        ADD COLUMN IF NOT EXISTS reversal_journal_entry_id INTEGER
     `);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS contracting_bill_deductions (
@@ -302,11 +358,60 @@ async function assertProjectWorkItem(companyId: number, projectId: number, workI
   return workItem;
 }
 
+async function assertApprovedChangeOrder(
+  companyId: number,
+  projectId: number,
+  bill: typeof contractingProgressBillsTable.$inferSelect,
+  changeOrderId: number | null,
+) {
+  if (changeOrderId == null) return null;
+  if (bill.direction !== "outgoing") {
+    throw error("أوامر التغيير متاحة لمستخلصات المالك فقط");
+  }
+  if (bill.ownerContractId == null) {
+    throw error("اختيار أمر التغيير يتطلب عقد مالك محدداً للمستخلص");
+  }
+  const [order] = await db.select().from(contractingOwnerContractsTable).where(and(
+    eq(contractingOwnerContractsTable.id, changeOrderId),
+    eq(contractingOwnerContractsTable.companyId, companyId),
+    eq(contractingOwnerContractsTable.projectId, projectId),
+  ));
+  if (!order || !["change_order", "addendum"].includes(String(order.contractType))) {
+    throw error("أمر التغيير غير صالح لهذا المشروع");
+  }
+  if (!["active", "approved"].includes(String(order.status))) {
+    throw error("لا يمكن اختيار أمر تغيير غير معتمد");
+  }
+  const [billContract] = await db.select({
+    id: contractingOwnerContractsTable.id,
+    contractType: contractingOwnerContractsTable.contractType,
+    parentContractId: contractingOwnerContractsTable.parentContractId,
+  }).from(contractingOwnerContractsTable).where(and(
+    eq(contractingOwnerContractsTable.id, bill.ownerContractId),
+    eq(contractingOwnerContractsTable.companyId, companyId),
+    eq(contractingOwnerContractsTable.projectId, projectId),
+  ));
+  if (!billContract) throw error("عقد المالك المرتبط بالمستخلص غير صالح");
+  const baseId = billContract.contractType === "change_order" || billContract.contractType === "addendum"
+    ? billContract.parentContractId
+    : billContract.id;
+  // A legacy change order without parentContractId is additive to the exact
+  // selected main contract. It must never be borrowed across projects.
+  if (order.id !== bill.ownerContractId && order.parentContractId != null && order.parentContractId !== baseId) {
+    throw error("أمر التغيير لا يتبع عقد المستخلص المحدد");
+  }
+  if (billContract.contractType !== "main" && order.id !== bill.ownerContractId) {
+    throw error("عقد المستخلص المحدد ليس العقد الأساسي لأمر التغيير");
+  }
+  return order;
+}
+
 async function priorTotals(
   companyId: number,
   projectId: number,
   workItemId: number,
   bill: typeof contractingProgressBillsTable.$inferSelect,
+  changeOrderId: number | null,
   excludeLineId?: number,
 ) {
   const rows = await db.select({
@@ -314,6 +419,7 @@ async function priorTotals(
     billDate: contractingProgressBillsTable.billDate,
     sourceBillId: contractingProgressBillsTable.id,
     direction: contractingProgressBillsTable.direction,
+    billStatus: contractingProgressBillsTable.status,
     ownerContractId: contractingProgressBillsTable.ownerContractId,
     subcontractorContractId: contractingProgressBillsTable.subcontractorContractId,
   }).from(contractingBillLinesTable).innerJoin(
@@ -334,10 +440,13 @@ async function priorTotals(
     // The bill number/id is the deterministic tie breaker for same-day bills.
     const before = String(row.billDate) < String(bill.billDate)
       || (String(row.billDate) === String(bill.billDate) && row.sourceBillId < bill.id);
+    const sameChangeOrder = (row.line.changeOrderId ?? null) === changeOrderId;
     const sameContract = bill.direction === "incoming"
       ? !bill.subcontractorContractId || row.subcontractorContractId === bill.subcontractorContractId
-      : !bill.ownerContractId || row.ownerContractId === bill.ownerContractId;
-    if (row.sourceBillId !== bill.id && row.direction === bill.direction && sameContract && before) {
+      : !bill.ownerContractId || row.ownerContractId === bill.ownerContractId
+        || (changeOrderId != null && row.line.changeOrderId === changeOrderId);
+    if (row.sourceBillId !== bill.id && row.billStatus !== "reversed"
+      && row.direction === bill.direction && sameContract && sameChangeOrder && before) {
       previousQty += Number(row.line.currentQty);
       previousValue += Number(row.line.currentValue);
     }
@@ -348,6 +457,7 @@ async function priorTotals(
 async function priorContractValue(
   companyId: number,
   bill: typeof contractingProgressBillsTable.$inferSelect,
+  changeOrderId: number | null,
   excludeLineId?: number,
 ) {
   const rows = await db.select({
@@ -355,6 +465,7 @@ async function priorContractValue(
     billDate: contractingProgressBillsTable.billDate,
     sourceBillId: contractingProgressBillsTable.id,
     direction: contractingProgressBillsTable.direction,
+    billStatus: contractingProgressBillsTable.status,
     ownerContractId: contractingProgressBillsTable.ownerContractId,
     subcontractorContractId: contractingProgressBillsTable.subcontractorContractId,
   }).from(contractingBillLinesTable).innerJoin(
@@ -369,10 +480,13 @@ async function priorContractValue(
   let total = 0;
   for (const row of rows) {
     if (excludeLineId && row.line.id === excludeLineId) continue;
+    if ((row.line.changeOrderId ?? null) !== changeOrderId) continue;
     const sameContract = bill.direction === "incoming"
       ? !bill.subcontractorContractId || row.subcontractorContractId === bill.subcontractorContractId
-      : !bill.ownerContractId || row.ownerContractId === bill.ownerContractId;
-    if (row.sourceBillId === bill.id || row.direction !== bill.direction || !sameContract) continue;
+      : !bill.ownerContractId || row.ownerContractId === bill.ownerContractId
+        || (changeOrderId != null && row.line.changeOrderId === changeOrderId);
+    if (row.sourceBillId === bill.id || row.billStatus === "reversed"
+      || row.direction !== bill.direction || !sameContract) continue;
     const before = String(row.billDate) < String(bill.billDate)
       || (String(row.billDate) === String(bill.billDate) && row.sourceBillId < bill.id);
     if (before) total += Number(row.line.currentValue);
@@ -383,14 +497,90 @@ async function priorContractValue(
     .filter((row) => {
       const sameContract = bill.direction === "incoming"
         ? !bill.subcontractorContractId || row.subcontractorContractId === bill.subcontractorContractId
-        : !bill.ownerContractId || row.ownerContractId === bill.ownerContractId;
+        : !bill.ownerContractId || row.ownerContractId === bill.ownerContractId
+          || (changeOrderId != null && row.line.changeOrderId === changeOrderId);
       return row.sourceBillId === bill.id && row.direction === bill.direction && sameContract
+        && (row.line.changeOrderId ?? null) === changeOrderId
         && (!excludeLineId || row.line.id !== excludeLineId);
     })
     .reduce((sum, row) => sum + Number(row.line.currentValue), 0);
 }
 
-async function contractCeiling(companyId: number, bill: typeof contractingProgressBillsTable.$inferSelect) {
+// Value already allocated anywhere in this exact contract scope. This is
+// separate from priorContractValue(), which is the selected change-order
+// bucket. A base allocation and each approved order must consume one shared
+// base+orders ceiling rather than receiving the base allowance repeatedly.
+async function priorContractScopeValue(
+  companyId: number,
+  bill: typeof contractingProgressBillsTable.$inferSelect,
+  excludeLineId?: number,
+) {
+  const rows = await db.select({
+    line: contractingBillLinesTable,
+    billDate: contractingProgressBillsTable.billDate,
+    sourceBillId: contractingProgressBillsTable.id,
+    direction: contractingProgressBillsTable.direction,
+    billStatus: contractingProgressBillsTable.status,
+    ownerContractId: contractingProgressBillsTable.ownerContractId,
+    subcontractorContractId: contractingProgressBillsTable.subcontractorContractId,
+  }).from(contractingBillLinesTable).innerJoin(
+    contractingProgressBillsTable,
+    eq(contractingBillLinesTable.billId, contractingProgressBillsTable.id),
+  ).where(and(
+    eq(contractingBillLinesTable.companyId, companyId),
+    eq(contractingBillLinesTable.projectId, bill.projectId),
+    eq(contractingProgressBillsTable.companyId, companyId),
+    eq(contractingProgressBillsTable.projectId, bill.projectId),
+  ));
+  const ownerContracts = bill.direction === "outgoing"
+    ? await db.select({
+      id: contractingOwnerContractsTable.id,
+      parentContractId: contractingOwnerContractsTable.parentContractId,
+      contractType: contractingOwnerContractsTable.contractType,
+    }).from(contractingOwnerContractsTable).where(and(
+      eq(contractingOwnerContractsTable.companyId, companyId),
+      eq(contractingOwnerContractsTable.projectId, bill.projectId),
+    ))
+    : [];
+  const selected = bill.ownerContractId
+    ? ownerContracts.find((contract) => contract.id === bill.ownerContractId)
+    : undefined;
+  const base = selected && ["change_order", "addendum"].includes(String(selected.contractType))
+    ? ownerContracts.find((contract) => contract.id === selected.parentContractId)
+    : selected ?? ownerContracts.find((contract) => contract.contractType === "main");
+  const scopeOwnerIds = new Set<number>(base ? [base.id] : []);
+  const scopeOrderIds = new Set<number>();
+  for (const contract of ownerContracts) {
+    if (!["change_order", "addendum"].includes(String(contract.contractType))) continue;
+    if (contract.parentContractId == null || contract.parentContractId === base?.id) {
+      scopeOwnerIds.add(contract.id);
+      scopeOrderIds.add(contract.id);
+    }
+  }
+  let total = 0;
+  for (const row of rows) {
+    if (excludeLineId && row.line.id === excludeLineId) continue;
+    if (row.billStatus === "reversed" || row.direction !== bill.direction) continue;
+    const sameContract = bill.direction === "incoming"
+      ? !bill.subcontractorContractId || row.subcontractorContractId === bill.subcontractorContractId
+      : !bill.ownerContractId
+        || scopeOwnerIds.has(Number(row.ownerContractId))
+        || row.line.changeOrderId != null && scopeOrderIds.has(row.line.changeOrderId);
+    if (!sameContract) continue;
+    const before = row.sourceBillId !== bill.id && (
+      String(row.billDate) < String(bill.billDate)
+      || String(row.billDate) === String(bill.billDate) && row.sourceBillId < bill.id
+    );
+    if (before || row.sourceBillId === bill.id) total += Number(row.line.currentValue);
+  }
+  return total;
+}
+
+async function contractCeiling(
+  companyId: number,
+  bill: typeof contractingProgressBillsTable.$inferSelect,
+  changeOrderId: number | null = null,
+) {
   if (bill.direction === "incoming" && bill.subcontractorContractId) {
     const [contract] = await db.select({ value: contractingSubContractsTable.value })
       .from(contractingSubContractsTable)
@@ -399,21 +589,41 @@ async function contractCeiling(companyId: number, bill: typeof contractingProgre
         eq(contractingSubContractsTable.companyId, companyId),
         eq(contractingSubContractsTable.projectId, bill.projectId),
       ));
-    return Number(contract?.value ?? 0);
+    const value = Number(contract?.value ?? 0);
+    return { total: value, bucket: value };
   }
   if (bill.direction === "outgoing") {
     const contracts = await db.select({
+      id: contractingOwnerContractsTable.id,
+      parentContractId: contractingOwnerContractsTable.parentContractId,
       contractType: contractingOwnerContractsTable.contractType,
+      status: contractingOwnerContractsTable.status,
       value: contractingOwnerContractsTable.value,
     }).from(contractingOwnerContractsTable).where(and(
       eq(contractingOwnerContractsTable.companyId, companyId),
       eq(contractingOwnerContractsTable.projectId, bill.projectId),
     ));
     if (contracts.length > 0) {
-      const main = contracts.find((contract) => contract.contractType === "main");
-      return Number(main?.value ?? 0) + contracts
-        .filter((contract) => contract.contractType === "change_order" || contract.contractType === "addendum")
+      const selected = bill.ownerContractId
+        ? contracts.find((contract) => contract.id === bill.ownerContractId)
+        : undefined;
+      const base = selected && ["change_order", "addendum"].includes(String(selected.contractType))
+        ? contracts.find((contract) => contract.id === selected.parentContractId)
+        : selected ?? contracts.find((contract) => contract.contractType === "main");
+      const baseId = base?.id;
+      const approvedOrders = contracts.filter((contract) =>
+        ["change_order", "addendum"].includes(String(contract.contractType))
+        && ["active", "approved"].includes(String(contract.status))
+        && (changeOrderId != null
+          ? contract.id === changeOrderId
+          : contract.parentContractId == null || contract.parentContractId === baseId),
+      );
+      const total = Number(base?.value ?? 0) + approvedOrders
         .reduce((sum, contract) => sum + Number(contract.value), 0);
+      const bucket = changeOrderId == null
+        ? total
+        : Number(approvedOrders.find((contract) => contract.id === changeOrderId)?.value ?? 0);
+      return { total, bucket };
     }
   }
   const [project] = await db.select({ contractValue: contractingProjectsTable.contractValue })
@@ -421,7 +631,8 @@ async function contractCeiling(companyId: number, bill: typeof contractingProgre
       eq(contractingProjectsTable.id, bill.projectId),
       eq(contractingProjectsTable.companyId, companyId),
     ));
-  return Number(project?.contractValue ?? 0);
+  const value = Number(project?.contractValue ?? 0);
+  return { total: value, bucket: value };
 }
 
 async function enforceAllocationLimit(
@@ -433,6 +644,8 @@ async function enforceAllocationLimit(
   currentValue: number,
   previousContractValue: number,
   contractValueLimit: number,
+  previousScopeValue = previousContractValue,
+  scopeValueLimit = contractValueLimit,
 ) {
   const cumulativeQty = previousQty + currentQty;
   const cumulativeValue = previousValue + currentValue;
@@ -444,19 +657,21 @@ async function enforceAllocationLimit(
   const exceedsQty = plannedQty > 0 && cumulativeQty > plannedQty + 0.0001;
   const exceedsValue = plannedValue > 0 && cumulativeValue > plannedValue + 0.01;
   const exceedsContract = contractValueLimit > 0
-    && previousContractValue + currentValue > contractValueLimit + 0.01;
+    && cents(previousContractValue) + cents(currentValue) > cents(contractValueLimit);
+  const exceedsScope = scopeValueLimit > 0
+    && cents(previousScopeValue) + cents(currentValue) > cents(scopeValueLimit);
   const approved = Boolean(req.body?.excessApproved || req.body?.overrideApproval);
   const reason = textValue(req.body?.excessApprovalReason ?? req.body?.approvalReason, "سبب اعتماد التجاوز");
-  if ((exceedsQty || exceedsValue || exceedsContract) && (!approved || !reason)) {
+  if ((exceedsQty || exceedsValue || exceedsContract || exceedsScope) && (!approved || !reason)) {
     throw error("تجاوز الكمية أو قيمة العقد؛ يلزم اعتماد صريح وسبب وصلاحية اعتماد", 422);
   }
-  if (approved && (exceedsQty || exceedsValue || exceedsContract) && !canAccessModule(req.authUser, "contracting", "post")) {
+  if (approved && (exceedsQty || exceedsValue || exceedsContract || exceedsScope) && !canApproveOverrun(req)) {
     throw error("لا تملك صلاحية اعتماد تجاوز الكمية أو قيمة العقد", 403);
   }
   return {
     cumulativeQty,
     cumulativeValue,
-    approved: Boolean(approved && (exceedsQty || exceedsValue || exceedsContract)),
+    approved: Boolean(approved && (exceedsQty || exceedsValue || exceedsContract || exceedsScope)),
     reason,
   };
 }
@@ -469,6 +684,10 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
       projectId: contractingBillLinesTable.projectId,
       billId: contractingBillLinesTable.billId,
       workItemId: contractingBillLinesTable.workItemId,
+      changeOrderId: contractingBillLinesTable.changeOrderId,
+      changeOrderNumber: contractingOwnerContractsTable.contractNumber,
+      changeOrderValue: contractingOwnerContractsTable.value,
+      changeOrderStatus: contractingOwnerContractsTable.status,
       workItemName: contractingWorkItemsTable.nameAr,
       workItemCode: contractingWorkItemsTable.code,
       unit: contractingWorkItemsTable.unit,
@@ -489,6 +708,13 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
       and(
         eq(contractingBillLinesTable.workItemId, contractingWorkItemsTable.id),
         eq(contractingWorkItemsTable.companyId, companyId),
+      ),
+    ).leftJoin(
+      contractingOwnerContractsTable,
+      and(
+        eq(contractingBillLinesTable.changeOrderId, contractingOwnerContractsTable.id),
+        eq(contractingOwnerContractsTable.companyId, companyId),
+        eq(contractingOwnerContractsTable.projectId, bill.projectId),
       ),
     ).where(and(eq(contractingBillLinesTable.companyId, companyId), eq(contractingBillLinesTable.billId, billId)))
       .orderBy(contractingBillLinesTable.id),
@@ -525,14 +751,21 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
   const netBeforeTax = Math.max(0, Number(bill.grossAmount) - deductionsTotal - Number(bill.previousPaid));
   const selectedOwner = ownerContracts.find((contract) => contract.id === bill.ownerContractId);
   const selectedSub = subContracts.find((contract) => contract.id === bill.subcontractorContractId);
-  const mainOwner = ownerContracts.find((contract) => contract.contractType === "main");
+  const mainOwner = selectedOwner && ["change_order", "addendum"].includes(selectedOwner.contractType)
+    ? ownerContracts.find((contract) => contract.id === selectedOwner.parentContractId)
+    : selectedOwner ?? ownerContracts.find((contract) => contract.contractType === "main");
   const originalContractValue = bill.direction === "incoming"
     ? Number(selectedSub?.value ?? 0)
     : Number(mainOwner?.value ?? selectedOwner?.value ?? project[0]?.contractValue ?? 0);
+  const baseContractId = mainOwner?.id;
   const changeOrdersValue = bill.direction === "incoming"
     ? 0
     : ownerContracts
-      .filter((contract) => contract.contractType === "change_order" || contract.contractType === "addendum")
+      .filter((contract) =>
+        (contract.contractType === "change_order" || contract.contractType === "addendum")
+        && ["active", "approved"].includes(contract.status)
+        && (contract.parentContractId == null || contract.parentContractId === baseContractId),
+      )
       .reduce((total, contract) => total + Number(contract.value), 0);
   const adjustedContractValue = originalContractValue + changeOrdersValue;
   const cumulativeWorks = lines.length > 0
@@ -561,6 +794,10 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
     penalties,
     attachments,
     workflow,
+    contracts: {
+      owner: ownerContracts,
+      subcontractor: subContracts,
+    },
     summary: {
       grossWorks: Number(bill.grossAmount),
       previousWorks: lines.reduce((total, row) => total + Number(row.previousValue), 0),
@@ -588,26 +825,36 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
 export async function createBillLine(companyId: number, billId: number, req: any) {
   const { bill } = await assertEditable(companyId, billId, req.authUser);
   const workItemId = idFrom(req.body?.workItemId, "بند التنفيذ");
+  const requestedChangeOrderId = req.body?.changeOrderId ?? req.body?.contractChangeOrderId;
+  const changeOrderId = requestedChangeOrderId == null || requestedChangeOrderId === ""
+    ? null : idFrom(requestedChangeOrderId, "أمر التغيير");
+  await assertApprovedChangeOrder(companyId, bill.projectId, bill, changeOrderId);
   const [duplicate] = await db.select({ id: contractingBillLinesTable.id }).from(contractingBillLinesTable).where(and(
     eq(contractingBillLinesTable.companyId, companyId),
     eq(contractingBillLinesTable.billId, billId),
     eq(contractingBillLinesTable.workItemId, workItemId),
+    changeOrderId == null
+      ? sql`${contractingBillLinesTable.changeOrderId} IS NULL`
+      : eq(contractingBillLinesTable.changeOrderId, changeOrderId),
   ));
   if (duplicate) throw error("لا يمكن إضافة بند التنفيذ نفسه مرتين إلى المستخلص", 409);
   const workItem = await assertProjectWorkItem(companyId, bill.projectId, workItemId);
   const currentQty = numberValue(req.body?.currentQty, "الكمية الحالية");
   const currentValue = numberValue(req.body?.currentValue, "قيمة الأعمال الحالية");
-  const previous = await priorTotals(companyId, bill.projectId, workItemId, bill);
-  const previousContractValue = await priorContractValue(companyId, bill);
+  const previous = await priorTotals(companyId, bill.projectId, workItemId, bill, changeOrderId);
+  const previousContractValue = await priorContractValue(companyId, bill, changeOrderId);
+  const previousScopeValue = await priorContractScopeValue(companyId, bill);
+  const ceilings = await contractCeiling(companyId, bill, changeOrderId);
   const limits = await enforceAllocationLimit(
     req, workItem, previous.previousQty, currentQty, previous.previousValue, currentValue,
-    previousContractValue, await contractCeiling(companyId, bill),
+    previousContractValue, ceilings.bucket, previousScopeValue, ceilings.total,
   );
   const [row] = await db.insert(contractingBillLinesTable).values({
     companyId,
     projectId: bill.projectId,
     billId,
     workItemId,
+    changeOrderId,
     previousQty: quantity(previous.previousQty),
     currentQty: quantity(currentQty),
     cumulativeQty: quantity(limits.cumulativeQty),
@@ -635,23 +882,35 @@ export async function updateBillLine(companyId: number, lineId: number, req: any
   const { bill } = await assertEditable(companyId, existing.billId, req.authUser);
   const workItemId = req.body?.workItemId == null ? existing.workItemId : idFrom(req.body.workItemId, "بند التنفيذ");
   if (!workItemId) throw error("بند التنفيذ مطلوب");
+  const requestedChangeOrderId = req.body?.changeOrderId ?? req.body?.contractChangeOrderId;
+  const changeOrderId = requestedChangeOrderId === undefined
+    ? existing.changeOrderId
+    : requestedChangeOrderId == null || requestedChangeOrderId === ""
+      ? null : idFrom(requestedChangeOrderId, "أمر التغيير");
+  await assertApprovedChangeOrder(companyId, bill.projectId, bill, changeOrderId);
   const [duplicate] = await db.select({ id: contractingBillLinesTable.id }).from(contractingBillLinesTable).where(and(
     eq(contractingBillLinesTable.companyId, companyId),
     eq(contractingBillLinesTable.billId, existing.billId),
     eq(contractingBillLinesTable.workItemId, workItemId),
+    changeOrderId == null
+      ? sql`${contractingBillLinesTable.changeOrderId} IS NULL`
+      : eq(contractingBillLinesTable.changeOrderId, changeOrderId),
   ));
   if (duplicate && duplicate.id !== existing.id) throw error("لا يمكن تكرار بند التنفيذ في المستخلص", 409);
   const workItem = await assertProjectWorkItem(companyId, bill.projectId, workItemId);
   const currentQty = req.body?.currentQty === undefined ? Number(existing.currentQty) : numberValue(req.body.currentQty, "الكمية الحالية");
   const currentValue = req.body?.currentValue === undefined ? Number(existing.currentValue) : numberValue(req.body.currentValue, "قيمة الأعمال الحالية");
-  const previous = await priorTotals(companyId, bill.projectId, workItemId, bill, existing.id);
-  const previousContractValue = await priorContractValue(companyId, bill, existing.id);
+  const previous = await priorTotals(companyId, bill.projectId, workItemId, bill, changeOrderId, existing.id);
+  const previousContractValue = await priorContractValue(companyId, bill, changeOrderId, existing.id);
+  const previousScopeValue = await priorContractScopeValue(companyId, bill, existing.id);
+  const ceilings = await contractCeiling(companyId, bill, changeOrderId);
   const limits = await enforceAllocationLimit(
     req, workItem, previous.previousQty, currentQty, previous.previousValue, currentValue,
-    previousContractValue, await contractCeiling(companyId, bill),
+    previousContractValue, ceilings.bucket, previousScopeValue, ceilings.total,
   );
   const [row] = await db.update(contractingBillLinesTable).set({
     workItemId,
+    changeOrderId,
     previousQty: quantity(previous.previousQty),
     currentQty: quantity(currentQty),
     cumulativeQty: quantity(limits.cumulativeQty),
@@ -942,6 +1201,35 @@ export async function createBillAttachment(companyId: number, billId: number, re
   }
 }
 
+export async function updateBillAttachment(companyId: number, id: number, req: any) {
+  const [existing] = await db.select().from(contractingBillAttachmentsTable).where(and(
+    eq(contractingBillAttachmentsTable.id, id),
+    eq(contractingBillAttachmentsTable.companyId, companyId),
+  ));
+  if (!existing) throw error("المرفق غير موجود", 404);
+  const { bill } = await assertEditable(companyId, existing.billId, req.authUser);
+  // Metadata edits deliberately cannot replace the storage reference. The
+  // upload/download path remains bill- and uploader-scoped through the
+  // existing safe object-path validation.
+  const category = req.body?.category === undefined
+    ? existing.category
+    : validateAttachmentCategory(req.body.category);
+  const filename = req.body?.filename === undefined
+    ? existing.filename
+    : textValue(req.body.filename, "اسم الملف", true)!;
+  if (filename.length > 255) throw error("اسم الملف طويل");
+  const [row] = await db.update(contractingBillAttachmentsTable).set({
+    category,
+    filename,
+  }).where(and(
+    eq(contractingBillAttachmentsTable.id, id),
+    eq(contractingBillAttachmentsTable.companyId, companyId),
+    eq(contractingBillAttachmentsTable.billId, bill.id),
+  )).returning();
+  await logDetailAction(companyId, bill, "attachment_updated", req.authUser?.id, category);
+  return row;
+}
+
 export async function deleteBillAttachment(companyId: number, id: number, user?: BranchUser | null) {
   const [existing] = await db.select().from(contractingBillAttachmentsTable).where(and(
     eq(contractingBillAttachmentsTable.id, id),
@@ -959,8 +1247,10 @@ const ALLOWED_TRANSITIONS: Record<string, Set<string>> = {
   submitted: new Set(["under_review", "rejected"]),
   under_review: new Set(["approved", "rejected"]),
   approved: new Set(["posted", "rejected"]),
-  posted: new Set(["partially_paid", "paid"]),
-  partially_paid: new Set(["paid"]),
+  // Settlement is the only source of payment state. These statuses remain
+  // readable for legacy rows but are intentionally not manual transitions.
+  posted: new Set(),
+  partially_paid: new Set(),
   paid: new Set(),
   rejected: new Set(["draft", "submitted"]),
 };
@@ -987,6 +1277,9 @@ export async function transitionBillWorkflow(companyId: number, billId: number, 
     return { state: current, idempotent: true };
   }
   if (!ALLOWED_TRANSITIONS[current]?.has(next)) {
+    if (next === "partially_paid" || next === "paid") {
+      throw error("حالة السداد تُنشأ من حركة السداد المحاسبية فقط", 409);
+    }
     throw error(`لا يمكن نقل المستخلص من ${current} إلى ${next}`, 409);
   }
   if (next === "rejected" && ["approved", "posted", "partially_paid", "paid"].includes(current)) {
@@ -1094,7 +1387,8 @@ async function settlementTotals(companyId: number) {
     const result = await db.execute(sql`
       SELECT bill_id,
              COALESCE(SUM(amount) FILTER (
-               WHERE kind IN ('bill_receipt','bill_payment','advance_application')
+               WHERE status = 'posted'
+                 AND kind IN ('bill_receipt','bill_payment','advance_application')
              ), 0)::numeric AS paid
         FROM contracting_accounting_settlements
        WHERE company_id = ${companyId}
@@ -1109,9 +1403,39 @@ async function settlementTotals(companyId: number) {
   }
 }
 
+type ReportTotals = {
+  grossWorks: number;
+  previousWorks: number;
+  currentWorks: number;
+  cumulativeWorks: number;
+  deductions: number;
+  retentions: number;
+  penalties: number;
+  payments: number;
+  outstanding: number;
+  contractValue: number;
+  remainingContract: number;
+  completionPercent: number;
+};
+
+function emptyReportTotals(): ReportTotals {
+  return {
+    grossWorks: 0, previousWorks: 0, currentWorks: 0, cumulativeWorks: 0,
+    deductions: 0, retentions: 0, penalties: 0, payments: 0, outstanding: 0,
+    contractValue: 0, remainingContract: 0, completionPercent: 0,
+  };
+}
+
 export async function contractingBillsReport(
   companyId: number,
-  filters: { projectId?: number; direction?: string } = {},
+  filters: {
+    projectId?: number;
+    contractorId?: number;
+    direction?: string;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  } = {},
   user?: BranchUser | null,
 ) {
   if (!user) throw error("غير مصرح", 401);
@@ -1125,21 +1449,15 @@ export async function contractingBillsReport(
   if (filters.projectId && !allowedProjectIds.includes(filters.projectId)) {
     return {
       bills: [],
-      totals: {
-        grossWorks: 0, previousWorks: 0, currentWorks: 0, cumulativeWorks: 0,
-        deductions: 0, retentions: 0, penalties: 0, payments: 0, outstanding: 0,
-        contractValue: 0, remainingContract: 0, completionPercent: 0,
-      },
+      totals: emptyReportTotals(),
+      draftTotals: emptyReportTotals(),
     };
   }
   if (allowedProjectIds.length === 0) {
     return {
       bills: [],
-      totals: {
-        grossWorks: 0, previousWorks: 0, currentWorks: 0, cumulativeWorks: 0,
-        deductions: 0, retentions: 0, penalties: 0, payments: 0, outstanding: 0,
-        contractValue: 0, remainingContract: 0, completionPercent: 0,
-      },
+      totals: emptyReportTotals(),
+      draftTotals: emptyReportTotals(),
     };
   }
   const conditions: any[] = [
@@ -1147,49 +1465,90 @@ export async function contractingBillsReport(
     inArray(contractingProgressBillsTable.projectId, allowedProjectIds),
   ];
   if (filters.projectId) conditions.push(eq(contractingProgressBillsTable.projectId, filters.projectId));
+  if (filters.contractorId) conditions.push(eq(contractingProgressBillsTable.contractorId, filters.contractorId));
   if (filters.direction === "incoming" || filters.direction === "outgoing") {
     conditions.push(eq(contractingProgressBillsTable.direction, filters.direction));
   }
+  if (filters.status) conditions.push(eq(contractingProgressBillsTable.status, filters.status));
+  if (filters.dateFrom) conditions.push(sql`${contractingProgressBillsTable.billDate} >= ${filters.dateFrom}`);
+  if (filters.dateTo) conditions.push(sql`${contractingProgressBillsTable.billDate} <= ${filters.dateTo}`);
   const bills = await db.select().from(contractingProgressBillsTable)
     .where(and(...conditions))
     .orderBy(desc(contractingProgressBillsTable.billDate), desc(contractingProgressBillsTable.id));
   if (bills.length === 0) return {
     bills: [],
-    totals: {
-      grossWorks: 0, previousWorks: 0, currentWorks: 0, cumulativeWorks: 0,
-      deductions: 0, retentions: 0, penalties: 0, payments: 0, outstanding: 0,
-      contractValue: 0, remainingContract: 0, completionPercent: 0,
-    },
+    totals: emptyReportTotals(),
+    draftTotals: emptyReportTotals(),
   };
   const ids = bills.map((bill) => bill.id);
-  const [lines, deductions, penalties, projectRows, reportOwnerContracts] = await Promise.all([
+  const [lines, deductions, penalties, projectRows, reportOwnerContracts, reportSubContracts, reportContractors] = await Promise.all([
     db.select().from(contractingBillLinesTable).where(eq(contractingBillLinesTable.companyId, companyId)),
     db.select().from(contractingBillDeductionsTable).where(eq(contractingBillDeductionsTable.companyId, companyId)),
     db.select().from(contractingBillPenaltiesTable).where(eq(contractingBillPenaltiesTable.companyId, companyId)),
-    db.select({ id: contractingProjectsTable.id, contractValue: contractingProjectsTable.contractValue })
+    db.select({
+      id: contractingProjectsTable.id,
+      code: contractingProjectsTable.code,
+      nameAr: contractingProjectsTable.nameAr,
+      contractValue: contractingProjectsTable.contractValue,
+    })
       .from(contractingProjectsTable).where(and(
         eq(contractingProjectsTable.companyId, companyId),
         inArray(contractingProjectsTable.id, allowedProjectIds),
       )),
     db.select({
+      id: contractingOwnerContractsTable.id,
       projectId: contractingOwnerContractsTable.projectId,
       contractType: contractingOwnerContractsTable.contractType,
+      parentContractId: contractingOwnerContractsTable.parentContractId,
+      status: contractingOwnerContractsTable.status,
       value: contractingOwnerContractsTable.value,
     }).from(contractingOwnerContractsTable).where(and(
       eq(contractingOwnerContractsTable.companyId, companyId),
       inArray(contractingOwnerContractsTable.projectId, allowedProjectIds),
     )),
+    db.select({
+      id: contractingSubContractsTable.id,
+      projectId: contractingSubContractsTable.projectId,
+      value: contractingSubContractsTable.value,
+    }).from(contractingSubContractsTable).where(and(
+      eq(contractingSubContractsTable.companyId, companyId),
+      inArray(contractingSubContractsTable.projectId, allowedProjectIds),
+    )),
+    db.select({
+      id: contractingContractorsTable.id,
+      name: contractingContractorsTable.name,
+    }).from(contractingContractorsTable).where(eq(contractingContractorsTable.companyId, companyId)),
   ]);
   const settlementMap = await settlementTotals(companyId);
   const selected = new Set(ids);
-  const projectContractValues = new Map(projectRows.map((project) => {
-    const owner = reportOwnerContracts.filter((contract) => contract.projectId === project.id);
-    const main = owner.find((contract) => contract.contractType === "main");
-    const changeOrders = owner
-      .filter((contract) => contract.contractType === "change_order" || contract.contractType === "addendum")
-      .reduce((total, contract) => total + Number(contract.value), 0);
-    return [project.id, Number(main?.value ?? project.contractValue ?? 0) + changeOrders] as const;
-  }));
+  const projectInfo = new Map(projectRows.map((project) => [project.id, project] as const));
+  const contractorNames = new Map(reportContractors.map((contractor) => [contractor.id, contractor.name] as const));
+  const ownerContractsByProject = new Map<number, typeof reportOwnerContracts>();
+  for (const contract of reportOwnerContracts) {
+    const projectContracts = ownerContractsByProject.get(contract.projectId) ?? [];
+    projectContracts.push(contract);
+    ownerContractsByProject.set(contract.projectId, projectContracts);
+  }
+  const incomingContractValues = new Map<number, number>();
+  const incomingProjectContractValues = new Map<number, number>();
+  for (const project of projectRows) {
+    const projectContracts = reportSubContracts.filter((contract) => contract.projectId === project.id);
+    incomingProjectContractValues.set(
+      project.id,
+      projectContracts.reduce((total, contract) => total + Number(contract.value), 0),
+    );
+    for (const contract of projectContracts) {
+      incomingContractValues.set(contract.id, Number(contract.value));
+    }
+  }
+  function outgoingContractScope(bill: typeof bills[number]) {
+    const projectContracts = ownerContractsByProject.get(bill.projectId) ?? [];
+    return reportOwnerContractScope(
+      projectContracts,
+      bill.ownerContractId,
+      Number(projectInfo.get(bill.projectId)?.contractValue ?? 0),
+    );
+  }
   const reportRows = bills.map((bill) => {
     const billLines = lines.filter((line) => line.billId === bill.id && selected.has(line.billId));
     const billDeductions = deductions.filter((row) => row.billId === bill.id);
@@ -1200,20 +1559,35 @@ export async function contractingBillsReport(
       .reduce((total, row) => total + Number(row.amount), 0);
     const deductionTotal = retention + extraDeductions;
     const settlementPaid = settlementMap.get(bill.id) ?? 0;
-    // Existing paidAmount and accounting settlements can describe the same
-    // payment. Taking the larger authoritative representation avoids double
-    // counting while still showing legacy bills with no settlement row.
-    const payments = Math.max(Number(bill.paidAmount), settlementPaid);
+    // Posted settlements are authoritative whenever a bill has settlement
+    // history. This prevents reversed/cancelled rows from falling through to
+    // the legacy paidAmount snapshot and being counted as paid again.
+    const payments = settlementMap.has(bill.id)
+      ? settlementPaid
+      : Number(bill.paidAmount);
     const billDeductionsApplied = extraDeductions
       + billPenalties.reduce((total, row) => total + Number(row.amount), 0);
-    const contractValue = projectContractValues.get(bill.projectId) ?? 0;
+    const outgoingScope = bill.direction === "outgoing" ? outgoingContractScope(bill) : null;
+    const contractValue = bill.direction === "incoming"
+      ? incomingContractValues.get(Number(bill.subcontractorContractId))
+        ?? incomingProjectContractValues.get(bill.projectId) ?? 0
+      : outgoingScope?.value ?? 0;
     const cumulativeWorks = billLines.length > 0
       ? billLines.reduce((total, line) => total + Number(line.cumulativeValue), 0)
       : Number(bill.grossAmount);
     return {
       id: bill.id,
       projectId: bill.projectId,
+      projectCode: projectInfo.get(bill.projectId)?.code ?? null,
+      projectName: projectInfo.get(bill.projectId)?.nameAr ?? null,
+      contractorId: bill.contractorId,
+      contractorName: bill.contractorId == null ? null : contractorNames.get(bill.contractorId) ?? null,
+      contractId: bill.direction === "incoming" ? bill.subcontractorContractId : bill.ownerContractId,
+      contractBaseId: bill.direction === "incoming"
+        ? bill.subcontractorContractId
+        : outgoingScope?.baseContractId ?? null,
       billNumber: bill.billNumber,
+      billType: bill.billType,
       billDate: bill.billDate,
       direction: bill.direction,
       status: bill.status,
@@ -1236,57 +1610,78 @@ export async function contractingBillsReport(
       settlementPaid,
     };
   });
-  const latestLinesByWorkItem = new Map<string, { previous: number; cumulative: number; billDate: string; billId: number }>();
-  const billDateById = new Map(bills.map((bill) => [bill.id, String(bill.billDate)]));
-  for (const line of lines) {
-    if (!selected.has(line.billId) || line.workItemId == null) continue;
-    const bill = bills.find((candidate) => candidate.id === line.billId);
-    const workItemKey = `${bill?.direction ?? "unknown"}:${line.workItemId}`;
-    const existing = latestLinesByWorkItem.get(workItemKey);
-    const date = billDateById.get(line.billId) ?? "";
-    if (!existing || date > existing.billDate || (date === existing.billDate && line.billId > existing.billId)) {
-      latestLinesByWorkItem.set(workItemKey, {
-        previous: Number(line.previousValue),
-        cumulative: Number(line.cumulativeValue),
-        billDate: date,
-        billId: line.billId,
-      });
+  const reportRowById = new Map(reportRows.map((row) => [row.id, row] as const));
+  const billById = new Map(bills.map((bill) => [bill.id, bill] as const));
+  const summarizeRows = (summaryRows: typeof reportRows): ReportTotals => {
+    const summaryIds = new Set(summaryRows.map((row) => row.id));
+    const latestLinesByWorkItem = new Map<string, {
+      previous: number;
+      cumulative: number;
+      billDate: string;
+      billId: number;
+    }>();
+    for (const line of lines) {
+      if (!summaryIds.has(line.billId) || line.workItemId == null) continue;
+      const row = reportRowById.get(line.billId);
+      if (!row) continue;
+      const workItemKey = `${row.direction}:${row.projectId}:${row.contractBaseId ?? ""}:${
+        (line as any).changeOrderId ?? ""
+      }:${line.workItemId}`;
+      const existing = latestLinesByWorkItem.get(workItemKey);
+      const date = String(row.billDate);
+      if (!existing || date > existing.billDate || (date === existing.billDate && line.billId > existing.billId)) {
+        latestLinesByWorkItem.set(workItemKey, {
+          previous: Number(line.previousValue),
+          cumulative: Number(line.cumulativeValue),
+          billDate: date,
+          billId: line.billId,
+        });
+      }
     }
-  }
-  const totals = reportRows.reduce((totals, row) => ({
-    grossWorks: totals.grossWorks + row.grossWorks,
-    // Current work is additive across periods. Previous/cumulative are read
-    // from only the latest allocation for each work item, avoiding a report
-    // that counts the same cumulative amount once per bill.
-    currentWorks: totals.currentWorks + row.currentWorks,
-    previousWorks: totals.previousWorks,
-    cumulativeWorks: totals.cumulativeWorks,
-    deductions: totals.deductions + row.deductions,
-    retentions: totals.retentions + row.retentions,
-    penalties: totals.penalties + row.penalties,
-    payments: totals.payments + row.payments,
-    outstanding: totals.outstanding + row.outstanding,
-    contractValue: totals.contractValue,
-    remainingContract: totals.remainingContract,
-    completionPercent: totals.completionPercent,
-  }), {
-    grossWorks: 0, currentWorks: 0, deductions: 0, retentions: 0,
-    penalties: 0, payments: 0, outstanding: 0, previousWorks: 0, cumulativeWorks: 0,
-    contractValue: 0, remainingContract: 0, completionPercent: 0,
+    const totals = summaryRows.reduce((summary, row) => ({
+      grossWorks: summary.grossWorks + row.grossWorks,
+      // Current work is additive across periods. Previous/cumulative are read
+      // from only the latest allocation for each work item, avoiding a report
+      // that counts the same cumulative amount once per bill.
+      currentWorks: summary.currentWorks + row.currentWorks,
+      previousWorks: summary.previousWorks,
+      cumulativeWorks: summary.cumulativeWorks,
+      deductions: summary.deductions + row.deductions,
+      retentions: summary.retentions + row.retentions,
+      penalties: summary.penalties + row.penalties,
+      payments: summary.payments + row.payments,
+      outstanding: summary.outstanding + row.outstanding,
+      contractValue: summary.contractValue,
+      remainingContract: summary.remainingContract,
+      completionPercent: summary.completionPercent,
+    }), emptyReportTotals());
+    totals.previousWorks = Array.from(latestLinesByWorkItem.values())
+      .reduce((total, row) => total + row.previous, 0);
+    totals.cumulativeWorks = Array.from(latestLinesByWorkItem.values())
+      .reduce((total, row) => total + row.cumulative, 0);
+    const selectedContractValues = new Map<string, number>();
+    for (const row of summaryRows) {
+      const key = `${row.direction}:${row.projectId}:${row.contractBaseId ?? row.contractId ?? "project"}`;
+      selectedContractValues.set(key, row.contractValue);
+    }
+    totals.contractValue = Array.from(selectedContractValues.values())
+      .reduce((total, value) => total + value, 0);
+    totals.remainingContract = Math.max(0, totals.contractValue - totals.cumulativeWorks);
+    totals.completionPercent = totals.contractValue > 0
+      ? Math.min(100, totals.cumulativeWorks / totals.contractValue * 100)
+      : 0;
+    return totals;
+  };
+  const certifiedRows = reportRows.filter((row) => {
+    const bill = billById.get(row.id);
+    return reportBillIsCertified(row.status, bill?.reversalJournalEntryId);
   });
-  totals.previousWorks = Array.from(latestLinesByWorkItem.values())
-    .reduce((total, row) => total + row.previous, 0);
-  totals.cumulativeWorks = Array.from(latestLinesByWorkItem.values())
-    .reduce((total, row) => total + row.cumulative, 0);
-  const selectedProjects = new Set(reportRows.map((row) => row.projectId));
-  totals.contractValue = Array.from(selectedProjects)
-    .reduce((total, projectId) => total + (projectContractValues.get(projectId) ?? 0), 0);
-  totals.remainingContract = Math.max(0, totals.contractValue - totals.cumulativeWorks);
-  totals.completionPercent = totals.contractValue > 0
-    ? Math.min(100, totals.cumulativeWorks / totals.contractValue * 100)
-    : 0;
+  const draftRows = reportRows.filter((row) => row.status === "draft");
+  const totals = summarizeRows(certifiedRows);
+  const draftTotals = summarizeRows(draftRows);
   return {
     bills: reportRows,
     totals,
+    draftTotals,
   };
 }

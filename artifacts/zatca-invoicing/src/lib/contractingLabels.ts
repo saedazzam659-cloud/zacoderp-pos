@@ -68,6 +68,8 @@ export const BILL_STATUS_LABEL: Record<string, string> = {
   partially_paid: "مسدد جزئياً",
   paid: "مدفوع",
   rejected: "مرفوض",
+  reversed: "معكوس",
+  cancelled: "ملغى",
 };
 
 export const BILL_TYPE_LABEL: Record<string, string> = {
@@ -91,6 +93,7 @@ export const CONTRACT_TYPE_LABEL: Record<string, string> = {
 export const CONTRACT_STATUS_LABEL: Record<string, string> = {
   draft: "مسودة",
   active: "نشط",
+  approved: "معتمد",
   suspended: "معلّق",
   completed: "مكتمل",
   terminated: "منتهٍ",

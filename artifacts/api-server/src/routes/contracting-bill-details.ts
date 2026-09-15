@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { requireContractingCapability } from "../lib/contracting-security.js";
 import {
   ensureContractingBillDetailsTables,
   listBillDetails,
@@ -16,6 +17,7 @@ import {
   updateBillPenalty,
   deleteBillPenalty,
   createBillAttachment,
+  updateBillAttachment,
   requestBillAttachmentUpload,
   writeBillAttachmentDirect,
   downloadBillAttachment,
@@ -69,24 +71,7 @@ function fail(res: any, caught: any) {
  * retain compatibility with the existing fallback action; an explicit false
  * still denies the request.
  */
-function requireBillCapability(capability: string, fallback: "create" | "edit" | "post" | "delete" = "edit") {
-  return (req: any, res: any, next: any) => {
-    if (req.authUser?.role === "admin" || req.authUser?.role === "superadmin") {
-      next();
-      return;
-    }
-    const permissions = req.authUser?.permissions?.contracting;
-    if (permissions && permissions[capability] === false) {
-      res.status(403).json({ error: "لا تملك صلاحية تنفيذ هذا الإجراء" });
-      return;
-    }
-    if (permissions && permissions[capability] === true) {
-      next();
-      return;
-    }
-    requirePermission("contracting", fallback)(req, res, next);
-  };
-}
+const requireBillCapability = requireContractingCapability;
 
 // Detail reads are intentionally separate from the legacy bill response so
 // old clients keep receiving the exact existing automatic fields.
@@ -106,9 +91,15 @@ router.get("/reports/bills", async (req, res) => {
   try {
     const rawProjectId = req.query.projectId;
     const projectId = rawProjectId == null || rawProjectId === "" ? undefined : Number(rawProjectId);
+    const rawContractorId = req.query.contractorId;
+    const contractorId = rawContractorId == null || rawContractorId === "" ? undefined : Number(rawContractorId);
     res.json(await contractingBillsReport(cid, {
       projectId: projectId && Number.isInteger(projectId) ? projectId : undefined,
+      contractorId: contractorId && Number.isInteger(contractorId) ? contractorId : undefined,
       direction: typeof req.query.direction === "string" ? req.query.direction : undefined,
+      status: typeof req.query.status === "string" ? req.query.status : undefined,
+      dateFrom: typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined,
+      dateTo: typeof req.query.dateTo === "string" ? req.query.dateTo : undefined,
     }, req.authUser));
   } catch (caught) {
     fail(res, caught);
@@ -266,6 +257,16 @@ router.post("/bills/:id/attachments", requireBillCapability("edit"), async (req,
   }
 });
 
+router.put("/bill-attachments/:id", requireBillCapability("edit"), async (req, res) => {
+  const cid = await companyId(req, res);
+  if (!cid) return;
+  try {
+    res.json(await updateBillAttachment(cid, Number(req.params.id), req));
+  } catch (caught) {
+    fail(res, caught);
+  }
+});
+
 router.delete("/bill-attachments/:id", requireBillCapability("edit"), async (req, res) => {
   const cid = await companyId(req, res);
   if (!cid) return;
@@ -280,10 +281,9 @@ router.post("/bills/:id/workflow", (req, res, next) => {
   const action = String(req.body?.state ?? "");
   const capability = action === "under_review" ? "review"
     : action === "approved" ? "approve"
-      : action === "partially_paid" || action === "paid" ? "pay"
-        : action === "rejected" ? "cancel"
-          : action === "draft" || action === "submitted" ? "edit" : "post";
-  requireBillCapability(capability, capability === "edit" ? "edit" : "post")(req, res, next);
+      : action === "rejected" ? "cancel"
+        : action === "draft" || action === "submitted" ? "edit" : "post";
+  requireBillCapability(capability as any, capability === "edit" ? "edit" : "post")(req, res, next);
 }, async (req, res) => {
   const cid = await companyId(req, res);
   if (!cid) return;

@@ -11,6 +11,7 @@ import {
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { requirePostRight } from "../lib/postingRights.js";
+import { requireContractingCapability } from "../lib/contracting-security.js";
 import {
   applyAdvance,
   approveBill,
@@ -23,7 +24,9 @@ import {
   listAccountingAudit,
   listMaterialMovements,
   listSettlements,
+  materialLots,
   unapproveBill,
+  createPostedCorrection,
 } from "../lib/contracting-accounting-service.js";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 
@@ -154,9 +157,38 @@ router.get("/projects/:projectId/material-movements", async (req, res) => {
   }
 });
 
+router.get("/projects/:projectId/material-lots", async (req, res) => {
+  const cid = await companyId(req, res);
+  if (!cid) return;
+  try {
+    const projectId = Number(req.params.projectId);
+    const itemId = Number(req.query.itemId);
+    const warehouseId = Number(req.query.warehouseId);
+    const [project] = await db.select({ branchId: contractingProjectsTable.branchId })
+      .from(contractingProjectsTable).where(and(
+        eq(contractingProjectsTable.id, projectId),
+        eq(contractingProjectsTable.companyId, cid),
+      ));
+    if (!project) return res.status(404).json({ error: "المشروع غير موجود" });
+    assertProjectBranchAccess(req, project.branchId);
+    if (!Number.isInteger(itemId) || !Number.isInteger(warehouseId)) {
+      return res.status(400).json({ error: "الصنف والمخزن مطلوبان لعرض التشغيلات" });
+    }
+    return res.json(await materialLots(
+      cid,
+      projectId,
+      itemId,
+      warehouseId,
+      String(req.query.movementDate ?? new Date().toISOString().slice(0, 10)),
+    ));
+  } catch (error) {
+    return fail(res, error);
+  }
+});
+
 router.post(
   "/projects/:projectId/settlements",
-  requirePermission("contracting", "post"),
+  requireContractingCapability("pay", "post"),
   requirePostRight("ctgContractingSettlement"),
   async (req, res) => {
     const cid = await companyId(req, res);
@@ -203,7 +235,7 @@ router.post(
 
 router.post(
   "/settlements/:id/apply",
-  requirePermission("contracting", "post"),
+  requireContractingCapability("pay", "post"),
   requirePostRight("ctgContractingSettlement"),
   async (req, res) => {
     const cid = await companyId(req, res);
@@ -250,7 +282,7 @@ router.get("/projects/:projectId/accounting/inventory-options", async (req, res)
 
 router.post(
   "/projects/:projectId/material-movements",
-  requirePermission("contracting", "post"),
+  requireContractingCapability("post", "post"),
   requirePostRight("stockMovement"),
   async (req, res) => {
     const cid = await companyId(req, res);
@@ -279,16 +311,26 @@ router.post(
         itemId: Number(body.itemId),
         unitId: Number(body.unitId),
         warehouseId: Number(body.warehouseId),
-        qty: Number(body.qty),
+         qty: String(body.qty ?? ""),
         direction,
         movementDate: String(body.movementDate ?? new Date().toISOString().slice(0, 10)),
         sourceMovementId: body.sourceMovementId == null || body.sourceMovementId === "" ? null : Number(body.sourceMovementId),
+         batchNumber: body.batchNumber === "__unbatched__"
+           ? null
+           : body.batchNumber == null || body.batchNumber === ""
+             ? undefined
+             : String(body.batchNumber),
+         expiryDate: body.expiryDate === null
+           ? null
+           : body.expiryDate === undefined || body.expiryDate === ""
+             ? undefined
+             : String(body.expiryDate),
         idempotencyKey,
         notes: body.notes == null ? null : String(body.notes),
         userId: userId(req),
         req,
       });
-      return res.status(201).json(result);
+       return res.status(result.idempotentReplay ? 200 : 201).json(result);
     } catch (error) {
       return fail(res, error);
     }
@@ -297,7 +339,7 @@ router.post(
 
 router.post(
   "/bills/:id/approve",
-  requirePermission("contracting", "post"),
+  requireContractingCapability("approve", "post"),
   async (req, res) => {
     const cid = await companyId(req, res);
     if (!cid) return;
@@ -317,7 +359,7 @@ router.post(
 
 router.post(
   "/bills/:id/unapprove",
-  requirePermission("contracting", "unpost"),
+  requireContractingCapability("cancel", "unpost"),
   async (req, res) => {
     const cid = await companyId(req, res);
     if (!cid) return;
@@ -335,6 +377,26 @@ router.post(
   },
 );
 
+router.post(
+  "/bills/:id/correction",
+  requireContractingCapability("correct", "unpost"),
+  async (req, res) => {
+    const cid = await companyId(req, res);
+    if (!cid) return;
+    try {
+      const result = await createPostedCorrection({
+        companyId: cid,
+        billId: Number(req.params.id),
+        userId: userId(req),
+        req,
+      });
+      return res.status(201).json(result);
+    } catch (error) {
+      return fail(res, error);
+    }
+  },
+);
+
 // These guards are intentionally mounted before the legacy CRUD router.  A
 // legacy client can still edit draft/submitted bills, while an approved bill
 // can only be changed through the atomic approve/unapprove workflow above.
@@ -344,7 +406,7 @@ router.put("/bills/:id", async (req, res, next) => {
   try {
     const requestedStatus = String(req.body?.status ?? "").toLowerCase();
     if (requestedStatus === "approved") {
-      requirePermission("contracting", "post")(req, res, () => {
+      requireContractingCapability("approve", "post")(req, res, () => {
         (async () => {
           try {
             const result = await approveBill({

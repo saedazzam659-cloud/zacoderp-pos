@@ -2760,7 +2760,13 @@
       "delete": "حذف",
       "post": "ترحيل",
       "unpost": "فك الترحيل",
-      "export": "تصدير"
+      "export": "تصدير",
+      "review": "مراجعة",
+      "approve": "اعتماد",
+      "pay": "سداد",
+      "cancel": "إلغاء",
+      "overrun": "اعتماد التجاوز",
+      "correct": "تصحيح مرحّل"
     },
     "modules": {
       "dashboard": "لوحة التحكم",

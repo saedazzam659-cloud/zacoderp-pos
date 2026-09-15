@@ -21,7 +21,9 @@ import { mobilePermAllowed } from "../lib/mobilePerms.js";
 //     user — only call where granular gating is desired.
 // ─────────────────────────────────────────────────────────────────────────
 
-export type PermAction = "view" | "create" | "edit" | "delete" | "post" | "unpost" | "export";
+export type PermAction =
+  | "view" | "create" | "edit" | "delete" | "post" | "unpost" | "export"
+  | "review" | "approve" | "pay" | "cancel" | "overrun" | "correct";
 
 // Maps the granular per-action module key (used by users.permissions and by
 // every requirePermission(...) call below) to the high-level company-module

@@ -21,9 +21,10 @@ type Settlement = {
 type MaterialMovement = {
   id: number; direction: "issue" | "return"; qty_base: string | number;
   total_cost: string | number; movement_date: string; journal_entry_id?: number | null;
+  batch_number?: string | null; expiry_date?: string | null;
 };
 type Options = {
-  items: Array<{ id: number; code: string; nameAr: string; unitId: number | null }>;
+  items: Array<{ id: number; code: string; nameAr: string; unitId: number | null; batchTrackingMode?: string | null }>;
   units: Array<{ id: number; code: string; nameAr: string }>;
   warehouses: Array<{ id: number; code: string; nameAr: string }>;
   cashBoxes: Array<{ id: number; code: string; nameAr: string }>;
@@ -65,6 +66,12 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   const [qty, setQty] = useState("");
   const [movementDirection, setMovementDirection] = useState<"issue" | "return">("issue");
   const [sourceMovementId, setSourceMovementId] = useState("");
+  const [lotNumber, setLotNumber] = useState("");
+  const [lotExpiryDate, setLotExpiryDate] = useState("");
+  const [lots, setLots] = useState<Array<{
+    batchNumber: string | null; expiryDate: string | null;
+    remainingBase: string; unitCost: string; expired: boolean;
+  }>>([]);
   const [resourceId, setResourceId] = useState("");
   const [applySettlementId, setApplySettlementId] = useState("");
   const [applyBillId, setApplyBillId] = useState("");
@@ -90,6 +97,29 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
     if (optionsResponse.ok) setOptions(await optionsResponse.json());
   }, [headers, projectId, token]);
   useEffect(() => { void reload(); }, [reload]);
+
+  const selectedItem = options.items.find((row) => row.id === Number(itemId));
+  const selectedBatchMode = selectedItem?.batchTrackingMode === "fifo" || selectedItem?.batchTrackingMode === "fefo"
+    ? selectedItem.batchTrackingMode
+    : null;
+  useEffect(() => {
+    setLotNumber("");
+    setLotExpiryDate("");
+    if (!token || !projectId || !itemId || !warehouseId || !selectedBatchMode || movementDirection !== "issue") {
+      setLots([]);
+      return;
+    }
+    fetch(`${API}/api/contracting/projects/${projectId}/material-lots?itemId=${itemId}&warehouseId=${warehouseId}&movementDate=${encodeURIComponent(settlementDate)}`, { headers })
+      .then(async (response) => {
+        if (!response.ok) throw new Error((await response.json()).error || `HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => setLots(data.lots ?? []))
+      .catch((error: any) => {
+        setLots([]);
+        toast({ title: error?.message || "تعذر تحميل التشغيلات", variant: "destructive" });
+      });
+  }, [headers, itemId, warehouseId, movementDirection, projectId, selectedBatchMode, settlementDate, token, toast]);
 
   function operationKey(scope: string) {
     const existing = operationKeys.current.get(scope);
@@ -126,6 +156,11 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
     await post(`/api/contracting/bills/${id}/${unapprove ? "unapprove" : "approve"}`, {});
   }
 
+  async function correct(id: number) {
+    if (!window.confirm("سيُعكس القيد الأصلي وتُنشأ مسودة تصحيح جديدة. هل تريد المتابعة؟")) return;
+    await post(`/api/contracting/bills/${id}/correction`, {});
+  }
+
   const requiresBill = kind.startsWith("retention_") || kind.startsWith("bill_");
   const advances = settlements.filter((s) => s.kind === "advance_receipt" || s.kind === "advance_payment");
 
@@ -153,12 +188,14 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   }
 
   async function saveMaterialMovement() {
-    const scope = `material:${movementDirection}:${itemId}:${unitId}:${warehouseId}:${qty}:${sourceMovementId || "new"}:${settlementDate}`;
+    const scope = `material:${movementDirection}:${itemId}:${unitId}:${warehouseId}:${qty}:${sourceMovementId || "new"}:${lotNumber}:${lotExpiryDate}:${settlementDate}`;
     const result = await post(`/api/contracting/projects/${projectId}/material-movements`, {
       direction: movementDirection, itemId: Number(itemId), unitId: Number(unitId),
-      warehouseId: Number(warehouseId), qty: Number(qty),
+      warehouseId: Number(warehouseId), qty,
       resourceId: resourceId ? Number(resourceId) : null,
       sourceMovementId: movementDirection === "return" && sourceMovementId ? Number(sourceMovementId) : null,
+      batchNumber: movementDirection === "issue" && lotNumber ? lotNumber : null,
+      expiryDate: movementDirection === "issue" && lotNumber ? lotExpiryDate || null : undefined,
       movementDate: settlementDate, idempotencyKey: operationKey(scope),
     }, scope);
     if (result) setQty("");
@@ -182,10 +219,17 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
                 <td className="p-2 font-medium">{bill.billNumber}</td>
                 <td className="p-2">{bill.direction === "incoming" ? "مقاول باطن" : "مالك"}</td>
                 <td className="p-2">{Number(bill.netAmount || 0).toLocaleString("en-US")}</td>
-                <td className="p-2">{bill.status === "approved" ? "معتمد ومرحل" : bill.status}</td>
+                <td className="p-2">{bill.status === "approved" ? "معتمد ومرحل" : bill.status === "reversed" ? "معكوس" : bill.status}</td>
                 <td className="p-2">
                   {bill.status === "approved" ? (
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => void approve(bill.id, true)}>فك الاعتماد بقيد عكسي</Button>
+                    <>
+                      <Button size="sm" variant="outline" disabled={busy} onClick={() => void approve(bill.id, true)}>فك الاعتماد بقيد عكسي</Button>
+                      <Button size="sm" variant="destructive" disabled={busy} onClick={() => void correct(bill.id)}>تصحيح مرحّل</Button>
+                    </>
+                  ) : bill.status === "posted" ? (
+                    <Button size="sm" variant="destructive" disabled={busy} onClick={() => void correct(bill.id)}>تصحيح مرحّل</Button>
+                ) : bill.status === "reversed" ? (
+                    <span className="text-xs text-slate-500">معكوس — راجع مسودة التصحيح المرتبطة</span>
                   ) : ["posted", "partially_paid", "paid"].includes(bill.status) ? (
                     <span className="text-xs text-slate-500">مقيد محاسبياً — لا تعديل مباشر</span>
                   ) : (
@@ -277,20 +321,37 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
           <label className="text-sm">الصنف<select className="mt-1 w-full rounded-md border bg-transparent p-2" value={itemId} onChange={(e) => setItemId(e.target.value)}><option value="">اختر الصنف</option>{options.items.map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</select></label>
           <label className="text-sm">الوحدة<select className="mt-1 w-full rounded-md border bg-transparent p-2" value={unitId} onChange={(e) => setUnitId(e.target.value)}><option value="">اختر الوحدة</option>{options.units.map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</select></label>
           <label className="text-sm">المخزن<select className="mt-1 w-full rounded-md border bg-transparent p-2" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}><option value="">اختر المخزن</option>{options.warehouses.map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</select>{selectedBalance && <span className="mt-1 block text-xs text-slate-500">الرصيد الفعلي: {Number(selectedBalance.qtyBase).toLocaleString("en-US")} • تكلفة الوحدة: {Number(selectedBalance.avgCost || 0).toLocaleString("en-US")}</span>}</label>
-          <label className="text-sm">الكمية<Input type="number" min="0.0001" step="0.0001" value={qty} onChange={(e) => setQty(e.target.value)} /></label>
+          {movementDirection === "issue" && selectedBatchMode && <label className="text-sm">التشغيلة ({selectedBatchMode === "fefo" ? "FEFO" : "FIFO"})
+            <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={`${lotNumber}|${lotExpiryDate}`} onChange={(e) => {
+              const [batch, expiry = ""] = e.target.value.split("|");
+              setLotNumber(batch === "__auto__" ? "" : batch === "__unbatched__" ? "__unbatched__" : batch);
+              setLotExpiryDate(expiry);
+            }}>
+              <option value="__auto__|">تخصيص تلقائي حسب {selectedBatchMode.toUpperCase()}</option>
+              {lots.map((lot) => {
+                const key = `${lot.batchNumber ?? "__unbatched__"}|${lot.expiryDate ?? ""}`;
+                return <option key={key} value={key} disabled={lot.expired}>
+                  {(lot.batchNumber ?? "بدون رقم تشغيلة")} — متاح {lot.remainingBase} — تكلفة {lot.unitCost}{lot.expiryDate ? ` — انتهاء ${lot.expiryDate}` : ""}{lot.expired ? " — منتهية" : ""}
+                </option>;
+              })}
+            </select>
+            <span className="mt-1 block text-[11px] text-slate-500">اتركها تلقائياً لتطبيق ترتيب {selectedBatchMode.toUpperCase()} عبر طبقات التقييم الفعلية.</span>
+          </label>}
+          <label className="text-sm">الكمية<Input type="number" min="0.000000000000000001" step="any" value={qty} onChange={(e) => setQty(e.target.value)} /></label>
           <label className="text-sm">معرّف المورد (اختياري)<Input type="number" value={resourceId} onChange={(e) => setResourceId(e.target.value)} /></label>
           {movementDirection === "return" && <label className="text-sm">رقم حركة الصرف الأصلية<Input type="number" value={sourceMovementId} onChange={(e) => setSourceMovementId(e.target.value)} /></label>}
         </div>
         <Button className="mt-3" disabled={busy || !itemId || !unitId || !warehouseId || !qty || (movementDirection === "return" && !sourceMovementId)} onClick={() => void saveMaterialMovement()}>ترحيل حركة المواد والقيد</Button>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-xs">
-            <thead><tr className="border-b text-right text-slate-500"><th className="p-2">الحركة</th><th className="p-2">التاريخ</th><th className="p-2">كمية الأساس</th><th className="p-2">التكلفة</th><th className="p-2">القيد</th></tr></thead>
+             <thead><tr className="border-b text-right text-slate-500"><th className="p-2">الحركة</th><th className="p-2">التاريخ</th><th className="p-2">التشغيلة</th><th className="p-2">كمية الأساس</th><th className="p-2">التكلفة</th><th className="p-2">القيد</th></tr></thead>
             <tbody>{movements.map((row) => (
               <tr key={row.id} className="border-b last:border-0">
                 <td className="p-2">{row.direction === "issue" ? "صرف" : "إرجاع"} #{row.id}</td>
                 <td className="p-2">{row.movement_date}</td>
-                <td className="p-2">{Number(row.qty_base).toLocaleString("en-US")}</td>
-                <td className="p-2">{Number(row.total_cost).toLocaleString("en-US")}</td>
+                 <td className="p-2">{row.batch_number ?? "—"}{row.expiry_date ? ` • ${row.expiry_date}` : ""}</td>
+                 <td className="p-2">{String(row.qty_base)}</td>
+                 <td className="p-2">{String(row.total_cost)}</td>
                 <td className="p-2">#{row.journal_entry_id ?? "—"}</td>
               </tr>
             ))}</tbody>

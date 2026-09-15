@@ -1192,7 +1192,7 @@ export default function Users() {
                           <thead>
                             <tr className="border-b">
                               <th className="text-start p-2 font-medium">{t("users.colScreen")}</th>
-                              {(["view", "create", "edit", "delete", "post", "unpost", "export"] as Action[]).map(a => (
+                              {(["view", "create", "edit", "delete", "post", "unpost", "export", "review", "approve", "pay", "cancel", "overrun", "correct"] as Action[]).map(a => (
                                 <th key={a} className="p-2 font-medium w-16 text-center">{t(ACTION_LABELS[a])}</th>
                               ))}
                             </tr>
@@ -1201,7 +1201,7 @@ export default function Users() {
                             {mods.map(m => (
                               <tr key={m.key} className="border-b last:border-b-0 hover:bg-muted/30">
                                 <td className="p-2">{t(m.label)}</td>
-                                {(["view", "create", "edit", "delete", "post", "unpost", "export"] as Action[]).map(a => {
+                                {(["view", "create", "edit", "delete", "post", "unpost", "export", "review", "approve", "pay", "cancel", "overrun", "correct"] as Action[]).map(a => {
                                   const supported = m.actions.includes(a);
                                   // Company managers always have every supported
                                   // permission. Render those inherited grants as

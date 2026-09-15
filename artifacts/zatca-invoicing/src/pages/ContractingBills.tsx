@@ -2,11 +2,14 @@
 // every project. Read-only list with KPI cards + filters; create/edit still
 // happens inside the project (تفاصيل المشروع → تبويب المستخلصات) because
 // every bill is anchored to a project.
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { FileText, ArrowDownToLine, ArrowUpFromLine, ExternalLink, Filter, X } from "lucide-react";
+import {
+  FileText, ArrowDownToLine, ArrowUpFromLine, ExternalLink, Filter, X,
+  Download, Loader2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -30,26 +33,55 @@ type BillRow = {
   direction: "outgoing" | "incoming";
   contractorId: number | null;
   contractorName: string | null;
+  contractId: number | null;
+  contractBaseId: number | null;
   billNumber: string;
   billType: string;
   billDate: string;
-  progressPercent: string;
-  grossAmount: string;
-  retentionAmount: string;
-  previousPaid: string;
-  dueAmount: string;
+  grossWorks: number;
+  previousWorks: number;
+  currentWorks: number;
+  cumulativeWorks: number;
+  contractValue: number;
+  remainingContract: number;
+  completionPercent: number;
+  deductions: number;
+  retentions: number;
+  penalties: number;
   vatAmount: string;
   netAmount: string;
-  paidAmount: string;
-  status: "draft" | "submitted" | "approved" | "paid" | "rejected";
+  payments: number;
+  outstanding: number;
+  settlementPaid: number;
+  status: string;
 };
 
 type Project   = { id: number; code: string; nameAr: string };
 type Contractor= { id: number; name: string };
+type ReportTotals = {
+  grossWorks: number;
+  previousWorks: number;
+  currentWorks: number;
+  cumulativeWorks: number;
+  deductions: number;
+  retentions: number;
+  penalties: number;
+  payments: number;
+  outstanding: number;
+  contractValue: number;
+  remainingContract: number;
+  completionPercent: number;
+};
 
-const STATUS_LABEL = BILL_STATUS_LABEL;
 const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  draft: "secondary", submitted: "outline", approved: "default", paid: "default", rejected: "destructive",
+  draft: "secondary", submitted: "outline", approved: "default", paid: "default",
+  rejected: "destructive", reversed: "destructive", cancelled: "destructive",
+};
+
+const EMPTY_TOTALS: ReportTotals = {
+  grossWorks: 0, previousWorks: 0, currentWorks: 0, cumulativeWorks: 0,
+  deductions: 0, retentions: 0, penalties: 0, payments: 0, outstanding: 0,
+  contractValue: 0, remainingContract: 0, completionPercent: 0,
 };
 
 const fmt = (n: number | string) =>
@@ -60,6 +92,14 @@ const parseDirection = (search: string): "" | "outgoing" | "incoming" => {
   return value === "outgoing" || value === "incoming" ? value : "";
 };
 
+function csvCell(value: unknown): string {
+  const text = String(value ?? "");
+  // Prefix spreadsheet formula operators, including values supplied through
+  // bill numbers/project names, so opening the CSV cannot execute a formula.
+  const safe = /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, "\"\"")}"`;
+}
+
 export default function ContractingBills() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
@@ -67,9 +107,14 @@ export default function ContractingBills() {
   const [, navigate] = useLocation();
 
   const [rows, setRows]               = useState<BillRow[]>([]);
+  const [reportTotals, setReportTotals] = useState<ReportTotals>(EMPTY_TOTALS);
+  const [draftTotals, setDraftTotals] = useState<ReportTotals>(EMPTY_TOTALS);
   const [projects, setProjects]       = useState<Project[]>([]);
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+  const [exporting, setExporting]     = useState(false);
+  const reportAbort = useRef<AbortController | null>(null);
 
   // Filters — all controlled. "" = no filter.
   // Direction is URL-backed so the owner/subcontractor sidebar shortcuts can
@@ -85,7 +130,11 @@ export default function ContractingBills() {
 
   const load = useCallback(async () => {
     if (!token) return;
+    reportAbort.current?.abort();
+    const controller = new AbortController();
+    reportAbort.current = controller;
     setLoading(true);
+    setError(null);
     try {
       const qs = new URLSearchParams();
       if (direction)    qs.set("direction",    direction);
@@ -94,14 +143,27 @@ export default function ContractingBills() {
       if (contractorId) qs.set("contractorId", contractorId);
       if (dateFrom)     qs.set("dateFrom",     dateFrom);
       if (dateTo)       qs.set("dateTo",       dateTo);
-      const r = await fetch(`${API}/api/contracting/bills?${qs.toString()}`, {
+      const r = await fetch(`${API}/api/contracting/reports/bills?${qs.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setRows(await r.json());
+      const payload = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(payload?.error || `HTTP ${r.status}`);
+      if (!Array.isArray(payload?.bills)) throw new Error("استجابة تقرير المستخلصات غير صالحة");
+      setRows(payload.bills);
+      setReportTotals({ ...EMPTY_TOTALS, ...(payload.totals || {}) });
+      setDraftTotals({ ...EMPTY_TOTALS, ...(payload.draftTotals || {}) });
     } catch (e: any) {
-      toast({ title: "حدث خطأ", description: e?.message, variant: "destructive" });
-    } finally { setLoading(false); }
+      if (e?.name !== "AbortError") {
+        setError(e?.message || "تعذر تحميل تقرير المستخلصات");
+        toast({ title: "تعذر تحميل التقرير", description: e?.message, variant: "destructive" });
+      }
+    } finally {
+      if (reportAbort.current === controller) {
+        reportAbort.current = null;
+        setLoading(false);
+      }
+    }
   }, [token, direction, status, projectId, contractorId, dateFrom, dateTo, toast]);
 
   // Project + contractor lookup lists for the filter selects. Loaded once.
@@ -118,7 +180,10 @@ export default function ContractingBills() {
   }, [token]);
 
   useEffect(() => { void loadLookups(); }, [loadLookups]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => reportAbort.current?.abort();
+  }, [load]);
 
   // Free-text search runs client-side over the already-filtered rows so
   // the user gets instant feedback without round-tripping.
@@ -133,18 +198,9 @@ export default function ContractingBills() {
     );
   }, [rows, search]);
 
-  // KPI totals are computed from `visible` so they stay in sync with what
-  // the user is actually looking at after applying filters + search.
-  const totals = useMemo(() => {
-    let count = visible.length, gross = 0, due = 0, net = 0, paid = 0;
-    for (const r of visible) {
-      gross += Number(r.grossAmount || 0);
-      due   += Number(r.dueAmount   || 0);
-      net   += Number(r.netAmount   || 0);
-      paid  += Number(r.paidAmount  || 0);
-    }
-    return { count, gross, due, net, paid, outstanding: net - paid };
-  }, [visible]);
+  // Cumulative values are calculated server-side from the selected report
+  // scope. Re-summing each visible row would count earlier periods repeatedly.
+  const totals = reportTotals;
 
   const hasFilters = !!(direction || status || projectId || contractorId || dateFrom || dateTo || search);
   const clearFilters = () => {
@@ -153,6 +209,55 @@ export default function ContractingBills() {
     navigate(`/contracting/bills${params.toString() ? `?${params.toString()}` : ""}`, { replace: true });
     setStatus(""); setProjectId(""); setContractorId("");
     setDateFrom(""); setDateTo(""); setSearch("");
+  };
+
+  const exportCsv = () => {
+    if (visible.length === 0) {
+      toast({ title: "لا توجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    setExporting(true);
+    try {
+      const columns = [
+        "المشروع", "رقم المستخلص", "التاريخ", "الاتجاه", "المقاول الباطن",
+        "الأعمال الإجمالية", "الأعمال السابقة", "الأعمال الحالية", "الأعمال التراكمية",
+        "قيمة العقد", "المتبقي من العقد", "المحتجز", "الاستقطاعات", "الغرامات",
+        "المدفوعات", "المتبقي", "الحالة",
+      ];
+      const data = visible.map((row) => [
+        row.projectName || row.projectCode || "",
+        row.billNumber,
+        row.billDate,
+        labelEnum(BILL_DIRECTION_LABEL, row.direction),
+        row.contractorName || "",
+        row.grossWorks,
+        row.previousWorks,
+        row.currentWorks,
+        row.cumulativeWorks,
+        row.contractValue,
+        row.remainingContract,
+        row.retentions,
+        row.deductions,
+        row.penalties,
+        row.payments,
+        row.outstanding,
+        labelEnum(BILL_STATUS_LABEL, row.status),
+      ]);
+      const csv = "\ufeff" + [columns, ...data]
+        .map((row) => row.map(csvCell).join(","))
+        .join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `contracting-bills-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -167,17 +272,38 @@ export default function ContractingBills() {
             عرض موحّد لكل مستخلصات المقاولات عبر المشاريع — صادرة للمالك ووواردة من المقاولين الباطن.
           </p>
         </div>
+        <Button
+          onClick={exportCsv}
+          disabled={exporting || loading || visible.length === 0}
+          data-testid="button-export-contracting-bills-csv"
+        >
+          {exporting ? <Loader2 className="ms-1 h-4 w-4 animate-spin" /> : <Download className="ms-1 h-4 w-4" />}
+          {exporting ? "جار تجهيز CSV…" : "تصدير CSV"}
+        </Button>
       </header>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard label="عدد المستخلصات" value={totals.count.toLocaleString("en-US")} tone="slate" />
-        <KpiCard label="إجمالي الأعمال" value={fmt(totals.gross)} tone="slate" suffix="ر.س" />
-        <KpiCard label="المستحق قبل الضريبة" value={fmt(totals.due)} tone="amber" suffix="ر.س" />
-        <KpiCard label="الصافي شامل الضريبة" value={fmt(totals.net)} tone="emerald" suffix="ر.س" />
-        <KpiCard label="المدفوع" value={fmt(totals.paid)} tone="emerald" suffix="ر.س" />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-8 gap-3">
+        <KpiCard label="عدد المستخلصات" value={visible.length.toLocaleString("en-US")} tone="slate" />
+        <KpiCard label="إجمالي الأعمال" value={fmt(totals.grossWorks)} tone="slate" suffix="ر.س" />
+        <KpiCard label="الأعمال التراكمية" value={fmt(totals.cumulativeWorks)} tone="slate" suffix="ر.س" />
+        <KpiCard label="المحتجز" value={fmt(totals.retentions)} tone="amber" suffix="ر.س" />
+        <KpiCard label="الاستقطاعات" value={fmt(totals.deductions)} tone="amber" suffix="ر.س" />
+        <KpiCard label="الغرامات" value={fmt(totals.penalties)} tone="rose" suffix="ر.س" />
+        <KpiCard label="المدفوعات" value={fmt(totals.payments)} tone="emerald" suffix="ر.س" />
         <KpiCard label="المتبقي للسداد" value={fmt(totals.outstanding)} tone="rose" suffix="ر.س" />
       </div>
+      <div className="text-xs text-muted-foreground">
+        قيمة العقود: {fmt(totals.contractValue)} ر.س · المتبقي من العقود: {fmt(totals.remainingContract)} ر.س ·
+        نسبة الإنجاز التراكمية: {Number(totals.completionPercent || 0).toFixed(2)}%
+        {search.trim() ? " · الإجماليات مبنية على فلاتر التقرير، بينما البحث يضيّق العرض فقط" : ""}
+      </div>
+      {(draftTotals.grossWorks || draftTotals.cumulativeWorks || draftTotals.outstanding) > 0 && (
+        <div className="text-xs text-amber-700 dark:text-amber-300">
+          المسودات غير المعتمدة (مستثناة من الإجماليات المالية): أعمال {fmt(draftTotals.grossWorks)} ر.س ·
+          تراكمي {fmt(draftTotals.cumulativeWorks)} ر.س · متبقي {fmt(draftTotals.outstanding)} ر.س
+        </div>
+      )}
 
       {/* Filters */}
       <div className="rounded-lg border bg-card p-4 space-y-3">
@@ -215,7 +341,7 @@ export default function ContractingBills() {
             value={status}
             onChange={setStatus}
             placeholder="الكل"
-            options={Object.entries(STATUS_LABEL).map(([value, label]) => ({ value, label }))}
+            options={Object.entries(BILL_STATUS_LABEL).map(([value, label]) => ({ value, label }))}
             testId="filter-status"
           />
           <FilterSelect
@@ -255,6 +381,15 @@ export default function ContractingBills() {
         </div>
       </div>
 
+      {error && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200" data-testid="status-contracting-bills-error">
+          <span>{error}</span>
+          <Button variant="outline" size="sm" onClick={() => void load()} data-testid="button-retry-contracting-bills">
+            إعادة المحاولة
+          </Button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="rounded-lg border bg-card">
         <Table>
@@ -266,9 +401,16 @@ export default function ContractingBills() {
               <TableHead className="text-start">الاتجاه</TableHead>
               <TableHead className="text-start">المقاول الباطن</TableHead>
               <TableHead className="text-end">إجمالي الأعمال</TableHead>
-              <TableHead className="text-end">المستحق</TableHead>
-              <TableHead className="text-end">الصافي</TableHead>
-              <TableHead className="text-end">المدفوع</TableHead>
+              <TableHead className="text-end">السابق</TableHead>
+              <TableHead className="text-end">الحالي</TableHead>
+              <TableHead className="text-end">التراكمي</TableHead>
+              <TableHead className="text-end">قيمة العقد</TableHead>
+              <TableHead className="text-end">المتبقي من العقد</TableHead>
+              <TableHead className="text-end">المحتجز</TableHead>
+              <TableHead className="text-end">الاستقطاعات</TableHead>
+              <TableHead className="text-end">الغرامات</TableHead>
+              <TableHead className="text-end">المدفوعات</TableHead>
+              <TableHead className="text-end">المتبقي</TableHead>
               <TableHead className="text-start">الحالة</TableHead>
               <TableHead className="text-end">إجراء</TableHead>
             </TableRow>
@@ -276,7 +418,7 @@ export default function ContractingBills() {
           <TableBody>
             {loading && Array.from({ length: 5 }).map((_, i) => (
               <TableRow key={`sk-${i}`}>
-                {Array.from({ length: 11 }).map((__, j) => (
+                {Array.from({ length: 18 }).map((__, j) => (
                   <TableCell key={j}><Skeleton className="h-5 w-full" /></TableCell>
                 ))}
               </TableRow>
@@ -284,7 +426,7 @@ export default function ContractingBills() {
 
             {!loading && visible.length === 0 && (
               <TableRow>
-                <TableCell colSpan={11} className="text-center py-12 text-muted-foreground">
+                <TableCell colSpan={18} className="text-center py-12 text-muted-foreground" data-testid="text-contracting-bills-empty">
                   {hasFilters
                     ? "لا توجد نتائج مطابقة للفلاتر — جرّب مسح بعضها."
                     : "لا توجد مستخلصات بعد. يتم إنشاء المستخلصات من داخل تفاصيل المشروع."}
@@ -315,13 +457,20 @@ export default function ContractingBills() {
                   )}
                 </TableCell>
                 <TableCell>{r.contractorName || (r.direction === "outgoing" ? "—" : "—")}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.grossAmount)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.dueAmount)}</TableCell>
-                <TableCell className="text-end font-mono font-semibold">{fmt(r.netAmount)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.paidAmount)}</TableCell>
+                <TableCell className="text-end font-mono">{fmt(r.grossWorks)}</TableCell>
+                <TableCell className="text-end font-mono">{fmt(r.previousWorks)}</TableCell>
+                <TableCell className="text-end font-mono">{fmt(r.currentWorks)}</TableCell>
+                <TableCell className="text-end font-mono font-semibold">{fmt(r.cumulativeWorks)}</TableCell>
+                <TableCell className="text-end font-mono">{fmt(r.contractValue)}</TableCell>
+                <TableCell className="text-end font-mono">{fmt(r.remainingContract)}</TableCell>
+                <TableCell className="text-end font-mono">{fmt(r.retentions)}</TableCell>
+                <TableCell className="text-end font-mono">{fmt(r.deductions)}</TableCell>
+                <TableCell className="text-end font-mono">{fmt(r.penalties)}</TableCell>
+                <TableCell className="text-end font-mono">{fmt(r.payments)}</TableCell>
+                <TableCell className="text-end font-mono font-semibold">{fmt(r.outstanding)}</TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_TONE[r.status] || "secondary"}>
-                     {labelEnum(STATUS_LABEL, r.status)}
+                  <Badge variant={STATUS_TONE[r.status] || "secondary"} data-testid={`status-bill-${r.id}`}>
+                    {labelEnum(BILL_STATUS_LABEL, r.status)}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-end">

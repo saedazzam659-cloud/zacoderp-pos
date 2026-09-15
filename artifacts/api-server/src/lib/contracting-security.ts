@@ -1,4 +1,6 @@
 import type { AuthUser } from "../middleware/auth.js";
+import { requirePermission, type PermAction } from "../middleware/permissions.js";
+import type { Request, Response, NextFunction } from "express";
 
 /**
  * Contracting is branch-owned data.  Unlike company-wide catalog rows, a
@@ -50,4 +52,32 @@ export function contractingWarehouseAllowed(
   return projectBranchId != null
     && warehouseBranchId != null
     && Number(projectBranchId) === Number(warehouseBranchId);
+}
+
+/**
+ * Detail/accounting workflow capabilities were added after the original
+ * contracting create/edit/post map. An omitted capability falls back to the
+ * legacy action, while an explicit false remains a denial.
+ */
+export function requireContractingCapability(
+  capability: PermAction,
+  fallback: PermAction = "post",
+) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = req.authUser as any;
+    if (user?.role === "admin" || user?.role === "superadmin") {
+      next();
+      return;
+    }
+    const permissions = user?.permissions?.contracting;
+    if (permissions && permissions[capability] === false) {
+      res.status(403).json({ error: "لا تملك صلاحية تنفيذ هذا الإجراء" });
+      return;
+    }
+    if (permissions && permissions[capability] === true) {
+      next();
+      return;
+    }
+    requirePermission("contracting", fallback)(req, res, next);
+  };
 }

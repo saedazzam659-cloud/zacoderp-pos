@@ -15,6 +15,7 @@ import { usersTable } from "./users";
 import {
   contractingProjectsTable,
   contractingProgressBillsTable,
+  contractingOwnerContractsTable,
   contractingWorkItemsTable,
 } from "./contracting";
 
@@ -38,6 +39,10 @@ export const contractingBillLinesTable = pgTable(
       .references(() => contractingProgressBillsTable.id, { onDelete: "cascade" }),
     workItemId: integer("work_item_id")
       .references(() => contractingWorkItemsTable.id, { onDelete: "set null" }),
+    // Optional per-line relation to an approved owner-contract change order.
+    // NULL deliberately preserves legacy work-item-only lines.
+    changeOrderId: integer("change_order_id")
+      .references(() => contractingOwnerContractsTable.id, { onDelete: "set null" }),
     previousQty: numeric("previous_qty", { precision: 14, scale: 4 }).notNull().default("0"),
     currentQty: numeric("current_qty", { precision: 14, scale: 4 }).notNull().default("0"),
     cumulativeQty: numeric("cumulative_qty", { precision: 14, scale: 4 }).notNull().default("0"),
@@ -55,8 +60,8 @@ export const contractingBillLinesTable = pgTable(
   (t) => ({
     byBill: index("ctg_bill_lines_bill_idx").on(t.companyId, t.billId),
     byWorkItem: index("ctg_bill_lines_work_item_idx").on(t.companyId, t.projectId, t.workItemId),
-    oneWorkItemPerBill: uniqueIndex("ctg_bill_lines_bill_work_item_uidx")
-      .on(t.companyId, t.billId, t.workItemId),
+    oneWorkItemPerBillAndChangeOrder: uniqueIndex("ctg_bill_lines_bill_work_item_change_uidx")
+      .on(t.companyId, t.billId, t.workItemId, t.changeOrderId),
   }),
 );
 

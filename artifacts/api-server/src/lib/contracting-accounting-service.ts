@@ -13,7 +13,9 @@ import {
   contractingResourcesTable,
   contractingSubContractsTable,
   contractingBillDeductionsTable,
+  contractingBillLinesTable,
   contractingBillPenaltiesTable,
+  contractingBillAttachmentsTable,
   contractingBillWorkflowEventsTable,
   itemsTable,
   journalEntriesTable,
@@ -30,8 +32,18 @@ import { canPostDoc, canUnpostDoc } from "./postingRights.js";
 import {
   addStockLedgerEntry,
   refreshItemCost,
+  readBatchRemaining,
 } from "./stockHelpers.js";
-import { resolveItemUnitConversion } from "./unitConversion.js";
+import {
+  addRational,
+  divideRational,
+  formatRational,
+  multiplyRational,
+  parseExactDecimal,
+  resolveItemUnitConversion,
+  roundQuantity,
+  type Rational,
+} from "./unitConversion.js";
 import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
 import { ensureContractingBillDetailsTables } from "./contracting-bill-details-service.js";
 import { contractingBranchAllowed } from "./contracting-security.js";
@@ -39,7 +51,6 @@ import {
   contractingBillAmounts,
   contractingBillRoleLines,
   authoritativeCumulativeBillAmounts,
-  materialMovementCost,
   reverseAccountingLines,
   validateSettlementCap,
 } from "./contracting-accounting-math.js";
@@ -53,7 +64,42 @@ const n = (value: unknown): number => {
 };
 const money = (value: unknown): string => n(value).toFixed(2);
 const today = () => new Date().toISOString().slice(0, 10);
-function idempotencyFingerprint(payload: Record<string, unknown>): string {
+const exact = (value: unknown): Rational => parseExactDecimal(String(value ?? "0"));
+const exactStorage = (value: Rational, places = 18): string =>
+  roundQuantity(formatRational(value), places, "half_up");
+const exactCompare = (a: Rational, b: Rational): number => {
+  const left = a.numerator * b.denominator;
+  const right = b.numerator * a.denominator;
+  return left < right ? -1 : left > right ? 1 : 0;
+};
+const exactPositive = (value: Rational): boolean => value.numerator > 0n;
+const exactQuantity = (value: Rational): string => {
+  const stored = exactStorage(value, 18);
+  if (exactCompare(parseExactDecimal(stored), value) !== 0) {
+    throw failure("الكمية المحوّلة لا يمكن حفظها دون فقدان دقة؛ استخدم كمية/وحدة تعطي كسراً عشرياً حتى 18 منزلة", 422);
+  }
+  return stored;
+};
+// stock_balance/stock_ledger are shared legacy inventory tables and remain at
+// their existing numeric(…,4) contract.  Do not widen them from a contracting
+// route: reject a quantity that would be changed by that boundary, while
+// applying the established half-up policy to legacy cost snapshots.
+export const legacyInventoryQuantity = (value: Rational): string => {
+  const stored = exactStorage(value, 4);
+  if (exactCompare(parseExactDecimal(stored), value) !== 0) {
+    throw failure("كمية حركة المقاولات تتجاوز دقة المخزون المشتركة (4 منازل عشرية)؛ لا يمكن ترحيلها دون فقدان الدقة", 422);
+  }
+  return stored;
+};
+const legacyInventoryCost = (value: Rational): string => exactStorage(value, 4);
+const legacyInventoryTotalCost = (value: Rational): string => exactStorage(value, 4);
+// Costs in the contracting movement/allocation snapshots use explicit 18/36
+// decimal scales.  The shared stock ledger receives its established 4-place
+// half-up projection; a weighted layer such as 5/3 remains postable without
+// passing through Number.
+const exactCost = (value: Rational): string => exactStorage(value, 18);
+const exactTotalCost = (value: Rational): string => exactStorage(value, 36);
+export function idempotencyFingerprint(payload: Record<string, unknown>): string {
   return createHash("sha256")
     .update(JSON.stringify(payload, Object.keys(payload).sort()))
     .digest("hex");
@@ -74,6 +120,59 @@ function resultRows(result: any): any[] {
 }
 
 /**
+ * Settlement posting is the source of payment state. Keep the legacy bill
+ * status/paidAmount projection synchronized in the same transaction as the
+ * receipt or advance-application row, and never count reversed settlements.
+ */
+async function refreshBillPaymentState(tx: Executor, companyId: number, billId: number, userId: number | null) {
+  const [bill] = await tx.select().from(contractingProgressBillsTable).where(and(
+    eq(contractingProgressBillsTable.id, billId),
+    eq(contractingProgressBillsTable.companyId, companyId),
+  ));
+  if (!bill) return;
+  const settledResult = await tx.execute(sql`
+    SELECT COALESCE(SUM(amount), 0) AS paid
+      FROM contracting_accounting_settlements
+     WHERE company_id = ${companyId}
+       AND bill_id = ${billId}
+       AND status = 'posted'
+       AND kind IN ('bill_receipt', 'bill_payment', 'advance_application')
+  `);
+  const paid = Math.max(0, n(resultRows(settledResult)[0]?.paid));
+  if (!(paid > 0)) return;
+  const net = Math.max(0, n(bill.netAmount));
+  const nextStatus = net > 0 && paid + 0.005 < net ? "partially_paid" : "paid";
+  const [updated] = await tx.update(contractingProgressBillsTable).set({
+    paidAmount: money(paid),
+    status: nextStatus,
+    paidAt: nextStatus === "paid" ? new Date() : null,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(contractingProgressBillsTable.id, billId),
+    eq(contractingProgressBillsTable.companyId, companyId),
+  )).returning();
+  const [latest] = await tx.select({ state: contractingBillWorkflowEventsTable.state })
+    .from(contractingBillWorkflowEventsTable)
+    .where(and(
+      eq(contractingBillWorkflowEventsTable.companyId, companyId),
+      eq(contractingBillWorkflowEventsTable.billId, billId),
+    ))
+    .orderBy(sql`${contractingBillWorkflowEventsTable.createdAt} DESC`, sql`${contractingBillWorkflowEventsTable.id} DESC`)
+    .limit(1);
+  if (latest?.state !== nextStatus) {
+    await tx.insert(contractingBillWorkflowEventsTable).values({
+      companyId,
+      projectId: updated?.projectId ?? bill.projectId,
+      billId,
+      state: nextStatus,
+      action: "accounting_settlement",
+      note: nextStatus === "paid" ? "تم إغلاق المستخلص بالسداد المحاسبي" : "تم تحديث السداد المحاسبي",
+      userId,
+    });
+  }
+}
+
+/**
  * Match the sales posting lock contract exactly: deterministic two-int
  * advisory namespace (company, item/warehouse key) followed by a row lock.
  * This local helper is intentionally narrow; it avoids changing shared
@@ -84,7 +183,7 @@ async function lockContractingStockBalance(
   companyId: number,
   itemId: number,
   warehouseId: number,
-): Promise<{ id: number; qty: number; avgCost: number } | null> {
+): Promise<{ id: number; qty: number; avgCost: number; qtyExact: string; avgCostExact: string } | null> {
   // Keep compatibility with legacy writers that use the shared stock:<...>
   // namespace, then take the exact two-int namespace used by sales.
   await tx.execute(sql`
@@ -111,7 +210,90 @@ async function lockContractingStockBalance(
     throw failure(`يوجد أكثر من رصيد للصنف ${itemId} في المخزن ${warehouseId}؛ صحح تكرار أرصدة المخزون قبل الترحيل`, 409);
   }
   const row = rows[0];
-  return row ? { id: Number(row.id), qty: n(row.qty), avgCost: n(row.avg_cost) } : null;
+  return row ? {
+    id: Number(row.id),
+    qty: n(row.qty),
+    avgCost: n(row.avg_cost),
+    qtyExact: String(row.qty ?? "0"),
+    avgCostExact: String(row.avg_cost ?? "0"),
+  } : null;
+}
+
+/** Lock every existing valuation-layer row for the bucket before deriving a
+ * pick plan.  stock_balance is only an aggregate concurrency guard; the
+ * positive ledger rows are the actual source layers used by FIFO/FEFO. */
+async function lockContractingStockLayers(
+  tx: Executor,
+  companyId: number,
+  itemId: number,
+  warehouseId: number,
+): Promise<void> {
+  await tx.execute(sql`
+    SELECT id
+      FROM stock_ledger
+     WHERE company_id = ${companyId}
+       AND item_id = ${itemId}
+       AND warehouse_id = ${warehouseId}
+     ORDER BY id ASC
+     FOR UPDATE
+  `);
+}
+
+type ExactPick = {
+  batchNumber: string | null;
+  expiryDate: string | null;
+  takeQty: Rational;
+  costPrice: Rational;
+};
+
+/**
+ * Allocate from the existing stock_ledger valuation layers without converting
+ * PostgreSQL numerics through JavaScript Number.  The public stock helper
+ * still supplies the canonical FIFO/FEFO order; raw aliases added there keep
+ * the persisted quantity exact to the movement's 18-place scale.
+ */
+export function allocateContractingPicks(
+  batches: Awaited<ReturnType<typeof readBatchRemaining>>,
+  requestedQty: Rational,
+  movementDate: string,
+  selectedBatchNumber?: string | null,
+  selectedExpiryDate?: string | null,
+): ExactPick[] {
+  const picks: ExactPick[] = [];
+  let remaining = requestedQty;
+  for (const batch of batches) {
+    if (!exactPositive(remaining)) break;
+    if (selectedBatchNumber !== undefined &&
+        (batch.batchNumber ?? null) !== (selectedBatchNumber ?? null)) continue;
+    if (selectedExpiryDate !== undefined &&
+        (batch.expiryDate ?? null) !== (selectedExpiryDate ?? null)) continue;
+    // Expired layers are never an available source.  This applies to both
+    // FIFO and FEFO; FEFO still determines the order among valid layers.
+    if (batch.expiryDate && batch.expiryDate < movementDate) continue;
+    const available = exact(batch.remainingRaw ?? String(batch.remaining));
+    if (!exactPositive(available)) continue;
+    const take = exactCompare(available, remaining) < 0 ? available : remaining;
+    const inboundQty = exact(batch.inboundQtyRaw ?? String(batch.inboundQty));
+    const inboundCost = exact(batch.inboundCostRaw ?? String(batch.inboundCost));
+    if (!exactPositive(inboundQty)) continue;
+    picks.push({
+      batchNumber: batch.batchNumber,
+      expiryDate: batch.expiryDate,
+      takeQty: take,
+      costPrice: divideRational(inboundCost, inboundQty),
+    });
+    remaining = addRational(remaining, { numerator: -take.numerator, denominator: take.denominator });
+  }
+  if (exactPositive(remaining)) {
+    const label = selectedBatchNumber
+      ? ` للتشغيلة ${selectedBatchNumber}`
+      : "";
+    throw failure(
+      `الكمية المتاحة غير منتهية الصلاحية لا تكفي${label}؛ لا يجوز صرف مخزون منتهي أو غير مُثبت التكلفة`,
+      400,
+    );
+  }
+  return picks;
 }
 
 function camelBill(row: any): any {
@@ -547,6 +729,9 @@ export async function approveBill(input: {
     const project = await projectFor(tx, input.companyId, locked.projectId);
     if (!project) throw failure("المشروع غير موجود", 404);
     assertBranchAccess(input.req, project.branchId);
+    if (locked.status === "reversed") {
+      throw failure("المستخلص الأصلي عُكس؛ اعتمد مسودة التصحيح الجديدة", 409);
+    }
     const postingKey = locked.direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill";
     if (!canPostDoc(input.req.authUser, postingKey)) throw failure("ليس لديك صلاحية ترحيل هذا النوع من المستخلصات", 403);
     if (locked.status === "approved" && locked.journalEntryId) {
@@ -662,6 +847,7 @@ export async function unapproveBill(input: {
   billId: number;
   userId: number | null;
   req: RequestLike;
+  correction?: boolean;
 }) {
   await ensureContractingAccountingTables();
   await ensureContractingBillDetailsTables();
@@ -673,8 +859,12 @@ export async function unapproveBill(input: {
     if (!project) throw failure("المشروع غير موجود", 404);
     assertBranchAccess(input.req, project.branchId);
     const postingKey = bill.direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill";
-    if (!canUnpostDoc(input.req.authUser, postingKey)) throw failure("ليس لديك صلاحية فك ترحيل هذا النوع من المستخلصات", 403);
-    if (bill.status !== "approved") throw failure("المستخلص ليس معتمداً", 409);
+    if (!canUnpostDoc(input.req.authUser, postingKey)) {
+      throw failure("ليس لديك صلاحية فك ترحيل هذا النوع من المستخلصات", 403);
+    }
+    if (!["approved", "posted"].includes(String(bill.status))) {
+      throw failure("المستخلص ليس معتمداً أو مرحّلاً", 409);
+    }
     if (!bill.journalEntryId) throw failure("لا يمكن فك اعتماد مستخلص بلا قيد", 409);
     const linked = await tx.execute(sql`
       SELECT id FROM contracting_accounting_settlements
@@ -685,6 +875,9 @@ export async function unapproveBill(input: {
     `);
     if (resultRows(linked).length) {
       throw failure("لا يمكن فك الاعتماد بعد وجود تسوية مرتبطة بالمستخلص", 409);
+    }
+    if (n(bill.paidAmount) > 0 || bill.status === "paid" || bill.status === "partially_paid") {
+      throw failure("لا يمكن فك الاعتماد قبل عكس التسويات والمدفوعات التابعة للمستخلص", 409);
     }
     const [original] = await tx.select().from(journalEntriesTable).where(and(
       eq(journalEntriesTable.id, Number(bill.journalEntryId)),
@@ -772,9 +965,347 @@ export async function unapproveBill(input: {
       severity: "warn",
       meta: { originalJournalEntryId: original.id, reversalJournalEntryId: reversalId },
     });
+    if (input.correction) {
+      return clonePostedCorrectionTx(tx, input, bill, reversalId);
+    }
     return { ...updated, reversalJournalEntryId: reversalId, originalJournalEntryId: original.id };
   });
   return out;
+}
+
+async function clonePostedCorrectionTx(
+  tx: Executor,
+  input: { companyId: number; userId: number | null },
+  source: any,
+  reversalJournalEntryId: number,
+) {
+  const [draft] = await tx.insert(contractingProgressBillsTable).values({
+    companyId: source.companyId,
+    projectId: source.projectId,
+    costCenterId: source.costCenterId,
+    direction: source.direction,
+    contractorId: source.contractorId,
+    ownerContractId: source.ownerContractId,
+    subcontractorContractId: source.subcontractorContractId,
+    billNumber: `${String(source.billNumber).slice(0, 180)}-C${source.id}`,
+    billType: source.billType,
+    billDate: source.billDate,
+    fromDate: source.fromDate,
+    toDate: source.toDate,
+    progressPercent: source.progressPercent,
+    grossAmount: source.grossAmount,
+    retentionPercent: source.retentionPercent,
+    retentionAmount: source.retentionAmount,
+    previousPaid: source.previousPaid,
+    dueAmount: source.dueAmount,
+    vatPercent: source.vatPercent,
+    vatAmount: source.vatAmount,
+    netAmount: source.netAmount,
+    paidAmount: "0",
+    correctionOfId: source.id,
+    journalEntryId: null,
+    reversalJournalEntryId: null,
+    status: "draft",
+    approvedByUserId: null,
+    approvedAt: null,
+    paidAt: null,
+    notes: source.notes,
+  }).returning();
+  if (!draft) throw failure("تعذر إنشاء مسودة التصحيح", 500);
+
+  const lines = await tx.select().from(contractingBillLinesTable).where(and(
+    eq(contractingBillLinesTable.companyId, input.companyId),
+    eq(contractingBillLinesTable.billId, source.id),
+  ));
+  if (lines.length) {
+    await tx.insert(contractingBillLinesTable).values(lines.map((line: any) => ({
+      companyId: line.companyId, projectId: line.projectId, billId: draft.id,
+      workItemId: line.workItemId, changeOrderId: line.changeOrderId,
+      previousQty: line.previousQty, currentQty: line.currentQty, cumulativeQty: line.cumulativeQty,
+      previousValue: line.previousValue, currentValue: line.currentValue, cumulativeValue: line.cumulativeValue,
+      excessApproved: line.excessApproved, excessApprovalReason: line.excessApprovalReason,
+      excessApprovedByUserId: line.excessApprovedByUserId, excessApprovedAt: line.excessApprovedAt,
+    })));
+  }
+  const deductions = await tx.select().from(contractingBillDeductionsTable).where(and(
+    eq(contractingBillDeductionsTable.companyId, input.companyId),
+    eq(contractingBillDeductionsTable.billId, source.id),
+  ));
+  if (deductions.length) {
+    await tx.insert(contractingBillDeductionsTable).values(deductions.map((row: any) => ({
+      companyId: row.companyId, projectId: row.projectId, billId: draft.id,
+      deductionKey: row.deductionKey, kind: row.kind, percentage: row.percentage,
+      amount: row.amount, reason: row.reason, reference: row.reference, notes: row.notes,
+      createdByUserId: row.createdByUserId,
+    })));
+  }
+  const penalties = await tx.select().from(contractingBillPenaltiesTable).where(and(
+    eq(contractingBillPenaltiesTable.companyId, input.companyId),
+    eq(contractingBillPenaltiesTable.billId, source.id),
+  ));
+  if (penalties.length) {
+    await tx.insert(contractingBillPenaltiesTable).values(penalties.map((row: any) => ({
+      companyId: row.companyId, projectId: row.projectId, billId: draft.id,
+      penaltyKey: row.penaltyKey, penaltyType: row.penaltyType, reason: row.reason,
+      amount: row.amount, penaltyDate: row.penaltyDate, reference: row.reference,
+      notes: row.notes, accountMappingKey: row.accountMappingKey, createdByUserId: row.createdByUserId,
+    })));
+  }
+  const attachments = await tx.select().from(contractingBillAttachmentsTable).where(and(
+    eq(contractingBillAttachmentsTable.companyId, input.companyId),
+    eq(contractingBillAttachmentsTable.billId, source.id),
+  ));
+  if (attachments.length) {
+    await tx.insert(contractingBillAttachmentsTable).values(attachments.map((row: any) => ({
+      companyId: row.companyId, projectId: row.projectId, billId: draft.id,
+      category: row.category, filename: row.filename, objectPath: row.objectPath,
+      contentType: row.contentType, bytes: row.bytes, uploadedByUserId: row.uploadedByUserId,
+    })));
+  }
+  const [sourceRow] = await tx.update(contractingProgressBillsTable).set({
+    status: "reversed",
+    reversalJournalEntryId,
+    approvedAt: null,
+    approvedByUserId: null,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(contractingProgressBillsTable.id, source.id),
+    eq(contractingProgressBillsTable.companyId, input.companyId),
+  )).returning();
+  await tx.insert(contractingBillWorkflowEventsTable).values([
+    {
+      companyId: source.companyId, projectId: source.projectId, billId: source.id,
+      state: "reversed", action: "posted_correction_reversed",
+      note: `تم عكس القيد وإنشاء مسودة تصحيح #${draft.id}`, userId: input.userId,
+    },
+    {
+      companyId: draft.companyId, projectId: draft.projectId, billId: draft.id,
+      state: "draft", action: "posted_correction_created",
+      note: `تصحيح للمستخلص المرحّل #${source.id}`, userId: input.userId,
+    },
+  ]);
+  await addAudit(tx, {
+    companyId: input.companyId, projectId: source.projectId, billId: source.id,
+    action: "bill_posted_correction", originalJournalEntryId: source.journalEntryId,
+    reversalJournalEntryId, amount: n(source.netAmount),
+    metadata: { correctionBillId: draft.id }, userId: input.userId,
+  });
+  await tx.insert(contractingEventsTable).values({
+    companyId: input.companyId, projectId: source.projectId, userId: input.userId,
+    eventType: "bill_posted_correction", title: `تصحيح مرحّل للمستخلص ${source.billNumber}`,
+    description: `القيد العكسي ${reversalJournalEntryId} ومسودة التصحيح ${draft.id}`,
+    severity: "warn",
+    meta: { sourceBillId: source.id, correctionBillId: draft.id, reversalJournalEntryId },
+  });
+  return { source: sourceRow, draft, reversalJournalEntryId };
+}
+
+/**
+ * Correcting a posted bill is deliberately not an edit/unapprove shortcut.
+ * First post one immutable reversal for the source JE, then copy the source
+ * business data into a new draft. The source row remains auditable and cannot
+ * be reused for a second correction.
+ */
+export async function createPostedCorrection(input: {
+  companyId: number;
+  billId: number;
+  userId: number | null;
+  req: RequestLike;
+}) {
+  await ensureContractingAccountingTables();
+  await ensureContractingBillDetailsTables();
+  const [source] = await db.select().from(contractingProgressBillsTable).where(and(
+    eq(contractingProgressBillsTable.id, input.billId),
+    eq(contractingProgressBillsTable.companyId, input.companyId),
+  ));
+  if (!source) throw failure("المستخلص غير موجود", 404);
+  if (source.reversalJournalEntryId || source.status === "reversed") {
+    throw failure("تم إنشاء تصحيح لهذا المستخلص من قبل", 409);
+  }
+  if (n(source.paidAmount) > 0 || ["paid", "partially_paid"].includes(String(source.status))) {
+    throw failure("لا يمكن تصحيح مستخلص مدفوع قبل عكس التسويات التابعة له", 409);
+  }
+  const postedSettlements = await db.execute(sql`
+    SELECT id FROM contracting_accounting_settlements
+     WHERE company_id = ${input.companyId}
+       AND bill_id = ${input.billId}
+       AND status = 'posted'
+     LIMIT 1
+  `);
+  if (resultRows(postedSettlements).length) {
+    throw failure("لا يمكن تصحيح مستخلص له تسويات مرحّلة؛ اعكس التسويات أولاً", 409);
+  }
+  if (!["approved", "posted"].includes(String(source.status)) || !source.journalEntryId) {
+    throw failure("لا يمكن إنشاء تصحيح إلا لمستخلص معتمد بقيد مرحّل", 409);
+  }
+
+  // The reversal and every copied detail row run inside one transaction.
+  // `unapproveBill` enforces the document-level unpost right itself.
+  const correction = await unapproveBill({ ...input, correction: true });
+  return correction;
+  /*
+  const [reversed] = await db.select().from(contractingProgressBillsTable).where(and(
+    eq(contractingProgressBillsTable.id, input.billId),
+    eq(contractingProgressBillsTable.companyId, input.companyId),
+  ));
+  if (!reversed) throw failure("تعذر حفظ حالة عكس المستخلص", 500);
+
+  let result;
+  try {
+    result = await db.transaction(async (tx) => {
+    const [draft] = await tx.insert(contractingProgressBillsTable).values({
+      companyId: reversed.companyId,
+      projectId: reversed.projectId,
+      costCenterId: reversed.costCenterId,
+      direction: reversed.direction,
+      contractorId: reversed.contractorId,
+      ownerContractId: reversed.ownerContractId,
+      subcontractorContractId: reversed.subcontractorContractId,
+      billNumber: `${String(reversed.billNumber).slice(0, 180)}-C${reversed.id}`,
+      billType: reversed.billType,
+      billDate: reversed.billDate,
+      fromDate: reversed.fromDate,
+      toDate: reversed.toDate,
+      progressPercent: reversed.progressPercent,
+      grossAmount: reversed.grossAmount,
+      retentionPercent: reversed.retentionPercent,
+      retentionAmount: reversed.retentionAmount,
+      previousPaid: reversed.previousPaid,
+      dueAmount: reversed.dueAmount,
+      vatPercent: reversed.vatPercent,
+      vatAmount: reversed.vatAmount,
+      netAmount: reversed.netAmount,
+      paidAmount: "0",
+      correctionOfId: reversed.id,
+      journalEntryId: null,
+      reversalJournalEntryId: null,
+      status: "draft",
+      approvedByUserId: null,
+      approvedAt: null,
+      paidAt: null,
+      notes: reversed.notes,
+    }).returning();
+    if (!draft) throw failure("تعذر إنشاء مسودة التصحيح", 500);
+
+    const lines = await tx.select().from(contractingBillLinesTable).where(and(
+      eq(contractingBillLinesTable.companyId, input.companyId),
+      eq(contractingBillLinesTable.billId, reversed.id),
+    ));
+    if (lines.length) {
+      await tx.insert(contractingBillLinesTable).values(lines.map((line) => ({
+        companyId: line.companyId,
+        projectId: line.projectId,
+        billId: draft.id,
+        workItemId: line.workItemId,
+        changeOrderId: line.changeOrderId,
+        previousQty: line.previousQty,
+        currentQty: line.currentQty,
+        cumulativeQty: line.cumulativeQty,
+        previousValue: line.previousValue,
+        currentValue: line.currentValue,
+        cumulativeValue: line.cumulativeValue,
+        excessApproved: line.excessApproved,
+        excessApprovalReason: line.excessApprovalReason,
+        excessApprovedByUserId: line.excessApprovedByUserId,
+        excessApprovedAt: line.excessApprovedAt,
+      })));
+    }
+    const deductions = await tx.select().from(contractingBillDeductionsTable).where(and(
+      eq(contractingBillDeductionsTable.companyId, input.companyId),
+      eq(contractingBillDeductionsTable.billId, reversed.id),
+    ));
+    if (deductions.length) {
+      await tx.insert(contractingBillDeductionsTable).values(deductions.map((row) => ({
+        companyId: row.companyId, projectId: row.projectId, billId: draft.id,
+        deductionKey: row.deductionKey, kind: row.kind, percentage: row.percentage,
+        amount: row.amount, reason: row.reason, reference: row.reference,
+        notes: row.notes, createdByUserId: row.createdByUserId,
+      })));
+    }
+    const penalties = await tx.select().from(contractingBillPenaltiesTable).where(and(
+      eq(contractingBillPenaltiesTable.companyId, input.companyId),
+      eq(contractingBillPenaltiesTable.billId, reversed.id),
+    ));
+    if (penalties.length) {
+      await tx.insert(contractingBillPenaltiesTable).values(penalties.map((row) => ({
+        companyId: row.companyId, projectId: row.projectId, billId: draft.id,
+        penaltyKey: row.penaltyKey, penaltyType: row.penaltyType, reason: row.reason,
+        amount: row.amount, penaltyDate: row.penaltyDate, reference: row.reference,
+        notes: row.notes, accountMappingKey: row.accountMappingKey,
+        createdByUserId: row.createdByUserId,
+      })));
+    }
+    const attachments = await tx.select().from(contractingBillAttachmentsTable).where(and(
+      eq(contractingBillAttachmentsTable.companyId, input.companyId),
+      eq(contractingBillAttachmentsTable.billId, reversed.id),
+    ));
+    if (attachments.length) {
+      await tx.insert(contractingBillAttachmentsTable).values(attachments.map((row) => ({
+        companyId: row.companyId, projectId: row.projectId, billId: draft.id,
+        category: row.category, filename: row.filename, objectPath: row.objectPath,
+        contentType: row.contentType, bytes: row.bytes, uploadedByUserId: row.uploadedByUserId,
+      })));
+    }
+    const [sourceRow] = await tx.update(contractingProgressBillsTable).set({
+      status: "reversed",
+      reversalJournalEntryId: Number(reversal.reversalJournalEntryId),
+      approvedAt: null,
+      approvedByUserId: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(contractingProgressBillsTable.id, reversed.id),
+      eq(contractingProgressBillsTable.companyId, input.companyId),
+    )).returning();
+    await tx.insert(contractingBillWorkflowEventsTable).values([
+      {
+        companyId: reversed.companyId, projectId: reversed.projectId, billId: reversed.id,
+        state: "reversed", action: "posted_correction_reversed",
+        note: `تم عكس القيد وإنشاء مسودة تصحيح #${draft.id}`, userId: input.userId,
+      },
+      {
+        companyId: draft.companyId, projectId: draft.projectId, billId: draft.id,
+        state: "draft", action: "posted_correction_created",
+        note: `تصحيح للمستخلص المرحّل #${reversed.id}`, userId: input.userId,
+      },
+    ]);
+    await addAudit(tx, {
+      companyId: input.companyId,
+      projectId: reversed.projectId,
+      billId: reversed.id,
+      action: "bill_posted_correction",
+      originalJournalEntryId: reversed.journalEntryId,
+      reversalJournalEntryId: Number(reversal.reversalJournalEntryId),
+      amount: n(reversed.netAmount),
+      metadata: { correctionBillId: draft.id },
+      userId: input.userId,
+    });
+    await tx.insert(contractingEventsTable).values({
+      companyId: input.companyId,
+      projectId: reversed.projectId,
+      userId: input.userId,
+      eventType: "bill_posted_correction",
+      title: `تصحيح مرحّل للمستخلص ${reversed.billNumber}`,
+      description: `القيد العكسي ${reversal.reversalJournalEntryId} ومسودة التصحيح ${draft.id}`,
+      severity: "warn",
+      meta: { sourceBillId: reversed.id, correctionBillId: draft.id, reversalJournalEntryId: reversal.reversalJournalEntryId },
+    });
+      return { source: sourceRow, draft, reversalJournalEntryId: reversal.reversalJournalEntryId };
+    });
+  } catch (caught) {
+    // The reversal has already been posted. Keep the source immutable even
+    // if copying its details fails, so a retry cannot edit the source row.
+    await db.update(contractingProgressBillsTable).set({
+      status: "reversed",
+      reversalJournalEntryId: Number(reversal.reversalJournalEntryId),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(contractingProgressBillsTable.id, reversed.id),
+      eq(contractingProgressBillsTable.companyId, input.companyId),
+    ));
+    throw caught;
+  }
+  return result;
+  */
 }
 
 export async function billMutationGuard(companyId: number, billId: number, action: "edit" | "delete") {
@@ -788,7 +1319,7 @@ export async function billMutationGuard(companyId: number, billId: number, actio
     eq(contractingProgressBillsTable.companyId, companyId),
   ));
   if (!bill) throw failure("المستخلص غير موجود", 404);
-  if (["approved", "posted", "partially_paid", "paid"].includes(String(bill.status))) {
+  if (["approved", "posted", "partially_paid", "paid", "reversed"].includes(String(bill.status))) {
     throw failure(`لا يمكن ${action === "delete" ? "حذف" : "تعديل"} مستخلص معتمد وله أثر في دفتر الأستاذ؛ استخدم فك الاعتماد`, 409);
   }
   if (action === "delete" && bill.journalEntryId) {
@@ -904,7 +1435,9 @@ export async function createSettlement(input: {
       bill = await lockBill(tx, input.companyId, input.billId);
       if (!bill || bill.projectId !== input.projectId) throw failure("المستخلص غير صالح لهذا المشروع");
       if (bill.direction !== details.direction) throw failure("اتجاه التسوية لا يطابق اتجاه المستخلص");
-      if (bill.status !== "approved" || !bill.journalEntryId) throw failure("يجب اعتماد المستخلص قبل تسوية المستخلص");
+      if (!["approved", "posted"].includes(String(bill.status)) || !bill.journalEntryId) {
+        throw failure("يجب اعتماد وترحيل المستخلص قبل تسوية المستخلص");
+      }
     }
     if (requiresBill && !bill) {
       throw failure("هذه التسوية تتطلب مستخلصاً معتمداً");
@@ -1026,6 +1559,9 @@ export async function createSettlement(input: {
            AND id = ${input.billId}
       `);
     }
+    if (input.billId != null) {
+      await refreshBillPaymentState(tx, input.companyId, input.billId, input.userId);
+    }
     await addAudit(tx, {
       companyId: input.companyId,
       projectId: input.projectId,
@@ -1076,11 +1612,12 @@ export async function applyAdvance(input: {
        FOR UPDATE
     `);
     const source = resultRows(sourceResult)[0];
-    if (!source || !["advance_receipt", "advance_payment"].includes(String(source.kind))) {
+    if (!source || source.status !== "posted"
+      || !["advance_receipt", "advance_payment"].includes(String(source.kind))) {
       throw failure("السلفة غير موجودة أو غير قابلة للتطبيق", 404);
     }
     const bill = await lockBill(tx, input.companyId, input.billId);
-    if (!bill || bill.status !== "approved" || !bill.journalEntryId) {
+    if (!bill || !["approved", "posted"].includes(String(bill.status)) || !bill.journalEntryId) {
       throw failure("يجب تطبيق السلفة على مستخلص معتمد وله قيد");
     }
     if (Number(source.project_id) !== Number(bill.projectId)) {
@@ -1164,6 +1701,7 @@ export async function applyAdvance(input: {
          AND id = ${input.settlementId}
     `);
     const row = resultRows(inserted)[0];
+    await refreshBillPaymentState(tx, input.companyId, input.billId, input.userId);
     await addAudit(tx, {
       companyId: input.companyId,
       projectId: bill.projectId,
@@ -1217,6 +1755,60 @@ export async function listMaterialMovements(companyId: number, projectId: number
   return resultRows(result);
 }
 
+/** Read the existing valuation-layer buckets for the optional lot selector.
+ * This is a read-only projection; posting still locks and re-reads the layers
+ * inside its transaction, so a stale UI option can only produce a safe
+ * validation error, never a wrong-cost movement. */
+export async function materialLots(
+  companyId: number,
+  projectId: number,
+  itemId: number,
+  warehouseId: number,
+  movementDate = today(),
+) {
+  const project = await projectFor(db, companyId, projectId);
+  if (!project) throw failure("المشروع غير موجود", 404);
+  const [warehouse] = await db.select({
+    id: warehousesTable.id,
+    branchId: warehousesTable.branchId,
+    isActive: warehousesTable.isActive,
+  }).from(warehousesTable).where(and(
+    eq(warehousesTable.id, warehouseId),
+    eq(warehousesTable.companyId, companyId),
+  ));
+  if (!warehouse || !warehouse.isActive) throw failure("المخزن غير موجود أو غير نشط");
+  if (project.branchId == null || warehouse.branchId !== project.branchId) {
+    throw failure("المخزن لا يتبع فرع المشروع", 403);
+  }
+  const [item] = await db.select({
+    id: itemsTable.id,
+    batchTrackingMode: itemsTable.batchTrackingMode,
+  }).from(itemsTable).where(and(
+    eq(itemsTable.id, itemId),
+    eq(itemsTable.companyId, companyId),
+    eq(itemsTable.itemType, "stock"),
+    eq(itemsTable.status, "active"),
+  ));
+  if (!item) throw failure("الصنف يجب أن يكون صنف مخزون نشطاً من نفس الشركة");
+  const mode = item.batchTrackingMode === "fifo" || item.batchTrackingMode === "fefo"
+    ? item.batchTrackingMode
+    : null;
+  if (!mode) return { mode: "none", lots: [] };
+  const rows = await readBatchRemaining(companyId, itemId, warehouseId, mode);
+  return {
+    mode,
+    lots: rows.map((row) => ({
+      batchNumber: row.batchNumber,
+      expiryDate: row.expiryDate,
+      remainingBase: row.remainingRaw ?? String(row.remaining),
+      unitCost: row.inboundQtyRaw && row.inboundCostRaw
+        ? exactCost(divideRational(exact(row.inboundCostRaw), exact(row.inboundQtyRaw)))
+        : "0",
+      expired: !!row.expiryDate && row.expiryDate < movementDate,
+    })),
+  };
+}
+
 export async function issueOrReturnMaterial(input: {
   companyId: number;
   projectId: number;
@@ -1224,17 +1816,18 @@ export async function issueOrReturnMaterial(input: {
   itemId: number;
   unitId: number;
   warehouseId: number;
-  qty: number;
+  qty: string | number;
   direction: "issue" | "return";
   movementDate: string;
   sourceMovementId?: number | null;
+  batchNumber?: string | null;
+  expiryDate?: string | null;
   idempotencyKey: string;
   notes?: string | null;
   userId: number | null;
   req: RequestLike;
 }) {
   await ensureContractingAccountingTables();
-  if (!(input.qty > 0)) throw failure("الكمية يجب أن تكون أكبر من صفر");
   if (!input.idempotencyKey?.trim()) throw failure("مفتاح العملية مطلوب لمنع الترحيل المكرر");
   const payloadHash = idempotencyFingerprint({
     projectId: input.projectId,
@@ -1242,10 +1835,12 @@ export async function issueOrReturnMaterial(input: {
     itemId: input.itemId,
     unitId: input.unitId,
     warehouseId: input.warehouseId,
-    qty: input.qty,
+    qty: String(input.qty),
     direction: input.direction,
     movementDate: input.movementDate,
     sourceMovementId: input.sourceMovementId ?? null,
+    batchNumber: input.batchNumber === undefined ? "__auto__" : input.batchNumber,
+    expiryDate: input.expiryDate === undefined ? "__auto__" : input.expiryDate,
     notes: input.notes ?? null,
   });
   const existing = await db.execute(sql`
@@ -1260,6 +1855,25 @@ export async function issueOrReturnMaterial(input: {
     return { ...row, idempotentReplay: true };
   }
   const out = await db.transaction(async (tx) => {
+    // Serialize the idempotency check itself.  The unique index remains the
+    // database backstop, while this lock makes concurrent retries replay the
+    // committed movement instead of racing into two stock mutations.
+    await tx.execute(sql`
+      SELECT pg_advisory_xact_lock(
+        hashtext(${`contracting-material-idempotency:${input.companyId}:${input.idempotencyKey}`})
+      )
+    `);
+    const txExisting = await tx.execute(sql`
+      SELECT * FROM contracting_material_movements
+       WHERE company_id = ${input.companyId}
+         AND idempotency_key = ${input.idempotencyKey}
+       LIMIT 1
+    `);
+    if (resultRows(txExisting)[0]) {
+      const row = resultRows(txExisting)[0];
+      assertIdempotentReplay(row, payloadHash);
+      return { ...row, idempotentReplay: true };
+    }
     const project = await projectFor(tx, input.companyId, input.projectId);
     if (!project) throw failure("المشروع غير موجود", 404);
     assertBranchAccess(input.req, project.branchId);
@@ -1290,9 +1904,9 @@ export async function issueOrReturnMaterial(input: {
     if (!item || item.itemType !== "stock" || item.status !== "active") {
       throw failure("الصنف يجب أن يكون صنف مخزون نشطاً من نفس الشركة");
     }
-    if (item.batchTrackingMode !== "none" || item.costMethod !== "weighted_avg") {
-      throw failure("حركة مواد المقاولات لا تدعم حالياً أصناف FIFO/FEFO أو غير المتوسط المرجح؛ استخدم مسار تشغيل التشغيلة المدعوم قبل الترحيل", 422);
-    }
+    const batchMode = item.batchTrackingMode === "fifo" || item.batchTrackingMode === "fefo"
+      ? item.batchTrackingMode
+      : "none";
     const [unit] = await tx.select({ id: unitsTable.id }).from(unitsTable).where(and(
       eq(unitsTable.id, input.unitId),
       eq(unitsTable.companyId, input.companyId),
@@ -1304,8 +1918,10 @@ export async function issueOrReturnMaterial(input: {
       unitId: input.unitId,
       executor: tx,
     });
-    const qtyBase = n(input.qty) * n(conversion.factor);
-    if (!(qtyBase > 0)) throw failure("تحويل الوحدة أعطى كمية غير صالحة");
+    const requestedQty = exact(input.qty);
+    if (!exactPositive(requestedQty)) throw failure("الكمية يجب أن تكون أكبر من صفر");
+    const requestedQtyBase = multiplyRational(requestedQty, exact(conversion.factor));
+    if (!exactPositive(requestedQtyBase)) throw failure("تحويل الوحدة أعطى كمية غير صالحة");
     if (input.resourceId != null) {
       const [resource] = await tx.select({
         id: contractingResourcesTable.id,
@@ -1324,8 +1940,15 @@ export async function issueOrReturnMaterial(input: {
         throw failure("مورد المواد لا يطابق الصنف والوحدة والمخزن والمشروع");
       }
     }
-    let sourceQtyBase: number | undefined;
-    let alreadyReturnedBase = 0;
+    let sourceMovement: any = null;
+    let returnPicks: Array<{
+      allocationId: number | null;
+      sourceLedgerId: number | null;
+      batchNumber: string | null;
+      expiryDate: string | null;
+      takeQty: Rational;
+      costPrice: Rational;
+    }> = [];
     if (input.direction === "return") {
       if (!input.sourceMovementId) throw failure("عملية الإرجاع تتطلب مرجع حركة الصرف الأصلية");
       const sourceResult = await tx.execute(sql`
@@ -1337,94 +1960,250 @@ export async function issueOrReturnMaterial(input: {
          AND status = 'posted'
          FOR UPDATE
       `);
-      const source = resultRows(sourceResult)[0];
-      if (!source || Number(source.item_id) !== input.itemId ||
-          Number(source.warehouse_id) !== input.warehouseId) {
+      sourceMovement = resultRows(sourceResult)[0];
+      if (!sourceMovement || Number(sourceMovement.item_id) !== input.itemId ||
+          Number(sourceMovement.warehouse_id) !== input.warehouseId) {
         throw failure("حركة الصرف الأصلية غير صالحة لهذا الإرجاع");
       }
-      sourceQtyBase = n(source.qty_base);
-      const returnedResult = await tx.execute(sql`
-        SELECT COALESCE(SUM(qty_base),0) AS total
-          FROM contracting_material_movements
+      const sourceAllocations = await tx.execute(sql`
+        SELECT id, source_ledger_id, batch_number, expiry_date, qty_base, unit_cost
+          FROM contracting_material_movement_allocations
          WHERE company_id = ${input.companyId}
-           AND source_movement_id = ${input.sourceMovementId}
-           AND direction = 'return'
-           AND status = 'posted'
+           AND movement_id = ${input.sourceMovementId}
+         ORDER BY id ASC
+         FOR UPDATE
       `);
-      alreadyReturnedBase = n(resultRows(returnedResult)[0]?.total);
+      const allocationRows = resultRows(sourceAllocations);
+      if (!allocationRows.length) {
+        // Movements posted before per-layer provenance was introduced remain
+        // reversible when the item is an unbatched weighted-average item:
+        // the original movement is the immutable cost snapshot.  A tracked
+        // FIFO/FEFO movement without allocations cannot be reconstructed
+        // safely and must be corrected through an inventory adjustment.
+        if (batchMode !== "none") {
+          throw failure("لا يمكن إرجاع حركة FIFO/FEFO قديمة بلا لقطة تشغيلة؛ أنشئ تصحيحاً مخزونياً مضبوطاً", 409);
+        }
+        const legacyReturned = await tx.execute(sql`
+          SELECT COALESCE(SUM(qty_base), 0)::text AS total
+            FROM contracting_material_movements
+           WHERE company_id = ${input.companyId}
+             AND source_movement_id = ${input.sourceMovementId}
+             AND direction = 'return'
+             AND status = 'posted'
+        `);
+        const alreadyReturned = exact(resultRows(legacyReturned)[0]?.total ?? "0");
+        const sourceQty = exact(sourceMovement.qty_base);
+        const remainingLegacy = addRational(sourceQty, {
+          numerator: -alreadyReturned.numerator,
+          denominator: alreadyReturned.denominator,
+        });
+        if (!exactPositive(remainingLegacy) || exactCompare(requestedQtyBase, remainingLegacy) > 0) {
+          throw failure("كمية الإرجاع تتجاوز الكمية المتبقية من حركة الصرف الأصلية", 409);
+        }
+        returnPicks.push({
+          allocationId: null,
+          sourceLedgerId: null,
+          batchNumber: null,
+          expiryDate: null,
+          takeQty: requestedQtyBase,
+          costPrice: exact(sourceMovement.unit_cost),
+        });
+      } else {
+        const returnedRows = await tx.execute(sql`
+          SELECT source_allocation_id, SUM(qty_base)::text AS total
+            FROM contracting_material_movement_allocations
+           WHERE company_id = ${input.companyId}
+             AND source_movement_id = ${input.sourceMovementId}
+             AND source_allocation_id IS NOT NULL
+           GROUP BY source_allocation_id
+        `);
+        const returnedByAllocation = new Map<number, Rational>(
+          resultRows(returnedRows).map((row) => [
+            Number(row.source_allocation_id),
+            exact(row.total ?? "0"),
+          ]),
+        );
+        let remainingToReturn = requestedQtyBase;
+        for (const allocation of allocationRows) {
+          if (!exactPositive(remainingToReturn)) break;
+          const allocated = exact(allocation.qty_base);
+          const alreadyReturned = returnedByAllocation.get(Number(allocation.id))
+            ?? exact("0");
+          const available = addRational(allocated, {
+            numerator: -alreadyReturned.numerator,
+            denominator: alreadyReturned.denominator,
+          });
+          if (!exactPositive(available)) continue;
+          if (allocation.expiry_date && String(allocation.expiry_date) < input.movementDate) {
+            // Returning the lot into stock would make an expired layer available
+            // again.  Require a controlled inventory adjustment instead.
+            const requestedAgainstExpired = exactCompare(available, remainingToReturn) < 0
+              ? available
+              : remainingToReturn;
+            if (exactPositive(requestedAgainstExpired)) {
+              throw failure(`لا يمكن إرجاع التشغيلة المنتهية ${allocation.batch_number ?? ""} إلى المخزون`, 422);
+            }
+          }
+          const take = exactCompare(available, remainingToReturn) < 0
+            ? available
+            : remainingToReturn;
+          returnPicks.push({
+            allocationId: Number(allocation.id),
+            sourceLedgerId: allocation.source_ledger_id == null ? null : Number(allocation.source_ledger_id),
+            batchNumber: allocation.batch_number ?? null,
+            expiryDate: allocation.expiry_date ?? null,
+            takeQty: take,
+            costPrice: exact(allocation.unit_cost),
+          });
+          remainingToReturn = addRational(remainingToReturn, {
+            numerator: -take.numerator,
+            denominator: take.denominator,
+          });
+        }
+        if (exactPositive(remainingToReturn)) {
+          throw failure("كمية الإرجاع تتجاوز الكمية المتبقية من حركة الصرف الأصلية", 409);
+        }
+      }
     }
     const balance = await lockContractingStockBalance(tx, input.companyId, input.itemId, input.warehouseId);
-    const available = n(balance?.qty);
-    if (input.direction === "issue" && available + 0.000001 < qtyBase && !warehouse.allowNegative) {
-      throw failure(`الرصيد الفعلي لا يكفي: المتاح ${available.toFixed(4)}، المطلوب ${qtyBase.toFixed(4)}`);
+    // Lock actual ledger layers after the aggregate advisory/row lock and
+    // before reading the pick plan.  This is the source-of-truth lock for
+    // FIFO/FEFO quantities; stock_balance is deliberately never duplicated
+    // per lot.
+    await lockContractingStockLayers(tx, input.companyId, input.itemId, input.warehouseId);
+    const available = exact(balance?.qtyExact ?? "0");
+    if (input.direction === "issue" && exactCompare(available, requestedQtyBase) < 0 &&
+        (!warehouse.allowNegative || batchMode !== "none")) {
+      throw failure(`الرصيد الفعلي لا يكفي: المتاح ${exactStorage(available)}، المطلوب ${exactStorage(requestedQtyBase)}`);
     }
-    const unitCost = input.direction === "return"
-      ? n(resultRows(await tx.execute(sql`
-          SELECT unit_cost FROM contracting_material_movements
-           WHERE company_id = ${input.companyId} AND id = ${input.sourceMovementId}
-        `))[0]?.unit_cost)
-      : n(balance?.avgCost);
-    const movementCost = materialMovementCost({
-      direction: input.direction,
-      qtyBase,
-      unitCost,
-      sourceQtyBase,
-      alreadyReturnedBase,
-    });
-    if (!movementCost.ok) throw failure(movementCost.reason);
-    const totalCost = movementCost.totalCost;
-    const delta = input.direction === "issue" ? -qtyBase : qtyBase;
-    let newBalance: number;
-    if (!balance) {
-      await tx.insert(stockBalanceTable).values({
-        companyId: input.companyId,
-        itemId: input.itemId,
-        warehouseId: input.warehouseId,
-        qty: String(delta),
-        avgCost: String(unitCost),
-      });
-      newBalance = delta;
-    } else {
-      newBalance = balance.qty + delta;
-      const newAverage = delta > 0 && newBalance > 0
-        ? ((balance.qty * balance.avgCost) + (delta * unitCost)) / newBalance
-        : balance.avgCost;
+    let issuePicks: ExactPick[] = [];
+    if (input.direction === "issue" && batchMode !== "none") {
+      const batches = await readBatchRemaining(
+        input.companyId,
+        input.itemId,
+        input.warehouseId,
+        batchMode,
+        tx,
+      );
+      issuePicks = allocateContractingPicks(
+        batches,
+        requestedQtyBase,
+        input.movementDate,
+        input.batchNumber,
+        input.expiryDate,
+      );
+    } else if (input.direction === "issue") {
+      issuePicks = [{
+        batchNumber: null,
+        expiryDate: null,
+        takeQty: requestedQtyBase,
+        costPrice: exact(balance?.avgCostExact ?? "0"),
+      }];
+    }
+    const picks = input.direction === "issue"
+      ? issuePicks
+      : returnPicks;
+    // The contracting movement/allocation tables retain 18-place quantities,
+    // but the shared stock ledger and balance remain on their existing
+    // numeric(…,4) contract.  Refuse a base quantity or split that would be
+    // rounded in those shared tables.
+    legacyInventoryQuantity(requestedQtyBase);
+    for (const pick of picks) legacyInventoryQuantity(pick.takeQty);
+    const totalCostExact = picks.reduce(
+      (sum, pick) => addRational(sum, multiplyRational(pick.takeQty, pick.costPrice)),
+      exact("0"),
+    );
+    const totalCost = n(exactStorage(totalCostExact, 12));
+    const unitCostExact = divideRational(totalCostExact, requestedQtyBase);
+    const delta = input.direction === "issue"
+      ? { numerator: -requestedQtyBase.numerator, denominator: requestedQtyBase.denominator }
+      : requestedQtyBase;
+    const oldQty = exact(balance?.qtyExact ?? "0");
+    const newQty = addRational(oldQty, delta);
+    const mayGoNegative = input.direction === "issue" && batchMode === "none" && warehouse.allowNegative;
+    if (!balance || (!mayGoNegative && exactCompare(newQty, { numerator: 0n, denominator: 1n }) < 0)) {
+      throw failure("لا يوجد رصيد مخزون قابل للتحديث لهذه الحركة", 409);
+    }
+    const storedNewQtyText = legacyInventoryQuantity(newQty);
+    let newAverage = exact(balance.avgCostExact);
+    if (input.direction === "return" && exactPositive(newQty)) {
+      const oldValue = multiplyRational(oldQty, exact(balance.avgCostExact));
+      const returnValue = totalCostExact;
+      newAverage = divideRational(addRational(oldValue, returnValue), newQty);
+    }
+    {
       await tx.update(stockBalanceTable).set({
-        qty: String(newBalance),
-        avgCost: String(newAverage),
+        qty: storedNewQtyText,
+        avgCost: legacyInventoryCost(newAverage),
         updatedAt: new Date(),
-      }).where(eq(stockBalanceTable.id, balance.id));
+      }).where(and(
+        eq(stockBalanceTable.id, balance.id),
+        eq(stockBalanceTable.companyId, input.companyId),
+        eq(stockBalanceTable.itemId, input.itemId),
+        eq(stockBalanceTable.warehouseId, input.warehouseId),
+      ));
     }
     const insertedMovement = await tx.execute(sql`
       INSERT INTO contracting_material_movements
-        (company_id, project_id, resource_id, item_id, unit_id, warehouse_id,
+        (company_id, project_id, project_branch_id, resource_id, item_id, unit_id, warehouse_id,
+         warehouse_branch_id,
          direction, movement_date, qty, qty_base, unit_cost, total_cost,
          source_movement_id, idempotency_key, idempotency_payload_hash, notes, created_by)
       VALUES (
-        ${input.companyId}, ${input.projectId}, ${input.resourceId ?? null},
+        ${input.companyId}, ${input.projectId}, ${project.branchId ?? null}, ${input.resourceId ?? null},
         ${input.itemId}, ${input.unitId}, ${input.warehouseId},
-        ${input.direction}, ${input.movementDate}, ${n(input.qty).toFixed(18)},
-        ${qtyBase.toFixed(18)}, ${unitCost.toFixed(6)}, ${money(totalCost)},
+        ${warehouse.branchId ?? null},
+        ${input.direction}, ${input.movementDate}, ${exactQuantity(requestedQty)},
+        ${exactQuantity(requestedQtyBase)}, ${exactCost(unitCostExact)}, ${exactTotalCost(totalCostExact)},
         ${input.sourceMovementId ?? null}, ${input.idempotencyKey}, ${payloadHash},
         ${input.notes ?? null}, ${input.userId}
       )
       RETURNING *
     `);
     const movement = resultRows(insertedMovement)[0];
-    await addStockLedgerEntry({
-      companyId: input.companyId,
-      itemId: input.itemId,
-      warehouseId: input.warehouseId,
-      txDate: input.movementDate,
-      txType: input.direction === "issue" ? "goods_delivery" : "goods_receipt",
-      qty: input.direction === "issue" ? (-qtyBase).toFixed(4) : qtyBase.toFixed(4),
-      costPrice: unitCost.toFixed(4),
-      totalCost: input.direction === "issue" ? (-totalCost).toFixed(4) : totalCost.toFixed(4),
-      balanceQty: Number(newBalance).toFixed(4),
-      refId: Number(movement.id),
-      refType: `contracting_material_${input.direction}`,
-      notes: input.notes ?? undefined,
-    }, tx);
+    let runningBalance = oldQty;
+    for (const pick of picks) {
+      const legacyPickQty = exact(legacyInventoryQuantity(pick.takeQty));
+      const pickTotalCost = multiplyRational(pick.takeQty, pick.costPrice);
+      runningBalance = input.direction === "issue"
+        ? addRational(runningBalance, { numerator: -legacyPickQty.numerator, denominator: legacyPickQty.denominator })
+        : addRational(runningBalance, legacyPickQty);
+      const ledgerId = await addStockLedgerEntry({
+        companyId: input.companyId,
+        itemId: input.itemId,
+        warehouseId: input.warehouseId,
+        txDate: input.movementDate,
+        txType: input.direction === "issue" ? "goods_delivery" : "goods_receipt",
+        qty: input.direction === "issue"
+          ? `-${legacyInventoryQuantity(pick.takeQty)}`
+          : legacyInventoryQuantity(pick.takeQty),
+        costPrice: legacyInventoryCost(pick.costPrice),
+        totalCost: input.direction === "issue"
+          ? `-${legacyInventoryTotalCost(pickTotalCost)}`
+          : legacyInventoryTotalCost(pickTotalCost),
+        balanceQty: legacyInventoryQuantity(runningBalance),
+        refId: Number(movement.id),
+        refType: `contracting_material_${input.direction}`,
+        batchNumber: pick.batchNumber,
+        expiryDate: pick.expiryDate,
+        notes: input.notes ?? undefined,
+      }, tx);
+      await tx.execute(sql`
+        INSERT INTO contracting_material_movement_allocations
+          (company_id, movement_id, source_movement_id, source_allocation_id,
+           source_ledger_id, item_id, warehouse_id, batch_number, expiry_date,
+           qty_base, unit_cost, total_cost)
+        VALUES (
+          ${input.companyId}, ${Number(movement.id)},
+          ${input.direction === "return" ? input.sourceMovementId : null},
+          ${input.direction === "return" ? (pick as typeof returnPicks[number]).allocationId : null},
+          ${input.direction === "return" ? (pick as typeof returnPicks[number]).sourceLedgerId : ledgerId},
+          ${input.itemId}, ${input.warehouseId}, ${pick.batchNumber}, ${pick.expiryDate},
+          ${exactQuantity(pick.takeQty)}, ${exactCost(pick.costPrice)},
+          ${exactTotalCost(multiplyRational(pick.takeQty, pick.costPrice))}
+        )
+      `);
+    }
     await refreshItemCost(input.companyId, input.itemId, tx);
     const map = await mappings(tx, input.companyId, "contracting_material_movement");
     const inventory = map.get("inventory");
@@ -1467,10 +2246,23 @@ export async function issueOrReturnMaterial(input: {
       action: `material_${input.direction}`,
       originalJournalEntryId: jeId,
       amount: totalCost,
-      metadata: { qtyBase, unitCost, balanceQty: newBalance },
+      metadata: {
+        qtyBase: exactQuantity(requestedQtyBase),
+        unitCost: exactCost(unitCostExact),
+        balanceQty: storedNewQtyText,
+        batchMode,
+        allocationCount: picks.length,
+        costRounding: "half_up@18",
+        totalCostRounding: "half_up@36",
+      },
       userId: input.userId,
     });
-    return { ...movement, journal_entry_id: jeId, balance_qty: newBalance, idempotentReplay: false };
+    return {
+      ...movement,
+      journal_entry_id: jeId,
+      balance_qty: storedNewQtyText,
+      idempotentReplay: false,
+    };
   });
   return out;
 }
@@ -1493,7 +2285,11 @@ export async function inventoryOptions(companyId: number, projectId: number) {
       : eq(warehousesTable.branchId, project.branchId),
   ));
   const items = await db.select({
-    id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr, unitId: itemsTable.unitId,
+    id: itemsTable.id,
+    code: itemsTable.code,
+    nameAr: itemsTable.nameAr,
+    unitId: itemsTable.unitId,
+    batchTrackingMode: itemsTable.batchTrackingMode,
   }).from(itemsTable).where(and(
     eq(itemsTable.companyId, companyId),
     eq(itemsTable.itemType, "stock"),
