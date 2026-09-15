@@ -26,7 +26,7 @@ import {
   stockBalanceTable,
   costCentersTable,
 } from "@workspace/db";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { branchScopeSpread, extractAuth, getAllowedBranchIds, resolveCompanyId } from "../middleware/auth.js";
 import { canAccessModule, requirePermission } from "../middleware/permissions.js";
 import {
@@ -274,6 +274,16 @@ function validateNonNegative(value: unknown, label: string): string | null {
   return null;
 }
 
+function validatePercentage(value: unknown, label: string): string | null {
+  const n = finiteNumber(value);
+  if (!Number.isFinite(n) || n < 0 || n > 100) return `${label} يجب أن يكون بين 0 و100`;
+  return null;
+}
+
+function calculateAdvancePayment(value: number, percent: number): number {
+  return Math.round((value * percent / 100 + Number.EPSILON) * 100) / 100;
+}
+
 function exactBaseQuantity(qty: unknown, factor: string): string {
   // PostgreSQL numeric cannot accept the resolver's exact repeating fraction
   // notation. Round only at the persistence boundary; the item graph itself
@@ -311,10 +321,9 @@ async function ensureWarehouseForProject(cid: number, warehouseId: number, proje
     eq(warehousesTable.isActive, true),
   ));
   if (!warehouse) return { error: "المخزن غير صالح أو غير نشط" as const };
-  // Inventory options and resource allocations never fall back to a
-  // company-wide/NULL-branch warehouse.  The project and warehouse must both
-  // have the same branch, otherwise a caller could use another branch's
-  // stock by choosing a central row.
+  // Company-wide (NULL-branch) warehouses are visible from every branch,
+  // matching inventory's read scope.  A branch-specific warehouse must still
+  // belong to the project's branch.
   if (!contractingWarehouseAllowed(project.branchId, warehouse.branchId)) {
     return { error: "المخزن لا يتبع فرع المشروع" as const };
   }
@@ -828,7 +837,8 @@ router.delete("/work-items/:id", async (req, res) => {
 
 // ─────────────────── RESOURCES ───────────────────
 // Inventory picker for material planning. It exposes only active stock items,
-// their item-owned unit graph, and warehouses visible to the project's branch.
+// their item-owned unit graph, and active warehouses visible to the project's
+// branch (including company-wide warehouses).
 // No stock movement is created by this read endpoint or by resource CRUD.
 router.get("/resources/inventory-options", async (req, res) => {
   try {
@@ -915,7 +925,10 @@ router.get("/resources/inventory-options", async (req, res) => {
     if (project.branchId == null) {
       warehouseConditions.push(sql`false`);
     } else {
-      warehouseConditions.push(eq(warehousesTable.branchId, project.branchId));
+      warehouseConditions.push(or(
+        isNull(warehousesTable.branchId),
+        eq(warehousesTable.branchId, project.branchId),
+      ));
     }
     const warehouses = await db.select({
       id: warehousesTable.id,
@@ -955,7 +968,7 @@ router.get("/resources", async (req, res) => {
     const conds: any[] = [eq(contractingResourcesTable.companyId, cid)];
     if (projectId !== null) conds.push(eq(contractingResourcesTable.projectId, projectId));
     const warehouseVisibility = resourceProject?.branchId != null
-      ? eq(warehousesTable.branchId, resourceProject.branchId)
+      ? or(isNull(warehousesTable.branchId), eq(warehousesTable.branchId, resourceProject.branchId))
       : undefined;
     if (projectId === null) {
       const allowedBranches = getAllowedBranchIds(req);
@@ -1298,7 +1311,13 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
     }
     const value = Number(b.value ?? 0);
     const advancePct = Number(b.advancePercent ?? 0);
-    const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : Math.round((value * advancePct / 100) * 100) / 100;
+    const valueError = validateNonNegative(value, "قيمة العقد");
+    const percentError = validatePercentage(advancePct, "نسبة الدفعة المقدمة");
+    const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : calculateAdvancePayment(value, advancePct);
+    const advanceError = validateNonNegative(advancePay, "الدفعة المقدمة");
+    if (valueError || percentError || advanceError) {
+      res.status(400).json({ error: valueError || percentError || advanceError }); return;
+    }
     const [row] = await db.insert(contractingOwnerContractsTable).values({
       companyId: cid, projectId,
       customerId: b.customerId ? Number(b.customerId) : null,
@@ -1374,7 +1393,35 @@ router.put("/owner-contracts/:id", async (req, res) => {
       upd.customerId = b.customerId ? Number(b.customerId) : null;
     }
     if (b.durationDays !== undefined) upd.durationDays = Number(b.durationDays);
-    for (const k of ["value","advancePayment","advancePercent","retentionPercent","vatPercent"]) {
+    const valueChanged = b.value !== undefined;
+    const advancePercentChanged = b.advancePercent !== undefined;
+    const value = valueChanged ? Number(b.value) : Number(cur.value);
+    const advancePct = advancePercentChanged ? Number(b.advancePercent) : Number(cur.advancePercent);
+    if (valueChanged) {
+      const error = validateNonNegative(value, "قيمة العقد");
+      if (error) { res.status(400).json({ error }); return; }
+      upd.value = String(value);
+    }
+    if (advancePercentChanged) {
+      const error = validatePercentage(advancePct, "نسبة الدفعة المقدمة");
+      if (error) { res.status(400).json({ error }); return; }
+      upd.advancePercent = String(advancePct);
+    }
+    // A legacy form may submit the stored amount alongside a changed value or
+    // percentage. Recalculate in that case; otherwise an amount-only edit
+    // remains the explicit value entered by the user.
+    const contractInputsChanged =
+      (valueChanged && value !== Number(cur.value)) ||
+      (advancePercentChanged && advancePct !== Number(cur.advancePercent));
+    if (contractInputsChanged) {
+      upd.advancePayment = String(calculateAdvancePayment(value, advancePct));
+    } else if (b.advancePayment !== undefined) {
+      const advancePay = Number(b.advancePayment);
+      const error = validateNonNegative(advancePay, "الدفعة المقدمة");
+      if (error) { res.status(400).json({ error }); return; }
+      upd.advancePayment = String(advancePay);
+    }
+    for (const k of ["retentionPercent","vatPercent"]) {
       if (b[k] !== undefined) upd[k] = String(b[k]);
     }
     const [row] = await db.update(contractingOwnerContractsTable).set(upd)
@@ -1435,7 +1482,13 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
     if (conErr)  { res.status(400).json({ error: conErr }); return; }
     const value = Number(b.value ?? 0);
     const advancePct = Number(b.advancePercent ?? 0);
-    const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : Math.round((value * advancePct / 100) * 100) / 100;
+    const valueError = validateNonNegative(value, "قيمة العقد");
+    const percentError = validatePercentage(advancePct, "نسبة الدفعة المقدمة");
+    const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : calculateAdvancePayment(value, advancePct);
+    const advanceError = validateNonNegative(advancePay, "الدفعة المقدمة");
+    if (valueError || percentError || advanceError) {
+      res.status(400).json({ error: valueError || percentError || advanceError }); return;
+    }
     const [row] = await db.insert(contractingSubContractsTable).values({
       companyId: cid, projectId,
       contractorId: Number(b.contractorId),
@@ -1491,7 +1544,35 @@ router.put("/sub-contracts/:id", async (req, res) => {
       upd.contractorId = Number(b.contractorId);
     }
     if (b.durationDays !== undefined) upd.durationDays = Number(b.durationDays);
-    for (const k of ["value","advancePayment","advancePercent","retentionPercent","vatPercent"]) {
+    const valueChanged = b.value !== undefined;
+    const advancePercentChanged = b.advancePercent !== undefined;
+    const value = valueChanged ? Number(b.value) : Number(cur.value);
+    const advancePct = advancePercentChanged ? Number(b.advancePercent) : Number(cur.advancePercent);
+    if (valueChanged) {
+      const error = validateNonNegative(value, "قيمة العقد");
+      if (error) { res.status(400).json({ error }); return; }
+      upd.value = String(value);
+    }
+    if (advancePercentChanged) {
+      const error = validatePercentage(advancePct, "نسبة الدفعة المقدمة");
+      if (error) { res.status(400).json({ error }); return; }
+      upd.advancePercent = String(advancePct);
+    }
+    // A legacy form may submit the stored amount alongside a changed value or
+    // percentage. Recalculate in that case; otherwise an amount-only edit
+    // remains the explicit value entered by the user.
+    const contractInputsChanged =
+      (valueChanged && value !== Number(cur.value)) ||
+      (advancePercentChanged && advancePct !== Number(cur.advancePercent));
+    if (contractInputsChanged) {
+      upd.advancePayment = String(calculateAdvancePayment(value, advancePct));
+    } else if (b.advancePayment !== undefined) {
+      const advancePay = Number(b.advancePayment);
+      const error = validateNonNegative(advancePay, "الدفعة المقدمة");
+      if (error) { res.status(400).json({ error }); return; }
+      upd.advancePayment = String(advancePay);
+    }
+    for (const k of ["retentionPercent","vatPercent"]) {
       if (b[k] !== undefined) upd[k] = String(b[k]);
     }
     const [row] = await db.update(contractingSubContractsTable).set(upd)

@@ -22,9 +22,9 @@ test("restricted users cannot use an unassigned project as a central fallback", 
   assert.equal(contractingBranchAllowed(user, null), false);
 });
 
-test("warehouse options stay on the project's branch", () => {
+test("warehouse options stay on the project's branch or shared company scope", () => {
   assert.equal(contractingWarehouseAllowed(7, 7), true);
   assert.equal(contractingWarehouseAllowed(7, 8), false);
-  assert.equal(contractingWarehouseAllowed(7, null), false);
+  assert.equal(contractingWarehouseAllowed(7, null), true);
   assert.equal(contractingWarehouseAllowed(null, null), false);
 });

@@ -40,18 +40,18 @@ export function contractingMutationAction(
 }
 
 /**
- * A warehouse option is visible only when it belongs to the project's branch.
- * There is intentionally no company-wide / NULL-branch fallback here:
- * returning such a row would also return balances for a branch the caller
- * cannot inspect.
+ * A warehouse option is visible when it belongs to the project's branch or is
+ * a company-wide (NULL-branch) warehouse.  Company-wide warehouses are part
+ * of the inventory read scope for every branch; the company predicate remains
+ * enforced by the caller's query.  A project without a branch still has no
+ * usable warehouse scope.
  */
 export function contractingWarehouseAllowed(
   projectBranchId: number | null | undefined,
   warehouseBranchId: number | null | undefined,
 ): boolean {
   return projectBranchId != null
-    && warehouseBranchId != null
-    && Number(projectBranchId) === Number(warehouseBranchId);
+    && (warehouseBranchId == null || Number(projectBranchId) === Number(warehouseBranchId));
 }
 
 /**

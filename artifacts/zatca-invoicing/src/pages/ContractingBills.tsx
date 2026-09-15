@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { usePermission } from "@/hooks/usePermission";
 import {
   FileText, ArrowDownToLine, ArrowUpFromLine, ExternalLink, Filter, X,
   Download, Loader2,
@@ -21,6 +22,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { DateField } from "@/components/ui/date-field";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { BILL_DIRECTION_LABEL, BILL_STATUS_LABEL, BILL_TYPE_LABEL, labelEnum } from "@/lib/contractingLabels";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -103,6 +107,7 @@ function csvCell(value: unknown): string {
 export default function ContractingBills() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
+  const canCreate = usePermission("contracting", "create");
   const searchString = useSearch();
   const [, navigate] = useLocation();
 
@@ -127,6 +132,8 @@ export default function ContractingBills() {
   const [dateFrom, setDateFrom]     = useState<string>("");
   const [dateTo, setDateTo]         = useState<string>("");
   const [search, setSearch]         = useState<string>("");
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createProjectId, setCreateProjectId] = useState("");
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -211,6 +218,24 @@ export default function ContractingBills() {
     setDateFrom(""); setDateTo(""); setSearch("");
   };
 
+  function openProjectBillForm() {
+    const id = Number(createProjectId);
+    // The project list is branch/company scoped by the API. Validate the
+    // selected value against that list before constructing a project route so
+    // a stale or tampered select value cannot open an arbitrary project.
+    const project = projects.find(p => Number(p.id) === id);
+    if (!project || !Number.isInteger(id) || id <= 0) {
+      toast({ title: "اختر مشروعاً صالحاً", variant: "destructive" });
+      return;
+    }
+    const billDirection = direction || "outgoing";
+    setCreateDialogOpen(false);
+    setCreateProjectId("");
+    // Keep this as a normal navigation (not replace): browser Back returns
+    // to the exact report URL, including its outgoing/incoming filter.
+    navigate(`/contracting/projects/${id}?tab=bills&direction=${billDirection}&createBill=1`);
+  }
+
   const exportCsv = () => {
     if (visible.length === 0) {
       toast({ title: "لا توجد بيانات للتصدير", variant: "destructive" });
@@ -272,15 +297,83 @@ export default function ContractingBills() {
             عرض موحّد لكل مستخلصات المقاولات عبر المشاريع — صادرة للمالك ووواردة من المقاولين الباطن.
           </p>
         </div>
-        <Button
-          onClick={exportCsv}
-          disabled={exporting || loading || visible.length === 0}
-          data-testid="button-export-contracting-bills-csv"
-        >
-          {exporting ? <Loader2 className="ms-1 h-4 w-4 animate-spin" /> : <Download className="ms-1 h-4 w-4" />}
-          {exporting ? "جار تجهيز CSV…" : "تصدير CSV"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            onClick={exportCsv}
+            disabled={exporting || loading || visible.length === 0}
+            data-testid="button-export-contracting-bills-csv"
+          >
+            {exporting ? <Loader2 className="ms-1 h-4 w-4 animate-spin" /> : <Download className="ms-1 h-4 w-4" />}
+            {exporting ? "جار تجهيز CSV…" : "تصدير CSV"}
+          </Button>
+          {canCreate && (
+            <Button
+              variant="default"
+              onClick={() => setCreateDialogOpen(true)}
+              data-testid="button-create-contracting-bill"
+            >
+              <FileText className="ms-1 h-4 w-4" /> إنشاء مستخلص
+            </Button>
+          )}
+        </div>
       </header>
+
+      {canCreate && (
+        <Dialog
+          open={createDialogOpen}
+          onOpenChange={(open) => {
+            setCreateDialogOpen(open);
+            if (!open) setCreateProjectId("");
+          }}
+        >
+          <DialogContent dir="rtl" data-testid="dialog-create-contracting-bill">
+            <DialogHeader>
+              <DialogTitle>إنشاء مستخلص جديد</DialogTitle>
+              <DialogDescription>
+                اختر مشروعاً مصرحاً لك به لفتح نموذج المستخلص الموجود داخل تفاصيل المشروع.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="create-bill-project">
+                المشروع
+              </label>
+              <Select
+                value={createProjectId || "__none__"}
+                onValueChange={(value) => setCreateProjectId(value === "__none__" ? "" : value)}
+              >
+                <SelectTrigger id="create-bill-project" data-testid="select-create-bill-project">
+                  <SelectValue placeholder="اختر مشروعاً" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">اختر مشروعاً</SelectItem>
+                  {projects
+                    .filter(project => Number.isInteger(Number(project.id)) && Number(project.id) > 0)
+                    .map(project => (
+                      <SelectItem key={project.id} value={String(project.id)}>
+                        {project.code} — {project.nameAr}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              {projects.length === 0 && (
+                <p className="text-xs text-muted-foreground">لا توجد مشاريع متاحة لك.</p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
+                إلغاء
+              </Button>
+              <Button
+                onClick={openProjectBillForm}
+                disabled={!createProjectId}
+                data-testid="button-confirm-create-contracting-bill"
+              >
+                متابعة
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-8 gap-3">

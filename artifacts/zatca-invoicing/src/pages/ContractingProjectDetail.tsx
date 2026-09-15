@@ -1,9 +1,10 @@
 import { saveBlob } from "@/lib/saveFile";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useRoute } from "wouter";
+import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { usePermission } from "@/hooks/usePermission";
 import {
   ArrowLeft, Briefcase, Plus, Pencil, Trash2, Sparkles, Download,
   TrendingUp, Wallet, Activity, AlertTriangle, FileSpreadsheet, Loader2, X,
@@ -158,15 +159,42 @@ const RISK_TONE:  Record<RiskLevel, string> = {
 
 const STATUS_LABEL = PROJECT_STATUS_LABEL;
 
+function calculateAdvancePayment(value: unknown, percent: unknown): string {
+  const contractValue = Number(value);
+  const advancePercent = Number(percent);
+  if (!Number.isFinite(contractValue) || !Number.isFinite(advancePercent)) return "0";
+  return String(Math.round((contractValue * advancePercent / 100 + Number.EPSILON) * 100) / 100);
+}
+
+type BillDirection = "outgoing" | "incoming";
+
+function parseProjectDetailQuery(search: string): {
+  tab: string;
+  billDirection: BillDirection;
+  createBill: boolean;
+} {
+  const params = new URLSearchParams(search);
+  const rawDirection = params.get("direction") ?? params.get("billDirection");
+  return {
+    // Only known tabs are accepted from the URL. The create-bill shortcut
+    // uses the bills tab; all other values retain the normal overview start.
+    tab: params.get("tab") === "bills" ? "bills" : "overview",
+    billDirection: rawDirection === "incoming" ? "incoming" : "outgoing",
+    createBill: params.get("createBill") === "1",
+  };
+}
+
 export default function ContractingProjectDetail() {
     const gate = useDemoActionGate();
   const { t } = useTranslation();
   const [, params] = useRoute("/contracting/projects/:id");
+  const search = useSearch();
   const projectId = Number(params?.id);
   const { token } = useAuth() as any;
   const { toast } = useToast();
+  const routeQuery = parseProjectDetailQuery(search);
   const [project, setProject] = useState<Project | null>(null);
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(routeQuery.tab);
 
   const loadProject = useCallback(async () => {
     if (!token || !projectId) return;
@@ -182,6 +210,7 @@ export default function ContractingProjectDetail() {
   }, [token, projectId, t, toast]);
 
   useEffect(() => { void loadProject(); }, [loadProject]);
+  useEffect(() => { setTab(routeQuery.tab); }, [routeQuery.tab]);
 
   const fmt = (n: string | number) => Number(n || 0).toLocaleString("en-US");
 
@@ -255,7 +284,14 @@ export default function ContractingProjectDetail() {
         <TabsContent value="sub-contracts"  className="mt-4"><SubContractsTab  projectId={projectId} /></TabsContent>
         <TabsContent value="work-items" className="mt-4"><WorkItemsTab projectId={projectId} onChange={loadProject} /></TabsContent>
         <TabsContent value="resources"  className="mt-4"><ResourcesTab projectId={projectId} /></TabsContent>
-        <TabsContent value="bills"      className="mt-4"><BillsTab     projectId={projectId} projectCostCenterId={project?.costCenterId ?? null} /></TabsContent>
+        <TabsContent value="bills" className="mt-4">
+          <BillsTab
+            projectId={projectId}
+            projectCostCenterId={project?.costCenterId ?? null}
+            initialDirection={routeQuery.billDirection}
+            autoOpen={routeQuery.createBill}
+          />
+        </TabsContent>
         <TabsContent value="accounting" className="mt-4"><ContractingAccountingPanel projectId={projectId} /></TabsContent>
         <TabsContent value="risks"      className="mt-4"><RisksTab     projectId={projectId} /></TabsContent>
         <TabsContent value="events"     className="mt-4"><EventsTab    projectId={projectId} /></TabsContent>
@@ -485,8 +521,16 @@ function ResourcesTab({ projectId }: { projectId: number }) {
     fetch(`${API}/api/contracting/resources/inventory-options?projectId=${projectId}`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(async (r) => {
-      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
-      return r.json();
+      const payload = await r.json().catch(() => null) as
+        (Partial<InventoryOptions> & { error?: unknown }) | null;
+      if (!r.ok) {
+        const message = typeof payload?.error === "string" ? payload.error : `HTTP ${r.status}`;
+        throw new Error(message);
+      }
+      if (!payload || !Array.isArray(payload.items) || !Array.isArray(payload.warehouses) || !Array.isArray(payload.balances)) {
+        throw new Error(t("contracting.resources.inventoryOptionsInvalid", "استجابة المخزون غير صالحة"));
+      }
+      return payload as InventoryOptions;
     }).then(setInventory).catch((e: any) => {
       toast({ title: e?.message ?? t("common.errorOccurred", "حدث خطأ"), variant: "destructive" });
     }).finally(() => setInventoryLoading(false));
@@ -655,14 +699,29 @@ function ResourcesTab({ projectId }: { projectId: number }) {
 }
 
 // ─────────────────── BILLS TAB ───────────────────
-function BillsTab({ projectId, projectCostCenterId }: { projectId: number; projectCostCenterId: number | null }) {
+function BillsTab({
+  projectId,
+  projectCostCenterId,
+  initialDirection = "outgoing",
+  autoOpen = false,
+}: {
+  projectId: number;
+  projectCostCenterId: number | null;
+  initialDirection?: BillDirection;
+  autoOpen?: boolean;
+}) {
   const { t } = useTranslation();
   const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
-  const [direction, setDirection] = useState<"outgoing" | "incoming">("outgoing");
+  const canCreate = usePermission("contracting", "create");
+  const routeSearch = useSearch();
+  const [, navigate] = useLocation();
+  const [direction, setDirection] = useState<BillDirection>(initialDirection);
   const [rows, setRows] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Bill> | null>(null);
+  const [billOptionsLoaded, setBillOptionsLoaded] = useState(false);
+  const autoOpenAttempted = useRef(false);
   // Peek the next bill-number from the central sequence engine while a NEW
   // bill is being created (id is still nullish).
   const isCreatingBill = !!editing && (editing as any).id == null;
@@ -693,6 +752,7 @@ function BillsTab({ projectId, projectCostCenterId }: { projectId: number; proje
   // dropdowns. Pulled lazily once on mount (rarely changes).
   useEffect(() => {
     if (!token) return;
+    setBillOptionsLoaded(false);
     void (async () => {
       try {
         const [c, oc, sc] = await Promise.all([
@@ -702,6 +762,7 @@ function BillsTab({ projectId, projectCostCenterId }: { projectId: number; proje
         ]);
         setContractors(c); setOwnerContracts(oc); setSubContracts(sc);
       } catch { /* non-fatal — form still works without auto-fill */ }
+      finally { setBillOptionsLoaded(true); }
     })();
   }, [token, projectId]);
 
@@ -759,6 +820,23 @@ function BillsTab({ projectId, projectCostCenterId }: { projectId: number; proje
     });
   }
 
+  useEffect(() => {
+    if (!autoOpen || autoOpenAttempted.current || !billOptionsLoaded) return;
+    autoOpenAttempted.current = true;
+    if (canCreate) openNew();
+
+    // Consume the one-shot command after starting the existing inline form.
+    // Keeping tab/direction in the URL preserves the user's context while
+    // preventing a remount or refresh from creating a second draft form.
+    const params = new URLSearchParams(routeSearch);
+    params.delete("createBill");
+    const nextSearch = params.toString();
+    navigate(
+      `/contracting/projects/${projectId}${nextSearch ? `?${nextSearch}` : ""}`,
+      { replace: true },
+    );
+  }, [autoOpen, billOptionsLoaded, canCreate, navigate, projectId, routeSearch]);
+
   // Quick totals for the header (helps SuperAdmins see exposure at a glance)
   const totals = rows.reduce((acc, b) => {
     acc.gross += Number(b.grossAmount); acc.due += Number(b.dueAmount);
@@ -801,9 +879,11 @@ function BillsTab({ projectId, projectCostCenterId }: { projectId: number; proje
             : t("contracting.bills.incomingTitle", "مستخلصات واردة من المقاولين الباطنين")}
           <span className="text-slate-500 font-normal text-sm mx-2">({rows.length})</span>
         </h3>
-        <Button size="sm" onClick={openNew}>
-          <Plus className="h-4 w-4 mx-1" /> {t("contracting.bills.add", "مستخلص جديد")}
-        </Button>
+        {canCreate && (
+          <Button size="sm" onClick={openNew}>
+            <Plus className="h-4 w-4 mx-1" /> {t("contracting.bills.add", "مستخلص جديد")}
+          </Button>
+        )}
       </div>
 
       <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
@@ -1329,6 +1409,10 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
     if (!editing?.contractNumber || !editing?.contractDate) {
       toast({ title: t("contracting.ownerContract.required", "رقم العقد والتاريخ مطلوبان"), variant: "destructive" }); return;
     }
+    const advancePercent = Number(editing.advancePercent ?? 0);
+    if (!Number.isFinite(advancePercent) || advancePercent < 0 || advancePercent > 100) {
+      toast({ title: t("contracting.ownerContract.advancePercentInvalid", "نسبة الدفعة المقدمة يجب أن تكون بين 0 و100"), variant: "destructive" }); return;
+    }
     try {
       const isEdit = (editing as any).id != null;
       const url = isEdit
@@ -1454,9 +1538,9 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
               </Field>
             )}
             <Field label={t("contracting.ownerContract.client", "اسم العميل")}><Input value={editing.clientName ?? ""} onChange={e => setEditing({ ...editing, clientName: e.target.value })} /></Field>
-            <Field label={t("contracting.ownerContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing({ ...editing, value: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing(current => current ? { ...current, value: e.target.value, advancePayment: calculateAdvancePayment(e.target.value, current.advancePercent) } : current)} /></Field>
             <Field label={t("contracting.ownerContract.advance", "دفعة مقدمة (ر.س)")}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
-            <Field label={t("contracting.ownerContract.advancePercent", "% دفعة مقدمة")}><Input type="number" value={editing.advancePercent ?? "0"} onChange={e => setEditing({ ...editing, advancePercent: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.advancePercent", "% دفعة مقدمة")}><Input type="number" min="0" max="100" step="0.01" value={editing.advancePercent ?? "0"} onChange={e => setEditing(current => current ? { ...current, advancePercent: e.target.value, advancePayment: calculateAdvancePayment(current.value, e.target.value) } : current)} /></Field>
             <Field label={t("contracting.ownerContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "5"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.duration", "المدة (يوم)")}><Input type="number" value={editing.durationDays ?? 0} onChange={e => setEditing({ ...editing, durationDays: Number(e.target.value) })} /></Field>
@@ -1533,6 +1617,10 @@ function SubContractsTab({ projectId }: { projectId: number }) {
     }
     if (!editing?.contractNumber || !editing?.contractDate) {
       toast({ title: t("contracting.subContract.required", "رقم العقد والتاريخ مطلوبان"), variant: "destructive" }); return;
+    }
+    const advancePercent = Number(editing.advancePercent ?? 0);
+    if (!Number.isFinite(advancePercent) || advancePercent < 0 || advancePercent > 100) {
+      toast({ title: t("contracting.subContract.advancePercentInvalid", "نسبة الدفعة المقدمة يجب أن تكون بين 0 و100"), variant: "destructive" }); return;
     }
     try {
       const isEdit = (editing as any).id != null;
@@ -1627,9 +1715,9 @@ function SubContractsTab({ projectId }: { projectId: number }) {
             <Field label={t("contracting.subContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.date", "تاريخ العقد")} required><DateField value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.signedAt", "تاريخ التوقيع")}><DateField value={editing.signedAt ?? ""} onChange={e => setEditing({ ...editing, signedAt: e.target.value })} /></Field>
-            <Field label={t("contracting.subContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing({ ...editing, value: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing(current => current ? { ...current, value: e.target.value, advancePayment: calculateAdvancePayment(e.target.value, current.advancePercent) } : current)} /></Field>
             <Field label={t("contracting.subContract.advance", "دفعة مقدمة (ر.س)")}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
-            <Field label={t("contracting.subContract.advancePercent", "% دفعة مقدمة")}><Input type="number" value={editing.advancePercent ?? "0"} onChange={e => setEditing({ ...editing, advancePercent: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.advancePercent", "% دفعة مقدمة")}><Input type="number" min="0" max="100" step="0.01" value={editing.advancePercent ?? "0"} onChange={e => setEditing(current => current ? { ...current, advancePercent: e.target.value, advancePayment: calculateAdvancePayment(current.value, e.target.value) } : current)} /></Field>
             <Field label={t("contracting.subContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "10"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.duration", "المدة (يوم)")}><Input type="number" value={editing.durationDays ?? 0} onChange={e => setEditing({ ...editing, durationDays: Number(e.target.value) })} /></Field>
