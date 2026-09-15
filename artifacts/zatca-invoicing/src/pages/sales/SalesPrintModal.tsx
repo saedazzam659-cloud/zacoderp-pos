@@ -1951,8 +1951,31 @@ function summaryFooterHtmlEn(t: FullTotals): string {
 // "ضريبية" vs "مبسطة" follows the ZATCA classification rule: a customer with
 // a VAT number is treated as a B2B taxable invoice (standard), otherwise as
 // a simplified (B2C) invoice. Returns/orders/quotations are handled too.
-function template14(d: PrintData): string {
+export function template14(d: PrintData): string {
   const { doc, lines, customer, company } = d;
+  // Contracting documents deliberately reuse this exact model-14 renderer
+  // (header, page-frame pagination, line table, totals card and audit footer)
+  // while supplying their own non-invoice labels and server totals.
+  const contracting = (d as any)._contracting as {
+    titleAr: string;
+    titleEn: string;
+    directionLabel: string;
+    footerLabel: string;
+    billNumber?: string;
+    billDate?: string;
+    totals?: Partial<FullTotals> & {
+      previousWorks?: number;
+      currentWorks?: number;
+      cumulativeWorks?: number;
+      contractValue?: number;
+      remainingContract?: number;
+      retention?: number;
+      deductions?: number;
+      penalties?: number;
+      paid?: number;
+      outstanding?: number;
+    };
+  } | undefined;
   // ── Language ───────────────────────────────────────────────────────────
   // `_lang` / `_enNames` are injected by SalesPrintModal right before this
   // builder runs. English mode flips to LTR, English labels, and live
@@ -1989,7 +2012,10 @@ function template14(d: PrintData): string {
     if (!isEn) return raw;
     return enUnits.get(raw.toLowerCase()) || enUnits.get(raw.toUpperCase()) || raw;
   };
-  const totals = computeFullTotals(doc, lines);
+  const calculatedTotals = computeFullTotals(doc, lines);
+  const totals = contracting?.totals
+    ? { ...calculatedTotals, ...contracting.totals }
+    : calculatedTotals;
   const safeLogo = safeLogoSrc(company?.logo);
   const safeBrandLogo = safeLogoSrc(company?.brandLogo);
   const isReturn = d.type === "return";
@@ -2002,21 +2028,21 @@ function template14(d: PrintData): string {
   // invoice itself).
   const hasBuyerVat = !!(customer?.vatNumber ?? doc.buyerVatNumber);
   const isSimplified = !hasBuyerVat;
-  const titleAr = isReturn ? (isSimplified ? "مرتجع مبيعات مبسط" : "مرتجع مبيعات ضريبي")
+  const titleAr = contracting?.titleAr ?? (isReturn ? (isSimplified ? "مرتجع مبيعات مبسط" : "مرتجع مبيعات ضريبي")
               : isQuot   ? "عرض سعر"
               : isOrder  ? "أمر بيع"
-              :            (isSimplified ? "فاتورة مبيعات مبسطة" : "فاتورة مبيعات ضريبية");
-  const titleEn = isReturn ? "Sales Return"
+              :            (isSimplified ? "فاتورة مبيعات مبسطة" : "فاتورة مبيعات ضريبية"));
+  const titleEn = contracting?.titleEn ?? (isReturn ? "Sales Return"
               : isQuot   ? "Quotation"
               : isOrder  ? "Sales Order"
-              :            (isSimplified ? "Simplified Tax Invoice" : "Tax Invoice");
+              :            (isSimplified ? "Simplified Tax Invoice" : "Tax Invoice"));
   const titleMain = isEn ? titleEn : titleAr;
   const titleSub  = isEn ? titleAr : titleEn;
-  const docNo = doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
-  const dateStr = docDate(doc, d.type);
-  const payLabel = isEn
+  const docNo = contracting?.billNumber ?? doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
+  const dateStr = contracting?.billDate ?? docDate(doc, d.type);
+  const payLabel = contracting?.directionLabel ?? (isEn
     ? (doc.paymentType === "cash" ? "Cash" : doc.paymentType === "bank" ? "On Account" : "Credit")
-    : (doc.paymentType === "cash" ? "نقداً" : doc.paymentType === "bank" ? "على حساب" : "آجل");
+    : (doc.paymentType === "cash" ? "نقداً" : doc.paymentType === "bank" ? "على حساب" : "آجل"));
   // Customer "account code" — prefer an explicit code, else fall back to the
   // chart-of-accounts link, else the customer id (#123) so the field never
   // shows a blank placeholder.
@@ -2319,7 +2345,7 @@ function template14(d: PrintData): string {
         </div>
         <div class="meta-pills">
           <span class="pill no"><b>${docNo}</b></span>
-          ${!isNonPaymentDoc(d.type) ? `<span class="pill pay"><b>${payLabel}</b></span>` : ""}
+          ${contracting || !isNonPaymentDoc(d.type) ? `<span class="pill pay"><b>${payLabel}</b></span>` : ""}
           <span class="pill">📅 <b>${dateStr}</b></span>
           ${isQuot && doc.validUntil ? `<span class="pill">${L.validUntil} <b>${doc.validUntil}</b></span>` : ""}
           ${isReturn && doc.invoiceId ? `<span class="pill">${L.reference}: <b>${doc.invoiceId}</b></span>` : ""}
@@ -2328,7 +2354,7 @@ function template14(d: PrintData): string {
 
       <!-- CUSTOMER (left side in RTL — last in DOM) -->
       <div class="col-cu">
-        <div class="label">${L.customerInfo}</div>
+        <div class="label">${contracting ? "الطرف المرتبط" : L.customerInfo}</div>
         <div class="cu-name">${(isEn ? (customer?.nameEn ?? customer?.nameAr) : (customer?.nameAr ?? customer?.nameEn)) ?? doc.buyerName ?? L.none}</div>
         ${isQuot ? `
           ${(customer?.vatNumber ?? doc.buyerVatNumber)
@@ -2365,7 +2391,7 @@ function template14(d: PrintData): string {
       </div>
       <div class="grp" style="text-align:left;">
         <span>${L.printedLbl}: <b>${new Date().toLocaleString(locale, { dateStyle: "short", timeStyle: "short" })}</b></span>
-        <span style="color:var(--gold);font-weight:700;">ZATCA e-Invoice</span>
+        <span style="color:var(--gold);font-weight:700;">${contracting?.footerLabel ?? "ZATCA e-Invoice"}</span>
       </div>
     </div>`;
 
@@ -2375,9 +2401,22 @@ function template14(d: PrintData): string {
   //   # / الصنف / الوحدة / سعر الوحدة / الكمية / الخصم / الكمية المجانية /
   //   المبلغ / الضريبة / قيمة الضريبة / الإجمالي
   // Total visible column count — needed for the per-line notes colspan.
-  const colCount = 11;
+  const colCount = contracting ? 9 : 11;
 
-  const linesHeadHtml = `
+  const linesHeadHtml = contracting ? `
+    <thead>
+      <tr>
+        <th style="width:30px">#</th>
+        <th>بند التنفيذ</th>
+        <th>الوحدة</th>
+        <th>الكمية السابقة</th>
+        <th>الكمية الحالية</th>
+        <th>الكمية التراكمية</th>
+        <th>قيمة السابق</th>
+        <th>قيمة الحالي</th>
+        <th>قيمة التراكمي</th>
+      </tr>
+    </thead>` : `
     <thead>
       <tr>
         <th style="width:30px">#</th>
@@ -2397,6 +2436,20 @@ function template14(d: PrintData): string {
   const chunkTablesHtml = lineChunks.map((chunk, chunkIdx) => {
     const rowsHtml = chunk.map((l: any, j: number) => {
       const idx = chunkIdx * LINES_PER_PAGE + j;
+      if (contracting) {
+        return `
+          <tr class="item-row">
+            <td>${idx + 1}</td>
+            <td>${itemDisplayName(l)}${l.changeOrderNumber ? `<div style="font-size:10px;color:#555;margin-top:1px;">أمر تغيير: ${escapePrintHtml(l.changeOrderNumber)}</div>` : ""}</td>
+            <td>${unitDisplay(l)}</td>
+            <td class="mono">${nf(l.previousQty)}</td>
+            <td class="mono">${nf(l.currentQty)}</td>
+            <td class="mono">${nf(l.cumulativeQty)}</td>
+            <td class="mono">${nf(l.previousValue)}</td>
+            <td class="mono">${nf(l.currentValue)}</td>
+            <td class="mono" style="font-weight:600;">${nf(l.cumulativeValue)}</td>
+          </tr>`;
+      }
       // Honors the doc's tax mode (السعر شامل الضريبة vs ضريبة إضافية).
       const f = lineFigures(l, !!doc.priceIncludesVat);
       const { qty, vat, tot } = f;
@@ -2436,6 +2489,28 @@ function template14(d: PrintData): string {
       ${!isLast ? `<div class="page-break"></div>` : ""}`;
   }).join("");
 
+  const contractingTotalsHtml = contracting ? `
+    <div class="__totalsRow"><span>الأعمال السابقة</span><span class="mono">${nf(contracting.totals?.previousWorks ?? 0)} ر.س</span></div>
+    <div class="__totalsRow"><span>الأعمال الحالية</span><span class="mono">${nf(contracting.totals?.currentWorks ?? totals.netPreVat)} ر.س</span></div>
+    <div class="__totalsRow"><span>الأعمال التراكمية</span><span class="mono">${nf(contracting.totals?.cumulativeWorks ?? totals.netPreVat)} ر.س</span></div>
+    <div class="__totalsRow"><span>قيمة العقد المعدلة</span><span class="mono">${nf(contracting.totals?.contractValue ?? 0)} ر.س</span></div>
+    <div class="__totalsRow"><span>المتبقي من العقد</span><span class="mono">${nf(contracting.totals?.remainingContract ?? 0)} ر.س</span></div>
+    <div class="__totalsRow"><span>المحتجز</span><span class="mono">${nf(contracting.totals?.retention ?? 0)} ر.س</span></div>
+    <div class="__totalsRow"><span>الاستقطاعات</span><span class="mono">${nf(contracting.totals?.deductions ?? 0)} ر.س</span></div>
+    <div class="__totalsRow"><span>الغرامات</span><span class="mono">${nf(contracting.totals?.penalties ?? 0)} ر.س</span></div>
+    <div class="__totalsRow"><span>ضريبة القيمة المضافة</span><span class="mono">${nf(totals.vatAmount)} ر.س</span></div>
+    <div class="__totalsRow grand"><span>الصافي المستحق</span><span class="mono">${nf(totals.grandTotal)} ر.س</span></div>
+    <div class="__totalsRow"><span>المدفوع</span><span class="mono">${nf(contracting.totals?.paid ?? 0)} ر.س</span></div>
+    <div class="__totalsRow"><span>المتبقي للسداد</span><span class="mono">${nf(contracting.totals?.outstanding ?? 0)} ر.س</span></div>`
+    : `
+              <div class="__totalsRow"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)}</span></div>
+              <div class="__totalsRow"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)}</span></div>
+              <div class="__totalsRow"><span>${tl("الصافي بدون الضريبة", "Net")}</span><span class="mono">${nf(totals.netPreVat)}</span></div>
+              <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono" style="color:#b45309;">${nf(totals.vatAmount)}</span></div>
+              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}${quotationCurrencyHtml}</span><span class="mono">${nf(totals.grandTotal)}</span></div>
+              ${sarEqRowsHtml(totals, "__totalsRow", tl, nf)}
+              ${(company?.printShowItemsSummary !== false) ? (isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)) : ""}`;
+
   return `${docHead}
   <body><div class="sheet">
     <table class="page-frame">
@@ -2461,15 +2536,9 @@ function template14(d: PrintData): string {
           <!-- Bottom : totals + QR (anchored to the page bottom) ──────── -->
           <div class="bottom">
             <div class="totals-card">
-              <div class="__totalsRow"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)}</span></div>
-              <div class="__totalsRow"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)}</span></div>
-              <div class="__totalsRow"><span>${tl("الصافي بدون الضريبة", "Net")}</span><span class="mono">${nf(totals.netPreVat)}</span></div>
-              <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono" style="color:#b45309;">${nf(totals.vatAmount)}</span></div>
-              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}${quotationCurrencyHtml}</span><span class="mono">${nf(totals.grandTotal)}</span></div>
-              ${sarEqRowsHtml(totals, "__totalsRow", tl, nf)}
-              ${(company?.printShowItemsSummary !== false) ? (isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)) : ""}
+              ${contractingTotalsHtml}
             </div>
-            ${showQrColumn ? `<div class="qr-col">
+            ${!contracting && showQrColumn ? `<div class="qr-col">
               ${showQrInDocument ? `<div class="qr-card">
                 ${qrImgHtml(d, { size: 150 })}
                 <div class="lbl">QR — ZATCA</div>

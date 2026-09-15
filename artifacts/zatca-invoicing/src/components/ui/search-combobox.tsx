@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronsUpDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Popover,
@@ -20,6 +20,8 @@ export interface ComboboxItem {
   badge?: string;
   badgeClass?: string;
   disabled?: boolean;
+  /** Show a clear button when a value is selected. */
+  clearable?: boolean;
   disabledReason?: string;
 }
 
@@ -32,6 +34,7 @@ interface SearchComboboxProps {
   emptyText?: string;
   className?: string;
   disabled?: boolean;
+  clearable?: boolean;
   /**
    * Dialog focus management focuses the first form control when content
    * mounts. Callers can keep that initial focus from opening the popover while
@@ -54,6 +57,7 @@ export function SearchCombobox({
   emptyText = "لا توجد نتائج",
   className,
   disabled,
+  clearable = false,
   openOnFocus = true,
   grouped,
   autoFocus,
@@ -248,6 +252,23 @@ export function SearchCombobox({
               "disabled:cursor-not-allowed disabled:opacity-50"
             )}
           />
+          {clearable && selectedItem && !disabled && (
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label="مسح الاختيار"
+              data-testid={testId ? `${testId}-clear` : undefined}
+              className="pointer-events-auto rounded-sm p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+              onMouseDown={e => {
+                e.preventDefault();
+                e.stopPropagation();
+                onValueChange("");
+                setSearch("");
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
           <div className="absolute inset-y-0 end-2 flex items-center gap-1 pointer-events-none">
             <ChevronsUpDown className="h-3.5 w-3.5 opacity-40" />
           </div>

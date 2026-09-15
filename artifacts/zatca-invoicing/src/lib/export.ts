@@ -12,6 +12,19 @@ export interface ExportColumn {
   numFmt?: string;
 }
 
+/**
+ * Keep user-controlled text as literal text in spreadsheet exports.
+ *
+ * Excel treats cells beginning with =, +, - or @ as formulas when a workbook
+ * is opened.  Money/quantity values must remain numbers, so callers should
+ * pass those as `number`; this helper is only for textual identifiers,
+ * names, notes and labels.
+ */
+export function safeSpreadsheetText(value: unknown): string {
+  const text = String(value ?? "");
+  return /^[\t\r\n ]*[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
 // ─── Excel Export ─────────────────────────────────────────────────────────────
 
 export function exportToExcel(
@@ -33,7 +46,7 @@ export function exportToExcel(
   const norm = (val: unknown): string | number => {
     if (val === null || val === undefined) return "";
     if (typeof val === "number") return Number.isFinite(val) ? val : "";
-    return String(val);
+    return safeSpreadsheetText(val);
   };
 
   const headers = columns.map(c => c.header);
@@ -95,6 +108,14 @@ export interface ExportCompanyInfo {
   brandLogo?: string | null;
 }
 
+/** Additional typed grids written into the same branded XLSX workbook. */
+export interface BrandedExtraSheet {
+  sheetName: string;
+  rows: Record<string, unknown>[];
+  columns: ExportColumn[];
+  totalsRow?: Record<string, unknown> | null;
+}
+
 /** Compose the single-line address from the granular ZATCA address parts. */
 export function buildCompanyAddressLine(c?: ExportCompanyInfo | null): string {
   if (!c) return "";
@@ -119,15 +140,16 @@ export async function exportToExcelBranded(
     company?: ExportCompanyInfo | null;
     title?: string;
     subtitle?: string;
+    extraSheets?: BrandedExtraSheet[];
   } = {},
 ): Promise<void> {
-  const { sheetName = "Sheet1", totalsRow, company, title, subtitle } = opts;
+  const { sheetName = "Sheet1", totalsRow, company, title, subtitle, extraSheets = [] } = opts;
   try {
     const ExcelJS = (await import("exceljs")).default;
     const norm = (val: unknown): string | number => {
       if (val === null || val === undefined) return "";
       if (typeof val === "number") return Number.isFinite(val) ? val : "";
-      return String(val);
+       return safeSpreadsheetText(val);
     };
 
     const wb = new ExcelJS.Workbook();
@@ -287,6 +309,60 @@ export async function exportToExcelBranded(
     // Freeze everything above the data so the header band + column titles stay
     // visible while scrolling.
     ws.views = [{ rightToLeft: true, state: "frozen", ySplit: headerRowIdx }];
+
+    // Related grids (for example owner contracts and subcontracts) stay in
+    // the same real XLSX workbook rather than causing multiple downloads.
+    for (const extra of extraSheets) {
+      const extraWs = wb.addWorksheet(extra.sheetName, { views: [{ rightToLeft: true }] });
+      const extraHeader = extraWs.getRow(1);
+      extra.columns.forEach((column, index) => {
+        const cell = extraHeader.getCell(index + 1);
+        cell.value = column.header;
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREEN } };
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      });
+      extra.rows.forEach((source, rowIndex) => {
+        const row = extraWs.getRow(rowIndex + 2);
+        extra.columns.forEach((column, columnIndex) => {
+          const raw = source[column.key];
+          const value = raw === null || raw === undefined
+            ? ""
+            : typeof raw === "number"
+              ? (Number.isFinite(raw) ? raw : "")
+              : safeSpreadsheetText(raw);
+          const cell = row.getCell(columnIndex + 1);
+          cell.value = value;
+          if (column.numFmt && typeof value === "number") cell.numFmt = column.numFmt;
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+        });
+      });
+      if (extra.totalsRow) {
+        const row = extraWs.getRow(extra.rows.length + 2);
+        extra.columns.forEach((column, columnIndex) => {
+          const raw = extra.totalsRow?.[column.key];
+          const value = raw === null || raw === undefined
+            ? ""
+            : typeof raw === "number"
+              ? (Number.isFinite(raw) ? raw : "")
+              : safeSpreadsheetText(raw);
+          const cell = row.getCell(columnIndex + 1);
+          cell.value = value;
+          if (column.numFmt && typeof value === "number") cell.numFmt = column.numFmt;
+          cell.font = { bold: true, color: { argb: GREEN_DARK } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREEN_SOFT } };
+        });
+      }
+      extra.columns.forEach((column, columnIndex) => {
+        const lengths = [
+          column.header.length,
+          ...extra.rows.map(source => String(source[column.key] ?? "").length),
+          extra.totalsRow ? String(extra.totalsRow[column.key] ?? "").length : 0,
+        ];
+        extraWs.getColumn(columnIndex + 1).width = column.width ?? Math.min(Math.max(...lengths, 10), 50);
+      });
+      extraWs.views = [{ rightToLeft: true, state: "frozen", ySplit: 1 }];
+    }
 
     const buffer = await wb.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
@@ -875,11 +951,17 @@ export async function exportToPDF(
 // This is the ONLY reliable way to avoid row-cutting with html2canvas —
 // html2pdf's built-in `pagebreak.avoid` either leaves giant blank gaps
 // (when too aggressive) or ignores <tr> entirely (when too lenient).
-async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> {
+export async function downloadHtmlAsPdf(
+  html: string,
+  filename: string,
+  opts: { orientation?: "portrait" | "landscape" } = {},
+): Promise<void> {
+  const orientation = opts.orientation ?? "landscape";
+  const viewportWidth = orientation === "portrait" ? 794 : 1123;
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
   iframe.style.cssText =
-    "position:fixed;left:-99999px;top:0;width:1123px;height:794px;border:0;visibility:hidden;";
+    `position:fixed;left:-99999px;top:0;width:${viewportWidth}px;height:1123px;border:0;visibility:hidden;`;
   document.body.appendChild(iframe);
   try {
     const doc = iframe.contentDocument;
@@ -967,7 +1049,7 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
       scale:           SCALE,
       useCORS:         true,
       backgroundColor: "#ffffff",
-      windowWidth:     1123,
+      windowWidth:     viewportWidth,
       windowHeight:    fullHeight + 100,
       scrollX:         0,
       scrollY:         0,
@@ -1008,8 +1090,10 @@ async function downloadHtmlAsPdf(html: string, filename: string): Promise<void> 
     // Sort + dedupe.
     const breaks = Array.from(new Set(safeBreaks)).sort((a, b) => a - b);
 
-    // PDF setup — A4 landscape, simple symmetric margins.
-    const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+    // PDF setup — preserve the requested A4 orientation. Existing report
+    // exports remain landscape; document-specific templates can opt into
+    // portrait without falling back to browser "Save as PDF".
+    const pdf = new jsPDF({ unit: "mm", format: "a4", orientation });
     const pageW       = pdf.internal.pageSize.getWidth();
     const pageH       = pdf.internal.pageSize.getHeight();
     const marginX     = 10;

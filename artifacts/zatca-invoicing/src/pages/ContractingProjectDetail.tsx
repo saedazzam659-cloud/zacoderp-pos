@@ -16,15 +16,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@/components/ui/tabs";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
 import ContractingAccountingPanel from "@/components/ContractingAccountingPanel";
 import ContractingBillDetailEditor from "@/components/ContractingBillDetailEditor";
+import {
+  ContractingBillExportActions,
+  ContractingContractsExportActions,
+  ContractingProjectExportActions,
+} from "@/components/ContractingExportActions";
+import type { ContractingContractSnapshot } from "@/lib/contractingPrintExport";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCostCenters, type CostCenter } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
@@ -53,12 +57,14 @@ const API = import.meta.env.VITE_API_URL || "";
 
 type Project = {
   id: number; code: string; nameAr: string; nameEn: string | null;
+  branchId: number | null;
   clientName: string | null; location: string | null; projectType: string;
   costCenterId: number | null;
   status: string; contractValue: string; plannedBudget: string; actualCost: string;
   plannedStartDate: string | null; plannedEndDate: string | null;
   progressPercent: string; description: string | null;
 };
+type ProjectBranch = { id: number; code: string; nameAr: string; nameEn: string | null };
 type WorkItem = {
   id: number; projectId: number; code: string | null; nameAr: string;
   category: string; unit: string; plannedQty: string; actualQty: string;
@@ -82,6 +88,7 @@ type InventoryWarehouse = { id: number; code: string; nameAr: string; branchId: 
 type InventoryBalance = { itemId: number; warehouseId: number; qtyBase: string; avgCost: string | null };
 type InventoryOptions = {
   items: InventoryItem[]; warehouses: InventoryWarehouse[]; balances: InventoryBalance[];
+  projectBranchId?: number | null; requiresProjectBranch?: boolean;
 };
 type Bill = {
   id: number; billNumber: string; billType: string; billDate: string;
@@ -194,6 +201,7 @@ export default function ContractingProjectDetail() {
   const { toast } = useToast();
   const routeQuery = parseProjectDetailQuery(search);
   const [project, setProject] = useState<Project | null>(null);
+  const [projectBranches, setProjectBranches] = useState<ProjectBranch[]>([]);
   const [tab, setTab] = useState(routeQuery.tab);
 
   const loadProject = useCallback(async () => {
@@ -210,6 +218,16 @@ export default function ContractingProjectDetail() {
   }, [token, projectId, t, toast]);
 
   useEffect(() => { void loadProject(); }, [loadProject]);
+  useEffect(() => {
+    if (!token) return;
+    void fetch(`${API}/api/contracting/projects/options`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(async response => {
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (Array.isArray(payload?.branches)) setProjectBranches(payload.branches);
+    }).catch(() => undefined);
+  }, [token]);
   useEffect(() => { setTab(routeQuery.tab); }, [routeQuery.tab]);
 
   const fmt = (n: string | number) => Number(n || 0).toLocaleString("en-US");
@@ -238,9 +256,19 @@ export default function ContractingProjectDetail() {
             {project.location && ` • ${project.location}`}
           </div>
         </div>
-        <Badge variant={project.status === "completed" ? "secondary" : project.status === "cancelled" ? "destructive" : "default"}>
-          {labelEnum(STATUS_LABEL, project.status)}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <ContractingProjectExportActions
+            project={{
+              ...project,
+              branchName: project.branchId == null
+                ? null
+                : projectBranches.find(branch => branch.id === project.branchId)?.nameAr || `#${project.branchId}`,
+            }}
+          />
+          <Badge variant={project.status === "completed" ? "secondary" : project.status === "cancelled" ? "destructive" : "default"}>
+            {labelEnum(STATUS_LABEL, project.status)}
+          </Badge>
+        </div>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -269,6 +297,12 @@ export default function ContractingProjectDetail() {
           </div>
           <div className="rounded-lg border bg-white dark:bg-slate-900 p-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             <Meta label={t("contracting.projects.client", "العميل")} value={project.clientName || "—"} />
+             <Meta
+               label={t("contracting.projects.branch", "الفرع")}
+               value={project.branchId == null
+                 ? "—"
+                 : projectBranches.find(branch => branch.id === project.branchId)?.nameAr || `#${project.branchId}`}
+             />
             <Meta label={t("contracting.projects.type", "نوع المشروع")} value={labelEnum(PROJECT_TYPE_LABEL, project.projectType)} />
             <Meta label={t("contracting.projects.plannedStartDate", "تاريخ البداية المخطط")} value={project.plannedStartDate || "—"} />
             <Meta label={t("contracting.projects.plannedEndDate", "تاريخ النهاية المخطط")} value={project.plannedEndDate || "—"} />
@@ -281,12 +315,13 @@ export default function ContractingProjectDetail() {
         </TabsContent>
 
         <TabsContent value="owner-contract" className="mt-4"><OwnerContractTab projectId={projectId} project={project} /></TabsContent>
-        <TabsContent value="sub-contracts"  className="mt-4"><SubContractsTab  projectId={projectId} /></TabsContent>
+        <TabsContent value="sub-contracts"  className="mt-4"><SubContractsTab  projectId={projectId} project={project} /></TabsContent>
         <TabsContent value="work-items" className="mt-4"><WorkItemsTab projectId={projectId} onChange={loadProject} /></TabsContent>
         <TabsContent value="resources"  className="mt-4"><ResourcesTab projectId={projectId} /></TabsContent>
         <TabsContent value="bills" className="mt-4">
           <BillsTab
             projectId={projectId}
+            project={project}
             projectCostCenterId={project?.costCenterId ?? null}
             initialDirection={routeQuery.billDirection}
             autoOpen={routeQuery.createBill}
@@ -332,6 +367,16 @@ function Meta({ label, value }: { label: string; value: React.ReactNode }) {
     <div>
       <div className="text-xs text-slate-500">{label}</div>
       <div className="font-medium">{value}</div>
+    </div>
+  );
+}
+function ProjectContext({ project }: { project: Project }) {
+  const { t } = useTranslation();
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900/60">
+      <span className="text-xs text-slate-500">{t("contracting.projectContext.label", "المشروع الحالي")}</span>
+      <div className="font-medium">{project.nameAr}</div>
+      <div className="font-mono text-xs text-slate-500">{project.code}</div>
     </div>
   );
 }
@@ -427,24 +472,28 @@ function WorkItemsTab({ projectId, onChange }: { projectId: number; onChange: ()
             <Field label={t("contracting.workItems.name", "الاسم")} required><Input value={editing.nameAr ?? ""} onChange={e => setEditing({ ...editing, nameAr: e.target.value })} /></Field>
             <Field label={t("contracting.workItems.unit", "الوحدة")}><Input value={editing.unit ?? "m3"} onChange={e => setEditing({ ...editing, unit: e.target.value })} placeholder="م³ / م² / ساعة" /></Field>
             <Field label={t("contracting.workItems.category", "التصنيف")}>
-              <Select value={editing.category ?? "other"} onValueChange={v => setEditing({ ...editing, category: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["earthworks","excavation","concrete","steel","masonry","electrical","plumbing","mep","finishing","other"].map(c => <SelectItem key={c} value={c}>{labelEnum(WORK_CATEGORY_LABEL, c)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["earthworks","excavation","concrete","steel","masonry","electrical","plumbing","mep","finishing","other"].map(c => ({ value: c, label: labelEnum(WORK_CATEGORY_LABEL, c) }))}
+                value={editing.category ?? "other"}
+                onValueChange={category => setEditing({ ...editing, category })}
+                placeholder={t("contracting.workItems.categoryPlaceholder", "اختر التصنيف")}
+                searchPlaceholder={t("contracting.workItems.categorySearchPlaceholder", "بحث في التصنيفات...")}
+                testId="work-item-category-picker"
+              />
             </Field>
             <Field label={t("contracting.workItems.plannedQty", "كمية مخططة")}><Input type="number" value={editing.plannedQty ?? "0"} onChange={e => setEditing({ ...editing, plannedQty: e.target.value })} /></Field>
             <Field label={t("contracting.workItems.actualQty", "كمية فعلية")}><Input type="number" value={editing.actualQty ?? "0"} onChange={e => setEditing({ ...editing, actualQty: e.target.value })} /></Field>
             <Field label={t("contracting.workItems.unitCost", "سعر الوحدة (ر.س)")}><Input type="number" value={editing.unitCost ?? "0"} onChange={e => setEditing({ ...editing, unitCost: e.target.value })} /></Field>
             <Field label={t("contracting.workItems.progress", "نسبة الإنجاز %")}><Input type="number" min={0} max={100} value={editing.progressPercent ?? "0"} onChange={e => setEditing({ ...editing, progressPercent: e.target.value })} /></Field>
             <Field label={t("contracting.workItems.status", "الحالة")}>
-              <Select value={editing.status ?? "pending"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["pending","in_progress","completed","blocked"].map(s => <SelectItem key={s} value={s}>{labelEnum(WORK_STATUS_LABEL, s)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["pending","in_progress","completed","blocked"].map(s => ({ value: s, label: labelEnum(WORK_STATUS_LABEL, s) }))}
+                value={editing.status ?? "pending"}
+                onValueChange={status => setEditing({ ...editing, status })}
+                placeholder={t("contracting.workItems.statusPlaceholder", "اختر الحالة")}
+                searchPlaceholder={t("contracting.workItems.statusSearchPlaceholder", "بحث في الحالات...")}
+                testId="work-item-status-picker"
+              />
              </Field>
            </div>
            <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
@@ -501,23 +550,31 @@ function ResourcesTab({ projectId }: { projectId: number }) {
   const [editing, setEditing] = useState<Partial<Resource> | null>(null);
   const [inventory, setInventory] = useState<InventoryOptions>({ items: [], warehouses: [], balances: [] });
   const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
+  const [inventoryRetry, setInventoryRetry] = useState(0);
+  const [resourceError, setResourceError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setResourceError(null);
     try {
       const r = await fetch(`${API}/api/contracting/resources?projectId=${projectId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setRows(await r.json());
-    } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
+    } catch (e: any) {
+      setResourceError(e?.message ?? t("common.errorOccurred", "حدث خطأ"));
+      toast({ title: e?.message, variant: "destructive" });
+    }
     finally { setLoading(false); }
-  }, [token, projectId, toast]);
+  }, [token, projectId, t, toast]);
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
     if (!token) return;
     setInventoryLoading(true);
+    setInventoryError(null);
     fetch(`${API}/api/contracting/resources/inventory-options?projectId=${projectId}`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(async (r) => {
@@ -532,9 +589,10 @@ function ResourcesTab({ projectId }: { projectId: number }) {
       }
       return payload as InventoryOptions;
     }).then(setInventory).catch((e: any) => {
+      setInventoryError(e?.message ?? t("common.errorOccurred", "حدث خطأ"));
       toast({ title: e?.message ?? t("common.errorOccurred", "حدث خطأ"), variant: "destructive" });
     }).finally(() => setInventoryLoading(false));
-  }, [token, projectId, t, toast]);
+  }, [token, projectId, inventoryRetry, t, toast]);
 
   async function save() {
     if (!editing?.name?.trim()) { toast({ title: t("common.required", "الاسم مطلوب"), variant: "destructive" }); return; }
@@ -567,6 +625,24 @@ function ResourcesTab({ projectId }: { projectId: number }) {
 
   return (
     <div className="space-y-3">
+      {resourceError && (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
+          <span>{resourceError}</span>
+          <Button size="sm" variant="outline" onClick={() => void load()}>{t("common.retry", "إعادة المحاولة")}</Button>
+        </div>
+      )}
+      {inventoryError && (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
+          <span>{inventoryError}</span>
+          <Button size="sm" variant="outline" onClick={() => setInventoryRetry(value => value + 1)}>{t("common.retry", "إعادة المحاولة")}</Button>
+        </div>
+      )}
+      {inventory.requiresProjectBranch && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <span>{t("contracting.resources.projectBranchRequired", "هذا المشروع بلا فرع. المخازن المشتركة متاحة للتخطيط، لكن اختر فرع المشروع قبل استخدام مخزن مرتبط بفرع.")}</span>
+          <Link href="/contracting/projects" className="font-medium underline">{t("contracting.resources.editProjectBranch", "فتح المشاريع لتحديد الفرع")}</Link>
+        </div>
+      )}
       <div className="flex justify-between">
         <h3 className="font-bold">{t("contracting.resources.title", "الموارد")} ({rows.length})</h3>
         <Button size="sm" onClick={() => setEditing({ name: "", type: "material", unit: "", qty: "0", unitCost: "0", status: "planned" })}>
@@ -589,43 +665,59 @@ function ResourcesTab({ projectId }: { projectId: number }) {
               <Input value={editing.name ?? ""} readOnly={editing.type === "material"} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder={editing.type === "material" ? t("contracting.resources.selectItem", "يُحدد من صنف المخزون") : ""} />
             </Field>
             <Field label={t("contracting.resources.type", "النوع")}>
-              <Select value={editing.type ?? "material"} onValueChange={v => setEditing({ ...editing, type: v, ...(v === "material" ? {} : { itemId: null, unitId: null, warehouseId: null, unit: "hr" }) })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["labor","equipment","material","subcontractor","other"].map(x => <SelectItem key={x} value={x}>{labelEnum(RESOURCE_TYPE_LABEL, x)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["labor","equipment","material","subcontractor","other"].map(x => ({ value: x, label: labelEnum(RESOURCE_TYPE_LABEL, x) }))}
+                value={editing.type ?? "material"}
+                onValueChange={type => setEditing({ ...editing, type, ...(type === "material" ? {} : { itemId: null, unitId: null, warehouseId: null, unit: "hr" }) })}
+                placeholder={t("contracting.resources.typePlaceholder", "اختر النوع")}
+                searchPlaceholder={t("contracting.resources.typeSearchPlaceholder", "بحث في الأنواع...")}
+                testId="resource-type-picker"
+              />
             </Field>
             {editing.type === "material" ? (
               <>
                 <Field label={t("contracting.resources.item", "صنف المخزون")} required>
-                  <Select value={editing.itemId ? String(editing.itemId) : ""} onValueChange={v => {
-                    const item = inventory.items.find(x => x.id === Number(v));
-                    setEditing({ ...editing, itemId: Number(v), unitId: item?.baseUnitId ?? null, unit: item?.baseUnit.code ?? "", name: item?.nameAr ?? "" });
-                  }}>
-                    <SelectTrigger><SelectValue placeholder={inventoryLoading ? t("common.loading", "جار التحميل…") : t("contracting.resources.selectItem", "اختر صنفاً")} /></SelectTrigger>
-                    <SelectContent>{inventory.items.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.code} — {item.nameAr}</SelectItem>)}</SelectContent>
-                  </Select>
+                  <ContractingPicker
+                    items={inventory.items.map(item => ({ value: String(item.id), label: `${item.code} — ${item.nameAr}` }))}
+                    value={editing.itemId ? String(editing.itemId) : ""}
+                    onValueChange={value => {
+                      const item = inventory.items.find(x => x.id === Number(value));
+                      setEditing({ ...editing, itemId: Number(value), unitId: item?.baseUnitId ?? null, unit: item?.baseUnit.code ?? "", name: item?.nameAr ?? "" });
+                    }}
+                    placeholder={inventoryLoading ? t("common.loading", "جار التحميل…") : t("contracting.resources.selectItem", "اختر صنفاً")}
+                    searchPlaceholder={t("contracting.resources.searchItem", "بحث بالكود أو اسم الصنف...")}
+                    emptyText={inventoryError ? t("contracting.resources.inventoryUnavailable", "تعذر تحميل أصناف المخزون") : t("contracting.resources.noItems", "لا توجد أصناف")}
+                    disabled={inventoryLoading || !!inventoryError}
+                    testId="resource-item-picker"
+                  />
                 </Field>
                 <Field label={t("contracting.resources.unit", "وحدة الصنف")} required>
-                  <Select value={editing.unitId ? String(editing.unitId) : ""} onValueChange={v => {
-                    const item = inventory.items.find(x => x.id === Number(editing.itemId));
-                    const unit = item?.units.find(x => x.id === Number(v));
-                    setEditing({ ...editing, unitId: Number(v), unit: unit?.code ?? "" });
-                  }}>
-                    <SelectTrigger><SelectValue placeholder={t("contracting.resources.selectUnit", "اختر وحدة قانونية")} /></SelectTrigger>
-                    <SelectContent>
-                      {(inventory.items.find(x => x.id === Number(editing.itemId))?.units ?? []).map(unit => (
-                        <SelectItem key={unit.id} value={String(unit.id)}>{unit.nameAr || UNIT_LABEL[unit.code] || unit.code}{unit.isBase ? ` (${t("contracting.resources.baseUnit", "أساسية")})` : ""}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <ContractingPicker
+                    items={(inventory.items.find(x => x.id === Number(editing.itemId))?.units ?? []).map(unit => ({ value: String(unit.id), label: `${unit.nameAr || UNIT_LABEL[unit.code] || unit.code}${unit.isBase ? ` (${t("contracting.resources.baseUnit", "أساسية")})` : ""}` }))}
+                    value={editing.unitId ? String(editing.unitId) : ""}
+                    onValueChange={value => {
+                      const item = inventory.items.find(x => x.id === Number(editing.itemId));
+                      const unit = item?.units.find(x => x.id === Number(value));
+                      setEditing({ ...editing, unitId: Number(value), unit: unit?.code ?? "" });
+                    }}
+                    placeholder={t("contracting.resources.selectUnit", "اختر وحدة قانونية")}
+                    searchPlaceholder={t("contracting.resources.searchUnit", "بحث في الوحدات...")}
+                    emptyText={t("contracting.resources.noUnits", "لا توجد وحدات لهذا الصنف")}
+                    disabled={inventoryLoading || !!inventoryError || !editing.itemId}
+                    testId="resource-unit-picker"
+                  />
                 </Field>
                 <Field label={t("contracting.resources.warehouse", "المخزن")} required>
-                  <Select value={editing.warehouseId ? String(editing.warehouseId) : ""} onValueChange={v => setEditing({ ...editing, warehouseId: Number(v) })}>
-                    <SelectTrigger><SelectValue placeholder={t("contracting.resources.selectWarehouse", "اختر مخزناً")} /></SelectTrigger>
-                    <SelectContent>{inventory.warehouses.map(warehouse => <SelectItem key={warehouse.id} value={String(warehouse.id)}>{warehouse.code} — {warehouse.nameAr}</SelectItem>)}</SelectContent>
-                  </Select>
+                  <ContractingPicker
+                    items={inventory.warehouses.map(warehouse => ({ value: String(warehouse.id), label: `${warehouse.code} — ${warehouse.nameAr}` }))}
+                    value={editing.warehouseId ? String(editing.warehouseId) : ""}
+                    onValueChange={value => setEditing({ ...editing, warehouseId: Number(value) })}
+                    placeholder={t("contracting.resources.selectWarehouse", "اختر مخزناً")}
+                    searchPlaceholder={t("contracting.resources.searchWarehouse", "بحث بالكود أو اسم المخزن...")}
+                    emptyText={t("contracting.resources.noWarehouses", "لا توجد مخازن متاحة")}
+                    disabled={inventoryLoading || !!inventoryError}
+                    testId="resource-warehouse-picker"
+                  />
                 </Field>
               </>
             ) : (
@@ -634,12 +726,14 @@ function ResourcesTab({ projectId }: { projectId: number }) {
             <Field label={t("contracting.resources.qty", "الكمية")}><Input type="number" value={editing.qty ?? "0"} onChange={e => setEditing({ ...editing, qty: e.target.value })} /></Field>
             <Field label={t("contracting.resources.unitCost", "سعر الوحدة")}><Input type="number" value={editing.unitCost ?? "0"} onChange={e => setEditing({ ...editing, unitCost: e.target.value })} /></Field>
             <Field label={t("contracting.resources.status", "الحالة")}>
-              <Select value={editing.status ?? "planned"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["planned","in_use","consumed","returned"].map(x => <SelectItem key={x} value={x}>{labelEnum(RESOURCE_STATUS_LABEL, x)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["planned","in_use","consumed","returned"].map(x => ({ value: x, label: labelEnum(RESOURCE_STATUS_LABEL, x) }))}
+                value={editing.status ?? "planned"}
+                onValueChange={status => setEditing({ ...editing, status })}
+                placeholder={t("contracting.resources.statusPlaceholder", "اختر الحالة")}
+                searchPlaceholder={t("contracting.resources.statusSearchPlaceholder", "بحث في الحالات...")}
+                testId="resource-status-picker"
+              />
             </Field>
           </div>
           {editing.type === "material" && editing.itemId && editing.unitId && editing.warehouseId && (() => {
@@ -701,11 +795,13 @@ function ResourcesTab({ projectId }: { projectId: number }) {
 // ─────────────────── BILLS TAB ───────────────────
 function BillsTab({
   projectId,
+  project,
   projectCostCenterId,
   initialDirection = "outgoing",
   autoOpen = false,
 }: {
   projectId: number;
+  project: Project;
   projectCostCenterId: number | null;
   initialDirection?: BillDirection;
   autoOpen?: boolean;
@@ -771,6 +867,12 @@ function BillsTab({
     if (direction === "incoming" && !editing.contractorId) {
       toast({ title: t("contracting.bills.contractorRequired", "يجب اختيار المقاول الباطن"), variant: "destructive" }); return;
     }
+    if (direction === "outgoing" && !editing.ownerContractId) {
+      toast({ title: t("contracting.bills.ownerContractRequired", "يجب اختيار عقد المالك المرتبط بهذا المشروع"), variant: "destructive" }); return;
+    }
+    if (direction === "incoming" && !editing.subcontractorContractId) {
+      toast({ title: t("contracting.bills.subcontractRequired", "يجب اختيار عقد الباطن المرتبط بالمشروع والمقاول"), variant: "destructive" }); return;
+    }
     try {
       const isEdit = (editing as any).id != null;
       const url = isEdit
@@ -806,7 +908,12 @@ function BillsTab({
     let subcontractorContractId: number | null = null;
     if (direction === "outgoing") {
       const latest = ownerContracts.find(c => c.status === "active") ?? ownerContracts[0];
-      if (latest) { retention = latest.retentionPercent; ownerContractId = latest.id; }
+      if (latest) {
+        retention = latest.retentionPercent;
+        // A single project contract is unambiguous; never silently pick a
+        // contract when the project has multiple owner contracts.
+        if (ownerContracts.length === 1) ownerContractId = latest.id;
+      }
     } else {
       // For incoming we don't preselect — user picks contractor first.
     }
@@ -848,13 +955,23 @@ function BillsTab({
   // narrow to that contractor's contracts on this project and pick latest.
   function onContractorChange(cid: number | null) {
     let retention = editing?.retentionPercent ?? "10";
-    let scId: number | null = editing?.subcontractorContractId ?? null;
+    let scId: number | null = null;
     if (cid) {
-      const match = subContracts.filter(s => s.contractorId === cid).sort((a,b)=>b.id-a.id)[0];
-      if (match) { retention = match.retentionPercent; scId = match.id; }
+      const matches = subContracts.filter(s => s.contractorId === cid).sort((a,b)=>b.id-a.id);
+      const match = matches[0];
+      if (match) {
+        retention = match.retentionPercent;
+        // A single contract is safe to default; multiple contracts require
+        // an explicit user selection below.
+        if (matches.length === 1) scId = match.id;
+      }
     }
     setEditing({ ...editing, contractorId: cid, retentionPercent: retention, subcontractorContractId: scId });
   }
+
+  const selectedSubContracts = editing?.contractorId
+    ? subContracts.filter(contract => contract.contractorId === Number(editing.contractorId))
+    : [];
 
   return (
     <div className="space-y-3">
@@ -919,6 +1036,19 @@ function BillsTab({
                   <TableCell className="tabular-nums text-emerald-600">{Number(b.paidAmount).toLocaleString("en-US")}</TableCell>
                    <TableCell><Badge>{labelEnum(BILL_STATUS_LABEL, b.status)}</Badge></TableCell>
                   <TableCell className="text-end">
+                     <ContractingBillExportActions
+                       compact
+                       snapshot={{
+                         bill: {
+                           ...b,
+                           projectId,
+                           projectCode: project.code,
+                           projectName: project.nameAr,
+                           contractorName: contractor?.name ?? null,
+                         },
+                         project,
+                       }}
+                     />
                     <Button size="sm" variant="ghost" onClick={() => setEditing(b)}><Pencil className="h-4 w-4" /></Button>
                     <Button size="sm" variant="ghost" onClick={() => del(b.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                   </TableCell>
@@ -942,25 +1072,62 @@ function BillsTab({
               <X className="h-4 w-4" />
             </Button>
           </div>
+           <ProjectContext project={project} />
           <div className="grid grid-cols-2 gap-3">
             {direction === "incoming" && (
               <Field label={t("contracting.bills.contractor", "المقاول الباطن")} required>
-                <Select value={editing.contractorId ? String(editing.contractorId) : ""} onValueChange={v => onContractorChange(v ? Number(v) : null)}>
-                  <SelectTrigger><SelectValue placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")} /></SelectTrigger>
-                  <SelectContent>
-                    {contractors.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name} {c.specialty && `(${c.specialty})`}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <ContractingPicker
+                  items={contractors.map(c => ({ value: String(c.id), label: `${c.name}${c.specialty ? ` (${c.specialty})` : ""}` }))}
+                  value={editing.contractorId ? String(editing.contractorId) : ""}
+                  onValueChange={value => onContractorChange(value ? Number(value) : null)}
+                  placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")}
+                  searchPlaceholder={t("contracting.bills.searchContractor", "بحث باسم المقاول...")}
+                  emptyText={t("contracting.bills.noContractors", "لا توجد مقاولات متاحة")}
+                  disabled={!billOptionsLoaded}
+                  testId="bill-contractor-picker"
+                />
               </Field>
             )}
-            {direction === "outgoing" && ownerContracts.length > 0 && (
-              <Field label={t("contracting.bills.linkedContract", "العقد المرتبط")}>
-                <Select value={editing.ownerContractId ? String(editing.ownerContractId) : ""} onValueChange={v => setEditing({ ...editing, ownerContractId: v ? Number(v) : null })}>
-                  <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                  <SelectContent>
-                     {ownerContracts.map(c => <SelectItem key={c.id} value={String(c.id)}>#{c.contractNumber} ({labelEnum(CONTRACT_TYPE_LABEL, c.contractType)})</SelectItem>)}
-                  </SelectContent>
-                </Select>
+            {direction === "outgoing" && (
+              <Field label={t("contracting.bills.ownerContract", "عقد المالك المرتبط")} required>
+                <ContractingPicker
+                  items={ownerContracts.map(c => ({ value: String(c.id), label: `#${c.contractNumber} (${labelEnum(CONTRACT_TYPE_LABEL, c.contractType)})` }))}
+                  value={editing.ownerContractId ? String(editing.ownerContractId) : ""}
+                  onValueChange={value => setEditing({ ...editing, ownerContractId: value ? Number(value) : null })}
+                  placeholder={t("contracting.bills.ownerContractPlaceholder", "اختر عقد المالك")}
+                  searchPlaceholder={t("contracting.bills.searchContract", "بحث برقم العقد...")}
+                  emptyText={t("contracting.bills.noOwnerContracts", "لا توجد عقود مالك لهذا المشروع")}
+                  disabled={!billOptionsLoaded}
+                  testId="bill-owner-contract-picker"
+                />
+              </Field>
+            )}
+            {direction === "incoming" && (
+              <Field label={t("contracting.bills.subcontract", "عقد الباطن المرتبط")} required>
+                <ContractingPicker
+                  items={selectedSubContracts.map(contract => ({
+                    value: String(contract.id),
+                    label: `#${contract.contractNumber} · ${contract.retentionPercent}%`,
+                  }))}
+                  value={editing.subcontractorContractId ? String(editing.subcontractorContractId) : ""}
+                  onValueChange={value => {
+                    const selected = selectedSubContracts.find(contract => contract.id === Number(value));
+                    setEditing({
+                      ...editing,
+                      subcontractorContractId: value ? Number(value) : null,
+                      retentionPercent: selected?.retentionPercent ?? editing.retentionPercent,
+                    });
+                  }}
+                  placeholder={editing.contractorId
+                    ? t("contracting.bills.subcontractPlaceholder", "اختر عقد الباطن")
+                    : t("contracting.bills.selectContractorFirst", "اختر المقاول أولاً")}
+                  searchPlaceholder={t("contracting.bills.searchSubcontract", "بحث برقم عقد الباطن...")}
+                  emptyText={editing.contractorId
+                    ? t("contracting.bills.noSubcontractsForContractor", "لا توجد عقود باطن لهذا المقاول في المشروع")
+                    : t("contracting.bills.selectContractorFirst", "اختر المقاول أولاً")}
+                  disabled={!billOptionsLoaded || !editing.contractorId}
+                  testId="bill-subcontract-picker"
+                />
               </Field>
             )}
             <Field label={t("contracting.bills.number", "الرقم")}>
@@ -978,43 +1145,39 @@ function BillsTab({
             </Field>
             <Field label={t("contracting.bills.date", "التاريخ")} required><DateField value={editing.billDate ?? ""} onChange={e => setEditing({ ...editing, billDate: e.target.value })} /></Field>
             <Field label={t("contracting.bills.type", "النوع")}>
-              <Select value={editing.billType ?? "interim"} onValueChange={v => setEditing({ ...editing, billType: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                   {["interim","final","advance","retention_release"].map(x => <SelectItem key={x} value={x}>{labelEnum(BILL_TYPE_LABEL, x)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["interim","final","advance","retention_release"].map(x => ({ value: x, label: labelEnum(BILL_TYPE_LABEL, x) }))}
+                value={editing.billType ?? "interim"}
+                onValueChange={billType => setEditing({ ...editing, billType })}
+                placeholder={t("contracting.bills.typePlaceholder", "اختر النوع")}
+                searchPlaceholder={t("contracting.bills.typeSearchPlaceholder", "بحث في أنواع المستخلصات...")}
+                testId="bill-type-picker"
+              />
             </Field>
             <Field label={t("contracting.bills.progress", "إنجاز %")}><Input type="number" value={editing.progressPercent ?? "0"} onChange={e => setEditing({ ...editing, progressPercent: e.target.value })} /></Field>
             <Field label={t("contracting.bills.gross", "إجمالي (ر.س)")} required><Input type="number" value={editing.grossAmount ?? "0"} onChange={e => setEditing({ ...editing, grossAmount: e.target.value })} /></Field>
             <Field label={t("contracting.bills.costCenter", "مركز التكلفة")}>
-              <Select
-                value={editing.costCenterId == null ? "__none" : String(editing.costCenterId)}
-                onValueChange={value => setEditing({
-                  ...editing,
-                  costCenterId: value === "__none" ? null : Number(value),
-                })}
-                disabled={costCentersLoading}
-              >
-                <SelectTrigger><SelectValue placeholder={t("contracting.bills.noCostCenter", "بدون مركز تكلفة")} /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none">{t("contracting.bills.noCostCenter", "بدون مركز تكلفة")}</SelectItem>
-                  {(costCenters as CostCenter[]).map(center => {
+              <ContractingPicker
+                items={[
+                  { value: "__none", label: t("contracting.bills.noCostCenter", "بدون مركز تكلفة") },
+                  ...(costCenters as CostCenter[]).map(center => {
                     const active = center.isActive !== false;
                     const current = editing.costCenterId === center.id;
-                    return (
-                      <SelectItem
-                        key={center.id}
-                        value={String(center.id)}
-                        disabled={!active && !current}
-                      >
-                        {center.code} — {center.nameAr || center.nameEn || `#${center.id}`}
-                        {!active ? ` (${t("contracting.bills.inactiveCostCenter", "غير نشط")})` : ""}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
+                    return {
+                      value: String(center.id),
+                      label: `${center.code} — ${center.nameAr || center.nameEn || `#${center.id}`}${!active ? ` (${t("contracting.bills.inactiveCostCenter", "غير نشط")})` : ""}`,
+                      disabled: !active && !current,
+                      disabledReason: t("contracting.bills.inactiveCostCenter", "غير نشط"),
+                    };
+                  }),
+                ]}
+                value={editing.costCenterId == null ? "__none" : String(editing.costCenterId)}
+                onValueChange={value => setEditing({ ...editing, costCenterId: value === "__none" ? null : Number(value) })}
+                placeholder={t("contracting.bills.noCostCenter", "بدون مركز تكلفة")}
+                searchPlaceholder={t("contracting.bills.costCenterSearchPlaceholder", "بحث بالكود أو الاسم...")}
+                disabled={costCentersLoading}
+                testId="bill-cost-center-picker"
+              />
               {editing.costCenterId == null && (
                 <p className="text-[11px] text-muted-foreground">
                   {t("contracting.bills.costCenterOptional", "مركز التكلفة اختياري؛ احفظ بدون مركز عند الحاجة")}
@@ -1025,20 +1188,28 @@ function BillsTab({
             <Field label={t("contracting.bills.previousPaid", "المدفوع سابقاً")}><Input type="number" value={editing.previousPaid ?? "0"} onChange={e => setEditing({ ...editing, previousPaid: e.target.value })} /></Field>
             <Field label={t("contracting.bills.paidAmount", "مبلغ مدفوع لهذا المستخلص")}><Input type="number" value={editing.paidAmount ?? "0"} readOnly disabled /></Field>
             <Field label={t("contracting.bills.status", "الحالة")}>
-              <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                   {["draft","submitted","approved","posted","partially_paid","rejected","paid"].map(x => (
-                     <SelectItem key={x} value={x} disabled={["approved","posted","partially_paid","paid"].includes(x)}>
-                       {labelEnum(BILL_STATUS_LABEL, x)}
-                     </SelectItem>
-                   ))}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["draft","submitted","approved","posted","partially_paid","rejected","paid"].map(x => ({
+                  value: x,
+                  label: labelEnum(BILL_STATUS_LABEL, x),
+                  disabled: ["approved","posted","partially_paid","paid"].includes(x),
+                  disabledReason: t("contracting.bills.lockedStatus", "الحالة المرحّلة لا يمكن اختيارها يدوياً"),
+                }))}
+                value={editing.status ?? "draft"}
+                onValueChange={status => setEditing({ ...editing, status })}
+                placeholder={t("contracting.bills.statusPlaceholder", "اختر الحالة")}
+                searchPlaceholder={t("contracting.bills.statusSearchPlaceholder", "بحث في الحالات...")}
+                testId="bill-status-picker"
+              />
             </Field>
           </div>
           {(editing as any)?.id != null && (
-            <ContractingBillDetailEditor billId={Number((editing as any).id)} projectId={projectId} />
+            <ContractingBillDetailEditor
+              billId={Number((editing as any).id)}
+              projectId={projectId}
+              bill={editing as any}
+              project={project}
+            />
           )}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
@@ -1117,36 +1288,44 @@ function RisksTab({ projectId }: { projectId: number }) {
             <div className="col-span-2"><Field label={t("contracting.risks.title2", "العنوان")} required><Input value={editing.title ?? ""} onChange={e => setEditing({ ...editing, title: e.target.value })} /></Field></div>
             <div className="col-span-2"><Field label={t("contracting.risks.description", "الوصف")}><Input value={editing.description ?? ""} onChange={e => setEditing({ ...editing, description: e.target.value })} /></Field></div>
             <Field label={t("contracting.risks.category", "التصنيف")}>
-              <Select value={editing.category ?? "other"} onValueChange={v => setEditing({ ...editing, category: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                   {["schedule","cost","quality","safety","environmental","contractual","other"].map(x => <SelectItem key={x} value={x}>{labelEnum(RISK_CATEGORY_LABEL, x)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["schedule","cost","quality","safety","environmental","contractual","other"].map(x => ({ value: x, label: labelEnum(RISK_CATEGORY_LABEL, x) }))}
+                value={editing.category ?? "other"}
+                onValueChange={category => setEditing({ ...editing, category })}
+                placeholder={t("contracting.risks.categoryPlaceholder", "اختر التصنيف")}
+                searchPlaceholder={t("contracting.risks.categorySearchPlaceholder", "بحث في التصنيفات...")}
+                testId="risk-category-picker"
+              />
             </Field>
             <Field label={t("contracting.risks.status", "الحالة")}>
-              <Select value={editing.status ?? "open"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                   {["open","mitigating","resolved","accepted"].map(x => <SelectItem key={x} value={x}>{labelEnum(RISK_STATUS_LABEL, x)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["open","mitigating","resolved","accepted"].map(x => ({ value: x, label: labelEnum(RISK_STATUS_LABEL, x) }))}
+                value={editing.status ?? "open"}
+                onValueChange={status => setEditing({ ...editing, status })}
+                placeholder={t("contracting.risks.statusPlaceholder", "اختر الحالة")}
+                searchPlaceholder={t("contracting.risks.statusSearchPlaceholder", "بحث في الحالات...")}
+                testId="risk-status-picker"
+              />
             </Field>
             <Field label={t("contracting.risks.likelihood", "الاحتمال")}>
-              <Select value={editing.likelihood ?? "medium"} onValueChange={v => setEditing({ ...editing, likelihood: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                 {["low","medium","high"].map(x => <SelectItem key={x} value={x}>{labelEnum(RISK_LEVEL_LABEL, x)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["low","medium","high"].map(x => ({ value: x, label: labelEnum(RISK_LEVEL_LABEL, x) }))}
+                value={editing.likelihood ?? "medium"}
+                onValueChange={likelihood => setEditing({ ...editing, likelihood })}
+                placeholder={t("contracting.risks.likelihoodPlaceholder", "اختر مستوى الاحتمال")}
+                searchPlaceholder={t("contracting.risks.levelSearchPlaceholder", "بحث في المستويات...")}
+                testId="risk-likelihood-picker"
+              />
             </Field>
             <Field label={t("contracting.risks.impact", "الأثر")}>
-              <Select value={editing.impact ?? "medium"} onValueChange={v => setEditing({ ...editing, impact: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                   {["low","medium","high"].map(x => <SelectItem key={x} value={x}>{labelEnum(RISK_LEVEL_LABEL, x)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["low","medium","high"].map(x => ({ value: x, label: labelEnum(RISK_LEVEL_LABEL, x) }))}
+                value={editing.impact ?? "medium"}
+                onValueChange={impact => setEditing({ ...editing, impact })}
+                placeholder={t("contracting.risks.impactPlaceholder", "اختر مستوى الأثر")}
+                searchPlaceholder={t("contracting.risks.levelSearchPlaceholder", "بحث في المستويات...")}
+                testId="risk-impact-picker"
+              />
             </Field>
             <div className="col-span-2"><Field label={t("contracting.risks.mitigationPlan", "خطة المعالجة")}><Input value={editing.mitigationPlan ?? ""} onChange={e => setEditing({ ...editing, mitigationPlan: e.target.value })} /></Field></div>
           </div>
@@ -1447,17 +1626,24 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-2">
         <div>
           <h3 className="font-bold">{t("contracting.ownerContract.title", "عقد المالك")}</h3>
           <div className="text-xs text-slate-500">{t("contracting.ownerContract.subtitle", "العقد الرئيسي وأوامر التغيير")}</div>
         </div>
-        <Button size="sm" onClick={openNew}>
-          <Plus className="h-4 w-4 mx-1" />
-          {rows.length === 0
-            ? t("contracting.ownerContract.addMain", "إضافة العقد الرئيسي")
-            : t("contracting.ownerContract.addChangeOrder", "إضافة أمر تغيير")}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ContractingContractsExportActions
+            compact
+            kind="owner"
+            contracts={rows as ContractingContractSnapshot[]}
+          />
+          <Button size="sm" onClick={openNew}>
+            <Plus className="h-4 w-4 mx-1" />
+            {rows.length === 0
+              ? t("contracting.ownerContract.addMain", "إضافة العقد الرئيسي")
+              : t("contracting.ownerContract.addChangeOrder", "إضافة أمر تغيير")}
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
@@ -1507,34 +1693,34 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
             <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
               <X className="h-4 w-4" />
             </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+           </div>
+           <ProjectContext project={project} />
+           <div className="grid grid-cols-2 gap-3">
             <Field label={t("contracting.ownerContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.date", "تاريخ العقد")} required><DateField value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.type", "النوع")}>
-              <Select value={editing.contractType ?? "main"} onValueChange={v => setEditing({ ...editing, contractType: v, ...(v === "main" ? { parentContractId: null } : {}) })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["main", "addendum", "change_order"].map(type => (
-                    <SelectItem key={type} value={type}>{labelEnum(CONTRACT_TYPE_LABEL, type)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["main", "addendum", "change_order"].map(type => ({ value: type, label: labelEnum(CONTRACT_TYPE_LABEL, type) }))}
+                value={editing.contractType ?? "main"}
+                onValueChange={contractType => setEditing({ ...editing, contractType, ...(contractType === "main" ? { parentContractId: null } : {}) })}
+                placeholder={t("contracting.ownerContract.typePlaceholder", "اختر نوع العقد")}
+                searchPlaceholder={t("contracting.ownerContract.typeSearchPlaceholder", "بحث في أنواع العقود...")}
+                testId="owner-contract-type-picker"
+              />
             </Field>
             {["change_order", "addendum"].includes(String(editing.contractType)) && (
               <Field label={t("contracting.ownerContract.parent", "العقد الأساسي")}>
-                <Select
+                <ContractingPicker
+                  items={[
+                    { value: "__none__", label: t("contracting.ownerContract.noParent", "بدون ربط") },
+                    ...rows.filter(c => c.id !== (editing as any).id && c.contractType === "main").map(c => ({ value: String(c.id), label: `#${c.contractNumber}` })),
+                  ]}
                   value={editing.parentContractId ? String(editing.parentContractId) : "__none__"}
-                  onValueChange={v => setEditing({ ...editing, parentContractId: v === "__none__" ? null : Number(v) })}
-                >
-                  <SelectTrigger><SelectValue placeholder="اختر العقد الأساسي" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">بدون ربط (legacy)</SelectItem>
-                    {rows.filter(c => c.id !== (editing as any).id && c.contractType === "main").map(c => (
-                      <SelectItem key={c.id} value={String(c.id)}>#{c.contractNumber}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  onValueChange={value => setEditing({ ...editing, parentContractId: value === "__none__" ? null : Number(value) })}
+                  placeholder={t("contracting.ownerContract.parentPlaceholder", "اختر العقد الأساسي")}
+                  searchPlaceholder={t("contracting.ownerContract.parentSearchPlaceholder", "بحث برقم العقد...")}
+                  testId="owner-contract-parent-picker"
+                />
               </Field>
             )}
             <Field label={t("contracting.ownerContract.client", "اسم العميل")}><Input value={editing.clientName ?? ""} onChange={e => setEditing({ ...editing, clientName: e.target.value })} /></Field>
@@ -1548,12 +1734,14 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
             <Field label={t("contracting.ownerContract.endDate", "تاريخ الانتهاء")}><DateField value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.signedAt", "تاريخ التوقيع")}><DateField value={editing.signedAt ?? ""} onChange={e => setEditing({ ...editing, signedAt: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.status", "الحالة")}>
-              <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["draft","active","approved","suspended","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{labelEnum(CONTRACT_STATUS_LABEL, x)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["draft","active","approved","suspended","completed","terminated","on_hold"].map(x => ({ value: x, label: labelEnum(CONTRACT_STATUS_LABEL, x) }))}
+                value={editing.status ?? "draft"}
+                onValueChange={status => setEditing({ ...editing, status })}
+                placeholder={t("contracting.ownerContract.statusPlaceholder", "اختر الحالة")}
+                searchPlaceholder={t("contracting.ownerContract.statusSearchPlaceholder", "بحث في الحالات...")}
+                testId="owner-contract-status-picker"
+              />
             </Field>
             <div className="col-span-2">
               <Field label={t("contracting.ownerContract.scope", "نطاق العمل")}>
@@ -1587,7 +1775,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
 }
 
 // ─────────────────── SUB CONTRACTS TAB ───────────────────
-function SubContractsTab({ projectId }: { projectId: number }) {
+function SubContractsTab({ projectId, project }: { projectId: number; project: Project }) {
   const { t } = useTranslation();
   const { token } = useAuth() as any;
   const { toast } = useToast();
@@ -1644,14 +1832,24 @@ function SubContractsTab({ projectId }: { projectId: number }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-2">
         <div>
           <h3 className="font-bold">{t("contracting.subContract.title", "عقود المقاولين الباطنين")} <span className="text-slate-500 font-normal text-sm mx-2">({rows.length})</span></h3>
           <div className="text-xs text-slate-500">{t("contracting.subContract.subtitle", "عقود إسناد العمل لمقاولين الباطن")}</div>
         </div>
-        <Button size="sm" onClick={() => setEditing({ contractNumber: "", contractDate: new Date().toISOString().slice(0,10), value: "0", advancePayment: "0", advancePercent: "0", retentionPercent: "10", vatPercent: "15", durationDays: 0, status: "draft" })}>
-          <Plus className="h-4 w-4 mx-1" /> {t("contracting.subContract.add", "عقد باطن جديد")}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ContractingContractsExportActions
+            compact
+            kind="subcontract"
+            contracts={rows.map(contract => ({
+              ...contract,
+              contractorName: contractors.find(item => item.id === contract.contractorId)?.name || null,
+            })) as ContractingContractSnapshot[]}
+          />
+          <Button size="sm" onClick={() => setEditing({ contractNumber: "", contractDate: new Date().toISOString().slice(0,10), value: "0", advancePayment: "0", advancePercent: "0", retentionPercent: "10", vatPercent: "15", durationDays: 0, status: "draft" })}>
+            <Plus className="h-4 w-4 mx-1" /> {t("contracting.subContract.add", "عقد باطن جديد")}
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
@@ -1702,15 +1900,19 @@ function SubContractsTab({ projectId }: { projectId: number }) {
             <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
               <X className="h-4 w-4" />
             </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+           </div>
+           <ProjectContext project={project} />
+           <div className="grid grid-cols-2 gap-3">
             <Field label={t("contracting.subContract.contractor", "المقاول الباطن")} required>
-              <Select value={editing.contractorId ? String(editing.contractorId) : ""} onValueChange={v => setEditing({ ...editing, contractorId: v ? Number(v) : undefined })}>
-                <SelectTrigger><SelectValue placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")} /></SelectTrigger>
-                <SelectContent>
-                  {contractors.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name} {c.specialty && `(${c.specialty})`}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={contractors.map(c => ({ value: String(c.id), label: `${c.name}${c.specialty ? ` (${c.specialty})` : ""}` }))}
+                value={editing.contractorId ? String(editing.contractorId) : ""}
+                onValueChange={value => setEditing({ ...editing, contractorId: value ? Number(value) : undefined })}
+                placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")}
+                searchPlaceholder={t("contracting.subContract.searchContractor", "بحث باسم المقاول...")}
+                emptyText={t("contracting.subContract.noContractors", "لا توجد مقاولات متاحة")}
+                testId="subcontract-contractor-picker"
+              />
             </Field>
             <Field label={t("contracting.subContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.date", "تاريخ العقد")} required><DateField value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
@@ -1724,12 +1926,14 @@ function SubContractsTab({ projectId }: { projectId: number }) {
             <Field label={t("contracting.subContract.startDate", "تاريخ البدء")}><DateField value={editing.startDate ?? ""} onChange={e => setEditing({ ...editing, startDate: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.endDate", "تاريخ الانتهاء")}><DateField value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.status", "الحالة")}>
-              <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["draft","active","suspended","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{labelEnum(CONTRACT_STATUS_LABEL, x)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ContractingPicker
+                items={["draft","active","suspended","completed","terminated","on_hold"].map(x => ({ value: x, label: labelEnum(CONTRACT_STATUS_LABEL, x) }))}
+                value={editing.status ?? "draft"}
+                onValueChange={status => setEditing({ ...editing, status })}
+                placeholder={t("contracting.subContract.statusPlaceholder", "اختر الحالة")}
+                searchPlaceholder={t("contracting.subContract.statusSearchPlaceholder", "بحث في الحالات...")}
+                testId="subcontract-status-picker"
+              />
             </Field>
             <div className="col-span-2">
               <Field label={t("contracting.subContract.scope", "نطاق العمل")}>
@@ -1759,5 +1963,39 @@ function SubContractsTab({ projectId }: { projectId: number }) {
         </div>
       )}
     </div>
+  );
+}
+
+function ContractingPicker({
+  items,
+  value,
+  onValueChange,
+  placeholder,
+  searchPlaceholder,
+  emptyText = "لا توجد نتائج",
+  disabled,
+  testId,
+}: {
+  items: ComboboxItem[];
+  value: string;
+  onValueChange: (value: string) => void;
+  placeholder: string;
+  searchPlaceholder?: string;
+  emptyText?: string;
+  disabled?: boolean;
+  testId: string;
+}) {
+  return (
+    <SearchCombobox
+      items={items}
+      value={value}
+      onValueChange={onValueChange}
+      placeholder={placeholder}
+      searchPlaceholder={searchPlaceholder}
+      emptyText={emptyText}
+      disabled={disabled}
+      openOnFocus={false}
+      testId={testId}
+    />
   );
 }

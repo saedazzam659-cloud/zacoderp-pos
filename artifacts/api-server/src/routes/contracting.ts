@@ -32,7 +32,7 @@ import { canAccessModule, requirePermission } from "../middleware/permissions.js
 import {
   contractingBranchAllowed,
   contractingMutationAction,
-  contractingWarehouseAllowed,
+  contractingWarehouseError,
 } from "../lib/contracting-security.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 import {
@@ -45,6 +45,11 @@ import {
   buildOutgoingBillJournal,
   buildIncomingBillJournal,
 } from "../lib/contracting-journals.js";
+import {
+  ensureProjectContractSelection,
+  type BillDirection,
+} from "../lib/contracting-project-contract-integrity.js";
+import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -198,6 +203,7 @@ async function findProjectCustomer(
   cid: number,
   customerId: number,
   existingCustomerId?: number | null,
+  projectBranchId?: number | null,
 ) {
   if (!Number.isInteger(customerId) || customerId <= 0) return null;
   const [visible] = await db.select({
@@ -206,7 +212,7 @@ async function findProjectCustomer(
   }).from(customersTable).where(and(
     eq(customersTable.id, customerId),
     eq(customersTable.companyId, cid),
-    ...branchScopeSpread(req, customersTable.branchId, undefined),
+    ...branchScopeSpread(req, customersTable.branchId, projectBranchId),
   ));
   if (visible) return visible;
 
@@ -216,10 +222,17 @@ async function findProjectCustomer(
     const [existing] = await db.select({
       id: customersTable.id,
       nameAr: customersTable.nameAr,
+      branchId: customersTable.branchId,
     }).from(customersTable).where(and(
       eq(customersTable.id, customerId),
       eq(customersTable.companyId, cid),
     ));
+    if (
+      existing
+      && projectBranchId != null
+      && existing.branchId != null
+      && Number(existing.branchId) !== Number(projectBranchId)
+    ) return null;
     return existing ?? null;
   }
   return null;
@@ -231,12 +244,101 @@ function parseOptionalCustomerId(raw: unknown): number | null | undefined {
   const id = Number(raw);
   return Number.isInteger(id) && id > 0 ? id : Number.NaN;
 }
-async function ensureBranch(cid: number, branchId: number): Promise<string | null> {
-  if (!branchId) return "الفرع غير صالح";
-  const [r] = await db.select({ id: branchesTable.id })
+async function ensureBranch(
+  cid: number,
+  branchId: number,
+  allowInactive = false,
+): Promise<string | null> {
+  if (!Number.isInteger(branchId) || branchId <= 0) return "الفرع غير صالح";
+  const [r] = await db.select({
+    id: branchesTable.id,
+    status: branchesTable.status,
+  })
     .from(branchesTable)
     .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
-  return r ? null : "الفرع غير صالح";
+  if (!r) return "الفرع غير صالح";
+  if (!allowInactive && r.status !== "active") return "الفرع غير نشط";
+  return null;
+}
+
+/**
+ * A project branch is a persisted scope, not a display-only preference.
+ * Changing it must never rewrite descendants or move already-posted history.
+ * Legacy branchless projects can be assigned a branch when no posted financial
+ * or stock history exists and every material resource is either shared or
+ * already compatible with the requested branch.
+ */
+async function projectBranchChangeError(
+  cid: number,
+  projectId: number,
+  previousBranchId: number | null,
+  nextBranchId: number | null,
+): Promise<string | null> {
+  if (previousBranchId === nextBranchId) return null;
+
+  // The accounting facade creates these additive tables lazily. Ensure they
+  // exist before checking them so a project edit is safe on an older tenant.
+  await ensureContractingAccountingTables();
+
+  const [postedBill] = await db.select({ id: contractingProgressBillsTable.id })
+    .from(contractingProgressBillsTable)
+    .where(and(
+      eq(contractingProgressBillsTable.companyId, cid),
+      eq(contractingProgressBillsTable.projectId, projectId),
+      or(
+        inArray(contractingProgressBillsTable.status, [
+          "approved", "posted", "paid", "partially_paid", "reversed",
+        ]),
+        sql`${contractingProgressBillsTable.journalEntryId} IS NOT NULL`,
+      ),
+    ))
+    .limit(1);
+  if (postedBill) {
+    return "لا يمكن تغيير فرع المشروع بعد وجود مستخلص مالي مرحّل";
+  }
+
+  const postedSettlement = await db.execute(sql`
+    SELECT id
+      FROM contracting_accounting_settlements
+     WHERE company_id = ${cid}
+       AND project_id = ${projectId}
+       AND status IN ('posted', 'approved', 'paid', 'partially_paid')
+     LIMIT 1
+  `);
+  if (Array.isArray(postedSettlement.rows) && postedSettlement.rows.length > 0) {
+    return "لا يمكن تغيير فرع المشروع بعد وجود تسوية مالية مرحّلة";
+  }
+
+  const postedMovement = await db.execute(sql`
+    SELECT id
+      FROM contracting_material_movements
+     WHERE company_id = ${cid}
+       AND project_id = ${projectId}
+       AND status = 'posted'
+     LIMIT 1
+  `);
+  if (Array.isArray(postedMovement.rows) && postedMovement.rows.length > 0) {
+    return "لا يمكن تغيير فرع المشروع بعد وجود حركة مخزون مرحّلة";
+  }
+
+  const resources = await db.select({
+    warehouseBranchId: warehousesTable.branchId,
+  }).from(contractingResourcesTable)
+    .leftJoin(warehousesTable, and(
+      eq(contractingResourcesTable.warehouseId, warehousesTable.id),
+      eq(warehousesTable.companyId, cid),
+    ))
+    .where(and(
+      eq(contractingResourcesTable.companyId, cid),
+      eq(contractingResourcesTable.projectId, projectId),
+    ));
+  const hasIncompatibleWarehouse = resources.some(({ warehouseBranchId }) =>
+    warehouseBranchId != null
+      && (nextBranchId == null || Number(warehouseBranchId) !== Number(nextBranchId)));
+  if (hasIncompatibleWarehouse) {
+    return "لا يمكن تغيير فرع المشروع لأن مورداً مرتبطاً بمخزن من فرع آخر";
+  }
+  return null;
 }
 async function ensureSubContract(cid: number, projectId: number, scId: number): Promise<string | null> {
   const [r] = await db.select({ id: contractingSubContractsTable.id, contractorId: contractingSubContractsTable.contractorId })
@@ -247,6 +349,54 @@ async function ensureSubContract(cid: number, projectId: number, scId: number): 
       eq(contractingSubContractsTable.projectId, projectId),
     ));
   return r ? null : "عقد الباطن غير صالح";
+}
+
+/**
+ * A contract is normally created under one project and the project_id is
+ * intentionally immutable once anything depends on it.  Keep the explicit
+ * projectId edit path safe for older clients that still send the full form:
+ * moving a contract with a child contract or bill would leave those
+ * descendants pointing at a different project scope.
+ */
+async function contractProjectMoveError(
+  cid: number,
+  contractId: number,
+  kind: "owner" | "subcontract",
+  previousProjectId: number,
+  nextProjectId: number,
+  req: any,
+): Promise<string | null> {
+  if (previousProjectId === nextProjectId) return null;
+  const projectError = await ensureProject(cid, nextProjectId, req);
+  if (projectError) return projectError;
+
+  if (kind === "owner") {
+    const [child] = await db.select({ id: contractingOwnerContractsTable.id })
+      .from(contractingOwnerContractsTable)
+      .where(and(
+        eq(contractingOwnerContractsTable.companyId, cid),
+        eq(contractingOwnerContractsTable.parentContractId, contractId),
+      ))
+      .limit(1);
+    const [bill] = await db.select({ id: contractingProgressBillsTable.id })
+      .from(contractingProgressBillsTable)
+      .where(and(
+        eq(contractingProgressBillsTable.companyId, cid),
+        eq(contractingProgressBillsTable.ownerContractId, contractId),
+      ))
+      .limit(1);
+    if (child || bill) return "لا يمكن نقل عقد له عقود أو مستخلصات تابعة إلى مشروع آخر";
+  } else {
+    const [bill] = await db.select({ id: contractingProgressBillsTable.id })
+      .from(contractingProgressBillsTable)
+      .where(and(
+        eq(contractingProgressBillsTable.companyId, cid),
+        eq(contractingProgressBillsTable.subcontractorContractId, contractId),
+      ))
+      .limit(1);
+    if (bill) return "لا يمكن نقل عقد له مستخلصات تابعة إلى مشروع آخر";
+  }
+  return null;
 }
 
 const RESOURCE_TYPES = new Set(["labor", "equipment", "material", "subcontractor", "other"]);
@@ -324,8 +474,9 @@ async function ensureWarehouseForProject(cid: number, warehouseId: number, proje
   // Company-wide (NULL-branch) warehouses are visible from every branch,
   // matching inventory's read scope.  A branch-specific warehouse must still
   // belong to the project's branch.
-  if (!contractingWarehouseAllowed(project.branchId, warehouse.branchId)) {
-    return { error: "المخزن لا يتبع فرع المشروع" as const };
+  const warehouseError = contractingWarehouseError(project.branchId, warehouse.branchId);
+  if (warehouseError) {
+    return { error: warehouseError };
   }
   return { project, warehouse };
 }
@@ -440,6 +591,38 @@ router.get("/projects", async (req, res) => {
   }
 });
 
+/**
+ * Branch picker for the contracting project form.  This is deliberately
+ * separate from the project list (which must remain an array for existing
+ * clients) and returns only active, same-tenant branches in the caller's
+ * authorized branch scope.
+ */
+router.get("/projects/options", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const conditions: any[] = [
+      eq(branchesTable.companyId, cid),
+      eq(branchesTable.status, "active"),
+    ];
+    const allowed = getAllowedBranchIds(req);
+    if (allowed !== null) {
+      if (allowed.length === 0) conditions.push(sql`false`);
+      else conditions.push(inArray(branchesTable.id, allowed));
+    }
+    const branches = await db.select({
+      id: branchesTable.id,
+      code: branchesTable.code,
+      nameAr: branchesTable.nameAr,
+      nameEn: branchesTable.nameEn,
+    }).from(branchesTable)
+      .where(and(...conditions))
+      .orderBy(branchesTable.code);
+    res.json({ branches });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ" });
+  }
+});
+
 router.get("/projects/:id", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
@@ -461,15 +644,20 @@ router.post("/projects", async (req, res) => {
     const cid = await scope(req, res); if (!cid) return;
     const b = req.body as any;
     if (!b?.nameAr) { res.status(400).json({ error: "اسم المشروع مطلوب" }); return; }
+    if (b.branchId == null || b.branchId === "") {
+      res.status(400).json({ error: "فرع المشروع مطلوب" }); return;
+    }
+    const branchId = Number(b.branchId);
+    if (!Number.isInteger(branchId) || branchId <= 0) {
+      res.status(400).json({ error: "الفرع غير صالح" }); return;
+    }
     const projectType = String(b.projectType ?? "building");
     const projectStatus = String(b.status ?? "draft");
     if (!PROJECT_TYPES.has(projectType)) { res.status(400).json({ error: "نوع المشروع غير صالح" }); return; }
     if (!PROJECT_STATUSES.has(projectStatus)) { res.status(400).json({ error: "حالة المشروع غير صالحة" }); return; }
-    if (b.branchId != null) {
-      const branchError = await ensureBranch(cid, Number(b.branchId));
-      if (branchError) { res.status(400).json({ error: branchError }); return; }
-    }
-    if (!projectBranchVisible(req, b.branchId ?? null)) {
+    const branchError = await ensureBranch(cid, branchId);
+    if (branchError) { res.status(400).json({ error: branchError }); return; }
+    if (!projectBranchVisible(req, branchId)) {
       res.status(403).json({ error: "ليس لديك صلاحية هذا الفرع" }); return;
     }
     const customerId = parseOptionalCustomerId(b.customerId);
@@ -481,7 +669,7 @@ router.post("/projects", async (req, res) => {
       if (!canAccessModule(req.authUser, "customers", "view")) {
         res.status(403).json({ error: "لا تملك صلاحية عرض العملاء" }); return;
       }
-      const customer = await findProjectCustomer(req, cid, customerId);
+      const customer = await findProjectCustomer(req, cid, customerId, undefined, branchId);
       if (!customer) { res.status(400).json({ error: "العميل غير صالح أو غير متاح لهذا الفرع" }); return; }
       // Always persist the selected customer's current display name as a
       // snapshot. Never infer a link from a legacy clientName.
@@ -518,7 +706,7 @@ router.post("/projects", async (req, res) => {
       code = String(b.code);
     } else {
       const seq = await nextSequenceNumber(cid, "contracting_project", {
-        branchId: b.branchId ?? null,
+        branchId,
         userId:   req.authUser?.id ?? null,
         refTable: "contracting_projects",
       });
@@ -532,7 +720,7 @@ router.post("/projects", async (req, res) => {
 
     const [row] = await db.insert(contractingProjectsTable).values({
       companyId: cid,
-      branchId: b.branchId ?? null,
+      branchId,
       code,
       nameAr: String(b.nameAr),
       nameEn: b.nameEn ?? null,
@@ -578,6 +766,7 @@ router.put("/projects/:id", async (req, res) => {
     if (b.status !== undefined && !PROJECT_STATUSES.has(String(b.status))) {
       res.status(400).json({ error: "حالة المشروع غير صالحة" }); return;
     }
+    let nextProjectBranchId = prev.branchId == null ? null : Number(prev.branchId);
     const passthroughText = ["nameAr","nameEn","clientName","location","description","status","projectType","code"];
     for (const k of passthroughText) if (b[k] !== undefined) updates[k] = b[k];
     const passthroughNum = ["contractValue","plannedBudget","actualCost","progressPercent"];
@@ -591,14 +780,34 @@ router.put("/projects/:id", async (req, res) => {
       updates[k] = String(b[k]);
     }
     if (b.branchId !== undefined) {
-      if (b.branchId != null) {
-        const branchError = await ensureBranch(cid, Number(b.branchId));
+      const nextBranchId = b.branchId == null || b.branchId === ""
+        ? null
+        : Number(b.branchId);
+      if (b.branchId != null && b.branchId !== "" && !Number.isInteger(nextBranchId)) {
+        res.status(400).json({ error: "الفرع غير صالح" }); return;
+      }
+      if (nextBranchId != null) {
+        // An unchanged legacy link may point to a branch that was later
+        // deactivated; preserve it while editing unrelated project fields.
+        const unchanged = prev.branchId != null && Number(prev.branchId) === nextBranchId;
+        const branchError = await ensureBranch(cid, nextBranchId, unchanged);
         if (branchError) { res.status(400).json({ error: branchError }); return; }
       }
-      if (!projectBranchVisible(req, b.branchId)) {
+      if (!projectBranchVisible(req, nextBranchId)) {
         res.status(403).json({ error: "ليس لديك صلاحية هذا الفرع" }); return;
       }
-      updates.branchId = b.branchId;
+      const branchChangeError = await projectBranchChangeError(
+        cid,
+        id,
+        prev.branchId == null ? null : Number(prev.branchId),
+        nextBranchId,
+      );
+      if (branchChangeError) {
+        res.status(409).json({ error: branchChangeError });
+        return;
+      }
+      updates.branchId = nextBranchId;
+      nextProjectBranchId = nextBranchId;
     }
     if (b.plannedStartDate !== undefined) updates.plannedStartDate = b.plannedStartDate;
     if (b.plannedEndDate   !== undefined) updates.plannedEndDate   = b.plannedEndDate;
@@ -617,7 +826,7 @@ router.put("/projects/:id", async (req, res) => {
         if (!isExistingLink && !canAccessModule(req.authUser, "customers", "view")) {
           res.status(403).json({ error: "لا تملك صلاحية عرض العملاء" }); return;
         }
-        const customer = await findProjectCustomer(req, cid, customerId, prev.customerId);
+        const customer = await findProjectCustomer(req, cid, customerId, prev.customerId, nextProjectBranchId);
         if (!customer) {
           res.status(400).json({ error: "العميل غير صالح أو غير متاح لهذا الفرع" });
           return;
@@ -922,14 +1131,18 @@ router.get("/resources/inventory-options", async (req, res) => {
       eq(warehousesTable.companyId, cid),
       eq(warehousesTable.isActive, true),
     ];
-    if (project.branchId == null) {
-      warehouseConditions.push(sql`false`);
-    } else {
-      warehouseConditions.push(or(
-        isNull(warehousesTable.branchId),
-        eq(warehousesTable.branchId, project.branchId),
-      ));
-    }
+    // A branchless project is visible only to company-wide/shared-project
+    // callers.  It may use a company-wide warehouse safely, but exposing
+    // branch-specific warehouses would let the picker infer a project branch
+    // from an arbitrary selection.  Resource planning does not need stock
+    // movement, so the shared option remains useful while mutations enforce
+    // the same rule.
+    warehouseConditions.push(project.branchId == null
+      ? isNull(warehousesTable.branchId)
+      : or(
+          isNull(warehousesTable.branchId),
+          eq(warehousesTable.branchId, project.branchId),
+        ));
     const warehouses = await db.select({
       id: warehousesTable.id,
       code: warehousesTable.code,
@@ -948,6 +1161,7 @@ router.get("/resources/inventory-options", async (req, res) => {
     ));
     res.json({
       projectBranchId: project.branchId,
+      requiresProjectBranch: project.branchId == null,
       items: materialItems,
       warehouses,
       balances,
@@ -1364,6 +1578,27 @@ router.put("/owner-contracts/:id", async (req, res) => {
       res.status(projectErrorStatus(projectError)).json({ error: projectError }); return;
     }
     const upd: any = { updatedAt: new Date() };
+    let nextProjectId = Number(cur.projectId);
+    if (b.projectId !== undefined) {
+      const requestedProjectId = Number(b.projectId);
+      if (!Number.isInteger(requestedProjectId) || requestedProjectId <= 0) {
+        res.status(400).json({ error: "المشروع غير صالح" }); return;
+      }
+      const moveError = await contractProjectMoveError(
+        cid,
+        id,
+        "owner",
+        Number(cur.projectId),
+        requestedProjectId,
+        req,
+      );
+      if (moveError) {
+        res.status(moveError === "ليس لديك صلاحية هذا الفرع" ? 403 : 409).json({ error: moveError });
+        return;
+      }
+      nextProjectId = requestedProjectId;
+      upd.projectId = requestedProjectId;
+    }
     for (const k of ["contractNumber","contractType","status","clientName","paymentTerms","scopeOfWork","penaltiesClause","notes"]) {
       if (b[k] !== undefined) upd[k] = b[k];
     }
@@ -1375,12 +1610,15 @@ router.put("/owner-contracts/:id", async (req, res) => {
         if (contractType !== "change_order" && contractType !== "addendum") {
           res.status(400).json({ error: "العقد الأساسي يخصص لأمر تغيير أو ملحق فقط" }); return;
         }
-        const parentError = await ensureOwnerContractParent(cid, cur.projectId, parentContractId, id);
+        const parentError = await ensureOwnerContractParent(cid, nextProjectId, parentContractId, id);
         if (parentError) { res.status(400).json({ error: parentError }); return; }
       }
       upd.parentContractId = parentContractId;
     } else if (b.contractType !== undefined && !["change_order", "addendum"].includes(String(b.contractType))) {
       upd.parentContractId = null;
+    } else if (b.projectId !== undefined && cur.parentContractId != null) {
+      const parentError = await ensureOwnerContractParent(cid, nextProjectId, Number(cur.parentContractId), id);
+      if (parentError) { res.status(409).json({ error: parentError }); return; }
     }
     for (const k of ["contractDate","signedAt","startDate","endDate"]) {
       if (b[k] !== undefined) upd[k] = b[k] || null;
@@ -1532,6 +1770,25 @@ router.put("/sub-contracts/:id", async (req, res) => {
       res.status(projectErrorStatus(projectError)).json({ error: projectError }); return;
     }
     const upd: any = { updatedAt: new Date() };
+    if (b.projectId !== undefined) {
+      const requestedProjectId = Number(b.projectId);
+      if (!Number.isInteger(requestedProjectId) || requestedProjectId <= 0) {
+        res.status(400).json({ error: "المشروع غير صالح" }); return;
+      }
+      const moveError = await contractProjectMoveError(
+        cid,
+        id,
+        "subcontract",
+        Number(cur.projectId),
+        requestedProjectId,
+        req,
+      );
+      if (moveError) {
+        res.status(moveError === "ليس لديك صلاحية هذا الفرع" ? 403 : 409).json({ error: moveError });
+        return;
+      }
+      upd.projectId = requestedProjectId;
+    }
     for (const k of ["contractNumber","status","scopeOfWork","paymentTerms","penaltiesClause","notes"]) {
       if (b[k] !== undefined) upd[k] = b[k];
     }
@@ -1736,10 +1993,10 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       }
     }
 
-    const direction = b.direction === "incoming" ? "incoming" : "outgoing";
-    if (direction === "incoming" && !b.contractorId) {
-      res.status(400).json({ error: "المقاول الباطن مطلوب لمستخلصات الباطن" }); return;
+    if (b.direction !== undefined && b.direction !== "incoming" && b.direction !== "outgoing") {
+      res.status(400).json({ error: "اتجاه المستخلص غير صالح" }); return;
     }
+    const direction = b.direction === "incoming" ? "incoming" : "outgoing";
 
     // Tenant-isolation: verify every referenced FK is in the same company
     // (and the same project for contract links). Without these guards a
@@ -1767,13 +2024,16 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       const e = await ensureContractor(cid, Number(b.contractorId));
       if (e) { res.status(400).json({ error: e }); return; }
     }
-    if (b.ownerContractId) {
-      const e = await ensureOwnerContract(cid, projectId, Number(b.ownerContractId));
-      if (e) { res.status(400).json({ error: e }); return; }
-    }
-    if (b.subcontractorContractId) {
-      const e = await ensureSubContract(cid, projectId, Number(b.subcontractorContractId));
-      if (e) { res.status(400).json({ error: e }); return; }
+    const contractIntegrityError = await ensureProjectContractSelection({
+      companyId: cid,
+      projectId,
+      direction,
+      contractorId: b.contractorId ? Number(b.contractorId) : null,
+      ownerContractId: b.ownerContractId ? Number(b.ownerContractId) : null,
+      subcontractorContractId: b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
+    });
+    if (contractIntegrityError) {
+      res.status(400).json({ error: contractIntegrityError }); return;
     }
 
     // Server-side computation. Client may send raw values; we recompute the
@@ -1870,7 +2130,7 @@ router.put("/bills/:id", async (req, res) => {
     if (b.direction !== undefined && b.direction !== cur.direction) {
       res.status(400).json({ error: "لا يمكن تغيير اتجاه المستخلص بعد إنشائه" }); return;
     }
-    const direction = cur.direction;
+    const direction = cur.direction as BillDirection;
 
     // Tenant-isolation guards on FK changes.
     if (b.contractorId !== undefined) {
@@ -1900,6 +2160,27 @@ router.put("/bills/:id", async (req, res) => {
     const finalContractorId = upd.contractorId !== undefined ? upd.contractorId : cur.contractorId;
     if (direction === "incoming" && !finalContractorId) {
       res.status(400).json({ error: "المقاول الباطن مطلوب لمستخلصات الباطن" }); return;
+    }
+    const contractIntegrityError = await ensureProjectContractSelection({
+      companyId: cid,
+      projectId: cur.projectId,
+      direction,
+      contractorId: finalContractorId,
+      ownerContractId: upd.ownerContractId !== undefined ? upd.ownerContractId : cur.ownerContractId,
+      subcontractorContractId: upd.subcontractorContractId !== undefined
+        ? upd.subcontractorContractId
+        : cur.subcontractorContractId,
+      // Preserve imported/unlinked drafts during ordinary edits.  Selecting
+      // either contract (or posting through accounting) never uses this
+      // compatibility path.
+      allowLegacyUnlinked:
+        cur.ownerContractId == null
+        && cur.subcontractorContractId == null
+        && (b.ownerContractId == null || b.ownerContractId === "")
+        && (b.subcontractorContractId == null || b.subcontractorContractId === ""),
+    });
+    if (contractIntegrityError) {
+      res.status(400).json({ error: contractIntegrityError }); return;
     }
 
     const gross    = b.grossAmount      !== undefined ? Number(b.grossAmount)      : Number(cur.grossAmount);

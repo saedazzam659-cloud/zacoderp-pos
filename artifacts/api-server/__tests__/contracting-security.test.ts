@@ -5,6 +5,7 @@ import {
   contractingBranchAllowed,
   contractingMutationAction,
   contractingWarehouseAllowed,
+  contractingWarehouseError,
 } from "../src/lib/contracting-security.ts";
 
 test("legacy contracting mutations map to granular actions", () => {
@@ -20,11 +21,19 @@ test("restricted users cannot use an unassigned project as a central fallback", 
   assert.equal(contractingBranchAllowed(user, 7), true);
   assert.equal(contractingBranchAllowed(user, 8), false);
   assert.equal(contractingBranchAllowed(user, null), false);
+  assert.equal(contractingBranchAllowed(
+    { role: "admin", viewAllBranches: false, branchIds: [] },
+    null,
+  ), true);
 });
 
 test("warehouse options stay on the project's branch or shared company scope", () => {
   assert.equal(contractingWarehouseAllowed(7, 7), true);
   assert.equal(contractingWarehouseAllowed(7, 8), false);
   assert.equal(contractingWarehouseAllowed(7, null), true);
-  assert.equal(contractingWarehouseAllowed(null, null), false);
+  assert.equal(contractingWarehouseAllowed(null, null), true);
+  assert.equal(contractingWarehouseAllowed(null, 7), false);
+  assert.equal(contractingWarehouseError(null, 7), "يجب تحديد فرع المشروع قبل اختيار مخزن مرتبط بفرع");
+  assert.equal(contractingWarehouseError(7, 8), "المخزن لا يتبع فرع المشروع");
+  assert.equal(contractingWarehouseError(null, null), null);
 });

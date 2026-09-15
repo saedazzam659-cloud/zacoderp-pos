@@ -9,15 +9,12 @@ import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import {
   FileText, ArrowDownToLine, ArrowUpFromLine, ExternalLink, Filter, X,
-  Download, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -26,6 +23,8 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { BILL_DIRECTION_LABEL, BILL_STATUS_LABEL, BILL_TYPE_LABEL, labelEnum } from "@/lib/contractingLabels";
+import { ContractingBillExportActions, ContractingBillsReportExportActions } from "@/components/ContractingExportActions";
+import type { ContractingBillSnapshot } from "@/lib/contractingPrintExport";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -96,14 +95,6 @@ const parseDirection = (search: string): "" | "outgoing" | "incoming" => {
   return value === "outgoing" || value === "incoming" ? value : "";
 };
 
-function csvCell(value: unknown): string {
-  const text = String(value ?? "");
-  // Prefix spreadsheet formula operators, including values supplied through
-  // bill numbers/project names, so opening the CSV cannot execute a formula.
-  const safe = /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
-  return `"${safe.replace(/"/g, "\"\"")}"`;
-}
-
 export default function ContractingBills() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
@@ -118,7 +109,6 @@ export default function ContractingBills() {
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState<string | null>(null);
-  const [exporting, setExporting]     = useState(false);
   const reportAbort = useRef<AbortController | null>(null);
 
   // Filters — all controlled. "" = no filter.
@@ -236,54 +226,33 @@ export default function ContractingBills() {
     navigate(`/contracting/projects/${id}?tab=bills&direction=${billDirection}&createBill=1`);
   }
 
-  const exportCsv = () => {
-    if (visible.length === 0) {
-      toast({ title: "لا توجد بيانات للتصدير", variant: "destructive" });
-      return;
-    }
-    setExporting(true);
-    try {
-      const columns = [
-        "المشروع", "رقم المستخلص", "التاريخ", "الاتجاه", "المقاول الباطن",
-        "الأعمال الإجمالية", "الأعمال السابقة", "الأعمال الحالية", "الأعمال التراكمية",
-        "قيمة العقد", "المتبقي من العقد", "المحتجز", "الاستقطاعات", "الغرامات",
-        "المدفوعات", "المتبقي", "الحالة",
-      ];
-      const data = visible.map((row) => [
-        row.projectName || row.projectCode || "",
-        row.billNumber,
-        row.billDate,
-        labelEnum(BILL_DIRECTION_LABEL, row.direction),
-        row.contractorName || "",
-        row.grossWorks,
-        row.previousWorks,
-        row.currentWorks,
-        row.cumulativeWorks,
-        row.contractValue,
-        row.remainingContract,
-        row.retentions,
-        row.deductions,
-        row.penalties,
-        row.payments,
-        row.outstanding,
-        labelEnum(BILL_STATUS_LABEL, row.status),
-      ]);
-      const csv = "\ufeff" + [columns, ...data]
-        .map((row) => row.map(csvCell).join(","))
-        .join("\r\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `contracting-bills-report-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    } finally {
-      setExporting(false);
-    }
-  };
+  const exportRows: ContractingBillSnapshot[] = visible.map((row) => ({
+    id: row.id,
+    projectId: row.projectId,
+    projectCode: row.projectCode,
+    projectName: row.projectName,
+    direction: row.direction,
+    contractorId: row.contractorId,
+    contractorName: row.contractorName,
+    contractValue: row.contractValue,
+    remainingContract: row.remainingContract,
+    billNumber: row.billNumber,
+    billType: row.billType,
+    billDate: row.billDate,
+    grossWorks: row.grossWorks,
+    previousWorks: row.previousWorks,
+    currentWorks: row.currentWorks,
+    cumulativeWorks: row.cumulativeWorks,
+    deductions: row.deductions,
+    retentions: row.retentions,
+    penalties: row.penalties,
+    vatAmount: row.vatAmount,
+    netAmount: row.netAmount,
+    payments: row.payments,
+    outstanding: row.outstanding,
+    paidAmount: row.settlementPaid,
+    status: row.status,
+  }));
 
   return (
     <div className="space-y-6 p-6" dir="rtl">
@@ -298,14 +267,7 @@ export default function ContractingBills() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            onClick={exportCsv}
-            disabled={exporting || loading || visible.length === 0}
-            data-testid="button-export-contracting-bills-csv"
-          >
-            {exporting ? <Loader2 className="ms-1 h-4 w-4 animate-spin" /> : <Download className="ms-1 h-4 w-4" />}
-            {exporting ? "جار تجهيز CSV…" : "تصدير CSV"}
-          </Button>
+          <ContractingBillsReportExportActions rows={exportRows} />
           {canCreate && (
             <Button
               variant="default"
@@ -337,24 +299,22 @@ export default function ContractingBills() {
               <label className="text-sm font-medium" htmlFor="create-bill-project">
                 المشروع
               </label>
-              <Select
-                value={createProjectId || "__none__"}
-                onValueChange={(value) => setCreateProjectId(value === "__none__" ? "" : value)}
-              >
-                <SelectTrigger id="create-bill-project" data-testid="select-create-bill-project">
-                  <SelectValue placeholder="اختر مشروعاً" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">اختر مشروعاً</SelectItem>
-                  {projects
-                    .filter(project => Number.isInteger(Number(project.id)) && Number(project.id) > 0)
-                    .map(project => (
-                      <SelectItem key={project.id} value={String(project.id)}>
-                        {project.code} — {project.nameAr}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+              <SearchCombobox
+                items={projects
+                  .filter(project => Number.isInteger(Number(project.id)) && Number(project.id) > 0)
+                  .map(project => ({
+                    value: String(project.id),
+                    label: `${project.code} — ${project.nameAr}`,
+                  }))}
+                value={createProjectId}
+                onValueChange={setCreateProjectId}
+                placeholder="اختر مشروعاً"
+                searchPlaceholder="بحث بالكود أو اسم المشروع..."
+                emptyText="لا توجد مشاريع مطابقة"
+                disabled={loading}
+                openOnFocus={false}
+                testId="select-create-bill-project"
+              />
               {projects.length === 0 && (
                 <p className="text-xs text-muted-foreground">لا توجد مشاريع متاحة لك.</p>
               )}
@@ -567,6 +527,43 @@ export default function ContractingBills() {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-end">
+                   <ContractingBillExportActions
+                     compact
+                     snapshot={{
+                       bill: {
+                         id: r.id,
+                         projectId: r.projectId,
+                         projectCode: r.projectCode,
+                         projectName: r.projectName,
+                         direction: r.direction,
+                         contractorId: r.contractorId,
+                         contractorName: r.contractorName,
+                         billNumber: r.billNumber,
+                         billType: r.billType,
+                         billDate: r.billDate,
+                         grossWorks: r.grossWorks,
+                         previousWorks: r.previousWorks,
+                         currentWorks: r.currentWorks,
+                         cumulativeWorks: r.cumulativeWorks,
+                         contractValue: r.contractValue,
+                         remainingContract: r.remainingContract,
+                         retentions: r.retentions,
+                         deductions: r.deductions,
+                         penalties: r.penalties,
+                         vatAmount: r.vatAmount,
+                         netAmount: r.netAmount,
+                         payments: r.payments,
+                         outstanding: r.outstanding,
+                         paidAmount: r.settlementPaid,
+                         status: r.status,
+                       },
+                       project: {
+                         id: r.projectId,
+                         code: r.projectCode,
+                         nameAr: r.projectName,
+                       },
+                     }}
+                   />
                   <Link href={`/contracting/projects/${r.projectId}`}>
                     <Button variant="ghost" size="sm" data-testid={`link-project-${r.projectId}`}>
                       <ExternalLink className="h-4 w-4 ms-1" /> فتح المشروع
@@ -619,25 +616,23 @@ function FilterSelect({
   options: { value: string; label: string }[];
   testId: string;
 }) {
-  // Select uses a sentinel "__all__" because Radix's <SelectItem> can't have
-  // an empty-string value. We translate it to "" outside the component.
+  const items: ComboboxItem[] = [
+    { value: "__all__", label: placeholder },
+    ...options,
+  ];
   return (
     <div>
       <label className="text-xs text-muted-foreground mb-1 block">{label}</label>
-      <Select
+      <SearchCombobox
+        items={items}
         value={value || "__all__"}
         onValueChange={(v) => onChange(v === "__all__" ? "" : v)}
-      >
-        <SelectTrigger data-testid={testId}>
-          <SelectValue placeholder={placeholder} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__all__">{placeholder}</SelectItem>
-          {options.map(o => (
-            <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        placeholder={placeholder}
+        searchPlaceholder={`بحث في ${label}...`}
+        emptyText="لا توجد نتائج"
+        testId={testId}
+        openOnFocus={false}
+      />
     </div>
   );
 }

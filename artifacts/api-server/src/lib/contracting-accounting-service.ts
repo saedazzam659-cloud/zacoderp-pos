@@ -24,7 +24,7 @@ import {
   unitsTable,
   warehousesTable,
 } from "@workspace/db";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { assertWritableForDate } from "./periodGuard.js";
 import { fullAuditFor } from "./journalAudit.js";
 import { nextJeSubSequence } from "./sequences.js";
@@ -46,7 +46,11 @@ import {
 } from "./unitConversion.js";
 import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
 import { ensureContractingBillDetailsTables } from "./contracting-bill-details-service.js";
-import { contractingBranchAllowed } from "./contracting-security.js";
+import { assertBillContractScope } from "./contracting-bill-contracts.js";
+import {
+  contractingBranchAllowed,
+  contractingWarehouseError,
+} from "./contracting-security.js";
 import {
   contractingBillAmounts,
   contractingBillRoleLines,
@@ -405,6 +409,11 @@ async function mappings(tx: Executor, companyId: number, documentType: string): 
  * certified delta and must never change the next certification's gross base.
  */
 async function certifyBillAmounts(tx: Executor, companyId: number, bill: any): Promise<any> {
+  // Validate the complete directional relationship before locking the
+  // selected contract.  The old check below only verified one id and would
+  // accept opposite-direction links or an incoming contractor from another
+  // contract.
+  await assertBillContractScope(tx, companyId, bill, { requireSelection: true });
   const contractId = bill.direction === "incoming"
     ? Number(bill.subcontractorContractId ?? 0)
     : Number(bill.ownerContractId ?? 0);
@@ -728,7 +737,7 @@ export async function approveBill(input: {
     if (!locked) throw failure("المستخلص غير موجود", 404);
     const project = await projectFor(tx, input.companyId, locked.projectId);
     if (!project) throw failure("المشروع غير موجود", 404);
-    assertBranchAccess(input.req, project.branchId);
+    assertProjectBranchAccess(input.req, project.branchId);
     if (locked.status === "reversed") {
       throw failure("المستخلص الأصلي عُكس؛ اعتمد مسودة التصحيح الجديدة", 409);
     }
@@ -857,7 +866,7 @@ export async function unapproveBill(input: {
     if (!bill) throw failure("المستخلص غير موجود", 404);
     const project = await projectFor(tx, input.companyId, bill.projectId);
     if (!project) throw failure("المشروع غير موجود", 404);
-    assertBranchAccess(input.req, project.branchId);
+    assertProjectBranchAccess(input.req, project.branchId);
     const postingKey = bill.direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill";
     if (!canUnpostDoc(input.req.authUser, postingKey)) {
       throw failure("ليس لديك صلاحية فك ترحيل هذا النوع من المستخلصات", 403);
@@ -1428,7 +1437,7 @@ export async function createSettlement(input: {
   const out = await db.transaction(async (tx) => {
     const project = await projectFor(tx, input.companyId, input.projectId);
     if (!project) throw failure("المشروع غير موجود", 404);
-    assertBranchAccess(input.req, project.branchId);
+    assertProjectBranchAccess(input.req, project.branchId);
     let bill: any = null;
     const requiresBill = input.kind.startsWith("retention_") || input.kind.startsWith("bill_");
     if (input.billId != null) {
@@ -1438,6 +1447,7 @@ export async function createSettlement(input: {
       if (!["approved", "posted"].includes(String(bill.status)) || !bill.journalEntryId) {
         throw failure("يجب اعتماد وترحيل المستخلص قبل تسوية المستخلص");
       }
+      await assertBillContractScope(tx, input.companyId, bill, { requireSelection: true });
     }
     if (requiresBill && !bill) {
       throw failure("هذه التسوية تتطلب مستخلصاً معتمداً");
@@ -1448,6 +1458,27 @@ export async function createSettlement(input: {
     const subcontractorContractId = bill
       ? Number(bill.subcontractorContractId ?? 0) || null
       : (Number(input.subcontractorContractId ?? 0) || null);
+    if (!bill) {
+      await assertBillContractScope(tx, input.companyId, {
+        projectId: input.projectId,
+        direction: details.direction,
+        ownerContractId,
+        subcontractorContractId,
+        // Standalone subcontractor advances identify their contractor through
+        // the selected subcontract, not through a separate payload field.
+        contractorId: null,
+      }, { requireSelection: true, requireIncomingContractor: false });
+    } else if (input.ownerContractId != null || input.subcontractorContractId != null) {
+      // A caller may repeat the selected contract for clarity, but an
+      // opposite-direction id must still be rejected rather than ignored.
+      await assertBillContractScope(tx, input.companyId, {
+        projectId: input.projectId,
+        direction: details.direction,
+        ownerContractId: input.ownerContractId,
+        subcontractorContractId: input.subcontractorContractId,
+        contractorId: bill.contractorId,
+      }, { requireSelection: false, requireIncomingContractor: false });
+    }
     if (input.kind === "advance_receipt" && !ownerContractId) {
       throw failure("قبض سلفة المالك يتطلب عقد مالك محدداً");
     }
@@ -1623,7 +1654,15 @@ export async function applyAdvance(input: {
     if (Number(source.project_id) !== Number(bill.projectId)) {
       throw failure("السلفة والمستخلص لا يتبعان المشروع نفسه");
     }
-    assertBranchAccess(input.req, (await projectFor(tx, input.companyId, bill.projectId))?.branchId);
+    await assertBillContractScope(tx, input.companyId, bill, { requireSelection: true });
+    await assertBillContractScope(tx, input.companyId, {
+      projectId: Number(source.project_id),
+      direction: String(source.direction),
+      ownerContractId: source.owner_contract_id,
+      subcontractorContractId: source.subcontractor_contract_id,
+      contractorId: null,
+    }, { requireSelection: true, requireIncomingContractor: false });
+    assertProjectBranchAccess(input.req, (await projectFor(tx, input.companyId, bill.projectId))?.branchId);
     const sourceDirection = String(source.direction);
     if (sourceDirection !== bill.direction) throw failure("اتجاه السلفة لا يطابق المستخلص");
     const billContractId = bill.direction === "outgoing"
@@ -1777,8 +1816,9 @@ export async function materialLots(
     eq(warehousesTable.companyId, companyId),
   ));
   if (!warehouse || !warehouse.isActive) throw failure("المخزن غير موجود أو غير نشط");
-  if (project.branchId == null || warehouse.branchId !== project.branchId) {
-    throw failure("المخزن لا يتبع فرع المشروع", 403);
+  const warehouseError = contractingWarehouseError(project.branchId, warehouse.branchId);
+  if (warehouseError) {
+    throw failure(warehouseError, 403);
   }
   const [item] = await db.select({
     id: itemsTable.id,
@@ -1876,7 +1916,7 @@ export async function issueOrReturnMaterial(input: {
     }
     const project = await projectFor(tx, input.companyId, input.projectId);
     if (!project) throw failure("المشروع غير موجود", 404);
-    assertBranchAccess(input.req, project.branchId);
+    assertProjectBranchAccess(input.req, project.branchId);
     const [warehouse] = await tx.select({
       id: warehousesTable.id,
       branchId: warehousesTable.branchId,
@@ -1888,8 +1928,9 @@ export async function issueOrReturnMaterial(input: {
     ));
     if (!warehouse || !warehouse.isActive) throw failure("المخزن غير موجود أو غير نشط");
     assertBranchAccess(input.req, warehouse.branchId);
-    if (project.branchId != null && warehouse.branchId != null && project.branchId !== warehouse.branchId) {
-      throw failure("المخزن لا يتبع فرع المشروع");
+    const warehouseError = contractingWarehouseError(project.branchId, warehouse.branchId);
+    if (warehouseError) {
+      throw failure(warehouseError);
     }
     const [item] = await tx.select({
       id: itemsTable.id,
@@ -2281,8 +2322,11 @@ export async function inventoryOptions(companyId: number, projectId: number) {
     eq(warehousesTable.companyId, companyId),
     eq(warehousesTable.isActive, true),
     project.branchId == null
-      ? sql`false`
-      : eq(warehousesTable.branchId, project.branchId),
+      ? isNull(warehousesTable.branchId)
+      : or(
+          isNull(warehousesTable.branchId),
+          eq(warehousesTable.branchId, project.branchId),
+        ),
   ));
   const items = await db.select({
     id: itemsTable.id,
@@ -2308,5 +2352,12 @@ export async function inventoryOptions(companyId: number, projectId: number) {
     eq(stockBalanceTable.companyId, companyId),
     inArray(stockBalanceTable.warehouseId, warehouseIds),
   ));
-  return { warehouses, items, units, balances };
+  return {
+    projectBranchId: project.branchId,
+    requiresProjectBranch: project.branchId == null,
+    warehouses,
+    items,
+    units,
+    balances,
+  };
 }

@@ -23,6 +23,12 @@ Preserve legacy project customer names without automatic name matching, and exte
 
 Release-managed application tables must be created in the shared active-database reconciliation pass before strict missing-table validation, not only during central startup or a lazy feature request.
 
+Contracting bills use the existing model 14 renderer, with contracting-specific labels and amounts rather than a separate look-alike template.
+
+**Why:** The user explicitly requested the same system print model; duplicated styling drifts and can misleadingly retain tax-invoice labels.
+
+**How to apply:** Keep shared frame/header/footer behavior consistent with model 14 and adapt document semantics without implying a progress bill is a ZATCA invoice.
+
 **Why:** External-agent upgrade and request-readiness paths can validate newly exported schema tables before central-only initialization ever reaches their database.
 
 **How to apply:** Cover startup, explicit upgrades and strict request readiness with the same additive table creation. Keep required tables required, and never share a successful initialization cache across tenant databases.

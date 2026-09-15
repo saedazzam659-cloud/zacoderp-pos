@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -247,47 +248,24 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         <section className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
           <h3 className="mb-3 font-bold">السلف والمحتجزات — قيود القبض والصرف</h3>
           <div className="grid gap-2 sm:grid-cols-2">
-            <label className="text-sm">نوع العملية
-              <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="advance_receipt">قبض سلفة من المالك</option>
-                <option value="advance_payment">صرف سلفة للمقاول الباطن</option>
-                <option value="retention_receipt">إفراج محتجزات من المالك</option>
-                <option value="retention_payment">صرف محتجزات للمقاول الباطن</option>
-                <option value="bill_receipt">تحصيل مستخلص من المالك</option>
-                <option value="bill_payment">سداد مستخلص المقاول الباطن</option>
-              </select>
-            </label>
+            <PickerField label="نوع العملية" value={kind} onValueChange={setKind} items={[
+              { value: "advance_receipt", label: "قبض سلفة من المالك" },
+              { value: "advance_payment", label: "صرف سلفة للمقاول الباطن" },
+              { value: "retention_receipt", label: "إفراج محتجزات من المالك" },
+              { value: "retention_payment", label: "صرف محتجزات للمقاول الباطن" },
+              { value: "bill_receipt", label: "تحصيل مستخلص من المالك" },
+              { value: "bill_payment", label: "سداد مستخلص المقاول الباطن" },
+            ]} testId="accounting-settlement-kind" />
             <label className="text-sm">المبلغ<Input type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
-            {requiresBill && <label className="text-sm">المستخلص المعتمد
-              <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={billId} onChange={(e) => setBillId(e.target.value)}>
-                <option value="">اختر مستخلصاً</option>
-                {approvedBills.map((bill) => <option key={bill.id} value={bill.id}>{bill.billNumber} — محتجز {bill.retentionAmount}</option>)}
-              </select>
-            </label>}
-            {!requiresBill && kind === "advance_receipt" && <label className="text-sm">عقد المالك
-              <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={ownerContractId} onChange={(e) => setOwnerContractId(e.target.value)}>
-                <option value="">اختر عقداً</option>
-                {options.ownerContracts.map((contract) => <option key={contract.id} value={contract.id}>{contract.contractNumber}{contract.clientName ? ` — ${contract.clientName}` : ""}</option>)}
-              </select>
-            </label>}
-            {!requiresBill && kind === "advance_payment" && <label className="text-sm">عقد المقاول الباطن
-              <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={subcontractorContractId} onChange={(e) => setSubcontractorContractId(e.target.value)}>
-                <option value="">اختر عقداً</option>
-                {options.subcontractorContracts.map((contract) => <option key={contract.id} value={contract.id}>{contract.contractNumber}</option>)}
-              </select>
-            </label>}
+            {requiresBill && <PickerField label="المستخلص المعتمد" value={billId} onValueChange={setBillId} placeholder="اختر مستخلصاً" items={approvedBills.map((bill) => ({ value: String(bill.id), label: `${bill.billNumber} — محتجز ${bill.retentionAmount}` }))} testId="accounting-bill-picker" />}
+            {!requiresBill && kind === "advance_receipt" && <PickerField label="عقد المالك" value={ownerContractId} onValueChange={setOwnerContractId} placeholder="اختر عقداً" items={options.ownerContracts.map((contract) => ({ value: String(contract.id), label: `${contract.contractNumber}${contract.clientName ? ` — ${contract.clientName}` : ""}` }))} testId="accounting-owner-contract-picker" />}
+            {!requiresBill && kind === "advance_payment" && <PickerField label="عقد المقاول الباطن" value={subcontractorContractId} onValueChange={setSubcontractorContractId} placeholder="اختر عقداً" items={options.subcontractorContracts.map((contract) => ({ value: String(contract.id), label: contract.contractNumber }))} testId="accounting-subcontractor-contract-picker" />}
             <label className="text-sm">التاريخ<Input type="date" value={settlementDate} onChange={(e) => setSettlementDate(e.target.value)} /></label>
-            <label className="text-sm">طريقة السداد
-              <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={paymentType} onChange={(e) => { setPaymentType(e.target.value as any); setTreasuryId(""); }}>
-                <option value="cash">نقدي — خزنة</option><option value="bank">بنكي — حساب بنكي</option>
-              </select>
-            </label>
-            <label className="text-sm">{paymentType === "cash" ? "الخزنة" : "الحساب البنكي"}
-              <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={treasuryId} onChange={(e) => setTreasuryId(e.target.value)}>
-                <option value="">اختر الحساب</option>
-                {(paymentType === "cash" ? options.cashBoxes : options.banks).map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}
-              </select>
-            </label>
+            <PickerField label="طريقة السداد" value={paymentType} onValueChange={(value) => { setPaymentType(value as "cash" | "bank"); setTreasuryId(""); }} items={[
+              { value: "cash", label: "نقدي — خزنة" },
+              { value: "bank", label: "بنكي — حساب بنكي" },
+            ]} testId="accounting-payment-type-picker" />
+            <PickerField label={paymentType === "cash" ? "الخزنة" : "الحساب البنكي"} value={treasuryId} onValueChange={setTreasuryId} placeholder="اختر الحساب" items={(paymentType === "cash" ? options.cashBoxes : options.banks).map((row) => ({ value: String(row.id), label: `${row.code} — ${row.nameAr}` }))} testId="accounting-treasury-picker" />
           </div>
           <Button className="mt-3" disabled={busy || !amount || !treasuryId || (requiresBill && !billId) || (!requiresBill && kind === "advance_receipt" && !ownerContractId) || (!requiresBill && kind === "advance_payment" && !subcontractorContractId)} onClick={() => void saveSettlement()}>ترحيل القيد</Button>
         </section>
@@ -295,18 +273,8 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         <section className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
           <h3 className="mb-3 font-bold">تطبيق سلفة على مستخلص</h3>
           <div className="grid gap-2 sm:grid-cols-3">
-            <label className="text-sm">السلفة
-              <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={applySettlementId} onChange={(e) => setApplySettlementId(e.target.value)}>
-                <option value="">اختر السلفة</option>
-                {advances.map((row) => <option key={row.id} value={row.id}>{labelKind[row.kind]} #{row.id} — متاح {(Number(row.amount) - Number(row.applied_amount || 0)).toLocaleString("en-US")}</option>)}
-              </select>
-            </label>
-            <label className="text-sm">المستخلص
-              <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={applyBillId} onChange={(e) => setApplyBillId(e.target.value)}>
-                <option value="">اختر مستخلصاً</option>
-                {approvedBills.map((bill) => <option key={bill.id} value={bill.id}>{bill.billNumber}</option>)}
-              </select>
-            </label>
+            <PickerField label="السلفة" value={applySettlementId} onValueChange={setApplySettlementId} placeholder="اختر السلفة" items={advances.map((row) => ({ value: String(row.id), label: `${labelKind[row.kind]} #${row.id} — متاح ${(Number(row.amount) - Number(row.applied_amount || 0)).toLocaleString("en-US")}` }))} testId="accounting-advance-picker" />
+            <PickerField label="المستخلص" value={applyBillId} onValueChange={setApplyBillId} placeholder="اختر مستخلصاً" items={approvedBills.map((bill) => ({ value: String(bill.id), label: bill.billNumber }))} testId="accounting-apply-bill-picker" />
             <label className="text-sm">مبلغ التطبيق<Input type="number" min="0.01" step="0.01" value={applyAmount} onChange={(e) => setApplyAmount(e.target.value)} /></label>
           </div>
           <Button className="mt-3" variant="outline" disabled={busy || !applySettlementId || !applyBillId || !applyAmount} onClick={() => void applyAdvance()}>ترحيل تطبيق السلفة</Button>
@@ -317,24 +285,38 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         <h3 className="mb-3 font-bold">صرف وإرجاع مواد فعلية للمشروع</h3>
         <p className="mb-3 text-xs text-slate-500">لا يغيّر هذا النموذج حالة المورد المخطط؛ بل ينشئ حركة مخزون فعلية وقيد تكلفة مشروع متوازناً.</p>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-sm">الحركة<select className="mt-1 w-full rounded-md border bg-transparent p-2" value={movementDirection} onChange={(e) => setMovementDirection(e.target.value as any)}><option value="issue">صرف مواد</option><option value="return">إرجاع مواد</option></select></label>
-          <label className="text-sm">الصنف<select className="mt-1 w-full rounded-md border bg-transparent p-2" value={itemId} onChange={(e) => setItemId(e.target.value)}><option value="">اختر الصنف</option>{options.items.map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</select></label>
-          <label className="text-sm">الوحدة<select className="mt-1 w-full rounded-md border bg-transparent p-2" value={unitId} onChange={(e) => setUnitId(e.target.value)}><option value="">اختر الوحدة</option>{options.units.map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</select></label>
-          <label className="text-sm">المخزن<select className="mt-1 w-full rounded-md border bg-transparent p-2" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}><option value="">اختر المخزن</option>{options.warehouses.map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</select>{selectedBalance && <span className="mt-1 block text-xs text-slate-500">الرصيد الفعلي: {Number(selectedBalance.qtyBase).toLocaleString("en-US")} • تكلفة الوحدة: {Number(selectedBalance.avgCost || 0).toLocaleString("en-US")}</span>}</label>
+          <PickerField label="الحركة" value={movementDirection} onValueChange={(value) => setMovementDirection(value as "issue" | "return")} items={[{ value: "issue", label: "صرف مواد" }, { value: "return", label: "إرجاع مواد" }]} testId="accounting-movement-direction-picker" />
+          <PickerField label="الصنف" value={itemId} onValueChange={setItemId} placeholder="اختر الصنف" items={options.items.map((row) => ({ value: String(row.id), label: `${row.code} — ${row.nameAr}` }))} testId="accounting-item-picker" />
+          <PickerField label="الوحدة" value={unitId} onValueChange={setUnitId} placeholder="اختر الوحدة" items={options.units.map((row) => ({ value: String(row.id), label: `${row.code} — ${row.nameAr}` }))} testId="accounting-unit-picker" />
+          <div>
+            <PickerField label="المخزن" value={warehouseId} onValueChange={setWarehouseId} placeholder="اختر المخزن" items={options.warehouses.map((row) => ({ value: String(row.id), label: `${row.code} — ${row.nameAr}` }))} testId="accounting-warehouse-picker" />
+            {selectedBalance && <span className="mt-1 block text-xs text-slate-500">الرصيد الفعلي: {Number(selectedBalance.qtyBase).toLocaleString("en-US")} • تكلفة الوحدة: {Number(selectedBalance.avgCost || 0).toLocaleString("en-US")}</span>}
+          </div>
           {movementDirection === "issue" && selectedBatchMode && <label className="text-sm">التشغيلة ({selectedBatchMode === "fefo" ? "FEFO" : "FIFO"})
-            <select className="mt-1 w-full rounded-md border bg-transparent p-2" value={`${lotNumber}|${lotExpiryDate}`} onChange={(e) => {
-              const [batch, expiry = ""] = e.target.value.split("|");
-              setLotNumber(batch === "__auto__" ? "" : batch === "__unbatched__" ? "__unbatched__" : batch);
-              setLotExpiryDate(expiry);
-            }}>
-              <option value="__auto__|">تخصيص تلقائي حسب {selectedBatchMode.toUpperCase()}</option>
-              {lots.map((lot) => {
-                const key = `${lot.batchNumber ?? "__unbatched__"}|${lot.expiryDate ?? ""}`;
-                return <option key={key} value={key} disabled={lot.expired}>
-                  {(lot.batchNumber ?? "بدون رقم تشغيلة")} — متاح {lot.remainingBase} — تكلفة {lot.unitCost}{lot.expiryDate ? ` — انتهاء ${lot.expiryDate}` : ""}{lot.expired ? " — منتهية" : ""}
-                </option>;
-              })}
-            </select>
+            <SearchCombobox
+              items={[
+                { value: "__auto__|", label: `تخصيص تلقائي حسب ${selectedBatchMode.toUpperCase()}` },
+                ...lots.map((lot) => {
+                  const key = `${lot.batchNumber ?? "__unbatched__"}|${lot.expiryDate ?? ""}`;
+                  return {
+                    value: key,
+                    label: `${lot.batchNumber ?? "بدون رقم تشغيلة"} — متاح ${lot.remainingBase} — تكلفة ${lot.unitCost}${lot.expiryDate ? ` — انتهاء ${lot.expiryDate}` : ""}${lot.expired ? " — منتهية" : ""}`,
+                    disabled: lot.expired,
+                    disabledReason: "التشغيلة منتهية",
+                  };
+                }),
+              ]}
+              value={`${lotNumber || "__auto__"}|${lotExpiryDate}`}
+              onValueChange={(value) => {
+                const [batch, expiry = ""] = value.split("|");
+                setLotNumber(batch === "__auto__" ? "" : batch === "__unbatched__" ? "__unbatched__" : batch);
+                setLotExpiryDate(expiry);
+              }}
+              placeholder="اختر التشغيلة"
+              searchPlaceholder="بحث برقم التشغيلة..."
+              testId="accounting-lot-picker"
+              openOnFocus={false}
+            />
             <span className="mt-1 block text-[11px] text-slate-500">اتركها تلقائياً لتطبيق ترتيب {selectedBatchMode.toUpperCase()} عبر طبقات التقييم الفعلية.</span>
           </label>}
           <label className="text-sm">الكمية<Input type="number" min="0.000000000000000001" step="any" value={qty} onChange={(e) => setQty(e.target.value)} /></label>
@@ -369,5 +351,38 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         </div>
       </section>
     </div>
+  );
+}
+
+function PickerField({
+  label,
+  value,
+  onValueChange,
+  items,
+  placeholder = "اختر...",
+  testId,
+}: {
+  label: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  items: ComboboxItem[];
+  placeholder?: string;
+  testId: string;
+}) {
+  return (
+    <label className="text-sm">
+      {label}
+      <SearchCombobox
+        className="mt-1"
+        items={items}
+        value={value}
+        onValueChange={onValueChange}
+        placeholder={placeholder}
+        searchPlaceholder={`بحث في ${label}...`}
+        emptyText="لا توجد نتائج"
+        testId={testId}
+        openOnFocus={false}
+      />
+    </label>
   );
 }

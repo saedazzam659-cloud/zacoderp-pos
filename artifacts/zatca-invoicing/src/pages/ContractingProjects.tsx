@@ -9,9 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import {
   AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
@@ -24,11 +21,17 @@ import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCostCenters, type CostCenter } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
 import { PROJECT_STATUS_LABEL, PROJECT_TYPE_LABEL, labelEnum } from "@/lib/contractingLabels";
+import {
+  ContractingProjectExportActions,
+  ContractingProjectsReportExportActions,
+} from "@/components/ContractingExportActions";
+import type { ContractingProjectSnapshot } from "@/lib/contractingPrintExport";
 
 const API = import.meta.env.VITE_API_URL || "";
 
 type Project = {
   id: number; code: string; nameAr: string; nameEn: string | null;
+  branchId: number | null;
   customerId: number | null;
   costCenterId: number | null;
   clientName: string | null; location: string | null; projectType: string;
@@ -36,6 +39,7 @@ type Project = {
   plannedStartDate: string | null; plannedEndDate: string | null;
   progressPercent: string; description: string | null;
 };
+type ProjectBranch = { id: number; code: string; nameAr: string; nameEn: string | null; isActive?: boolean };
 
 const STATUSES = ["draft", "study", "contract", "planning", "in_progress", "on_hold", "completed", "cancelled"] as const;
 const TYPES = ["building", "road", "infrastructure", "renovation", "maintenance", "other"] as const;
@@ -47,7 +51,7 @@ const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "out
 };
 
 const empty = (): Partial<Project> => ({
-  code: "", nameAr: "", nameEn: "", customerId: null, costCenterId: null, clientName: "", location: "",
+  code: "", nameAr: "", nameEn: "", branchId: null, customerId: null, costCenterId: null, clientName: "", location: "",
   projectType: "building", status: "draft", contractValue: "0",
   plannedBudget: "0", actualCost: "0", plannedStartDate: "", plannedEndDate: "",
   progressPercent: "0", description: "",
@@ -76,11 +80,35 @@ export default function ContractingProjects() {
     companyId,
     includeInactive: true,
   });
+  const [branches, setBranches] = useState<ProjectBranch[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(false);
+  const [branchesError, setBranchesError] = useState<string | null>(null);
   const editingOpen = editing != null;
   const requestHeaders = useCallback((): Record<string, string> => ({
     Authorization: `Bearer ${token}`,
     ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
   }), [token, actingCompanyId]);
+
+  const loadBranches = useCallback(async () => {
+    if (!token) return;
+    setBranchesLoading(true);
+    setBranchesError(null);
+    try {
+      const response = await fetch(`${API}/api/contracting/projects/options`, {
+        headers: requestHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+      setBranches(Array.isArray(payload?.branches) ? payload.branches : []);
+    } catch (error: any) {
+      setBranches([]);
+      setBranchesError(error?.message || t("contracting.projects.branchesLoadError", "تعذر تحميل الفروع"));
+    } finally {
+      setBranchesLoading(false);
+    }
+  }, [requestHeaders, t, token]);
+
+  useEffect(() => { void loadBranches(); }, [loadBranches]);
 
   useEffect(() => {
     if (!editingOpen || !token || !companyId) {
@@ -95,7 +123,9 @@ export default function ContractingProjects() {
     setCustomersError(null);
     const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
     if (actingCompanyId) headers["x-acting-company-id"] = String(actingCompanyId);
-    fetch(`${API}/api/customers?companyId=${encodeURIComponent(companyId)}`, { headers })
+    const customerQuery = new URLSearchParams({ companyId: String(companyId) });
+    if (editing?.branchId != null) customerQuery.set("branchId", String(editing.branchId));
+    fetch(`${API}/api/customers?${customerQuery.toString()}`, { headers })
       .then(async r => {
         if (!r.ok) throw new Error(r.status === 403
           ? t("contracting.projects.customerPermission", "لا تملك صلاحية عرض العملاء")
@@ -115,7 +145,7 @@ export default function ContractingProjects() {
         if (!cancelled) setCustomersLoading(false);
       });
     return () => { cancelled = true; };
-  }, [editingOpen, token, companyId, actingCompanyId, t]);
+  }, [editingOpen, editing?.branchId, token, companyId, actingCompanyId, t]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -142,6 +172,10 @@ export default function ContractingProjects() {
       toast({ title: t("contracting.projects.nameRequired", "الاسم مطلوب"), variant: "destructive" });
       return;
     }
+    if (isCreating && !editing.branchId) {
+      toast({ title: t("contracting.projects.branchRequired", "الفرع مطلوب للمشروع الجديد"), variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       const isEdit = (editing as any).id != null;
@@ -158,14 +192,25 @@ export default function ContractingProjects() {
         headers: { "Content-Type": "application/json", ...requestHeaders() },
         body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
+       if (!r.ok) {
+         const payload = await r.json().catch(() => ({}));
+         const error = new Error(payload?.error || `HTTP ${r.status}`) as Error & { status?: number };
+         error.status = r.status;
+         throw error;
+       }
       toast({ title: isEdit
         ? t("contracting.projects.updated", "تم تحديث المشروع")
         : t("contracting.projects.created", "تم إنشاء المشروع") });
       setEditing(null);
       await load();
-    } catch (e: any) {
-      toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });
+     } catch (e: any) {
+       toast({
+         title: e?.status === 409
+           ? t("contracting.projects.branchChangeBlocked", "تعذر تغيير فرع المشروع")
+           : t("common.errorOccurred", "حدث خطأ"),
+         description: e?.message,
+         variant: "destructive",
+       });
     } finally { setSaving(false); }
   }
 
@@ -247,6 +292,47 @@ export default function ContractingProjects() {
     return items;
   }, [costCenters, editing?.costCenterId, t]);
 
+  const branchItems: ComboboxItem[] = useMemo(() => {
+    const currentId = editing?.branchId == null ? null : Number(editing.branchId);
+    const seen = new Set<number>();
+    const items: ComboboxItem[] = [];
+    for (const branch of branches) {
+      const id = Number(branch.id);
+      if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+      seen.add(id);
+      const active = branch.isActive !== false;
+      // Inactive branches remain visible only when they are the historical
+      // value of the record being edited; they cannot be selected for a new
+      // project or used to move an existing project to an inactive branch.
+      if (!active && id !== currentId) continue;
+      items.push({
+        value: String(id),
+        label: `${branch.code} — ${branch.nameAr || branch.nameEn || `#${id}`}${!active ? ` (${t("contracting.projects.branchInactive", "غير نشط")})` : ""}`,
+        labelEn: branch.nameEn || undefined,
+        disabled: !active,
+        disabledReason: !active ? t("contracting.projects.branchInactive", "الفرع غير نشط") : undefined,
+      });
+    }
+    // Preserve a historical selection if it is no longer returned by the
+    // authorized branch catalogue.
+    if (currentId != null && !seen.has(currentId)) {
+      items.unshift({
+        value: String(currentId),
+        label: `#${currentId} (${t("contracting.projects.branchUnavailable", "الفرع المرتبط الحالي غير متاح للاختيار")})`,
+        disabled: true,
+        disabledReason: t("contracting.projects.branchUnavailable", "الفرع المرتبط الحالي غير متاح للاختيار"),
+      });
+    }
+    return items;
+  }, [branches, editing?.branchId, t]);
+
+  const exportProjects: ContractingProjectSnapshot[] = rows.map(project => ({
+    ...project,
+    branchName: project.branchId == null
+      ? null
+      : branches.find(branch => branch.id === project.branchId)?.nameAr || `#${project.branchId}`,
+  }));
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -257,10 +343,13 @@ export default function ContractingProjects() {
           <h1 className="text-2xl font-bold">{t("contracting.projects.title", "مشاريع المقاولات")}</h1>
           <p className="text-sm text-slate-500">{t("contracting.projects.subtitle", "إدارة جميع المشاريع الإنشائية")}</p>
         </div>
-        <Button onClick={() => setEditing(empty())}>
-          <Plus className="h-4 w-4 mx-1" />
-          {t("contracting.projects.new", "مشروع جديد")}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ContractingProjectsReportExportActions rows={exportProjects} />
+          <Button onClick={() => setEditing(empty())}>
+            <Plus className="h-4 w-4 mx-1" />
+            {t("contracting.projects.new", "مشروع جديد")}
+          </Button>
+        </div>
       </div>
 
       {editing && (
@@ -274,9 +363,9 @@ export default function ContractingProjects() {
           onClose={() => setEditing(null)}
           onSave={save}
           saving={saving}
-          saveDisabled={!editing.nameAr?.trim()}
+           saveDisabled={!editing.nameAr?.trim() || (isCreating && !editing.branchId)}
         >
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
             <Field label={t("contracting.projects.code", "الكود")}>
               <Input
                 value={
@@ -295,6 +384,63 @@ export default function ContractingProjects() {
             </Field>
             <Field label={t("contracting.projects.nameEn", "الاسم بالإنجليزية")}>
               <Input value={editing.nameEn ?? ""} onChange={e => setEditing({ ...editing, nameEn: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.branch", "الفرع")} required={isCreating}>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <SearchCombobox
+                    className="flex-1"
+                    items={branchItems}
+                    value={editing.branchId == null ? "" : String(editing.branchId)}
+                    onValueChange={value => {
+                      const branchId = value ? Number(value) : null;
+                      const changed = Number(editing.branchId ?? 0) !== Number(branchId ?? 0);
+                      setEditing({
+                        ...editing,
+                        branchId,
+                        ...(changed
+                          ? { customerId: null, clientName: "", costCenterId: null }
+                          : {}),
+                      });
+                    }}
+                    placeholder={isCreating
+                      ? t("contracting.projects.branchPlaceholder", "اختر فرع المشروع")
+                      : t("contracting.projects.branchOptionalPlaceholder", "بدون فرع")}
+                    searchPlaceholder={t("contracting.projects.branchSearchPlaceholder", "بحث بكود أو اسم الفرع...")}
+                    emptyText={branchesError
+                      ? t("contracting.projects.branchUnavailable", "تعذر تحميل الفروع")
+                      : t("contracting.projects.noBranches", "لا توجد فروع متاحة")}
+                    disabled={branchesLoading || !!branchesError}
+                    openOnFocus={false}
+                    testId="project-branch-picker"
+                  />
+                  {!isCreating && editing.branchId != null && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      title={t("contracting.projects.clearBranch", "إلغاء ربط الفرع")}
+                      aria-label={t("contracting.projects.clearBranch", "إلغاء ربط الفرع")}
+                      onClick={() => setEditing({
+                        ...editing,
+                        branchId: null,
+                        customerId: null,
+                        clientName: "",
+                        costCenterId: null,
+                      })}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+                {branchesLoading && <p className="text-[11px] text-muted-foreground">{t("contracting.projects.loadingBranches", "جارٍ تحميل الفروع...")}</p>}
+                {branchesError && (
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-destructive">
+                    <span>{t("contracting.projects.branchesLoadError", "تعذر تحميل الفروع")}</span>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => void loadBranches()}>{t("common.retry", "إعادة المحاولة")}</Button>
+                  </div>
+                )}
+              </div>
             </Field>
             <Field label={t("contracting.projects.client", "العميل")}>
               <div className="space-y-1.5">
@@ -385,20 +531,26 @@ export default function ContractingProjects() {
               <Input value={editing.location ?? ""} onChange={e => setEditing({ ...editing, location: e.target.value })} />
             </Field>
             <Field label={t("contracting.projects.type", "نوع المشروع")}>
-              <Select value={editing.projectType ?? "building"} onValueChange={v => setEditing({ ...editing, projectType: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                   {TYPES.map(ty => <SelectItem key={ty} value={ty}>{labelEnum(PROJECT_TYPE_LABEL, ty)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchCombobox
+                items={TYPES.map(ty => ({ value: ty, label: labelEnum(PROJECT_TYPE_LABEL, ty) }))}
+                value={editing.projectType ?? "building"}
+                onValueChange={projectType => setEditing({ ...editing, projectType })}
+                placeholder={t("contracting.projects.typePlaceholder", "اختر نوع المشروع")}
+                searchPlaceholder={t("contracting.projects.typeSearchPlaceholder", "بحث في أنواع المشاريع...")}
+                testId="project-type-picker"
+                openOnFocus={false}
+              />
             </Field>
             <Field label={t("contracting.projects.status", "الحالة")}>
-              <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {STATUSES.map(s => <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchCombobox
+                items={STATUSES.map(s => ({ value: s, label: STATUS_LABEL[s] }))}
+                value={editing.status ?? "draft"}
+                onValueChange={status => setEditing({ ...editing, status })}
+                placeholder={t("contracting.projects.statusPlaceholder", "اختر الحالة")}
+                searchPlaceholder={t("contracting.projects.statusSearchPlaceholder", "بحث في الحالات...")}
+                testId="project-status-picker"
+                openOnFocus={false}
+              />
             </Field>
             <Field label={t("contracting.projects.contractValue", "قيمة العقد (ر.س)")}>
               <Input type="number" value={editing.contractValue ?? "0"}
@@ -438,13 +590,19 @@ export default function ContractingProjects() {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t("contracting.projects.allStatuses", "كل الحالات")}</SelectItem>
-            {STATUSES.map(s => <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <SearchCombobox
+          className="w-[180px]"
+          items={[
+            { value: "all", label: t("contracting.projects.allStatuses", "كل الحالات") },
+            ...STATUSES.map(s => ({ value: s, label: STATUS_LABEL[s] })),
+          ]}
+          value={statusFilter}
+          onValueChange={setStatusFilter}
+          placeholder={t("contracting.projects.allStatuses", "كل الحالات")}
+          searchPlaceholder={t("contracting.projects.statusSearchPlaceholder", "بحث في الحالات...")}
+          testId="project-status-filter"
+          openOnFocus={false}
+        />
       </div>
 
       {/* Mobile cards (md-hidden) */}
@@ -465,6 +623,7 @@ export default function ContractingProjects() {
                 <div className="flex-1 min-w-0">
                   <Link href={`/contracting/projects/${p.id}`} className="font-bold text-sm hover:underline text-amber-900 block truncate">{p.nameAr}</Link>
                   {p.location && <p className="text-[11px] text-slate-500 truncate">{p.location}</p>}
+                   <p className="text-[11px] text-slate-500 truncate">{t("contracting.projects.branch", "الفرع")}: {p.branchId == null ? "—" : branches.find(branch => branch.id === p.branchId)?.nameAr || `#${p.branchId}`}</p>
                   {p.clientName && <p className="text-xs text-slate-700 truncate">{p.clientName}</p>}
                 </div>
               </div>
@@ -483,7 +642,7 @@ export default function ContractingProjects() {
               </div>
             </div>
             <div className="grid grid-cols-3 border-t divide-x divide-slate-100 [direction:ltr]">
-              <button onClick={() => setDeleting(p)} className="py-2.5 text-rose-600 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><Trash2 className="h-3.5 w-3.5" />حذف</button>
+               <button onClick={() => setDeleting(p)} className="py-2.5 text-rose-600 text-xs font-semibold hover:bg-rose-50 flex items-center justify-center gap-1"><Trash2 className="h-3.5 w-3.5" />حذف</button>
               <Link href={`/contracting/projects/${p.id}`} className="py-2.5 text-slate-700 text-xs font-semibold hover:bg-slate-50 flex items-center justify-center gap-1"><ExternalLink className="h-3.5 w-3.5" />فتح</Link>
               <button onClick={() => setEditing(p)} className="py-2.5 text-amber-700 text-xs font-semibold hover:bg-amber-50 flex items-center justify-center gap-1"><Pencil className="h-3.5 w-3.5" />تعديل</button>
             </div>
@@ -505,7 +664,8 @@ export default function ContractingProjects() {
             <TableRow>
               <TableHead>{t("contracting.projects.code", "الكود")}</TableHead>
               <TableHead>{t("contracting.projects.name", "الاسم")}</TableHead>
-              <TableHead>{t("contracting.projects.client", "العميل")}</TableHead>
+             <TableHead>{t("contracting.projects.branch", "الفرع")}</TableHead>
+             <TableHead>{t("contracting.projects.client", "العميل")}</TableHead>
               <TableHead>{t("contracting.projects.status", "الحالة")}</TableHead>
               <TableHead>{t("contracting.projects.contractValue", "قيمة العقد")}</TableHead>
               <TableHead>{t("contracting.projects.actualCost", "التكلفة الفعلية")}</TableHead>
@@ -514,11 +674,11 @@ export default function ContractingProjects() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading && rows.length === 0 && (
-              <TableRow><TableCell colSpan={8}><Skeleton className="h-32 w-full" /></TableCell></TableRow>
+             {loading && rows.length === 0 && (
+              <TableRow><TableCell colSpan={9}><Skeleton className="h-32 w-full" /></TableCell></TableRow>
             )}
-            {!loading && rows.length === 0 && (
-              <TableRow><TableCell colSpan={8} className="text-center text-sm text-slate-500 py-6">
+             {!loading && rows.length === 0 && (
+              <TableRow><TableCell colSpan={9} className="text-center text-sm text-slate-500 py-6">
                 {t("contracting.projects.empty", "لا توجد مشاريع — اضغط «مشروع جديد» للبدء")}
               </TableCell></TableRow>
             )}
@@ -531,7 +691,8 @@ export default function ContractingProjects() {
                   </Link>
                   {p.location && <div className="text-[11px] text-slate-500">{p.location}</div>}
                 </TableCell>
-                <TableCell>{p.clientName || "—"}</TableCell>
+                 <TableCell>{p.branchId == null ? "—" : branches.find(branch => branch.id === p.branchId)?.nameAr || `#${p.branchId}`}</TableCell>
+                 <TableCell>{p.clientName || "—"}</TableCell>
                 <TableCell><Badge variant={STATUS_TONE[p.status] ?? "default"}>{labelEnum(STATUS_LABEL, p.status)}</Badge></TableCell>
                 <TableCell className="tabular-nums">{Number(p.contractValue).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums">{Number(p.actualCost).toLocaleString("en-US")}</TableCell>
@@ -545,6 +706,10 @@ export default function ContractingProjects() {
                 </TableCell>
                 <TableCell className="text-end">
                   <div className="inline-flex gap-1">
+                     <ContractingProjectExportActions
+                       compact
+                       project={exportProjects.find(project => project.id === p.id) ?? p}
+                     />
                     <Link href={`/contracting/projects/${p.id}`}>
                       <Button size="sm" variant="ghost"><ExternalLink className="h-4 w-4" /></Button>
                     </Link>

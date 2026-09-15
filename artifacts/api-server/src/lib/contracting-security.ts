@@ -43,15 +43,31 @@ export function contractingMutationAction(
  * A warehouse option is visible when it belongs to the project's branch or is
  * a company-wide (NULL-branch) warehouse.  Company-wide warehouses are part
  * of the inventory read scope for every branch; the company predicate remains
- * enforced by the caller's query.  A project without a branch still has no
- * usable warehouse scope.
+ * enforced by the caller's query.  A project without a branch can therefore
+ * use a company-wide warehouse, but must not silently select a branch-specific
+ * warehouse: doing so would infer the project's branch from the user's choice.
  */
 export function contractingWarehouseAllowed(
   projectBranchId: number | null | undefined,
   warehouseBranchId: number | null | undefined,
 ): boolean {
-  return projectBranchId != null
-    && (warehouseBranchId == null || Number(projectBranchId) === Number(warehouseBranchId));
+  return warehouseBranchId == null
+    || (projectBranchId != null && Number(projectBranchId) === Number(warehouseBranchId));
+}
+
+/**
+ * Keep the distinction between an ordinary branch mismatch and a project
+ * whose branch is genuinely unknown.  Callers use this for a user-facing
+ * validation error rather than returning an apparently valid empty picker.
+ */
+export function contractingWarehouseError(
+  projectBranchId: number | null | undefined,
+  warehouseBranchId: number | null | undefined,
+): string | null {
+  if (contractingWarehouseAllowed(projectBranchId, warehouseBranchId)) return null;
+  return projectBranchId == null
+    ? "يجب تحديد فرع المشروع قبل اختيار مخزن مرتبط بفرع"
+    : "المخزن لا يتبع فرع المشروع";
 }
 
 /**

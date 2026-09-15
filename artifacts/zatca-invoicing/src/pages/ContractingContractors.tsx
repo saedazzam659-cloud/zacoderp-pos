@@ -7,9 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle, AlertDialogCancel, AlertDialogAction,
@@ -157,20 +155,26 @@ export default function ContractingContractors() {
               <Input value={editing.email ?? ""} onChange={e => setEditing({ ...editing, email: e.target.value })} />
             </Field>
             <Field label={t("contracting.contractors.specialty", "التخصص")}>
-              <Select value={editing.specialty ?? "general"} onValueChange={v => setEditing({ ...editing, specialty: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {SPECIALTIES.map(s => <SelectItem key={s} value={s}>{SPECIALTY_LABEL[s]}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchCombobox
+                items={SPECIALTIES.map(s => ({ value: s, label: SPECIALTY_LABEL[s] }))}
+                value={editing.specialty ?? "general"}
+                onValueChange={specialty => setEditing({ ...editing, specialty })}
+                placeholder={t("contracting.contractors.specialtyPlaceholder", "اختر التخصص")}
+                searchPlaceholder={t("contracting.contractors.specialtySearchPlaceholder", "بحث في التخصصات...")}
+                testId="contractor-specialty-picker"
+                openOnFocus={false}
+              />
             </Field>
             <Field label={t("contracting.contractors.status", "الحالة")}>
-              <Select value={editing.status ?? "active"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {STATUSES.map(s => <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchCombobox
+                items={STATUSES.map(s => ({ value: s, label: STATUS_LABEL[s] }))}
+                value={editing.status ?? "active"}
+                onValueChange={status => setEditing({ ...editing, status })}
+                placeholder={t("contracting.contractors.statusPlaceholder", "اختر الحالة")}
+                searchPlaceholder={t("contracting.contractors.statusSearchPlaceholder", "بحث في الحالات...")}
+                testId="contractor-status-picker"
+                openOnFocus={false}
+              />
             </Field>
             <Field label={t("contracting.contractors.rating", "التقييم (0-5)")}>
               <Input type="number" min={0} max={5} step={0.1} value={editing.rating ?? "0"}

@@ -442,9 +442,11 @@ async function priorTotals(
       || (String(row.billDate) === String(bill.billDate) && row.sourceBillId < bill.id);
     const sameChangeOrder = (row.line.changeOrderId ?? null) === changeOrderId;
     const sameContract = bill.direction === "incoming"
-      ? !bill.subcontractorContractId || row.subcontractorContractId === bill.subcontractorContractId
-      : !bill.ownerContractId || row.ownerContractId === bill.ownerContractId
-        || (changeOrderId != null && row.line.changeOrderId === changeOrderId);
+      ? bill.subcontractorContractId != null
+        && row.subcontractorContractId === bill.subcontractorContractId
+      : bill.ownerContractId != null
+        && (row.ownerContractId === bill.ownerContractId
+          || (changeOrderId != null && row.line.changeOrderId === changeOrderId));
     if (row.sourceBillId !== bill.id && row.billStatus !== "reversed"
       && row.direction === bill.direction && sameContract && sameChangeOrder && before) {
       previousQty += Number(row.line.currentQty);
@@ -482,9 +484,11 @@ async function priorContractValue(
     if (excludeLineId && row.line.id === excludeLineId) continue;
     if ((row.line.changeOrderId ?? null) !== changeOrderId) continue;
     const sameContract = bill.direction === "incoming"
-      ? !bill.subcontractorContractId || row.subcontractorContractId === bill.subcontractorContractId
-      : !bill.ownerContractId || row.ownerContractId === bill.ownerContractId
-        || (changeOrderId != null && row.line.changeOrderId === changeOrderId);
+      ? bill.subcontractorContractId != null
+        && row.subcontractorContractId === bill.subcontractorContractId
+      : bill.ownerContractId != null
+        && (row.ownerContractId === bill.ownerContractId
+          || (changeOrderId != null && row.line.changeOrderId === changeOrderId));
     if (row.sourceBillId === bill.id || row.billStatus === "reversed"
       || row.direction !== bill.direction || !sameContract) continue;
     const before = String(row.billDate) < String(bill.billDate)
@@ -496,9 +500,11 @@ async function priorContractValue(
   return total + rows
     .filter((row) => {
       const sameContract = bill.direction === "incoming"
-        ? !bill.subcontractorContractId || row.subcontractorContractId === bill.subcontractorContractId
-        : !bill.ownerContractId || row.ownerContractId === bill.ownerContractId
-          || (changeOrderId != null && row.line.changeOrderId === changeOrderId);
+        ? bill.subcontractorContractId != null
+          && row.subcontractorContractId === bill.subcontractorContractId
+        : bill.ownerContractId != null
+          && (row.ownerContractId === bill.ownerContractId
+            || (changeOrderId != null && row.line.changeOrderId === changeOrderId));
       return row.sourceBillId === bill.id && row.direction === bill.direction && sameContract
         && (row.line.changeOrderId ?? null) === changeOrderId
         && (!excludeLineId || row.line.id !== excludeLineId);
@@ -546,13 +552,14 @@ async function priorContractScopeValue(
     ? ownerContracts.find((contract) => contract.id === bill.ownerContractId)
     : undefined;
   const base = selected && ["change_order", "addendum"].includes(String(selected.contractType))
+    && selected.parentContractId != null
     ? ownerContracts.find((contract) => contract.id === selected.parentContractId)
-    : selected ?? ownerContracts.find((contract) => contract.contractType === "main");
+    : selected;
   const scopeOwnerIds = new Set<number>(base ? [base.id] : []);
   const scopeOrderIds = new Set<number>();
   for (const contract of ownerContracts) {
     if (!["change_order", "addendum"].includes(String(contract.contractType))) continue;
-    if (contract.parentContractId == null || contract.parentContractId === base?.id) {
+    if (base?.id != null && contract.parentContractId === base.id) {
       scopeOwnerIds.add(contract.id);
       scopeOrderIds.add(contract.id);
     }
@@ -562,10 +569,11 @@ async function priorContractScopeValue(
     if (excludeLineId && row.line.id === excludeLineId) continue;
     if (row.billStatus === "reversed" || row.direction !== bill.direction) continue;
     const sameContract = bill.direction === "incoming"
-      ? !bill.subcontractorContractId || row.subcontractorContractId === bill.subcontractorContractId
-      : !bill.ownerContractId
-        || scopeOwnerIds.has(Number(row.ownerContractId))
-        || row.line.changeOrderId != null && scopeOrderIds.has(row.line.changeOrderId);
+      ? bill.subcontractorContractId != null
+        && row.subcontractorContractId === bill.subcontractorContractId
+      : bill.ownerContractId != null
+        && (scopeOwnerIds.has(Number(row.ownerContractId))
+          || row.line.changeOrderId != null && scopeOrderIds.has(row.line.changeOrderId));
     if (!sameContract) continue;
     const before = row.sourceBillId !== bill.id && (
       String(row.billDate) < String(bill.billDate)
@@ -603,20 +611,22 @@ async function contractCeiling(
       eq(contractingOwnerContractsTable.companyId, companyId),
       eq(contractingOwnerContractsTable.projectId, bill.projectId),
     ));
-    if (contracts.length > 0) {
+    // An unlinked legacy bill has no contract scope.  Keep its project-level
+    // compatibility value below, but never choose the first owner contract.
+    if (contracts.length > 0 && bill.ownerContractId != null) {
       const selected = bill.ownerContractId
         ? contracts.find((contract) => contract.id === bill.ownerContractId)
         : undefined;
       const base = selected && ["change_order", "addendum"].includes(String(selected.contractType))
         ? contracts.find((contract) => contract.id === selected.parentContractId)
-        : selected ?? contracts.find((contract) => contract.contractType === "main");
+        : selected;
       const baseId = base?.id;
       const approvedOrders = contracts.filter((contract) =>
         ["change_order", "addendum"].includes(String(contract.contractType))
         && ["active", "approved"].includes(String(contract.status))
         && (changeOrderId != null
           ? contract.id === changeOrderId
-          : contract.parentContractId == null || contract.parentContractId === baseId),
+          : baseId != null && contract.parentContractId === baseId),
       );
       const total = Number(base?.value ?? 0) + approvedOrders
         .reduce((sum, contract) => sum + Number(contract.value), 0);
@@ -753,7 +763,7 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
   const selectedSub = subContracts.find((contract) => contract.id === bill.subcontractorContractId);
   const mainOwner = selectedOwner && ["change_order", "addendum"].includes(selectedOwner.contractType)
     ? ownerContracts.find((contract) => contract.id === selectedOwner.parentContractId)
-    : selectedOwner ?? ownerContracts.find((contract) => contract.contractType === "main");
+    : selectedOwner;
   const originalContractValue = bill.direction === "incoming"
     ? Number(selectedSub?.value ?? 0)
     : Number(mainOwner?.value ?? selectedOwner?.value ?? project[0]?.contractValue ?? 0);
@@ -764,7 +774,8 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
       .filter((contract) =>
         (contract.contractType === "change_order" || contract.contractType === "addendum")
         && ["active", "approved"].includes(contract.status)
-        && (contract.parentContractId == null || contract.parentContractId === baseContractId),
+        && baseContractId != null
+        && contract.parentContractId === baseContractId,
       )
       .reduce((total, contract) => total + Number(contract.value), 0);
   const adjustedContractValue = originalContractValue + changeOrdersValue;
@@ -1530,13 +1541,8 @@ export async function contractingBillsReport(
     ownerContractsByProject.set(contract.projectId, projectContracts);
   }
   const incomingContractValues = new Map<number, number>();
-  const incomingProjectContractValues = new Map<number, number>();
   for (const project of projectRows) {
     const projectContracts = reportSubContracts.filter((contract) => contract.projectId === project.id);
-    incomingProjectContractValues.set(
-      project.id,
-      projectContracts.reduce((total, contract) => total + Number(contract.value), 0),
-    );
     for (const contract of projectContracts) {
       incomingContractValues.set(contract.id, Number(contract.value));
     }
@@ -1570,7 +1576,7 @@ export async function contractingBillsReport(
     const outgoingScope = bill.direction === "outgoing" ? outgoingContractScope(bill) : null;
     const contractValue = bill.direction === "incoming"
       ? incomingContractValues.get(Number(bill.subcontractorContractId))
-        ?? incomingProjectContractValues.get(bill.projectId) ?? 0
+        ?? Number(projectInfo.get(bill.projectId)?.contractValue ?? 0)
       : outgoingScope?.value ?? 0;
     const cumulativeWorks = billLines.length > 0
       ? billLines.reduce((total, line) => total + Number(line.cumulativeValue), 0)

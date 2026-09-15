@@ -3,12 +3,14 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { FileText, Pencil, Plus, Trash2, UploadCloud } from "lucide-react";
+import { ContractingBillExportActions } from "@/components/ContractingExportActions";
+import type { ContractingBillSnapshot, ContractingProjectSnapshot } from "@/lib/contractingPrintExport";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -147,6 +149,22 @@ function money(value: number): string {
   return Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
+const DEDUCTION_KIND_ITEMS: ComboboxItem[] = [
+  { value: "advance", label: "دفعة مقدمة" },
+  { value: "retention", label: "ضمان أعمال (القيمة الحالية)" },
+  { value: "materials", label: "مواد / عهد" },
+  { value: "settlement", label: "تسوية" },
+  { value: "other", label: "أخرى" },
+];
+
+const ATTACHMENT_CATEGORY_ITEMS: ComboboxItem[] = [
+  { value: "invoice", label: "فاتورة" },
+  { value: "completion_certificate", label: "شهادة إنجاز" },
+  { value: "handover", label: "محضر استلام" },
+  { value: "penalty", label: "مستند غرامة" },
+  { value: "other", label: "أخرى" },
+];
+
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1">
@@ -156,12 +174,50 @@ function DetailField({ label, children }: { label: string; children: React.React
   );
 }
 
+function BillDetailPicker({
+  items,
+  value,
+  onValueChange,
+  placeholder,
+  searchPlaceholder,
+  emptyText = "لا توجد نتائج",
+  className,
+  testId,
+}: {
+  items: ComboboxItem[];
+  value: string;
+  onValueChange: (value: string) => void;
+  placeholder: string;
+  searchPlaceholder?: string;
+  emptyText?: string;
+  className?: string;
+  testId: string;
+}) {
+  return (
+    <SearchCombobox
+      className={className}
+      items={items}
+      value={value}
+      onValueChange={onValueChange}
+      placeholder={placeholder}
+      searchPlaceholder={searchPlaceholder}
+      emptyText={emptyText}
+      openOnFocus={false}
+      testId={testId}
+    />
+  );
+}
+
 export default function ContractingBillDetailEditor({
   billId,
   projectId,
+  bill,
+  project,
 }: {
   billId: number;
   projectId: number;
+  bill?: Partial<ContractingBillSnapshot>;
+  project?: ContractingProjectSnapshot;
 }) {
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
@@ -428,15 +484,36 @@ export default function ContractingBillDetailEditor({
           <p className="text-[11px] text-slate-500">الكميات السابقة والتراكمية يحسبها الخادم من المستخلصات السابقة.</p>
         </div>
         <div className="flex items-center gap-2">
+          {bill?.direction && bill.billNumber && (
+            <ContractingBillExportActions
+              compact
+              snapshot={{
+                bill: {
+                  ...(bill ?? {}),
+                  id: billId,
+                  projectId,
+                  projectCode: project?.code,
+                  projectName: project?.nameAr || project?.nameEn,
+                  direction: bill.direction,
+                  billNumber: bill.billNumber,
+                  billDate: bill.billDate ?? "",
+                } as ContractingBillSnapshot,
+                project,
+              }}
+            />
+          )}
           <Badge variant={locked ? "secondary" : "default"}>{STATUS_LABEL[detail.state] || detail.state}</Badge>
           {nextStates.length > 0 && (
             <>
-              <Select value={workflowState} onValueChange={setWorkflowState}>
-                <SelectTrigger className="h-8 w-36"><SelectValue placeholder="الإجراء التالي" /></SelectTrigger>
-                <SelectContent>
-                  {nextStates.map((state) => <SelectItem key={state} value={state}>{STATUS_LABEL[state] || state}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <BillDetailPicker
+                className="w-36"
+                items={nextStates.map((state) => ({ value: state, label: STATUS_LABEL[state] || state }))}
+                value={workflowState}
+                onValueChange={setWorkflowState}
+                placeholder="الإجراء التالي"
+                searchPlaceholder="بحث في الإجراءات..."
+                testId="bill-workflow-picker"
+              />
               <Button size="sm" onClick={() => void transition()} disabled={transitioning || !workflowState || workflowState === detail.state}>{transitioning ? "جار الحفظ…" : "تسجيل"}</Button>
             </>
           )}
@@ -475,19 +552,28 @@ export default function ContractingBillDetailEditor({
         {!locked && (
           <div className="grid grid-cols-2 gap-2 rounded border bg-white p-3 md:grid-cols-6 dark:bg-slate-900">
             <DetailField label="بند التنفيذ">
-              <Select value={line.workItemId} onValueChange={(value) => setLine({ ...line, workItemId: value })}>
-                <SelectTrigger><SelectValue placeholder="اختر بنداً" /></SelectTrigger>
-                <SelectContent>{workItems.map((item) => <SelectItem key={item.id} value={String(item.id)}>{item.code ? `${item.code} — ` : ""}{item.nameAr}</SelectItem>)}</SelectContent>
-              </Select>
+              <BillDetailPicker
+                items={workItems.map((item) => ({ value: String(item.id), label: `${item.code ? `${item.code} — ` : ""}${item.nameAr}` }))}
+                value={line.workItemId}
+                onValueChange={(value) => setLine({ ...line, workItemId: value })}
+                placeholder="اختر بنداً"
+                searchPlaceholder="بحث بالكود أو اسم البند..."
+                emptyText="لا توجد بنود تنفيذ"
+                testId="bill-line-work-item-picker"
+              />
             </DetailField>
             <DetailField label="أمر التغيير المعتمد (اختياري)">
-              <Select value={line.changeOrderId || "__none__"} onValueChange={(value) => setLine({ ...line, changeOrderId: value === "__none__" ? "" : value })}>
-                <SelectTrigger><SelectValue placeholder="بدون أمر تغيير" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">بدون أمر تغيير — بند legacy</SelectItem>
-                  {ownerChangeOrders.map((contract) => <SelectItem key={contract.id} value={String(contract.id)}>#{contract.contractNumber} · {money(Number(contract.value))} ر.س</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <BillDetailPicker
+                items={[
+                  { value: "__none__", label: "بدون أمر تغيير — بند legacy" },
+                  ...ownerChangeOrders.map((contract) => ({ value: String(contract.id), label: `#${contract.contractNumber} · ${money(Number(contract.value))} ر.س` })),
+                ]}
+                value={line.changeOrderId || "__none__"}
+                onValueChange={(value) => setLine({ ...line, changeOrderId: value === "__none__" ? "" : value })}
+                placeholder="بدون أمر تغيير"
+                searchPlaceholder="بحث برقم أمر التغيير..."
+                testId="bill-line-change-order-picker"
+              />
             </DetailField>
             <DetailField label="الكمية الحالية"><Input type="number" min="0" value={line.currentQty} onChange={(e) => setLine({ ...line, currentQty: e.target.value })} /></DetailField>
             <DetailField label="قيمة الأعمال الحالية"><Input type="number" min="0" value={line.currentValue} onChange={(e) => setLine({ ...line, currentValue: e.target.value })} /></DetailField>
@@ -527,9 +613,16 @@ export default function ContractingBillDetailEditor({
         <h5 className="font-semibold">الاستقطاعات ({detail.deductions.length})</h5>
         {!locked && (
           <div className="grid grid-cols-2 gap-2 rounded border bg-white p-3 md:grid-cols-6 dark:bg-slate-900">
-            <DetailField label="النوع"><Select value={deduction.kind} onValueChange={(value) => setDeduction({ ...deduction, kind: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
-              <SelectItem value="advance">دفعة مقدمة</SelectItem><SelectItem value="retention">ضمان أعمال (القيمة الحالية)</SelectItem><SelectItem value="materials">مواد / عهد</SelectItem><SelectItem value="settlement">تسوية</SelectItem><SelectItem value="other">أخرى</SelectItem>
-            </SelectContent></Select></DetailField>
+            <DetailField label="النوع">
+              <BillDetailPicker
+                items={DEDUCTION_KIND_ITEMS}
+                value={deduction.kind}
+                onValueChange={(value) => setDeduction({ ...deduction, kind: value })}
+                placeholder="اختر النوع"
+                searchPlaceholder="بحث في أنواع الاستقطاع..."
+                testId="bill-deduction-kind-picker"
+              />
+            </DetailField>
             <DetailField label="النسبة"><Input type="number" min="0" max="100" value={deduction.percentage} onChange={(e) => setDeduction({ ...deduction, percentage: e.target.value })} /></DetailField>
             <DetailField label="القيمة"><Input type="number" min="0" value={deduction.amount} onChange={(e) => setDeduction({ ...deduction, amount: e.target.value })} /></DetailField>
             <DetailField label="السبب"><Input value={deduction.reason} onChange={(e) => setDeduction({ ...deduction, reason: e.target.value })} /></DetailField>
@@ -540,9 +633,16 @@ export default function ContractingBillDetailEditor({
         <div className="space-y-2 text-xs">{detail.deductions.map((row) => (
           editingDeduction?.id === row.id ? (
             <div key={row.id} className="grid grid-cols-2 gap-2 rounded border bg-white p-3 dark:bg-slate-900 md:grid-cols-7" data-testid={`editor-deduction-${row.id}`}>
-              <DetailField label="النوع"><Select value={editingDeduction.draft.kind} onValueChange={(value) => setEditingDeduction({ ...editingDeduction, draft: { ...editingDeduction.draft, kind: value } })}><SelectTrigger data-testid={`select-edit-deduction-kind-${row.id}`}><SelectValue /></SelectTrigger><SelectContent>
-                <SelectItem value="advance">دفعة مقدمة</SelectItem><SelectItem value="retention">ضمان أعمال (القيمة الحالية)</SelectItem><SelectItem value="materials">مواد / عهد</SelectItem><SelectItem value="settlement">تسوية</SelectItem><SelectItem value="other">أخرى</SelectItem>
-              </SelectContent></Select></DetailField>
+              <DetailField label="النوع">
+                <BillDetailPicker
+                  items={DEDUCTION_KIND_ITEMS}
+                  value={editingDeduction.draft.kind}
+                  onValueChange={(value) => setEditingDeduction({ ...editingDeduction, draft: { ...editingDeduction.draft, kind: value } })}
+                  placeholder="اختر النوع"
+                  searchPlaceholder="بحث في أنواع الاستقطاع..."
+                  testId={`select-edit-deduction-kind-${row.id}`}
+                />
+              </DetailField>
               <DetailField label="النسبة"><Input data-testid={`input-edit-deduction-percentage-${row.id}`} type="number" min="0" max="100" value={editingDeduction.draft.percentage} onChange={(e) => setEditingDeduction({ ...editingDeduction, draft: { ...editingDeduction.draft, percentage: e.target.value } })} /></DetailField>
               <DetailField label="القيمة"><Input data-testid={`input-edit-deduction-amount-${row.id}`} type="number" min="0" value={editingDeduction.draft.amount} onChange={(e) => setEditingDeduction({ ...editingDeduction, draft: { ...editingDeduction.draft, amount: e.target.value } })} /></DetailField>
               <DetailField label="السبب"><Input data-testid={`input-edit-deduction-reason-${row.id}`} value={editingDeduction.draft.reason} onChange={(e) => setEditingDeduction({ ...editingDeduction, draft: { ...editingDeduction.draft, reason: e.target.value } })} /></DetailField>
@@ -634,9 +734,17 @@ export default function ContractingBillDetailEditor({
         <div className="flex items-center justify-between"><h5 className="font-semibold"><FileText className="ml-1 inline h-4 w-4" />المرفقات ({detail.attachments.length})</h5></div>
         {!locked && (
           <div className="flex flex-wrap items-end gap-2 rounded border bg-white p-3 dark:bg-slate-900">
-            <DetailField label="نوع المرفق"><Select value={fileCategory} onValueChange={setFileCategory}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent>
-              <SelectItem value="invoice">فاتورة</SelectItem><SelectItem value="completion_certificate">شهادة إنجاز</SelectItem><SelectItem value="handover">محضر استلام</SelectItem><SelectItem value="penalty">مستند غرامة</SelectItem><SelectItem value="other">أخرى</SelectItem>
-            </SelectContent></Select></DetailField>
+            <DetailField label="نوع المرفق">
+              <BillDetailPicker
+                className="w-48"
+                items={ATTACHMENT_CATEGORY_ITEMS}
+                value={fileCategory}
+                onValueChange={setFileCategory}
+                placeholder="اختر نوع المرفق"
+                searchPlaceholder="بحث في أنواع المرفقات..."
+                testId="bill-attachment-category-picker"
+              />
+            </DetailField>
             <label className="inline-flex h-9 cursor-pointer items-center rounded-md bg-sky-600 px-3 text-sm text-white hover:bg-sky-700">
               <UploadCloud className="ml-1 h-4 w-4" />{uploading ? "جار الرفع…" : "رفع ملف"}
               <input type="file" className="hidden" disabled={uploading} onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadAttachment(file); e.currentTarget.value = ""; }} />
@@ -647,9 +755,17 @@ export default function ContractingBillDetailEditor({
           editingAttachment?.id === row.id ? (
             <div key={row.id} className="flex flex-wrap items-end gap-2 rounded border bg-white p-3 dark:bg-slate-900" data-testid={`editor-attachment-${row.id}`}>
               <DetailField label="اسم الملف"><Input value={editingAttachment.filename} onChange={(e) => setEditingAttachment({ ...editingAttachment, filename: e.target.value })} data-testid={`input-edit-attachment-filename-${row.id}`} /></DetailField>
-              <DetailField label="نوع المرفق"><Select value={editingAttachment.category} onValueChange={(value) => setEditingAttachment({ ...editingAttachment, category: value })}><SelectTrigger className="w-48" data-testid={`select-edit-attachment-category-${row.id}`}><SelectValue /></SelectTrigger><SelectContent>
-                <SelectItem value="invoice">فاتورة</SelectItem><SelectItem value="completion_certificate">شهادة إنجاز</SelectItem><SelectItem value="handover">محضر استلام</SelectItem><SelectItem value="penalty">مستند غرامة</SelectItem><SelectItem value="other">أخرى</SelectItem>
-              </SelectContent></Select></DetailField>
+              <DetailField label="نوع المرفق">
+                <BillDetailPicker
+                  className="w-48"
+                  items={ATTACHMENT_CATEGORY_ITEMS}
+                  value={editingAttachment.category}
+                  onValueChange={(value) => setEditingAttachment({ ...editingAttachment, category: value })}
+                  placeholder="اختر نوع المرفق"
+                  searchPlaceholder="بحث في أنواع المرفقات..."
+                  testId={`select-edit-attachment-category-${row.id}`}
+                />
+              </DetailField>
               <Button size="sm" disabled={savingEdit !== null} onClick={() => void updateAttachment()} data-testid={`button-save-attachment-${row.id}`}>{savingEdit === "attachment" ? "جار الحفظ…" : "حفظ"}</Button>
               <Button size="sm" variant="outline" disabled={savingEdit !== null} onClick={() => setEditingAttachment(null)} data-testid={`button-cancel-attachment-${row.id}`}>إلغاء</Button>
             </div>

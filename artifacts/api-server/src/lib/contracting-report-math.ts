@@ -29,10 +29,8 @@ export function reportOwnerContractScope(
     && ["change_order", "addendum"].includes(selected.contractType)
     && selected.parentContractId != null
     ? byId.get(selected.parentContractId) ?? selected
-    : selected ?? contracts.find((contract) => contract.contractType === "main");
-  const baseContractId = base?.id ?? selectedContractId ?? null;
-  const legacyBaseContractId = contracts.find((contract) => contract.contractType === "main")?.id
-    ?? baseContractId;
+    : selected;
+  const baseContractId = base?.id ?? null;
   const baseValue = Number(base?.value ?? selected?.value ?? projectContractValue ?? 0);
   const approvedChildChangeOrders = contracts
     .filter((contract) =>
@@ -40,9 +38,6 @@ export function reportOwnerContractScope(
       && contract.status === "approved"
       && (
         contract.parentContractId === baseContractId
-        // Older child rows did not carry a parent link. Scope those legacy
-        // rows to the project's primary base only, exactly once.
-        || (contract.parentContractId == null && baseContractId === legacyBaseContractId)
       ),
     )
     .reduce((total, contract) => total + Number(contract.value), 0);
