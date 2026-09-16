@@ -8,6 +8,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { contractWorkItemDefaults } from "@/lib/contractingWorkItemDefaults";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -187,11 +188,11 @@ export default function ContractingContractBoqEditor({
 
   function chooseWorkItem(value: string) {
     const selected = workItems.find(item => String(item.id) === value);
-    setDraft(current => current ? {
+    if (!selected) return;
+    setDraft(current => !current || current.workItemId === value ? current : {
       ...current,
-      workItemId: value,
-      unit: current.unit || selected?.unit || "",
-    } : current);
+      ...contractWorkItemDefaults(selected),
+    });
   }
 
   function chooseBaseLine(value: string) {
@@ -294,6 +295,13 @@ export default function ContractingContractBoqEditor({
               testId="contract-boq-work-item-picker"
             />
           </div>
+          {draft.workItemId && (
+            <p className="col-span-2 rounded border border-sky-100 bg-sky-50 p-2 text-xs leading-5 text-sky-900 md:col-span-4 dark:bg-sky-950 dark:text-sky-100">
+              كمية البند المخططة بالمشروع: <strong>{workItems.find(item => String(item.id) === draft.workItemId)?.plannedQty ?? "—"} {workItems.find(item => String(item.id) === draft.workItemId)?.unit ?? ""}</strong>.
+              {" "}تُقترح عند اختيار البند؛ عدّل كمية هذا العقد وأدخل سعره المتفق عليه. لا يُنقل سعر المالك أو التكلفة التخطيطية تلقائيًا.
+              {" "}بعد حفظ السطر يظهر البند في مستخلصات هذا العقد لإدخال التنفيذ ونسبة الاعتماد.
+            </p>
+          )}
           {direction === "subcontract" && (
             <div className="col-span-2">
               <label className="text-[11px] text-slate-600">سطر المالك المصدر (اختياري)</label>
