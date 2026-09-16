@@ -7,6 +7,7 @@ import { requireContractingCapability } from "../lib/contracting-security.js";
 import {
   ensureContractingBillDetailsTables,
   listBillDetails,
+  certificationPreview,
   createBillLine,
   saveBillLines,
   updateBillLine,
@@ -45,6 +46,29 @@ router.use((req, res, next) => {
   next();
 });
 router.use(requirePermission("contracting", "view"));
+// This preview is deliberately read-only: keep it ahead of the legacy
+// detail-table healer, whose middleware performs additive DDL for older
+// tenants.
+router.get("/projects/:projectId/certification-preview", async (req, res) => {
+  const cid = await companyId(req, res);
+  if (!cid) return;
+  try {
+    res.json(await certificationPreview(
+      cid,
+      Number(req.params.projectId),
+      {
+        direction: req.query.direction,
+        ownerContractId: req.query.ownerContractId,
+        subcontractorContractId: req.query.subcontractorContractId,
+        billDate: req.query.billDate,
+      },
+      req.authUser,
+    ));
+  } catch (caught) {
+    fail(res, caught);
+  }
+});
+
 router.use(async (_req, _res, next) => {
   try {
     await ensureContractingBillDetailsTables();

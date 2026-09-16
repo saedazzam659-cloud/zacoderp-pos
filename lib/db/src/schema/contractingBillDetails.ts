@@ -7,6 +7,7 @@ import {
   boolean,
   timestamp,
   date,
+  jsonb,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -59,6 +60,15 @@ export const contractingBillLinesTable = pgTable(
     previousValue: numeric("previous_value", { precision: 14, scale: 2 }).notNull().default("0"),
     currentValue: numeric("current_value", { precision: 14, scale: 2 }).notNull().default("0"),
     cumulativeValue: numeric("cumulative_value", { precision: 14, scale: 2 }).notNull().default("0"),
+    // Certification is deliberately nullable for legacy rows. A NULL
+    // extension value means that the historical value was fully certified.
+    executionValue: numeric("execution_value", { precision: 14, scale: 2 }),
+    certificationPercent: numeric("certification_percent", { precision: 5, scale: 2 }),
+    currentExecutionCertifiedValue: numeric("current_execution_certified_value", { precision: 14, scale: 2 }),
+    priorPendingCertifiedValue: numeric("prior_pending_certified_value", { precision: 14, scale: 2 }),
+    certificationReason: text("certification_reason"),
+    pendingCertificationAllocations: jsonb("pending_certification_allocations")
+      .$type<Array<{ sourceLineId: number; amount: string }>>(),
     excessApproved: boolean("excess_approved").notNull().default(false),
     excessApprovalReason: text("excess_approval_reason"),
     excessApprovedByUserId: integer("excess_approved_by_user_id")

@@ -120,6 +120,14 @@ export interface ContractingBillLineSnapshot {
   currentValue?: string | number | null;
   cumulativeValue?: string | number | null;
   changeOrderNumber?: string | null;
+  unitPriceSnapshot?: string | number | null;
+  executionValue?: string | number | null;
+  certificationPercent?: string | number | null;
+  currentExecutionCertifiedValue?: string | number | null;
+  priorPendingCertifiedValue?: string | number | null;
+  previousPendingValue?: string | number | null;
+  pendingValue?: string | number | null;
+  certificationReason?: string | null;
 }
 
 export interface ContractingBillDetailSnapshot {
@@ -223,7 +231,13 @@ const CONTRACTING_BILL_COLUMNS: ExportColumn[] = [
   { key: "item", header: "بند التنفيذ", width: 28 },
   { key: "unit", header: "الوحدة", width: 12 },
   { key: "previousQty", header: "الكمية السابقة", width: 14, numFmt: "#,##0.###" },
-  { key: "currentQty", header: "الكمية الحالية", width: 14, numFmt: "#,##0.###" },
+  { key: "currentQty", header: "التنفيذ الفعلي الحالي", width: 20, numFmt: "#,##0.###" },
+  { key: "executionValue", header: "قيمة التنفيذ الحالي", width: 20, numFmt: "#,##0.00" },
+  { key: "certificationPercent", header: "اعتماد التنفيذ الحالي %", width: 22, numFmt: "#,##0.00" },
+  { key: "currentExecutionCertifiedValue", header: "المعتمد من التنفيذ الحالي", width: 24, numFmt: "#,##0.00" },
+  { key: "priorPendingCertifiedValue", header: "اعتماد معلّق سابق", width: 20, numFmt: "#,##0.00" },
+  { key: "pendingValue", header: "قيمة متبقية معلّقة", width: 20, numFmt: "#,##0.00" },
+  { key: "certificationReason", header: "سبب ومرجع الاعتماد", width: 30 },
   { key: "cumulativeQty", header: "الكمية التراكمية", width: 16, numFmt: "#,##0.###" },
   { key: "previousWorks", header: "الأعمال السابقة", width: 16, numFmt: "#,##0.00" },
   { key: "currentWorks", header: "الأعمال الحالية", width: 16, numFmt: "#,##0.00" },
@@ -288,6 +302,12 @@ function reportRow(
     unit: text(line?.unit || ""),
     previousQty: optionalNumber(line?.previousQty),
     currentQty: optionalNumber(line?.currentQty),
+    executionValue: optionalNumber(line?.executionValue ?? line?.currentValue),
+    certificationPercent: optionalNumber(line?.certificationPercent ?? 100),
+    currentExecutionCertifiedValue: optionalNumber(line?.currentExecutionCertifiedValue ?? line?.currentValue),
+    priorPendingCertifiedValue: optionalNumber(line?.priorPendingCertifiedValue ?? 0),
+    pendingValue: optionalNumber(line?.pendingValue ?? 0),
+    certificationReason: line?.certificationReason ?? "",
     cumulativeQty: optionalNumber(line?.cumulativeQty),
     previousWorks: optionalNumber(line?.previousValue ?? summary?.previousWorks ?? bill.previousWorks),
     currentWorks: optionalNumber(line?.currentValue ?? summary?.currentWorks ?? bill.currentWorks ?? bill.grossAmount),
@@ -375,7 +395,7 @@ export function buildContractingModel14Html(snapshot: ContractingBillPrintSnapsh
     itemName: line.workItemName || line.workItemCode || "—",
     unit: line.unit || "—",
     qty: line.currentQty ?? 0,
-    unitPrice: numberValue(line.currentQty) > 0
+    unitPrice: line.unitPriceSnapshot != null ? numberValue(line.unitPriceSnapshot) : numberValue(line.currentQty) > 0
       ? numberValue(line.currentValue) / numberValue(line.currentQty)
       : 0,
     vatRate: bill.vatPercent ?? 0,
@@ -384,6 +404,13 @@ export function buildContractingModel14Html(snapshot: ContractingBillPrintSnapsh
     cumulativeQty: line.cumulativeQty ?? 0,
     previousValue: line.previousValue ?? 0,
     currentValue: line.currentValue ?? 0,
+    executionValue: line.executionValue ?? null,
+    certificationPercent: line.certificationPercent ?? null,
+    currentExecutionCertifiedValue: line.currentExecutionCertifiedValue ?? line.currentValue ?? 0,
+    priorPendingCertifiedValue: line.priorPendingCertifiedValue ?? 0,
+    previousPendingValue: line.previousPendingValue ?? 0,
+    pendingValue: line.pendingValue ?? 0,
+    certificationReason: line.certificationReason ?? "",
     cumulativeValue: line.cumulativeValue ?? 0,
     changeOrderNumber: line.changeOrderNumber ?? null,
   }));

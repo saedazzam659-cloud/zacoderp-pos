@@ -32,6 +32,12 @@ import {
   calculateSignedContractingBillNet,
   sumExactCents,
 } from "./contracting-bill-adjustment-math.js";
+import {
+  calculateBoqCertification,
+  pendingValueForBoqLines,
+  type BoqCertificationResult,
+  type CertificationPriorLine,
+} from "./contracting-boq-certification.js";
 
 /**
  * Detail CRUD remains separate, but workflow approval delegates to the
@@ -592,6 +598,88 @@ async function priorBoqTotals(
   return { previousQty, previousValue };
 }
 
+/**
+ * Return the same certified chronological source lines used by the BOQ
+ * certification helper. Drafts must never be allowed to release a pending
+ * amount that only exists on another draft.
+ */
+async function priorBoqCertificationLines(
+  companyId: number,
+  bill: typeof contractingProgressBillsTable.$inferSelect,
+  boqLineId: number,
+  excludeLineId?: number,
+  executor: any = db,
+): Promise<CertificationPriorLine[]> {
+  const rows = await executor.select({
+    line: contractingBillLinesTable,
+    billDate: contractingProgressBillsTable.billDate,
+    sourceBillId: contractingProgressBillsTable.id,
+    billStatus: contractingProgressBillsTable.status,
+    direction: contractingProgressBillsTable.direction,
+    ownerContractId: contractingProgressBillsTable.ownerContractId,
+    subcontractorContractId: contractingProgressBillsTable.subcontractorContractId,
+  }).from(contractingBillLinesTable).innerJoin(
+    contractingProgressBillsTable,
+    eq(contractingBillLinesTable.billId, contractingProgressBillsTable.id),
+  ).where(and(
+    eq(contractingBillLinesTable.companyId, companyId),
+    eq(contractingBillLinesTable.projectId, bill.projectId),
+    eq(contractingBillLinesTable.boqLineId, boqLineId),
+    eq(contractingProgressBillsTable.companyId, companyId),
+    eq(contractingProgressBillsTable.projectId, bill.projectId),
+  ));
+  return rows
+    .filter((row: any) => {
+      if (excludeLineId && row.line.id === excludeLineId) return false;
+      const before = String(row.billDate) < String(bill.billDate)
+        || (String(row.billDate) === String(bill.billDate) && row.sourceBillId < bill.id);
+      const exactContract = bill.direction === "outgoing"
+        ? row.direction === "outgoing" && row.ownerContractId === bill.ownerContractId
+        : row.direction === "incoming" && row.subcontractorContractId === bill.subcontractorContractId;
+      return before && exactContract
+        && ["approved", "certified", "posted", "partially_paid", "paid"].includes(String(row.billStatus));
+    })
+    .sort((a: any, b: any) =>
+      String(a.billDate).localeCompare(String(b.billDate))
+      || Number(a.sourceBillId) - Number(b.sourceBillId)
+      || Number(a.line.id) - Number(b.line.id),
+    )
+    .map((row: any) => row.line as CertificationPriorLine);
+}
+
+async function calculateLineCertification(
+  companyId: number,
+  bill: typeof contractingProgressBillsTable.$inferSelect,
+  boqLineId: number,
+  unitPrice: number,
+  input: {
+    currentQty: number;
+    contractQuantity?: number;
+    certificationPercent?: unknown;
+    priorPendingCertifiedValue?: unknown;
+    certificationReason?: unknown;
+  },
+  excludeLineId?: number,
+  executor: any = db,
+): Promise<BoqCertificationResult> {
+  const priorLines = await priorBoqCertificationLines(
+    companyId,
+    bill,
+    boqLineId,
+    excludeLineId,
+    executor,
+  );
+  return calculateBoqCertification({
+    currentQty: input.currentQty,
+    unitPrice,
+    contractQuantity: input.contractQuantity,
+    certificationPercent: input.certificationPercent as any,
+    priorPendingCertifiedValue: input.priorPendingCertifiedValue as any,
+    certificationReason: input.certificationReason == null ? null : String(input.certificationReason),
+    priorLines,
+  });
+}
+
 async function assertApprovedChangeOrder(
   companyId: number,
   projectId: number,
@@ -1004,6 +1092,12 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
       previousValue: contractingBillLinesTable.previousValue,
       currentValue: contractingBillLinesTable.currentValue,
       cumulativeValue: contractingBillLinesTable.cumulativeValue,
+       executionValue: contractingBillLinesTable.executionValue,
+       certificationPercent: contractingBillLinesTable.certificationPercent,
+       currentExecutionCertifiedValue: contractingBillLinesTable.currentExecutionCertifiedValue,
+       priorPendingCertifiedValue: contractingBillLinesTable.priorPendingCertifiedValue,
+       certificationReason: contractingBillLinesTable.certificationReason,
+       pendingCertificationAllocations: contractingBillLinesTable.pendingCertificationAllocations,
       excessApproved: contractingBillLinesTable.excessApproved,
       excessApprovalReason: contractingBillLinesTable.excessApprovalReason,
       excessApprovedByUserId: contractingBillLinesTable.excessApprovedByUserId,
@@ -1099,13 +1193,51 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
   for (const line of lines) {
     if (line.boqLineId != null && line.contractQty != null) {
       const previous = await priorBoqTotals(companyId, bill, line.boqLineId, line.id ?? undefined);
+       const priorCertificationLines = await priorBoqCertificationLines(
+         companyId,
+         bill,
+         line.boqLineId,
+         line.id ?? undefined,
+       );
       const currentQty = Number(line.currentQty ?? 0);
       const unitPrice = Number(line.unitPriceSnapshot ?? line.boqUnitPrice ?? 0);
+       const legacyCertification = line.executionValue == null
+         && line.certificationPercent == null
+         && line.currentExecutionCertifiedValue == null
+         && line.priorPendingCertifiedValue == null
+         && line.pendingCertificationAllocations == null;
+       const certification = calculateBoqCertification({
+         currentQty,
+         unitPrice,
+         certificationPercent: line.certificationPercent,
+         priorPendingCertifiedValue: line.priorPendingCertifiedValue,
+         certificationReason: line.certificationReason,
+         priorLines: priorCertificationLines,
+       });
       line.previousQty = quantity(previous.previousQty);
       line.previousValue = money(previous.previousValue);
-      line.currentValue = money(currentQty * unitPrice);
+       // Historical rows have no certification extension fields. Preserve
+       // their certified value byte-for-byte while treating it as fully
+       // certified for pending-balance purposes.
+       line.currentValue = legacyCertification
+         ? money(Number(line.currentValue ?? 0))
+         : certification.currentValue;
       line.cumulativeQty = quantity(previous.previousQty + currentQty);
-      line.cumulativeValue = money(previous.previousValue + currentQty * unitPrice);
+       line.cumulativeValue = money(previous.previousValue + Number(line.currentValue));
+       if (!legacyCertification) {
+         line.executionValue = line.executionValue ?? certification.executionValue;
+         line.certificationPercent = line.certificationPercent ?? certification.certificationPercent;
+         line.currentExecutionCertifiedValue = line.currentExecutionCertifiedValue
+           ?? certification.currentExecutionCertifiedValue;
+         line.priorPendingCertifiedValue = line.priorPendingCertifiedValue
+           ?? certification.priorPendingCertifiedValue;
+         line.pendingCertificationAllocations = line.pendingCertificationAllocations
+           ?? certification.pendingCertificationAllocations;
+       }
+       line.previousPendingValue = certification.previousPendingValue;
+       line.pendingValue = legacyCertification
+        ? certification.previousPendingValue
+         : certification.pendingValue;
       line.remainingQty = quantity(Math.max(0, Number(line.contractQty) - previous.previousQty - currentQty));
       line.completionPercent = Number(line.contractQty) > 0
         ? Math.min(100, (previous.previousQty + currentQty) / Number(line.contractQty) * 100)
@@ -1115,6 +1247,8 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
   for (const boq of contractBoqLines) {
     if (storedByBoq.has(boq.id)) continue;
     const previous = await priorBoqTotals(companyId, bill, boq.id);
+     const priorCertificationLines = await priorBoqCertificationLines(companyId, bill, boq.id);
+     const previousPendingValue = pendingValueForBoqLines(priorCertificationLines);
     const previousQty = previous.previousQty;
     const previousValue = previous.previousValue;
     lines.push({
@@ -1147,6 +1281,14 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
       previousValue: money(previousValue),
       currentValue: "0.00",
       cumulativeValue: money(previousValue),
+       executionValue: "0.00",
+       certificationPercent: "100.00",
+       currentExecutionCertifiedValue: "0.00",
+       priorPendingCertifiedValue: "0.00",
+       certificationReason: null,
+       pendingCertificationAllocations: [],
+       previousPendingValue: money(previousPendingValue),
+       pendingValue: money(previousPendingValue),
       excessApproved: false,
       excessApprovalReason: null,
       excessApprovedByUserId: null,
@@ -1338,6 +1480,159 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
   };
 }
 
+/**
+ * Read-only BOQ certification preview for a contract/date. This intentionally
+ * returns the same transient line shape as bill details without creating a
+ * bill or a zero-quantity detail row.
+ */
+export async function certificationPreview(
+  companyId: number,
+  projectId: number,
+  input: {
+    direction?: unknown;
+    ownerContractId?: unknown;
+    subcontractorContractId?: unknown;
+    billDate?: unknown;
+  },
+  user?: BranchUser | null,
+) {
+  await assertProjectBranchAccess(companyId, projectId, user);
+  const direction = String(input.direction ?? "").trim();
+  if (direction !== "outgoing" && direction !== "incoming") {
+    throw error("اتجاه المستخلص غير صالح");
+  }
+  const billDate = String(input.billDate ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(billDate)) {
+    throw error("تاريخ المستخلص يجب أن يكون بصيغة YYYY-MM-DD");
+  }
+  const parsedDate = new Date(`${billDate}T00:00:00Z`);
+  if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== billDate) {
+    throw error("تاريخ المستخلص غير صالح");
+  }
+  const ownerContractId = input.ownerContractId == null || input.ownerContractId === ""
+    ? null : idFrom(input.ownerContractId, "عقد المالك");
+  const subcontractorContractId = input.subcontractorContractId == null
+    || input.subcontractorContractId === ""
+    ? null : idFrom(input.subcontractorContractId, "عقد الباطن");
+  if (direction === "outgoing" && ownerContractId == null) {
+    throw error("ownerContractId مطلوب للمستخلص الصادر");
+  }
+  if (direction === "incoming" && subcontractorContractId == null) {
+    throw error("subcontractorContractId مطلوب للمستخلص الوارد");
+  }
+  if (direction === "outgoing" && subcontractorContractId != null) {
+    throw error("لا يجوز إرسال عقد باطن مع مستخلص صادر");
+  }
+  if (direction === "incoming" && ownerContractId != null) {
+    throw error("لا يجوز إرسال عقد مالك مع مستخلص وارد");
+  }
+  const [contract] = direction === "outgoing"
+    ? await db.select({ id: contractingOwnerContractsTable.id })
+      .from(contractingOwnerContractsTable)
+      .where(and(
+        eq(contractingOwnerContractsTable.id, ownerContractId!),
+        eq(contractingOwnerContractsTable.companyId, companyId),
+        eq(contractingOwnerContractsTable.projectId, projectId),
+      ))
+    : await db.select({ id: contractingSubContractsTable.id })
+      .from(contractingSubContractsTable)
+      .where(and(
+        eq(contractingSubContractsTable.id, subcontractorContractId!),
+        eq(contractingSubContractsTable.companyId, companyId),
+        eq(contractingSubContractsTable.projectId, projectId),
+      ));
+  if (!contract) throw error("العقد غير موجود لهذا المشروع", 404);
+
+  const previewBill = {
+    id: Number.MAX_SAFE_INTEGER,
+    projectId,
+    direction,
+    ownerContractId,
+    subcontractorContractId,
+    billDate,
+  } as typeof contractingProgressBillsTable.$inferSelect;
+  const boqLines = await db.select({
+    id: contractingContractBoqLinesTable.id,
+    projectId: contractingContractBoqLinesTable.projectId,
+    workItemId: contractingContractBoqLinesTable.workItemId,
+    lineCode: contractingContractBoqLinesTable.lineCode,
+    description: contractingContractBoqLinesTable.description,
+    unit: contractingContractBoqLinesTable.unit,
+    quantity: contractingContractBoqLinesTable.quantity,
+    unitPrice: contractingContractBoqLinesTable.unitPrice,
+    totalAmount: contractingContractBoqLinesTable.totalAmount,
+    workItemName: contractingWorkItemsTable.nameAr,
+    workItemCode: contractingWorkItemsTable.code,
+  }).from(contractingContractBoqLinesTable).innerJoin(
+    contractingWorkItemsTable,
+    and(
+      eq(contractingWorkItemsTable.id, contractingContractBoqLinesTable.workItemId),
+      eq(contractingWorkItemsTable.companyId, companyId),
+    ),
+  ).where(and(
+    eq(contractingContractBoqLinesTable.companyId, companyId),
+    eq(contractingContractBoqLinesTable.projectId, projectId),
+    direction === "incoming"
+      ? eq(contractingContractBoqLinesTable.subcontractorContractId, subcontractorContractId!)
+      : eq(contractingContractBoqLinesTable.ownerContractId, ownerContractId!),
+    eq(contractingContractBoqLinesTable.direction, direction === "incoming" ? "subcontract" : "owner"),
+  )).orderBy(asc(contractingContractBoqLinesTable.id));
+
+  const lines: any[] = [];
+  for (const boq of boqLines) {
+    const previous = await priorBoqTotals(companyId, previewBill, boq.id);
+    const priorCertificationLines = await priorBoqCertificationLines(companyId, previewBill, boq.id);
+    const previousPendingValue = pendingValueForBoqLines(priorCertificationLines);
+    lines.push({
+      id: null,
+      projectId,
+      billId: null,
+      workItemId: boq.workItemId,
+      boqLineId: boq.id,
+      boqLineCode: boq.lineCode,
+      boqLineDescription: boq.description,
+      boqUnitPrice: boq.unitPrice,
+      contractQty: boq.quantity,
+      contractAmount: boq.totalAmount,
+      unitSnapshot: boq.unit,
+      unitPriceSnapshot: boq.unitPrice,
+      changeOrderId: null,
+      changeOrderSubcontractId: null,
+      changeOrderNumber: null,
+      changeOrderValue: null,
+      changeOrderStatus: null,
+      workItemName: boq.workItemName,
+      workItemCode: boq.workItemCode,
+      unit: boq.unit,
+      previousQty: quantity(previous.previousQty),
+      currentQty: "0.0000",
+      cumulativeQty: quantity(previous.previousQty),
+      remainingQty: quantity(Math.max(0, Number(boq.quantity) - previous.previousQty)),
+      completionPercent: Number(boq.quantity) > 0
+        ? Math.min(100, previous.previousQty / Number(boq.quantity) * 100)
+        : 0,
+      previousValue: money(previous.previousValue),
+      currentValue: "0.00",
+      cumulativeValue: money(previous.previousValue),
+      executionValue: "0.00",
+      certificationPercent: "100.00",
+      currentExecutionCertifiedValue: "0.00",
+      priorPendingCertifiedValue: "0.00",
+      certificationReason: null,
+      pendingCertificationAllocations: [],
+      previousPendingValue: money(previousPendingValue),
+      pendingValue: money(previousPendingValue),
+      excessApproved: false,
+      excessApprovalReason: null,
+      excessApprovedByUserId: null,
+      excessApprovedAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
+  }
+  return { lines };
+}
+
 export async function createBillLine(companyId: number, billId: number, req: any) {
   const { bill } = await assertEditable(companyId, billId, req.authUser);
   // New commercial allocations must point at a contract BOQ line.  Legacy
@@ -1368,7 +1663,20 @@ export async function createBillLine(companyId: number, billId: number, req: any
   const workItem = await assertProjectWorkItem(companyId, bill.projectId, workItemId);
   const currentQty = numberValue(req.body?.currentQty, "الكمية الحالية");
   const terms = await effectiveBoqTerms(companyId, bill, boqLine, ownerChangeOrderId, changeOrderSubcontractId);
-  const currentValue = currentQty * terms.unitPrice;
+  const certification = await calculateLineCertification(
+    companyId,
+    bill,
+    boqLineId,
+    terms.unitPrice,
+    {
+      currentQty,
+        contractQuantity: terms.quantity,
+      certificationPercent: req.body?.certificationPercent,
+      priorPendingCertifiedValue: req.body?.priorPendingCertifiedValue,
+      certificationReason: req.body?.certificationReason,
+    },
+  );
+  const currentValue = Number(certification.currentValue);
   if (req.body?.currentValue !== undefined
     && Math.abs(numberValue(req.body.currentValue, "قيمة الأعمال الحالية") - currentValue) > 0.01) {
     throw error("قيمة سطر المستخلص يجب أن تطابق سعر سطر جدول الكميات");
@@ -1396,13 +1704,24 @@ export async function createBillLine(companyId: number, billId: number, req: any
     previousValue: money(previous.previousValue),
     currentValue: money(currentValue),
     cumulativeValue: money(previous.previousValue + currentValue),
+    executionValue: certification.executionValue,
+    certificationPercent: certification.certificationPercent,
+    currentExecutionCertifiedValue: certification.currentExecutionCertifiedValue,
+    priorPendingCertifiedValue: certification.priorPendingCertifiedValue,
+    certificationReason: req.body?.certificationReason == null
+      ? null : String(req.body.certificationReason).trim() || null,
+    pendingCertificationAllocations: certification.pendingCertificationAllocations,
     excessApproved: false,
     excessApprovalReason: null,
     excessApprovedByUserId: null,
     excessApprovedAt: null,
   }).returning();
   await logDetailAction(companyId, bill, "line_created", req.authUser?.id);
-  return row;
+  return {
+    ...row,
+    previousPendingValue: certification.previousPendingValue,
+    pendingValue: certification.pendingValue,
+  };
 }
 
 /**
@@ -1448,7 +1767,31 @@ export async function saveBillLines(companyId: number, billId: number, req: any)
         eq(contractingBillLinesTable.billId, billId),
         eq(contractingBillLinesTable.boqLineId, boqLineId),
       ));
-      if (existing && currentQty === 0) {
+       const certificationPercent = entry?.certificationPercent === undefined
+         ? existing?.certificationPercent ?? 100
+         : entry.certificationPercent;
+       const priorPendingCertifiedValue = entry?.priorPendingCertifiedValue === undefined
+         ? existing?.priorPendingCertifiedValue ?? 0
+         : entry.priorPendingCertifiedValue;
+       const certificationReason = entry?.certificationReason === undefined
+         ? existing?.certificationReason ?? null
+         : entry.certificationReason;
+       const certification = await calculateLineCertification(
+         companyId,
+         bill,
+         boqLineId,
+         terms.unitPrice,
+         {
+           currentQty,
+           contractQuantity: terms.quantity,
+           certificationPercent,
+           priorPendingCertifiedValue,
+           certificationReason,
+         },
+         existing?.id,
+         tx,
+       );
+       if (existing && currentQty === 0 && Number(certification.priorPendingCertifiedValue) === 0) {
         // A zero entered explicitly means remove the draft allocation. GET
         // will return the BOQ row again as a transient zero row.
         await tx.delete(contractingBillLinesTable).where(and(
@@ -1461,7 +1804,7 @@ export async function saveBillLines(companyId: number, billId: number, req: any)
       if (previous.previousQty + currentQty > terms.quantity + 0.0001) {
         throw error("الكمية التراكمية تتجاوز كمية العقد؛ استخدم سطر أمر تغيير معتمد");
       }
-      const currentValue = currentQty * terms.unitPrice;
+      const currentValue = Number(certification.currentValue);
       const effectiveAmount = terms.quantity * terms.unitPrice;
       if (previous.previousValue + currentValue > effectiveAmount + 0.01) {
         throw error("قيمة الأعمال تتجاوز قيمة البند المعتمدة");
@@ -1479,6 +1822,12 @@ export async function saveBillLines(companyId: number, billId: number, req: any)
         previousValue: money(previous.previousValue),
         currentValue: money(currentValue),
         cumulativeValue: money(previous.previousValue + currentValue),
+        executionValue: certification.executionValue,
+        certificationPercent: certification.certificationPercent,
+        currentExecutionCertifiedValue: certification.currentExecutionCertifiedValue,
+        priorPendingCertifiedValue: certification.priorPendingCertifiedValue,
+        certificationReason: String(certificationReason ?? "").trim() || null,
+        pendingCertificationAllocations: certification.pendingCertificationAllocations,
         excessApproved: false,
         excessApprovalReason: null,
         excessApprovedByUserId: null,
@@ -1490,15 +1839,23 @@ export async function saveBillLines(companyId: number, billId: number, req: any)
           eq(contractingBillLinesTable.id, existing.id),
           eq(contractingBillLinesTable.companyId, companyId),
         )).returning();
-        saved.push(row);
-      } else if (currentQty > 0) {
+        saved.push({
+          ...row,
+          previousPendingValue: certification.previousPendingValue,
+          pendingValue: certification.pendingValue,
+        });
+      } else if (currentQty > 0 || Number(certification.priorPendingCertifiedValue) > 0) {
         const [row] = await tx.insert(contractingBillLinesTable).values({
           companyId,
           projectId: bill.projectId,
           billId,
           ...values,
         }).returning();
-        saved.push(row);
+        saved.push({
+          ...row,
+          previousPendingValue: certification.previousPendingValue,
+          pendingValue: certification.pendingValue,
+        });
       }
     }
     return saved;
@@ -1552,7 +1909,30 @@ export async function updateBillLine(companyId: number, lineId: number, req: any
       ? Number(existing.currentQty)
       : numberValue(req.body.currentQty, "الكمية الحالية");
     const terms = await effectiveBoqTerms(companyId, bill, boqLine, changeOrderId, changeOrderSubcontractId);
-    const currentValue = currentQty * terms.unitPrice;
+    const certificationPercent = req.body?.certificationPercent === undefined
+      ? existing.certificationPercent ?? 100
+      : req.body.certificationPercent;
+    const priorPendingCertifiedValue = req.body?.priorPendingCertifiedValue === undefined
+      ? existing.priorPendingCertifiedValue ?? 0
+      : req.body.priorPendingCertifiedValue;
+    const certificationReason = req.body?.certificationReason === undefined
+      ? existing.certificationReason ?? null
+      : req.body.certificationReason;
+    const certification = await calculateLineCertification(
+      companyId,
+      bill,
+      boqLineId,
+      terms.unitPrice,
+      {
+        currentQty,
+        contractQuantity: terms.quantity,
+        certificationPercent,
+        priorPendingCertifiedValue,
+        certificationReason,
+      },
+      existing.id,
+    );
+    const currentValue = Number(certification.currentValue);
     if (req.body?.currentValue !== undefined
       && Math.abs(numberValue(req.body.currentValue, "قيمة الأعمال الحالية") - currentValue) > 0.01) {
       throw error("قيمة سطر المستخلص يجب أن تطابق سعر سطر جدول الكميات");
@@ -1577,13 +1957,23 @@ export async function updateBillLine(companyId: number, lineId: number, req: any
       previousValue: money(previous.previousValue),
       currentValue: money(currentValue),
       cumulativeValue: money(previous.previousValue + currentValue),
+      executionValue: certification.executionValue,
+      certificationPercent: certification.certificationPercent,
+      currentExecutionCertifiedValue: certification.currentExecutionCertifiedValue,
+      priorPendingCertifiedValue: certification.priorPendingCertifiedValue,
+      certificationReason: String(certificationReason ?? "").trim() || null,
+      pendingCertificationAllocations: certification.pendingCertificationAllocations,
       updatedAt: new Date(),
     }).where(and(
       eq(contractingBillLinesTable.id, lineId),
       eq(contractingBillLinesTable.companyId, companyId),
     )).returning();
     await logDetailAction(companyId, bill, "line_updated", req.authUser?.id);
-    return row;
+    return {
+      ...row,
+      previousPendingValue: certification.previousPendingValue,
+      pendingValue: certification.pendingValue,
+    };
   }
   const workItemId = req.body?.workItemId == null ? existing.workItemId : idFrom(req.body.workItemId, "بند التنفيذ");
   if (!workItemId) throw error("بند التنفيذ مطلوب");
@@ -2035,6 +2425,26 @@ export async function transitionBillWorkflow(companyId: number, billId: number, 
   if (current === next) {
     if (["approved", "posted", "partially_paid", "paid"].includes(current)) {
       if (!bill.journalEntryId || !["approved", "posted", "partially_paid", "paid"].includes(String(bill.status))) {
+        const nonfinancial = Number(bill.grossAmount) === 0
+          && Number(bill.dueAmount) === 0
+          && Number(bill.vatAmount) === 0
+          && Number(bill.netAmount) === 0
+          && (await db.execute(sql`
+            SELECT
+              COALESCE(SUM(current_qty), 0)::numeric AS physical_qty,
+              COALESCE(SUM(current_value), 0)::numeric
+                AS certified_value
+              FROM contracting_bill_lines
+             WHERE company_id = ${companyId}
+               AND project_id = ${bill.projectId}
+               AND bill_id = ${bill.id}
+               AND boq_line_id IS NOT NULL
+          `).then((result: any) => {
+            const rows = Array.isArray(result) ? result : result?.rows ?? [];
+            return Number(rows[0]?.physical_qty ?? 0) > 0
+              && Number(rows[0]?.certified_value ?? 0) === 0;
+          }));
+        if (nonfinancial) return { state: current, idempotent: true };
         throw error("حالة المستخلص المالية موجودة بلا قيد محاسبي مرحّل؛ استخدم مسار الاعتماد المحاسبي", 409);
       }
       const [journal] = await db.select({ status: journalEntriesTable.status })

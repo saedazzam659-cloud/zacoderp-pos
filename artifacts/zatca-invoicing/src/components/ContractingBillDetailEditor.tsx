@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { FileText, Pencil, Plus, Trash2, UploadCloud } from "lucide-react";
 import { ContractingBillExportActions } from "@/components/ContractingExportActions";
 import type { ContractingBillSnapshot, ContractingProjectSnapshot } from "@/lib/contractingPrintExport";
+import ContractingExecutionTable from "@/components/ContractingExecutionTable";
+import { executionInputs, executionPayload, executionValidation, type ExecutionInputs, type ExecutionLine } from "@/lib/contractingExecution";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -40,7 +42,7 @@ type BoqLine = {
   workItemName: string | null;
 };
 
-type BillLine = {
+type BillLine = ExecutionLine & {
   id: number | null;
   workItemId: number | null;
   boqLineId: number | null;
@@ -322,11 +324,15 @@ export default function ContractingBillDetailEditor({
   projectId,
   bill,
   project,
+  initialExecutionValues,
+  onLinesLoaded,
 }: {
   billId: number;
   projectId: number;
   bill?: Partial<ContractingBillSnapshot>;
   project?: ContractingProjectSnapshot;
+  initialExecutionValues?: ExecutionInputs;
+  onLinesLoaded?: (count: number) => void;
 }) {
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
@@ -335,7 +341,9 @@ export default function ContractingBillDetailEditor({
   const [loading, setLoading] = useState(true);
   const [line, setLine] = useState({ boqLineId: "", changeOrderId: "", currentQty: "0", currentValue: "0", excessApproved: false, excessApprovalReason: "" });
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
-  const [lineQuantities, setLineQuantities] = useState<Record<number, string>>({});
+  const [executionValues, setExecutionValues] = useState<ExecutionInputs>({});
+  const initialExecution = useRef(initialExecutionValues);
+  const [savingLines, setSavingLines] = useState(false);
   const [lineVariations, setLineVariations] = useState<Record<number, string>>({});
   const [addition, setAddition] = useState<AdditionDraft>({
     calculationType: "fixed",
@@ -380,12 +388,10 @@ export default function ContractingBillDetailEditor({
       if (!detailResponse.ok) throw new Error((await detailResponse.json()).error || `HTTP ${detailResponse.status}`);
       const next = await detailResponse.json();
       setDetail(next);
+      onLinesLoaded?.((next.lines ?? []).length);
       setWorkflowState(next.state);
-      setLineQuantities(Object.fromEntries(
-        (next.lines ?? [])
-          .filter((row: BillLine) => row.boqLineId != null)
-          .map((row: BillLine) => [row.boqLineId, String(row.currentQty ?? "0")]),
-      ));
+      setExecutionValues(initialExecution.current ?? executionInputs(next.lines ?? []));
+      initialExecution.current = undefined;
       setLineVariations(Object.fromEntries(
         (next.lines ?? [])
           .filter((row: BillLine) => row.boqLineId != null)
@@ -458,14 +464,18 @@ export default function ContractingBillDetailEditor({
   }
 
   async function saveAllLines() {
-    if (locked || !detail) return;
+    if (locked || !detail || savingLines) return;
+    const error = executionValidation(detail.lines.map(row => {
+      const savedVariation = String(row.changeOrderId ?? row.changeOrderSubcontractId ?? "__none__");
+      return savedVariation !== (lineVariations[row.boqLineId!] ?? "__none__") ? { ...row, contractQty: null } : row;
+    }), executionValues);
+    if (error) { toast({ title: error, variant: "destructive" }); return; }
+    setSavingLines(true);
     try {
       await request(`/bills/${billId}/lines`, "POST", {
-        lines: detail?.lines
-          .filter((row) => row.boqLineId != null)
+        lines: executionPayload(detail.lines, executionValues)
           .map((row) => ({
-            boqLineId: row.boqLineId,
-            currentQty: lineQuantities[row.boqLineId!] ?? "0",
+            ...row,
             approvedChangeOrderId: (lineVariations[row.boqLineId!] ?? "__none__") === "__none__"
               ? null
               : Number(lineVariations[row.boqLineId!]),
@@ -501,7 +511,7 @@ export default function ContractingBillDetailEditor({
       await load();
     } catch (caught: any) {
       toast({ title: caught?.message, variant: "destructive" });
-    }
+    } finally { setSavingLines(false); }
   }
 
   async function addAddition() {
@@ -757,82 +767,25 @@ export default function ContractingBillDetailEditor({
         <div className="flex items-center justify-between">
           <h5 className="font-semibold">بنود المستخلص ({detail.lines.length})</h5>
           {!locked && (
-            <Button size="sm" onClick={() => void saveAllLines()} data-testid="bill-details-save">
-              حفظ تفاصيل البنود
+            <Button size="sm" disabled={savingLines} onClick={() => void saveAllLines()} data-testid="bill-details-save">
+              {savingLines ? "جارٍ الحفظ…" : "حفظ التنفيذ والاعتماد"}
             </Button>
           )}
         </div>
-        <div className="overflow-x-auto rounded border bg-white dark:bg-slate-900 shadow-sm">
-          <Table className="min-w-[1100px]">
-            <TableHeader className="bg-slate-50 dark:bg-slate-800/50">
-              <TableRow>
-                <TableHead className="w-1/4">البند</TableHead>
-                <TableHead>الوحدة</TableHead>
-                <TableHead className="w-[220px]">مرجع التغيير المعتمد</TableHead>
-                <TableHead className="text-end">كمية العقد</TableHead>
-                <TableHead className="text-end">سابق</TableHead>
-                <TableHead className="text-end text-sky-700 dark:text-sky-300 font-bold">حالي</TableHead>
-                <TableHead className="text-end">تراكمي</TableHead>
-                <TableHead className="text-end">متبقي</TableHead>
-                <TableHead className="text-end">الإنجاز</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {detail.lines.map((row) => (
-                <TableRow key={row.boqLineId ?? `legacy-${row.id}`} className="group hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                  <TableCell>
-                    <div className="font-medium text-slate-900 dark:text-slate-100">
-                      {row.boqLineCode && <span className="font-mono text-slate-500 text-xs ml-1">{row.boqLineCode}</span>}
-                      {row.workItemCode ? <span className="font-mono text-slate-500 text-xs ml-1">{row.workItemCode}</span> : ""}
-                      {row.workItemName || "بند محذوف"}
-                    </div>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {row.boqLineId == null && <Badge variant="outline" className="text-[10px] h-5">legacy</Badge>}
-                      {row.changeOrderNumber && <Badge variant="secondary" className="text-[10px] h-5 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 border-indigo-200">أمر {row.changeOrderNumber}</Badge>}
-                      {row.excessApproved && <Badge variant="outline" className="text-[10px] h-5 border-amber-200 text-amber-700 bg-amber-50">اعتماد تجاوز</Badge>}
-                      <span className="text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                        السعر: {money(Number(row.unitPriceSnapshot ?? row.boqUnitPrice ?? 0))} ر.س
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-slate-500">{row.unitSnapshot || row.unit || "—"}</TableCell>
-                   <TableCell>
-                     {row.boqLineId == null
-                       ? <span className="text-xs text-slate-500">legacy — بدون ربط تلقائي</span>
-                       : <BillDetailPicker
-                           items={approvedVariationItems}
-                           value={lineVariations[row.boqLineId] ?? "__none__"}
-                           onValueChange={(value) => setLineVariations((current) => ({ ...current, [row.boqLineId!]: value }))}
-                           placeholder="بدون تغيير"
-                           searchPlaceholder="بحث في أوامر التغيير المعتمدة..."
-                           emptyText="لا توجد أوامر تغيير معتمدة لهذا العقد"
-                           className="min-w-[190px]"
-                           disabled={locked}
-                           testId={`bill-line-variation-picker-${row.boqLineId}`}
-                         />}
-                   </TableCell>
-                   <TableCell className="text-end tabular-nums">{Number(row.contractQty ?? 0).toLocaleString()}<div className="text-xs text-slate-500">{money(Number(row.contractAmount ?? 0))}</div></TableCell>
-                   <TableCell className="text-end tabular-nums"><div>{Number(row.previousQty).toLocaleString()}</div><div className="text-xs text-slate-500">{money(Number(row.previousValue))}</div></TableCell>
-                   <TableCell className="text-end tabular-nums bg-sky-50/30 dark:bg-sky-900/10">
-                     {row.boqLineId == null
-                       ? <><div className="text-sky-700">{Number(row.currentQty).toLocaleString()}</div><div className="text-xs text-slate-500">{money(Number(row.currentValue))}</div></>
-                       : <><Input className="h-8 w-24 text-end" type="number" min="0" value={lineQuantities[row.boqLineId] ?? "0"} disabled={locked} onChange={(event) => setLineQuantities((current) => ({ ...current, [row.boqLineId!]: event.target.value }))} /><div className="text-xs text-sky-700">{money(Number(lineQuantities[row.boqLineId] ?? 0) * Number(row.unitPriceSnapshot ?? row.boqUnitPrice ?? 0))}</div></>}
-                   </TableCell>
-                   <TableCell className="text-end tabular-nums"><div>{Number(row.cumulativeQty).toLocaleString()}</div><div className="text-xs text-slate-500">{money(Number(row.cumulativeValue))}</div></TableCell>
-                   <TableCell className="text-end tabular-nums"><div>{Number(row.remainingQty ?? 0).toLocaleString()}</div><div className="text-xs text-slate-500">{money(Math.max(0, Number(row.contractAmount ?? 0) - Number(row.cumulativeValue ?? 0)))}</div></TableCell>
-                   <TableCell className="text-end tabular-nums">{Number(row.completionPercent ?? 0).toFixed(1)}%</TableCell>
-                </TableRow>
-              ))}
-              {detail.lines.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-slate-500">
-                    لا توجد بنود في هذا المستخلص
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <ContractingExecutionTable rows={detail.lines} values={executionValues} onChange={setExecutionValues}
+          disabled={locked || savingLines}
+          renderVariation={row => row.boqLineId == null ? null : <BillDetailPicker
+            items={approvedVariationItems}
+            value={lineVariations[row.boqLineId] ?? "__none__"}
+            onValueChange={value => setLineVariations(current => ({ ...current, [row.boqLineId!]: value }))}
+            placeholder="مرجع التغيير المعتمد"
+            searchPlaceholder="بحث في أوامر التغيير المعتمدة..."
+            emptyText="لا توجد أوامر تغيير معتمدة لهذا العقد"
+            className="mt-2 min-w-[190px]"
+            disabled={locked || savingLines}
+            testId={`bill-line-variation-picker-${row.boqLineId}`}
+          />}
+        />
       </section>
 <section className="space-y-2">
          <div className="flex items-center justify-between">

@@ -356,7 +356,7 @@ export default function ContractingBills() {
       </div>
       <div className="text-xs text-muted-foreground">
         قيمة العقود: {fmt(totals.contractValue)} ر.س · المتبقي من العقود: {fmt(totals.remainingContract)} ر.س ·
-        نسبة الإنجاز التراكمية: {Number(totals.completionPercent || 0).toFixed(2)}%
+        نسبة الاعتماد المالي التراكمية: {Number(totals.completionPercent || 0).toFixed(2)}%
         {search.trim() ? " · الإجماليات مبنية على فلاتر التقرير، بينما البحث يضيّق العرض فقط" : ""}
       </div>
       {(draftTotals.grossWorks || draftTotals.cumulativeWorks || draftTotals.outstanding) > 0 && (

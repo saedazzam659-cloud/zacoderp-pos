@@ -6,6 +6,7 @@ import {
   contractingProgressBillsTable,
   contractingSubContractsTable,
 } from "@workspace/db";
+import { calculateBoqCertification } from "./contracting-boq-certification.js";
 
 type Bill = typeof contractingProgressBillsTable.$inferSelect;
 type Tx = any;
@@ -69,6 +70,80 @@ async function lockVariation(
        WHERE id = ${id} AND company_id = ${companyId} AND project_id = ${projectId}
        FOR UPDATE
     `);
+  }
+}
+
+/**
+ * A source line cannot be reversed while a later certified bill still
+ * consumes its physical execution or releases its pending certification.
+ * Reversals therefore proceed from the latest dependent bill backwards.
+ */
+export async function assertNoBoqCertificationDependents(
+  tx: Tx,
+  companyId: number,
+  bill: Bill,
+) {
+  const sourceLines = await tx.select({
+    line: contractingBillLinesTable,
+  }).from(contractingBillLinesTable).where(and(
+    eq(contractingBillLinesTable.companyId, companyId),
+    eq(contractingBillLinesTable.projectId, bill.projectId),
+    eq(contractingBillLinesTable.billId, bill.id),
+  ));
+  const boqSources = sourceLines.filter((row: any) => row.line.boqLineId != null);
+  if (boqSources.length === 0) return;
+  if (!await lockContract(tx, companyId, bill.projectId, bill)) {
+    throw failure("لا يمكن عكس مستخلص BOQ مرتبط بعقد غير محدد", 409);
+  }
+  for (const source of boqSources) {
+    const sourceLine = source.line;
+    const dependents = await tx.select({
+      line: contractingBillLinesTable,
+      billDate: contractingProgressBillsTable.billDate,
+      billId: contractingProgressBillsTable.id,
+      status: contractingProgressBillsTable.status,
+      direction: contractingProgressBillsTable.direction,
+      ownerContractId: contractingProgressBillsTable.ownerContractId,
+      subcontractorContractId: contractingProgressBillsTable.subcontractorContractId,
+    }).from(contractingBillLinesTable).innerJoin(
+      contractingProgressBillsTable,
+      eq(contractingProgressBillsTable.id, contractingBillLinesTable.billId),
+    ).where(and(
+      eq(contractingBillLinesTable.companyId, companyId),
+      eq(contractingBillLinesTable.projectId, bill.projectId),
+      eq(contractingBillLinesTable.boqLineId, sourceLine.boqLineId!),
+      eq(contractingProgressBillsTable.companyId, companyId),
+      eq(contractingProgressBillsTable.projectId, bill.projectId),
+      bill.direction === "incoming"
+        ? and(
+          eq(contractingProgressBillsTable.direction, "incoming"),
+          eq(contractingProgressBillsTable.subcontractorContractId, bill.subcontractorContractId!),
+        )
+        : and(
+          eq(contractingProgressBillsTable.direction, "outgoing"),
+          eq(contractingProgressBillsTable.ownerContractId, bill.ownerContractId!),
+        ),
+      sql`${contractingProgressBillsTable.status} IN (${sql.join(CERTIFIED.map((status) => sql`${status}`), sql`, `)})`,
+    ));
+    for (const dependent of dependents) {
+      if (dependent.billId === bill.id) continue;
+      const later = String(dependent.billDate) > String(bill.billDate)
+        || (String(dependent.billDate) === String(bill.billDate) && dependent.billId > bill.id);
+      if (!later) continue;
+      const dependentAllocations = Array.isArray(dependent.line.pendingCertificationAllocations)
+        ? dependent.line.pendingCertificationAllocations
+        : [];
+      const releasesSource = dependentAllocations.some((allocation: any) =>
+        Number(allocation?.sourceLineId) === Number(sourceLine.id)
+        && Number(allocation?.amount ?? 0) > 0,
+      );
+      if (Number(dependent.line.currentQty) > 0 || releasesSource) {
+        throw failure(
+          "لا يمكن عكس أو تصحيح مصدر BOQ قبل عكس المستخلصات المعتمدة التابعة له أولاً",
+          409,
+        );
+      }
+    }
   }
 }
 
@@ -241,6 +316,7 @@ export async function recertifyBoqBill(
     )).orderBy(asc(contractingProgressBillsTable.billDate), asc(contractingProgressBillsTable.id), asc(contractingBillLinesTable.id));
     let previousQty = 0;
     let previousValue = 0;
+    const priorCertificationLines: Array<typeof line> = [];
     for (const prior of certified) {
       if (prior.billId === bill.id) continue;
       const later = String(prior.billDate) > String(bill.billDate)
@@ -253,13 +329,28 @@ export async function recertifyBoqBill(
       }
       previousQty += Number(prior.line.currentQty);
       previousValue += Number(prior.line.currentValue);
+      priorCertificationLines.push(prior.line);
     }
     const currentQty = Number(line.currentQty);
     if (!Number.isFinite(currentQty) || currentQty < 0) throw failure("كمية سطر BOQ غير صالحة");
     if (previousQty + currentQty > terms.quantity + 0.0001) {
       throw failure("الاعتماد يرفض تجاوز كمية BOQ بعد إعادة التحقق من كل المستخلصات المعتمدة", 409);
     }
-    const currentValue = currentQty * terms.unitPrice;
+    let certification;
+    try {
+      certification = calculateBoqCertification({
+        currentQty,
+        unitPrice: terms.unitPrice,
+        contractQuantity: terms.quantity,
+        certificationPercent: line.certificationPercent,
+        priorPendingCertifiedValue: line.priorPendingCertifiedValue,
+        certificationReason: line.certificationReason,
+        priorLines: priorCertificationLines,
+      });
+    } catch (caught) {
+      throw failure((caught as Error)?.message ?? "بيانات اعتماد BOQ غير صالحة", 409);
+    }
+    const currentValue = Number(certification.currentValue);
     if (previousValue + currentValue > terms.quantity * terms.unitPrice + 0.01) {
       throw failure("الاعتماد يرفض تجاوز قيمة BOQ بعد إعادة التحقق من كل المستخلصات المعتمدة", 409);
     }
@@ -272,6 +363,12 @@ export async function recertifyBoqBill(
       previousValue: money(previousValue),
       currentValue: money(currentValue),
       cumulativeValue: money(previousValue + currentValue),
+      executionValue: certification.executionValue,
+      certificationPercent: certification.certificationPercent,
+      currentExecutionCertifiedValue: certification.currentExecutionCertifiedValue,
+      priorPendingCertifiedValue: certification.priorPendingCertifiedValue,
+      certificationReason: String(line.certificationReason ?? "").trim() || null,
+      pendingCertificationAllocations: certification.pendingCertificationAllocations,
       updatedAt: new Date(),
     }).where(and(
       eq(contractingBillLinesTable.id, line.id),

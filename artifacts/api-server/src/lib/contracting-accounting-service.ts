@@ -63,7 +63,10 @@ import {
 import { buildContractingBillAdjustmentResult } from "./contracting-bill-adjustments.js";
 import { contractingAdjustmentAccountId, getContractingSettings } from "./contracting-settings.js";
 import { calculateSignedContractingBillNet } from "./contracting-bill-adjustment-math.js";
-import { recertifyBoqBill } from "./contracting-boq-recertification.js";
+import {
+  assertNoBoqCertificationDependents,
+  recertifyBoqBill,
+} from "./contracting-boq-recertification.js";
 
 type Executor = any;
 type RequestLike = any;
@@ -623,6 +626,51 @@ async function certifyBillAmounts(tx: Executor, companyId: number, bill: any): P
 }
 
 /**
+ * A zero-certification certificate records physical execution without
+ * creating a zero-value journal. It is intentionally narrow: every monetary
+ * period amount and every current certified line value must be zero while at
+ * least one BOQ line records positive execution. Cumulative gross may include
+ * previously certified periods and is deliberately not used for this check.
+ */
+export async function isNonfinancialBoqCertificate(
+  tx: Executor,
+  companyId: number,
+  bill: any,
+): Promise<boolean> {
+  if (
+    n(bill.dueAmount) !== 0
+    || n(bill.vatAmount) !== 0
+    || n(bill.netAmount) !== 0
+    || n(bill.paidAmount) !== 0
+  ) return false;
+  const result = await tx.execute(sql`
+    SELECT
+      COALESCE(SUM(current_qty), 0)::numeric AS physical_qty,
+      COALESCE(SUM(current_value), 0)::numeric
+        AS certified_value
+      FROM contracting_bill_lines
+     WHERE company_id = ${companyId}
+       AND project_id = ${bill.projectId}
+       AND bill_id = ${bill.id}
+       AND boq_line_id IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM contracting_bill_additions a
+         WHERE a.company_id = ${companyId} AND a.bill_id = ${bill.id} AND a.amount <> 0
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM contracting_bill_deductions d
+         WHERE d.company_id = ${companyId} AND d.bill_id = ${bill.id} AND d.amount <> 0
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM contracting_bill_penalties p
+         WHERE p.company_id = ${companyId} AND p.bill_id = ${bill.id} AND p.amount <> 0
+       )
+  `);
+  const row = resultRows(result)[0];
+  return n(row?.physical_qty) > 0 && n(row?.certified_value) === 0;
+}
+
+/**
  * Detail deductions are not allowed to silently alter a posted bill.  The
  * base gross/VAT fields remain immutable; only explicitly mapped adjustment
  * accounts may be included in the approval JE. Retention and advance
@@ -1072,6 +1120,9 @@ export async function approveBill(input: {
       return { ...locked, idempotentReplay: true };
     }
     if (locked.status === "approved") {
+      if (await isNonfinancialBoqCertificate(tx, input.companyId, locked)) {
+        return { ...locked, idempotentReplay: true };
+      }
       throw failure("المستخلص معتمد لكن قيده المحاسبي مفقود؛ لا يمكن إنشاء قيد مكرر", 409);
     }
     if (locked.journalEntryId) {
@@ -1088,6 +1139,47 @@ export async function approveBill(input: {
     }
     await recertifyBoqBill(tx, input.companyId, locked);
     Object.assign(locked, await certifyBillAmounts(tx, input.companyId, locked));
+    if (await isNonfinancialBoqCertificate(tx, input.companyId, locked)) {
+      const [updated] = await tx.update(contractingProgressBillsTable).set({
+        status: "approved",
+        journalEntryId: null,
+        approvedByUserId: input.userId,
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(and(
+        eq(contractingProgressBillsTable.id, input.billId),
+        eq(contractingProgressBillsTable.companyId, input.companyId),
+      )).returning();
+      await addAudit(tx, {
+        companyId: input.companyId,
+        projectId: locked.projectId,
+        billId: input.billId,
+        action: "bill_approved_nonfinancial",
+        amount: 0,
+        metadata: { physicalExecutionOnly: true },
+        userId: input.userId,
+      });
+      await tx.insert(contractingBillWorkflowEventsTable).values({
+        companyId: input.companyId,
+        projectId: locked.projectId,
+        billId: input.billId,
+        state: "approved",
+        action: "accounting_approve_nonfinancial",
+        note: "تم اعتماد شهادة تنفيذ غير مالية بلا قيد صفري",
+        userId: input.userId,
+      });
+      await tx.insert(contractingEventsTable).values({
+        companyId: input.companyId,
+        projectId: locked.projectId,
+        userId: input.userId,
+        eventType: "bill_approved",
+        title: `اعتماد شهادة تنفيذ ${locked.billNumber}`,
+        description: "تم تسجيل التنفيذ الفعلي بلا قيد مالي لأن القيمة المعتمدة صفر",
+        severity: "info",
+        meta: { nonfinancial: true },
+      });
+      return { ...(updated ?? locked), idempotentReplay: false };
+    }
     const map = await mappings(tx, input.companyId,
       locked.direction === "incoming" ? "contracting_incoming_bill" : "contracting_outgoing_bill");
     const receivableOrPayable = map.get(locked.direction === "outgoing" ? "receivable" : "payable");
@@ -1210,6 +1302,7 @@ export async function unapproveBill(input: {
     const project = await projectFor(tx, input.companyId, bill.projectId);
     if (!project) throw failure("المشروع غير موجود", 404);
     assertProjectBranchAccess(input.req, project.branchId);
+    await assertNoBoqCertificationDependents(tx, input.companyId, bill);
     const postingKey = bill.direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill";
     if (!canUnpostDoc(input.req.authUser, postingKey)) {
       throw failure("ليس لديك صلاحية فك ترحيل هذا النوع من المستخلصات", 403);
@@ -1217,7 +1310,34 @@ export async function unapproveBill(input: {
     if (!["approved", "posted", "partially_paid", "paid"].includes(String(bill.status))) {
       throw failure("المستخلص ليس معتمداً أو مرحّلاً", 409);
     }
-    if (!bill.journalEntryId) throw failure("لا يمكن فك اعتماد مستخلص بلا قيد", 409);
+    if (!bill.journalEntryId) {
+      if (!await isNonfinancialBoqCertificate(tx, input.companyId, bill)) {
+        throw failure("لا يمكن فك اعتماد مستخلص مالي بلا قيد", 409);
+      }
+      const linkedPayments = await tx.execute(sql`
+        SELECT id FROM contracting_accounting_settlements
+        WHERE company_id = ${input.companyId} AND bill_id = ${bill.id} AND status = 'posted' LIMIT 1
+      `);
+      if (resultRows(linkedPayments).length) throw failure("يجب عكس التسويات المرتبطة أولًا", 409);
+      const [updated] = await tx.update(contractingProgressBillsTable).set({
+        status: "submitted", approvedAt: null, approvedByUserId: null, updatedAt: new Date(),
+      }).where(and(
+        eq(contractingProgressBillsTable.companyId, input.companyId),
+        eq(contractingProgressBillsTable.id, bill.id),
+      )).returning();
+      await addAudit(tx, {
+        companyId: input.companyId, projectId: bill.projectId, billId: bill.id,
+        action: "bill_unapproved_nonfinancial", amount: 0,
+        metadata: { physicalExecutionOnly: true }, userId: input.userId,
+      });
+      await tx.insert(contractingBillWorkflowEventsTable).values({
+        companyId: input.companyId, projectId: bill.projectId, billId: bill.id,
+        state: "submitted", action: "accounting_unapprove_nonfinancial",
+        note: "فك اعتماد شهادة التنفيذ غير المالية، دون إنشاء قيد صفري", userId: input.userId,
+      });
+      if (input.correction) return clonePostedCorrectionTx(tx, input, bill, null);
+      return { ...updated, reversalJournalEntryId: null, originalJournalEntryId: null };
+    }
     const linked = await tx.execute(sql`
       SELECT id FROM contracting_accounting_settlements
        WHERE company_id = ${input.companyId}
@@ -1410,7 +1530,7 @@ async function clonePostedCorrectionTx(
   tx: Executor,
   input: { companyId: number; userId: number | null },
   source: any,
-  reversalJournalEntryId: number,
+  reversalJournalEntryId: number | null,
 ) {
   const [draft] = await tx.insert(contractingProgressBillsTable).values({
     companyId: source.companyId,
@@ -1470,6 +1590,12 @@ async function clonePostedCorrectionTx(
       changeOrderId: line.changeOrderId, changeOrderSubcontractId: line.changeOrderSubcontractId,
       previousQty: line.previousQty, currentQty: line.currentQty, cumulativeQty: line.cumulativeQty,
       previousValue: line.previousValue, currentValue: line.currentValue, cumulativeValue: line.cumulativeValue,
+       executionValue: line.executionValue,
+       certificationPercent: line.certificationPercent,
+       currentExecutionCertifiedValue: line.currentExecutionCertifiedValue,
+       priorPendingCertifiedValue: line.priorPendingCertifiedValue,
+       certificationReason: line.certificationReason,
+       pendingCertificationAllocations: line.pendingCertificationAllocations,
       excessApproved: line.excessApproved, excessApprovalReason: line.excessApprovalReason,
       excessApprovedByUserId: line.excessApprovedByUserId, excessApprovedAt: line.excessApprovedAt,
     })));

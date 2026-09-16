@@ -75,6 +75,12 @@ Execution and certification must remain separate ledgers of progress. Executed w
 
 **How to apply:** Keep actual measured execution distinct from payable certified value. If a percentage represents partial valuation rather than physical quantity acceptance, label its quantity equivalent explicitly; do not silently turn it into new actual execution. Derive current certification from cumulative certified value minus previously certified value, with traceable pending-work references.
 
+Zero financial certification does not mean zero physical execution. A wholly pending execution certificate may be approved without manufacturing a zero-value accounting journal, and must remain reversible subject to later dependent certificates.
+
+**Why:** Rejecting all zero-payable certificates loses the physical quantity budget; treating cumulative previously certified value as current payment also incorrectly rejects later wholly pending work.
+
+**How to apply:** Evaluate the current period and any financial adjustments separately from historical cumulative amounts. Preserve audit evidence for nonfinancial approval and reversal, and never use this path to bypass missing journals on genuinely financial certificates.
+
 Runtime-created financial tables must also be represented in the exported declarative schema and development database before publishing.
 
 **Why:** Tables existing only in production were proposed as deleted/rename candidates when a new unrelated table appeared in development. Lazy creation is not sufficient protection against schema synchronization.

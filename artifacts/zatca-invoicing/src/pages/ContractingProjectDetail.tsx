@@ -23,6 +23,9 @@ import {
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
 import ContractingAccountingPanel from "@/components/ContractingAccountingPanel";
 import ContractingBillDetailEditor from "@/components/ContractingBillDetailEditor";
+import ContractingContractBoqEditor from "@/components/ContractingContractBoqEditor";
+import ContractingDraftExecution, { emptyDraftExecution, draftExecutionScope, type DraftExecutionState } from "@/components/ContractingDraftExecution";
+import { executionEstimate, executionInput, executionPayload, executionValidation, type ExecutionInputs } from "@/lib/contractingExecution";
 import {
   ContractingBillExportActions,
   ContractingContractsExportActions,
@@ -871,12 +874,19 @@ function BillsTab({
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Bill> | null>(null);
   const [saving, setSaving] = useState(false);
+  const saveLock = useRef(false);
+  const [draftExecution, setDraftExecution] = useState<DraftExecutionState>(emptyDraftExecution);
+  const [recoveredExecution, setRecoveredExecution] = useState<{ billId: number; values: ExecutionInputs } | null>(null);
+  const [detailsRevision, setDetailsRevision] = useState(0);
   const [billOptionsLoaded, setBillOptionsLoaded] = useState(false);
   const autoOpenAttempted = useRef(false);
   const createAttempt = useRef<RetryableCreateAttempt | null>(null);
   // Peek the next bill-number from the central sequence engine while a NEW
   // bill is being created (id is still nullish).
   const isCreatingBill = !!editing && (editing as any).id == null;
+  const newExecutionMode = isCreatingBill && ["interim", "final"].includes(editing?.billType ?? "interim");
+  const draftContractId = (direction === "incoming" ? editing?.subcontractorContractId : editing?.ownerContractId) ?? null;
+  const expectedExecutionScope = draftExecutionScope(projectId, direction, draftContractId, editing?.billDate ?? "");
   const nextBillCode = useNextSequenceNumber("contracting_bill", isCreatingBill);
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [ownerContracts, setOwnerContracts] = useState<OwnerContract[]>([]);
@@ -938,6 +948,7 @@ function BillsTab({
   }, [token, projectId]);
 
   async function save() {
+    if (saveLock.current) return;
     if (!editing || saving) return;
     if (!editing?.billDate) { toast({ title: t("contracting.bills.dateRequired", "التاريخ مطلوب"), variant: "destructive" }); return; }
     if (direction === "incoming" && !editing.contractorId) {
@@ -950,11 +961,32 @@ function BillsTab({
       toast({ title: t("contracting.bills.subcontractRequired", "يجب اختيار عقد الباطن المرتبط بالمشروع والمقاول"), variant: "destructive" }); return;
     }
     const isEdit = (editing as any).id != null;
+    const executionRows = newExecutionMode ? executionPayload(draftExecution.lines, draftExecution.values) : null;
+    if (newExecutionMode) {
+      if (draftExecution.scope !== expectedExecutionScope || draftExecution.loading || draftExecution.error) {
+        toast({ title: "انتظر تحميل بنود العقد بنجاح قبل الحفظ", variant: "destructive" }); return;
+      }
+      if (!executionRows?.length) {
+        toast({ title: "أضف بنود العقد المرتبطة ببنود التنفيذ أولًا", variant: "destructive" }); return;
+      }
+      const validation = executionValidation(draftExecution.lines, draftExecution.values);
+      if (validation) { toast({ title: validation, variant: "destructive" }); return; }
+    }
     const payload: Record<string, unknown> = { ...editing, direction };
+    if (newExecutionMode) {
+      // Persist a zero-value draft header, then save the authoritative lines.
+      // Never use aggregate progress to overwrite detailed certification.
+      Object.assign(payload, { grossAmount: "0", progressPercent: "0", aggregateProgress: false, previousPaid: "0" });
+    }
     // Settlement posting owns the read-only paid amount.
     if (isEdit) delete payload.paidAmount;
+    if (isEdit && detailLineCount != null && detailLineCount > 0) {
+      for (const field of ["grossAmount", "progressPercent", "aggregateProgress", "previousPaid", "dueAmount", "vatAmount", "netAmount", "retentionAmount"]) delete payload[field];
+    }
     const attempt = isEdit ? null : retryableCreateAttempt(payload, createAttempt.current);
     if (attempt) createAttempt.current = attempt;
+    saveLock.current = true;
+    let persistedId: number | null = null;
     try {
       const url = isEdit
         ? `${API}/api/contracting/bills/${(editing as any).id}`
@@ -976,11 +1008,33 @@ function BillsTab({
         const data = await r.json().catch(() => ({}));
         throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { responseMayBeLost });
       }
+      const savedBill = await r.json();
+      if (!isEdit && (!Number.isInteger(savedBill.id) || savedBill.id <= 0)) throw new Error("استجابة حفظ المستخلص لا تحتوي على رقم صالح");
+      persistedId = Number(savedBill.id);
       createAttempt.current = null;
-      setEditing(null);
+      if (newExecutionMode && executionRows) {
+        // Capture the ID immediately: a failed details request must never
+        // repeat POST /bills and create a second header on retry.
+        setRecoveredExecution({ billId: persistedId, values: draftExecution.values });
+        setEditing(savedBill);
+        const detailsResponse = await fetch(`${API}/api/contracting/bills/${persistedId}/lines`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ lines: executionRows }),
+        });
+        if (!detailsResponse.ok) {
+          const body = await detailsResponse.json().catch(() => ({}));
+          throw new Error(`حُفظت المسودة، لكن تعذر حفظ التنفيذ والاعتماد: ${body.error || detailsResponse.status}. بيانات البنود باقية بالأسفل لإعادة حفظها.`);
+        }
+        setRecoveredExecution(null);
+        setDetailsRevision(value => value + 1);
+        toast({ title: "تم حفظ التنفيذ والاعتماد في المسودة", description: "راجع الإجماليات والتسويات بالأسفل قبل الاعتماد المالي." });
+      } else {
+        setEditing(null);
+      }
       await load();
     } catch (e: any) {
-      const responseMayBeLost = !isEdit && (
+      const responseMayBeLost = !isEdit && persistedId == null && (
         e?.responseMayBeLost === true || shouldRetainCreateAttemptAfterFailure(undefined, e)
       );
       toast({
@@ -991,6 +1045,7 @@ function BillsTab({
         variant: "destructive",
       });
     } finally {
+      saveLock.current = false;
       setSaving(false);
     }
   }
@@ -1004,6 +1059,9 @@ function BillsTab({
   // recent active contract on the relevant side (saves typing for the
   // common case where retention% is identical across all bills).
   function openNew() {
+    if (saveLock.current) return;
+    setDraftExecution(emptyDraftExecution);
+    setRecoveredExecution(null);
     createAttempt.current = null;
     const today = new Date().toISOString().slice(0,10);
     let retention = "10";
@@ -1093,8 +1151,11 @@ function BillsTab({
     : editing?.subcontractorContractId != null;
   const adjustedContractValue = selectedAggregateContractValue(direction, editing, ownerContracts, subContracts);
   const priorCertifiedGross = selectedPriorCertifiedGross(rows, direction, editing);
-  const cumulativeGross = Number(editing?.grossAmount ?? 0);
-  const currentPeriodGross = Math.max(0, cumulativeGross - priorCertifiedGross);
+  const draftCertifiedCurrent = draftExecution.scope === expectedExecutionScope
+    ? draftExecution.lines.reduce((total, row) => total + executionEstimate(row, draftExecution.values[row.boqLineId!] ?? executionInput(row)).certifiedTotal, 0)
+    : 0;
+  const cumulativeGross = newExecutionMode ? priorCertifiedGross + draftCertifiedCurrent : Number(editing?.grossAmount ?? 0);
+  const currentPeriodGross = newExecutionMode ? draftCertifiedCurrent : Math.max(0, cumulativeGross - priorCertifiedGross);
   const selectedContract = direction === "incoming"
     ? subContracts.find(contract => contract.id === Number(editing?.subcontractorContractId))
     : ownerContracts.find(contract => contract.id === Number(editing?.ownerContractId));
@@ -1189,7 +1250,7 @@ function BillsTab({
             <TableHead>{t("contracting.bills.number", "الرقم")}</TableHead>
             <TableHead>{t("contracting.bills.date", "التاريخ")}</TableHead>
             {direction === "incoming" && <TableHead>{t("contracting.bills.contractor", "المقاول الباطن")}</TableHead>}
-            <TableHead>{t("contracting.bills.progress", "إنجاز %")}</TableHead>
+            <TableHead>{t("contracting.bills.certificationPercent", "اعتماد مالي %")}</TableHead>
             <TableHead>{t("contracting.bills.gross", "إجمالي")}</TableHead>
             <TableHead>{t("contracting.bills.retention", "محتجز")}</TableHead>
             <TableHead>{t("contracting.bills.due", "مستحق")}</TableHead>
@@ -1371,7 +1432,7 @@ function BillsTab({
                 <Input value={aggregateMoney(adjustedContractValue)} readOnly disabled data-testid="input-bill-contract-base" />
               </Field>
             )}
-            <Field label={t("contracting.bills.progress", "الإنجاز التراكمي %")}>
+            {!newExecutionMode && !detailMode && <Field label={t("contracting.bills.progress", "الإنجاز التراكمي %")}>
               <Input
                 type="number"
                 min="0"
@@ -1388,7 +1449,7 @@ function BillsTab({
                     : "هذا المستخلص تفصيلي ببنود الكميات؛ عدّل الكميات في جدول البنود."}
                 </p>
               )}
-            </Field>
+            </Field>}
             {!editingBillId && (
               <Field label={t("contracting.bills.retentionPercent", "% محتجز")}>
                 <Input
@@ -1419,18 +1480,27 @@ function BillsTab({
 
           {(editing as any)?.id != null ? (
             <ContractingBillDetailEditor
+              key={`${(editing as any).id}:${detailsRevision}`}
               billId={Number((editing as any).id)}
               projectId={projectId}
               bill={editing as any}
               project={project}
+              initialExecutionValues={recoveredExecution?.billId === Number((editing as any).id) ? recoveredExecution.values : undefined}
+              onLinesLoaded={setDetailLineCount}
             />
           ) : (
+            <>
+            {newExecutionMode && <ContractingDraftExecution
+              projectId={projectId} direction={direction} contractId={draftContractId}
+              date={editing.billDate ?? ""} state={draftExecution}
+              onChange={setDraftExecution} disabled={saving}
+            />}
             <div className="mt-8 pt-4">
               <h5 className="font-semibold text-sky-800 dark:text-sky-200 mb-4">القيم المالية المحسوبة</h5>
               <p className="text-xs text-muted-foreground mb-3">معاينة حسب العقد والسابق المعتمد؛ يُثبّت الخادم الحساب عند الحفظ. الإضافات والاستقطاعات واسترداد المقدم تظهر في تفاصيل المسودة المحفوظة.</p>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 bg-muted/10 border p-4 rounded-xl">
                 <Field label={t("contracting.bills.gross", "الإجمالي التراكمي قبل الضريبة (ر.س)")} required>
-                  <Input type="number" value={editing.grossAmount ?? "0"} readOnly disabled />
+                  <Input type="number" value={aggregateMoney(cumulativeGross)} readOnly disabled />
                 </Field>
                 <Field label="محتجز الفترة">
                   <Input value={aggregateMoney(previewRetention)} readOnly disabled />
@@ -1452,6 +1522,7 @@ function BillsTab({
                 </Field>
               </div>
             </div>
+            </>
           )}
 
           <div className="flex items-center justify-end gap-2 mt-4 pt-4 border-t bg-muted/20 p-4 rounded-xl">
@@ -2019,6 +2090,11 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
               </Field>
             </div>
           </div>
+          {editing.id != null ? (
+            <ContractingContractBoqEditor projectId={projectId} direction="owner"
+              contractId={editing.id} contractType={editing.contractType}
+              parentContractId={editing.parentContractId ?? null} />
+          ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنوده وربطها ببنود تنفيذ المشروع بكميات وأسعار هذا العقد.</p>}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button disabled={saving} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
@@ -2220,6 +2296,9 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
               </Field>
             </div>
           </div>
+          {editing.id != null ? (
+            <ContractingContractBoqEditor projectId={projectId} direction="subcontract" contractId={editing.id} />
+          ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنود الباطن بأسعارها المستقلة وربطها ببنود التنفيذ أو مصدرها في عقد المالك.</p>}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button disabled={saving} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>

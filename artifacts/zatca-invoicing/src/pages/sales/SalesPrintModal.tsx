@@ -2411,11 +2411,11 @@ export function template14(d: PrintData): string {
         <th>بند التنفيذ</th>
         <th>الوحدة</th>
         <th>الكمية السابقة</th>
-        <th>الكمية الحالية</th>
-        <th>الكمية التراكمية</th>
-        <th>قيمة السابق</th>
-        <th>قيمة الحالي</th>
-        <th>قيمة التراكمي</th>
+        <th>المنفّذ الحالي</th>
+        <th>إجمالي المنفّذ</th>
+        <th>المعتمد السابق</th>
+        <th>المعتمد الحالي</th>
+        <th>إجمالي المعتمد</th>
       </tr>
     </thead>` : `
     <thead>
@@ -2441,7 +2441,14 @@ export function template14(d: PrintData): string {
         return `
           <tr class="item-row">
             <td>${idx + 1}</td>
-            <td>${itemDisplayName(l)}${l.changeOrderNumber ? `<div style="font-size:10px;color:#555;margin-top:1px;">أمر تغيير: ${escapePrintHtml(l.changeOrderNumber)}</div>` : ""}</td>
+            <td>${itemDisplayName(l)}${l.changeOrderNumber ? `<div style="font-size:10px;color:#555;margin-top:1px;">أمر تغيير: ${escapePrintHtml(l.changeOrderNumber)}</div>` : ""}
+              ${l.certificationPercent != null ? `<div style="font-size:9px;color:#334155;margin-top:3px;line-height:1.5;">
+                اعتماد المنفّذ الحالي: ${nf(l.certificationPercent)}% · قيمة التنفيذ: ${nf(l.executionValue)}<br/>
+                معتمد من التنفيذ: ${nf(l.currentExecutionCertifiedValue)} · اعتماد معلّق سابق: ${nf(l.priorPendingCertifiedValue)}<br/>
+                متبقٍ معلّق (قيمة): ${nf(l.pendingValue)}
+                ${l.certificationReason ? `<br/>المرجع: ${escapePrintHtml(l.certificationReason)}` : ""}
+              </div>` : ""}
+            </td>
             <td>${unitDisplay(l)}</td>
             <td class="mono">${nf(l.previousQty)}</td>
             <td class="mono">${nf(l.currentQty)}</td>
