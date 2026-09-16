@@ -59,6 +59,27 @@ export function ensureContractingAccountingTables(): Promise<void> {
         ADD COLUMN IF NOT EXISTS application_origin TEXT NOT NULL DEFAULT 'manual',
         ADD COLUMN IF NOT EXISTS reversal_journal_entry_id INTEGER REFERENCES journal_entries(id) ON DELETE RESTRICT
     `);
+    // Recovery policy/snapshot columns are additive so an external agent can
+    // heal an older tenant without a declarative schema publish first.
+    await db.execute(sql`
+      ALTER TABLE IF EXISTS contracting_owner_contracts
+        ADD COLUMN IF NOT EXISTS advance_recovery_method TEXT NOT NULL DEFAULT 'percentage',
+        ADD COLUMN IF NOT EXISTS advance_recovery_fixed_amount NUMERIC(14,2) NOT NULL DEFAULT 0
+    `);
+    await db.execute(sql`
+      ALTER TABLE IF EXISTS contracting_sub_contracts
+        ADD COLUMN IF NOT EXISTS advance_recovery_method TEXT NOT NULL DEFAULT 'percentage',
+        ADD COLUMN IF NOT EXISTS advance_recovery_fixed_amount NUMERIC(14,2) NOT NULL DEFAULT 0
+    `);
+    await db.execute(sql`
+      ALTER TABLE IF EXISTS contracting_progress_bills
+        ADD COLUMN IF NOT EXISTS advance_recovery_method TEXT NOT NULL DEFAULT 'percentage',
+        ADD COLUMN IF NOT EXISTS advance_recovery_fixed_amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS advance_recovery_contract_advance_amount NUMERIC(14,2),
+        ADD COLUMN IF NOT EXISTS advance_recovery_total_previously_recovered NUMERIC(14,2),
+        ADD COLUMN IF NOT EXISTS advance_recovery_override_amount NUMERIC(14,2),
+        ADD COLUMN IF NOT EXISTS advance_recovery_override_reason TEXT
+    `);
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS contracting_settlements_project_idx
         ON contracting_accounting_settlements(company_id, project_id, created_at DESC)

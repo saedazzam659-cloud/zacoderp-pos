@@ -18,6 +18,26 @@ export function contractingBranchAllowed(
   return branchId != null && (user.branchIds ?? []).includes(Number(branchId));
 }
 
+export function contractingAdvanceRecoveryOverrideAllowed(user: {
+  role?: string | null;
+  permissions?: { contracting?: { overrun?: boolean } } | null;
+} | null | undefined): boolean {
+  const role = String(user?.role ?? "").toLowerCase();
+  if (role === "admin" || role === "superadmin") return true;
+  return user?.permissions?.contracting?.overrun === true;
+}
+
+export function contractingAdvanceRecoverySnapshotLocked(bill: {
+  status?: string | null;
+  journalEntryId?: number | string | null;
+  reversalJournalEntryId?: number | string | null;
+} | null | undefined): boolean {
+  const status = String(bill?.status ?? "");
+  if (status === "reversed") return true;
+  if (["approved", "posted", "partially_paid", "paid"].includes(status)) return true;
+  return bill?.journalEntryId != null && bill?.reversalJournalEntryId == null;
+}
+
 /**
  * Legacy contracting routes are still mounted beside the accounting router.
  * Map HTTP mutations to the existing granular permission actions instead of

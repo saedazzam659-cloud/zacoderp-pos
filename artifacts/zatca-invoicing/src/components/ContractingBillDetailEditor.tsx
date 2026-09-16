@@ -12,7 +12,8 @@ import { FileText, Pencil, Plus, Trash2, UploadCloud } from "lucide-react";
 import { ContractingBillExportActions } from "@/components/ContractingExportActions";
 import type { ContractingBillSnapshot, ContractingProjectSnapshot } from "@/lib/contractingPrintExport";
 import ContractingExecutionTable from "@/components/ContractingExecutionTable";
-import { executionInputs, executionPayload, executionValidation, type ExecutionInputs, type ExecutionLine } from "@/lib/contractingExecution";
+import { executionInput, executionEstimate, executionInputs, executionPayload, executionValidation, type ExecutionInputs, type ExecutionLine } from "@/lib/contractingExecution";
+import ContractingAdvanceRecoverySummary from "./ContractingAdvanceRecoverySummary";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -1059,6 +1060,17 @@ export default function ContractingBillDetailEditor({
         ))}</div>
       </section>
 
+      <ContractingAdvanceRecoverySummary
+        projectId={projectId} billId={billId} direction={detail.bill.direction}
+        contractId={detail.bill.direction === "incoming" ? detail.bill.subcontractorContractId : detail.bill.ownerContractId}
+        billDate={bill?.billDate ?? ""} locked={locked} refreshKey={detail}
+        retentionPercent={bill?.retentionPercent}
+        currentValue={detail.lines.length > 0 ? detail.lines.reduce((total, row) => total + (
+          row.boqLineId == null ? Number(row.currentValue) :
+            executionEstimate(row, executionValues[row.boqLineId] ?? executionInput(row)).certifiedTotal
+        ), 0) : undefined}
+        onSaved={onSaved}
+      />
       {/* 3. BOTTOM: Financial values and adjustments summary */}
       <div className="flex flex-wrap items-start justify-end gap-4 mt-8 pt-4 border-t">
         <div className="w-80 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
@@ -1075,10 +1087,6 @@ export default function ContractingBillDetailEditor({
           
           <div className="flex justify-between border-t pt-2 mt-2"><span className="text-muted-foreground">الإضافات المالية</span><span className="font-mono text-emerald-600">{money(detail.summary.additionsTotal)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">إجمالي الاستقطاعات</span><span className="font-mono text-amber-700">−{money(detail.summary.deductionsTotal)}</span></div>
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">استرداد المقدم {detail.summary.advanceRecovery?.enabled ? `(${detail.summary.advanceRecovery.advanceRecoveryPercent}%)` : "— غير مفعّل"}</span>
-            <span className="font-mono text-amber-700">−{money(Number(detail.summary.advanceRecovery?.recoveryAmount ?? 0))}</span>
-          </div>
           <div className="flex justify-between"><span className="text-muted-foreground">الغرامات المستقلة</span><span className="font-mono text-rose-700">−{money(detail.summary.penaltyTotal)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">الضريبة (VAT)</span><span className="font-mono">{money(detail.summary.vatAmount)}</span></div>
           
@@ -1086,20 +1094,13 @@ export default function ContractingBillDetailEditor({
             <span>صافي المستخلص الحالي</span>
             <span className="font-mono text-primary">{money(detail.summary.adjustedNetAmount)}</span>
           </div>
-          {!locked && detail.summary.advanceRecovery?.enabled && <>
-            <div className="flex justify-between border-t pt-2 text-xs font-semibold"><span>المستحق بعد استرداد المقدم (معاينة)</span><span className="font-mono">{money(Math.max(0, detail.summary.remainingAmount - Number(detail.summary.advanceRecovery.recoveryAmount)))}</span></div>
-            {Number(detail.summary.advanceRecovery.actualAdvanceRemaining) <= 0 && <p className="text-xs text-amber-700">لا يوجد رصيد دفعة مقدمة مرحّلة لهذا العقد. سجّلها في المحاسبة والتسويات؛ إدخال نسبتها بالعقد وحده لا ينشئ رصيدًا ماليًا.</p>}
-            {!detail.summary.advanceRecovery.startReached && <p className="text-xs text-amber-700">لم يصل الاعتماد المالي التراكمي إلى نسبة بدء الخصم المحددة.</p>}
-          </>}
         </div>
       </div>
 
       {/* 4. FOOTER: Save / Approve / Print */}
       <div className="flex flex-wrap items-center justify-between gap-2 mt-4 pt-4 border-t bg-muted/20 p-4 rounded-xl">
         <div className="text-xs text-muted-foreground">
-          {detail.summary.advanceRecovery && detail.summary.advanceRecovery.enabled && (
-            <p>الرصيد الفعلي للسلفة قبل التطبيق: {money(Number(detail.summary.advanceRecovery.actualAdvanceRemaining))} ر.س · بعد التطبيق: {money(Number(detail.summary.advanceRecovery.remainingAdvanceAfter))} ر.س</p>
-          )}
+          <p>استرداد المقدم تسوية مستقلة، ولا يخفض الضريبة أو يكرر الخصم من صافي الأعمال.</p>
         </div>
         <div className="flex items-center gap-2">
           {bill?.direction && bill.billNumber && (

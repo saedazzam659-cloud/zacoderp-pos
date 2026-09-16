@@ -19,7 +19,11 @@ import {
   journalEntriesTable,
 } from "@workspace/db";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage.js";
-import { approveBill, certifyBillAmounts } from "./contracting-accounting-service.js";
+import {
+  approveBill,
+  certifyBillAmounts,
+  getAdvanceRecoveryPreview,
+} from "./contracting-accounting-service.js";
 export { recertifyBoqBill } from "./contracting-boq-recertification.js";
 import { contractingBranchAllowed } from "./contracting-security.js";
 import { reportBillIsCertified, reportOwnerContractScope } from "./contracting-report-math.js";
@@ -1390,39 +1394,39 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
   const currentWorks = lines.length > 0
     ? lines.reduce((total, row) => total + Number(row.currentValue), 0)
     : Math.max(0, Number(bill.grossAmount) - Number(bill.previousPaid));
-  const advanceSources = await db.execute(sql`
-    SELECT COALESCE(SUM(amount - applied_amount), 0)::numeric AS remaining
-      FROM contracting_accounting_settlements
-     WHERE company_id = ${companyId}
-       AND project_id = ${bill.projectId}
-       AND direction = ${bill.direction}
-       AND kind IN ('advance_receipt', 'advance_payment')
-       AND status = 'posted'
-       AND ${bill.direction === "outgoing"
-         ? sql`owner_contract_id = ${Number(bill.ownerContractId)}
-               AND subcontractor_contract_id IS NULL`
-         : sql`subcontractor_contract_id = ${Number(bill.subcontractorContractId)}
-               AND owner_contract_id IS NULL`}
-  `);
-  const advanceSourceRows = Array.isArray(advanceSources)
-    ? advanceSources as any[]
-    : ((advanceSources as any)?.rows ?? []);
-  const actualAdvanceRemaining = String(advanceSourceRows[0]?.remaining ?? "0");
-  const advanceNetDue = adjustedNetAmount;
-  const advanceRecovery = calculateAdvanceRecoveryCents({
-    enabled: bill.advanceRecoveryEnabled === true || String(bill.advanceRecoveryEnabled) === "true",
-    progressPercent: bill.progressPercent ?? "0",
-    startProgressPercent: bill.advanceRecoveryStartProgressPercent ?? "0",
-    advanceRecoveryPercent: bill.advanceRecoveryPercent ?? "0",
-    currentCertifiedWorkBeforeVat: currentWorks,
-    actualAdvanceRemaining,
-    netDue: advanceNetDue,
-  });
+  const contractId = bill.direction === "outgoing"
+    ? Number(bill.ownerContractId ?? 0)
+    : Number(bill.subcontractorContractId ?? 0);
+  const advanceRecovery = contractId > 0
+    ? await getAdvanceRecoveryPreview({
+      companyId,
+      projectId: bill.projectId,
+      direction: bill.direction as "outgoing" | "incoming",
+      ownerContractId: bill.ownerContractId,
+      subcontractorContractId: bill.subcontractorContractId,
+      billDate: String(bill.billDate),
+      billId: bill.id,
+      currentCertifiedWorkBeforeVat: currentWorks,
+      overrideFieldsPresent: false,
+      req: { authUser: user },
+    })
+    : calculateAdvanceRecoveryCents({
+      enabled: bill.advanceRecoveryEnabled === true || String(bill.advanceRecoveryEnabled) === "true",
+      progressPercent: bill.progressPercent ?? "0",
+      startProgressPercent: bill.advanceRecoveryStartProgressPercent ?? "0",
+      advanceRecoveryPercent: bill.advanceRecoveryPercent ?? "0",
+      method: bill.advanceRecoveryMethod ?? "percentage",
+      fixedAmount: bill.advanceRecoveryFixedAmount ?? "0",
+      currentCertifiedWorkBeforeVat: currentWorks,
+      actualAdvanceRemaining: bill.advanceRecoveryRemainingBefore ?? "0",
+      netDue: adjustedNetAmount,
+    });
   return {
     bill: {
       id: bill.id,
       projectId: bill.projectId,
       direction: bill.direction,
+      billDate: bill.billDate,
       ownerContractId: bill.ownerContractId,
       subcontractorContractId: bill.subcontractorContractId,
       grossAmount: bill.grossAmount,

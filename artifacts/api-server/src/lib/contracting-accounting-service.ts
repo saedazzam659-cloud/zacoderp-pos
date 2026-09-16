@@ -50,6 +50,8 @@ import { ensureContractingBillDetailsTables } from "./contracting-bill-details-s
 import { assertBillContractScope } from "./contracting-bill-contracts.js";
 import {
   contractingBranchAllowed,
+  contractingAdvanceRecoveryOverrideAllowed,
+  contractingAdvanceRecoverySnapshotLocked,
   contractingWarehouseError,
 } from "./contracting-security.js";
 import {
@@ -57,6 +59,7 @@ import {
   contractingBillRoleLines,
   authoritativeCumulativeBillAmounts,
   calculateAdvanceRecoveryCents,
+  autoRecoveryApplicationIdempotencyKey,
   reverseAccountingLines,
   validateSettlementCap,
 } from "./contracting-accounting-math.js";
@@ -436,11 +439,17 @@ function camelBill(row: any): any {
     netAmount: row.net_amount,
     advanceRecoveryEnabled: row.advance_recovery_enabled,
     advanceRecoveryPercent: row.advance_recovery_percent,
+    advanceRecoveryMethod: row.advance_recovery_method,
+    advanceRecoveryFixedAmount: row.advance_recovery_fixed_amount,
     advanceRecoveryStartProgressPercent: row.advance_recovery_start_progress_percent,
     advanceRecoveryRequestedAmount: row.advance_recovery_requested_amount,
     advanceRecoveryAmount: row.advance_recovery_amount,
     advanceRecoveryRemainingBefore: row.advance_recovery_remaining_before,
     advanceRecoveryRemainingAfter: row.advance_recovery_remaining_after,
+    advanceRecoveryContractAdvanceAmount: row.advance_recovery_contract_advance_amount,
+    advanceRecoveryTotalPreviouslyRecovered: row.advance_recovery_total_previously_recovered,
+    advanceRecoveryOverrideAmount: row.advance_recovery_override_amount,
+    advanceRecoveryOverrideReason: row.advance_recovery_override_reason,
     paidAmount: row.paid_amount,
     journalEntryId: row.journal_entry_id,
     approvedByUserId: row.approved_by_user_id,
@@ -905,6 +914,399 @@ async function lockedAdvanceSources(
   return resultRows(result);
 }
 
+/**
+ * Advance recovery is a posting exception, not a general bill-edit right.
+ * Reuse the existing document posting permission so admins and users with an
+ * explicit posting grant can request one, while an ordinary editor cannot.
+ */
+export function canOverrideAdvanceRecovery(req: RequestLike, direction: "outgoing" | "incoming"): boolean {
+  const user = req?.authUser;
+  return contractingAdvanceRecoveryOverrideAllowed(user);
+}
+
+/**
+ * A historical journal marker alone does not freeze a reopened submitted
+ * bill: unapproval retains the original JE trace while recording its
+ * reversal. A reversal state itself remains immutable.
+ */
+export function isAdvanceRecoverySnapshotLocked(bill: any): boolean {
+  return contractingAdvanceRecoverySnapshotLocked(bill);
+}
+
+function recoveryContractTable(direction: "outgoing" | "incoming"): string {
+  return direction === "incoming" ? "contracting_sub_contracts" : "contracting_owner_contracts";
+}
+
+async function liveAdvanceRecoveryContract(
+  executor: Executor,
+  companyId: number,
+  projectId: number,
+  direction: "outgoing" | "incoming",
+  contractId: number,
+  lock = false,
+): Promise<any> {
+  const row = await executor.execute(sql`
+    SELECT id, advance_payment, advance_recovery_enabled,
+           advance_recovery_percent, advance_recovery_method,
+           advance_recovery_fixed_amount,
+           advance_recovery_start_progress_percent,
+           value, contract_type, parent_contract_id,
+           retention_enabled, retention_percent, retention_cap_percent,
+           vat_percent
+      FROM ${sql.raw(recoveryContractTable(direction))}
+     WHERE id = ${contractId}
+       AND company_id = ${companyId}
+       AND project_id = ${projectId}
+     ${lock ? sql`FOR UPDATE` : sql``}
+  `);
+  const contract = resultRows(row)[0];
+  if (!contract) throw failure("العقد المرتبط بالمستخلص غير موجود في نفس الشركة والمشروع", 422);
+  const method = String(contract.advance_recovery_method ?? "percentage");
+  if (method !== "percentage" && method !== "fixed") {
+    throw failure("طريقة استرداد السلفة في العقد غير صالحة", 409);
+  }
+  return {
+    enabled: booleanValue(contract.advance_recovery_enabled),
+    percent: String(contract.advance_recovery_percent ?? "0"),
+    method,
+    fixedAmount: String(contract.advance_recovery_fixed_amount ?? "0"),
+    startProgressPercent: String(contract.advance_recovery_start_progress_percent ?? "0"),
+    contractAdvanceAmount: String(contract.advance_payment ?? "0"),
+    value: String(contract.value ?? "0"),
+    contractType: String(contract.contract_type ?? "main"),
+    parentContractId: contract.parent_contract_id == null ? null : Number(contract.parent_contract_id),
+    retentionEnabled: contract.retention_enabled == null ? true : booleanValue(contract.retention_enabled),
+    retentionPercent: String(contract.retention_percent ?? "5"),
+    retentionCapPercent: contract.retention_cap_percent == null ? null : String(contract.retention_cap_percent),
+    vatPercent: String(contract.vat_percent ?? "15"),
+  };
+}
+
+async function previewApprovedBase(
+  executor: Executor,
+  companyId: number,
+  projectId: number,
+  bill: any,
+  contractId: number,
+  billDate: string,
+): Promise<{ priorGross: string; priorRetention: string; adjustedContractValue: string }> {
+  const contractTable = bill?.direction === "incoming"
+    ? "contracting_sub_contracts"
+    : "contracting_owner_contracts";
+  const contract = await executor.execute(sql`
+    SELECT value, contract_type, parent_contract_id
+      FROM ${sql.raw(contractTable)}
+     WHERE id = ${contractId} AND company_id = ${companyId} AND project_id = ${projectId}
+  `);
+  const row = resultRows(contract)[0];
+  if (!row) throw failure("العقد المرتبط بالمستخلص غير موجود في نفس الشركة والمشروع", 422);
+  let adjustedContractValue = n(row.value);
+  if (bill?.direction !== "incoming") {
+    const baseId = ["change_order", "addendum"].includes(String(row.contract_type))
+      ? Number(row.parent_contract_id ?? contractId)
+      : contractId;
+    const base = await executor.execute(sql`
+      SELECT value FROM contracting_owner_contracts
+       WHERE id = ${baseId} AND company_id = ${companyId} AND project_id = ${projectId}
+    `);
+    const children = await executor.execute(sql`
+      SELECT COALESCE(SUM(value), 0) AS value
+        FROM contracting_owner_contracts
+       WHERE company_id = ${companyId} AND project_id = ${projectId}
+         AND parent_contract_id = ${baseId}
+         AND contract_type IN ('change_order', 'addendum')
+         AND status = 'approved'
+    `);
+    adjustedContractValue = n(resultRows(base)[0]?.value ?? row.value)
+      + n(resultRows(children)[0]?.value);
+  }
+  const contractColumn = bill?.direction === "incoming"
+    ? "subcontractor_contract_id"
+    : "owner_contract_id";
+  const opposite = bill?.direction === "incoming"
+    ? "owner_contract_id"
+    : "subcontractor_contract_id";
+  const prior = await executor.execute(sql`
+    SELECT COALESCE(MAX(gross_amount), 0) AS prior_gross,
+           COALESCE(SUM(retention_amount), 0) AS prior_retention
+      FROM contracting_progress_bills
+     WHERE company_id = ${companyId} AND project_id = ${projectId}
+       AND direction = ${bill?.direction}
+       AND ${sql.raw(contractColumn)} = ${contractId}
+       AND ${sql.raw(opposite)} IS NULL
+       AND ${bill?.id ? sql`id <> ${bill.id} AND` : sql``}
+       (bill_date < ${billDate} OR (bill_date = ${billDate} AND id < ${Number(bill?.id ?? 2147483647)}))
+       AND status IN ('approved', 'posted', 'partially_paid', 'paid')
+       AND reversal_journal_entry_id IS NULL
+  `);
+  const priorRow = resultRows(prior)[0] ?? {};
+  return {
+    priorGross: String(priorRow.prior_gross ?? "0"),
+    priorRetention: String(priorRow.prior_retention ?? "0"),
+    adjustedContractValue: adjustedContractValue.toFixed(2),
+  };
+}
+
+async function previewSignedAdjustments(
+  executor: Executor,
+  companyId: number,
+  billId: number | null | undefined,
+  rawNetAmount: string,
+): Promise<string> {
+  if (!billId) return rawNetAmount;
+  const [additions, deductions, penalties] = await Promise.all([
+    executor.execute(sql`SELECT amount, NULL::text AS kind FROM contracting_bill_additions WHERE company_id = ${companyId} AND bill_id = ${billId}`),
+    executor.execute(sql`SELECT amount, kind FROM contracting_bill_deductions WHERE company_id = ${companyId} AND bill_id = ${billId}`),
+    executor.execute(sql`SELECT amount, NULL::text AS kind FROM contracting_bill_penalties WHERE company_id = ${companyId} AND bill_id = ${billId}`),
+  ]);
+  const signed = calculateSignedContractingBillNet({
+    rawNetAmount,
+    additions: resultRows(additions),
+    deductions: resultRows(deductions),
+    penalties: resultRows(penalties),
+  });
+  return signed.adjustedNetAmount;
+}
+
+async function advanceRecoveryBalances(
+  executor: Executor,
+  companyId: number,
+  bill: { projectId: number; direction: string; ownerContractId?: number | null; subcontractorContractId?: number | null },
+): Promise<{ actualAdvanceRemaining: string; totalPreviouslyRecovered: string }> {
+  const contractId = bill.direction === "outgoing"
+    ? Number(bill.ownerContractId ?? 0)
+    : Number(bill.subcontractorContractId ?? 0);
+  const sources = await executor.execute(sql`
+    SELECT
+      COALESCE(SUM(amount - applied_amount), 0)::numeric AS remaining
+    FROM contracting_accounting_settlements
+    WHERE company_id = ${companyId}
+      AND project_id = ${bill.projectId}
+      AND direction = ${bill.direction}
+      AND kind IN ('advance_receipt', 'advance_payment')
+      AND status = 'posted'
+      AND ${bill.direction === "outgoing"
+        ? sql`owner_contract_id = ${contractId} AND subcontractor_contract_id IS NULL`
+        : sql`subcontractor_contract_id = ${contractId} AND owner_contract_id IS NULL`}
+  `);
+  const applications = await executor.execute(sql`
+    SELECT COALESCE(SUM(amount), 0)::numeric AS recovered
+      FROM contracting_accounting_settlements
+     WHERE company_id = ${companyId}
+       AND project_id = ${bill.projectId}
+       AND direction = ${bill.direction}
+       AND kind = 'advance_application'
+       AND status = 'posted'
+       AND ${bill.direction === "outgoing"
+         ? sql`owner_contract_id = ${contractId} AND subcontractor_contract_id IS NULL`
+         : sql`subcontractor_contract_id = ${contractId} AND owner_contract_id IS NULL`}
+  `);
+  return {
+    actualAdvanceRemaining: String(resultRows(sources)[0]?.remaining ?? "0"),
+    totalPreviouslyRecovered: String(resultRows(applications)[0]?.recovered ?? "0"),
+  };
+}
+
+function advanceRecoverySnapshot(bill: any): any {
+  const progress = String(bill.progressPercent ?? "0");
+  const start = String(bill.advanceRecoveryStartProgressPercent ?? "0");
+  const enabled = booleanValue(bill.advanceRecoveryEnabled);
+  const currentWork = Math.max(0, n(bill.grossAmount) - n(bill.previousPaid));
+  const netDue = Math.max(0, n(bill.netAmount));
+  const recovery = String(bill.advanceRecoveryAmount ?? "0");
+  const before = String(bill.advanceRecoveryRemainingBefore ?? "0");
+  const after = String(bill.advanceRecoveryRemainingAfter ?? "0");
+  return {
+    enabled,
+    startReached: Number(progress) >= Number(start),
+    eligible: enabled && Number(progress) >= Number(start) && currentWork > 0,
+    progressPercent: progress,
+    startProgressPercent: start,
+    advanceRecoveryPercent: String(bill.advanceRecoveryPercent ?? "0"),
+    method: String(bill.advanceRecoveryMethod ?? "percentage"),
+    fixedAmount: String(bill.advanceRecoveryFixedAmount ?? "0"),
+    contractAdvanceAmount: String(bill.advanceRecoveryContractAdvanceAmount ?? "0"),
+    totalPreviouslyRecovered: String(bill.advanceRecoveryTotalPreviouslyRecovered ?? "0"),
+    outstandingContractualAmount: String(
+      Math.max(
+        0,
+        n(bill.advanceRecoveryContractAdvanceAmount) - n(bill.advanceRecoveryTotalPreviouslyRecovered),
+      ).toFixed(2),
+    ),
+    currentCertifiedWorkBeforeVat: currentWork.toFixed(2),
+    actualAdvanceRemaining: before,
+    netDue: netDue.toFixed(2),
+    requestedRecoveryAmount: String(bill.advanceRecoveryRequestedAmount ?? "0"),
+    recoveryAmount: recovery,
+    advanceRecoveryAmount: recovery,
+    remainingAdvanceAfter: after,
+    remainingAfterRecovery: after,
+  };
+}
+
+/**
+ * Read-only authoritative calculation shared by the preview endpoint and
+ * bill-details summary. It deliberately never writes a bill or a settlement.
+ */
+export async function getAdvanceRecoveryPreview(input: {
+  companyId: number;
+  projectId: number;
+  direction: "outgoing" | "incoming";
+  ownerContractId?: number | null;
+  subcontractorContractId?: number | null;
+  billDate: string;
+  billId?: number | null;
+  currentCertifiedWorkBeforeVat?: number | string | null;
+  progressPercent?: number | string | null;
+  netDue?: number | string | null;
+  retentionEnabled?: boolean | null;
+  retentionPercent?: number | string | null;
+  retentionCapPercent?: number | string | null;
+  vatPercent?: number | string | null;
+  overrideAmount?: number | string | null;
+  overrideReason?: string | null;
+  overrideFieldsPresent?: boolean;
+  req?: RequestLike;
+}) {
+  await ensureContractingAccountingTables();
+  const project = await projectFor(db, input.companyId, input.projectId);
+  if (!project) throw failure("المشروع غير موجود", 404);
+  assertProjectBranchAccess(input.req, project.branchId);
+  if (input.overrideFieldsPresent && !canOverrideAdvanceRecovery(input.req, input.direction)) {
+    throw failure("ليس لديك صلاحية طلب استرداد سلفة استثنائياً", 403);
+  }
+
+  let bill: any = null;
+  if (input.billId != null) {
+    const rows = await db.execute(sql`
+      SELECT * FROM contracting_progress_bills
+       WHERE id = ${Number(input.billId)}
+         AND company_id = ${input.companyId}
+         AND project_id = ${input.projectId}
+    `);
+    bill = camelBill(resultRows(rows)[0]);
+    if (!bill) throw failure("المستخلص غير موجود في نفس المشروع والشركة", 404);
+    if (bill.direction !== input.direction) throw failure("اتجاه المستخلص لا يطابق طلب المعاينة", 422);
+    const expectedContract = input.direction === "outgoing"
+      ? Number(bill.ownerContractId ?? 0)
+      : Number(bill.subcontractorContractId ?? 0);
+    const requestedContract = input.direction === "outgoing"
+      ? Number(input.ownerContractId ?? 0)
+      : Number(input.subcontractorContractId ?? 0);
+    if (expectedContract !== requestedContract) {
+      throw failure("العقد المحدد لا يطابق عقد المستخلص", 422);
+    }
+  }
+  const contractId = input.direction === "outgoing"
+    ? Number(input.ownerContractId ?? bill?.ownerContractId ?? 0)
+    : Number(input.subcontractorContractId ?? bill?.subcontractorContractId ?? 0);
+  if (!Number.isInteger(contractId) || contractId <= 0) throw failure("يجب تحديد عقد المالك أو عقد الباطن", 422);
+  const locked = bill && isAdvanceRecoverySnapshotLocked(bill);
+  if (locked) {
+    const snapshot = advanceRecoverySnapshot(bill);
+    return {
+      ...snapshot,
+      billDate: String(bill.billDate),
+      canOverride: canOverrideAdvanceRecovery(input.req, input.direction),
+      overrideAmount: bill.advanceRecoveryOverrideAmount == null
+        ? null : String(bill.advanceRecoveryOverrideAmount),
+      overrideReason: bill.advanceRecoveryOverrideReason ?? null,
+      source: bill.advanceRecoveryOverrideAmount == null ? "snapshot" : "override",
+    };
+  }
+  const policy = await liveAdvanceRecoveryContract(
+    db,
+    input.companyId,
+    input.projectId,
+    input.direction,
+    contractId,
+  );
+  const previewBase = await previewApprovedBase(
+    db,
+    input.companyId,
+    input.projectId,
+    { direction: input.direction, id: bill?.id },
+    contractId,
+    input.billDate,
+  );
+
+  const balances = await advanceRecoveryBalances(db, input.companyId, {
+    projectId: input.projectId,
+    direction: input.direction,
+    ownerContractId: input.ownerContractId ?? bill?.ownerContractId,
+    subcontractorContractId: input.subcontractorContractId ?? bill?.subcontractorContractId,
+  });
+  const currentWork = input.currentCertifiedWorkBeforeVat
+    ?? (bill ? Math.max(0, n(bill.grossAmount) - n(bill.previousPaid)) : "0");
+  const cumulativeGross = (n(previewBase.priorGross) + n(currentWork)).toFixed(2);
+  const rawAmounts = authoritativeCumulativeBillAmounts({
+    grossAmount: cumulativeGross,
+    adjustedContractValue: previewBase.adjustedContractValue,
+    retentionEnabled: input.retentionEnabled ?? bill?.retentionEnabled ?? policy.retentionEnabled,
+    retentionPercent: input.retentionPercent ?? bill?.retentionPercent ?? policy.retentionPercent,
+    retentionCapPercent: input.retentionCapPercent ?? bill?.retentionCapPercent ?? policy.retentionCapPercent,
+    vatPercent: input.vatPercent ?? bill?.vatPercent ?? policy.vatPercent,
+    priorGrossAmount: previewBase.priorGross,
+    priorRetentionAmount: previewBase.priorRetention,
+  });
+  const adjustedNetBeforePaid = await previewSignedAdjustments(
+    db,
+    input.companyId,
+    bill?.id ?? null,
+    rawAmounts.netAmount,
+  );
+  const derivedNetDue = Math.max(
+    0,
+    n(adjustedNetBeforePaid) - n(bill?.paidAmount ?? "0"),
+  ).toFixed(2);
+  const progress = input.progressPercent
+    ?? (n(previewBase.adjustedContractValue) > 0
+      ? ((n(cumulativeGross) / n(previewBase.adjustedContractValue)) * 100).toFixed(2)
+      : "0.00");
+  const netDue = input.netDue ?? derivedNetDue;
+  const overrideAmount = input.overrideFieldsPresent
+    ? input.overrideAmount ?? null
+    : bill?.advanceRecoveryOverrideAmount ?? null;
+  const overrideReason = input.overrideFieldsPresent
+    ? input.overrideReason ?? null
+    : bill?.advanceRecoveryOverrideReason ?? null;
+  if (
+    input.overrideFieldsPresent
+    && overrideAmount == null
+    && String(overrideReason ?? "").trim() !== ""
+  ) {
+    throw failure("لا يمكن إرسال سبب استرداد استثنائي دون مبلغ", 422);
+  }
+  if (overrideAmount != null && String(overrideReason ?? "").trim() === "") {
+    throw failure("سبب استرداد السلفة الاستثنائي مطلوب", 422);
+  }
+  const policyResult = calculateAdvanceRecoveryCents({
+    enabled: policy.enabled,
+    progressPercent: progress,
+    startProgressPercent: policy.startProgressPercent,
+    advanceRecoveryPercent: policy.percent,
+    method: policy.method,
+    fixedAmount: policy.fixedAmount,
+    contractAdvanceAmount: policy.contractAdvanceAmount,
+    totalPreviouslyRecovered: balances.totalPreviouslyRecovered,
+    currentCertifiedWorkBeforeVat: currentWork,
+    actualAdvanceRemaining: balances.actualAdvanceRemaining,
+    netDue,
+    overrideAmount,
+  });
+  return {
+    ...policyResult,
+    billDate: input.billDate,
+    cumulativeGrossAmount: rawAmounts.grossAmount,
+    priorApprovedGrossAmount: previewBase.priorGross,
+    derivedNetDue,
+    canOverride: canOverrideAdvanceRecovery(input.req, input.direction),
+    overrideAmount: overrideAmount == null ? null : String(overrideAmount),
+    overrideReason: overrideReason == null ? null : String(overrideReason),
+    source: overrideAmount == null ? "contract" : "override",
+  };
+}
+
 async function applyAdvanceTx(input: {
   tx: Executor;
   companyId: number;
@@ -993,7 +1395,9 @@ async function applyAdvanceTx(input: {
       ${outgoing ? null : Number(input.bill.subcontractorContractId)},
       'advance_application', ${input.bill.direction}, ${money(input.amount)},
       ${money(input.amount)}, ${applicationDate}, ${jeId}, ${Number(input.source.id)},
-      ${input.applicationOrigin === "auto_recovery" ? `auto-recovery:${input.bill.id}:${input.source.id}:${input.amount}` : null},
+       ${input.applicationOrigin === "auto_recovery"
+         ? autoRecoveryApplicationIdempotencyKey(input.bill.id, jeId, input.source.id, input.amount)
+         : null},
       ${idempotencyFingerprint({
         billId: input.bill.id,
         sourceSettlementId: Number(input.source.id),
@@ -1049,6 +1453,8 @@ async function autoRecoverAdvanceTx(input: {
        AND id <> ${input.bill.id}
        AND status IN ('approved', 'posted', 'partially_paid', 'paid')
        AND reversal_journal_entry_id IS NULL
+       AND (bill_date < ${input.bill.billDate}
+            OR (bill_date = ${input.bill.billDate} AND id < ${input.bill.id}))
        AND ${input.bill.direction === "outgoing"
          ? sql`owner_contract_id = ${Number(input.bill.ownerContractId)}
                AND subcontractor_contract_id IS NULL`
@@ -1057,21 +1463,63 @@ async function autoRecoverAdvanceTx(input: {
   `);
   const priorGross = centsBig(resultRows(priorGrossResult)[0]?.gross ?? "0");
   const currentWork = centsBig(input.bill.grossAmount) - priorGross;
-  const netDue = centsBig(input.detailAdjustments.adjustedNetAmount);
+  // Existing bill payments are already settled and cannot be recovered again.
+  // Keep the preview and approval paths on the same outstanding-net basis.
+  const netDue = centsBig(input.detailAdjustments.adjustedNetAmount)
+    - centsBig(input.bill.paidAmount ?? "0");
+  const recoveredResult = await input.tx.execute(sql`
+    SELECT COALESCE(SUM(amount), 0)::numeric AS recovered
+      FROM contracting_accounting_settlements
+     WHERE company_id = ${input.companyId}
+       AND project_id = ${input.bill.projectId}
+       AND direction = ${input.bill.direction}
+       AND kind = 'advance_application'
+       AND status = 'posted'
+       AND ${input.bill.direction === "outgoing"
+         ? sql`owner_contract_id = ${Number(input.bill.ownerContractId)}
+               AND subcontractor_contract_id IS NULL`
+         : sql`subcontractor_contract_id = ${Number(input.bill.subcontractorContractId)}
+               AND owner_contract_id IS NULL`}
+  `);
+  const totalPreviouslyRecovered = String(resultRows(recoveredResult)[0]?.recovered ?? "0");
+  const overrideAmount = input.bill.advanceRecoveryOverrideAmount == null
+    ? null
+    : String(input.bill.advanceRecoveryOverrideAmount);
+  const overrideReason = input.bill.advanceRecoveryOverrideReason == null
+    ? null
+    : String(input.bill.advanceRecoveryOverrideReason);
+  if (overrideAmount != null) {
+    if (!canOverrideAdvanceRecovery(input.req, input.bill.direction)) {
+      throw failure("ليس لديك صلاحية طلب استرداد سلفة استثنائياً", 403);
+    }
+    if (!overrideReason?.trim()) throw failure("سبب استرداد السلفة الاستثنائي مطلوب", 422);
+  }
   const policy = calculateAdvanceRecoveryCents({
     enabled: booleanValue(input.bill.advanceRecoveryEnabled),
     progressPercent: input.bill.progressPercent ?? "0",
     startProgressPercent: input.bill.advanceRecoveryStartProgressPercent ?? "0",
     advanceRecoveryPercent: input.bill.advanceRecoveryPercent ?? "0",
+    method: input.bill.advanceRecoveryMethod ?? "percentage",
+    fixedAmount: input.bill.advanceRecoveryFixedAmount ?? "0",
+    contractAdvanceAmount: input.bill.advanceRecoveryContractAdvanceAmount ?? "0",
+    totalPreviouslyRecovered,
     currentCertifiedWorkBeforeVat: centsText(currentWork < 0n ? 0n : currentWork),
     actualAdvanceRemaining: centsText(remainingCents < 0n ? 0n : remainingCents),
     netDue: centsText(netDue < 0n ? 0n : netDue),
+    overrideAmount,
   });
   await input.tx.update(contractingProgressBillsTable).set({
+    advanceRecoveryEnabled: booleanValue(input.bill.advanceRecoveryEnabled),
+    advanceRecoveryPercent: String(input.bill.advanceRecoveryPercent ?? "0"),
+    advanceRecoveryMethod: String(input.bill.advanceRecoveryMethod ?? "percentage"),
+    advanceRecoveryFixedAmount: String(input.bill.advanceRecoveryFixedAmount ?? "0"),
+    advanceRecoveryStartProgressPercent: String(input.bill.advanceRecoveryStartProgressPercent ?? "0"),
+    advanceRecoveryContractAdvanceAmount: String(input.bill.advanceRecoveryContractAdvanceAmount ?? "0"),
     advanceRecoveryRequestedAmount: policy.requestedRecoveryAmount,
     advanceRecoveryAmount: policy.recoveryAmount,
     advanceRecoveryRemainingBefore: policy.actualAdvanceRemaining,
     advanceRecoveryRemainingAfter: policy.remainingAdvanceAfter,
+    advanceRecoveryTotalPreviouslyRecovered: policy.totalPreviouslyRecovered,
     updatedAt: new Date(),
   }).where(and(
     eq(contractingProgressBillsTable.id, input.bill.id),
@@ -1090,13 +1538,26 @@ async function autoRecoverAdvanceTx(input: {
       source,
       bill: input.bill,
       amount: centsText(amount),
-      netAmountOverride: policy.netDue,
+       // applyAdvanceTx checks the full bill settlement cap (including the
+       // already-paid amount), while policy.netDue is the outstanding slice.
+       netAmountOverride: centsText(centsBig(policy.netDue) + centsBig(input.bill.paidAmount ?? "0")),
       userId: input.userId,
       req: input.req,
       applicationOrigin: "auto_recovery",
     }));
     remainingToApply -= amount;
     source.applied_amount = centsText(centsBig(source.applied_amount) + amount);
+  }
+  if (overrideAmount != null) {
+    await addAudit(input.tx, {
+      companyId: input.companyId,
+      projectId: input.bill.projectId,
+      billId: input.bill.id,
+      action: "advance_recovery_override",
+      amount: Number(policy.recoveryAmount),
+      metadata: { amount: overrideAmount, reason: overrideReason },
+      userId: input.userId,
+    });
   }
   return { policy, applications };
 }
@@ -1151,10 +1612,46 @@ export async function approveBill(input: {
     }
     await recertifyBoqBill(tx, input.companyId, locked);
     Object.assign(locked, await certifyBillAmounts(tx, input.companyId, locked));
+    // Unapproved drafts follow the live contract. Approval is the boundary:
+    // lock/read the current policy and persist the exact snapshot used by the
+    // settlement flow below. Contract edits after this point cannot rewrite
+    // posted history.
+    const recoveryContractId = locked.direction === "outgoing"
+      ? Number(locked.ownerContractId ?? 0)
+      : Number(locked.subcontractorContractId ?? 0);
+    const recoveryPolicy = await liveAdvanceRecoveryContract(
+      tx,
+      input.companyId,
+      locked.projectId,
+      locked.direction,
+      recoveryContractId,
+      true,
+    );
+    Object.assign(locked, {
+      advanceRecoveryEnabled: recoveryPolicy.enabled,
+      advanceRecoveryPercent: recoveryPolicy.percent,
+      advanceRecoveryMethod: recoveryPolicy.method,
+      advanceRecoveryFixedAmount: recoveryPolicy.fixedAmount,
+      advanceRecoveryStartProgressPercent: recoveryPolicy.startProgressPercent,
+      advanceRecoveryContractAdvanceAmount: recoveryPolicy.contractAdvanceAmount,
+    });
+    if (
+      locked.advanceRecoveryOverrideAmount != null
+      && !canOverrideAdvanceRecovery(input.req, locked.direction)
+    ) {
+      throw failure("ليس لديك صلاحية طلب استرداد سلفة استثنائياً", 403);
+    }
     if (await isNonfinancialBoqCertificate(tx, input.companyId, locked)) {
       const [updated] = await tx.update(contractingProgressBillsTable).set({
         status: "approved",
         journalEntryId: null,
+        reversalJournalEntryId: null,
+        advanceRecoveryEnabled: locked.advanceRecoveryEnabled,
+        advanceRecoveryPercent: locked.advanceRecoveryPercent,
+        advanceRecoveryMethod: locked.advanceRecoveryMethod,
+        advanceRecoveryFixedAmount: locked.advanceRecoveryFixedAmount,
+        advanceRecoveryStartProgressPercent: locked.advanceRecoveryStartProgressPercent,
+        advanceRecoveryContractAdvanceAmount: locked.advanceRecoveryContractAdvanceAmount,
         approvedByUserId: input.userId,
         approvedAt: new Date(),
         updatedAt: new Date(),
@@ -1171,6 +1668,21 @@ export async function approveBill(input: {
         metadata: { physicalExecutionOnly: true },
         userId: input.userId,
       });
+      if (locked.advanceRecoveryOverrideAmount != null) {
+        await addAudit(tx, {
+          companyId: input.companyId,
+          projectId: locked.projectId,
+          billId: input.billId,
+          action: "advance_recovery_override",
+          amount: 0,
+          metadata: {
+            amount: String(locked.advanceRecoveryOverrideAmount),
+            reason: String(locked.advanceRecoveryOverrideReason ?? ""),
+            appliedAmount: "0.00",
+          },
+          userId: input.userId,
+        });
+      }
       await tx.insert(contractingBillWorkflowEventsTable).values({
         companyId: input.companyId,
         projectId: locked.projectId,
@@ -1237,6 +1749,7 @@ export async function approveBill(input: {
     const [updated] = await tx.update(contractingProgressBillsTable).set({
       status: "approved",
       journalEntryId: jeId,
+      reversalJournalEntryId: null,
       approvedByUserId: input.userId,
       approvedAt: new Date(),
       updatedAt: new Date(),
@@ -1475,12 +1988,13 @@ export async function unapproveBill(input: {
       })),
       req: input.req,
     });
-    const [updated] = await tx.update(contractingProgressBillsTable).set({
+     const [updated] = await tx.update(contractingProgressBillsTable).set({
       status: "submitted",
       approvedAt: null,
       approvedByUserId: null,
       paidAmount: "0.00",
       paidAt: null,
+       reversalJournalEntryId: reversalId,
       // Keep the original JE id as a permanent source trace. The audit row
       // below points to the reversal; a later approval replaces this pointer.
       updatedAt: new Date(),

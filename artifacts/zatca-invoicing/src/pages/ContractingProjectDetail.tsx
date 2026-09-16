@@ -26,6 +26,7 @@ import ContractingBillDetailEditor from "@/components/ContractingBillDetailEdito
 import ContractingContractBoqEditor from "@/components/ContractingContractBoqEditor";
 import ContractingProjectScope from "@/components/ContractingProjectScope";
 import ContractingAdvanceRecoveryFields, { type AdvanceRecoveryPolicy } from "@/components/ContractingAdvanceRecoveryFields";
+import ContractingAdvanceRecoverySummary, { type RecoveryOverride } from "@/components/ContractingAdvanceRecoverySummary";
 import ContractingDraftExecution, { emptyDraftExecution, draftExecutionScope, type DraftExecutionState } from "@/components/ContractingDraftExecution";
 import { executionEstimate, executionInput, executionPayload, executionValidation, type ExecutionInputs } from "@/lib/contractingExecution";
 import {
@@ -100,7 +101,7 @@ type InventoryOptions = {
   items: InventoryItem[]; warehouses: InventoryWarehouse[]; balances: InventoryBalance[];
   projectBranchId?: number | null; requiresProjectBranch?: boolean;
 };
-type Bill = AdvanceRecoveryPolicy & {
+type Bill = AdvanceRecoveryPolicy & Partial<RecoveryOverride> & {
   id: number; billNumber: string; billType: string; billDate: string;
   direction: "outgoing" | "incoming";
   contractorId: number | null;
@@ -976,6 +977,12 @@ function BillsTab({
       if (validation) { toast({ title: validation, variant: "destructive" }); return; }
     }
     const payload: Record<string, unknown> = { ...editing, direction };
+    // Contract policy and posting snapshots are server-owned. Only an explicit
+    // authorized exception on a new draft is submitted from this form.
+    for (const field of Object.keys(payload)) {
+      if (field.startsWith("advanceRecovery")
+        && (isEdit || !["advanceRecoveryOverrideAmount", "advanceRecoveryOverrideReason"].includes(field))) delete payload[field];
+    }
     if (newExecutionMode) {
       // Persist a zero-value draft header, then save the authoritative lines.
       // Never use aggregate progress to overwrite detailed certification.
@@ -1136,6 +1143,8 @@ function BillsTab({
       contractorId: cid,
       retentionPercent: retention,
       subcontractorContractId: scId,
+      advanceRecoveryOverrideAmount: undefined,
+      advanceRecoveryOverrideReason: undefined,
     };
     if (scId) {
       const percent = Number(editing?.progressPercent ?? 0);
@@ -1183,7 +1192,7 @@ function BillsTab({
   const financiallyLocked = Boolean(
     editing && (
       ["approved", "posted", "partially_paid", "paid", "reversed"].includes(String(editing.status))
-      || editing.journalEntryId
+      || (editing.journalEntryId && !editing.reversalJournalEntryId)
     ),
   );
   const detailMode = detailLineCount != null && detailLineCount > 0;
@@ -1207,17 +1216,11 @@ function BillsTab({
     if (!editing) return;
     const nextValue = selectedAggregateContractValue(direction, { ...editing, ...next }, ownerContracts, subContracts);
     const percent = Number(editing.progressPercent ?? 0);
-    const contract = direction === "incoming"
-      ? subContracts.find(row => row.id === (next.subcontractorContractId ?? editing.subcontractorContractId))
-      : ownerContracts.find(row => row.id === (next.ownerContractId ?? editing.ownerContractId));
     setEditing({
       ...editing,
       ...next,
-      ...(contract ? {
-        advanceRecoveryEnabled: contract.advanceRecoveryEnabled ?? false,
-        advanceRecoveryPercent: contract.advanceRecoveryPercent ?? "0",
-        advanceRecoveryStartProgressPercent: contract.advanceRecoveryStartProgressPercent ?? "0",
-      } : {}),
+      advanceRecoveryOverrideAmount: undefined,
+      advanceRecoveryOverrideReason: undefined,
       grossAmount: nextValue > 0
         ? aggregateMoney(nextValue * Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0)) / 100)
         : editing.grossAmount,
@@ -1489,8 +1492,18 @@ function BillsTab({
             </Field>
           </div>
 
-          <ContractingAdvanceRecoveryFields value={editing} disabled={financiallyLocked || saving}
-            onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
+          {!editingBillId && <ContractingAdvanceRecoverySummary
+            key={expectedExecutionScope}
+            projectId={projectId} direction={direction}
+            contractId={direction === "incoming" ? editing.subcontractorContractId ?? null : editing.ownerContractId ?? null}
+            billDate={editing.billDate ?? ""} currentValue={currentPeriodGross}
+            retentionPercent={editing.retentionPercent}
+            override={editing.advanceRecoveryOverrideAmount !== undefined ? {
+              advanceRecoveryOverrideAmount: editing.advanceRecoveryOverrideAmount,
+              advanceRecoveryOverrideReason: editing.advanceRecoveryOverrideReason ?? null,
+            } : undefined}
+            onOverrideChange={values => setEditing(current => current ? { ...current, ...values } : current)}
+          />}
           <p className="rounded border bg-muted/20 p-3 text-xs leading-5">
             «السابق» و«الرصيد المعلّق السابق» يُحمّلان من المستخلصات المعتمدة ماليًا لنفس العقد فقط.
             المسودة والمرسل وتحت المراجعة لا تُضاف إلى السابق؛ احفظ البنود ثم أكمل الاعتماد المالي للمستخلص السابق أولًا.

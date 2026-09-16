@@ -362,17 +362,9 @@ export async function canApproveContractingOverride(
 ): Promise<boolean> {
   if (!user) return false;
   if (user.role === "admin" || user.role === "superadmin") return true;
-  const policy = await getContractingSettings(companyId);
-  if (policy.overrideApprovalRequired
-      && !(policy.overrideApproverRoles ?? []).includes(String(user.role ?? "").toLowerCase())) {
-    return false;
-  }
-  const permissions = user.permissions?.contracting;
-  if (permissions?.overrun === false) return false;
-  if (permissions?.overrun === true) return true;
-  // Preserve the pre-policy behaviour for legacy users whose permission map
-  // has no overrun key: posting authority was the historical fallback.
-  return permissions?.post === true;
+  // An explicit exception capability is required; ordinary contracting post
+  // authority is intentionally not a fallback for financial overrides.
+  return user.permissions?.contracting?.overrun === true;
 }
 
 export function contractingAdjustmentAccountId(

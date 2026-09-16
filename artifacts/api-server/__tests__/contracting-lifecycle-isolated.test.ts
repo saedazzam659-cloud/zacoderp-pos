@@ -32,6 +32,7 @@ import {
 } from "@workspace/db";
 import {
   approveBill,
+  unapproveBill,
   createSettlement,
   createPostedCorrection,
   reverseBillSettlement,
@@ -341,6 +342,14 @@ test("isolated PostgreSQL contracting lifecycle", { skip: !armed }, async (t) =>
     assert.equal(String(approvedOne.previousPaid), "0.00");
     assert.equal(String(approvedOne.retentionAmount), "50.00", "first-period retention stays below the approved 5% cap");
     assert.equal(String(approvedOne.advanceRecoveryAmount), "250.00", "recovery uses a posted advance, not a requested advance");
+    const originalApprovalJournalId = Number(approvedOne.journalEntryId);
+    const reopenedOne = await unapproveBill({ companyId, billId: first.id, userId: user.id, req });
+    assert.equal(String(reopenedOne.status), "submitted");
+    assert.equal(Number(reopenedOne.journalEntryId), originalApprovalJournalId, "historical JE trace is retained");
+    assert.ok(Number(reopenedOne.reversalJournalEntryId) > 0, "unapproval records the reversing JE marker");
+    const reapprovedOne = await approveBill({ companyId, billId: first.id, userId: user.id, req });
+    assert.ok(["approved", "partially_paid"].includes(String(reapprovedOne.status)));
+    assert.equal(String(reapprovedOne.advanceRecoveryAmount), "250.00", "reapproval creates a fresh auto-recovery cycle");
 
     const second = await insertBill(`${tag}-02`, "1000", "50", "2026-03-01");
     const approvedTwo = await approveBill({ companyId, billId: second.id, userId: user.id, req });

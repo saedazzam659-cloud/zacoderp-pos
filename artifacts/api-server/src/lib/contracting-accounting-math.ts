@@ -74,13 +74,22 @@ export function calculateAdvanceRecoveryCents(input: {
   progressPercent: number | string;
   startProgressPercent: number | string;
   advanceRecoveryPercent: number | string;
+  method?: "percentage" | "fixed" | string | null;
+  fixedAmount?: number | string | null;
+  contractAdvanceAmount?: number | string | null;
+  totalPreviouslyRecovered?: number | string | null;
   currentCertifiedWorkBeforeVat: number | string;
   actualAdvanceRemaining: number | string;
   netDue: number | string;
+  overrideAmount?: number | string | null;
 }) {
   const progress = percentCents(input.progressPercent);
   const start = percentCents(input.startProgressPercent);
   const rate = percentCents(input.advanceRecoveryPercent);
+  const method = String(input.method ?? "percentage") === "fixed" ? "fixed" : "percentage";
+  const fixedAmount = scaledCents(input.fixedAmount ?? "0");
+  const contractAdvanceAmount = scaledCents(input.contractAdvanceAmount ?? "0");
+  const totalPreviouslyRecovered = scaledCents(input.totalPreviouslyRecovered ?? "0");
   const currentWork = scaledCents(input.currentCertifiedWorkBeforeVat);
   const advanceRemaining = scaledCents(input.actualAdvanceRemaining);
   const netDue = scaledCents(input.netDue);
@@ -94,10 +103,34 @@ export function calculateAdvanceRecoveryCents(input: {
     throw new Error("مبالغ استرداد السلفة لا يمكن أن تكون سالبة");
   }
   const startReached = progress >= start;
-  const eligible = Boolean(input.enabled) && startReached && currentWork > 0n && rate > 0n;
-  const requested = eligible ? multiplyCentsByPercent(currentWork, rate) : 0n;
-  const actual = requested < advanceRemaining ? requested : advanceRemaining;
-  const recovered = actual < netDue ? actual : netDue;
+  if (fixedAmount < 0n || contractAdvanceAmount < 0n || totalPreviouslyRecovered < 0n) {
+    throw new Error("مبالغ سياسة استرداد السلفة لا يمكن أن تكون سالبة");
+  }
+  const eligible = Boolean(input.enabled)
+    && startReached
+    // A fixed policy must still be tied to positive current certified work.
+    // This preserves zero-financial execution certificates unless an explicit
+    // override is supplied by the caller.
+    && currentWork > 0n
+    && (method === "fixed" ? fixedAmount > 0n : rate > 0n);
+  const calculatedRequested = eligible
+    ? method === "fixed" ? fixedAmount : multiplyCentsByPercent(currentWork, rate)
+    : 0n;
+  const requested = input.overrideAmount == null
+    ? calculatedRequested
+    : scaledCents(input.overrideAmount);
+  if (requested < 0n) throw new Error("مبلغ استرداد السلفة لا يمكن أن يكون سالباً");
+  // `0.00` is an explicit contractual cap and must disable recovery. Only an
+  // omitted value keeps the legacy source-balance-only behavior.
+  const hasContractCap = input.contractAdvanceAmount != null;
+  const contractualRemaining = hasContractCap
+    ? (contractAdvanceAmount > totalPreviouslyRecovered
+      ? contractAdvanceAmount - totalPreviouslyRecovered
+      : 0n)
+    : advanceRemaining;
+  const sourceCapped = requested < advanceRemaining ? requested : advanceRemaining;
+  const contractualCapped = sourceCapped < contractualRemaining ? sourceCapped : contractualRemaining;
+  const recovered = contractualCapped < netDue ? contractualCapped : netDue;
   const remainingAfter = advanceRemaining - recovered;
   return {
     enabled: Boolean(input.enabled),
@@ -106,6 +139,11 @@ export function calculateAdvanceRecoveryCents(input: {
     progressPercent: centsString(progress),
     startProgressPercent: centsString(start),
     advanceRecoveryPercent: centsString(rate),
+    method,
+    fixedAmount: centsString(fixedAmount),
+    contractAdvanceAmount: centsString(contractAdvanceAmount),
+    totalPreviouslyRecovered: centsString(totalPreviouslyRecovered),
+    outstandingContractualAmount: centsString(contractualRemaining),
     currentCertifiedWorkBeforeVat: centsString(currentWork),
     actualAdvanceRemaining: centsString(advanceRemaining),
     netDue: centsString(netDue),
@@ -123,6 +161,15 @@ export const calculateContractingAdvanceRecovery = calculateAdvanceRecoveryCents
 export const advanceRecoveryAmounts = calculateAdvanceRecoveryCents;
 export const calculateAdvanceRecovery = calculateAdvanceRecoveryCents;
 export const calculateAdvanceRecoveryPreview = calculateAdvanceRecoveryCents;
+
+export function autoRecoveryApplicationIdempotencyKey(
+  billId: number | string,
+  approvalCycleId: number | string,
+  sourceSettlementId: number | string,
+  amount: number | string,
+): string {
+  return `auto-recovery:${billId}:${approvalCycleId}:${sourceSettlementId}:${amount}`;
+}
 
 /**
  * Contract ceiling allocation is intentionally calculated in integer cents:

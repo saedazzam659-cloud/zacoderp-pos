@@ -5,6 +5,7 @@ import {
   authoritativeCumulativeBillAmounts,
   aggregateContractProgressAmounts,
   calculateAdvanceRecoveryCents,
+  autoRecoveryApplicationIdempotencyKey,
   contractingCeilingAllocation,
   contractingBillRoleLines,
   idempotencyDecision,
@@ -13,6 +14,10 @@ import {
   reverseAccountingLines,
   validateSettlementCap,
 } from "../src/lib/contracting-accounting-math.ts";
+import {
+  contractingAdvanceRecoveryOverrideAllowed,
+  contractingAdvanceRecoverySnapshotLocked,
+} from "../src/lib/contracting-security.ts";
 import { calculateSignedContractingBillNet } from "../src/lib/contracting-bill-adjustment-math.ts";
 
 /**
@@ -104,6 +109,67 @@ test("cumulative certification uses prior certified totals, never paid amount", 
     priorGrossAmount: "950",
     priorRetentionAmount: "47.50",
   }), /أقل من آخر مستخلص/);
+});
+
+test("advance recovery treats an explicit zero contractual cap differently from legacy omission", () => {
+  const input = {
+    enabled: true,
+    progressPercent: "50",
+    startProgressPercent: "0",
+    advanceRecoveryPercent: "10",
+    currentCertifiedWorkBeforeVat: "1000",
+    actualAdvanceRemaining: "500",
+    netDue: "1000",
+  };
+  assert.equal(calculateAdvanceRecoveryCents(input).recoveryAmount, "100.00");
+  assert.equal(
+    calculateAdvanceRecoveryCents({ ...input, contractAdvanceAmount: "0" }).recoveryAmount,
+    "0.00",
+  );
+});
+
+test("auto-recovery cycle idempotency changes after unapproval while retrying same cycle is stable", () => {
+  const first = autoRecoveryApplicationIdempotencyKey(7, 101, 22, "10.00");
+  assert.equal(first, autoRecoveryApplicationIdempotencyKey(7, 101, 22, "10.00"));
+  assert.notEqual(first, autoRecoveryApplicationIdempotencyKey(7, 102, 22, "10.00"));
+});
+
+test("ordinary posting authority cannot request an exceptional recovery override", () => {
+  assert.equal(
+    contractingAdvanceRecoveryOverrideAllowed({
+      role: "user",
+      postingPermissions: { ctgOutgoingBill: { post: true } },
+    } as any),
+    false,
+  );
+  assert.equal(
+    contractingAdvanceRecoveryOverrideAllowed({
+      role: "user",
+      permissions: { contracting: { overrun: true } },
+    }),
+    true,
+  );
+  assert.equal(contractingAdvanceRecoveryOverrideAllowed({ role: "admin" }), true);
+});
+
+test("reopened submitted bill uses live policy while active and reversed history stays frozen", () => {
+  assert.equal(
+    contractingAdvanceRecoverySnapshotLocked({
+      status: "submitted",
+      journalEntryId: 10,
+      reversalJournalEntryId: 11,
+    }),
+    false,
+  );
+  assert.equal(
+    contractingAdvanceRecoverySnapshotLocked({
+      status: "submitted",
+      journalEntryId: 10,
+      reversalJournalEntryId: null,
+    }),
+    true,
+  );
+  assert.equal(contractingAdvanceRecoverySnapshotLocked({ status: "reversed" }), true);
 });
 
 test("aggregate percentage uses adjusted contract base and current period delta", () => {

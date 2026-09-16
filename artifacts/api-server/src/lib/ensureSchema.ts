@@ -326,6 +326,10 @@ const CONTRACTING_ADVANCE_RECOVERY_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS contracting_owner_contracts
      ADD COLUMN IF NOT EXISTS advance_recovery_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS contracting_owner_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_method TEXT NOT NULL DEFAULT 'percentage'`,
+  `ALTER TABLE IF EXISTS contracting_owner_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_fixed_amount NUMERIC(14,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_owner_contracts
      ADD COLUMN IF NOT EXISTS advance_recovery_start_progress_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS contracting_owner_contracts
      ADD COLUMN IF NOT EXISTS retention_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
@@ -336,6 +340,10 @@ const CONTRACTING_ADVANCE_RECOVERY_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS contracting_sub_contracts
      ADD COLUMN IF NOT EXISTS advance_recovery_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS contracting_sub_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_method TEXT NOT NULL DEFAULT 'percentage'`,
+  `ALTER TABLE IF EXISTS contracting_sub_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_fixed_amount NUMERIC(14,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_sub_contracts
      ADD COLUMN IF NOT EXISTS advance_recovery_start_progress_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS contracting_sub_contracts
      ADD COLUMN IF NOT EXISTS retention_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
@@ -345,6 +353,10 @@ const CONTRACTING_ADVANCE_RECOVERY_COMPATIBILITY_DDL = [
      ADD COLUMN IF NOT EXISTS advance_recovery_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
   `ALTER TABLE IF EXISTS contracting_progress_bills
      ADD COLUMN IF NOT EXISTS advance_recovery_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_method TEXT NOT NULL DEFAULT 'percentage'`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_fixed_amount NUMERIC(14,2) NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS contracting_progress_bills
      ADD COLUMN IF NOT EXISTS advance_recovery_start_progress_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS contracting_progress_bills
@@ -355,6 +367,14 @@ const CONTRACTING_ADVANCE_RECOVERY_COMPATIBILITY_DDL = [
      ADD COLUMN IF NOT EXISTS advance_recovery_remaining_before NUMERIC(14,2) NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS contracting_progress_bills
      ADD COLUMN IF NOT EXISTS advance_recovery_remaining_after NUMERIC(14,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_contract_advance_amount NUMERIC(14,2)`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_total_previously_recovered NUMERIC(14,2)`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_override_amount NUMERIC(14,2)`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_override_reason TEXT`,
   `ALTER TABLE IF EXISTS contracting_progress_bills
      ADD COLUMN IF NOT EXISTS retention_enabled BOOLEAN`,
   `ALTER TABLE IF EXISTS contracting_progress_bills

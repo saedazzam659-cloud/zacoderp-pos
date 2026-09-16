@@ -57,6 +57,12 @@ Keep cumulative certified work separate from period retention and actual settlem
 
 **How to apply:** Use one signed-net rule across approval, recovery, payment limits, status and reports. Cap recovery by actual posted advances for the exact contract. Serialize advance work using bill, contract, then source locks consistently.
 
+Contract advance-recovery policy is live for unapproved bills, but approved recovery is an immutable snapshot. Contract changes affect subsequent draft calculations, never already posted applications. Recovery exceptions require exceptional authority and a recorded reason, not ordinary bill-edit rights.
+
+**Why:** The user explicitly wants contract-owned automatic recovery rather than manually maintained per-bill settings, while retaining prior balances and preventing duplicate recovery.
+
+**How to apply:** Refresh previews without overwriting entered quantities, re-read policy under posting locks, cap by both actual posted funds and the remaining contractual advance, and treat a reversed approval reopened for review as live again.
+
 Contract BOQ is the commercial source of truth, while project work items are shared scope. Owner and subcontract prices stay independent; defaults belong to each new contract, not a live company-settings reference.
 
 “Shared scope” means shared among contracts inside one project, never one execution record shared across projects. Any future general work-item catalog must create independent project-owned records.

@@ -59,6 +59,10 @@ import {
   calculateAdvanceRecoveryCents,
   type CertifiedContractProgressBill,
 } from "../lib/contracting-accounting-math.js";
+import {
+  canOverrideAdvanceRecovery,
+  getAdvanceRecoveryPreview,
+} from "../lib/contracting-accounting-service.js";
 import { assertBillContractScope } from "../lib/contracting-bill-contracts.js";
 import {
   contractCreateFingerprint,
@@ -97,6 +101,12 @@ router.use(requirePermission("contracting", "view"));
 // action so this router behaves like the newer routes.
 router.use((req, res, next) => {
   const action = contractingMutationAction(req.method);
+  // This POST is a read-only calculation despite using POST for its structured
+  // request body; it must remain available with the existing view capability.
+  if (req.method === "POST" && req.path.endsWith("/advance-recovery-preview")) {
+    next();
+    return;
+  }
   if (!action) { next(); return; }
   requirePermission("contracting", action)(req, res, next);
 });
@@ -547,6 +557,43 @@ function validatePercentage(value: unknown, label: string): string | null {
   return null;
 }
 
+function validateAdvanceRecoveryMethod(value: unknown, label = "طريقة استرداد الدفعة المقدمة"): string | null {
+  const method = String(value ?? "percentage");
+  return method === "percentage" || method === "fixed"
+    ? null
+    : `${label} يجب أن تكون percentage أو fixed`;
+}
+
+function advanceRecoveryOverrideRequest(
+  req: any,
+  direction: BillDirection,
+  body: any,
+  existing?: any,
+) {
+  const hasAmount = Object.prototype.hasOwnProperty.call(body ?? {}, "advanceRecoveryOverrideAmount");
+  const hasReason = Object.prototype.hasOwnProperty.call(body ?? {}, "advanceRecoveryOverrideReason");
+  if (!hasAmount && !hasReason) {
+    return { present: false, amount: existing?.advanceRecoveryOverrideAmount ?? null, reason: existing?.advanceRecoveryOverrideReason ?? null };
+  }
+  if (!canOverrideAdvanceRecovery(req, direction)) {
+    throw Object.assign(new Error("ليس لديك صلاحية طلب استرداد سلفة استثنائياً"), { status: 403 });
+  }
+  const rawAmount = hasAmount ? body.advanceRecoveryOverrideAmount : existing?.advanceRecoveryOverrideAmount;
+  const cleared = rawAmount == null || rawAmount === "";
+  if (cleared) {
+    return { present: true, amount: null, reason: null };
+  }
+  const amount = Number(rawAmount);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw Object.assign(new Error("مبلغ استرداد السلفة الاستثنائي يجب أن يكون غير سالب"), { status: 422 });
+  }
+  const reason = String(hasReason ? body.advanceRecoveryOverrideReason : existing?.advanceRecoveryOverrideReason ?? "").trim();
+  if (!reason) {
+    throw Object.assign(new Error("سبب استرداد السلفة الاستثنائي مطلوب"), { status: 422 });
+  }
+  return { present: true, amount: String(amount), reason };
+}
+
 function calculateAdvancePayment(value: number, percent: number): number {
   return Math.round((value * percent / 100 + Number.EPSILON) * 100) / 100;
 }
@@ -554,7 +601,10 @@ function calculateAdvancePayment(value: number, percent: number): number {
 type AdvanceRecoverySettings = {
   enabled: boolean;
   percent: string;
+  method: "percentage" | "fixed";
+  fixedAmount: string;
   startProgressPercent: string;
+  contractAdvanceAmount: string;
 };
 
 type RetentionSettings = {
@@ -613,7 +663,10 @@ async function contractAdvanceRecoverySettings(
     const [contract] = await db.select({
       enabled: contractingSubContractsTable.advanceRecoveryEnabled,
       percent: contractingSubContractsTable.advanceRecoveryPercent,
+      method: contractingSubContractsTable.advanceRecoveryMethod,
+      fixedAmount: contractingSubContractsTable.advanceRecoveryFixedAmount,
       start: contractingSubContractsTable.advanceRecoveryStartProgressPercent,
+      advancePayment: contractingSubContractsTable.advancePayment,
     }).from(contractingSubContractsTable).where(and(
       eq(contractingSubContractsTable.companyId, companyId),
       eq(contractingSubContractsTable.projectId, projectId),
@@ -622,13 +675,19 @@ async function contractAdvanceRecoverySettings(
     return {
       enabled: Boolean(contract?.enabled),
       percent: String(contract?.percent ?? "0"),
+      method: String(contract?.method ?? "percentage") as "percentage" | "fixed",
+      fixedAmount: String(contract?.fixedAmount ?? "0"),
       startProgressPercent: String(contract?.start ?? "0"),
+      contractAdvanceAmount: String(contract?.advancePayment ?? "0"),
     };
   }
   const [contract] = await db.select({
     enabled: contractingOwnerContractsTable.advanceRecoveryEnabled,
     percent: contractingOwnerContractsTable.advanceRecoveryPercent,
+    method: contractingOwnerContractsTable.advanceRecoveryMethod,
+    fixedAmount: contractingOwnerContractsTable.advanceRecoveryFixedAmount,
     start: contractingOwnerContractsTable.advanceRecoveryStartProgressPercent,
+    advancePayment: contractingOwnerContractsTable.advancePayment,
   }).from(contractingOwnerContractsTable).where(and(
     eq(contractingOwnerContractsTable.companyId, companyId),
     eq(contractingOwnerContractsTable.projectId, projectId),
@@ -637,7 +696,10 @@ async function contractAdvanceRecoverySettings(
   return {
     enabled: Boolean(contract?.enabled),
     percent: String(contract?.percent ?? "0"),
+    method: String(contract?.method ?? "percentage") as "percentage" | "fixed",
+    fixedAmount: String(contract?.fixedAmount ?? "0"),
     startProgressPercent: String(contract?.start ?? "0"),
+    contractAdvanceAmount: String(contract?.advancePayment ?? "0"),
   };
 }
 
@@ -1757,6 +1819,10 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
       ?? defaults?.defaultAdvanceRecoveryStartProgressPercent
       ?? 0,
     );
+    const recoveryMethod = String(b.advanceRecoveryMethod ?? "percentage");
+    const recoveryFixedAmount = Number(b.advanceRecoveryFixedAmount ?? 0);
+    const recoveryMethodError = validateAdvanceRecoveryMethod(recoveryMethod);
+    const recoveryFixedError = validateNonNegative(recoveryFixedAmount, "قيمة استرداد السلفة الثابتة");
     const recoveryPercentError = validatePercentage(recoveryPct, "نسبة استرداد الدفعة المقدمة");
     const recoveryStartError = validatePercentage(recoveryStartPct, "بداية استرداد الدفعة المقدمة");
     const retentionEnabled = b.retentionEnabled == null
@@ -1768,8 +1834,8 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
     const retentionCapError = validatePercentage(retentionCapPct, "سقف المحتجزات");
     const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : calculateAdvancePayment(value, advancePct);
     const advanceError = validateNonNegative(advancePay, "الدفعة المقدمة");
-    if (valueError || percentError || recoveryPercentError || recoveryStartError || retentionPercentError || retentionCapError || advanceError) {
-      res.status(400).json({ error: valueError || percentError || recoveryPercentError || recoveryStartError || retentionPercentError || retentionCapError || advanceError }); return;
+    if (valueError || percentError || recoveryPercentError || recoveryStartError || recoveryMethodError || recoveryFixedError || retentionPercentError || retentionCapError || advanceError) {
+      res.status(400).json({ error: valueError || percentError || recoveryPercentError || recoveryStartError || recoveryMethodError || recoveryFixedError || retentionPercentError || retentionCapError || advanceError }); return;
     }
     const values = {
       companyId: cid, projectId,
@@ -1785,6 +1851,8 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
       advancePercent:   String(advancePct),
       advanceRecoveryEnabled: recoveryEnabled,
       advanceRecoveryPercent: String(recoveryPct),
+      advanceRecoveryMethod: recoveryMethod,
+      advanceRecoveryFixedAmount: String(recoveryFixedAmount),
       advanceRecoveryStartProgressPercent: String(recoveryStartPct),
       retentionEnabled,
       retentionPercent: String(retentionPct),
@@ -1932,13 +2000,25 @@ router.put("/owner-contracts/:id", async (req, res) => {
     const recoveryStartPct = recoveryStartChanged
       ? Number(b.advanceRecoveryStartProgressPercent ?? b.startProgressPercent)
       : Number(cur.advanceRecoveryStartProgressPercent ?? 0);
+    const recoveryMethodChanged = b.advanceRecoveryMethod !== undefined;
+    const recoveryFixedChanged = b.advanceRecoveryFixedAmount !== undefined;
+    const recoveryMethod = recoveryMethodChanged
+      ? String(b.advanceRecoveryMethod)
+      : String(cur.advanceRecoveryMethod ?? "percentage");
+    const recoveryFixedAmount = recoveryFixedChanged
+      ? Number(b.advanceRecoveryFixedAmount)
+      : Number(cur.advanceRecoveryFixedAmount ?? 0);
+    const recoveryMethodError = validateAdvanceRecoveryMethod(recoveryMethod);
+    const recoveryFixedError = validateNonNegative(recoveryFixedAmount, "قيمة استرداد السلفة الثابتة");
     const recoveryPercentError = validatePercentage(recoveryPct, "نسبة استرداد الدفعة المقدمة");
     const recoveryStartError = validatePercentage(recoveryStartPct, "بداية استرداد الدفعة المقدمة");
-    if (recoveryPercentError || recoveryStartError) {
-      res.status(400).json({ error: recoveryPercentError || recoveryStartError }); return;
+    if (recoveryPercentError || recoveryStartError || recoveryMethodError || recoveryFixedError) {
+      res.status(400).json({ error: recoveryPercentError || recoveryStartError || recoveryMethodError || recoveryFixedError }); return;
     }
     if (recoveryEnabledChanged) upd.advanceRecoveryEnabled = b.advanceRecoveryEnabled === true;
     if (recoveryPercentChanged) upd.advanceRecoveryPercent = String(recoveryPct);
+    if (recoveryMethodChanged) upd.advanceRecoveryMethod = recoveryMethod;
+    if (recoveryFixedChanged) upd.advanceRecoveryFixedAmount = String(recoveryFixedAmount);
     if (recoveryStartChanged) upd.advanceRecoveryStartProgressPercent = String(recoveryStartPct);
     // A legacy form may submit the stored amount alongside a changed value or
     // percentage. Recalculate in that case; otherwise an amount-only edit
@@ -2129,6 +2209,10 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
       ?? defaults?.defaultAdvanceRecoveryStartProgressPercent
       ?? 0,
     );
+    const recoveryMethod = String(b.advanceRecoveryMethod ?? "percentage");
+    const recoveryFixedAmount = Number(b.advanceRecoveryFixedAmount ?? 0);
+    const recoveryMethodError = validateAdvanceRecoveryMethod(recoveryMethod);
+    const recoveryFixedError = validateNonNegative(recoveryFixedAmount, "قيمة استرداد السلفة الثابتة");
     const recoveryPercentError = validatePercentage(recoveryPct, "نسبة استرداد الدفعة المقدمة");
     const recoveryStartError = validatePercentage(recoveryStartPct, "بداية استرداد الدفعة المقدمة");
     const retentionEnabled = b.retentionEnabled == null
@@ -2140,8 +2224,8 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
     const retentionCapError = validatePercentage(retentionCapPct, "سقف المحتجزات");
     const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : calculateAdvancePayment(value, advancePct);
     const advanceError = validateNonNegative(advancePay, "الدفعة المقدمة");
-    if (valueError || percentError || recoveryPercentError || recoveryStartError || retentionPercentError || retentionCapError || advanceError) {
-      res.status(400).json({ error: valueError || percentError || recoveryPercentError || recoveryStartError || retentionPercentError || retentionCapError || advanceError }); return;
+    if (valueError || percentError || recoveryPercentError || recoveryStartError || recoveryMethodError || recoveryFixedError || retentionPercentError || retentionCapError || advanceError) {
+      res.status(400).json({ error: valueError || percentError || recoveryPercentError || recoveryStartError || recoveryMethodError || recoveryFixedError || retentionPercentError || retentionCapError || advanceError }); return;
     }
     const values = {
       companyId: cid, projectId,
@@ -2157,6 +2241,8 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
       advancePercent:   String(advancePct),
       advanceRecoveryEnabled: recoveryEnabled,
       advanceRecoveryPercent: String(recoveryPct),
+      advanceRecoveryMethod: recoveryMethod,
+      advanceRecoveryFixedAmount: String(recoveryFixedAmount),
       advanceRecoveryStartProgressPercent: String(recoveryStartPct),
       retentionEnabled,
       retentionPercent: String(retentionPct),
@@ -2331,13 +2417,25 @@ router.put("/sub-contracts/:id", async (req, res) => {
     const recoveryStartPct = recoveryStartChanged
       ? Number(b.advanceRecoveryStartProgressPercent ?? b.startProgressPercent)
       : Number(cur.advanceRecoveryStartProgressPercent ?? 0);
+    const recoveryMethodChanged = b.advanceRecoveryMethod !== undefined;
+    const recoveryFixedChanged = b.advanceRecoveryFixedAmount !== undefined;
+    const recoveryMethod = recoveryMethodChanged
+      ? String(b.advanceRecoveryMethod)
+      : String(cur.advanceRecoveryMethod ?? "percentage");
+    const recoveryFixedAmount = recoveryFixedChanged
+      ? Number(b.advanceRecoveryFixedAmount)
+      : Number(cur.advanceRecoveryFixedAmount ?? 0);
+    const recoveryMethodError = validateAdvanceRecoveryMethod(recoveryMethod);
+    const recoveryFixedError = validateNonNegative(recoveryFixedAmount, "قيمة استرداد السلفة الثابتة");
     const recoveryPercentError = validatePercentage(recoveryPct, "نسبة استرداد الدفعة المقدمة");
     const recoveryStartError = validatePercentage(recoveryStartPct, "بداية استرداد الدفعة المقدمة");
-    if (recoveryPercentError || recoveryStartError) {
-      res.status(400).json({ error: recoveryPercentError || recoveryStartError }); return;
+    if (recoveryPercentError || recoveryStartError || recoveryMethodError || recoveryFixedError) {
+      res.status(400).json({ error: recoveryPercentError || recoveryStartError || recoveryMethodError || recoveryFixedError }); return;
     }
     if (recoveryEnabledChanged) upd.advanceRecoveryEnabled = b.advanceRecoveryEnabled === true;
     if (recoveryPercentChanged) upd.advanceRecoveryPercent = String(recoveryPct);
+    if (recoveryMethodChanged) upd.advanceRecoveryMethod = recoveryMethod;
+    if (recoveryFixedChanged) upd.advanceRecoveryFixedAmount = String(recoveryFixedAmount);
     if (recoveryStartChanged) upd.advanceRecoveryStartProgressPercent = String(recoveryStartPct);
     const row = await db.transaction(async (tx) => {
       const [locked] = await tx.select({ id: contractingSubContractsTable.id })
@@ -2712,6 +2810,78 @@ router.get("/projects/:projectId/bills", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
 });
 
+/**
+ * Authoritative, read-only recovery calculation. POST is intentional: the
+ * preview accepts the same structured inputs as the approval calculation and
+ * never creates a bill, settlement, journal entry, or audit row.
+ */
+router.post("/projects/:projectId/advance-recovery-preview", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const body = req.body ?? {};
+    const direction = body.direction === "incoming" ? "incoming" : body.direction === "outgoing" ? "outgoing" : null;
+    if (!direction) {
+      res.status(422).json({ error: "اتجاه المستخلص يجب أن يكون outgoing أو incoming" });
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.billDate ?? ""))) {
+      res.status(422).json({ error: "تاريخ المستخلص مطلوب" });
+      return;
+    }
+    const ownerContractId = body.ownerContractId == null || body.ownerContractId === ""
+      ? null : Number(body.ownerContractId);
+    const subcontractorContractId = body.subcontractorContractId == null || body.subcontractorContractId === ""
+      ? null : Number(body.subcontractorContractId);
+    if (
+      (direction === "outgoing" && (!Number.isInteger(ownerContractId) || Number(ownerContractId ?? 0) <= 0 || subcontractorContractId != null))
+      || (direction === "incoming" && (!Number.isInteger(subcontractorContractId) || Number(subcontractorContractId ?? 0) <= 0 || ownerContractId != null))
+    ) {
+      res.status(422).json({ error: "يجب تحديد عقد واحد مطابق لاتجاه المستخلص" });
+      return;
+    }
+    if (body.currentCertifiedWorkBeforeVat != null) {
+      const current = Number(body.currentCertifiedWorkBeforeVat);
+      if (!Number.isFinite(current) || current < 0) {
+        res.status(422).json({ error: "قيمة الأعمال المعتمدة الحالية يجب أن تكون غير سالبة" });
+        return;
+      }
+    }
+    if (body.progressPercent != null) {
+      const progressError = validatePercentage(body.progressPercent, "نسبة الإنجاز");
+      if (progressError) { res.status(422).json({ error: progressError }); return; }
+    }
+    if (body.netDue != null) {
+      const netError = validateNonNegative(body.netDue, "صافي المستخلص");
+      if (netError) { res.status(422).json({ error: netError }); return; }
+    }
+    const hasOverride = Object.prototype.hasOwnProperty.call(body, "advanceRecoveryOverrideAmount")
+      || Object.prototype.hasOwnProperty.call(body, "advanceRecoveryOverrideReason");
+    const result = await getAdvanceRecoveryPreview({
+      companyId: cid,
+      projectId: Number(req.params.projectId),
+      direction,
+      ownerContractId,
+      subcontractorContractId,
+      billDate: String(body.billDate),
+      billId: body.billId == null || body.billId === "" ? null : Number(body.billId),
+      currentCertifiedWorkBeforeVat: body.currentCertifiedWorkBeforeVat,
+      progressPercent: body.progressPercent,
+      netDue: body.netDue,
+      retentionEnabled: body.retentionEnabled,
+      retentionPercent: body.retentionPercent,
+      retentionCapPercent: body.retentionCapPercent,
+      vatPercent: body.vatPercent,
+      overrideAmount: body.advanceRecoveryOverrideAmount,
+      overrideReason: body.advanceRecoveryOverrideReason,
+      overrideFieldsPresent: hasOverride,
+      req,
+    });
+    res.json({ advanceRecovery: result });
+  } catch (e: any) {
+    res.status(Number(e?.status) || 400).json({ error: e?.message ?? "تعذر حساب استرداد السلفة" });
+  }
+});
+
 router.post("/projects/:projectId/bills", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
@@ -2730,6 +2900,7 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       res.status(400).json({ error: "اتجاه المستخلص غير صالح" }); return;
     }
     const direction = b.direction === "incoming" ? "incoming" : "outgoing";
+    const recoveryOverride = advanceRecoveryOverrideRequest(req, direction, b);
 
     // Tenant-isolation: verify every referenced FK is in the same company
     // (and the same project for contract links). Without these guards a
@@ -2863,11 +3034,17 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       netAmount: String(netAmount),
       advanceRecoveryEnabled: billRecoverySettings.enabled,
       advanceRecoveryPercent: billRecoverySettings.percent,
+      advanceRecoveryMethod: billRecoverySettings.method,
+      advanceRecoveryFixedAmount: billRecoverySettings.fixedAmount,
       advanceRecoveryStartProgressPercent: billRecoverySettings.startProgressPercent,
       advanceRecoveryRequestedAmount: "0",
       advanceRecoveryAmount: "0",
       advanceRecoveryRemainingBefore: "0",
       advanceRecoveryRemainingAfter: "0",
+      advanceRecoveryContractAdvanceAmount: billRecoverySettings.contractAdvanceAmount,
+      advanceRecoveryTotalPreviouslyRecovered: "0",
+      advanceRecoveryOverrideAmount: recoveryOverride.amount,
+      advanceRecoveryOverrideReason: recoveryOverride.reason,
       paidAmount: String(b.paidAmount ?? 0),
       status: b.status ?? "draft",
       notes: b.notes ?? null,
@@ -2964,6 +3141,11 @@ router.put("/bills/:id", async (req, res) => {
       res.status(400).json({ error: "لا يمكن تغيير اتجاه المستخلص بعد إنشائه" }); return;
     }
     const direction = cur.direction as BillDirection;
+    const recoveryOverride = advanceRecoveryOverrideRequest(req, direction, b, cur);
+    if (recoveryOverride.present) {
+      upd.advanceRecoveryOverrideAmount = recoveryOverride.amount;
+      upd.advanceRecoveryOverrideReason = recoveryOverride.reason;
+    }
 
     // Tenant-isolation guards on FK changes.
     if (b.contractorId !== undefined) {

@@ -214,6 +214,8 @@ export const contractingOwnerContractsTable = pgTable(
     // policy applied to later certified work.
     advanceRecoveryEnabled: boolean("advance_recovery_enabled").notNull().default(false),
     advanceRecoveryPercent: numeric("advance_recovery_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+     advanceRecoveryMethod: text("advance_recovery_method").notNull().default("percentage"),
+     advanceRecoveryFixedAmount: numeric("advance_recovery_fixed_amount", { precision: 14, scale: 2 }).notNull().default("0"),
     advanceRecoveryStartProgressPercent: numeric("advance_recovery_start_progress_percent", { precision: 5, scale: 2 }).notNull().default("0"),
     // Retention policy is snapshotted on the contract. Company setting
     // changes therefore only affect contracts created afterwards.
@@ -269,6 +271,8 @@ export const contractingSubContractsTable = pgTable(
     advancePercent:   numeric("advance_percent",   { precision: 5,  scale: 2 }).notNull().default("0"),
     advanceRecoveryEnabled: boolean("advance_recovery_enabled").notNull().default(false),
     advanceRecoveryPercent: numeric("advance_recovery_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+     advanceRecoveryMethod: text("advance_recovery_method").notNull().default("percentage"),
+     advanceRecoveryFixedAmount: numeric("advance_recovery_fixed_amount", { precision: 14, scale: 2 }).notNull().default("0"),
     advanceRecoveryStartProgressPercent: numeric("advance_recovery_start_progress_percent", { precision: 5, scale: 2 }).notNull().default("0"),
     retentionEnabled: boolean("retention_enabled").notNull().default(true),
     retentionPercent: numeric("retention_percent", { precision: 5,  scale: 2 }).notNull().default("5"),
@@ -345,11 +349,17 @@ export const contractingProgressBillsTable = pgTable(
     // disabled and therefore never acquire retroactive deductions.
     advanceRecoveryEnabled: boolean("advance_recovery_enabled").notNull().default(false),
     advanceRecoveryPercent: numeric("advance_recovery_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+     advanceRecoveryMethod: text("advance_recovery_method").notNull().default("percentage"),
+     advanceRecoveryFixedAmount: numeric("advance_recovery_fixed_amount", { precision: 14, scale: 2 }).notNull().default("0"),
     advanceRecoveryStartProgressPercent: numeric("advance_recovery_start_progress_percent", { precision: 5, scale: 2 }).notNull().default("0"),
     advanceRecoveryRequestedAmount: numeric("advance_recovery_requested_amount", { precision: 14, scale: 2 }).notNull().default("0"),
     advanceRecoveryAmount: numeric("advance_recovery_amount", { precision: 14, scale: 2 }).notNull().default("0"),
     advanceRecoveryRemainingBefore: numeric("advance_recovery_remaining_before", { precision: 14, scale: 2 }).notNull().default("0"),
     advanceRecoveryRemainingAfter: numeric("advance_recovery_remaining_after", { precision: 14, scale: 2 }).notNull().default("0"),
+     advanceRecoveryContractAdvanceAmount: numeric("advance_recovery_contract_advance_amount", { precision: 14, scale: 2 }),
+     advanceRecoveryTotalPreviouslyRecovered: numeric("advance_recovery_total_previously_recovered", { precision: 14, scale: 2 }),
+     advanceRecoveryOverrideAmount: numeric("advance_recovery_override_amount", { precision: 14, scale: 2 }),
+     advanceRecoveryOverrideReason: text("advance_recovery_override_reason"),
     paidAmount:      numeric("paid_amount",       { precision: 14, scale: 2 }).notNull().default("0"),
     // Posted corrections never rewrite the source bill. They reverse this
     // row's journal and create a new draft linked back to it.
