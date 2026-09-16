@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/table";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { contractWorkItemDefaults } from "@/lib/contractingWorkItemDefaults";
+import ContractingProjectScope from "./ContractingProjectScope";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -77,6 +78,8 @@ function total(draft: Pick<Draft, "quantity" | "unitPrice">): number {
 
 export default function ContractingContractBoqEditor({
   projectId,
+  projectName,
+  projectCode,
   direction,
   contractId,
   contractType = "main",
@@ -84,6 +87,8 @@ export default function ContractingContractBoqEditor({
   onChanged,
 }: {
   projectId: number;
+  projectName: string;
+  projectCode: string;
   direction: Direction;
   contractId: number;
   contractType?: string;
@@ -139,19 +144,19 @@ export default function ContractingContractBoqEditor({
   const workItemOptions = useMemo<ComboboxItem[]>(
     () => workItems.map(item => ({
       value: String(item.id),
-      label: `${item.code ? `${item.code} — ` : ""}${item.nameAr}`,
+      label: `${item.code ? `${item.code} — ` : ""}${item.nameAr} · #${item.id}`,
     })),
     [workItems],
   );
   const ownerLineOptions = useMemo<ComboboxItem[]>(
     () => [
       { value: "__none__", label: "بدون ربط بسطر المالك" },
-      ...ownerLines.map(line => ({
+      ...ownerLines.filter(line => !draft?.workItemId || String(line.workItemId) === draft.workItemId).map(line => ({
         value: String(line.id),
         label: `${line.workItemCode ? `${line.workItemCode} — ` : ""}${line.workItemName || "بند"} · ${Number(line.quantity).toLocaleString()} ${line.unit}`,
       })),
     ],
-    [ownerLines],
+    [ownerLines, draft?.workItemId],
   );
   const baseLineOptions = useMemo<ComboboxItem[]>(
     () => [
@@ -269,6 +274,7 @@ export default function ContractingContractBoqEditor({
 
   return (
     <section className="col-span-2 mt-4 space-y-2 rounded-md border border-sky-200 bg-sky-50/50 p-3 dark:border-sky-900 dark:bg-sky-950/20" dir="rtl">
+      <ContractingProjectScope projectId={projectId} projectName={projectName} projectCode={projectCode} />
       <div className="flex items-center justify-between gap-2">
         <div>
           <h5 className="font-semibold">جدول كميات العقد</h5>

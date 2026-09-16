@@ -24,6 +24,7 @@ import ContractingAIAssistant from "@/components/ContractingAIAssistant";
 import ContractingAccountingPanel from "@/components/ContractingAccountingPanel";
 import ContractingBillDetailEditor from "@/components/ContractingBillDetailEditor";
 import ContractingContractBoqEditor from "@/components/ContractingContractBoqEditor";
+import ContractingProjectScope from "@/components/ContractingProjectScope";
 import ContractingDraftExecution, { emptyDraftExecution, draftExecutionScope, type DraftExecutionState } from "@/components/ContractingDraftExecution";
 import { executionEstimate, executionInput, executionPayload, executionValidation, type ExecutionInputs } from "@/lib/contractingExecution";
 import {
@@ -329,7 +330,7 @@ export default function ContractingProjectDetail() {
 
         <TabsContent value="owner-contract" className="mt-4"><OwnerContractTab projectId={projectId} project={project} /></TabsContent>
         <TabsContent value="sub-contracts"  className="mt-4"><SubContractsTab  projectId={projectId} project={project} /></TabsContent>
-        <TabsContent value="work-items" className="mt-4"><WorkItemsTab projectId={projectId} onChange={loadProject} /></TabsContent>
+        <TabsContent value="work-items" className="mt-4"><WorkItemsTab key={projectId} projectId={projectId} project={project} onChange={loadProject} /></TabsContent>
         <TabsContent value="resources"  className="mt-4"><ResourcesTab projectId={projectId} /></TabsContent>
         <TabsContent value="bills" className="mt-4">
           <BillsTab
@@ -403,7 +404,7 @@ function Field({ label, required, children }: { label: string; required?: boolea
 }
 
 // ─────────────────── WORK ITEMS TAB ───────────────────
-function WorkItemsTab({ projectId, onChange }: { projectId: number; onChange: () => void }) {
+function WorkItemsTab({ projectId, project, onChange }: { projectId: number; project: Project; onChange: () => void }) {
   const { t } = useTranslation();
   const { token } = useAuth() as any;
   const { toast } = useToast();
@@ -460,6 +461,7 @@ function WorkItemsTab({ projectId, onChange }: { projectId: number; onChange: ()
 
   return (
     <div className="space-y-3">
+      <ContractingProjectScope projectId={projectId} projectName={project.nameAr} projectCode={project.code} />
       <div className="flex justify-between">
         <h3 className="font-bold">{t("contracting.workItems.title", "بنود التنفيذ")} ({rows.length})</h3>
         <Button size="sm" onClick={() => setEditing({
@@ -2091,7 +2093,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
             </div>
           </div>
           {editing.id != null ? (
-            <ContractingContractBoqEditor projectId={projectId} direction="owner"
+            <ContractingContractBoqEditor key={`${projectId}:owner:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="owner"
               contractId={editing.id} contractType={editing.contractType}
               parentContractId={editing.parentContractId ?? null} />
           ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنوده وربطها ببنود تنفيذ المشروع بكميات وأسعار هذا العقد.</p>}
@@ -2297,7 +2299,7 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
             </div>
           </div>
           {editing.id != null ? (
-            <ContractingContractBoqEditor projectId={projectId} direction="subcontract" contractId={editing.id} />
+            <ContractingContractBoqEditor key={`${projectId}:subcontract:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="subcontract" contractId={editing.id} />
           ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنود الباطن بأسعارها المستقلة وربطها ببنود التنفيذ أو مصدرها في عقد المالك.</p>}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>

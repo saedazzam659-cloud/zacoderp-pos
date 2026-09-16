@@ -339,6 +339,9 @@ async function validateLine(
   if (body.sourceOwnerLineId != null && body.sourceOwnerLineId !== "") {
     if (direction !== "subcontract") throw error("ربط سطر المالك متاح لأسطر عقود الباطن فقط");
     sourceOwnerLine = await assertSourceOwnerLine(companyId, projectId, id(body.sourceOwnerLineId, "سطر عقد المالك"));
+    if (sourceOwnerLine.workItemId !== workItemId) {
+      throw error("سطر المالك المصدر يجب أن يرتبط بنفس بند التنفيذ المختار، وليس ببند آخر مشابه في الاسم");
+    }
     const allocated = await sourceAllocatedQuantity(companyId, sourceOwnerLine.id, existingId);
     if (allocated + qty > Number(sourceOwnerLine.quantity) + 0.0001) {
       throw error("إجمالي كميات المقاولين الباطنين يتجاوز كمية سطر عقد المالك");

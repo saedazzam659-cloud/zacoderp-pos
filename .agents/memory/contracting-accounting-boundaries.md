@@ -59,6 +59,10 @@ Keep cumulative certified work separate from period retention and actual settlem
 
 Contract BOQ is the commercial source of truth, while project work items are shared scope. Owner and subcontract prices stay independent; defaults belong to each new contract, not a live company-settings reference.
 
+“Shared scope” means shared among contracts inside one project, never one execution record shared across projects. Any future general work-item catalog must create independent project-owned records.
+
+**Why:** The user explicitly wants similarly named items in different projects to remain isolated, while avoiding repeated manual entry of the same item's descriptive data within a project.
+
 **Why:** The user requires multiple independently priced contracts within one project and forbids old agreements changing when company defaults change.
 
 **How to apply:** Never infer a contract when several exist or copy owner pricing to a subcontract implicitly. Validate certified quantities again inside approval, not just at draft save; several valid drafts can otherwise exceed the same remaining quantity.
