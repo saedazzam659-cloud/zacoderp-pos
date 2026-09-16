@@ -326,6 +326,7 @@ export default function ContractingBillDetailEditor({
   project,
   initialExecutionValues,
   onLinesLoaded,
+  onSaved,
 }: {
   billId: number;
   projectId: number;
@@ -333,6 +334,7 @@ export default function ContractingBillDetailEditor({
   project?: ContractingProjectSnapshot;
   initialExecutionValues?: ExecutionInputs;
   onLinesLoaded?: (count: number) => void;
+  onSaved?: () => void;
 }) {
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
@@ -482,6 +484,7 @@ export default function ContractingBillDetailEditor({
           })),
       });
       await load();
+      onSaved?.();
       toast({ title: "تم حفظ كميات المستخلص وإعادة احتساب القيم من الخادم" });
     } catch (caught: any) {
       toast({ title: caught?.message || "تعذر حفظ كميات المستخلص", variant: "destructive" });
@@ -1062,7 +1065,7 @@ export default function ContractingBillDetailEditor({
           <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1 mb-3">
             <span>الملخص المالي للمستخلص</span>
             <span className="font-semibold px-2 py-0.5 rounded bg-muted text-foreground/70">
-              إنجاز: {detail.summary.cumulativeCompletionPercent.toFixed(2)}%
+              اعتماد مالي: {detail.summary.cumulativeCompletionPercent.toFixed(2)}%
             </span>
           </div>
           
@@ -1072,9 +1075,10 @@ export default function ContractingBillDetailEditor({
           
           <div className="flex justify-between border-t pt-2 mt-2"><span className="text-muted-foreground">الإضافات المالية</span><span className="font-mono text-emerald-600">{money(detail.summary.additionsTotal)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">إجمالي الاستقطاعات</span><span className="font-mono text-amber-700">−{money(detail.summary.deductionsTotal)}</span></div>
-          {detail.summary.advanceRecovery && detail.summary.advanceRecovery.enabled && (
-            <div className="flex justify-between text-[11px]"><span className="text-muted-foreground ms-2">↳ استرداد سلفة</span><span className="font-mono text-amber-700">−{money(Number(detail.summary.advanceRecovery.recoveryAmount))}</span></div>
-          )}
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">استرداد المقدم {detail.summary.advanceRecovery?.enabled ? `(${detail.summary.advanceRecovery.advanceRecoveryPercent}%)` : "— غير مفعّل"}</span>
+            <span className="font-mono text-amber-700">−{money(Number(detail.summary.advanceRecovery?.recoveryAmount ?? 0))}</span>
+          </div>
           <div className="flex justify-between"><span className="text-muted-foreground">الغرامات المستقلة</span><span className="font-mono text-rose-700">−{money(detail.summary.penaltyTotal)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">الضريبة (VAT)</span><span className="font-mono">{money(detail.summary.vatAmount)}</span></div>
           
@@ -1082,6 +1086,11 @@ export default function ContractingBillDetailEditor({
             <span>صافي المستخلص الحالي</span>
             <span className="font-mono text-primary">{money(detail.summary.adjustedNetAmount)}</span>
           </div>
+          {!locked && detail.summary.advanceRecovery?.enabled && <>
+            <div className="flex justify-between border-t pt-2 text-xs font-semibold"><span>المستحق بعد استرداد المقدم (معاينة)</span><span className="font-mono">{money(Math.max(0, detail.summary.remainingAmount - Number(detail.summary.advanceRecovery.recoveryAmount)))}</span></div>
+            {Number(detail.summary.advanceRecovery.actualAdvanceRemaining) <= 0 && <p className="text-xs text-amber-700">لا يوجد رصيد دفعة مقدمة مرحّلة لهذا العقد. سجّلها في المحاسبة والتسويات؛ إدخال نسبتها بالعقد وحده لا ينشئ رصيدًا ماليًا.</p>}
+            {!detail.summary.advanceRecovery.startReached && <p className="text-xs text-amber-700">لم يصل الاعتماد المالي التراكمي إلى نسبة بدء الخصم المحددة.</p>}
+          </>}
         </div>
       </div>
 

@@ -528,7 +528,7 @@ async function mappings(tx: Executor, companyId: number, documentType: string): 
  * amounts are deliberately not part of this calculation: payment settles a
  * certified delta and must never change the next certification's gross base.
  */
-async function certifyBillAmounts(tx: Executor, companyId: number, bill: any): Promise<any> {
+export async function certifyBillAmounts(tx: Executor, companyId: number, bill: any, options: { persist?: boolean; lock?: boolean } = {}): Promise<any> {
   // Validate the complete directional relationship before locking the
   // selected contract.  The old check below only verified one id and would
   // accept opposite-direction links or an incoming contractor from another
@@ -554,7 +554,7 @@ async function certifyBillAmounts(tx: Executor, companyId: number, bill: any): P
      WHERE id = ${contractId}
        AND company_id = ${companyId}
        AND project_id = ${bill.projectId}
-     FOR UPDATE
+      ${options.lock === false ? sql`` : sql`FOR UPDATE`}
   `);
   const lockedContract = resultRows(contract)[0];
   if (!lockedContract) throw failure("العقد المرتبط بالمستخلص غير موجود في نفس الشركة والمشروع", 422);
@@ -596,12 +596,22 @@ async function certifyBillAmounts(tx: Executor, companyId: number, bill: any): P
        AND ${sql.raw(contractColumn)} = ${contractId}
         AND ${sql.raw(oppositeContractColumn)} IS NULL
        AND id <> ${bill.id}
+        AND (bill_date < ${bill.billDate} OR (bill_date = ${bill.billDate} AND id < ${bill.id}))
        AND status IN ('approved', 'posted', 'partially_paid', 'paid')
        AND reversal_journal_entry_id IS NULL
   `);
   const prior = resultRows(priorResult)[0] ?? {};
+  const detailResult = await tx.execute(sql`
+    SELECT COUNT(*) AS line_count, COALESCE(SUM(current_value), 0) AS current_value
+    FROM contracting_bill_lines
+    WHERE company_id = ${companyId} AND project_id = ${bill.projectId} AND bill_id = ${bill.id}
+  `);
+  const detail = resultRows(detailResult)[0];
+  const grossAmount = Number(detail?.line_count ?? 0) > 0
+    ? money(n(prior.prior_gross) + n(detail.current_value))
+    : bill.grossAmount;
   const amounts = authoritativeCumulativeBillAmounts({
-    grossAmount: bill.grossAmount,
+    grossAmount,
     adjustedContractValue,
     retentionEnabled: bill.retentionEnabled,
     retentionPercent: bill.retentionPercent ?? 0,
@@ -610,19 +620,21 @@ async function certifyBillAmounts(tx: Executor, companyId: number, bill: any): P
     priorGrossAmount: prior.prior_gross ?? 0,
     priorRetentionAmount: prior.prior_retention ?? 0,
   });
-  await tx.update(contractingProgressBillsTable).set({
+  const progressPercent = adjustedContractValue > 0 ? money(n(amounts.grossAmount) / adjustedContractValue * 100) : "0.00";
+  if (options.persist !== false) await tx.update(contractingProgressBillsTable).set({
     grossAmount: amounts.grossAmount,
     previousPaid: amounts.previousPaid,
     retentionAmount: amounts.retentionAmount,
     dueAmount: amounts.dueAmount,
     vatAmount: amounts.vatAmount,
     netAmount: amounts.netAmount,
+    progressPercent,
     updatedAt: new Date(),
   }).where(and(
     eq(contractingProgressBillsTable.id, bill.id),
     eq(contractingProgressBillsTable.companyId, companyId),
   ));
-  return { ...bill, ...amounts, id: bill.id };
+  return { ...bill, ...amounts, progressPercent, id: bill.id };
 }
 
 /**

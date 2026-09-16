@@ -3,6 +3,7 @@ import {
   accountsTable,
   contractingSettingsTable,
   db,
+  getActiveExternalDb,
   type ContractingSettingsRow,
 } from "@workspace/db";
 
@@ -45,7 +46,12 @@ type SettingsWithDefaults = ContractingSettingsRow & {
   defaultRetentionCapPercent: string;
 };
 
-let settingsTablePromise: Promise<void> | null = null;
+// The schema healer runs against both the central database and many external
+// agent databases. A process-global promise would bind the first successful
+// DDL run to whichever database happened to initialize first, leaving every
+// later database (including an agent being upgraded) without this table.
+const centralDbScope = {};
+const settingsTablePromises = new WeakMap<object, Promise<void>>();
 
 /**
  * This table is an additive module extension and is intentionally healed
@@ -53,8 +59,10 @@ let settingsTablePromise: Promise<void> | null = null;
  * may not have the table at all.
  */
 export function ensureContractingSettingsTable(): Promise<void> {
-  if (settingsTablePromise) return settingsTablePromise;
-  settingsTablePromise = (async () => {
+  const scope = getActiveExternalDb() ?? centralDbScope;
+  const existing = settingsTablePromises.get(scope);
+  if (existing) return existing;
+  const promise = (async () => {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS contracting_settings (
         id SERIAL PRIMARY KEY,
@@ -106,7 +114,13 @@ export function ensureContractingSettingsTable(): Promise<void> {
     ];
     for (const statement of ddl) await db.execute(sql.raw(statement));
   })();
-  return settingsTablePromise;
+  settingsTablePromises.set(scope, promise);
+  // A failed DDL attempt must not poison retries for this database, while a
+  // successful attempt remains single-flight within the same DB context.
+  void promise.catch(() => {
+    if (settingsTablePromises.get(scope) === promise) settingsTablePromises.delete(scope);
+  });
+  return promise;
 }
 
 function failure(message: string, status = 400): Error & { status: number } {

@@ -19,7 +19,7 @@ import {
   journalEntriesTable,
 } from "@workspace/db";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage.js";
-import { approveBill } from "./contracting-accounting-service.js";
+import { approveBill, certifyBillAmounts } from "./contracting-accounting-service.js";
 export { recertifyBoqBill } from "./contracting-boq-recertification.js";
 import { contractingBranchAllowed } from "./contracting-security.js";
 import { reportBillIsCertified, reportOwnerContractScope } from "./contracting-report-math.js";
@@ -1298,6 +1298,11 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
     });
   }
   const state = await getWorkflowState(companyId, bill);
+  if (!LOCKED_STATES.has(state) && !LOCKED_STATES.has(bill.status)
+    && (bill.direction === "outgoing" ? bill.ownerContractId != null : bill.subcontractorContractId != null)
+    && lines.some(row => row.id != null && row.boqLineId != null)) {
+    Object.assign(bill, await certifyBillAmounts(db, companyId, bill, { persist: false, lock: false }));
+  }
   const retention = Number(bill.retentionAmount ?? 0);
   const extensionDeductions = deductions
     .filter((row) => !["retention", "advance", "settlement"].includes(row.kind))
@@ -1736,6 +1741,10 @@ export async function saveBillLines(companyId: number, billId: number, req: any)
     : Array.isArray(req.body?.lines) ? req.body.lines : [];
   const seen = new Set<number>();
   const result = await db.transaction(async (tx: any) => {
+    const locked = await tx.execute(sql`SELECT status FROM contracting_progress_bills
+      WHERE company_id = ${companyId} AND id = ${billId} FOR UPDATE`);
+    const lockedRows = Array.isArray(locked) ? locked : locked.rows ?? [];
+    if (!lockedRows[0] || LOCKED_STATES.has(lockedRows[0].status)) throw error("المستخلص لم يعد قابلًا لتعديل البنود", 409);
     const saved: any[] = [];
     for (const entry of requested) {
       const boqLineId = idFrom(entry?.boqLineId, "سطر جدول الكميات");
@@ -1858,6 +1867,7 @@ export async function saveBillLines(companyId: number, billId: number, req: any)
         });
       }
     }
+    await certifyBillAmounts(tx, companyId, bill);
     return saved;
   });
   await logDetailAction(companyId, bill, "lines_batch_saved", req.authUser?.id, `${result.length} BOQ lines`);

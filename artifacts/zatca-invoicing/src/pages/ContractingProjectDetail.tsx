@@ -25,6 +25,7 @@ import ContractingAccountingPanel from "@/components/ContractingAccountingPanel"
 import ContractingBillDetailEditor from "@/components/ContractingBillDetailEditor";
 import ContractingContractBoqEditor from "@/components/ContractingContractBoqEditor";
 import ContractingProjectScope from "@/components/ContractingProjectScope";
+import ContractingAdvanceRecoveryFields, { type AdvanceRecoveryPolicy } from "@/components/ContractingAdvanceRecoveryFields";
 import ContractingDraftExecution, { emptyDraftExecution, draftExecutionScope, type DraftExecutionState } from "@/components/ContractingDraftExecution";
 import { executionEstimate, executionInput, executionPayload, executionValidation, type ExecutionInputs } from "@/lib/contractingExecution";
 import {
@@ -99,7 +100,7 @@ type InventoryOptions = {
   items: InventoryItem[]; warehouses: InventoryWarehouse[]; balances: InventoryBalance[];
   projectBranchId?: number | null; requiresProjectBranch?: boolean;
 };
-type Bill = {
+type Bill = AdvanceRecoveryPolicy & {
   id: number; billNumber: string; billType: string; billDate: string;
   direction: "outgoing" | "incoming";
   contractorId: number | null;
@@ -115,7 +116,7 @@ type Bill = {
   aggregateProgress?: boolean;
   status: string; notes: string | null;
 };
-type OwnerContract = {
+type OwnerContract = AdvanceRecoveryPolicy & {
   id: number; projectId: number; customerId: number | null; clientName: string | null;
   contractNumber: string; contractDate: string; signedAt: string | null;
   contractType: string; parentContractId: number | null;
@@ -126,7 +127,7 @@ type OwnerContract = {
   paymentTerms: string | null; scopeOfWork: string | null; penaltiesClause: string | null;
   status: string; notes: string | null;
 };
-type SubContract = {
+type SubContract = AdvanceRecoveryPolicy & {
   id: number; projectId: number; contractorId: number;
   contractNumber: string; contractDate: string; signedAt: string | null;
   scopeOfWork: string | null;
@@ -1206,9 +1207,17 @@ function BillsTab({
     if (!editing) return;
     const nextValue = selectedAggregateContractValue(direction, { ...editing, ...next }, ownerContracts, subContracts);
     const percent = Number(editing.progressPercent ?? 0);
+    const contract = direction === "incoming"
+      ? subContracts.find(row => row.id === (next.subcontractorContractId ?? editing.subcontractorContractId))
+      : ownerContracts.find(row => row.id === (next.ownerContractId ?? editing.ownerContractId));
     setEditing({
       ...editing,
       ...next,
+      ...(contract ? {
+        advanceRecoveryEnabled: contract.advanceRecoveryEnabled ?? false,
+        advanceRecoveryPercent: contract.advanceRecoveryPercent ?? "0",
+        advanceRecoveryStartProgressPercent: contract.advanceRecoveryStartProgressPercent ?? "0",
+      } : {}),
       grossAmount: nextValue > 0
         ? aggregateMoney(nextValue * Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0)) / 100)
         : editing.grossAmount,
@@ -1480,6 +1489,12 @@ function BillsTab({
             </Field>
           </div>
 
+          <ContractingAdvanceRecoveryFields value={editing} disabled={financiallyLocked || saving}
+            onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
+          <p className="rounded border bg-muted/20 p-3 text-xs leading-5">
+            «السابق» و«الرصيد المعلّق السابق» يُحمّلان من المستخلصات المعتمدة ماليًا لنفس العقد فقط.
+            المسودة والمرسل وتحت المراجعة لا تُضاف إلى السابق؛ احفظ البنود ثم أكمل الاعتماد المالي للمستخلص السابق أولًا.
+          </p>
           {(editing as any)?.id != null ? (
             <ContractingBillDetailEditor
               key={`${(editing as any).id}:${detailsRevision}`}
@@ -1489,6 +1504,7 @@ function BillsTab({
               project={project}
               initialExecutionValues={recoveredExecution?.billId === Number((editing as any).id) ? recoveredExecution.values : undefined}
               onLinesLoaded={setDetailLineCount}
+              onSaved={load}
             />
           ) : (
             <>
@@ -2092,6 +2108,8 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
               </Field>
             </div>
           </div>
+          <ContractingAdvanceRecoveryFields value={editing} disabled={saving}
+            onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
           {editing.id != null ? (
             <ContractingContractBoqEditor key={`${projectId}:owner:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="owner"
               contractId={editing.id} contractType={editing.contractType}
@@ -2298,6 +2316,8 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
               </Field>
             </div>
           </div>
+          <ContractingAdvanceRecoveryFields value={editing} disabled={saving}
+            onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
           {editing.id != null ? (
             <ContractingContractBoqEditor key={`${projectId}:subcontract:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="subcontract" contractId={editing.id} />
           ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنود الباطن بأسعارها المستقلة وربطها ببنود التنفيذ أو مصدرها في عقد المالك.</p>}
