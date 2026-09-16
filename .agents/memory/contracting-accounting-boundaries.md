@@ -74,3 +74,9 @@ Runtime-created financial tables must also be represented in the exported declar
 **Why:** Tables existing only in production were proposed as deleted/rename candidates when a new unrelated table appeared in development. Lazy creation is not sufficient protection against schema synchronization.
 
 **How to apply:** Restore missing definitions and apply additive development-only changes; never rename accounting/history tables into idempotency tables. Inspect the actual publish SQL, not just summary flags: the diff tool has returned `hasStructuralDataLoss: false` and empty removal lists while its statements included `DROP TABLE ... CASCADE`.
+
+Financial release verification must distinguish real isolated database evidence from browser fixtures. A mocked successful replay cannot establish server idempotency, and a seeded subcontract does not establish its payable lifecycle.
+
+**Why:** Separate frontend and arithmetic checks can pass while a lost-response retry still creates duplicate financial documents or an entire accounting direction remains untested.
+
+**How to apply:** Exercise persisted replay, posting, settlements and corrections in a disposable database for each direction; use browser fixtures only for explicitly identified UI behavior, never as evidence of database correctness.

@@ -129,6 +129,7 @@ function resultRows(result: any): any[] {
   return Array.isArray(result) ? result : result?.rows ?? [];
 }
 
+if (false) {
 /**
  * Settlement posting is the source of payment state. Keep the legacy bill
  * status/paidAmount projection synchronized in the same transaction as the
@@ -197,6 +198,87 @@ async function refreshBillPaymentState(tx: Executor, companyId: number, billId: 
       state: nextStatus,
       action: "accounting_settlement",
       note: nextStatus === "paid" ? "تم إغلاق المستخلص بالسداد المحاسبي" : "تم تحديث السداد المحاسبي",
+      userId,
+    });
+  }
+}
+}
+/**
+ * Settlement posting is the source of payment state. Keep the legacy bill
+ * status/paidAmount projection synchronized in the same transaction as the
+ * receipt or advance-application row, and never count reversed settlements.
+ */
+async function refreshBillPaymentState(tx: Executor, companyId: number, billId: number, userId: number | null) {
+  const [bill] = await tx.select().from(contractingProgressBillsTable).where(and(
+    eq(contractingProgressBillsTable.id, billId),
+    eq(contractingProgressBillsTable.companyId, companyId),
+  ));
+  if (!bill) return;
+  const settledResult = await tx.execute(sql`
+    SELECT COALESCE(SUM(amount), 0) AS paid
+      FROM contracting_accounting_settlements
+     WHERE company_id = ${companyId}
+       AND bill_id = ${billId}
+       AND status = 'posted'
+       AND kind IN ('bill_receipt', 'bill_payment', 'advance_application')
+  `);
+  const paid = Math.max(0, n(resultRows(settledResult)[0]?.paid));
+  const [additions, deductions, penalties] = await Promise.all([
+    tx.select().from(contractingBillAdditionsTable).where(and(
+      eq(contractingBillAdditionsTable.companyId, companyId),
+      eq(contractingBillAdditionsTable.billId, billId),
+    )),
+    tx.select().from(contractingBillDeductionsTable).where(and(
+      eq(contractingBillDeductionsTable.companyId, companyId),
+      eq(contractingBillDeductionsTable.billId, billId),
+    )),
+    tx.select().from(contractingBillPenaltiesTable).where(and(
+      eq(contractingBillPenaltiesTable.companyId, companyId),
+      eq(contractingBillPenaltiesTable.billId, billId),
+    )),
+  ]);
+  const signedNet = calculateSignedContractingBillNet({
+    rawNetAmount: bill.netAmount,
+    additions,
+    deductions,
+    penalties,
+  });
+  const net = n(signedNet.adjustedNetAmount);
+  // A reversed payment can bring the posted settlement total back to zero.
+  // That must restore the bill to approved rather than leaving a fully-paid
+  // projection behind (and thereby blocking the next legitimate settlement).
+  const nextStatus = paid <= 0.005
+    ? "approved"
+    : net > 0 && paid + 0.005 < net ? "partially_paid" : "paid";
+  const [updated] = await tx.update(contractingProgressBillsTable).set({
+    paidAmount: money(paid),
+    status: nextStatus,
+    paidAt: nextStatus === "paid" ? new Date() : null,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(contractingProgressBillsTable.id, billId),
+    eq(contractingProgressBillsTable.companyId, companyId),
+  )).returning();
+  const [latest] = await tx.select({ state: contractingBillWorkflowEventsTable.state })
+    .from(contractingBillWorkflowEventsTable)
+    .where(and(
+      eq(contractingBillWorkflowEventsTable.companyId, companyId),
+      eq(contractingBillWorkflowEventsTable.billId, billId),
+    ))
+    .orderBy(sql`${contractingBillWorkflowEventsTable.createdAt} DESC`, sql`${contractingBillWorkflowEventsTable.id} DESC`)
+    .limit(1);
+  if (latest?.state !== nextStatus) {
+    await tx.insert(contractingBillWorkflowEventsTable).values({
+      companyId,
+      projectId: updated?.projectId ?? bill.projectId,
+      billId,
+      state: nextStatus,
+      action: "accounting_settlement",
+      note: nextStatus === "paid"
+        ? "تم إغلاق المستخلص بالسداد المحاسبي"
+        : nextStatus === "approved"
+          ? "تم عكس التسوية وإعادة المستخلص إلى معتمد"
+          : "تم تحديث السداد المحاسبي",
       userId,
     });
   }
@@ -1357,6 +1439,13 @@ async function clonePostedCorrectionTx(
     vatPercent: source.vatPercent,
     vatAmount: source.vatAmount,
     netAmount: source.netAmount,
+    advanceRecoveryEnabled: source.advanceRecoveryEnabled,
+    advanceRecoveryPercent: source.advanceRecoveryPercent,
+    advanceRecoveryStartProgressPercent: source.advanceRecoveryStartProgressPercent,
+    advanceRecoveryRequestedAmount: source.advanceRecoveryRequestedAmount,
+    advanceRecoveryAmount: source.advanceRecoveryAmount,
+    advanceRecoveryRemainingBefore: source.advanceRecoveryRemainingBefore,
+    advanceRecoveryRemainingAfter: source.advanceRecoveryRemainingAfter,
     paidAmount: "0",
     correctionOfId: source.id,
     journalEntryId: null,
@@ -1376,11 +1465,27 @@ async function clonePostedCorrectionTx(
   if (lines.length) {
     await tx.insert(contractingBillLinesTable).values(lines.map((line: any) => ({
       companyId: line.companyId, projectId: line.projectId, billId: draft.id,
-      workItemId: line.workItemId, changeOrderId: line.changeOrderId,
+      workItemId: line.workItemId, boqLineId: line.boqLineId,
+      unitSnapshot: line.unitSnapshot, unitPriceSnapshot: line.unitPriceSnapshot,
+      changeOrderId: line.changeOrderId, changeOrderSubcontractId: line.changeOrderSubcontractId,
       previousQty: line.previousQty, currentQty: line.currentQty, cumulativeQty: line.cumulativeQty,
       previousValue: line.previousValue, currentValue: line.currentValue, cumulativeValue: line.cumulativeValue,
       excessApproved: line.excessApproved, excessApprovalReason: line.excessApprovalReason,
       excessApprovedByUserId: line.excessApprovedByUserId, excessApprovedAt: line.excessApprovedAt,
+    })));
+  }
+  const additions = await tx.select().from(contractingBillAdditionsTable).where(and(
+    eq(contractingBillAdditionsTable.companyId, input.companyId),
+    eq(contractingBillAdditionsTable.billId, source.id),
+  ));
+  if (additions.length) {
+    await tx.insert(contractingBillAdditionsTable).values(additions.map((row: any) => ({
+      companyId: row.companyId, projectId: row.projectId, billId: draft.id,
+      additionKey: row.additionKey, calculationType: row.calculationType, rate: row.rate,
+      baseType: row.baseType, baseAmount: row.baseAmount, amount: row.amount,
+      reason: row.reason, referenceType: row.referenceType, reference: row.reference,
+      taxTreatment: row.taxTreatment, accountMappingKey: row.accountMappingKey,
+      notes: row.notes, createdByUserId: row.createdByUserId,
     })));
   }
   const deductions = await tx.select().from(contractingBillDeductionsTable).where(and(
@@ -1735,7 +1840,8 @@ async function treasuryAccount(tx: Executor, companyId: number, paymentType: str
   throw failure("نوع السداد يجب أن يكون نقداً أو بنكياً");
 }
 
-export async function createSettlement(input: {
+if (false) {
+async function createSettlementRebaseAlternative(input: {
   companyId: number;
   projectId: number;
   billId?: number | null;
@@ -1984,7 +2090,420 @@ export async function createSettlement(input: {
   });
   return out;
 }
+}
+export async function createSettlement(input: {
+  companyId: number;
+  projectId: number;
+  billId?: number | null;
+  ownerContractId?: number | null;
+  subcontractorContractId?: number | null;
+  kind: string;
+  amount: number;
+  settlementDate: string;
+  paymentType: "cash" | "bank";
+  cashBoxId?: number | null;
+  bankAccountId?: number | null;
+  idempotencyKey: string;
+  notes?: string | null;
+  userId: number | null;
+  req: RequestLike;
+}) {
+  await ensureContractingAccountingTables();
+  const details = settlementKindDetails(input.kind);
+  if (!details) throw failure("نوع التسوية غير صالح");
+  if (!(input.amount > 0)) throw failure("المبلغ يجب أن يكون أكبر من صفر");
+  const payloadHash = idempotencyFingerprint({
+    projectId: input.projectId,
+    billId: input.billId ?? null,
+    ownerContractId: input.ownerContractId ?? null,
+    subcontractorContractId: input.subcontractorContractId ?? null,
+    kind: input.kind,
+    amount: money(input.amount),
+    settlementDate: input.settlementDate || today(),
+    paymentType: input.paymentType,
+    cashBoxId: input.cashBoxId ?? null,
+    bankAccountId: input.bankAccountId ?? null,
+    notes: input.notes ?? null,
+  });
+  const existing = await db.execute(sql`
+    SELECT * FROM contracting_accounting_settlements
+     WHERE company_id = ${input.companyId}
+       AND idempotency_key = ${input.idempotencyKey}
+     LIMIT 1
+  `);
+  if (resultRows(existing)[0]) {
+    const row = resultRows(existing)[0];
+    assertIdempotentReplay(row, payloadHash);
+    return { ...row, idempotentReplay: true };
+  }
+  const settlementDate = input.settlementDate || today();
+  const out = await db.transaction(async (tx) => {
+    const project = await projectFor(tx, input.companyId, input.projectId);
+    if (!project) throw failure("المشروع غير موجود", 404);
+    assertProjectBranchAccess(input.req, project.branchId);
+    let bill: any = null;
+    const requiresBill = input.kind.startsWith("retention_") || input.kind.startsWith("bill_");
+    if (input.billId != null) {
+      bill = await lockBill(tx, input.companyId, input.billId);
+      if (!bill || bill.projectId !== input.projectId) throw failure("المستخلص غير صالح لهذا المشروع");
+      if (bill.direction !== details.direction) throw failure("اتجاه التسوية لا يطابق اتجاه المستخلص");
+      // A duplicate request can be waiting on this bill lock while the first
+      // request advances the bill to paid. Replay before state validation, or
+      // that harmless retry would incorrectly fail as an already-paid bill.
+      const billLockedReplay = await tx.execute(sql`
+        SELECT * FROM contracting_accounting_settlements
+         WHERE company_id = ${input.companyId}
+           AND idempotency_key = ${input.idempotencyKey}
+         LIMIT 1
+      `);
+      const billReplayRow = resultRows(billLockedReplay)[0];
+      if (billReplayRow) {
+        assertIdempotentReplay(billReplayRow, payloadHash);
+        return { ...billReplayRow, idempotentReplay: true };
+      }
+       if (!["approved", "posted", "partially_paid"].includes(String(bill.status)) || !bill.journalEntryId) {
+        throw failure("يجب اعتماد وترحيل المستخلص قبل تسوية المستخلص");
+      }
+      await assertBillContractScope(tx, input.companyId, bill, { requireSelection: true });
+    }
+    if (requiresBill && !bill) {
+      throw failure("هذه التسوية تتطلب مستخلصاً معتمداً");
+    }
+    const ownerContractId = bill
+      ? Number(bill.ownerContractId ?? 0) || null
+      : (Number(input.ownerContractId ?? 0) || null);
+    const subcontractorContractId = bill
+      ? Number(bill.subcontractorContractId ?? 0) || null
+      : (Number(input.subcontractorContractId ?? 0) || null);
+    if (!bill) {
+      await assertBillContractScope(tx, input.companyId, {
+        projectId: input.projectId,
+        direction: details.direction,
+        ownerContractId,
+        subcontractorContractId,
+        // Standalone subcontractor advances identify their contractor through
+        // the selected subcontract, not through a separate payload field.
+        contractorId: null,
+      }, { requireSelection: true, requireIncomingContractor: false });
+    } else if (input.ownerContractId != null || input.subcontractorContractId != null) {
+      // A caller may repeat the selected contract for clarity, but an
+      // opposite-direction id must still be rejected rather than ignored.
+      await assertBillContractScope(tx, input.companyId, {
+        projectId: input.projectId,
+        direction: details.direction,
+        ownerContractId: input.ownerContractId,
+        subcontractorContractId: input.subcontractorContractId,
+        contractorId: bill.contractorId,
+      }, { requireSelection: false, requireIncomingContractor: false });
+    }
+    if (input.kind === "advance_receipt" && !ownerContractId) {
+      throw failure("قبض سلفة المالك يتطلب عقد مالك محدداً");
+    }
+    if (input.kind === "advance_payment" && !subcontractorContractId) {
+      throw failure("صرف سلفة المقاول الباطن يتطلب عقداً محدداً");
+    }
+    if (bill && (
+      (input.ownerContractId != null && Number(input.ownerContractId) !== ownerContractId) ||
+      (input.subcontractorContractId != null && Number(input.subcontractorContractId) !== subcontractorContractId)
+    )) {
+      throw failure("العقد المحدد لا يطابق عقد المستخلص");
+    }
+    const contractId = details.direction === "outgoing" ? ownerContractId : subcontractorContractId;
+    if (!contractId) throw failure("العقد المرتبط بالتسوية مطلوب");
+    const contractTable = details.direction === "outgoing"
+      ? "contracting_owner_contracts"
+      : "contracting_sub_contracts";
+    const contract = await tx.execute(sql`
+      SELECT id FROM ${sql.raw(contractTable)}
+       WHERE company_id = ${input.companyId}
+         AND project_id = ${input.projectId}
+         AND id = ${contractId}
+       FOR UPDATE
+    `);
+    if (!resultRows(contract).length) throw failure("العقد المرتبط بالتسوية غير موجود في نفس الشركة والمشروع");
+    // The preflight lookup above is only a fast replay path. Recheck after the
+    // bill/contract locks so two identical concurrent requests cannot both
+    // pass the cap calculation and race the unique settlement index.
+    const lockedReplay = await tx.execute(sql`
+      SELECT * FROM contracting_accounting_settlements
+       WHERE company_id = ${input.companyId}
+         AND idempotency_key = ${input.idempotencyKey}
+       LIMIT 1
+    `);
+    const replayRow = resultRows(lockedReplay)[0];
+    if (replayRow) {
+      assertIdempotentReplay(replayRow, payloadHash);
+      return { ...replayRow, idempotentReplay: true };
+    }
+    if (input.kind.startsWith("retention_")) {
+      const prior = await tx.execute(sql`
+        SELECT COALESCE(SUM(amount),0) AS total
+          FROM contracting_accounting_settlements
+         WHERE company_id = ${input.companyId}
+           AND bill_id = ${input.billId}
+           AND kind = ${input.kind}
+           AND status = 'posted'
+      `);
+      const already = n(resultRows(prior)[0]?.total);
+      const cap = validateSettlementCap({
+        kind: input.kind as "retention_receipt" | "retention_payment",
+        requested: input.amount,
+        retentionAmount: bill.retentionAmount,
+        alreadyReleased: already,
+      });
+      if (!cap.ok) {
+        throw failure(cap.reason);
+      }
+    }
+    if (input.kind.startsWith("bill_")) {
+      const [additions, deductions, penalties] = await Promise.all([
+        tx.select().from(contractingBillAdditionsTable).where(and(
+          eq(contractingBillAdditionsTable.companyId, input.companyId),
+          eq(contractingBillAdditionsTable.billId, input.billId!),
+        )),
+        tx.select().from(contractingBillDeductionsTable).where(and(
+          eq(contractingBillDeductionsTable.companyId, input.companyId),
+          eq(contractingBillDeductionsTable.billId, input.billId!),
+        )),
+        tx.select().from(contractingBillPenaltiesTable).where(and(
+          eq(contractingBillPenaltiesTable.companyId, input.companyId),
+          eq(contractingBillPenaltiesTable.billId, input.billId!),
+        )),
+      ]);
+      const signedNet = calculateSignedContractingBillNet({
+        rawNetAmount: bill.netAmount,
+        additions,
+        deductions,
+        penalties,
+      });
+      const postedBillLedger = await tx.execute(sql`
+        SELECT COALESCE(SUM(amount), 0) AS total
+          FROM contracting_accounting_settlements
+         WHERE company_id = ${input.companyId}
+           AND bill_id = ${input.billId}
+           AND status = 'posted'
+           AND kind IN ('bill_receipt', 'bill_payment', 'advance_application')
+      `);
+      const cap = validateSettlementCap({
+        kind: input.kind as "bill_receipt" | "bill_payment",
+        requested: input.amount,
+        billNetAmount: signedNet.adjustedNetAmount,
+        // paidAmount is a projection of this same posted ledger; never add
+        // it to ledger rows or an advance application is counted twice.
+        billPaidAmount: n(resultRows(postedBillLedger)[0]?.total),
+      });
+      if (!cap.ok) {
+        throw failure(cap.reason);
+      }
+    }
+    const treasury = await treasuryAccount(tx, input.companyId, input.paymentType,
+      input.cashBoxId ?? null, input.bankAccountId ?? null);
+    for (const branchId of treasury.branchIds ?? []) assertBranchAccess(input.req, branchId);
+    if ((treasury.branchIds ?? []).length > 0 &&
+        project.branchId != null && !(treasury.branchIds as number[]).includes(Number(project.branchId))) {
+      throw failure("الخزنة أو البنك لا يتبع فرع المشروع");
+    }
+    const map = await mappings(tx, input.companyId, details.mapping);
+    const counterpart = map.get(details.creditRole === "treasury" ? details.debitRole : details.creditRole);
+    if (!counterpart) throw failure("حساب التسوية غير مربوط؛ راجع ربط القيود المحاسبية");
+    const jeNumber = await nextJeNumber(input.companyId, "contracting_settlement", settlementDate, input.userId);
+    const lines = details.debitRole === "treasury"
+      ? [
+          { accountId: treasury.accountId, debit: money(input.amount), credit: "0.00", description: treasury.label, costCenter: `contracting-project:${input.projectId}` },
+          { accountId: counterpart, debit: "0.00", credit: money(input.amount), description: `تسوية ${input.kind}`, costCenter: `contracting-project:${input.projectId}` },
+        ]
+      : [
+          { accountId: counterpart, debit: money(input.amount), credit: "0.00", description: `تسوية ${input.kind}`, costCenter: `contracting-project:${input.projectId}` },
+          { accountId: treasury.accountId, debit: "0.00", credit: money(input.amount), description: treasury.label, costCenter: `contracting-project:${input.projectId}` },
+        ];
+    const jeId = await insertJournal(tx, input.companyId, {
+      docNumber: jeNumber,
+      date: settlementDate,
+      branchId: project.branchId ?? treasury.branchId,
+      description: `تسوية مقاولات ${input.kind} — مشروع #${input.projectId}`,
+      entryType: "contracting_settlement",
+      lines,
+      req: input.req,
+    });
+    const inserted = await tx.execute(sql`
+      INSERT INTO contracting_accounting_settlements
+        (company_id, project_id, bill_id, owner_contract_id, subcontractor_contract_id,
+         kind, direction, amount,
+         settlement_date, payment_type, cash_box_id, bank_account_id,
+         journal_entry_id, idempotency_key, idempotency_payload_hash, notes, created_by)
+      VALUES (
+        ${input.companyId}, ${input.projectId}, ${input.billId ?? null},
+        ${ownerContractId}, ${subcontractorContractId},
+        ${input.kind}, ${details.direction}, ${money(input.amount)},
+        ${settlementDate}, ${input.paymentType}, ${input.cashBoxId ?? null},
+        ${input.bankAccountId ?? null}, ${jeId}, ${input.idempotencyKey}, ${payloadHash},
+        ${input.notes ?? null}, ${input.userId}
+      )
+      RETURNING *
+    `);
+    const row = resultRows(inserted)[0];
+    if (input.kind.startsWith("bill_") && input.billId != null) {
+      await tx.execute(sql`
+        UPDATE contracting_progress_bills
+           SET paid_amount = paid_amount + ${money(input.amount)},
+               updated_at = NOW()
+         WHERE company_id = ${input.companyId}
+           AND id = ${input.billId}
+      `);
+    }
+    if (input.billId != null) {
+      await refreshBillPaymentState(tx, input.companyId, input.billId, input.userId);
+    }
+    await addAudit(tx, {
+      companyId: input.companyId,
+      projectId: input.projectId,
+      billId: input.billId ?? null,
+      settlementId: Number(row.id),
+      action: input.kind,
+      originalJournalEntryId: jeId,
+      amount: input.amount,
+      userId: input.userId,
+    });
+    return { ...row, idempotentReplay: false };
+  });
+  return out;
+}
 
+/**
+ * Payment settlements are immutable accounting evidence.  A correction is a
+ * separate reversing JE, never a delete or a negative rewrite of the source
+ * payment.  This intentionally supports only bill receipts/payments: advances
+ * and retention have their own application/release lifecycle and need their
+ * own source-balance restoration rules.
+ */
+export async function reverseBillSettlement(input: {
+  companyId: number;
+  settlementId: number;
+  userId: number | null;
+  req: RequestLike;
+}) {
+  await ensureContractingAccountingTables();
+  return db.transaction(async (tx) => {
+    // Establish the same lock order used by bill payment and approval:
+    // bill -> exact contract -> settlement.  The preliminary read only finds
+    // that order; the settlement is re-read FOR UPDATE before any decision.
+    // This prevents a payment/recovery writer from racing the paid-state
+    // projection and makes two simultaneous reversal requests serialize.
+    const target = resultRows(await tx.execute(sql`
+      SELECT bill_id, project_id, direction, owner_contract_id,
+             subcontractor_contract_id, kind
+        FROM contracting_accounting_settlements
+       WHERE company_id = ${input.companyId}
+         AND id = ${input.settlementId}
+    `))[0];
+    if (!target) throw failure("تسوية المقاولات غير موجودة", 404);
+    if (!["bill_receipt", "bill_payment"].includes(String(target.kind)) || target.bill_id == null) {
+      throw failure("عكس هذه التسوية غير مدعوم من مسار عكس دفعات المستخلص", 422);
+    }
+    const bill = await lockBill(tx, input.companyId, Number(target.bill_id));
+    if (!bill || bill.projectId !== Number(target.project_id) || bill.direction !== target.direction) {
+      throw failure("المستخلص المرتبط بالتسوية غير صالح", 409);
+    }
+    const project = await projectFor(tx, input.companyId, bill.projectId);
+    if (!project) throw failure("المشروع غير موجود", 404);
+    assertProjectBranchAccess(input.req, project.branchId);
+    const contractId = bill.direction === "outgoing"
+      ? Number(bill.ownerContractId ?? 0)
+      : Number(bill.subcontractorContractId ?? 0);
+    const contractTable = bill.direction === "outgoing"
+      ? "contracting_owner_contracts"
+      : "contracting_sub_contracts";
+    if (!contractId || Number(target.owner_contract_id ?? 0) !== (bill.direction === "outgoing" ? contractId : 0)
+      || Number(target.subcontractor_contract_id ?? 0) !== (bill.direction === "incoming" ? contractId : 0)) {
+      throw failure("عقد التسوية لا يطابق عقد المستخلص", 409);
+    }
+    const contract = await tx.execute(sql`
+      SELECT id FROM ${sql.raw(contractTable)}
+       WHERE company_id = ${input.companyId}
+         AND project_id = ${bill.projectId}
+         AND id = ${contractId}
+       FOR UPDATE
+    `);
+    if (!resultRows(contract).length) throw failure("العقد المرتبط بالتسوية غير موجود في نفس الشركة والمشروع", 409);
+    const locked = await tx.execute(sql`
+      SELECT *
+        FROM contracting_accounting_settlements
+       WHERE company_id = ${input.companyId}
+         AND id = ${input.settlementId}
+       FOR UPDATE
+    `);
+    const settlement = resultRows(locked)[0];
+    if (!settlement) throw failure("تسوية المقاولات غير موجودة", 404);
+    if (!["bill_receipt", "bill_payment"].includes(String(settlement.kind))) {
+      throw failure("عكس هذه التسوية غير مدعوم من مسار عكس دفعات المستخلص", 422);
+    }
+    if (settlement.status === "reversed") {
+      return { ...settlement, idempotentReplay: true };
+    }
+    if (settlement.status !== "posted" || !settlement.journal_entry_id) {
+      throw failure("لا يمكن عكس تسوية غير مرحّلة أو بلا قيد", 409);
+    }
+    if (!canUnpostDoc(input.req?.authUser, "ctgContractingSettlement")) {
+      throw failure("ليس لديك صلاحية فك ترحيل هذه التسوية", 403);
+    }
+    const [original] = await tx.select().from(journalEntriesTable).where(and(
+      eq(journalEntriesTable.id, Number(settlement.journal_entry_id)),
+      eq(journalEntriesTable.companyId, input.companyId),
+    ));
+    if (!original || original.status !== "posted") {
+      throw failure("قيد التسوية الأصلي غير مرحّل أو غير موجود", 409);
+    }
+    const originalLines = await tx.select().from(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, original.id));
+    if (!originalLines.length) throw failure("قيد التسوية الأصلي لا يحتوي على بنود", 409);
+    const reversalDate = today();
+    const reversalNumber = await nextJeNumber(
+      input.companyId,
+      "contracting_settlement_reversal",
+      reversalDate,
+      input.userId,
+    );
+    const reversalJournalEntryId = await insertJournal(tx, input.companyId, {
+      docNumber: reversalNumber,
+      date: reversalDate,
+      branchId: project.branchId,
+      description: `عكس تسوية مقاولات ${settlement.kind} — مشروع #${settlement.project_id}`,
+      entryType: "contracting_settlement_reversal",
+      lines: reverseAccountingLines(originalLines).map((reversed, index) => ({
+        ...reversed,
+        accountId: Number(originalLines[index].accountId),
+        costCenter: originalLines[index].costCenter,
+      })),
+      req: input.req,
+    });
+    const reversed = await tx.execute(sql`
+      UPDATE contracting_accounting_settlements
+         SET status = 'reversed',
+             reversal_journal_entry_id = ${reversalJournalEntryId},
+             updated_at = NOW()
+       WHERE company_id = ${input.companyId}
+         AND id = ${input.settlementId}
+       RETURNING *
+    `);
+    if (settlement.bill_id != null) {
+      await refreshBillPaymentState(tx, input.companyId, Number(settlement.bill_id), input.userId);
+    }
+    const row = resultRows(reversed)[0];
+    await addAudit(tx, {
+      companyId: input.companyId,
+      projectId: Number(settlement.project_id),
+      billId: settlement.bill_id == null ? null : Number(settlement.bill_id),
+      settlementId: Number(settlement.id),
+      action: "bill_settlement_reversed",
+      originalJournalEntryId: Number(settlement.journal_entry_id),
+      reversalJournalEntryId,
+      amount: n(settlement.amount),
+      metadata: { kind: settlement.kind, reversalDate },
+      userId: input.userId,
+    });
+    return { ...row, idempotentReplay: false };
+  });
+}
 export async function applyAdvance(input: {
   companyId: number;
   settlementId: number;

@@ -9,6 +9,7 @@ import { reconcilePostgresSequences } from "./postgresSequenceReconciliation.js"
 import { ensureContractingBillDetailsTables } from "./contracting-bill-details-service.js";
 import { ensureContractingSettingsTable } from "./contracting-settings.js";
 import { ensureContractCreateIdempotencySchema } from "./contracting-contract-create-idempotency.js";
+import { ensureBillCreateIdempotencySchema } from "./contracting-bill-create-idempotency.js";
 
 let healPromise: Promise<void> | null = null;
 type SchemaReconciliationState =
@@ -4292,6 +4293,7 @@ async function ensureCentralDemoAnalyticsSchema(): Promise<void> {
   }
 }
 
+if (false) {
 async function runHeal(options: {
   includeIdentitySteps?: boolean;
   strictSchema?: boolean;
@@ -4314,6 +4316,108 @@ async function runHeal(options: {
   // catalog checks. The POST helper retains its lazy fallback for test/agent
   // callers which invoke a route without bootstrapping the full server.
   await ensureContractCreateIdempotencySchema();
+  await ensureContractingResourceInventoryCompatibility();
+  await ensureContractingProjectCustomerCompatibility();
+  await ensureContractingCostCenterCompatibility();
+  await ensureContractingAdvanceRecoveryCompatibility();
+  await ensureContractingSettingsTable();
+  // Required application tables must exist on the active database BEFORE
+  // generic validation. Keep this in the shared pass: startup, manual agent
+  // upgrades and strict request readiness all use it (without a central-only
+  // memoized promise). Do not suppress missing tables via the optional list.
+  await ensureContractingBillDetailsTables();
+
+  // These release-managed tables have complete additive DDL here, unlike
+  // generic schema entities. Create them before strict missing-table
+  // validation so an already-initialized agent DB can heal itself on its
+  // first request after a central release instead of entering a permanent
+  // AGENT_SCHEMA_FAILED loop.
+  try {
+    await ensurePayrollAllocationSchema({ strict: strictSchema });
+  } catch (err) {
+    logger.error({ err }, "ensureSchema: payroll-allocation reconciliation failed");
+    if (strictSchema) throw err;
+  }
+
+  let appliedEnumStmts: string[] = [];
+  try {
+    appliedEnumStmts = await ensureEnums(enums, { strict: strictSchema });
+  } catch (err) {
+    logger.error({ err }, "ensureSchema: enum reconciliation failed");
+    if (strictSchema) throw err;
+  }
+
+  let appliedColStmts: string[] = [];
+  let missingTables: string[] = [];
+  try {
+    const r = await ensureColumns(tables, {
+      strict: strictSchema,
+      optionalMissingTables: options.optionalMissingTables,
+      excludedColumns: options.excludedColumns,
+    });
+    appliedColStmts = r.applied;
+    missingTables = r.missingTables;
+  } catch (err) {
+    logger.error({ err }, "ensureSchema: column reconciliation failed");
+    throw err;
+  }
+  // Generic reconciliation materializes any newly declared snapshot/factor
+  // columns first; this pass then widens existing numeric columns and performs
+  // the guarded legacy item-unit backfill.
+  await ensureItemUnitConversionCompatibility();
+
+  // Tenant identity indexes depend on the columns above (companies.code in
+  // particular), so they must run AFTER ensureColumns.
+  let appliedIdentitySteps: string[] = [];
+  if (includeIdentitySteps) {
+    try {
+      appliedIdentitySteps = await ensureTenantIdentityIndexes();
+    } catch (err) {
+      logger.error({ err }, "ensureSchema: tenant identity reconciliation failed (continuing)");
+    }
+  }
+
+  const optionalMissing = new Set(options.optionalMissingTables ?? []);
+  const requiredMissingTables = missingTables.filter(name => !optionalMissing.has(name));
+  if (requiredMissingTables.length) {
+    logger.warn(
+      { missingTables: requiredMissingTables },
+      "ensureSchema: schema declares tables that don't exist in DB — run `pnpm db:push` or write a migration",
+    );
+  }
+  logger.info(
+    {
+      enums: appliedEnumStmts.length,
+      columns: appliedColStmts.length,
+      sample: [...appliedEnumStmts, ...appliedColStmts].slice(0, 10),
+    },
+    "ensureSchema: reconciliation complete",
+  );
+}
+}
+async function runHeal(options: {
+  includeIdentitySteps?: boolean;
+  strictSchema?: boolean;
+  optionalMissingTables?: readonly string[];
+  excludedColumns?: readonly string[];
+} = {}): Promise<void> {
+  const includeIdentitySteps = options.includeIdentitySteps !== false;
+  const strictSchema = options.strictSchema === true;
+  const { tables, enums } = collectSchemaEntities();
+  logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
+
+  // Run this compatibility DDL before generic inspection. Purchase-invoice
+  // posting writes these JE-line fields during the same request that follows an
+  // agent package update, so a partially-upgraded agent must heal first.
+  await ensureSupplierMetadataCompatibility();
+  await ensureIndustrialPurchaseCostCompatibility();
+  await ensureInvoiceCreateIdempotencySchema();
+  // Request-replay claims are operational state, but their additive table must
+  // exist in the shared heal pass before strict reconciliation and backup
+  // catalog checks. The POST helper retains its lazy fallback for test/agent
+  // callers which invoke a route without bootstrapping the full server.
+  await ensureContractCreateIdempotencySchema();
+  await ensureBillCreateIdempotencySchema();
   await ensureContractingResourceInventoryCompatibility();
   await ensureContractingProjectCustomerCompatibility();
   await ensureContractingCostCenterCompatibility();

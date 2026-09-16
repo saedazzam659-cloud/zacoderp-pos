@@ -1,10 +1,10 @@
-// =====================================================================
+// Contracting routes
 // Contracting / Construction ERP — CRUD routes
 //
 // Permission key: `contracting`. Multi-tenant by companyId.
 // Numeric fields are returned as strings (Drizzle numeric → string) which
 // the frontend formats with toLocaleString. Dates as YYYY-MM-DD.
-// =====================================================================
+// End route overview
 import { Router } from "express";
 import { db } from "@workspace/db";
 import {
@@ -65,6 +65,11 @@ import {
   createContractIdempotently,
   parseContractCreateIdempotencyKey,
 } from "../lib/contracting-contract-create-idempotency.js";
+import {
+  billCreateFingerprint,
+  createBillIdempotently,
+  parseBillCreateIdempotencyKey,
+} from "../lib/contracting-bill-create-idempotency.js";
 import {
   getContractingSettings,
   updateContractingSettings,
@@ -2712,34 +2717,13 @@ router.post("/projects/:projectId/bills", async (req, res) => {
     const cid = await scope(req, res); if (!cid) return;
     const projectId = Number(req.params.projectId);
     const b = req.body as any;
+    const idempotencyKey = parseBillCreateIdempotencyKey(req);
     if (!b?.billDate) {
       res.status(400).json({ error: "تاريخ المستخلص مطلوب" }); return;
     }
     if (["approved", "posted", "partially_paid", "paid"].includes(String(b.status)) || Number(b.paidAmount ?? 0) !== 0) {
       res.status(409).json({ error: "لا يمكن إنشاء مستخلص بترحيل أو سداد مباشر؛ استخدم مسار المحاسبة لاعتماد المستخلص وتسويته" });
       return;
-    }
-
-    // Auto bill number — pull from the configured "contracting_bill"
-    // sequence when the client did not supply one. Falls back to the
-    // legacy "must-be-supplied" contract so existing tenants without a
-    // sequence configured still get a clear error instead of an empty
-    // billNumber being inserted.
-    let billNumber: string;
-    if (b.billNumber) {
-      billNumber = String(b.billNumber);
-    } else {
-      const seq = await nextSequenceNumber(cid, "contracting_bill", {
-        branchId: b.branchId ?? null,
-        userId:   req.authUser?.id ?? null,
-        refTable: "contracting_progress_bills",
-      });
-      if (seq) {
-        billNumber = seq;
-      } else {
-        res.status(400).json({ error: "رقم المستخلص مطلوب (لا يوجد مسلسل مهيأ لمستخلصات المقاولات)" });
-        return;
-      }
     }
 
     if (b.direction !== undefined && b.direction !== "incoming" && b.direction !== "outgoing") {
@@ -2855,29 +2839,28 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       netAmount = Number(aggregate.netAmount);
     }
 
-    const [row] = await db.insert(contractingProgressBillsTable).values({
+    const values = {
       companyId: cid, projectId,
       costCenterId: effectiveCostCenterId,
       direction,
       contractorId: b.contractorId ? Number(b.contractorId) : null,
       ownerContractId:         b.ownerContractId         ? Number(b.ownerContractId)         : null,
       subcontractorContractId: b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
-      billNumber,
       billType: b.billType ?? "interim",
       billDate: b.billDate,
       fromDate: b.fromDate ?? null,
       toDate:   b.toDate   ?? null,
       progressPercent: String(b.progressPercent ?? 0),
-      grossAmount:      String(gross),
+      grossAmount: String(gross),
       retentionEnabled: billRetentionSettings ? retEnabled : b.retentionEnabled !== false,
       retentionPercent: String(retPct),
       retentionCapPercent: retCapPct == null ? null : String(retCapPct),
-      retentionAmount:  String(retAmount),
-      previousPaid:     String(prevPaid),
-      dueAmount:        String(dueAmount),
-      vatPercent:       String(vatPct),
-      vatAmount:        String(vatAmount),
-      netAmount:        String(netAmount),
+      retentionAmount: String(retAmount),
+      previousPaid: String(prevPaid),
+      dueAmount: String(dueAmount),
+      vatPercent: String(vatPct),
+      vatAmount: String(vatAmount),
+      netAmount: String(netAmount),
       advanceRecoveryEnabled: billRecoverySettings.enabled,
       advanceRecoveryPercent: billRecoverySettings.percent,
       advanceRecoveryStartProgressPercent: billRecoverySettings.startProgressPercent,
@@ -2885,17 +2868,49 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       advanceRecoveryAmount: "0",
       advanceRecoveryRemainingBefore: "0",
       advanceRecoveryRemainingAfter: "0",
-      paidAmount:       String(b.paidAmount ?? 0),
+      paidAmount: String(b.paidAmount ?? 0),
       status: b.status ?? "draft",
       notes: b.notes ?? null,
-    }).returning();
-    await logEvent({
-      companyId: cid, projectId, userId: req.authUser!.id,
-      eventType: "bill_submitted",
-      title: `${direction === "incoming" ? "مستخلص باطن" : "مستخلص مالك"} جديد رقم ${row.billNumber}`,
-      description: `صافي: ${row.netAmount} ر.س`,
+    };
+    const outcome = await createBillIdempotently({
+      companyId: cid,
+      userId: req.authUser!.id,
+      idempotencyKey,
+      // The generated number is intentionally absent: an empty-number retry
+      // must claim the same client intent before it can issue another number.
+      payloadHash: billCreateFingerprint({
+        ...values,
+        requestedBillNumber: b.billNumber ? String(b.billNumber) : null,
+      }),
+      create: async (tx) => {
+        // Sequence allocation runs only after this request owns the durable
+        // claim. `nextSequenceNumber` deliberately commits its own tiny
+        // counter transaction (gaps are safe), but is inside this create path
+        // and is never reached by a replay.
+        const billNumber = b.billNumber
+          ? String(b.billNumber)
+          : await nextSequenceNumber(cid, "contracting_bill", {
+            branchId: b.branchId ?? null,
+            userId: req.authUser?.id ?? null,
+            refTable: "contracting_progress_bills",
+          });
+        if (!billNumber) {
+          throw Object.assign(new Error("رقم المستخلص مطلوب (لا يوجد مسلسل مهيأ لمستخلصات المقاولات)"), { status: 400 });
+        }
+        const [row] = await tx.insert(contractingProgressBillsTable).values({ ...values, billNumber }).returning();
+        return row;
+      },
     });
-    res.status(201).json(row);
+    const row = outcome.created ? outcome.row : outcome.result;
+    if (outcome.created) {
+      await logEvent({
+        companyId: cid, projectId, userId: req.authUser!.id,
+        eventType: "bill_submitted",
+        title: `${direction === "incoming" ? "مستخلص باطن" : "مستخلص مالك"} جديد رقم ${row.billNumber}`,
+        description: `صافي: ${row.netAmount} ر.س`,
+      });
+    }
+    res.status(outcome.created ? 201 : 200).json(row);
   } catch (e: any) { res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" }); }
 });
 

@@ -1970,6 +1970,7 @@ export function template14(d: PrintData): string {
       contractValue?: number;
       remainingContract?: number;
       retention?: number;
+      additions?: number;
       deductions?: number;
       penalties?: number;
       paid?: number;
@@ -2496,6 +2497,7 @@ export function template14(d: PrintData): string {
     <div class="__totalsRow"><span>قيمة العقد المعدلة</span><span class="mono">${nf(contracting.totals?.contractValue ?? 0)} ر.س</span></div>
     <div class="__totalsRow"><span>المتبقي من العقد</span><span class="mono">${nf(contracting.totals?.remainingContract ?? 0)} ر.س</span></div>
     <div class="__totalsRow"><span>المحتجز</span><span class="mono">${nf(contracting.totals?.retention ?? 0)} ر.س</span></div>
+    <div class="__totalsRow"><span>الإضافات المالية</span><span class="mono">${nf(contracting.totals?.additions ?? 0)} ر.س</span></div>
     <div class="__totalsRow"><span>الاستقطاعات</span><span class="mono">${nf(contracting.totals?.deductions ?? 0)} ر.س</span></div>
     <div class="__totalsRow"><span>الغرامات</span><span class="mono">${nf(contracting.totals?.penalties ?? 0)} ر.س</span></div>
     <div class="__totalsRow"><span>ضريبة القيمة المضافة</span><span class="mono">${nf(totals.vatAmount)} ر.س</span></div>

@@ -258,7 +258,7 @@ function text(value: unknown): string {
 
 function statusLabel(value: unknown): string {
   const key = String(value ?? "");
-  return CONTRACTING_STATUS_LABEL[key] ?? (key || "—");
+  return text(CONTRACTING_STATUS_LABEL[key] ?? (key || "—"));
 }
 
 function partyName(snapshot: ContractingBillPrintSnapshot): string {
@@ -278,7 +278,7 @@ function reportRow(
   const isLine = Boolean(line);
   return {
     recordType: isLine ? "بند مستخلص" : "ملخص مستخلص",
-    project: [bill.projectCode, bill.projectName].filter(Boolean).join(" — "),
+    project: text([bill.projectCode, bill.projectName].filter(Boolean).join(" — ")),
     billNumber: text(bill.billNumber),
     billDate: text(bill.billDate),
     direction: CONTRACTING_DIRECTION_LABEL[bill.direction],
@@ -295,8 +295,8 @@ function reportRow(
     contractValue: optionalNumber(summary?.adjustedContractValue ?? bill.contractValue),
     remainingContract: optionalNumber(summary?.remainingContractValue ?? bill.remainingContract),
     retentions: optionalNumber(summary?.retentionAmount ?? bill.retentionAmount ?? bill.retentions),
-     additions: optionalNumber(summary?.additionsTotal ?? bill.additions),
-    deductions: optionalNumber(summary?.deductionsTotal ?? bill.deductions),
+    additions: optionalNumber(summary?.additionsTotal ?? bill.additions),
+    deductions: optionalNumber(summary?.generalDeductionsTotal ?? bill.deductions),
     penalties: optionalNumber(summary?.penaltyTotal ?? bill.penalties),
     signedAdjustment: optionalNumber(summary?.signedAdjustmentAmount ?? bill.signedAdjustmentAmount),
     vatAmount: optionalNumber(summary?.vatAmount ?? bill.vatAmount),
@@ -311,7 +311,7 @@ function billTotalsRow(snapshot: ContractingBillPrintSnapshot): Record<string, u
   const summary = detail?.summary;
   return {
     recordType: "الإجمالي المعتمد",
-    project: [bill.projectCode, bill.projectName].filter(Boolean).join(" — "),
+    project: text([bill.projectCode, bill.projectName].filter(Boolean).join(" — ")),
     billNumber: text(bill.billNumber),
     direction: CONTRACTING_DIRECTION_LABEL[bill.direction],
     previousWorks: optionalNumber(summary?.previousWorks ?? bill.previousWorks),
@@ -321,7 +321,7 @@ function billTotalsRow(snapshot: ContractingBillPrintSnapshot): Record<string, u
     remainingContract: optionalNumber(summary?.remainingContractValue ?? bill.remainingContract),
     retentions: optionalNumber(summary?.retentionAmount ?? bill.retentionAmount ?? bill.retentions),
     additions: optionalNumber(summary?.additionsTotal ?? bill.additions),
-    deductions: optionalNumber(summary?.deductionsTotal ?? bill.deductions),
+    deductions: optionalNumber(summary?.generalDeductionsTotal ?? bill.deductions),
     penalties: optionalNumber(summary?.penaltyTotal ?? bill.penalties),
     signedAdjustment: optionalNumber(summary?.signedAdjustmentAmount ?? bill.signedAdjustmentAmount),
     vatAmount: optionalNumber(summary?.vatAmount ?? bill.vatAmount),
@@ -332,19 +332,22 @@ function billTotalsRow(snapshot: ContractingBillPrintSnapshot): Record<string, u
 }
 
 /** Shared row builder used by the branded XLSX exporter and fast export tests. */
+/** Shared row builder used by the branded XLSX exporter and fast export tests. */
 export function buildContractingBillExportRows(
   snapshot: ContractingBillPrintSnapshot,
 ): Record<string, unknown>[] {
   const lines = snapshot.detail?.lines ?? [];
   const additions = snapshot.detail?.additions ?? [];
+  const party = text(partyName(snapshot));
   return [
-    reportRow(snapshot.bill, snapshot.detail),
-    ...lines.map(line => reportRow(snapshot.bill, snapshot.detail, line)),
+    { ...reportRow(snapshot.bill, snapshot.detail), party },
+    ...lines.map(line => ({ ...reportRow(snapshot.bill, snapshot.detail, line), party })),
     ...additions.map(addition => ({
       ...reportRow(snapshot.bill, snapshot.detail),
+      party,
       recordType: "إضافة مالية",
-      item: addition.reason || "إضافة مالية",
-      unit: addition.reference ? `${addition.referenceType || "مرجع"}: ${addition.reference}` : "—",
+      item: text(addition.reason || "إضافة مالية"),
+      unit: text(addition.reference ? `${addition.referenceType || "مرجع"}: ${addition.reference}` : "—"),
       currentWorks: optionalNumber(addition.amount),
       cumulativeWorks: optionalNumber(addition.amount),
       additions: optionalNumber(addition.amount),
@@ -352,6 +355,12 @@ export function buildContractingBillExportRows(
   ];
 }
 
+/**
+ * Render a saved contracting bill through the actual sales model-14 renderer.
+ * The adapter only supplies contracting rows/totals and title labels; all
+ * model-14 structure, styles, header, logo, pagination and footer remain
+ * shared with saved sales documents.
+ */
 /**
  * Render a saved contracting bill through the actual sales model-14 renderer.
  * The adapter only supplies contracting rows/totals and title labels; all
@@ -408,7 +417,7 @@ export function buildContractingModel14Html(snapshot: ContractingBillPrintSnapsh
       remainingContract: summary?.remainingContractValue ?? bill.remainingContract ?? 0,
       retention: summary?.retentionAmount ?? bill.retentionAmount ?? bill.retentions ?? 0,
       additions: summary?.additionsTotal ?? bill.additions ?? 0,
-      deductions: summary?.deductionsTotal ?? bill.deductions ?? 0,
+       deductions: summary?.generalDeductionsTotal ?? bill.deductions ?? 0,
       penalties: summary?.penaltyTotal ?? bill.penalties ?? 0,
       paid: summary?.paidAmount ?? bill.paidAmount ?? bill.payments ?? 0,
       outstanding: summary?.remainingAmount ?? bill.outstanding ?? 0,

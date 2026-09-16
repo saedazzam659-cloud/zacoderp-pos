@@ -17,6 +17,7 @@ type Bill = {
 type Settlement = {
   id: number; kind: string; direction: string; amount: string | number;
   applied_amount?: string | number; journal_entry_id?: number | null;
+  reversal_journal_entry_id?: number | null;
   bill_id?: number | null; settlement_date: string; status: string;
 };
 type MaterialMovement = {
@@ -130,7 +131,12 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
     return value;
   }
 
-  async function post(url: string, body: Record<string, unknown>, operationScope?: string) {
+  async function post(
+    url: string,
+    body: Record<string, unknown>,
+    operationScope?: string,
+    successMessage = "تم الترحيل المحاسبي بنجاح",
+  ) {
     setBusy(true);
     try {
       const response = await fetch(`${API}${url}`, {
@@ -141,7 +147,7 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
       if (operationScope) operationKeys.current.delete(operationScope);
-      toast({ title: "تم الترحيل المحاسبي بنجاح" });
+      toast({ title: successMessage });
       await reload();
       return data;
     } catch (error: any) {
@@ -160,6 +166,18 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   async function correct(id: number) {
     if (!window.confirm("سيُعكس القيد الأصلي وتُنشأ مسودة تصحيح جديدة. هل تريد المتابعة؟")) return;
     await post(`/api/contracting/bills/${id}/correction`, {});
+  }
+
+  async function reverseSettlement(settlement: Settlement) {
+    if (!window.confirm(
+      `سيُنشأ قيد عكسي مرحّل لتسوية المستخلص #${settlement.id} بقيمة ${Number(settlement.amount).toLocaleString("en-US")} مع الاحتفاظ بالسجل الأصلي. هل تريد المتابعة؟`,
+    )) return;
+    await post(
+      `/api/contracting/settlements/${settlement.id}/reverse`,
+      {},
+      undefined,
+      "تم عكس تسوية المستخلص وإنشاء قيد عكسي",
+    );
   }
 
   const requiresBill = kind.startsWith("retention_") || kind.startsWith("bill_");
@@ -345,7 +363,30 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
       <section className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
         <h3 className="mb-3 font-bold">سجل التسويات والتدقيق المحاسبي</h3>
         <div className="space-y-1 text-sm">
-          {settlements.map((row) => <div key={row.id} className="flex flex-wrap justify-between gap-2 border-b py-2"><span>{labelKind[row.kind] || row.kind} #{row.id}{row.bill_id ? ` — مستخلص #${row.bill_id}` : ""}</span><span>{Number(row.amount).toLocaleString("en-US")} • قيد #{row.journal_entry_id ?? "—"}</span></div>)}
+          {settlements.map((row) => {
+            const reversibleBillSettlement = ["bill_receipt", "bill_payment"].includes(row.kind) && row.status === "posted";
+            return (
+              <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2">
+                <span>{labelKind[row.kind] || row.kind} #{row.id}{row.bill_id ? ` — مستخلص #${row.bill_id}` : ""}</span>
+                <span>{Number(row.amount).toLocaleString("en-US")} • قيد #{row.journal_entry_id ?? "—"}</span>
+                {reversibleBillSettlement ? (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={busy}
+                    data-testid={`button-reverse-settlement-${row.id}`}
+                    onClick={() => void reverseSettlement(row)}
+                  >
+                    عكس تسوية المستخلص
+                  </Button>
+                ) : row.status === "reversed" ? (
+                  <span className="text-xs text-slate-500">معكوس{row.reversal_journal_entry_id ? ` بقيد #${row.reversal_journal_entry_id}` : ""}</span>
+                ) : (
+                  <span className="text-xs text-slate-500">{row.status === "posted" ? "مرحّل" : row.status}</span>
+                )}
+              </div>
+            );
+          })}
           {!settlements.length && <div className="text-slate-500">لا توجد تسويات مرحّلة</div>}
           {audit.slice(0, 10).map((row) => <div key={`audit-${row.id}`} className="text-xs text-slate-500">#{row.id} — {row.action} — {new Date(row.created_at).toLocaleString("ar-SA")}</div>)}
         </div>

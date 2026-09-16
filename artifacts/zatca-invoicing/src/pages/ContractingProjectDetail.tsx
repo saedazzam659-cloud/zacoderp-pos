@@ -34,6 +34,11 @@ import { useCostCenters, type CostCenter } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import {
+  retryableCreateAttempt,
+  shouldRetainCreateAttemptAfterFailure,
+  type RetryableCreateAttempt,
+} from "@/lib/contractingSaveRetry";
+import {
   BILL_STATUS_LABEL,
   BILL_TYPE_LABEL,
   CONTRACT_STATUS_LABEL,
@@ -865,8 +870,10 @@ function BillsTab({
   const [rows, setRows] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Bill> | null>(null);
+  const [saving, setSaving] = useState(false);
   const [billOptionsLoaded, setBillOptionsLoaded] = useState(false);
   const autoOpenAttempted = useRef(false);
+  const createAttempt = useRef<RetryableCreateAttempt | null>(null);
   // Peek the next bill-number from the central sequence engine while a NEW
   // bill is being created (id is still nullish).
   const isCreatingBill = !!editing && (editing as any).id == null;
@@ -931,6 +938,7 @@ function BillsTab({
   }, [token, projectId]);
 
   async function save() {
+    if (!editing || saving) return;
     if (!editing?.billDate) { toast({ title: t("contracting.bills.dateRequired", "التاريخ مطلوب"), variant: "destructive" }); return; }
     if (direction === "incoming" && !editing.contractorId) {
       toast({ title: t("contracting.bills.contractorRequired", "يجب اختيار المقاول الباطن"), variant: "destructive" }); return;
@@ -941,24 +949,50 @@ function BillsTab({
     if (direction === "incoming" && !editing.subcontractorContractId) {
       toast({ title: t("contracting.bills.subcontractRequired", "يجب اختيار عقد الباطن المرتبط بالمشروع والمقاول"), variant: "destructive" }); return;
     }
+    const isEdit = (editing as any).id != null;
+    const payload: Record<string, unknown> = { ...editing, direction };
+    // Settlement posting owns the read-only paid amount.
+    if (isEdit) delete payload.paidAmount;
+    const attempt = isEdit ? null : retryableCreateAttempt(payload, createAttempt.current);
+    if (attempt) createAttempt.current = attempt;
     try {
-      const isEdit = (editing as any).id != null;
       const url = isEdit
         ? `${API}/api/contracting/bills/${(editing as any).id}`
         : `${API}/api/contracting/projects/${projectId}/bills`;
-      const payload: any = { ...editing, direction };
-      // Paid amount is owned by the accounting settlement path. Do not send
-      // the read-only value back through the legacy CRUD update, even when it
-      // is unchanged.
-      if (isEdit) delete payload.paidAmount;
+      if (attempt) payload.idempotencyKey = attempt.idempotencyKey;
+      setSaving(true);
       const r = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(attempt ? { "Idempotency-Key": attempt.idempotencyKey } : {}),
+        },
         body: JSON.stringify(payload),
       });
-      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
-      setEditing(null); await load();
-    } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
+      if (!r.ok) {
+        const responseMayBeLost = !isEdit && shouldRetainCreateAttemptAfterFailure(r.status);
+        if (!responseMayBeLost) createAttempt.current = null;
+        const data = await r.json().catch(() => ({}));
+        throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { responseMayBeLost });
+      }
+      createAttempt.current = null;
+      setEditing(null);
+      await load();
+    } catch (e: any) {
+      const responseMayBeLost = !isEdit && (
+        e?.responseMayBeLost === true || shouldRetainCreateAttemptAfterFailure(undefined, e)
+      );
+      toast({
+        title: responseMayBeLost ? "تعذر التحقق من حفظ المستخلص" : e?.message || "تعذر حفظ المستخلص",
+        description: responseMayBeLost
+          ? "قد يكون الحفظ قد تم. أعد الضغط على «حفظ البيانات الأساسية» دون تغيير البيانات؛ لن ينشئ ذلك مستخلصاً مكرراً."
+          : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
   }
   async function del(id: number) {
     if (!confirm(t("common.confirmDelete", "تأكيد الحذف؟"))) return;
@@ -970,6 +1004,7 @@ function BillsTab({
   // recent active contract on the relevant side (saves typing for the
   // common case where retention% is identical across all bills).
   function openNew() {
+    createAttempt.current = null;
     const today = new Date().toISOString().slice(0,10);
     let retention = "10";
     let ownerContractId: number | null = null;
@@ -1214,7 +1249,7 @@ function BillsTab({
               </span>
             </h4>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+              <Button size="sm" variant="ghost" onClick={() => { createAttempt.current = null; setEditing(null); }} aria-label={t("common.close", "إغلاق")}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
@@ -1420,15 +1455,16 @@ function BillsTab({
           )}
 
           <div className="flex items-center justify-end gap-2 mt-4 pt-4 border-t bg-muted/20 p-4 rounded-xl">
-            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button onClick={save}>{t("common.save", "حفظ البيانات الأساسية")}</Button>
+            <Button variant="outline" disabled={saving} onClick={() => { createAttempt.current = null; setEditing(null); }}>{t("common.cancel", "إلغاء")}</Button>
+            <Button onClick={() => void save()} disabled={saving} data-testid="button-save-contracting-bill">
+              {saving ? t("common.saving", "جار الحفظ…") : t("common.save", "حفظ البيانات الأساسية")}
+            </Button>
           </div>
         </div>
       )}
     </div>
   );
 }
-
 // ─────────────────── RISKS TAB ───────────────────
 function RisksTab({ projectId }: { projectId: number }) {
   const { t } = useTranslation();

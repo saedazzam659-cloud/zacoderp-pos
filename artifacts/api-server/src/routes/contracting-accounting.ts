@@ -10,7 +10,7 @@ import {
 } from "@workspace/db";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
-import { requirePostRight } from "../lib/postingRights.js";
+import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { requireContractingCapability } from "../lib/contracting-security.js";
 import {
   applyAdvance,
@@ -27,6 +27,7 @@ import {
   materialLots,
   unapproveBill,
   createPostedCorrection,
+  reverseBillSettlement,
 } from "../lib/contracting-accounting-service.js";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 
@@ -255,6 +256,27 @@ router.post(
         req,
       });
       return res.status(201).json(result);
+    } catch (error) {
+      return fail(res, error);
+    }
+  },
+);
+
+router.post(
+  "/settlements/:id/reverse",
+  requireContractingCapability("cancel", "unpost"),
+  requireUnpostRight("ctgContractingSettlement"),
+  async (req, res) => {
+    const cid = await companyId(req, res);
+    if (!cid) return;
+    try {
+      const result = await reverseBillSettlement({
+        companyId: cid,
+        settlementId: Number(req.params.id),
+        userId: userId(req),
+        req,
+      });
+      return res.status(result.idempotentReplay ? 200 : 201).json(result);
     } catch (error) {
       return fail(res, error);
     }

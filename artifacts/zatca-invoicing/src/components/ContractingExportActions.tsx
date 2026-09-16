@@ -172,6 +172,10 @@ export function ContractingBillExportActions({
     const subcontracts = detail.contracts?.subcontractor ?? [];
     return {
       ...snapshot,
+      // List/detail callers only carry the bill and project. Resolve company
+      // branding at click time so model-14, XLSX and PDF all receive the same
+      // authenticated company identity.
+      company: snapshot.company ?? companyInfo(user),
       printedBy: snapshot.printedBy || user?.nameAr || user?.username || null,
       bill,
       detail,

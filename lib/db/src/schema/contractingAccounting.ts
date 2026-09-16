@@ -466,3 +466,49 @@ export const contractingContractCreateIdempotencyTable = pgTable(
     ),
   ],
 );
+
+/**
+ * Operational replay claims for contracting bill creation. This runtime
+ * financial-adjacent table is declared here as well as created additively by
+ * the route helper, so schema publishing recognizes it and never treats it as
+ * an orphan to remove or rename. Claim rows are intentionally not tenant
+ * backup business data.
+ */
+export const contractingBillCreateIdempotencyTable = pgTable(
+  "contracting_bill_create_idempotency",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull(),
+    userId: integer("user_id").notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    billId: integer("bill_id"),
+    result: jsonb("result").notNull(),
+    statusCode: integer("status_code").notNull().default(201),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      name: "contracting_bill_create_idempotency_company_id_fkey",
+      columns: [t.companyId],
+      foreignColumns: [companiesTable.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "contracting_bill_create_idempotency_user_id_fkey",
+      columns: [t.userId],
+      foreignColumns: [usersTable.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "contracting_bill_create_idempotency_bill_fk",
+      columns: [t.billId],
+      foreignColumns: [contractingProgressBillsTable.id],
+    }).onDelete("cascade"),
+    unique(
+      "contracting_bill_create_i_company_id_user_id_idempotency_key_key",
+    ).on(t.companyId, t.userId, t.idempotencyKey),
+    index("contracting_bill_create_idempotency_bill_idx").on(
+      t.companyId,
+      t.billId,
+    ),
+  ],
+);

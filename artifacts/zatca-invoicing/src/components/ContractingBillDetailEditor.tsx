@@ -155,7 +155,7 @@ type PenaltyDraft = {
 type Detail = {
   state: string;
   bill: {
-    direction: "owner" | "incoming" | "subcontract";
+    direction: "outgoing" | "incoming";
     ownerContractId: number | null;
     subcontractorContractId: number | null;
   };
@@ -736,11 +736,11 @@ export default function ContractingBillDetailEditor({
             {bill?.billNumber && <span className="font-mono text-sm bg-muted text-muted-foreground px-2 py-0.5 rounded">{bill.billNumber}</span>}
           </h4>
           <p className="text-[11px] text-slate-500 mt-1">الكميات السابقة والتراكمية يحسبها الخادم تلقائيًا من المستخلصات المعتمدة السابقة لتجنب الأخطاء البشرية.</p>
-
+          
           {project && (
             <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5"><span className="font-medium text-foreground">المشروع:</span> {project.nameAr} {project.code ? `(${project.code})` : ''}</span>
-              {detail.bill.direction === 'owner' ? (
+              {detail.bill.direction === "outgoing" ? (
                 <span className="flex items-center gap-1.5"><span className="font-medium text-foreground">العميل:</span> {project.clientName || '—'}</span>
               ) : null}
               <span className="flex items-center gap-1.5">
@@ -1112,11 +1112,11 @@ export default function ContractingBillDetailEditor({
               إنجاز: {detail.summary.cumulativeCompletionPercent.toFixed(2)}%
             </span>
           </div>
-
+          
           <div className="flex justify-between"><span className="text-muted-foreground">أعمال سابقة (معتمدة)</span><span className="font-mono">{money(detail.summary.previousWorks)}</span></div>
           <div className="flex justify-between font-bold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-900/20 px-2 py-1 rounded -mx-2 -my-1"><span className="ms-2">أعمال حالية</span><span className="font-mono me-2">{money(detail.summary.currentWorks)}</span></div>
           <div className="flex justify-between text-slate-700 dark:text-slate-300"><span className="text-muted-foreground">أعمال تراكمية</span><span className="font-mono font-semibold">{money(detail.summary.cumulativeWorks)}</span></div>
-
+          
           <div className="flex justify-between border-t pt-2 mt-2"><span className="text-muted-foreground">الإضافات المالية</span><span className="font-mono text-emerald-600">{money(detail.summary.additionsTotal)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">إجمالي الاستقطاعات</span><span className="font-mono text-amber-700">−{money(detail.summary.deductionsTotal)}</span></div>
           {detail.summary.advanceRecovery && detail.summary.advanceRecovery.enabled && (
@@ -1124,7 +1124,7 @@ export default function ContractingBillDetailEditor({
           )}
           <div className="flex justify-between"><span className="text-muted-foreground">الغرامات المستقلة</span><span className="font-mono text-rose-700">−{money(detail.summary.penaltyTotal)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">الضريبة (VAT)</span><span className="font-mono">{money(detail.summary.vatAmount)}</span></div>
-
+          
           <div className="flex justify-between font-bold border-t pt-2 text-base">
             <span>صافي المستخلص الحالي</span>
             <span className="font-mono text-primary">{money(detail.summary.adjustedNetAmount)}</span>
