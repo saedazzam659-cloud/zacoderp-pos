@@ -25,6 +25,7 @@ import {
   warehousesTable,
   stockBalanceTable,
   costCentersTable,
+  contractingBillLinesTable,
 } from "@workspace/db";
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { branchScopeSpread, extractAuth, getAllowedBranchIds, resolveCompanyId } from "../middleware/auth.js";
@@ -50,12 +51,39 @@ import {
   type BillDirection,
 } from "../lib/contracting-project-contract-integrity.js";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
+import { ensureContractingBillDetailsTables } from "../lib/contracting-bill-details-service.js";
+import { ensureContractingBoqTables } from "../lib/contracting-boq-service.js";
+import {
+  aggregateContractProgressAmounts,
+  priorCertifiedContractGross,
+  calculateAdvanceRecoveryCents,
+  type CertifiedContractProgressBill,
+} from "../lib/contracting-accounting-math.js";
+import { assertBillContractScope } from "../lib/contracting-bill-contracts.js";
+import {
+  contractCreateFingerprint,
+  createContractIdempotently,
+  parseContractCreateIdempotencyKey,
+} from "../lib/contracting-contract-create-idempotency.js";
+import {
+  getContractingSettings,
+  updateContractingSettings,
+  validateContractingSettingAccounts,
+} from "../lib/contracting-settings.js";
 
 const router = Router();
 router.use(extractAuth);
 router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   next();
+});
+router.use(async (_req, _res, next) => {
+  try {
+    await ensureContractingBoqTables();
+    next();
+  } catch (caught) {
+    next(caught);
+  }
 });
 router.use(requirePermission("contracting", "view"));
 // The old router only checked `contracting:view`, which made every legacy
@@ -89,6 +117,32 @@ function projectBranchCondition(req: any, branchColumn: any): any[] {
 function projectErrorStatus(error: string): number {
   return error === "ليس لديك صلاحية هذا الفرع" ? 403 : 400;
 }
+
+// ─────────────────── MODULE SETTINGS (إعدادات المقاولات) ──────────────
+// The router-wide view gate protects reads; the mutation gate above maps PUT
+// to contracting:edit.  Account ids are checked against the tenant and must
+// point at active posting accounts before they are persisted.
+router.get("/settings", async (req, res) => {
+  try {
+    const cid = await scope(req, res);
+    if (!cid) return;
+    res.json(await getContractingSettings(cid));
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر تحميل إعدادات المقاولات" });
+  }
+});
+
+router.put("/settings", async (req, res) => {
+  try {
+    const cid = await scope(req, res);
+    if (!cid) return;
+    const patch = req.body ?? {};
+    await validateContractingSettingAccounts(cid, patch);
+    res.json(await updateContractingSettings(cid, patch, req.authUser?.id ?? null));
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر حفظ إعدادات المقاولات" });
+  }
+});
 
 // Tenant-isolation guards. Each helper returns a string error message
 // (in Arabic) if the referenced row is missing or doesn't belong to the
@@ -140,6 +194,64 @@ async function ensureOwnerContractParent(
   ));
   if (!parent || parent.contractType !== "main") return "العقد الأساسي يجب أن يكون عقداً رئيسياً من نفس المشروع";
   return null;
+}
+async function ensureSubContractParent(
+  cid: number,
+  projectId: number,
+  parentId: number,
+  childId?: number,
+): Promise<string | null> {
+  if (!Number.isInteger(parentId) || parentId <= 0 || parentId === childId) {
+    return "العقد الأساسي لأمر تغيير الباطن غير صالح";
+  }
+  const [parent] = await db.select({
+    id: contractingSubContractsTable.id,
+    contractType: contractingSubContractsTable.contractType,
+  }).from(contractingSubContractsTable).where(and(
+    eq(contractingSubContractsTable.id, parentId),
+    eq(contractingSubContractsTable.companyId, cid),
+    eq(contractingSubContractsTable.projectId, projectId),
+  ));
+  if (!parent || parent.contractType !== "main") return "العقد الأساسي يجب أن يكون عقد باطن رئيسياً من نفس المشروع";
+  return null;
+}
+
+async function assertChangeOrderReductionSafe(
+  cid: number,
+  projectId: number,
+  contractId: number,
+  direction: "owner" | "subcontract",
+  executor: any = db,
+) {
+  const result = await executor.execute(sql`
+    SELECT 1
+      FROM contracting_contract_boq_lines child
+      JOIN contracting_contract_boq_lines base
+        ON base.id = child.base_line_id
+       AND base.company_id = child.company_id
+      JOIN contracting_bill_lines bl ON bl.boq_line_id = base.id
+      JOIN contracting_progress_bills pb ON pb.id = bl.bill_id
+     WHERE child.company_id = ${cid}
+       AND child.project_id = ${projectId}
+       AND bl.company_id = ${cid}
+       AND pb.company_id = ${cid}
+       AND pb.project_id = ${projectId}
+       AND ${direction === "owner"
+    ? sql`child.owner_contract_id = ${contractId}`
+    : sql`child.subcontractor_contract_id = ${contractId}`}
+       AND child.quantity_delta < 0
+       AND pb.status IN ('approved', 'certified', 'posted', 'partially_paid', 'paid')
+       AND (
+         SELECT COALESCE(SUM(bl2.current_qty), 0)
+           FROM contracting_bill_lines bl2
+           JOIN contracting_progress_bills pb2 ON pb2.id = bl2.bill_id
+          WHERE bl2.boq_line_id = base.id
+            AND pb2.status IN ('approved', 'certified', 'posted', 'partially_paid', 'paid')
+       ) > base.quantity + child.quantity_delta + 0.0001
+     LIMIT 1
+  `);
+  const rows = Array.isArray(result) ? result : (result as any).rows ?? [];
+  if (rows.length > 0) throw new Error("لا يمكن اعتماد خفض كمية أدنى من الكمية المنفذة والمعتمدة");
 }
 async function ensureCustomer(cid: number, customerId: number): Promise<string | null> {
   if (!customerId) return "العميل غير صالح";
@@ -432,6 +544,96 @@ function validatePercentage(value: unknown, label: string): string | null {
 
 function calculateAdvancePayment(value: number, percent: number): number {
   return Math.round((value * percent / 100 + Number.EPSILON) * 100) / 100;
+}
+
+type AdvanceRecoverySettings = {
+  enabled: boolean;
+  percent: string;
+  startProgressPercent: string;
+};
+
+type RetentionSettings = {
+  enabled: boolean;
+  percent: string;
+  capPercent: string;
+};
+
+async function contractRetentionSettings(
+  companyId: number,
+  projectId: number,
+  direction: BillDirection,
+  ownerContractId: number | null,
+  subcontractorContractId: number | null,
+): Promise<RetentionSettings | null> {
+  if (direction === "incoming") {
+    const [contract] = await db.select({
+      enabled: contractingSubContractsTable.retentionEnabled,
+      percent: contractingSubContractsTable.retentionPercent,
+      capPercent: contractingSubContractsTable.retentionCapPercent,
+    }).from(contractingSubContractsTable).where(and(
+      eq(contractingSubContractsTable.companyId, companyId),
+      eq(contractingSubContractsTable.projectId, projectId),
+      eq(contractingSubContractsTable.id, Number(subcontractorContractId)),
+    ));
+    return contract ? {
+      enabled: contract.enabled !== false,
+      percent: String(contract.percent ?? "5"),
+      capPercent: String(contract.capPercent ?? "100"),
+    } : null;
+  }
+  const [contract] = await db.select({
+    enabled: contractingOwnerContractsTable.retentionEnabled,
+    percent: contractingOwnerContractsTable.retentionPercent,
+    capPercent: contractingOwnerContractsTable.retentionCapPercent,
+  }).from(contractingOwnerContractsTable).where(and(
+    eq(contractingOwnerContractsTable.companyId, companyId),
+    eq(contractingOwnerContractsTable.projectId, projectId),
+    eq(contractingOwnerContractsTable.id, Number(ownerContractId)),
+  ));
+  return contract ? {
+    enabled: contract.enabled !== false,
+    percent: String(contract.percent ?? "5"),
+    capPercent: String(contract.capPercent ?? "100"),
+  } : null;
+}
+
+async function contractAdvanceRecoverySettings(
+  companyId: number,
+  projectId: number,
+  direction: BillDirection,
+  ownerContractId: number | null,
+  subcontractorContractId: number | null,
+): Promise<AdvanceRecoverySettings> {
+  if (direction === "incoming") {
+    const [contract] = await db.select({
+      enabled: contractingSubContractsTable.advanceRecoveryEnabled,
+      percent: contractingSubContractsTable.advanceRecoveryPercent,
+      start: contractingSubContractsTable.advanceRecoveryStartProgressPercent,
+    }).from(contractingSubContractsTable).where(and(
+      eq(contractingSubContractsTable.companyId, companyId),
+      eq(contractingSubContractsTable.projectId, projectId),
+      eq(contractingSubContractsTable.id, Number(subcontractorContractId)),
+    ));
+    return {
+      enabled: Boolean(contract?.enabled),
+      percent: String(contract?.percent ?? "0"),
+      startProgressPercent: String(contract?.start ?? "0"),
+    };
+  }
+  const [contract] = await db.select({
+    enabled: contractingOwnerContractsTable.advanceRecoveryEnabled,
+    percent: contractingOwnerContractsTable.advanceRecoveryPercent,
+    start: contractingOwnerContractsTable.advanceRecoveryStartProgressPercent,
+  }).from(contractingOwnerContractsTable).where(and(
+    eq(contractingOwnerContractsTable.companyId, companyId),
+    eq(contractingOwnerContractsTable.projectId, projectId),
+    eq(contractingOwnerContractsTable.id, Number(ownerContractId)),
+  ));
+  return {
+    enabled: Boolean(contract?.enabled),
+    percent: String(contract?.percent ?? "0"),
+    startProgressPercent: String(contract?.start ?? "0"),
+  };
 }
 
 function exactBaseQuantity(qty: unknown, factor: string): string {
@@ -1504,6 +1706,8 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
     const cid = await scope(req, res); if (!cid) return;
     const projectId = Number(req.params.projectId);
     const b = req.body as any;
+    const userId = req.authUser!.id;
+    const idempotencyKey = parseContractCreateIdempotencyKey(req);
     if (!b?.contractNumber || !b?.contractDate) {
       res.status(400).json({ error: "رقم العقد وتاريخه مطلوبان" }); return;
     }
@@ -1516,6 +1720,12 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
     const contractType = String(b.contractType ?? "main");
     const parentContractId = b.parentContractId == null || b.parentContractId === ""
       ? null : Number(b.parentContractId);
+    if (["change_order", "addendum"].includes(contractType) && parentContractId == null) {
+      res.status(400).json({ error: "أمر التغيير يجب أن يرتبط بعقد أساسي من نفس المشروع" }); return;
+    }
+    if (["approved", "rejected"].includes(String(b.status ?? "")) && ["change_order", "addendum"].includes(contractType)) {
+      res.status(400).json({ error: "يجب استخدام مسار قرار أمر التغيير للاعتماد أو الرفض" }); return;
+    }
     if (parentContractId != null) {
       if (contractType !== "change_order" && contractType !== "addendum") {
         res.status(400).json({ error: "العقد الأساسي يخصص لأمر تغيير أو ملحق فقط" }); return;
@@ -1527,12 +1737,36 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
     const advancePct = Number(b.advancePercent ?? 0);
     const valueError = validateNonNegative(value, "قيمة العقد");
     const percentError = validatePercentage(advancePct, "نسبة الدفعة المقدمة");
+    // Settings are copied into a new contract only. Later company policy
+    // edits must never rewrite this contract's retention/recovery snapshot.
+    const defaults = await getContractingSettings(cid);
+    const recoveryEnabled = b.advanceRecoveryEnabled === undefined
+      ? Boolean(defaults?.defaultAdvanceRecoveryEnabled)
+      : b.advanceRecoveryEnabled === true;
+    const recoveryPct = Number(
+      b.advanceRecoveryPercent ?? defaults?.defaultAdvanceRecoveryPercent ?? 0,
+    );
+    const recoveryStartPct = Number(
+      b.advanceRecoveryStartProgressPercent
+      ?? b.startProgressPercent
+      ?? defaults?.defaultAdvanceRecoveryStartProgressPercent
+      ?? 0,
+    );
+    const recoveryPercentError = validatePercentage(recoveryPct, "نسبة استرداد الدفعة المقدمة");
+    const recoveryStartError = validatePercentage(recoveryStartPct, "بداية استرداد الدفعة المقدمة");
+    const retentionEnabled = b.retentionEnabled == null
+      ? defaults.defaultRetentionEnabled !== false
+      : b.retentionEnabled === true;
+    const retentionPct = Number(b.retentionPercent ?? defaults.defaultRetentionPercent ?? 5);
+    const retentionCapPct = Number(b.retentionCapPercent ?? defaults.defaultRetentionCapPercent ?? 100);
+    const retentionPercentError = validatePercentage(retentionPct, "نسبة المحتجزات");
+    const retentionCapError = validatePercentage(retentionCapPct, "سقف المحتجزات");
     const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : calculateAdvancePayment(value, advancePct);
     const advanceError = validateNonNegative(advancePay, "الدفعة المقدمة");
-    if (valueError || percentError || advanceError) {
-      res.status(400).json({ error: valueError || percentError || advanceError }); return;
+    if (valueError || percentError || recoveryPercentError || recoveryStartError || retentionPercentError || retentionCapError || advanceError) {
+      res.status(400).json({ error: valueError || percentError || recoveryPercentError || recoveryStartError || retentionPercentError || retentionCapError || advanceError }); return;
     }
-    const [row] = await db.insert(contractingOwnerContractsTable).values({
+    const values = {
       companyId: cid, projectId,
       customerId: b.customerId ? Number(b.customerId) : null,
       clientName: b.clientName ?? null,
@@ -1544,7 +1778,12 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
       value:            String(value),
       advancePayment:   String(advancePay),
       advancePercent:   String(advancePct),
-      retentionPercent: String(b.retentionPercent ?? 5),
+      advanceRecoveryEnabled: recoveryEnabled,
+      advanceRecoveryPercent: String(recoveryPct),
+      advanceRecoveryStartProgressPercent: String(recoveryStartPct),
+      retentionEnabled,
+      retentionPercent: String(retentionPct),
+      retentionCapPercent: String(retentionCapPct),
       vatPercent:       String(b.vatPercent ?? 15),
       durationDays: Number(b.durationDays ?? 0),
       startDate: b.startDate ?? null,
@@ -1554,7 +1793,29 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
       penaltiesClause: b.penaltiesClause ?? null,
       status: b.status ?? "draft",
       notes: b.notes ?? null,
-    }).returning();
+    };
+    const payloadHash = contractCreateFingerprint({
+      operation: "owner_contract_create",
+      userId,
+      ...values,
+    });
+    const createResult = await createContractIdempotently({
+      companyId: cid,
+      userId,
+      operation: "owner_contract_create",
+      idempotencyKey,
+      payloadHash,
+      create: async (tx) => {
+        const [row] = await tx.insert(contractingOwnerContractsTable).values(values).returning();
+        if (!row) throw new Error("تعذر إنشاء عقد المالك");
+        return row;
+      },
+    });
+    if (!createResult.created) {
+      res.status(200).json({ ...createResult.result, idempotentReplay: true });
+      return;
+    }
+    const row = createResult.row;
     await logEvent({
       companyId: cid, projectId, userId: req.authUser!.id,
       eventType: "owner_contract_created",
@@ -1562,7 +1823,9 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
       description: `قيمة العقد: ${row.value} ر.س`,
     });
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" });
+  }
 });
 
 router.put("/owner-contracts/:id", async (req, res) => {
@@ -1576,6 +1839,10 @@ router.put("/owner-contracts/:id", async (req, res) => {
     const projectError = await ensureProject(cid, cur.projectId, req);
     if (projectError) {
       res.status(projectErrorStatus(projectError)).json({ error: projectError }); return;
+    }
+    if (["change_order", "addendum"].includes(String(b.contractType ?? cur.contractType))
+      && ["approved", "rejected"].includes(String(b.status ?? ""))) {
+      res.status(409).json({ error: "استخدم مسار قرار أمر التغيير لتسجيل الاعتماد أو الرفض" }); return;
     }
     const upd: any = { updatedAt: new Date() };
     let nextProjectId = Number(cur.projectId);
@@ -1606,14 +1873,20 @@ router.put("/owner-contracts/:id", async (req, res) => {
       const parentContractId = b.parentContractId == null || b.parentContractId === ""
         ? null : Number(b.parentContractId);
       const contractType = String(b.contractType ?? cur.contractType);
+      const nextProjectId = b.projectId !== undefined ? Number(b.projectId) : Number(cur.projectId);
       if (parentContractId != null) {
         if (contractType !== "change_order" && contractType !== "addendum") {
           res.status(400).json({ error: "العقد الأساسي يخصص لأمر تغيير أو ملحق فقط" }); return;
         }
         const parentError = await ensureOwnerContractParent(cid, nextProjectId, parentContractId, id);
         if (parentError) { res.status(400).json({ error: parentError }); return; }
+      } else if (["change_order", "addendum"].includes(contractType)) {
+        res.status(400).json({ error: "أمر التغيير يجب أن يرتبط بعقد أساسي من نفس المشروع" }); return;
       }
       upd.parentContractId = parentContractId;
+    } else if (["change_order", "addendum"].includes(String(b.contractType ?? cur.contractType))
+      && cur.parentContractId == null) {
+      res.status(400).json({ error: "أمر التغيير يجب أن يرتبط بعقد أساسي من نفس المشروع" }); return;
     } else if (b.contractType !== undefined && !["change_order", "addendum"].includes(String(b.contractType))) {
       upd.parentContractId = null;
     } else if (b.projectId !== undefined && cur.parentContractId != null) {
@@ -1645,6 +1918,23 @@ router.put("/owner-contracts/:id", async (req, res) => {
       if (error) { res.status(400).json({ error }); return; }
       upd.advancePercent = String(advancePct);
     }
+    const recoveryEnabledChanged = b.advanceRecoveryEnabled !== undefined;
+    const recoveryPercentChanged = b.advanceRecoveryPercent !== undefined;
+    const recoveryStartChanged = b.advanceRecoveryStartProgressPercent !== undefined || b.startProgressPercent !== undefined;
+    const recoveryPct = recoveryPercentChanged
+      ? Number(b.advanceRecoveryPercent)
+      : Number(cur.advanceRecoveryPercent ?? 0);
+    const recoveryStartPct = recoveryStartChanged
+      ? Number(b.advanceRecoveryStartProgressPercent ?? b.startProgressPercent)
+      : Number(cur.advanceRecoveryStartProgressPercent ?? 0);
+    const recoveryPercentError = validatePercentage(recoveryPct, "نسبة استرداد الدفعة المقدمة");
+    const recoveryStartError = validatePercentage(recoveryStartPct, "بداية استرداد الدفعة المقدمة");
+    if (recoveryPercentError || recoveryStartError) {
+      res.status(400).json({ error: recoveryPercentError || recoveryStartError }); return;
+    }
+    if (recoveryEnabledChanged) upd.advanceRecoveryEnabled = b.advanceRecoveryEnabled === true;
+    if (recoveryPercentChanged) upd.advanceRecoveryPercent = String(recoveryPct);
+    if (recoveryStartChanged) upd.advanceRecoveryStartProgressPercent = String(recoveryStartPct);
     // A legacy form may submit the stored amount alongside a changed value or
     // percentage. Recalculate in that case; otherwise an amount-only edit
     // remains the explicit value entered by the user.
@@ -1659,14 +1949,91 @@ router.put("/owner-contracts/:id", async (req, res) => {
       if (error) { res.status(400).json({ error }); return; }
       upd.advancePayment = String(advancePay);
     }
-    for (const k of ["retentionPercent","vatPercent"]) {
-      if (b[k] !== undefined) upd[k] = String(b[k]);
+    const retentionEnabledChanged = b.retentionEnabled !== undefined && b.retentionEnabled !== null;
+    const retentionPercentChanged = b.retentionPercent !== undefined && b.retentionPercent !== null;
+    const retentionCapChanged = b.retentionCapPercent !== undefined && b.retentionCapPercent !== null;
+    const retentionPct = retentionPercentChanged
+      ? Number(b.retentionPercent)
+      : Number(cur.retentionPercent ?? 5);
+    const retentionCapPct = retentionCapChanged
+      ? Number(b.retentionCapPercent)
+      : Number(cur.retentionCapPercent ?? 100);
+    const retentionPercentError = validatePercentage(retentionPct, "نسبة المحتجزات");
+    const retentionCapError = validatePercentage(retentionCapPct, "سقف المحتجزات");
+    if (retentionPercentError || retentionCapError) {
+      res.status(400).json({ error: retentionPercentError || retentionCapError }); return;
     }
-    const [row] = await db.update(contractingOwnerContractsTable).set(upd)
-      .where(and(eq(contractingOwnerContractsTable.id, id), eq(contractingOwnerContractsTable.companyId, cid)))
-      .returning();
+    if (retentionEnabledChanged) upd.retentionEnabled = b.retentionEnabled === true;
+    if (retentionPercentChanged) upd.retentionPercent = String(retentionPct);
+    if (retentionCapChanged) upd.retentionCapPercent = String(retentionCapPct);
+    if (b.vatPercent !== undefined) upd.vatPercent = String(b.vatPercent);
+    const row = await db.transaction(async (tx) => {
+      const [locked] = await tx.select({ id: contractingOwnerContractsTable.id })
+        .from(contractingOwnerContractsTable)
+        .where(and(eq(contractingOwnerContractsTable.id, id), eq(contractingOwnerContractsTable.companyId, cid)))
+        .for("update");
+      if (!locked) throw Object.assign(new Error("غير موجود"), { status: 404 });
+      const [updated] = await tx.update(contractingOwnerContractsTable).set(upd)
+        .where(and(eq(contractingOwnerContractsTable.id, id), eq(contractingOwnerContractsTable.companyId, cid)))
+        .returning();
+      return updated;
+    });
     res.json(row);
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+router.put("/owner-contracts/:id/change-order-decision", requirePermission("contracting", "approve"), async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const decision = String(req.body?.decision ?? req.body?.status ?? "");
+    if (!["approved", "rejected"].includes(decision)) {
+      res.status(400).json({ error: "قرار أمر التغيير يجب أن يكون اعتماداً أو رفضاً" }); return;
+    }
+    const [cur] = await db.select().from(contractingOwnerContractsTable).where(and(
+      eq(contractingOwnerContractsTable.id, id),
+      eq(contractingOwnerContractsTable.companyId, cid),
+    ));
+    if (!cur) { res.status(404).json({ error: "أمر التغيير غير موجود" }); return; }
+    const projectError = await ensureProject(cid, cur.projectId, req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    if (!["change_order", "addendum"].includes(String(cur.contractType))) {
+      res.status(400).json({ error: "العقد المحدد ليس أمراً تغييرياً أو ملحقاً" }); return;
+    }
+    if (decision === "approved" && !cur.signedAt) {
+      res.status(422).json({ error: "لا يمكن اعتماد أمر تغيير غير موقع" }); return;
+    }
+    const row = await db.transaction(async (tx) => {
+      const [locked] = await tx.select().from(contractingOwnerContractsTable)
+        .where(and(
+          eq(contractingOwnerContractsTable.id, id),
+          eq(contractingOwnerContractsTable.companyId, cid),
+        ))
+        .for("update");
+      if (!locked) throw Object.assign(new Error("أمر التغيير غير موجود"), { status: 404 });
+      if (decision === "approved") await assertChangeOrderReductionSafe(cid, locked.projectId, id, "owner", tx);
+      const [updated] = await tx.update(contractingOwnerContractsTable).set({
+        status: decision,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(contractingOwnerContractsTable.id, id),
+        eq(contractingOwnerContractsTable.companyId, cid),
+      )).returning();
+      return updated;
+    });
+    await logEvent({
+      companyId: cid,
+      projectId: cur.projectId,
+      userId: req.authUser?.id,
+      eventType: `owner_change_order_${decision}`,
+      title: `${decision === "approved" ? "اعتماد" : "رفض"} أمر تغيير المالك ${cur.contractNumber}`,
+      description: req.body?.reason ? String(req.body.reason) : null,
+      meta: { contractId: id, decision },
+    });
+    res.json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" });
+  }
 });
 
 router.delete("/owner-contracts/:id", async (req, res) => {
@@ -1711,6 +2078,8 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
     const cid = await scope(req, res); if (!cid) return;
     const projectId = Number(req.params.projectId);
     const b = req.body as any;
+    const userId = req.authUser!.id;
+    const idempotencyKey = parseContractCreateIdempotencyKey(req);
     if (!b?.contractNumber || !b?.contractDate || !b?.contractorId) {
       res.status(400).json({ error: "رقم العقد، التاريخ، والمقاول الباطن مطلوبة" }); return;
     }
@@ -1718,26 +2087,75 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
     if (projErr) { res.status(projectErrorStatus(projErr)).json({ error: projErr }); return; }
     const conErr  = await ensureContractor(cid, Number(b.contractorId));
     if (conErr)  { res.status(400).json({ error: conErr }); return; }
+    const contractType = String(b.contractType ?? "main");
+    const parentContractId = b.parentContractId == null || b.parentContractId === ""
+      ? null : Number(b.parentContractId);
+    if (!["main", "change_order"].includes(contractType)) {
+      res.status(400).json({ error: "نوع عقد الباطن غير صالح" }); return;
+    }
+    if (contractType === "change_order" && parentContractId == null) {
+      res.status(400).json({ error: "أمر تغيير الباطن يجب أن يرتبط بعقد أساسي من نفس المشروع" }); return;
+    }
+    if (["approved", "rejected"].includes(String(b.status ?? "")) && contractType === "change_order") {
+      res.status(400).json({ error: "يجب استخدام مسار قرار أمر تغيير الباطن للاعتماد أو الرفض" }); return;
+    }
+    if (parentContractId != null) {
+      if (contractType !== "change_order") {
+        res.status(400).json({ error: "العقد الأساسي مخصص لأمر تغيير الباطن فقط" }); return;
+      }
+      const parentError = await ensureSubContractParent(cid, projectId, parentContractId);
+      if (parentError) { res.status(400).json({ error: parentError }); return; }
+    }
     const value = Number(b.value ?? 0);
     const advancePct = Number(b.advancePercent ?? 0);
     const valueError = validateNonNegative(value, "قيمة العقد");
     const percentError = validatePercentage(advancePct, "نسبة الدفعة المقدمة");
+    // Company policy is a source for new-contract snapshots only.
+    const defaults = await getContractingSettings(cid);
+    const recoveryEnabled = b.advanceRecoveryEnabled === undefined
+      ? Boolean(defaults?.defaultAdvanceRecoveryEnabled)
+      : b.advanceRecoveryEnabled === true;
+    const recoveryPct = Number(
+      b.advanceRecoveryPercent ?? defaults?.defaultAdvanceRecoveryPercent ?? 0,
+    );
+    const recoveryStartPct = Number(
+      b.advanceRecoveryStartProgressPercent
+      ?? b.startProgressPercent
+      ?? defaults?.defaultAdvanceRecoveryStartProgressPercent
+      ?? 0,
+    );
+    const recoveryPercentError = validatePercentage(recoveryPct, "نسبة استرداد الدفعة المقدمة");
+    const recoveryStartError = validatePercentage(recoveryStartPct, "بداية استرداد الدفعة المقدمة");
+    const retentionEnabled = b.retentionEnabled == null
+      ? defaults.defaultRetentionEnabled !== false
+      : b.retentionEnabled === true;
+    const retentionPct = Number(b.retentionPercent ?? defaults.defaultRetentionPercent ?? 5);
+    const retentionCapPct = Number(b.retentionCapPercent ?? defaults.defaultRetentionCapPercent ?? 100);
+    const retentionPercentError = validatePercentage(retentionPct, "نسبة المحتجزات");
+    const retentionCapError = validatePercentage(retentionCapPct, "سقف المحتجزات");
     const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : calculateAdvancePayment(value, advancePct);
     const advanceError = validateNonNegative(advancePay, "الدفعة المقدمة");
-    if (valueError || percentError || advanceError) {
-      res.status(400).json({ error: valueError || percentError || advanceError }); return;
+    if (valueError || percentError || recoveryPercentError || recoveryStartError || retentionPercentError || retentionCapError || advanceError) {
+      res.status(400).json({ error: valueError || percentError || recoveryPercentError || recoveryStartError || retentionPercentError || retentionCapError || advanceError }); return;
     }
-    const [row] = await db.insert(contractingSubContractsTable).values({
+    const values = {
       companyId: cid, projectId,
       contractorId: Number(b.contractorId),
       contractNumber: String(b.contractNumber),
       contractDate: b.contractDate,
       signedAt: b.signedAt ?? null,
+      contractType,
+      parentContractId,
       scopeOfWork: b.scopeOfWork ?? null,
       value:            String(value),
       advancePayment:   String(advancePay),
       advancePercent:   String(advancePct),
-      retentionPercent: String(b.retentionPercent ?? 5),
+      advanceRecoveryEnabled: recoveryEnabled,
+      advanceRecoveryPercent: String(recoveryPct),
+      advanceRecoveryStartProgressPercent: String(recoveryStartPct),
+      retentionEnabled,
+      retentionPercent: String(retentionPct),
+      retentionCapPercent: String(retentionCapPct),
       vatPercent:       String(b.vatPercent ?? 15),
       durationDays: Number(b.durationDays ?? 0),
       startDate: b.startDate ?? null,
@@ -1746,7 +2164,29 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
       penaltiesClause: b.penaltiesClause ?? null,
       status: b.status ?? "draft",
       notes: b.notes ?? null,
-    }).returning();
+    };
+    const payloadHash = contractCreateFingerprint({
+      operation: "subcontract_create",
+      userId,
+      ...values,
+    });
+    const createResult = await createContractIdempotently({
+      companyId: cid,
+      userId,
+      operation: "subcontract_create",
+      idempotencyKey,
+      payloadHash,
+      create: async (tx) => {
+        const [row] = await tx.insert(contractingSubContractsTable).values(values).returning();
+        if (!row) throw new Error("تعذر إنشاء عقد الباطن");
+        return row;
+      },
+    });
+    if (!createResult.created) {
+      res.status(200).json({ ...createResult.result, idempotentReplay: true });
+      return;
+    }
+    const row = createResult.row;
     await logEvent({
       companyId: cid, projectId, userId: req.authUser!.id,
       eventType: "sub_contract_created",
@@ -1754,7 +2194,9 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
       description: `قيمة العقد: ${row.value} ر.س`,
     });
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" });
+  }
 });
 
 router.put("/sub-contracts/:id", async (req, res) => {
@@ -1769,7 +2211,12 @@ router.put("/sub-contracts/:id", async (req, res) => {
     if (projectError) {
       res.status(projectErrorStatus(projectError)).json({ error: projectError }); return;
     }
+    if (String(b.contractType ?? cur.contractType) === "change_order"
+      && ["approved", "rejected"].includes(String(b.status ?? ""))) {
+      res.status(409).json({ error: "استخدم مسار قرار أمر تغيير الباطن لتسجيل الاعتماد أو الرفض" }); return;
+    }
     const upd: any = { updatedAt: new Date() };
+    let nextProjectId = Number(cur.projectId);
     if (b.projectId !== undefined) {
       const requestedProjectId = Number(b.projectId);
       if (!Number.isInteger(requestedProjectId) || requestedProjectId <= 0) {
@@ -1787,10 +2234,33 @@ router.put("/sub-contracts/:id", async (req, res) => {
         res.status(moveError === "ليس لديك صلاحية هذا الفرع" ? 403 : 409).json({ error: moveError });
         return;
       }
+      nextProjectId = requestedProjectId;
       upd.projectId = requestedProjectId;
     }
-    for (const k of ["contractNumber","status","scopeOfWork","paymentTerms","penaltiesClause","notes"]) {
+    for (const k of ["contractNumber","status","scopeOfWork","paymentTerms","penaltiesClause","notes","contractType"]) {
       if (b[k] !== undefined) upd[k] = b[k];
+    }
+    if (b.contractType !== undefined && !["main", "change_order"].includes(String(b.contractType))) {
+      res.status(400).json({ error: "نوع عقد الباطن غير صالح" }); return;
+    }
+    if (b.parentContractId !== undefined) {
+      const parentContractId = b.parentContractId == null || b.parentContractId === ""
+        ? null : Number(b.parentContractId);
+      const contractType = String(b.contractType ?? cur.contractType);
+      if (parentContractId != null) {
+        if (contractType !== "change_order") {
+          res.status(400).json({ error: "العقد الأساسي مخصص لأمر تغيير الباطن فقط" }); return;
+        }
+        const parentError = await ensureSubContractParent(cid, nextProjectId, parentContractId, id);
+        if (parentError) { res.status(400).json({ error: parentError }); return; }
+      } else if (contractType === "change_order") {
+        res.status(400).json({ error: "أمر تغيير الباطن يجب أن يرتبط بعقد أساسي من نفس المشروع" }); return;
+      }
+      upd.parentContractId = parentContractId;
+    } else if (String(b.contractType ?? cur.contractType) === "change_order" && cur.parentContractId == null) {
+      res.status(400).json({ error: "أمر تغيير الباطن يجب أن يرتبط بعقد أساسي من نفس المشروع" }); return;
+    } else if (b.contractType !== undefined && b.contractType !== "change_order") {
+      upd.parentContractId = null;
     }
     for (const k of ["contractDate","signedAt","startDate","endDate"]) {
       if (b[k] !== undefined) upd[k] = b[k] || null;
@@ -1829,14 +2299,108 @@ router.put("/sub-contracts/:id", async (req, res) => {
       if (error) { res.status(400).json({ error }); return; }
       upd.advancePayment = String(advancePay);
     }
-    for (const k of ["retentionPercent","vatPercent"]) {
-      if (b[k] !== undefined) upd[k] = String(b[k]);
+    const retentionEnabledChanged = b.retentionEnabled !== undefined && b.retentionEnabled !== null;
+    const retentionPercentChanged = b.retentionPercent !== undefined && b.retentionPercent !== null;
+    const retentionCapChanged = b.retentionCapPercent !== undefined && b.retentionCapPercent !== null;
+    const retentionPct = retentionPercentChanged
+      ? Number(b.retentionPercent)
+      : Number(cur.retentionPercent ?? 5);
+    const retentionCapPct = retentionCapChanged
+      ? Number(b.retentionCapPercent)
+      : Number(cur.retentionCapPercent ?? 100);
+    const retentionPercentError = validatePercentage(retentionPct, "نسبة المحتجزات");
+    const retentionCapError = validatePercentage(retentionCapPct, "سقف المحتجزات");
+    if (retentionPercentError || retentionCapError) {
+      res.status(400).json({ error: retentionPercentError || retentionCapError }); return;
     }
-    const [row] = await db.update(contractingSubContractsTable).set(upd)
-      .where(and(eq(contractingSubContractsTable.id, id), eq(contractingSubContractsTable.companyId, cid)))
-      .returning();
+    if (retentionEnabledChanged) upd.retentionEnabled = b.retentionEnabled === true;
+    if (retentionPercentChanged) upd.retentionPercent = String(retentionPct);
+    if (retentionCapChanged) upd.retentionCapPercent = String(retentionCapPct);
+    if (b.vatPercent !== undefined) upd.vatPercent = String(b.vatPercent);
+    const recoveryEnabledChanged = b.advanceRecoveryEnabled !== undefined;
+    const recoveryPercentChanged = b.advanceRecoveryPercent !== undefined;
+    const recoveryStartChanged = b.advanceRecoveryStartProgressPercent !== undefined || b.startProgressPercent !== undefined;
+    const recoveryPct = recoveryPercentChanged
+      ? Number(b.advanceRecoveryPercent)
+      : Number(cur.advanceRecoveryPercent ?? 0);
+    const recoveryStartPct = recoveryStartChanged
+      ? Number(b.advanceRecoveryStartProgressPercent ?? b.startProgressPercent)
+      : Number(cur.advanceRecoveryStartProgressPercent ?? 0);
+    const recoveryPercentError = validatePercentage(recoveryPct, "نسبة استرداد الدفعة المقدمة");
+    const recoveryStartError = validatePercentage(recoveryStartPct, "بداية استرداد الدفعة المقدمة");
+    if (recoveryPercentError || recoveryStartError) {
+      res.status(400).json({ error: recoveryPercentError || recoveryStartError }); return;
+    }
+    if (recoveryEnabledChanged) upd.advanceRecoveryEnabled = b.advanceRecoveryEnabled === true;
+    if (recoveryPercentChanged) upd.advanceRecoveryPercent = String(recoveryPct);
+    if (recoveryStartChanged) upd.advanceRecoveryStartProgressPercent = String(recoveryStartPct);
+    const row = await db.transaction(async (tx) => {
+      const [locked] = await tx.select({ id: contractingSubContractsTable.id })
+        .from(contractingSubContractsTable)
+        .where(and(eq(contractingSubContractsTable.id, id), eq(contractingSubContractsTable.companyId, cid)))
+        .for("update");
+      if (!locked) throw Object.assign(new Error("غير موجود"), { status: 404 });
+      const [updated] = await tx.update(contractingSubContractsTable).set(upd)
+        .where(and(eq(contractingSubContractsTable.id, id), eq(contractingSubContractsTable.companyId, cid)))
+        .returning();
+      return updated;
+    });
     res.json(row);
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+router.put("/sub-contracts/:id/change-order-decision", requirePermission("contracting", "approve"), async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const decision = String(req.body?.decision ?? req.body?.status ?? "");
+    if (!["approved", "rejected"].includes(decision)) {
+      res.status(400).json({ error: "قرار أمر تغيير الباطن يجب أن يكون اعتماداً أو رفضاً" }); return;
+    }
+    const [cur] = await db.select().from(contractingSubContractsTable).where(and(
+      eq(contractingSubContractsTable.id, id),
+      eq(contractingSubContractsTable.companyId, cid),
+    ));
+    if (!cur) { res.status(404).json({ error: "أمر تغيير الباطن غير موجود" }); return; }
+    const projectError = await ensureProject(cid, cur.projectId, req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    if (cur.contractType !== "change_order") {
+      res.status(400).json({ error: "العقد المحدد ليس أمر تغيير باطن" }); return;
+    }
+    if (decision === "approved" && !cur.signedAt) {
+      res.status(422).json({ error: "لا يمكن اعتماد أمر تغيير غير موقع" }); return;
+    }
+    const row = await db.transaction(async (tx) => {
+      const [locked] = await tx.select().from(contractingSubContractsTable)
+        .where(and(
+          eq(contractingSubContractsTable.id, id),
+          eq(contractingSubContractsTable.companyId, cid),
+        ))
+        .for("update");
+      if (!locked) throw Object.assign(new Error("أمر تغيير الباطن غير موجود"), { status: 404 });
+      if (decision === "approved") await assertChangeOrderReductionSafe(cid, locked.projectId, id, "subcontract", tx);
+      const [updated] = await tx.update(contractingSubContractsTable).set({
+        status: decision,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(contractingSubContractsTable.id, id),
+        eq(contractingSubContractsTable.companyId, cid),
+      )).returning();
+      return updated;
+    });
+    await logEvent({
+      companyId: cid,
+      projectId: cur.projectId,
+      userId: req.authUser?.id,
+      eventType: `subcontract_change_order_${decision}`,
+      title: `${decision === "approved" ? "اعتماد" : "رفض"} أمر تغيير الباطن ${cur.contractNumber}`,
+      description: req.body?.reason ? String(req.body.reason) : null,
+      meta: { contractId: id, decision },
+    });
+    res.json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" });
+  }
 });
 
 router.delete("/sub-contracts/:id", async (req, res) => {
@@ -1862,6 +2426,191 @@ router.delete("/sub-contracts/:id", async (req, res) => {
 //   outgoing — مستخلص يصدره مكتبنا للمالك (claim against client)
 //   incoming — مستخلص يصدره المقاول الباطن لنا (we owe a sub-contractor)
 // Filter via ?direction=outgoing|incoming. Defaults to all.
+
+function numberChanged(left: unknown, right: unknown): boolean {
+  const a = Number(left ?? 0);
+  const b = Number(right ?? 0);
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.abs(a - b) > 0.000001 : String(left ?? "") !== String(right ?? "");
+}
+
+function aggregateProgressRequestedOnCreate(body: any): boolean {
+  const hasContract = body?.direction === "incoming"
+    ? body?.subcontractorContractId != null && body?.subcontractorContractId !== ""
+    : body?.ownerContractId != null && body?.ownerContractId !== "";
+  // Existing clients create a blank 0% draft before adding detail lines. Do
+  // not reinterpret that legacy shape as aggregate mode until the user
+  // actually supplies a percentage (or the new UI sends its explicit marker).
+  return Boolean(body?.aggregateProgress === true)
+    || (hasContract && body?.progressPercent !== undefined && Number(body.progressPercent) > 0);
+}
+
+/**
+ * The aggregate percentage editor is intentionally separate from detailed
+ * bill-line allocation.  A contract's value is VAT-exclusive; approved
+ * change orders are additive to the selected base contract only.
+ */
+async function aggregateAdjustedContractValue(
+  companyId: number,
+  projectId: number,
+  direction: BillDirection,
+  ownerContractId: number | null,
+  subcontractorContractId: number | null,
+): Promise<number> {
+  if (direction === "incoming") {
+    const [contract] = await db.select({ value: contractingSubContractsTable.value })
+      .from(contractingSubContractsTable)
+      .where(and(
+        eq(contractingSubContractsTable.id, Number(subcontractorContractId)),
+        eq(contractingSubContractsTable.companyId, companyId),
+        eq(contractingSubContractsTable.projectId, projectId),
+      ));
+    if (!contract) throw Object.assign(new Error("عقد الباطن غير صالح لنطاق المستخلص"), { status: 422 });
+    return Number(contract.value ?? 0);
+  }
+
+  const [selected] = await db.select({
+    id: contractingOwnerContractsTable.id,
+    value: contractingOwnerContractsTable.value,
+    contractType: contractingOwnerContractsTable.contractType,
+    parentContractId: contractingOwnerContractsTable.parentContractId,
+  }).from(contractingOwnerContractsTable).where(and(
+    eq(contractingOwnerContractsTable.id, Number(ownerContractId)),
+    eq(contractingOwnerContractsTable.companyId, companyId),
+    eq(contractingOwnerContractsTable.projectId, projectId),
+  ));
+  if (!selected) throw Object.assign(new Error("عقد المالك غير صالح لنطاق المستخلص"), { status: 422 });
+
+  const baseId = ["change_order", "addendum"].includes(String(selected.contractType))
+    ? selected.parentContractId ?? selected.id
+    : selected.id;
+  const [base] = await db.select({ value: contractingOwnerContractsTable.value })
+    .from(contractingOwnerContractsTable).where(and(
+      eq(contractingOwnerContractsTable.id, baseId),
+      eq(contractingOwnerContractsTable.companyId, companyId),
+      eq(contractingOwnerContractsTable.projectId, projectId),
+    ));
+  const children = await db.select({ value: contractingOwnerContractsTable.value })
+    .from(contractingOwnerContractsTable).where(and(
+      eq(contractingOwnerContractsTable.companyId, companyId),
+      eq(contractingOwnerContractsTable.projectId, projectId),
+      eq(contractingOwnerContractsTable.parentContractId, baseId),
+      inArray(contractingOwnerContractsTable.contractType, ["change_order", "addendum"]),
+      eq(contractingOwnerContractsTable.status, "approved"),
+    ));
+  return Number(base?.value ?? selected.value ?? 0)
+    + children.reduce((sum, child) => sum + Number(child.value ?? 0), 0);
+}
+
+async function aggregatePriorAmounts(
+  companyId: number,
+  projectId: number,
+  direction: BillDirection,
+  ownerContractId: number | null,
+  subcontractorContractId: number | null,
+  excludeBillId?: number | null,
+) {
+  const conditions: any[] = [
+    eq(contractingProgressBillsTable.companyId, companyId),
+    eq(contractingProgressBillsTable.projectId, projectId),
+    eq(contractingProgressBillsTable.direction, direction),
+  ];
+  if (direction === "incoming") {
+    conditions.push(eq(contractingProgressBillsTable.subcontractorContractId, Number(subcontractorContractId)));
+  } else {
+    conditions.push(eq(contractingProgressBillsTable.ownerContractId, Number(ownerContractId)));
+  }
+  const rows = await db.select({
+    id: contractingProgressBillsTable.id,
+    projectId: contractingProgressBillsTable.projectId,
+    direction: contractingProgressBillsTable.direction,
+    ownerContractId: contractingProgressBillsTable.ownerContractId,
+    subcontractorContractId: contractingProgressBillsTable.subcontractorContractId,
+    grossAmount: contractingProgressBillsTable.grossAmount,
+    retentionAmount: contractingProgressBillsTable.retentionAmount,
+    status: contractingProgressBillsTable.status,
+    reversalJournalEntryId: contractingProgressBillsTable.reversalJournalEntryId,
+  }).from(contractingProgressBillsTable).where(and(...conditions));
+  return priorCertifiedContractGross({
+    bills: rows as CertifiedContractProgressBill[],
+    projectId,
+    direction,
+    ownerContractId,
+    subcontractorContractId,
+    excludeBillId,
+  });
+}
+
+async function billHasDetailLines(companyId: number, billId: number): Promise<boolean> {
+  // The detail tables are additive and are also created during the active
+  // schema reconciliation pass. Keep this guard safe for a rolling upgrade.
+  await ensureContractingBillDetailsTables();
+  const [line] = await db.select({ id: contractingBillLinesTable.id })
+    .from(contractingBillLinesTable)
+    .where(and(
+      eq(contractingBillLinesTable.companyId, companyId),
+      eq(contractingBillLinesTable.billId, billId),
+    ))
+    .limit(1);
+  return Boolean(line);
+}
+
+async function recomputeAggregateProgress(input: {
+  companyId: number;
+  projectId: number;
+  direction: BillDirection;
+  contractorId: number | null;
+  ownerContractId: number | null;
+  subcontractorContractId: number | null;
+  progressPercent: unknown;
+  retentionEnabled?: boolean | null;
+  retentionPercent: unknown;
+  retentionCapPercent?: unknown;
+  vatPercent: unknown;
+  excludeBillId?: number | null;
+}) {
+  // This is the strict tenant + project + direction + contractor boundary.
+  // Do not derive an adjusted value before it passes this check.
+  await assertBillContractScope(db, input.companyId, {
+    projectId: input.projectId,
+    direction: input.direction,
+    contractorId: input.contractorId,
+    ownerContractId: input.ownerContractId,
+    subcontractorContractId: input.subcontractorContractId,
+  }, { requireSelection: true });
+  const progress = Number(input.progressPercent);
+  const percentageError = validatePercentage(progress, "نسبة الإنجاز");
+  if (percentageError) throw Object.assign(new Error(percentageError), { status: 422 });
+  const retentionError = validatePercentage(input.retentionPercent, "نسبة المحتجز");
+  if (retentionError) throw Object.assign(new Error(retentionError), { status: 422 });
+  const vatError = validatePercentage(input.vatPercent, "نسبة الضريبة");
+  if (vatError) throw Object.assign(new Error(vatError), { status: 422 });
+  const adjustedContractValue = await aggregateAdjustedContractValue(
+    input.companyId,
+    input.projectId,
+    input.direction,
+    input.ownerContractId,
+    input.subcontractorContractId,
+  );
+  const prior = await aggregatePriorAmounts(
+    input.companyId,
+    input.projectId,
+    input.direction,
+    input.ownerContractId,
+    input.subcontractorContractId,
+    input.excludeBillId,
+  );
+  const amounts = aggregateContractProgressAmounts({
+    adjustedContractValue,
+    progressPercent: progress,
+    priorGrossAmount: prior.grossAmount,
+    priorRetentionAmount: prior.retentionAmount,
+    retentionEnabled: input.retentionEnabled,
+    retentionPercent: String(input.retentionPercent),
+    retentionCapPercent: input.retentionCapPercent == null ? null : String(input.retentionCapPercent),
+    vatPercent: String(input.vatPercent),
+  });
+  return { ...amounts, adjustedContractValue, prior };
+}
 
 // Company-wide bills list (across all projects). Powers the standalone
 // "المستخلصات" screen so finance can track every progress bill in one place.
@@ -2035,17 +2784,76 @@ router.post("/projects/:projectId/bills", async (req, res) => {
     if (contractIntegrityError) {
       res.status(400).json({ error: contractIntegrityError }); return;
     }
+    const billRecoverySettings = await contractAdvanceRecoverySettings(
+      cid,
+      projectId,
+      direction,
+      b.ownerContractId ? Number(b.ownerContractId) : null,
+      b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
+    );
+    const billRetentionSettings = await contractRetentionSettings(
+      cid,
+      projectId,
+      direction,
+      b.ownerContractId ? Number(b.ownerContractId) : null,
+      b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
+    );
 
     // Server-side computation. Client may send raw values; we recompute the
     // derived ones here so the math is consistent and tamper-resistant.
-    const gross     = Number(b.grossAmount ?? 0);
-    const retPct    = Number(b.retentionPercent ?? 0);
-    const vatPct    = b.vatPercent !== undefined ? Number(b.vatPercent) : 15;
-    const prevPaid  = Number(b.previousPaid ?? 0);
-    const retAmount = Math.round((gross * retPct / 100) * 100) / 100;
-    const dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
-    const vatAmount = Math.round((dueAmount * vatPct / 100) * 100) / 100;
-    const netAmount = Math.round((dueAmount + vatAmount) * 100) / 100;
+    const aggregateRequested = aggregateProgressRequestedOnCreate({ ...b, direction });
+    let gross = Number(b.grossAmount ?? 0);
+    let retEnabled = billRetentionSettings?.enabled ?? (b.retentionEnabled !== false);
+    let retPct = Number(billRetentionSettings?.percent ?? b.retentionPercent ?? 0);
+    let retCapPct = billRetentionSettings?.capPercent ?? (b.retentionCapPercent == null ? null : String(b.retentionCapPercent));
+    const retentionCapBase = billRetentionSettings && retCapPct != null
+      ? await aggregateAdjustedContractValue(
+        cid,
+        projectId,
+        direction,
+        b.ownerContractId ? Number(b.ownerContractId) : null,
+        b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
+      )
+      : null;
+    let vatPct = b.vatPercent !== undefined ? Number(b.vatPercent) : 15;
+    let prevPaid = Number(b.previousPaid ?? 0);
+    const requestedRetention = retEnabled
+      ? Math.round((gross * retPct / 100) * 100) / 100
+      : 0;
+    const retentionCapAmount = retentionCapBase == null || retCapPct == null
+      ? null
+      : Math.round((retentionCapBase * Number(retCapPct) / 100) * 100) / 100;
+    let retAmount = retentionCapAmount == null
+      ? requestedRetention
+      : Math.min(requestedRetention, retentionCapAmount);
+    let dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
+    let vatAmount = Math.round((dueAmount * vatPct / 100) * 100) / 100;
+    let netAmount = Math.round((dueAmount + vatAmount) * 100) / 100;
+    if (aggregateRequested) {
+      const aggregate = await recomputeAggregateProgress({
+        companyId: cid,
+        projectId,
+        direction,
+        contractorId: b.contractorId ? Number(b.contractorId) : null,
+        ownerContractId: b.ownerContractId ? Number(b.ownerContractId) : null,
+        subcontractorContractId: b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
+        progressPercent: b.progressPercent ?? 0,
+        retentionEnabled: retEnabled,
+        retentionPercent: retPct,
+        retentionCapPercent: retCapPct,
+        vatPercent: b.vatPercent ?? 15,
+      });
+      gross = Number(aggregate.grossAmount);
+      retEnabled = billRetentionSettings?.enabled ?? (b.retentionEnabled !== false);
+      retPct = Number(billRetentionSettings?.percent ?? b.retentionPercent ?? 0);
+      retCapPct = billRetentionSettings?.capPercent ?? (b.retentionCapPercent == null ? null : String(b.retentionCapPercent));
+      vatPct = b.vatPercent !== undefined ? Number(b.vatPercent) : 15;
+      prevPaid = Number(aggregate.previousPaid);
+      retAmount = Number(aggregate.retentionAmount);
+      dueAmount = Number(aggregate.dueAmount);
+      vatAmount = Number(aggregate.vatAmount);
+      netAmount = Number(aggregate.netAmount);
+    }
 
     const [row] = await db.insert(contractingProgressBillsTable).values({
       companyId: cid, projectId,
@@ -2061,13 +2869,22 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       toDate:   b.toDate   ?? null,
       progressPercent: String(b.progressPercent ?? 0),
       grossAmount:      String(gross),
+      retentionEnabled: billRetentionSettings ? retEnabled : b.retentionEnabled !== false,
       retentionPercent: String(retPct),
+      retentionCapPercent: retCapPct == null ? null : String(retCapPct),
       retentionAmount:  String(retAmount),
       previousPaid:     String(prevPaid),
       dueAmount:        String(dueAmount),
       vatPercent:       String(vatPct),
       vatAmount:        String(vatAmount),
       netAmount:        String(netAmount),
+      advanceRecoveryEnabled: billRecoverySettings.enabled,
+      advanceRecoveryPercent: billRecoverySettings.percent,
+      advanceRecoveryStartProgressPercent: billRecoverySettings.startProgressPercent,
+      advanceRecoveryRequestedAmount: "0",
+      advanceRecoveryAmount: "0",
+      advanceRecoveryRemainingBefore: "0",
+      advanceRecoveryRemainingAfter: "0",
       paidAmount:       String(b.paidAmount ?? 0),
       status: b.status ?? "draft",
       notes: b.notes ?? null,
@@ -2079,7 +2896,7 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       description: `صافي: ${row.netAmount} ر.س`,
     });
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) { res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" }); }
 });
 
 router.put("/bills/:id", async (req, res) => {
@@ -2090,9 +2907,10 @@ router.put("/bills/:id", async (req, res) => {
     const [cur] = await db.select().from(contractingProgressBillsTable)
       .where(and(eq(contractingProgressBillsTable.id, id), eq(contractingProgressBillsTable.companyId, cid)));
     if (!cur) { res.status(404).json({ error: "غير موجود" }); return; }
-    if (["approved", "posted", "partially_paid", "paid"].includes(String(cur.status)) ||
+    if (["approved", "posted", "partially_paid", "paid", "reversed"].includes(String(cur.status)) ||
+        cur.journalEntryId ||
         ["approved", "posted", "partially_paid", "paid"].includes(String(b.status)) || b.paidAmount !== undefined) {
-      res.status(409).json({ error: "لا يمكن تعديل حالة مالية أو مبلغ السداد من المسار القديم؛ استخدم اعتماد/تسوية المحاسبة" });
+      res.status(409).json({ error: "لا يمكن تعديل مستخلص مرحّل أو معتمد؛ استخدم مسار التصحيح/فك الاعتماد المحاسبي" });
       return;
     }
     const projectError = await ensureProject(cid, cur.projectId, req);
@@ -2183,20 +3001,151 @@ router.put("/bills/:id", async (req, res) => {
       res.status(400).json({ error: contractIntegrityError }); return;
     }
 
-    const gross    = b.grossAmount      !== undefined ? Number(b.grossAmount)      : Number(cur.grossAmount);
-    const retPct   = b.retentionPercent !== undefined ? Number(b.retentionPercent) : Number(cur.retentionPercent);
-    const prevPaid = b.previousPaid     !== undefined ? Number(b.previousPaid)     : Number(cur.previousPaid);
+    const finalOwnerContractId = upd.ownerContractId !== undefined
+      ? upd.ownerContractId
+      : cur.ownerContractId;
+    const finalSubcontractorContractId = upd.subcontractorContractId !== undefined
+      ? upd.subcontractorContractId
+      : cur.subcontractorContractId;
+    const progressChanged = b.progressPercent !== undefined
+      && numberChanged(b.progressPercent, cur.progressPercent);
+    const contractChanged = numberChanged(finalOwnerContractId, cur.ownerContractId)
+      || numberChanged(finalSubcontractorContractId, cur.subcontractorContractId);
+    // Capture the policy when a draft first receives an exact contract link.
+    // Existing drafts keep their original snapshot, so enabling recovery on a
+    // contract cannot rewrite a legacy bill retroactively.
+    const shouldSnapshotRecovery = contractChanged
+      || (
+        cur.ownerContractId == null
+        && cur.subcontractorContractId == null
+        && (finalOwnerContractId != null || finalSubcontractorContractId != null)
+      );
+    if (shouldSnapshotRecovery) {
+      const recovery = await contractAdvanceRecoverySettings(
+        cid,
+        cur.projectId,
+        direction,
+        finalOwnerContractId ? Number(finalOwnerContractId) : null,
+        finalSubcontractorContractId ? Number(finalSubcontractorContractId) : null,
+      );
+      upd.advanceRecoveryEnabled = recovery.enabled;
+      upd.advanceRecoveryPercent = recovery.percent;
+      upd.advanceRecoveryStartProgressPercent = recovery.startProgressPercent;
+      upd.advanceRecoveryRequestedAmount = "0";
+      upd.advanceRecoveryAmount = "0";
+      upd.advanceRecoveryRemainingBefore = "0";
+      upd.advanceRecoveryRemainingAfter = "0";
+    }
+    const shouldSnapshotRetention = contractChanged
+      || (
+        cur.ownerContractId == null
+        && cur.subcontractorContractId == null
+        && (finalOwnerContractId != null || finalSubcontractorContractId != null)
+      );
+    const retentionSnapshot = shouldSnapshotRetention
+      ? await contractRetentionSettings(
+        cid,
+        cur.projectId,
+        direction,
+        finalOwnerContractId ? Number(finalOwnerContractId) : null,
+        finalSubcontractorContractId ? Number(finalSubcontractorContractId) : null,
+      )
+      : null;
+    if (shouldSnapshotRetention && !retentionSnapshot) {
+      res.status(422).json({ error: "تعذر حفظ لقطة سياسة المحتجزات للعقد المرتبط" });
+      return;
+    }
+    // A percentage change or a contract selection is a controlling aggregate
+    // edit.  A marker without either change is intentionally ignored so a
+    // legacy draft remains byte-for-byte compatible when merely renamed.
+    const aggregateRequested = (b.aggregateProgress === true && (progressChanged || contractChanged))
+      || progressChanged
+      || contractChanged;
+    if (aggregateRequested && await billHasDetailLines(cid, id)) {
+      res.status(409).json({
+        error: "هذا المستخلص تفصيلي ببنود كميات وأسعار؛ لا يمكن تعديل نسبة التجميع. عدّل بنود التفاصيل بدلاً من ذلك",
+      });
+      return;
+    }
+
+    let gross    = b.grossAmount      !== undefined ? Number(b.grossAmount)      : Number(cur.grossAmount);
+    const hasRetentionEnabledPatch = b.retentionEnabled !== undefined && b.retentionEnabled !== null;
+    const hasRetentionCapPatch = b.retentionCapPercent !== undefined && b.retentionCapPercent !== null;
+    let retEnabled = shouldSnapshotRetention
+      ? retentionSnapshot!.enabled
+      : (hasRetentionEnabledPatch ? b.retentionEnabled === true : cur.retentionEnabled !== false);
+    let retPct   = shouldSnapshotRetention
+      ? Number(retentionSnapshot!.percent)
+      : (b.retentionPercent !== undefined && b.retentionPercent !== null
+        ? Number(b.retentionPercent)
+        : Number(cur.retentionPercent));
+    let retCapPct = shouldSnapshotRetention
+      ? Number(retentionSnapshot!.capPercent)
+      : (hasRetentionCapPatch
+        ? Number(b.retentionCapPercent)
+        : (cur.retentionCapPercent == null ? null : Number(cur.retentionCapPercent)));
+    const retentionPercentError = validatePercentage(retPct, "نسبة المحتجزات");
+    const retentionCapError = retCapPct == null ? null : validatePercentage(retCapPct, "سقف المحتجزات");
+    if (retentionPercentError || retentionCapError) {
+      res.status(400).json({ error: retentionPercentError || retentionCapError });
+      return;
+    }
+    let prevPaid = b.previousPaid     !== undefined ? Number(b.previousPaid)     : Number(cur.previousPaid);
     // VAT % is now persisted on the bill row. If the client doesn't send a
     // new value we fall back to the stored value — never to a hard-coded
     // 15% — so editing a non-15% bill no longer silently rewrites its tax.
     const vatPct   = b.vatPercent       !== undefined ? Number(b.vatPercent)       : Number(cur.vatPercent ?? 15);
     upd.vatPercent = String(vatPct);
-    const retAmount = Math.round((gross * retPct / 100) * 100) / 100;
-    const dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
-    const vatAmount = Math.round((dueAmount * vatPct / 100) * 100) / 100;
-    const netAmount = Math.round((dueAmount + vatAmount) * 100) / 100;
+    const retentionCapBase = retCapPct == null
+      || (finalOwnerContractId == null && finalSubcontractorContractId == null)
+      ? null
+      : await aggregateAdjustedContractValue(
+        cid,
+        cur.projectId,
+        direction,
+        finalOwnerContractId ? Number(finalOwnerContractId) : null,
+        finalSubcontractorContractId ? Number(finalSubcontractorContractId) : null,
+      );
+    const requestedRetention = retEnabled
+      ? Math.round((gross * retPct / 100) * 100) / 100
+      : 0;
+    const retentionCapAmount = retentionCapBase == null || retCapPct == null
+      ? null
+      : Math.round((retentionCapBase * retCapPct / 100) * 100) / 100;
+    let retAmount = retentionCapAmount == null
+      ? requestedRetention
+      : Math.min(requestedRetention, retentionCapAmount);
+    let dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
+    let vatAmount = Math.round((dueAmount * vatPct / 100) * 100) / 100;
+    let netAmount = Math.round((dueAmount + vatAmount) * 100) / 100;
+    if (aggregateRequested) {
+      const aggregate = await recomputeAggregateProgress({
+        companyId: cid,
+        projectId: cur.projectId,
+        direction,
+        contractorId: finalContractorId ? Number(finalContractorId) : null,
+        ownerContractId: finalOwnerContractId ? Number(finalOwnerContractId) : null,
+        subcontractorContractId: finalSubcontractorContractId ? Number(finalSubcontractorContractId) : null,
+        progressPercent: b.progressPercent !== undefined ? b.progressPercent : cur.progressPercent,
+        retentionEnabled: retEnabled,
+        retentionPercent: retPct,
+        retentionCapPercent: retCapPct,
+        vatPercent: vatPct,
+        excludeBillId: id,
+      });
+      gross = Number(aggregate.grossAmount);
+      prevPaid = Number(aggregate.previousPaid);
+      retAmount = Number(aggregate.retentionAmount);
+      dueAmount = Number(aggregate.dueAmount);
+      vatAmount = Number(aggregate.vatAmount);
+      netAmount = Number(aggregate.netAmount);
+    }
     upd.grossAmount      = String(gross);
+    if (shouldSnapshotRetention || hasRetentionEnabledPatch) upd.retentionEnabled = retEnabled;
     upd.retentionPercent = String(retPct);
+    if (shouldSnapshotRetention || hasRetentionCapPatch) {
+      upd.retentionCapPercent = retCapPct == null ? null : String(retCapPct);
+    }
     upd.retentionAmount  = String(retAmount);
     upd.previousPaid     = String(prevPaid);
     upd.dueAmount        = String(dueAmount);
@@ -2245,7 +3194,7 @@ router.put("/bills/:id", async (req, res) => {
       });
     }
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) { res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" }); }
 });
 
 router.delete("/bills/:id", async (req, res) => {
@@ -2260,7 +3209,7 @@ router.delete("/bills/:id", async (req, res) => {
       .from(contractingProgressBillsTable)
       .where(and(eq(contractingProgressBillsTable.id, id), eq(contractingProgressBillsTable.companyId, cid)));
     if (!current) { res.status(404).json({ error: "غير موجود" }); return; }
-    if (["approved", "posted", "partially_paid", "paid"].includes(String(current.status)) || current.journalEntryId) {
+    if (["approved", "posted", "partially_paid", "paid", "reversed"].includes(String(current.status)) || current.journalEntryId) {
       res.status(409).json({ error: "لا يمكن حذف مستخلص له أثر مالي؛ استخدم فك الاعتماد من مسار المحاسبة" });
       return;
     }

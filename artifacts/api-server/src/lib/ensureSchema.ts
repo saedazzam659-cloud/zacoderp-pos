@@ -7,6 +7,8 @@ import { PgEnum } from "drizzle-orm/pg-core";
 import { logger } from "./logger";
 import { reconcilePostgresSequences } from "./postgresSequenceReconciliation.js";
 import { ensureContractingBillDetailsTables } from "./contracting-bill-details-service.js";
+import { ensureContractingSettingsTable } from "./contracting-settings.js";
+import { ensureContractCreateIdempotencySchema } from "./contracting-contract-create-idempotency.js";
 
 let healPromise: Promise<void> | null = null;
 type SchemaReconciliationState =
@@ -308,6 +310,80 @@ async function ensureContractingCostCenterCompatibility(): Promise<void> {
       await execDDL(stmt);
     } catch (err) {
       logger.error({ err, stmt }, "ensureSchema: contracting cost-centre compatibility reconciliation failed");
+      throw err;
+    }
+  }
+}
+
+// Contract policy columns are deliberately additive. Recovery remains disabled
+// for historical rows and retention keeps a legacy-compatible enabled/100%
+// contract default; no historical bill is backfilled or recalculated by this
+// heal pass.
+const CONTRACTING_ADVANCE_RECOVERY_COMPATIBILITY_DDL = [
+  `ALTER TABLE IF EXISTS contracting_owner_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE IF EXISTS contracting_owner_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_owner_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_start_progress_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_owner_contracts
+     ADD COLUMN IF NOT EXISTS retention_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
+  `ALTER TABLE IF EXISTS contracting_owner_contracts
+     ADD COLUMN IF NOT EXISTS retention_cap_percent NUMERIC(5,2) NOT NULL DEFAULT 100`,
+  `ALTER TABLE IF EXISTS contracting_sub_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE IF EXISTS contracting_sub_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_sub_contracts
+     ADD COLUMN IF NOT EXISTS advance_recovery_start_progress_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_sub_contracts
+     ADD COLUMN IF NOT EXISTS retention_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
+  `ALTER TABLE IF EXISTS contracting_sub_contracts
+     ADD COLUMN IF NOT EXISTS retention_cap_percent NUMERIC(5,2) NOT NULL DEFAULT 100`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_start_progress_percent NUMERIC(5,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_requested_amount NUMERIC(14,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_amount NUMERIC(14,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_remaining_before NUMERIC(14,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS advance_recovery_remaining_after NUMERIC(14,2) NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS retention_enabled BOOLEAN`,
+  `ALTER TABLE IF EXISTS contracting_progress_bills
+     ADD COLUMN IF NOT EXISTS retention_cap_percent NUMERIC(5,2)`,
+  `ALTER TABLE IF EXISTS contracting_accounting_settlements
+     ADD COLUMN IF NOT EXISTS application_origin TEXT NOT NULL DEFAULT 'manual'`,
+  `ALTER TABLE IF EXISTS contracting_accounting_settlements
+     ADD COLUMN IF NOT EXISTS reversal_journal_entry_id INTEGER`,
+  `DO $$ BEGIN
+     IF to_regclass('contracting_accounting_settlements') IS NOT NULL THEN
+       EXECUTE 'CREATE INDEX IF NOT EXISTS ctg_advance_source_contract_idx
+         ON contracting_accounting_settlements(company_id, project_id, owner_contract_id, subcontractor_contract_id, settlement_date, id)
+         WHERE kind IN (''advance_receipt'',''advance_payment'') AND status = ''posted''';
+     END IF;
+   END $$`,
+  `DO $$ BEGIN
+     IF to_regclass('contracting_accounting_settlements') IS NOT NULL THEN
+       EXECUTE 'CREATE INDEX IF NOT EXISTS ctg_advance_application_bill_idx
+         ON contracting_accounting_settlements(company_id, bill_id, application_origin, status)
+         WHERE kind = ''advance_application''';
+     END IF;
+   END $$`,
+] as const;
+
+async function ensureContractingAdvanceRecoveryCompatibility(): Promise<void> {
+  for (const stmt of CONTRACTING_ADVANCE_RECOVERY_COMPATIBILITY_DDL) {
+    try {
+      await execDDL(stmt);
+    } catch (err) {
+      logger.error({ err, stmt }, "ensureSchema: contracting advance-recovery reconciliation failed");
       throw err;
     }
   }
@@ -4233,9 +4309,16 @@ async function runHeal(options: {
   await ensureSupplierMetadataCompatibility();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
+  // Request-replay claims are operational state, but their additive table must
+  // exist in the shared heal pass before strict reconciliation and backup
+  // catalog checks. The POST helper retains its lazy fallback for test/agent
+  // callers which invoke a route without bootstrapping the full server.
+  await ensureContractCreateIdempotencySchema();
   await ensureContractingResourceInventoryCompatibility();
   await ensureContractingProjectCustomerCompatibility();
   await ensureContractingCostCenterCompatibility();
+  await ensureContractingAdvanceRecoveryCompatibility();
+  await ensureContractingSettingsTable();
   // Required application tables must exist on the active database BEFORE
   // generic validation. Keep this in the shared pass: startup, manual agent
   // upgrades and strict request readiness all use it (without a central-only

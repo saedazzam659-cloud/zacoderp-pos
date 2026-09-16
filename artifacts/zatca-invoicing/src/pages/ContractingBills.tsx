@@ -49,6 +49,8 @@ type BillRow = {
   remainingContract: number;
   completionPercent: number;
   deductions: number;
+  additions: number;
+  signedAdjustmentAmount: number;
   retentions: number;
   penalties: number;
   vatAmount: string;
@@ -67,6 +69,8 @@ type ReportTotals = {
   currentWorks: number;
   cumulativeWorks: number;
   deductions: number;
+  additions: number;
+  signedAdjustments: number;
   retentions: number;
   penalties: number;
   payments: number;
@@ -83,7 +87,7 @@ const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "out
 
 const EMPTY_TOTALS: ReportTotals = {
   grossWorks: 0, previousWorks: 0, currentWorks: 0, cumulativeWorks: 0,
-  deductions: 0, retentions: 0, penalties: 0, payments: 0, outstanding: 0,
+  deductions: 0, additions: 0, signedAdjustments: 0, retentions: 0, penalties: 0, payments: 0, outstanding: 0,
   contractValue: 0, remainingContract: 0, completionPercent: 0,
 };
 
@@ -244,6 +248,8 @@ export default function ContractingBills() {
     currentWorks: row.currentWorks,
     cumulativeWorks: row.cumulativeWorks,
     deductions: row.deductions,
+    additions: row.additions,
+    signedAdjustmentAmount: row.signedAdjustmentAmount,
     retentions: row.retentions,
     penalties: row.penalties,
     vatAmount: row.vatAmount,
@@ -341,6 +347,8 @@ export default function ContractingBills() {
         <KpiCard label="إجمالي الأعمال" value={fmt(totals.grossWorks)} tone="slate" suffix="ر.س" />
         <KpiCard label="الأعمال التراكمية" value={fmt(totals.cumulativeWorks)} tone="slate" suffix="ر.س" />
         <KpiCard label="المحتجز" value={fmt(totals.retentions)} tone="amber" suffix="ر.س" />
+        <KpiCard label="الإضافات" value={fmt(totals.additions)} tone="emerald" suffix="ر.س" />
+        <KpiCard label="أثر التسوية الصافي" value={fmt(totals.signedAdjustments)} tone="slate" suffix="ر.س" />
         <KpiCard label="الاستقطاعات" value={fmt(totals.deductions)} tone="amber" suffix="ر.س" />
         <KpiCard label="الغرامات" value={fmt(totals.penalties)} tone="rose" suffix="ر.س" />
         <KpiCard label="المدفوعات" value={fmt(totals.payments)} tone="emerald" suffix="ر.س" />
@@ -444,34 +452,28 @@ export default function ContractingBills() {
       )}
 
       {/* Table */}
-      <div className="rounded-lg border bg-card">
-        <Table>
-          <TableHeader>
+      <div className="rounded-lg border bg-card overflow-x-auto shadow-sm">
+        <Table className="min-w-[1400px]">
+          <TableHeader className="bg-slate-50 dark:bg-slate-800/50">
             <TableRow>
-              <TableHead className="text-start">المشروع</TableHead>
-              <TableHead className="text-start">رقم المستخلص</TableHead>
-              <TableHead className="text-start">التاريخ</TableHead>
-              <TableHead className="text-start">الاتجاه</TableHead>
-              <TableHead className="text-start">المقاول الباطن</TableHead>
-              <TableHead className="text-end">إجمالي الأعمال</TableHead>
-              <TableHead className="text-end">السابق</TableHead>
-              <TableHead className="text-end">الحالي</TableHead>
-              <TableHead className="text-end">التراكمي</TableHead>
-              <TableHead className="text-end">قيمة العقد</TableHead>
-              <TableHead className="text-end">المتبقي من العقد</TableHead>
-              <TableHead className="text-end">المحتجز</TableHead>
-              <TableHead className="text-end">الاستقطاعات</TableHead>
-              <TableHead className="text-end">الغرامات</TableHead>
-              <TableHead className="text-end">المدفوعات</TableHead>
-              <TableHead className="text-end">المتبقي</TableHead>
-              <TableHead className="text-start">الحالة</TableHead>
-              <TableHead className="text-end">إجراء</TableHead>
+              <TableHead className="text-start w-48">المشروع</TableHead>
+              <TableHead className="text-start w-32">رقم المستخلص</TableHead>
+              <TableHead className="text-start">الاتجاه والمقاول</TableHead>
+              <TableHead className="text-end text-slate-500">السابق</TableHead>
+              <TableHead className="text-end text-sky-700 dark:text-sky-300 font-bold">الحالي</TableHead>
+              <TableHead className="text-end text-slate-700 dark:text-slate-300 font-semibold">التراكمي</TableHead>
+              <TableHead className="text-end">قيمة العقد والمتبقي</TableHead>
+              <TableHead className="text-end text-amber-700 dark:text-amber-500">استقطاعات وغرامات</TableHead>
+              <TableHead className="text-end text-emerald-600 dark:text-emerald-400">المدفوع</TableHead>
+              <TableHead className="text-end text-rose-600 dark:text-rose-400 font-bold">المتبقي</TableHead>
+              <TableHead className="text-start w-28">الحالة</TableHead>
+              <TableHead className="text-end w-24">—</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading && Array.from({ length: 5 }).map((_, i) => (
               <TableRow key={`sk-${i}`}>
-                {Array.from({ length: 18 }).map((__, j) => (
+                {Array.from({ length: 12 }).map((__, j) => (
                   <TableCell key={j}><Skeleton className="h-5 w-full" /></TableCell>
                 ))}
               </TableRow>
@@ -479,7 +481,7 @@ export default function ContractingBills() {
 
             {!loading && visible.length === 0 && (
               <TableRow>
-                <TableCell colSpan={18} className="text-center py-12 text-muted-foreground" data-testid="text-contracting-bills-empty">
+                <TableCell colSpan={12} className="text-center py-12 text-muted-foreground" data-testid="text-contracting-bills-empty">
                   {hasFilters
                     ? "لا توجد نتائج مطابقة للفلاتر — جرّب مسح بعضها."
                     : "لا توجد مستخلصات بعد. يتم إنشاء المستخلصات من داخل تفاصيل المشروع."}
@@ -488,87 +490,98 @@ export default function ContractingBills() {
             )}
 
             {!loading && visible.map((r) => (
-              <TableRow key={r.id} data-testid={`row-bill-${r.id}`}>
+              <TableRow key={r.id} className="group hover:bg-slate-50/50 dark:hover:bg-slate-800/30" data-testid={`row-bill-${r.id}`}>
                 <TableCell>
-                  <div className="font-medium">{r.projectName || "—"}</div>
-                  {r.projectCode && <div className="text-xs text-muted-foreground">{r.projectCode}</div>}
+                  <div className="font-medium text-slate-900 dark:text-slate-100">{r.projectName || "—"}</div>
+                  {r.projectCode && <div className="text-[10px] text-slate-500 font-mono mt-0.5">{r.projectCode}</div>}
                 </TableCell>
-                 <TableCell className="font-mono text-sm">
-                   <div>{r.billNumber}</div>
-                   <div className="font-sans text-xs text-muted-foreground">{labelEnum(BILL_TYPE_LABEL, r.billType)}</div>
+                 <TableCell>
+                   <div className="font-mono text-sm text-slate-900 dark:text-slate-100">{r.billNumber}</div>
+                   <div className="text-[10px] text-slate-500 mt-0.5">{r.billDate} · {labelEnum(BILL_TYPE_LABEL, r.billType)}</div>
                  </TableCell>
-                <TableCell className="whitespace-nowrap text-sm">{r.billDate}</TableCell>
                 <TableCell>
-                  {r.direction === "incoming" ? (
-                    <Badge variant="outline" className="gap-1">
-                       <ArrowDownToLine className="h-3 w-3" /> {labelEnum(BILL_DIRECTION_LABEL, "incoming")}
-                    </Badge>
-                  ) : (
-                    <Badge variant="default" className="gap-1 bg-emerald-600">
-                       <ArrowUpFromLine className="h-3 w-3" /> {labelEnum(BILL_DIRECTION_LABEL, "outgoing")}
-                    </Badge>
-                  )}
+                  <div className="flex items-center gap-1.5 mb-1">
+                    {r.direction === "incoming" ? (
+                      <Badge variant="outline" className="gap-1 h-5 text-[10px]">
+                         <ArrowDownToLine className="h-3 w-3" /> {labelEnum(BILL_DIRECTION_LABEL, "incoming")}
+                      </Badge>
+                    ) : (
+                      <Badge variant="default" className="gap-1 h-5 text-[10px] bg-emerald-600">
+                         <ArrowUpFromLine className="h-3 w-3" /> {labelEnum(BILL_DIRECTION_LABEL, "outgoing")}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-600 dark:text-slate-400 truncate max-w-[150px]">
+                    {r.contractorName || (r.direction === "outgoing" ? "المالك" : "—")}
+                  </div>
                 </TableCell>
-                <TableCell>{r.contractorName || (r.direction === "outgoing" ? "—" : "—")}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.grossWorks)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.previousWorks)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.currentWorks)}</TableCell>
-                <TableCell className="text-end font-mono font-semibold">{fmt(r.cumulativeWorks)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.contractValue)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.remainingContract)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.retentions)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.deductions)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.penalties)}</TableCell>
-                <TableCell className="text-end font-mono">{fmt(r.payments)}</TableCell>
-                <TableCell className="text-end font-mono font-semibold">{fmt(r.outstanding)}</TableCell>
+                <TableCell className="text-end font-mono text-slate-500">{fmt(r.previousWorks)}</TableCell>
+                <TableCell className="text-end font-mono font-bold text-sky-700 dark:text-sky-300 bg-sky-50/30 dark:bg-sky-900/10">{fmt(r.currentWorks)}</TableCell>
+                <TableCell className="text-end font-mono font-semibold text-slate-700 dark:text-slate-300">{fmt(r.cumulativeWorks)}</TableCell>
+                <TableCell className="text-end">
+                  <div className="font-mono text-sm text-slate-700 dark:text-slate-300">{fmt(r.contractValue)}</div>
+                  <div className="font-mono text-[10px] text-slate-500 mt-0.5" title="المتبقي من العقد">باقي: {fmt(r.remainingContract)}</div>
+                </TableCell>
+                <TableCell className="text-end">
+                  <div className="text-xs text-emerald-700 dark:text-emerald-500" title="إضافات مالية">{fmt(r.additions)}</div>
+                  <div className="text-[10px] text-violet-600" title="أثر الإضافات ناقص الاستقطاعات العامة والغرامات">أثر: {fmt(r.signedAdjustmentAmount)}</div>
+                  <div className="text-xs text-amber-700 dark:text-amber-500" title="استقطاعات ومحتجز">{fmt(r.deductions + r.retentions)}</div>
+                  {r.penalties > 0 && <div className="text-[10px] text-rose-500 mt-0.5" title="غرامات">غرامات: {fmt(r.penalties)}</div>}
+                </TableCell>
+                <TableCell className="text-end font-mono text-emerald-600 dark:text-emerald-400 font-medium">{fmt(r.payments)}</TableCell>
+                <TableCell className="text-end font-mono font-bold text-rose-600 dark:text-rose-400">{fmt(r.outstanding)}</TableCell>
                 <TableCell>
                   <Badge variant={STATUS_TONE[r.status] || "secondary"} data-testid={`status-bill-${r.id}`}>
                     {labelEnum(BILL_STATUS_LABEL, r.status)}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-end">
-                   <ContractingBillExportActions
-                     compact
-                     snapshot={{
-                       bill: {
-                         id: r.id,
-                         projectId: r.projectId,
-                         projectCode: r.projectCode,
-                         projectName: r.projectName,
-                         direction: r.direction,
-                         contractorId: r.contractorId,
-                         contractorName: r.contractorName,
-                         billNumber: r.billNumber,
-                         billType: r.billType,
-                         billDate: r.billDate,
-                         grossWorks: r.grossWorks,
-                         previousWorks: r.previousWorks,
-                         currentWorks: r.currentWorks,
-                         cumulativeWorks: r.cumulativeWorks,
-                         contractValue: r.contractValue,
-                         remainingContract: r.remainingContract,
-                         retentions: r.retentions,
-                         deductions: r.deductions,
-                         penalties: r.penalties,
-                         vatAmount: r.vatAmount,
-                         netAmount: r.netAmount,
-                         payments: r.payments,
-                         outstanding: r.outstanding,
-                         paidAmount: r.settlementPaid,
-                         status: r.status,
-                       },
-                       project: {
-                         id: r.projectId,
-                         code: r.projectCode,
-                         nameAr: r.projectName,
-                       },
-                     }}
-                   />
-                  <Link href={`/contracting/projects/${r.projectId}`}>
-                    <Button variant="ghost" size="sm" data-testid={`link-project-${r.projectId}`}>
-                      <ExternalLink className="h-4 w-4 ms-1" /> فتح المشروع
-                    </Button>
-                  </Link>
+                  <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                     <ContractingBillExportActions
+                       compact
+                       snapshot={{
+                         bill: {
+                           id: r.id,
+                           projectId: r.projectId,
+                           projectCode: r.projectCode,
+                           projectName: r.projectName,
+                           direction: r.direction,
+                           contractorId: r.contractorId,
+                           contractorName: r.contractorName,
+                           billNumber: r.billNumber,
+                           billType: r.billType,
+                           billDate: r.billDate,
+                           grossWorks: r.grossWorks,
+                           previousWorks: r.previousWorks,
+                           currentWorks: r.currentWorks,
+                           cumulativeWorks: r.cumulativeWorks,
+                           contractValue: r.contractValue,
+                           remainingContract: r.remainingContract,
+                           retentions: r.retentions,
+                           deductions: r.deductions,
+                           additions: r.additions,
+                           signedAdjustmentAmount: r.signedAdjustmentAmount,
+                           penalties: r.penalties,
+                           vatAmount: r.vatAmount,
+                           netAmount: r.netAmount,
+                           payments: r.payments,
+                           outstanding: r.outstanding,
+                           paidAmount: r.settlementPaid,
+                           status: r.status,
+                         },
+                         project: {
+                           id: r.projectId,
+                           code: r.projectCode,
+                           nameAr: r.projectName,
+                         },
+                       }}
+                     />
+                    <Link href={`/contracting/projects/${r.projectId}`}>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="فتح المشروع" data-testid={`link-project-${r.projectId}`}>
+                        <ExternalLink className="h-4 w-4 text-slate-500" />
+                      </Button>
+                    </Link>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

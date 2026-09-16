@@ -101,6 +101,9 @@ type Bill = {
   previousPaid: string; dueAmount: string; vatAmount: string; netAmount: string;
   paidAmount: string;
   costCenterId: number | null;
+  reversalJournalEntryId?: number | null;
+  journalEntryId?: number | null;
+  aggregateProgress?: boolean;
   status: string; notes: string | null;
 };
 type OwnerContract = {
@@ -109,6 +112,7 @@ type OwnerContract = {
   contractType: string; parentContractId: number | null;
   value: string; advancePayment: string; advancePercent: string;
   retentionPercent: string; vatPercent: string;
+  retentionEnabled?: boolean; retentionCapPercent?: string | null;
   durationDays: number; startDate: string | null; endDate: string | null;
   paymentTerms: string | null; scopeOfWork: string | null; penaltiesClause: string | null;
   status: string; notes: string | null;
@@ -119,6 +123,7 @@ type SubContract = {
   scopeOfWork: string | null;
   value: string; advancePayment: string; advancePercent: string;
   retentionPercent: string; vatPercent: string;
+  retentionEnabled?: boolean; retentionCapPercent?: string | null;
   durationDays: number; startDate: string | null; endDate: string | null;
   paymentTerms: string | null; penaltiesClause: string | null;
   status: string; notes: string | null;
@@ -793,6 +798,50 @@ function ResourcesTab({ projectId }: { projectId: number }) {
 }
 
 // ─────────────────── BILLS TAB ───────────────────
+function aggregateMoney(value: number): string {
+  return (Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100).toFixed(2);
+}
+
+function selectedAggregateContractValue(
+  direction: BillDirection,
+  bill: Partial<Bill> | null,
+  ownerContracts: OwnerContract[],
+  subContracts: SubContract[],
+): number {
+  if (!bill) return 0;
+  if (direction === "incoming") {
+    return Number(subContracts.find(c => c.id === Number(bill.subcontractorContractId))?.value ?? 0);
+  }
+  const selected = ownerContracts.find(c => c.id === Number(bill.ownerContractId));
+  if (!selected) return 0;
+  const base = ["change_order", "addendum"].includes(selected.contractType)
+    ? ownerContracts.find(c => c.id === selected.parentContractId) ?? selected
+    : selected;
+  return Number(base.value || 0) + ownerContracts
+    .filter(c =>
+      ["change_order", "addendum"].includes(c.contractType)
+      && c.status === "approved"
+      && c.parentContractId === base.id,
+    )
+    .reduce((sum, c) => sum + Number(c.value || 0), 0);
+}
+
+function selectedPriorCertifiedGross(rows: Bill[], direction: BillDirection, bill: Partial<Bill> | null): number {
+  if (!bill) return 0;
+  const contractId = direction === "incoming" ? bill.subcontractorContractId : bill.ownerContractId;
+  if (contractId == null) return 0;
+  const currentId = (bill as any).id == null ? null : Number((bill as any).id);
+  return rows.filter(row =>
+    row.direction === direction
+    && (direction === "incoming"
+      ? Number(row.subcontractorContractId) === Number(contractId)
+      : Number(row.ownerContractId) === Number(contractId))
+    && ["approved", "posted", "partially_paid", "paid"].includes(String(row.status))
+    && row.reversalJournalEntryId == null
+    && (currentId == null || row.id !== currentId),
+  ).reduce((max, row) => Math.max(max, Number(row.grossAmount || 0)), 0);
+}
+
 function BillsTab({
   projectId,
   project,
@@ -825,6 +874,7 @@ function BillsTab({
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [ownerContracts, setOwnerContracts] = useState<OwnerContract[]>([]);
   const [subContracts,   setSubContracts]   = useState<SubContract[]>([]);
+  const [detailLineCount, setDetailLineCount] = useState<number | null>(null);
   const companyId = actingCompanyId ?? user?.companyId ?? user?.company?.id ?? null;
   const { data: costCenters = [], isLoading: costCentersLoading } = useCostCenters({
     companyId,
@@ -843,6 +893,24 @@ function BillsTab({
     finally { setLoading(false); }
   }, [token, projectId, direction, toast]);
   useEffect(() => { void load(); }, [load]);
+
+  const editingBillId = editing && (editing as any).id != null ? Number((editing as any).id) : null;
+  useEffect(() => {
+    setDetailLineCount(null);
+    if (!editingBillId) return;
+    let active = true;
+    void fetch(`${API}/api/contracting/bills/${editingBillId}/details`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(async response => {
+      if (!response.ok) return;
+      const detail = await response.json();
+      if (active) setDetailLineCount(Array.isArray(detail?.lines) ? detail.lines.length : 0);
+    }).catch(() => {
+      // Keep the percentage control disabled until the authoritative detail
+      // endpoint has answered; never invent a line mode in the UI.
+    });
+    return () => { active = false; };
+  }, [editingBillId, token]);
 
   // Auxiliary loads (contractors, contracts) — needed for the dialog form
   // dropdowns. Pulled lazily once on mount (rarely changes).
@@ -924,6 +992,7 @@ function BillsTab({
       ownerContractId, subcontractorContractId,
       contractorId: null,
       costCenterId: projectCostCenterId,
+      aggregateProgress: false,
     });
   }
 
@@ -966,12 +1035,88 @@ function BillsTab({
         if (matches.length === 1) scId = match.id;
       }
     }
-    setEditing({ ...editing, contractorId: cid, retentionPercent: retention, subcontractorContractId: scId });
+    const next: Partial<Bill> = {
+      ...editing,
+      contractorId: cid,
+      retentionPercent: retention,
+      subcontractorContractId: scId,
+    };
+    if (scId) {
+      const percent = Number(editing?.progressPercent ?? 0);
+      const value = selectedAggregateContractValue(direction, next, ownerContracts, subContracts);
+      next.grossAmount = aggregateMoney(value * (Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0) / 100);
+      next.aggregateProgress = true;
+    }
+    setEditing(next);
   }
 
   const selectedSubContracts = editing?.contractorId
     ? subContracts.filter(contract => contract.contractorId === Number(editing.contractorId))
     : [];
+  const aggregateContractSelected = direction === "outgoing"
+    ? editing?.ownerContractId != null
+    : editing?.subcontractorContractId != null;
+  const adjustedContractValue = selectedAggregateContractValue(direction, editing, ownerContracts, subContracts);
+  const priorCertifiedGross = selectedPriorCertifiedGross(rows, direction, editing);
+  const cumulativeGross = Number(editing?.grossAmount ?? 0);
+  const currentPeriodGross = Math.max(0, cumulativeGross - priorCertifiedGross);
+  const selectedContract = direction === "incoming"
+    ? subContracts.find(contract => contract.id === Number(editing?.subcontractorContractId))
+    : ownerContracts.find(contract => contract.id === Number(editing?.ownerContractId));
+  const priorRetained = rows.filter(row =>
+    row.id !== editingBillId
+    && row.direction === direction
+    && ["approved", "posted", "partially_paid", "paid"].includes(row.status)
+    && row.reversalJournalEntryId == null
+    && (direction === "incoming"
+      ? row.subcontractorContractId === editing?.subcontractorContractId
+      : row.ownerContractId === editing?.ownerContractId),
+  ).reduce((sum, row) => sum + Number(row.retentionAmount || 0), 0);
+  // Display-only draft estimate. Saving/approval still re-derives these
+  // amounts on the server under the contract lock.
+  const retentionRequested = selectedContract?.retentionEnabled === false
+    ? 0 : Number(aggregateMoney(cumulativeGross * Number(editing?.retentionPercent ?? selectedContract?.retentionPercent ?? 0) / 100));
+  const retentionCeiling = selectedContract?.retentionCapPercent == null
+    ? Infinity : Number(aggregateMoney(adjustedContractValue * Number(selectedContract.retentionCapPercent) / 100));
+  const previewRetention = Math.max(0, Math.min(retentionRequested, retentionCeiling) - priorRetained);
+  const previewDue = Math.max(0, currentPeriodGross - previewRetention);
+  const previewVat = Number(aggregateMoney(previewDue * Number(selectedContract?.vatPercent ?? 0) / 100));
+  const financiallyLocked = Boolean(
+    editing && (
+      ["approved", "posted", "partially_paid", "paid", "reversed"].includes(String(editing.status))
+      || editing.journalEntryId
+    ),
+  );
+  const detailMode = detailLineCount != null && detailLineCount > 0;
+  const aggregatePercentDisabled = financiallyLocked || Boolean(editingBillId && (detailLineCount == null || detailMode));
+
+  function updateAggregateProgress(value: string) {
+    if (!editing) return;
+    const parsed = Number(value);
+    const percent = Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 0;
+    setEditing({
+      ...editing,
+      progressPercent: value,
+      grossAmount: aggregateContractSelected
+        ? aggregateMoney(adjustedContractValue * percent / 100)
+        : editing.grossAmount,
+      aggregateProgress: aggregateContractSelected,
+    });
+  }
+
+  function updateAggregateContract(next: Partial<Bill>) {
+    if (!editing) return;
+    const nextValue = selectedAggregateContractValue(direction, { ...editing, ...next }, ownerContracts, subContracts);
+    const percent = Number(editing.progressPercent ?? 0);
+    setEditing({
+      ...editing,
+      ...next,
+      grossAmount: nextValue > 0
+        ? aggregateMoney(nextValue * Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0)) / 100)
+        : editing.grossAmount,
+      aggregateProgress: nextValue > 0,
+    });
+  }
 
   return (
     <div className="space-y-3">
@@ -1060,20 +1205,29 @@ function BillsTab({
       </div>
 
       {editing && (
-        <div className="rounded-lg border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
+        <div className="rounded-lg border bg-white dark:bg-slate-900 shadow-sm p-4 space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-sky-100 dark:border-sky-900/40">
+            <h4 className="font-bold text-sky-800 dark:text-sky-200 flex items-center gap-2">
               {(editing as any)?.id ? t("contracting.bills.edit", "تعديل المستخلص") : t("contracting.bills.add", "مستخلص جديد")}
-              <span className="text-xs font-normal text-slate-500 mx-2">
+              <span className="text-xs font-normal text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
                 ({direction === "outgoing" ? t("contracting.bills.outgoing", "للمالك (صادر)") : t("contracting.bills.incoming", "من الباطن (وارد)")})
               </span>
             </h4>
-            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
-              <X className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
-           <ProjectContext project={project} />
-          <div className="grid grid-cols-2 gap-3">
+
+          {/* TOP METADATA GRID */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 bg-muted/20 p-3 rounded-lg border">
+             <Field label="اسم المشروع">
+               <Input value={project.nameAr ?? ""} readOnly disabled data-testid="input-bill-project-name" />
+             </Field>
+             <Field label="كود المشروع">
+               <Input value={project.code ?? ""} readOnly disabled data-testid="input-bill-project-code" />
+             </Field>
             {direction === "incoming" && (
               <Field label={t("contracting.bills.contractor", "المقاول الباطن")} required>
                 <ContractingPicker
@@ -1083,7 +1237,7 @@ function BillsTab({
                   placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")}
                   searchPlaceholder={t("contracting.bills.searchContractor", "بحث باسم المقاول...")}
                   emptyText={t("contracting.bills.noContractors", "لا توجد مقاولات متاحة")}
-                  disabled={!billOptionsLoaded}
+                   disabled={!billOptionsLoaded || Boolean(editingBillId && (detailMode || financiallyLocked))}
                   testId="bill-contractor-picker"
                 />
               </Field>
@@ -1093,11 +1247,11 @@ function BillsTab({
                 <ContractingPicker
                   items={ownerContracts.map(c => ({ value: String(c.id), label: `#${c.contractNumber} (${labelEnum(CONTRACT_TYPE_LABEL, c.contractType)})` }))}
                   value={editing.ownerContractId ? String(editing.ownerContractId) : ""}
-                  onValueChange={value => setEditing({ ...editing, ownerContractId: value ? Number(value) : null })}
+                   onValueChange={value => updateAggregateContract({ ownerContractId: value ? Number(value) : null })}
                   placeholder={t("contracting.bills.ownerContractPlaceholder", "اختر عقد المالك")}
                   searchPlaceholder={t("contracting.bills.searchContract", "بحث برقم العقد...")}
                   emptyText={t("contracting.bills.noOwnerContracts", "لا توجد عقود مالك لهذا المشروع")}
-                  disabled={!billOptionsLoaded}
+                   disabled={!billOptionsLoaded || Boolean(editingBillId && (detailMode || financiallyLocked))}
                   testId="bill-owner-contract-picker"
                 />
               </Field>
@@ -1112,8 +1266,7 @@ function BillsTab({
                   value={editing.subcontractorContractId ? String(editing.subcontractorContractId) : ""}
                   onValueChange={value => {
                     const selected = selectedSubContracts.find(contract => contract.id === Number(value));
-                    setEditing({
-                      ...editing,
+                    updateAggregateContract({
                       subcontractorContractId: value ? Number(value) : null,
                       retentionPercent: selected?.retentionPercent ?? editing.retentionPercent,
                     });
@@ -1125,7 +1278,7 @@ function BillsTab({
                   emptyText={editing.contractorId
                     ? t("contracting.bills.noSubcontractsForContractor", "لا توجد عقود باطن لهذا المقاول في المشروع")
                     : t("contracting.bills.selectContractorFirst", "اختر المقاول أولاً")}
-                  disabled={!billOptionsLoaded || !editing.contractorId}
+                   disabled={!billOptionsLoaded || !editing.contractorId || Boolean(editingBillId && (detailMode || financiallyLocked))}
                   testId="bill-subcontract-picker"
                 />
               </Field>
@@ -1154,8 +1307,7 @@ function BillsTab({
                 testId="bill-type-picker"
               />
             </Field>
-            <Field label={t("contracting.bills.progress", "إنجاز %")}><Input type="number" value={editing.progressPercent ?? "0"} onChange={e => setEditing({ ...editing, progressPercent: e.target.value })} /></Field>
-            <Field label={t("contracting.bills.gross", "إجمالي (ر.س)")} required><Input type="number" value={editing.grossAmount ?? "0"} onChange={e => setEditing({ ...editing, grossAmount: e.target.value })} /></Field>
+
             <Field label={t("contracting.bills.costCenter", "مركز التكلفة")}>
               <ContractingPicker
                 items={[
@@ -1178,15 +1330,41 @@ function BillsTab({
                 disabled={costCentersLoading}
                 testId="bill-cost-center-picker"
               />
-              {editing.costCenterId == null && (
-                <p className="text-[11px] text-muted-foreground">
-                  {t("contracting.bills.costCenterOptional", "مركز التكلفة اختياري؛ احفظ بدون مركز عند الحاجة")}
+            </Field>
+            {aggregateContractSelected && (
+              <Field label="أساس العقد المعدل قبل الضريبة (ر.س)">
+                <Input value={aggregateMoney(adjustedContractValue)} readOnly disabled data-testid="input-bill-contract-base" />
+              </Field>
+            )}
+            <Field label={t("contracting.bills.progress", "الإنجاز التراكمي %")}>
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                value={editing.progressPercent ?? "0"}
+                onChange={event => updateAggregateProgress(event.target.value)}
+                disabled={aggregatePercentDisabled}
+                data-testid="input-bill-progress-percent"
+              />
+              {aggregatePercentDisabled && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                  {financiallyLocked
+                    ? "هذا المستخلص مرتبط بأثر مالي مرحّل ولا يمكن تعديله."
+                    : "هذا المستخلص تفصيلي ببنود الكميات؛ عدّل الكميات في جدول البنود."}
                 </p>
               )}
             </Field>
-            <Field label={t("contracting.bills.retentionPercent", "% محتجز")}><Input type="number" value={editing.retentionPercent ?? "10"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
-            <Field label={t("contracting.bills.previousPaid", "المدفوع سابقاً")}><Input type="number" value={editing.previousPaid ?? "0"} onChange={e => setEditing({ ...editing, previousPaid: e.target.value })} /></Field>
-            <Field label={t("contracting.bills.paidAmount", "مبلغ مدفوع لهذا المستخلص")}><Input type="number" value={editing.paidAmount ?? "0"} readOnly disabled /></Field>
+            {!editingBillId && (
+              <Field label={t("contracting.bills.retentionPercent", "% محتجز")}>
+                <Input
+                  type="number" min="0" max="100"
+                  value={editing.retentionPercent ?? selectedContract?.retentionPercent ?? "0"}
+                  onChange={event => setEditing({ ...editing, retentionPercent: event.target.value })}
+                  disabled={financiallyLocked || selectedContract?.retentionEnabled === false}
+                />
+              </Field>
+            )}
+
             <Field label={t("contracting.bills.status", "الحالة")}>
               <ContractingPicker
                 items={["draft","submitted","approved","posted","partially_paid","rejected","paid"].map(x => ({
@@ -1203,17 +1381,47 @@ function BillsTab({
               />
             </Field>
           </div>
-          {(editing as any)?.id != null && (
+
+          {(editing as any)?.id != null ? (
             <ContractingBillDetailEditor
               billId={Number((editing as any).id)}
               projectId={projectId}
               bill={editing as any}
               project={project}
             />
+          ) : (
+            <div className="mt-8 pt-4">
+              <h5 className="font-semibold text-sky-800 dark:text-sky-200 mb-4">القيم المالية المحسوبة</h5>
+              <p className="text-xs text-muted-foreground mb-3">معاينة حسب العقد والسابق المعتمد؛ يُثبّت الخادم الحساب عند الحفظ. الإضافات والاستقطاعات واسترداد المقدم تظهر في تفاصيل المسودة المحفوظة.</p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 bg-muted/10 border p-4 rounded-xl">
+                <Field label={t("contracting.bills.gross", "الإجمالي التراكمي قبل الضريبة (ر.س)")} required>
+                  <Input type="number" value={editing.grossAmount ?? "0"} readOnly disabled />
+                </Field>
+                <Field label="محتجز الفترة">
+                  <Input value={aggregateMoney(previewRetention)} readOnly disabled />
+                </Field>
+                <Field label="السابق المعتمد لنفس العقد">
+                  <Input type="number" value={aggregateMoney(priorCertifiedGross)} readOnly disabled />
+                </Field>
+                <Field label="الحالي للفترة">
+                  <Input type="number" value={aggregateMoney(currentPeriodGross)} readOnly disabled />
+                </Field>
+                <Field label="المستحق قبل الضريبة">
+                  <Input type="number" value={aggregateMoney(previewDue)} readOnly disabled />
+                </Field>
+                <Field label="الضريبة">
+                  <Input type="number" value={aggregateMoney(previewVat)} readOnly disabled />
+                </Field>
+                <Field label="الصافي قبل التسويات الإضافية">
+                  <Input type="number" value={aggregateMoney(previewDue + previewVat)} readOnly disabled className="font-bold bg-sky-50 dark:bg-sky-950/20" />
+                </Field>
+              </div>
+            </div>
           )}
-          <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
+
+          <div className="flex items-center justify-end gap-2 mt-4 pt-4 border-t bg-muted/20 p-4 rounded-xl">
             <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
+            <Button onClick={save}>{t("common.save", "حفظ البيانات الأساسية")}</Button>
           </div>
         </div>
       )}

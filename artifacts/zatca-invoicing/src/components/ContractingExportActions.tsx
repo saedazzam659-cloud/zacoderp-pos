@@ -19,6 +19,11 @@ import {
   exportContractingContractsWorkbook,
   printContractingContracts,
   printContractingBill,
+  exportContractingProjectReportPdf,
+  exportContractingProjectReportWorkbook,
+  printContractingProjectReport,
+  type ContractingProjectReportKey,
+  type ContractingProjectReportsSnapshot,
   type ContractingBillDetailSnapshot,
   type ContractingBillPrintSnapshot,
   type ContractingBillSnapshot,
@@ -359,4 +364,40 @@ export function ContractingContractsExportActions({
   }
 
   return <Actions busy={busy} onAction={action => void run(action)} compact={compact} prefix={`contracting-${kind}-contracts`} />;
+}
+
+export function ContractingProjectReportExportActions({
+  snapshot,
+  report,
+  compact = false,
+}: {
+  snapshot: ContractingProjectReportsSnapshot;
+  report: ContractingProjectReportKey;
+  compact?: boolean;
+}) {
+  const { user } = useAuth() as any;
+  const { toast } = useToast();
+  const [busy, setBusy] = useState<ActionKind | null>(null);
+
+  async function run(kind: ActionKind) {
+    const rows = snapshot.reports?.[report];
+    if ((!Array.isArray(rows) || rows.length === 0) && report !== "profitability") {
+      toast({ title: "لا توجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    setBusy(kind);
+    try {
+      const company = companyInfo(user);
+      const filename = `تقرير-${filenamePart(snapshot.project?.code || snapshot.project?.id)}-${report}`;
+      if (kind === "xlsx") await exportContractingProjectReportWorkbook(snapshot, report, company, filename);
+      else if (kind === "pdf") await exportContractingProjectReportPdf(snapshot, report, company, filename);
+      else await printContractingProjectReport(snapshot, report, company, filename);
+    } catch (error: any) {
+      toast({ title: "تعذر تجهيز التقرير", description: error?.message, variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return <Actions busy={busy} onAction={kind => void run(kind)} compact={compact} prefix={`contracting-project-report-${report}`} />;
 }

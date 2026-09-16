@@ -92,6 +92,8 @@ export interface ContractingBillSnapshot {
   retentionPercent?: string | number | null;
   retentionAmount?: string | number | null;
   deductions?: string | number | null;
+  additions?: string | number | null;
+  signedAdjustmentAmount?: string | number | null;
   penalties?: string | number | null;
   retentions?: string | number | null;
   vatPercent?: string | number | null;
@@ -123,6 +125,16 @@ export interface ContractingBillLineSnapshot {
 export interface ContractingBillDetailSnapshot {
   state?: string | null;
   lines?: ContractingBillLineSnapshot[];
+  additions?: Array<{
+    calculationType?: string | null;
+    rate?: string | number | null;
+    baseType?: string | null;
+    baseAmount?: string | number | null;
+    reason?: string | null;
+    referenceType?: string | null;
+    reference?: string | null;
+    amount?: string | number | null;
+  }>;
   deductions?: Array<{ kind?: string | null; reason?: string | null; amount?: string | number | null }>;
   penalties?: Array<{ penaltyType?: string | null; reason?: string | null; amount?: string | number | null; penaltyDate?: string | null }>;
   summary?: {
@@ -136,11 +148,16 @@ export interface ContractingBillDetailSnapshot {
     remainingContractValue?: number;
     cumulativeCompletionPercent?: number;
     deductionsTotal?: number;
+    additionsTotal?: number;
+    generalDeductionsTotal?: number;
     retentionAmount?: number;
     penaltyTotal?: number;
     netBeforeTax?: number;
     vatAmount?: number;
     netAmount?: number;
+    adjustedNetAmount?: number;
+    rawNetAmount?: number;
+    signedAdjustmentAmount?: number;
     paidAmount?: number;
     remainingAmount?: number;
   };
@@ -214,8 +231,10 @@ const CONTRACTING_BILL_COLUMNS: ExportColumn[] = [
   { key: "contractValue", header: "قيمة العقد", width: 16, numFmt: "#,##0.00" },
   { key: "remainingContract", header: "المتبقي من العقد", width: 18, numFmt: "#,##0.00" },
   { key: "retentions", header: "المحتجز", width: 14, numFmt: "#,##0.00" },
+  { key: "additions", header: "الإضافات المالية", width: 16, numFmt: "#,##0.00" },
   { key: "deductions", header: "الاستقطاعات", width: 14, numFmt: "#,##0.00" },
   { key: "penalties", header: "الغرامات", width: 14, numFmt: "#,##0.00" },
+  { key: "signedAdjustment", header: "أثر التسوية الصافي", width: 18, numFmt: "#,##0.00" },
   { key: "vatAmount", header: "الضريبة", width: 14, numFmt: "#,##0.00" },
   { key: "netAmount", header: "الصافي", width: 16, numFmt: "#,##0.00" },
   { key: "paidAmount", header: "المدفوع", width: 16, numFmt: "#,##0.00" },
@@ -276,10 +295,12 @@ function reportRow(
     contractValue: optionalNumber(summary?.adjustedContractValue ?? bill.contractValue),
     remainingContract: optionalNumber(summary?.remainingContractValue ?? bill.remainingContract),
     retentions: optionalNumber(summary?.retentionAmount ?? bill.retentionAmount ?? bill.retentions),
+     additions: optionalNumber(summary?.additionsTotal ?? bill.additions),
     deductions: optionalNumber(summary?.deductionsTotal ?? bill.deductions),
     penalties: optionalNumber(summary?.penaltyTotal ?? bill.penalties),
+    signedAdjustment: optionalNumber(summary?.signedAdjustmentAmount ?? bill.signedAdjustmentAmount),
     vatAmount: optionalNumber(summary?.vatAmount ?? bill.vatAmount),
-    netAmount: optionalNumber(summary?.netAmount ?? bill.netAmount),
+    netAmount: optionalNumber(summary?.adjustedNetAmount ?? summary?.netAmount ?? bill.netAmount),
     paidAmount: optionalNumber(summary?.paidAmount ?? bill.paidAmount ?? bill.payments),
     outstanding: optionalNumber(summary?.remainingAmount ?? bill.outstanding),
   };
@@ -299,10 +320,12 @@ function billTotalsRow(snapshot: ContractingBillPrintSnapshot): Record<string, u
     contractValue: optionalNumber(summary?.adjustedContractValue ?? bill.contractValue),
     remainingContract: optionalNumber(summary?.remainingContractValue ?? bill.remainingContract),
     retentions: optionalNumber(summary?.retentionAmount ?? bill.retentionAmount ?? bill.retentions),
+    additions: optionalNumber(summary?.additionsTotal ?? bill.additions),
     deductions: optionalNumber(summary?.deductionsTotal ?? bill.deductions),
     penalties: optionalNumber(summary?.penaltyTotal ?? bill.penalties),
+    signedAdjustment: optionalNumber(summary?.signedAdjustmentAmount ?? bill.signedAdjustmentAmount),
     vatAmount: optionalNumber(summary?.vatAmount ?? bill.vatAmount),
-    netAmount: optionalNumber(summary?.netAmount ?? bill.netAmount),
+    netAmount: optionalNumber(summary?.adjustedNetAmount ?? summary?.netAmount ?? bill.netAmount),
     paidAmount: optionalNumber(summary?.paidAmount ?? bill.paidAmount ?? bill.payments),
     outstanding: optionalNumber(summary?.remainingAmount ?? bill.outstanding),
   };
@@ -313,9 +336,19 @@ export function buildContractingBillExportRows(
   snapshot: ContractingBillPrintSnapshot,
 ): Record<string, unknown>[] {
   const lines = snapshot.detail?.lines ?? [];
+  const additions = snapshot.detail?.additions ?? [];
   return [
     reportRow(snapshot.bill, snapshot.detail),
     ...lines.map(line => reportRow(snapshot.bill, snapshot.detail, line)),
+    ...additions.map(addition => ({
+      ...reportRow(snapshot.bill, snapshot.detail),
+      recordType: "إضافة مالية",
+      item: addition.reason || "إضافة مالية",
+      unit: addition.reference ? `${addition.referenceType || "مرجع"}: ${addition.reference}` : "—",
+      currentWorks: optionalNumber(addition.amount),
+      cumulativeWorks: optionalNumber(addition.amount),
+      additions: optionalNumber(addition.amount),
+    })),
   ];
 }
 
@@ -374,6 +407,7 @@ export function buildContractingModel14Html(snapshot: ContractingBillPrintSnapsh
       contractValue: summary?.adjustedContractValue ?? bill.contractValue ?? 0,
       remainingContract: summary?.remainingContractValue ?? bill.remainingContract ?? 0,
       retention: summary?.retentionAmount ?? bill.retentionAmount ?? bill.retentions ?? 0,
+      additions: summary?.additionsTotal ?? bill.additions ?? 0,
       deductions: summary?.deductionsTotal ?? bill.deductions ?? 0,
       penalties: summary?.penaltyTotal ?? bill.penalties ?? 0,
       paid: summary?.paidAmount ?? bill.paidAmount ?? bill.payments ?? 0,
@@ -382,7 +416,7 @@ export function buildContractingModel14Html(snapshot: ContractingBillPrintSnapsh
       discountTotal: 0,
       netPreVat: numberValue(current),
       vatAmount: numberValue(vat),
-      grandTotal: net == null ? numberValue(current) + numberValue(vat) : numberValue(net),
+      grandTotal: numberValue(summary?.adjustedNetAmount ?? net ?? numberValue(current) + numberValue(vat)),
     },
   };
   const customer = {
@@ -768,4 +802,213 @@ export async function printContractingBillsReport(
 
 export function buildContractingReportColumns(): ExportColumn[] {
   return CONTRACTING_BILL_COLUMNS.map(column => ({ ...column }));
+}
+
+export type ContractingProjectReportKey =
+  | "boqStatement"
+  | "executedQuantities"
+  | "bills"
+  | "cumulative"
+  | "advance"
+  | "retention"
+  | "deductions"
+  | "variations"
+  | "profitability";
+
+export interface ContractingProjectReportsSnapshot {
+  project?: {
+    id?: number;
+    code?: string | null;
+    nameAr?: string | null;
+  } | null;
+  reports?: Partial<Record<ContractingProjectReportKey, unknown>>;
+}
+
+const PROJECT_REPORT_COLUMNS: Record<ContractingProjectReportKey, ExportColumn[]> = {
+  boqStatement: [
+    { key: "direction", header: "الاتجاه", width: 14 },
+    { key: "lineCode", header: "كود البند", width: 18 },
+    { key: "description", header: "الوصف", width: 28 },
+    { key: "unit", header: "الوحدة", width: 12 },
+    { key: "contractQuantity", header: "كمية العقد", width: 14, numFmt: "#,##0.###" },
+    { key: "priorQuantity", header: "الكمية السابقة", width: 14, numFmt: "#,##0.###" },
+    { key: "currentQuantity", header: "الكمية الحالية", width: 14, numFmt: "#,##0.###" },
+    { key: "cumulativeQuantity", header: "الكمية التراكمية", width: 16, numFmt: "#,##0.###" },
+    { key: "remainingQuantity", header: "الكمية المتبقية", width: 16, numFmt: "#,##0.###" },
+    { key: "contractValue", header: "قيمة العقد", width: 16, numFmt: "#,##0.00" },
+    { key: "priorValue", header: "قيمة السابق", width: 16, numFmt: "#,##0.00" },
+    { key: "currentValue", header: "قيمة الحالي", width: 16, numFmt: "#,##0.00" },
+    { key: "cumulativeValue", header: "القيمة التراكمية", width: 18, numFmt: "#,##0.00" },
+    { key: "remainingValue", header: "القيمة المتبقية", width: 18, numFmt: "#,##0.00" },
+    { key: "completionPercent", header: "الإنجاز %", width: 13, numFmt: "0.00" },
+    { key: "latestBillStatus", header: "حالة آخر مستخلص", width: 18 },
+  ],
+  executedQuantities: [],
+  bills: [
+    { key: "billNumber", header: "رقم المستخلص", width: 18 },
+    { key: "billDate", header: "التاريخ", width: 14 },
+    { key: "direction", header: "الاتجاه", width: 15 },
+    { key: "status", header: "الحالة", width: 16 },
+    { key: "grossWorks", header: "الأعمال التراكمية", width: 18, numFmt: "#,##0.00" },
+    { key: "currentWorks", header: "الأعمال الحالية", width: 16, numFmt: "#,##0.00" },
+    { key: "cumulativeWorks", header: "الأعمال التراكمية", width: 18, numFmt: "#,##0.00" },
+    { key: "retentions", header: "المحتجز", width: 14, numFmt: "#,##0.00" },
+    { key: "additions", header: "الإضافات", width: 14, numFmt: "#,##0.00" },
+    { key: "deductions", header: "الاستقطاعات", width: 14, numFmt: "#,##0.00" },
+    { key: "penalties", header: "الغرامات", width: 14, numFmt: "#,##0.00" },
+    { key: "signedAdjustmentAmount", header: "أثر التسوية الصافي", width: 18, numFmt: "#,##0.00" },
+    { key: "netAmount", header: "الصافي", width: 16, numFmt: "#,##0.00" },
+    { key: "actualPaid", header: "المدفوع فعلياً", width: 16, numFmt: "#,##0.00" },
+    { key: "dueAmount", header: "المستحق", width: 16, numFmt: "#,##0.00" },
+    { key: "settlementStatus", header: "حالة التسوية", width: 18 },
+  ],
+  cumulative: [
+    { key: "billNumber", header: "رقم المستخلص", width: 18 },
+    { key: "billDate", header: "التاريخ", width: 14 },
+    { key: "direction", header: "الاتجاه", width: 15 },
+    { key: "status", header: "الحالة", width: 16 },
+    { key: "previousValue", header: "الأعمال السابقة", width: 17, numFmt: "#,##0.00" },
+    { key: "currentValue", header: "الأعمال الحالية", width: 17, numFmt: "#,##0.00" },
+    { key: "cumulativeValue", header: "الأعمال التراكمية", width: 19, numFmt: "#,##0.00" },
+    { key: "remainingValue", header: "الأعمال المتبقية", width: 18, numFmt: "#,##0.00" },
+    { key: "completionPercent", header: "الإنجاز %", width: 13, numFmt: "0.00" },
+    { key: "actualPaid", header: "المدفوع فعلياً", width: 16, numFmt: "#,##0.00" },
+    { key: "dueAmount", header: "المستحق", width: 16, numFmt: "#,##0.00" },
+    { key: "settlementStatus", header: "حالة التسوية", width: 18 },
+  ],
+  advance: [
+    { key: "settlementDate", header: "تاريخ التسوية", width: 16 },
+    { key: "billNumber", header: "رقم المستخلص", width: 18 },
+    { key: "direction", header: "الاتجاه", width: 15 },
+    { key: "kind", header: "نوع الحركة", width: 20 },
+    { key: "amount", header: "المبلغ", width: 16, numFmt: "#,##0.00" },
+    { key: "appliedAmount", header: "المطبق", width: 16, numFmt: "#,##0.00" },
+    { key: "statusLabel", header: "حالة التسوية", width: 18 },
+    { key: "notes", header: "ملاحظات", width: 28 },
+  ],
+  retention: [
+    { key: "billNumber", header: "رقم المستخلص", width: 18 },
+    { key: "billDate", header: "التاريخ", width: 14 },
+    { key: "direction", header: "الاتجاه", width: 15 },
+    { key: "status", header: "الحالة", width: 16 },
+    { key: "retention", header: "المحتجز", width: 16, numFmt: "#,##0.00" },
+    { key: "released", header: "المفرج عنه", width: 16, numFmt: "#,##0.00" },
+    { key: "settlementStatus", header: "حالة التسوية", width: 18 },
+  ],
+  deductions: [
+    { key: "billId", header: "المستخلص", width: 16 },
+    { key: "source", header: "المصدر", width: 16 },
+    { key: "kind", header: "النوع", width: 18 },
+    { key: "reason", header: "السبب", width: 30 },
+    { key: "amount", header: "القيمة", width: 16, numFmt: "#,##0.00" },
+    { key: "reference", header: "المرجع", width: 20 },
+  ],
+  variations: [
+    { key: "contractNumber", header: "رقم العقد/الأمر", width: 20 },
+    { key: "contractType", header: "النوع", width: 16 },
+    { key: "status", header: "الحالة", width: 16 },
+    { key: "originalValue", header: "القيمة الأصلية", width: 17, numFmt: "#,##0.00" },
+    { key: "variationValue", header: "قيمة التغيير", width: 17, numFmt: "#,##0.00" },
+    { key: "adjustedValue", header: "القيمة المعدلة", width: 17, numFmt: "#,##0.00" },
+  ],
+  profitability: [
+    { key: "revenue", header: "إيراد المالك المنفذ", width: 21, numFmt: "#,##0.00" },
+    { key: "actualCost", header: "التكلفة الفعلية", width: 18, numFmt: "#,##0.00" },
+    { key: "estimatedCost", header: "التكلفة التقديرية", width: 18, numFmt: "#,##0.00" },
+    { key: "profit", header: "الربح", width: 16, numFmt: "#,##0.00" },
+    { key: "marginPercent", header: "الهامش %", width: 14, numFmt: "0.00" },
+    { key: "costSource", header: "مصدر التكلفة", width: 28 },
+    { key: "note", header: "حدود التقرير", width: 46 },
+  ],
+};
+PROJECT_REPORT_COLUMNS.executedQuantities = PROJECT_REPORT_COLUMNS.boqStatement;
+
+const PROJECT_REPORT_TITLES: Record<ContractingProjectReportKey, string> = {
+  boqStatement: "كشف بنود العقد",
+  executedQuantities: "كشف الكميات المنفذة",
+  bills: "كشف المستخلصات",
+  cumulative: "المستخلص التراكمي",
+  advance: "كشف الدفعة المقدمة واستردادها",
+  retention: "كشف المحتجز",
+  deductions: "كشف الاستقطاعات والغرامات والتسويات",
+  variations: "مقارنة العقد الأصلي والمعدل",
+  profitability: "ربحية المشروع من التكلفة الفعلية المتاحة",
+};
+
+function reportRows(
+  snapshot: ContractingProjectReportsSnapshot,
+  key: ContractingProjectReportKey,
+): Record<string, unknown>[] {
+  const value = snapshot.reports?.[key];
+  if (key === "profitability") return value && !Array.isArray(value) ? [value as Record<string, unknown>] : [];
+  return Array.isArray(value) ? value as Record<string, unknown>[] : [];
+}
+
+export function buildContractingProjectReportRows(
+  snapshot: ContractingProjectReportsSnapshot,
+  key: ContractingProjectReportKey,
+): Record<string, unknown>[] {
+  return reportRows(snapshot, key);
+}
+
+export async function exportContractingProjectReportWorkbook(
+  snapshot: ContractingProjectReportsSnapshot,
+  key: ContractingProjectReportKey,
+  company?: ContractingCompany | null,
+  filename = `تقرير-المشروع-${snapshot.project?.code || snapshot.project?.id || "project"}`,
+): Promise<void> {
+  await exportToExcelBranded(reportRows(snapshot, key), PROJECT_REPORT_COLUMNS[key], filename, {
+    sheetName: "تقرير المشروع",
+    company,
+    title: PROJECT_REPORT_TITLES[key],
+    subtitle: snapshot.project?.nameAr || snapshot.project?.code || "",
+  });
+}
+
+export async function exportContractingProjectReportPdf(
+  snapshot: ContractingProjectReportsSnapshot,
+  key: ContractingProjectReportKey,
+  company?: ContractingCompany | null,
+  filename = `تقرير-المشروع-${snapshot.project?.code || snapshot.project?.id || "project"}`,
+): Promise<void> {
+  await exportToPDF(
+    reportRows(snapshot, key),
+    PROJECT_REPORT_COLUMNS[key],
+    filename,
+    PROJECT_REPORT_TITLES[key],
+    snapshot.project?.nameAr || snapshot.project?.code || "بيانات المشروع",
+    false,
+    null,
+    null,
+    company?.logo,
+    null,
+    company,
+    { fitOneLine: true },
+  );
+}
+
+export async function printContractingProjectReport(
+  snapshot: ContractingProjectReportsSnapshot,
+  key: ContractingProjectReportKey,
+  company?: ContractingCompany | null,
+  filename = `تقرير-المشروع-${snapshot.project?.code || snapshot.project?.id || "project"}`,
+): Promise<void> {
+  await exportToPDF(
+    reportRows(snapshot, key),
+    PROJECT_REPORT_COLUMNS[key],
+    filename,
+    PROJECT_REPORT_TITLES[key],
+    snapshot.project?.nameAr || snapshot.project?.code || "بيانات المشروع",
+    true,
+    null,
+    null,
+    company?.logo,
+    null,
+    company,
+    { fitOneLine: true },
+  );
+}
+
+export function contractingProjectReportTitle(key: ContractingProjectReportKey): string {
+  return PROJECT_REPORT_TITLES[key];
 }

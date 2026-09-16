@@ -312,6 +312,7 @@ const contractingSubNav: NavDef[] = [
   { nameKey: "nav.contractingBills",       href: "/contracting/bills",        icon: FileText,  permKey: "contracting" },
   { nameKey: "nav.contractingOwnerBills",  href: "/contracting/bills?direction=outgoing", icon: ArrowUpCircle, permKey: "contracting" },
   { nameKey: "nav.contractingSubcontractorBills", href: "/contracting/bills?direction=incoming", icon: ArrowDownCircle, permKey: "contracting" },
+  { nameKey: "nav.contractingSettings",   href: "/contracting/settings",      icon: Settings2,      permKey: "contracting", requireAdmin: true },
 ];
 const CONTRACTING_GROUP_PERMS = ["contracting"];
 // Maintenance ERP — gated by a single `maintenance` permission key.

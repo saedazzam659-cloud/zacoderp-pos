@@ -97,8 +97,10 @@ import aiReportsRouter from "./ai-reports";
 import dataDoctorRouter from "./data-doctor";
 import printDesignerRouter from "./print-designer";
 import contractingRouter from "./contracting";
+import contractingProjectReportsRouter from "./contracting-project-reports";
 import contractingAccountingRouter from "./contracting-accounting";
 import contractingBillDetailsRouter from "./contracting-bill-details";
+import contractingBoqRouter from "./contracting-boq";
 import contractingAiRouter from "./contracting-ai";
 import maintenanceRouter from "./maintenance";
 import installmentsRouter from "./installments";
@@ -355,9 +357,11 @@ router.use(zatcaRouter);
 // contracting CRUD router so approved ledger-backed documents cannot bypass
 // the reversal/idempotency workflow.
 router.use("/contracting", contractingAccountingRouter);
+router.use("/contracting", contractingProjectReportsRouter);
 // Additive progress-bill detail editor. It never owns journals, settlements,
 // or stock posting; those remain behind contracting-accountingRouter.
 router.use("/contracting", contractingBillDetailsRouter);
+router.use("/contracting", contractingBoqRouter);
 router.use("/contracting", contractingRouter);
 // Dedicated namespace for integrations that do not use legacy contracting
 // CRUD paths; it shares the same tenant and permission guards.

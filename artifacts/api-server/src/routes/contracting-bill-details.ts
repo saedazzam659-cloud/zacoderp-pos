@@ -8,8 +8,12 @@ import {
   ensureContractingBillDetailsTables,
   listBillDetails,
   createBillLine,
+  saveBillLines,
   updateBillLine,
   deleteBillLine,
+  createBillAddition,
+  updateBillAddition,
+  deleteBillAddition,
   createBillDeduction,
   updateBillDeduction,
   deleteBillDeduction,
@@ -161,7 +165,11 @@ router.post("/bills/:id/lines", requireBillCapability("edit"), async (req, res) 
   const cid = await companyId(req, res);
   if (!cid) return;
   try {
-    res.status(201).json(await createBillLine(cid, Number(req.params.id), req));
+    if (Array.isArray(req.body) || Array.isArray(req.body?.lines)) {
+      res.json(await saveBillLines(cid, Number(req.params.id), req));
+    } else {
+      res.status(201).json(await createBillLine(cid, Number(req.params.id), req));
+    }
   } catch (caught) {
     fail(res, caught);
   }
@@ -182,6 +190,36 @@ router.delete("/bill-lines/:id", requireBillCapability("edit"), async (req, res)
   if (!cid) return;
   try {
     res.json(await deleteBillLine(cid, Number(req.params.id), req.authUser));
+  } catch (caught) {
+    fail(res, caught);
+  }
+});
+
+router.post("/bills/:id/additions", requireBillCapability("edit"), async (req, res) => {
+  const cid = await companyId(req, res);
+  if (!cid) return;
+  try {
+    res.status(201).json(await createBillAddition(cid, Number(req.params.id), req));
+  } catch (caught) {
+    fail(res, caught);
+  }
+});
+
+router.put("/bill-additions/:id", requireBillCapability("edit"), async (req, res) => {
+  const cid = await companyId(req, res);
+  if (!cid) return;
+  try {
+    res.json(await updateBillAddition(cid, Number(req.params.id), req));
+  } catch (caught) {
+    fail(res, caught);
+  }
+});
+
+router.delete("/bill-additions/:id", requireBillCapability("edit"), async (req, res) => {
+  const cid = await companyId(req, res);
+  if (!cid) return;
+  try {
+    res.json(await deleteBillAddition(cid, Number(req.params.id), req.authUser));
   } catch (caught) {
     fail(res, caught);
   }

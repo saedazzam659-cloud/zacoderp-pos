@@ -58,6 +58,73 @@ function centsString(value: bigint): string {
 }
 
 /**
+ * Calculate the automatic recovery for one certified period.  This is kept
+ * entirely in integer cents so the same policy is used by approval and the
+ * read-only bill preview:
+ *
+ *   current certified work before VAT × recovery rate
+ *
+ * `previous certified work` is intentionally absent. The caller supplies the
+ * current period delta, which prevents cumulative bills from recovering the
+ * same work twice. The result is capped by both the actual posted advance
+ * balance and the bill's net due.
+ */
+export function calculateAdvanceRecoveryCents(input: {
+  enabled: boolean;
+  progressPercent: number | string;
+  startProgressPercent: number | string;
+  advanceRecoveryPercent: number | string;
+  currentCertifiedWorkBeforeVat: number | string;
+  actualAdvanceRemaining: number | string;
+  netDue: number | string;
+}) {
+  const progress = percentCents(input.progressPercent);
+  const start = percentCents(input.startProgressPercent);
+  const rate = percentCents(input.advanceRecoveryPercent);
+  const currentWork = scaledCents(input.currentCertifiedWorkBeforeVat);
+  const advanceRemaining = scaledCents(input.actualAdvanceRemaining);
+  const netDue = scaledCents(input.netDue);
+  if (progress < 0n || progress > 10000n || start < 0n || start > 10000n) {
+    throw new Error("نسبة الإنجاز وبداية استرداد السلفة يجب أن تكونا بين 0 و100");
+  }
+  if (rate < 0n || rate > 10000n) {
+    throw new Error("نسبة استرداد السلفة يجب أن تكون بين 0 و100");
+  }
+  if (currentWork < 0n || advanceRemaining < 0n || netDue < 0n) {
+    throw new Error("مبالغ استرداد السلفة لا يمكن أن تكون سالبة");
+  }
+  const startReached = progress >= start;
+  const eligible = Boolean(input.enabled) && startReached && currentWork > 0n && rate > 0n;
+  const requested = eligible ? multiplyCentsByPercent(currentWork, rate) : 0n;
+  const actual = requested < advanceRemaining ? requested : advanceRemaining;
+  const recovered = actual < netDue ? actual : netDue;
+  const remainingAfter = advanceRemaining - recovered;
+  return {
+    enabled: Boolean(input.enabled),
+    startReached,
+    eligible,
+    progressPercent: centsString(progress),
+    startProgressPercent: centsString(start),
+    advanceRecoveryPercent: centsString(rate),
+    currentCertifiedWorkBeforeVat: centsString(currentWork),
+    actualAdvanceRemaining: centsString(advanceRemaining),
+    netDue: centsString(netDue),
+    requestedRecoveryAmount: centsString(requested),
+    recoveryAmount: centsString(recovered),
+    advanceRecoveryAmount: centsString(recovered),
+    remainingAdvanceAfter: centsString(remainingAfter),
+    remainingAfterRecovery: centsString(remainingAfter),
+  };
+}
+
+// Descriptive aliases make the policy easy to discover without exposing the
+// cent implementation details to callers.
+export const calculateContractingAdvanceRecovery = calculateAdvanceRecoveryCents;
+export const advanceRecoveryAmounts = calculateAdvanceRecoveryCents;
+export const calculateAdvanceRecovery = calculateAdvanceRecoveryCents;
+export const calculateAdvanceRecoveryPreview = calculateAdvanceRecoveryCents;
+
+/**
  * Contract ceiling allocation is intentionally calculated in integer cents:
  * the base contract is granted once to the whole scope, while a selected
  * change-order line can consume only that order's delta.
@@ -100,19 +167,38 @@ function multiplyCentsByPercent(cents: bigint, percent: bigint): bigint {
 
 /**
  * Server-authoritative cumulative certification math.  `priorGrossAmount`
- * and `priorRetentionAmount` are maxima of certified bills for the locked
- * contract, not paid amounts and not client-supplied `previousPaid`.
+ * and `priorRetentionAmount` are maxima/sums of certified bills for the
+ * locked contract, not paid amounts and not client-supplied `previousPaid`.
+ * A non-null retention snapshot caps cumulative retention against the adjusted
+ * contract value; a null cap is the compatibility path for legacy bills.
  */
 export function authoritativeCumulativeBillAmounts(input: {
   grossAmount: number | string;
+  adjustedContractValue?: number | string | null;
+  retentionEnabled?: boolean | null;
   retentionPercent: number | string;
+  retentionCapPercent?: number | string | null;
   vatPercent: number | string;
   priorGrossAmount: number | string;
   priorRetentionAmount: number | string;
 }) {
   const gross = scaledCents(input.grossAmount);
   const priorGross = scaledCents(input.priorGrossAmount);
-  const currentRetention = multiplyCentsByPercent(gross, percentCents(input.retentionPercent));
+  const retentionBase = input.adjustedContractValue == null
+    ? gross
+    : scaledCents(input.adjustedContractValue);
+  const requestedRetention = Boolean(input.retentionEnabled ?? true)
+    ? multiplyCentsByPercent(gross, percentCents(input.retentionPercent))
+    : 0n;
+  const capPercent = input.retentionCapPercent == null
+    ? null
+    : percentCents(input.retentionCapPercent);
+  const retentionCap = capPercent == null
+    ? null
+    : multiplyCentsByPercent(retentionBase, capPercent);
+  const currentRetention = retentionCap == null || requestedRetention < retentionCap
+    ? requestedRetention
+    : retentionCap;
   const priorRetention = scaledCents(input.priorRetentionAmount);
   if (gross < priorGross) {
     throw new Error("إجمالي المستخلص التراكمي أقل من آخر مستخلص معتمد للعقد");
@@ -133,6 +219,154 @@ export function authoritativeCumulativeBillAmounts(input: {
     netAmount: centsString(due + vat),
   };
 }
+
+/**
+ * A progress bill's `grossAmount` is the certified cumulative work value
+ * before VAT.  It is not the amount paid and it is not a period amount.  The
+ * aggregate editor derives that cumulative value from the selected
+ * contract's adjusted (approved) ceiling and a 0..100 percentage, then
+ * derives the current period from the latest certified value for the exact
+ * same contract.
+ *
+ * Keep this calculation free of database concerns.  Besides making the
+ * rounding policy explicit, this lets the API and focused math tests share
+ * exactly the same rules.
+ */
+export type CertifiedContractProgressBill = {
+  id?: number | string | null;
+  projectId?: number | string | null;
+  direction: "outgoing" | "incoming";
+  ownerContractId?: number | string | null;
+  subcontractorContractId?: number | string | null;
+  grossAmount: number | string;
+  retentionAmount?: number | string | null;
+  status: string;
+  reversalJournalEntryId?: number | string | null;
+};
+
+const CERTIFIED_PROGRESS_STATUSES = new Set([
+  "approved",
+  "posted",
+  "partially_paid",
+  "paid",
+]);
+
+function sameNullableId(left: unknown, right: unknown): boolean {
+  if (left == null || left === "") return right == null || right === "";
+  return Number(left) === Number(right);
+}
+
+/**
+ * Find the highest certified cumulative gross and the sum of saved period
+ * retentions for one exact contract.
+ *
+ * Cumulative bills must not be summed: 20,000 followed by 30,000 means the
+ * current period is 10,000, not 50,000. Retention is different: bills save
+ * the period delta, so prior retention is the SUM of certified, non-reversed
+ * period retentions (not MAX). Reversed rows are excluded both by workflow
+ * state and by the reversal journal marker, and all project and contract
+ * dimensions are matched exactly.
+ */
+export function priorCertifiedContractGross(input: {
+  bills: readonly CertifiedContractProgressBill[];
+  projectId?: number | string | null;
+  direction: "outgoing" | "incoming";
+  ownerContractId?: number | string | null;
+  subcontractorContractId?: number | string | null;
+  excludeBillId?: number | string | null;
+}): {
+  grossAmount: string;
+  retentionAmount: string;
+} {
+  let gross = 0n;
+  let retention = 0n;
+  for (const bill of input.bills) {
+    if (
+      !CERTIFIED_PROGRESS_STATUSES.has(String(bill.status))
+      || bill.reversalJournalEntryId != null
+      || (input.excludeBillId != null && Number(bill.id) === Number(input.excludeBillId))
+      || (input.projectId != null && !sameNullableId(bill.projectId, input.projectId))
+      || bill.direction !== input.direction
+      || !sameNullableId(bill.ownerContractId, input.ownerContractId)
+      || !sameNullableId(bill.subcontractorContractId, input.subcontractorContractId)
+    ) continue;
+    const candidateGross = scaledCents(bill.grossAmount);
+    const candidateRetention = scaledCents(bill.retentionAmount ?? 0);
+    if (candidateGross > gross) gross = candidateGross;
+     retention += candidateRetention;
+  }
+  return {
+    grossAmount: centsString(gross),
+    retentionAmount: centsString(retention),
+  };
+}
+
+/**
+ * Compute an aggregate percentage bill.  `adjustedContractValue` is already
+ * the VAT-exclusive base plus approved change orders, while all returned
+ * financial values follow the existing cumulative certification convention.
+ * In particular, `previousPaid` is the previous certified cumulative gross;
+ * it is not a second payment deduction.
+ */
+export function aggregateContractProgressAmounts(input: {
+  adjustedContractValue: number | string;
+  progressPercent: number | string;
+  priorGrossAmount: number | string;
+  priorRetentionAmount?: number | string;
+  retentionEnabled?: boolean | null;
+  retentionPercent: number | string;
+  retentionCapPercent?: number | string | null;
+  vatPercent: number | string;
+}) {
+  const progress = numberValue(input.progressPercent);
+  if (!Number.isFinite(progress) || progress < 0 || progress > 100) {
+    throw new Error("نسبة الإنجاز يجب أن تكون بين 0 و100");
+  }
+  const contractValue = scaledCents(input.adjustedContractValue);
+  if (contractValue < 0n) throw new Error("قيمة العقد المعدلة يجب ألا تكون سالبة");
+  const gross = multiplyCentsByPercent(contractValue, percentCents(progress));
+  const priorGross = scaledCents(input.priorGrossAmount);
+  const priorRetention = scaledCents(input.priorRetentionAmount ?? 0);
+  if (gross < priorGross) {
+    throw new Error("نسبة الإنجاز التراكمية أقل من آخر إنجاز معتمد للعقد");
+  }
+
+  const requestedRetention = Boolean(input.retentionEnabled ?? true)
+    ? multiplyCentsByPercent(gross, percentCents(input.retentionPercent))
+    : 0n;
+  const capPercent = input.retentionCapPercent == null
+    ? null
+    : percentCents(input.retentionCapPercent);
+  const retentionCap = capPercent == null
+    ? null
+    : multiplyCentsByPercent(contractValue, capPercent);
+  const cumulativeRetention = retentionCap == null || requestedRetention < retentionCap
+    ? requestedRetention
+    : retentionCap;
+  if (cumulativeRetention < priorRetention) {
+    throw new Error("محتجزات المستخلص التراكمي أقل من آخر محتجزات معتمدة للعقد");
+  }
+  const currentGross = gross - priorGross;
+  const retention = cumulativeRetention - priorRetention;
+  const due = currentGross > retention ? currentGross - retention : 0n;
+  const vat = multiplyCentsByPercent(due, percentCents(input.vatPercent));
+  return {
+    grossAmount: centsString(gross),
+    cumulativeGrossAmount: centsString(gross),
+    previousPaid: centsString(priorGross),
+    priorGrossAmount: centsString(priorGross),
+    currentGrossAmount: centsString(currentGross),
+    currentPeriodGrossAmount: centsString(currentGross),
+    retentionAmount: centsString(retention),
+    dueAmount: centsString(due),
+    vatAmount: centsString(vat),
+    netAmount: centsString(due + vat),
+  };
+}
+
+// Descriptive alias for callers that want to make the aggregate mode
+// explicit at the call site.
+export const calculateAggregateContractProgress = aggregateContractProgressAmounts;
 
 /**
  * Return role-level lines before account mapping.  Keeping this role-level

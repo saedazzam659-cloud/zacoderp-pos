@@ -3,13 +3,17 @@ import assert from "node:assert/strict";
 
 import {
   authoritativeCumulativeBillAmounts,
+  aggregateContractProgressAmounts,
+  calculateAdvanceRecoveryCents,
   contractingCeilingAllocation,
   contractingBillRoleLines,
   idempotencyDecision,
   materialMovementCost,
+  priorCertifiedContractGross,
   reverseAccountingLines,
   validateSettlementCap,
 } from "../src/lib/contracting-accounting-math.ts";
+import { calculateSignedContractingBillNet } from "../src/lib/contracting-bill-adjustment-math.ts";
 
 /**
  * Deliberately tiny in-memory executor.  It models only the state transitions
@@ -102,6 +106,132 @@ test("cumulative certification uses prior certified totals, never paid amount", 
   }), /أقل من آخر مستخلص/);
 });
 
+test("aggregate percentage uses adjusted contract base and current period delta", () => {
+  const amounts = aggregateContractProgressAmounts({
+    adjustedContractValue: "100000",
+    progressPercent: "30",
+    priorGrossAmount: "20000",
+    priorRetentionAmount: "1000",
+    retentionPercent: "5",
+    vatPercent: "15",
+  });
+  assert.equal(amounts.cumulativeGrossAmount, "30000.00");
+  assert.equal(amounts.currentPeriodGrossAmount, "10000.00");
+  assert.equal(amounts.previousPaid, "20000.00");
+  assert.equal(amounts.retentionAmount, "500.00");
+  assert.equal(amounts.dueAmount, "9500.00");
+  assert.equal(amounts.vatAmount, "1425.00");
+  assert.equal(amounts.netAmount, "10925.00");
+});
+
+test("retention cap is cumulative across sequential aggregate certifications", () => {
+  const first = aggregateContractProgressAmounts({
+    adjustedContractValue: "100000",
+    progressPercent: "50",
+    priorGrossAmount: "0",
+    priorRetentionAmount: "0",
+    retentionEnabled: true,
+    retentionPercent: "5",
+    retentionCapPercent: "2",
+    vatPercent: "15",
+  });
+  assert.equal(first.cumulativeGrossAmount, "50000.00");
+  assert.equal(first.retentionAmount, "2000.00");
+
+  const second = aggregateContractProgressAmounts({
+    adjustedContractValue: "100000",
+    progressPercent: "100",
+    priorGrossAmount: first.cumulativeGrossAmount,
+    priorRetentionAmount: first.retentionAmount,
+    retentionEnabled: true,
+    retentionPercent: "5",
+    retentionCapPercent: "2",
+    vatPercent: "15",
+  });
+  assert.equal(second.cumulativeGrossAmount, "100000.00");
+  assert.equal(second.retentionAmount, "0.00");
+  assert.equal(second.dueAmount, "50000.00");
+});
+
+test("disabled retention on a new contract produces no retention delta", () => {
+  const amounts = aggregateContractProgressAmounts({
+    adjustedContractValue: "100000",
+    progressPercent: "25",
+    priorGrossAmount: "0",
+    priorRetentionAmount: "0",
+    retentionEnabled: false,
+    retentionPercent: "5",
+    retentionCapPercent: "2",
+    vatPercent: "15",
+  });
+  assert.equal(amounts.retentionAmount, "0.00");
+  assert.equal(amounts.dueAmount, "25000.00");
+});
+
+test("legacy bill math remains uncapped when no retention snapshot exists", () => {
+  assert.deepEqual(authoritativeCumulativeBillAmounts({
+    grossAmount: "1500",
+    retentionPercent: "5",
+    vatPercent: "15",
+    priorGrossAmount: "0",
+    priorRetentionAmount: "0",
+    retentionEnabled: null,
+    retentionCapPercent: null,
+    adjustedContractValue: "100",
+  }), {
+    grossAmount: "1500.00",
+    previousPaid: "0.00",
+    retentionAmount: "75.00",
+    dueAmount: "1425.00",
+    vatAmount: "213.75",
+    netAmount: "1638.75",
+  });
+});
+
+test("prior aggregate certification excludes reversals and sibling contracts", () => {
+  const prior = priorCertifiedContractGross({
+    projectId: 7,
+    direction: "outgoing",
+    ownerContractId: 12,
+    subcontractorContractId: null,
+    bills: [
+      { id: 1, projectId: 7, direction: "outgoing", ownerContractId: 12, subcontractorContractId: null, grossAmount: "20000", retentionAmount: "1000", status: "approved" },
+      { id: 2, projectId: 7, direction: "outgoing", ownerContractId: 12, subcontractorContractId: null, grossAmount: "50000", retentionAmount: "2500", status: "reversed", reversalJournalEntryId: 9 },
+      { id: 3, projectId: 7, direction: "outgoing", ownerContractId: 99, subcontractorContractId: null, grossAmount: "90000", retentionAmount: "4500", status: "approved" },
+    ],
+  });
+  assert.deepEqual(prior, { grossAmount: "20000.00", retentionAmount: "1000.00" });
+});
+
+test("prior retention sums saved period deltas across sequential cumulative bills", () => {
+  const prior = priorCertifiedContractGross({
+    projectId: 7,
+    direction: "outgoing",
+    ownerContractId: 12,
+    subcontractorContractId: null,
+    bills: [
+      { id: 1, projectId: 7, direction: "outgoing", ownerContractId: 12, subcontractorContractId: null, grossAmount: "20000", retentionAmount: "1000", status: "approved" },
+      { id: 2, projectId: 7, direction: "outgoing", ownerContractId: 12, subcontractorContractId: null, grossAmount: "30000", retentionAmount: "500", status: "approved" },
+      { id: 3, projectId: 7, direction: "outgoing", ownerContractId: 12, subcontractorContractId: null, grossAmount: "40000", retentionAmount: "500", status: "approved" },
+    ],
+  });
+  assert.deepEqual(prior, { grossAmount: "40000.00", retentionAmount: "2000.00" });
+  assert.deepEqual(authoritativeCumulativeBillAmounts({
+    grossAmount: "50000",
+    retentionPercent: "5",
+    vatPercent: "15",
+    priorGrossAmount: prior.grossAmount,
+    priorRetentionAmount: prior.retentionAmount,
+  }), {
+    grossAmount: "50000.00",
+    previousPaid: "40000.00",
+    retentionAmount: "500.00",
+    dueAmount: "9500.00",
+    vatAmount: "1425.00",
+    netAmount: "10925.00",
+  });
+});
+
 test("advance, retention and bill settlement caps reject over-application", () => {
   assert.equal(validateSettlementCap({
     kind: "advance_application", requested: 200, availableAdvance: 200,
@@ -124,6 +254,55 @@ test("advance, retention and bill settlement caps reject over-application", () =
     ok: false,
     reason: "مبلغ التسوية يتجاوز رصيد المستخلص المتبقي",
   });
+});
+
+test("advance recovery uses current certified work, start threshold, and actual balance caps", () => {
+  const eligible = calculateAdvanceRecoveryCents({
+    enabled: true,
+    progressPercent: "35",
+    startProgressPercent: "30",
+    advanceRecoveryPercent: "10",
+    currentCertifiedWorkBeforeVat: "1234.57",
+    actualAdvanceRemaining: "100.00",
+    netDue: "80.00",
+  });
+  assert.equal(eligible.requestedRecoveryAmount, "123.46");
+  assert.equal(eligible.recoveryAmount, "80.00");
+  assert.equal(eligible.remainingAdvanceAfter, "20.00");
+
+  const belowThreshold = calculateAdvanceRecoveryCents({
+    enabled: true,
+    progressPercent: "29.99",
+    startProgressPercent: "30",
+    advanceRecoveryPercent: "10",
+    currentCertifiedWorkBeforeVat: "5000",
+    actualAdvanceRemaining: "1000",
+    netDue: "5000",
+  });
+  assert.equal(belowThreshold.requestedRecoveryAmount, "0.00");
+  assert.equal(belowThreshold.startReached, false);
+});
+
+test("signed adjustments reduce recovery and receipt caps exactly once", () => {
+  const adjusted = calculateSignedContractingBillNet({
+    rawNetAmount: "1000.00",
+    additions: [{ amount: "200.00" }],
+    deductions: [{ kind: "materials", amount: "300.00" }],
+    penalties: [{ amount: "100.00" }],
+  });
+  assert.equal(adjusted.signedAdjustmentAmount, "-200.00");
+  assert.equal(adjusted.adjustedNetAmount, "800.00");
+  const recovery = calculateAdvanceRecoveryCents({
+    enabled: true,
+    progressPercent: "50",
+    startProgressPercent: "0",
+    advanceRecoveryPercent: "100",
+    currentCertifiedWorkBeforeVat: "900.00",
+    actualAdvanceRemaining: "2000.00",
+    netDue: adjusted.adjustedNetAmount,
+  });
+  assert.equal(recovery.requestedRecoveryAmount, "900.00");
+  assert.equal(recovery.recoveryAmount, "800.00");
 });
 
 test("mock executor makes duplicate settlement replay-safe and rejects a missing key", () => {

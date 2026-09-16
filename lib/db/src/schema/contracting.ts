@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, numeric, timestamp, date, jsonb, index,
+  pgTable, serial, text, integer, numeric, boolean, timestamp, date, jsonb, index,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
@@ -210,7 +210,16 @@ export const contractingOwnerContractsTable = pgTable(
     value:            numeric("value",             { precision: 14, scale: 2 }).notNull().default("0"),
     advancePayment:   numeric("advance_payment",   { precision: 14, scale: 2 }).notNull().default("0"),
     advancePercent:   numeric("advance_percent",   { precision: 5,  scale: 2 }).notNull().default("0"),
+    // Sizing the initial payment is independent from the opt-in recovery
+    // policy applied to later certified work.
+    advanceRecoveryEnabled: boolean("advance_recovery_enabled").notNull().default(false),
+    advanceRecoveryPercent: numeric("advance_recovery_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    advanceRecoveryStartProgressPercent: numeric("advance_recovery_start_progress_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    // Retention policy is snapshotted on the contract. Company setting
+    // changes therefore only affect contracts created afterwards.
+    retentionEnabled: boolean("retention_enabled").notNull().default(true),
     retentionPercent: numeric("retention_percent", { precision: 5,  scale: 2 }).notNull().default("5"),
+    retentionCapPercent: numeric("retention_cap_percent", { precision: 5, scale: 2 }).notNull().default("100"),
     vatPercent:       numeric("vat_percent",       { precision: 5,  scale: 2 }).notNull().default("15"),
     durationDays: integer("duration_days").notNull().default(0),
     startDate: date("start_date"),
@@ -249,11 +258,21 @@ export const contractingSubContractsTable = pgTable(
     contractNumber: text("contract_number").notNull(),
     contractDate: date("contract_date").notNull(),
     signedAt: date("signed_at"),
+    // A subcontract change order reuses this contract row rather than
+    // introducing a second change-order entity.
+    contractType: text("contract_type").notNull().default("main"),
+    parentContractId: integer("parent_contract_id")
+      .references((): AnyPgColumn => contractingSubContractsTable.id, { onDelete: "set null" }),
     scopeOfWork: text("scope_of_work"),
     value:            numeric("value",             { precision: 14, scale: 2 }).notNull().default("0"),
     advancePayment:   numeric("advance_payment",   { precision: 14, scale: 2 }).notNull().default("0"),
     advancePercent:   numeric("advance_percent",   { precision: 5,  scale: 2 }).notNull().default("0"),
+    advanceRecoveryEnabled: boolean("advance_recovery_enabled").notNull().default(false),
+    advanceRecoveryPercent: numeric("advance_recovery_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    advanceRecoveryStartProgressPercent: numeric("advance_recovery_start_progress_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    retentionEnabled: boolean("retention_enabled").notNull().default(true),
     retentionPercent: numeric("retention_percent", { precision: 5,  scale: 2 }).notNull().default("5"),
+    retentionCapPercent: numeric("retention_cap_percent", { precision: 5, scale: 2 }).notNull().default("100"),
     vatPercent:       numeric("vat_percent",       { precision: 5,  scale: 2 }).notNull().default("15"),
     durationDays: integer("duration_days").notNull().default(0),
     startDate: date("start_date"),
@@ -310,13 +329,27 @@ export const contractingProgressBillsTable = pgTable(
     // Cumulative project (or scope) progress at the time of this bill (0-100).
     progressPercent: numeric("progress_percent", { precision: 5, scale: 2 }).notNull().default("0"),
     grossAmount:     numeric("gross_amount",      { precision: 14, scale: 2 }).notNull().default("0"),
+    // These are immutable policy snapshots for a bill created after the
+    // retention policy was introduced. NULL means a legacy bill: approval
+    // must keep its historical retention calculation without a cap.
+    retentionEnabled: boolean("retention_enabled"),
     retentionPercent:numeric("retention_percent", { precision: 5,  scale: 2 }).notNull().default("0"),
+    retentionCapPercent: numeric("retention_cap_percent", { precision: 5, scale: 2 }),
     retentionAmount: numeric("retention_amount",  { precision: 14, scale: 2 }).notNull().default("0"),
     previousPaid:    numeric("previous_paid",     { precision: 14, scale: 2 }).notNull().default("0"),
     dueAmount:       numeric("due_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     vatPercent:      numeric("vat_percent",       { precision: 5,  scale: 2 }).notNull().default("15"),
     vatAmount:       numeric("vat_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     netAmount:       numeric("net_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
+    // Immutable recovery-policy and amount snapshots. Legacy bills remain
+    // disabled and therefore never acquire retroactive deductions.
+    advanceRecoveryEnabled: boolean("advance_recovery_enabled").notNull().default(false),
+    advanceRecoveryPercent: numeric("advance_recovery_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    advanceRecoveryStartProgressPercent: numeric("advance_recovery_start_progress_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    advanceRecoveryRequestedAmount: numeric("advance_recovery_requested_amount", { precision: 14, scale: 2 }).notNull().default("0"),
+    advanceRecoveryAmount: numeric("advance_recovery_amount", { precision: 14, scale: 2 }).notNull().default("0"),
+    advanceRecoveryRemainingBefore: numeric("advance_recovery_remaining_before", { precision: 14, scale: 2 }).notNull().default("0"),
+    advanceRecoveryRemainingAfter: numeric("advance_recovery_remaining_after", { precision: 14, scale: 2 }).notNull().default("0"),
     paidAmount:      numeric("paid_amount",       { precision: 14, scale: 2 }).notNull().default("0"),
     // Posted corrections never rewrite the source bill. They reverse this
     // row's journal and create a new draft linked back to it.

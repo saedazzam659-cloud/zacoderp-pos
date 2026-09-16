@@ -34,6 +34,8 @@ export function ensureContractingAccountingTables(): Promise<void> {
         source_settlement_id INTEGER REFERENCES contracting_accounting_settlements(id) ON DELETE RESTRICT,
         idempotency_key TEXT,
         idempotency_payload_hash TEXT,
+        application_origin TEXT NOT NULL DEFAULT 'manual',
+        reversal_journal_entry_id INTEGER REFERENCES journal_entries(id) ON DELETE RESTRICT,
         status TEXT NOT NULL DEFAULT 'posted',
         notes TEXT,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -53,7 +55,9 @@ export function ensureContractingAccountingTables(): Promise<void> {
       ALTER TABLE contracting_accounting_settlements
         ADD COLUMN IF NOT EXISTS owner_contract_id INTEGER REFERENCES contracting_owner_contracts(id) ON DELETE RESTRICT,
         ADD COLUMN IF NOT EXISTS subcontractor_contract_id INTEGER REFERENCES contracting_sub_contracts(id) ON DELETE RESTRICT,
-        ADD COLUMN IF NOT EXISTS idempotency_payload_hash TEXT
+        ADD COLUMN IF NOT EXISTS idempotency_payload_hash TEXT,
+        ADD COLUMN IF NOT EXISTS application_origin TEXT NOT NULL DEFAULT 'manual',
+        ADD COLUMN IF NOT EXISTS reversal_journal_entry_id INTEGER REFERENCES journal_entries(id) ON DELETE RESTRICT
     `);
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS contracting_settlements_project_idx

@@ -186,6 +186,7 @@ import ContractingProjects from "@/pages/ContractingProjects";
 import ContractingProjectDetail from "@/pages/ContractingProjectDetail";
 import ContractingContractors from "@/pages/ContractingContractors";
 import ContractingBills from "@/pages/ContractingBills";
+import ContractingSettings from "@/pages/ContractingSettings";
 import MaintenanceHub from "@/pages/maintenance/MaintenanceHub";
 import MaintenanceAssets from "@/pages/maintenance/MaintenanceAssets";
 import MaintenanceTechnicians from "@/pages/maintenance/MaintenanceTechnicians";
@@ -957,6 +958,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/contracting/projects/:id"     module="contracting"    component={ContractingProjectDetail} />}
             {!isSuperAdmin && <PermRoute path="/contracting/contractors"      module="contracting"    component={ContractingContractors} />}
             {!isSuperAdmin && <PermRoute path="/contracting/bills"            module="contracting"    component={ContractingBills} />}
+            {!isSuperAdmin && <PermRoute path="/contracting/settings"          module="contracting"    component={ContractingSettings} />}
 
             {/* Maintenance ERP — gated by `maintenance` permission. */}
             {!isSuperAdmin && <PermRoute path="/maintenance"                  module="maintenance"    component={MaintenanceHub} />}
