@@ -1778,6 +1778,9 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
   const [rows, setRows] = useState<OwnerContract[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<OwnerContract> | null>(null);
+  const createRequestId = useRef<string | null>(null);
+  const saveInFlight = useRef(false);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1793,6 +1796,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
   useEffect(() => { void load(); }, [load]);
 
   async function save() {
+    if (saveInFlight.current) return;
     if (!editing?.contractNumber || !editing?.contractDate) {
       toast({ title: t("contracting.ownerContract.required", "رقم العقد والتاريخ مطلوبان"), variant: "destructive" }); return;
     }
@@ -1800,19 +1804,24 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
     if (!Number.isFinite(advancePercent) || advancePercent < 0 || advancePercent > 100) {
       toast({ title: t("contracting.ownerContract.advancePercentInvalid", "نسبة الدفعة المقدمة يجب أن تكون بين 0 و100"), variant: "destructive" }); return;
     }
+    saveInFlight.current = true;
+    setSaving(true);
     try {
       const isEdit = (editing as any).id != null;
+      if (!isEdit) createRequestId.current ??= crypto.randomUUID();
       const url = isEdit
         ? `${API}/api/contracting/owner-contracts/${(editing as any).id}`
         : `${API}/api/contracting/projects/${projectId}/owner-contracts`;
       const r = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(editing),
+        body: JSON.stringify(isEdit ? editing : { ...editing, clientRequestId: createRequestId.current }),
       });
       if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
+      createRequestId.current = null;
       setEditing(null); await load();
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
+    finally { saveInFlight.current = false; setSaving(false); }
   }
   async function del(id: number) {
     if (!confirm(t("common.confirmDelete", "تأكيد الحذف؟"))) return;
@@ -1821,6 +1830,8 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
   }
 
   function openNew() {
+    if (saveInFlight.current) return;
+    createRequestId.current = null;
     setEditing({
       contractNumber: "", contractDate: new Date().toISOString().slice(0,10),
       contractType: rows.length === 0 ? "main" : "change_order",
@@ -1973,8 +1984,8 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
-            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
+            <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
+            <Button disabled={saving} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
           </div>
         </div>
       )}
@@ -1991,6 +2002,9 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<SubContract> | null>(null);
+  const createRequestId = useRef<string | null>(null);
+  const saveInFlight = useRef(false);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2008,6 +2022,7 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
   useEffect(() => { void load(); }, [load]);
 
   async function save() {
+    if (saveInFlight.current) return;
     if (!editing?.contractorId) {
       toast({ title: t("contracting.subContract.contractorRequired", "يجب اختيار المقاول الباطن"), variant: "destructive" }); return;
     }
@@ -2018,19 +2033,24 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
     if (!Number.isFinite(advancePercent) || advancePercent < 0 || advancePercent > 100) {
       toast({ title: t("contracting.subContract.advancePercentInvalid", "نسبة الدفعة المقدمة يجب أن تكون بين 0 و100"), variant: "destructive" }); return;
     }
+    saveInFlight.current = true;
+    setSaving(true);
     try {
       const isEdit = (editing as any).id != null;
+      if (!isEdit) createRequestId.current ??= crypto.randomUUID();
       const url = isEdit
         ? `${API}/api/contracting/sub-contracts/${(editing as any).id}`
         : `${API}/api/contracting/projects/${projectId}/sub-contracts`;
       const r = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(editing),
+        body: JSON.stringify(isEdit ? editing : { ...editing, clientRequestId: createRequestId.current }),
       });
       if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
+      createRequestId.current = null;
       setEditing(null); await load();
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
+    finally { saveInFlight.current = false; setSaving(false); }
   }
   async function del(id: number) {
     if (!confirm(t("common.confirmDelete", "تأكيد الحذف؟"))) return;
@@ -2054,7 +2074,7 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
               contractorName: contractors.find(item => item.id === contract.contractorId)?.name || null,
             })) as ContractingContractSnapshot[]}
           />
-          <Button size="sm" onClick={() => setEditing({ contractNumber: "", contractDate: new Date().toISOString().slice(0,10), value: "0", advancePayment: "0", advancePercent: "0", retentionPercent: "10", vatPercent: "15", durationDays: 0, status: "draft" })}>
+          <Button size="sm" disabled={saving} onClick={() => { createRequestId.current = null; setEditing({ contractNumber: "", contractDate: new Date().toISOString().slice(0,10), value: "0", advancePayment: "0", advancePercent: "0", retentionPercent: "10", vatPercent: "15", durationDays: 0, status: "draft" }); }}>
             <Plus className="h-4 w-4 mx-1" /> {t("contracting.subContract.add", "عقد باطن جديد")}
           </Button>
         </div>
@@ -2165,8 +2185,8 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
-            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
+            <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
+            <Button disabled={saving} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
           </div>
         </div>
       )}

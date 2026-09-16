@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 
 import {
   contractCreateFingerprint,
@@ -7,6 +8,10 @@ import {
 } from "../src/lib/contracting-contract-create-idempotency.ts";
 
 test("contract create request keys accept the form field or Idempotency-Key header", () => {
+  assert.equal(
+    parseContractCreateIdempotencyKey({ body: { clientRequestId: "web-form-key" } }),
+    "web-form-key",
+  );
   assert.equal(
     parseContractCreateIdempotencyKey({ body: { idempotencyKey: " form-key " } }),
     "form-key",
@@ -22,6 +27,18 @@ test("contract create request keys accept the form field or Idempotency-Key head
     () => parseContractCreateIdempotencyKey({ body: {} }),
     (error: any) => error.status === 400,
   );
+});
+
+test("both web contract forms retain and send a create key and block concurrent saves", () => {
+  const source = readFileSync(new URL("../../zatca-invoicing/src/pages/ContractingProjectDetail.tsx", import.meta.url), "utf8");
+  for (const name of ["OwnerContractTab", "SubContractsTab"]) {
+    const form = source.split(`function ${name}(`)[1]?.split("\nfunction ")[0];
+    assert.ok(form, `${name} exists`);
+    assert.match(form, /if \(saveInFlight\.current\) return/);
+    assert.match(form, /createRequestId\.current \?\?= crypto\.randomUUID\(\)/);
+    assert.match(form, /JSON\.stringify\(isEdit \? editing : \{ \.\.\.editing, clientRequestId: createRequestId\.current \}\)/);
+    assert.match(form, /<Button disabled=\{saving\} onClick=\{save\}>/);
+  }
 });
 
 test("contract create fingerprints are stable for reordered top-level fields", () => {
