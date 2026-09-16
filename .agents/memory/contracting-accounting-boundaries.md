@@ -69,6 +69,12 @@ Keep the progress-certificate form in the invoice-style reading order: metadata 
 
 **How to apply:** Preserve project navigation separately. Visually distinguish current editable quantities from prior/cumulative read-only values without removing aggregate-progress behavior during cosmetic changes.
 
+Execution and certification must remain separate ledgers of progress. Executed work not yet certified may be certified in a later period with zero new execution.
+
+**Why:** The user confirmed that partial consultant certification must leave the uncertified portion pending, rather than consume contract quantity again or treat it as financial retention.
+
+**How to apply:** Keep actual measured execution distinct from payable certified value. If a percentage represents partial valuation rather than physical quantity acceptance, label its quantity equivalent explicitly; do not silently turn it into new actual execution. Derive current certification from cumulative certified value minus previously certified value, with traceable pending-work references.
+
 Runtime-created financial tables must also be represented in the exported declarative schema and development database before publishing.
 
 **Why:** Tables existing only in production were proposed as deleted/rename candidates when a new unrelated table appeared in development. Lazy creation is not sufficient protection against schema synchronization.
