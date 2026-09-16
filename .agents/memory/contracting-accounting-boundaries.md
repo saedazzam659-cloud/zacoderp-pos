@@ -68,3 +68,9 @@ Keep the progress-certificate form in the invoice-style reading order: metadata 
 **Why:** The user explicitly requested the familiar invoice arrangement and field scale to make certificate entry and review easier.
 
 **How to apply:** Preserve project navigation separately. Visually distinguish current editable quantities from prior/cumulative read-only values without removing aggregate-progress behavior during cosmetic changes.
+
+Runtime-created financial tables must also be represented in the exported declarative schema and development database before publishing.
+
+**Why:** Tables existing only in production were proposed as deleted/rename candidates when a new unrelated table appeared in development. Lazy creation is not sufficient protection against schema synchronization.
+
+**How to apply:** Restore missing definitions and apply additive development-only changes; never rename accounting/history tables into idempotency tables. Inspect the actual publish SQL, not just summary flags: the diff tool has returned `hasStructuralDataLoss: false` and empty removal lists while its statements included `DROP TABLE ... CASCADE`.
