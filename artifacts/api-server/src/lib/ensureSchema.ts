@@ -237,6 +237,23 @@ const INDUSTRIAL_PURCHASE_COST_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS purchase_return_lines ADD COLUMN IF NOT EXISTS industrial_cost JSONB`,
 ] as const;
 
+// Internal transport is an additive cost on a warehouse transfer. Keep this
+// rolling-upgrade DDL independent from Drizzle migrations so old tenants can
+// receive the fields without rewriting posted documents.
+const INTERNAL_TRANSPORT_COMPATIBILITY_DDL = [
+  `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS transfer_type TEXT NOT NULL DEFAULT 'warehouse'`,
+  `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS production_order_id INTEGER`,
+  `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS internal_transport_amount NUMERIC(18,2) NOT NULL DEFAULT '0'`,
+  `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS internal_transport_expense_account_id INTEGER`,
+  `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS internal_transport_counterpart_account_id INTEGER`,
+  `ALTER TABLE IF EXISTS manufacturing_settings ADD COLUMN IF NOT EXISTS internal_transport_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+  `CREATE INDEX IF NOT EXISTS stock_transfers_production_order_idx ON stock_transfers (company_id, production_order_id)`,
+] as const;
+
+async function ensureInternalTransportCompatibility(): Promise<void> {
+  for (const stmt of INTERNAL_TRANSPORT_COMPATIBILITY_DDL) await execDDL(stmt);
+}
+
 async function ensureIndustrialPurchaseCostCompatibility(): Promise<void> {
   for (const stmt of INDUSTRIAL_PURCHASE_COST_COMPATIBILITY_DDL) {
     try {
@@ -4330,6 +4347,7 @@ async function runHeal(options: {
   // agent package update, so a partially-upgraded agent must heal first.
   await ensureSupplierMetadataCompatibility();
   await ensureIndustrialPurchaseCostCompatibility();
+  await ensureInternalTransportCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must
   // exist in the shared heal pass before strict reconciliation and backup

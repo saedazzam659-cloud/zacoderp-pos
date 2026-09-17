@@ -461,6 +461,14 @@ export const stockTransfersTable = pgTable("stock_transfers", {
   fromAccountId:   integer("from_account_id").references(() => accountsTable.id),
   toAccountId:     integer("to_account_id").references(() => accountsTable.id),
   journalEntryId:  integer("journal_entry_id"),
+  // `warehouse` is the legacy transfer kind. Manufacturing transfers may
+  // carry a separately posted internal transport charge; this is never
+  // derived from the value of the moved goods.
+  transferType:    text("transfer_type").notNull().default("warehouse"),
+  productionOrderId: integer("production_order_id"),
+  internalTransportAmount: numeric("internal_transport_amount", { precision: 18, scale: 2 }).notNull().default("0"),
+  internalTransportExpenseAccountId: integer("internal_transport_expense_account_id").references(() => accountsTable.id),
+  internalTransportCounterpartAccountId: integer("internal_transport_counterpart_account_id").references(() => accountsTable.id),
   status:          docStatusEnum("status").default("draft").notNull(),
   notes:           text("notes"),
   createdAt:       timestamp("created_at").defaultNow().notNull(),

@@ -33,6 +33,9 @@ import {
   notificationsTable,
   subscriptionsTable,
   accountingMappingsTable,
+  productionOrdersTable,
+  productionCostAllocationsTable,
+  manufacturingSettingsTable,
 } from "@workspace/db";
 import { eq, ne, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or, count } from "drizzle-orm";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -122,6 +125,124 @@ function guard(req: any, res: any): number | null {
 
 function getCompanyId(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+}
+
+const TRANSPORT_TYPES = new Set(["warehouse", "manufacturing"]);
+
+async function validateInternalTransportAccounts(
+  q: any,
+  cid: number,
+  amount: number,
+  expenseAccountId: unknown,
+  counterpartAccountId: unknown,
+) {
+  if (!(amount > 0)) return;
+  const expenseId = Number(expenseAccountId);
+  const counterpartId = Number(counterpartAccountId);
+  if (!Number.isInteger(expenseId) || expenseId <= 0 ||
+      !Number.isInteger(counterpartId) || counterpartId <= 0 ||
+      expenseId === counterpartId) {
+    throw new Error("مبلغ النقل الداخلي الموجب يتطلب حساب مصروف وحساب مقابل مختلفين");
+  }
+  const rows = await q.select({
+    id: accountsTable.id, accountType: accountsTable.accountType,
+    isActive: accountsTable.isActive, isPosting: accountsTable.isPosting,
+  }).from(accountsTable).where(and(
+    eq(accountsTable.companyId, cid),
+    inArray(accountsTable.id, [expenseId, counterpartId]),
+  ));
+  const byId = new Map(rows.map((row: any) => [row.id, row]));
+  const expense = byId.get(expenseId);
+  const counterpart = byId.get(counterpartId);
+  if (!expense || !expense.isActive || !expense.isPosting || expense.accountType !== "expense") {
+    throw new Error("حساب مصروف النقل الداخلي يجب أن يكون حساب مصروف نشطاً وقابلاً للترحيل في الشركة");
+  }
+  if (!counterpart || !counterpart.isActive || !counterpart.isPosting) {
+    throw new Error("حساب مقابل النقل الداخلي غير موجود أو غير نشط أو غير قابل للترحيل");
+  }
+}
+
+async function validateTransportOrder(
+  q: any,
+  cid: number,
+  orderId: number | null,
+  warehouseIds: number[],
+  req?: any,
+) {
+  if (orderId == null) return null;
+  const [order] = await q.select({
+    id: productionOrdersTable.id, status: productionOrdersTable.status,
+    branchId: productionOrdersTable.branchId, orderNumber: productionOrdersTable.orderNumber,
+  }).from(productionOrdersTable).where(and(
+    eq(productionOrdersTable.id, orderId),
+    eq(productionOrdersTable.companyId, cid),
+  )).limit(1);
+  if (!order) throw new Error("أمر الإنتاج غير موجود في الشركة");
+  if (["completed", "cancelled", "reversed"].includes(String(order.status))) {
+    throw new Error("لا يمكن إضافة أو ربط تكلفة نقل داخلي بأمر مكتمل أو ملغى أو معكوس");
+  }
+  if (req && order.branchId != null) {
+    const allowed = getAllowedBranchIds(req);
+    if (allowed != null && !allowed.includes(order.branchId)) {
+      throw new Error("أمر الإنتاج خارج نطاق الفرع المسموح");
+    }
+  }
+  const warehouses = warehouseIds.length
+    ? await q.select({ id: warehousesTable.id, branchId: warehousesTable.branchId })
+      .from(warehousesTable).where(and(
+        eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, warehouseIds),
+      ))
+    : [];
+  if (order.branchId != null && warehouses.some((w: any) => w.branchId != null && w.branchId !== order.branchId)) {
+    throw new Error("يجب أن يتبع أمر الإنتاج ومخازن التحويل نفس الفرع");
+  }
+  return order;
+}
+
+async function allocatePostedInternalTransport(
+  tx: any,
+  cid: number,
+  transfer: any,
+  actorId: number | null,
+) {
+  if (!transfer.productionOrderId || Number(transfer.internalTransportAmount) <= 0) return;
+  const [order] = await tx.select().from(productionOrdersTable).where(and(
+    eq(productionOrdersTable.id, transfer.productionOrderId),
+    eq(productionOrdersTable.companyId, cid),
+  )).for("update");
+  if (!order || ["completed", "cancelled", "reversed"].includes(String(order.status))) {
+    throw new Error("لا يمكن توزيع النقل الداخلي على أمر إنتاج مكتمل أو ملغى أو معكوس");
+  }
+  const [alreadyUsed] = await tx.select({ id: productionCostAllocationsTable.id })
+    .from(productionCostAllocationsTable).where(and(
+      eq(productionCostAllocationsTable.companyId, cid),
+      eq(productionCostAllocationsTable.sourceType, "internal_transport"),
+      eq(productionCostAllocationsTable.sourceRecordId, transfer.id),
+    )).limit(1);
+  if (alreadyUsed) return;
+  const date = String(transfer.transferDate).slice(0, 10);
+  await tx.insert(productionCostAllocationsTable).values({
+    companyId: cid,
+    orderId: order.id,
+    sourceType: "internal_transport",
+    sourceRecordId: transfer.id,
+    periodStart: date,
+    periodEnd: date,
+    basis: "posted_internal_transport",
+    sourceAmount: Number(transfer.internalTransportAmount).toFixed(2),
+    sharePct: "100",
+    allocatedAmount: Number(transfer.internalTransportAmount).toFixed(2),
+    snapshotMeta: {
+      label: `نقل داخلي للتحويل ${transfer.transferNumber}`,
+      includeInManufacturing: true,
+      costTreatment: "manufacturing_overhead",
+      reclassificationAccounts: [{
+        accountId: transfer.internalTransportExpenseAccountId,
+        weight: Number(transfer.internalTransportAmount),
+      }],
+    },
+    createdBy: actorId,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════

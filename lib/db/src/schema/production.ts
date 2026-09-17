@@ -287,7 +287,7 @@ export const productionCostAllocationsTable = pgTable(
     id: serial("id").primaryKey(),
     companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
     orderId: integer("order_id").notNull().references(() => productionOrdersTable.id, { onDelete: "restrict" }),
-    sourceType: text("source_type").notNull(), // payroll | fixed_asset_depreciation | prepaid_amortization | posted industrial purchase line
+    sourceType: text("source_type").notNull(), // payroll | fixed_asset_depreciation | prepaid_amortization | purchase line | internal_transport
     sourceRecordId: integer("source_record_id").notNull(),
     periodStart: date("period_start").notNull(),
     periodEnd: date("period_end").notNull(),
@@ -801,6 +801,9 @@ export const manufacturingSettingsTable = pgTable(
       precision: 14,
       scale: 6,
     }),
+    // Disabled for new captures by default. Existing posted transport costs
+    // remain historical and continue through their saved source snapshots.
+    internalTransportEnabled: boolean("internal_transport_enabled").notNull().default(false),
     // ─── Round A — Approval gate (informational on this MVP) ─────────────
     // When approvalRequired is true (or estimatedCost >= approvalThreshold),
     // the order's pending-approval UI surfaces it for manual approval before
