@@ -158,3 +158,11 @@ is different: `availableAmount` subtracts every non-cancelled allocation for
 the same tenant/source across all branches, including shared company-wide
 sources. Branch-filtering the used amount would let two branch views
 over-consume one delegated source pool.
+
+## Internal delivery and transport
+
+Present internal delivery to manufacturing using the existing invoice-entry UI conventions, backed by a single warehouse transfer rather than a second stock movement. Delivery into a production warehouse is not material consumption. Transport is a separate charge, never the transferred goods' value; linking to an order is optional and each delivery retains its own link.
+
+**Why:** The user chose an internal delivery document for this workflow and explicitly requested the same invoice UI/UX. Charging the stock transfer value as transport would duplicate material cost, and treating delivery as consumption would duplicate the existing manufacturing issue.
+
+**How to apply:** Reuse transfer posting and production source-cost ownership when implementing the approved design. Support several delivery documents per order, and preserve independent unlinked movements.
