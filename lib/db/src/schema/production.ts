@@ -295,6 +295,11 @@ export const productionCostAllocationsTable = pgTable(
     sourceAmount: numeric("source_amount", { precision: 18, scale: 2 }).notNull(),
     sharePct: numeric("share_pct", { precision: 9, scale: 6 }).notNull(),
     allocatedAmount: numeric("allocated_amount", { precision: 18, scale: 2 }).notNull(),
+    // Supplemental WIP reclassification for a source attached after issue.
+    // These IDs make late transport capitalization and its exact reversal
+    // independently auditable without mutating the source journal.
+    reclassificationJournalEntryId: integer("reclassification_journal_entry_id"),
+    reversalJournalEntryId: integer("reversal_journal_entry_id"),
     snapshotMeta: jsonb("snapshot_meta").$type<Record<string, unknown>>().default({}),
     createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),

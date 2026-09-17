@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { GitBranch, FileText, Plus, Server, PackageOpen } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { Switch } from "@/components/ui/switch";
 import type { Catalog } from "./types";
 
 export function SimpleSetup({
@@ -18,7 +19,8 @@ export function SimpleSetup({
   onSaveRouting,
   onLoadRouting,
   onSaveTemplate,
-  onSaveWarehouse
+   onSaveWarehouse,
+   onSaveAccounting,
 }: {
   catalog: Catalog;
   busy: boolean;
@@ -31,6 +33,15 @@ export function SimpleSetup({
   onLoadRouting: (id: number) => Promise<any>;
   onSaveTemplate: (data: { id?: number; name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
   onSaveWarehouse: (data: { code: string; nameAr: string; isDefault: boolean }) => Promise<unknown>;
+  onSaveAccounting: (data: {
+    defaultWipAccountId: number | null;
+    defaultRawInventoryAccountId: number | null;
+    defaultFinishedGoodsAccountId: number | null;
+    defaultOverheadAccountId: number | null;
+    defaultWasteAccountId: number | null;
+    electricityTariffPerKwh?: number | null;
+    internalTransportEnabled?: boolean;
+  }) => Promise<unknown>;
 }) {
   const [material, setMaterial] = useState({ code: "", nameAr: "", itemNature: "raw", unitId: "" });
   const [bom, setBom] = useState({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
@@ -52,6 +63,14 @@ export function SimpleSetup({
   }>>([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }]);
   const [template, setTemplate] = useState({ name: "", productItemId: "", plannedQty: "1", unitCode: "" });
   const [warehouse, setWarehouse] = useState({ code: "", nameAr: "", isDefault: false });
+  const [internalTransportEnabled, setInternalTransportEnabled] = useState(
+    catalog.accounting?.settings?.internalTransportEnabled === true,
+  );
+  const [savingTransportSetting, setSavingTransportSetting] = useState(false);
+
+  useEffect(() => {
+    setInternalTransportEnabled(catalog.accounting?.settings?.internalTransportEnabled === true);
+  }, [catalog.accounting?.settings?.internalTransportEnabled]);
 
   // Dialog open states
   const [openMat, setOpenMat] = useState(false);
@@ -183,6 +202,47 @@ export function SimpleSetup({
 
   return (
     <div dir="rtl" className="grid gap-6 text-start md:grid-cols-2 lg:grid-cols-2">
+      <Card className="border-amber-200 bg-amber-50/30 shadow-sm md:col-span-2">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base text-amber-950">النقل الداخلي إلى التصنيع</CardTitle>
+          <CardDescription>يسمح بالتقاط تكلفة النقل الجديدة في أذونات التسليم. الإيقاف لا يحذف التاريخ المحفوظ.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center justify-between gap-4">
+          <div className="text-sm">
+            <div className="font-semibold">{internalTransportEnabled ? "التقاط تكلفة النقل مفعّل" : "التقاط تكلفة النقل متوقف"}</div>
+            <p className="mt-1 text-xs text-slate-600">يمكن قراءة أذونات النقل السابقة وتكلفتها في تفاصيل الأمر مهما كان الإعداد الحالي.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={internalTransportEnabled}
+              disabled={savingTransportSetting || busy}
+              onCheckedChange={async (checked) => {
+                const previous = internalTransportEnabled;
+                setInternalTransportEnabled(checked);
+                setSavingTransportSetting(true);
+                try {
+                  await onSaveAccounting({
+                    defaultWipAccountId: catalog.accounting?.settings?.defaultWipAccountId ?? null,
+                    defaultRawInventoryAccountId: catalog.accounting?.settings?.defaultRawInventoryAccountId ?? null,
+                    defaultFinishedGoodsAccountId: catalog.accounting?.settings?.defaultFinishedGoodsAccountId ?? null,
+                    defaultOverheadAccountId: catalog.accounting?.settings?.defaultOverheadAccountId ?? null,
+                    defaultWasteAccountId: catalog.accounting?.settings?.defaultWasteAccountId ?? null,
+                    electricityTariffPerKwh: catalog.accounting?.settings?.electricityTariffPerKwh == null
+                      ? null : Number(catalog.accounting.settings.electricityTariffPerKwh),
+                    internalTransportEnabled: checked,
+                  });
+                } catch {
+                  setInternalTransportEnabled(previous);
+                } finally {
+                  setSavingTransportSetting(false);
+                }
+              }}
+              aria-label="تفعيل النقل الداخلي"
+            />
+            <span className="text-xs font-medium">{internalTransportEnabled ? "مفعّل" : "متوقف"}</span>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Materials & BOM */}
       <Card className="border-violet-100 shadow-sm">

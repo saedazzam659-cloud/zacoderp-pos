@@ -1319,6 +1319,15 @@ export function SimpleWizard({
 
           {tab === "costs" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                <h4 className="font-semibold text-amber-950">النقل الداخلي إلى التصنيع</h4>
+                <p className="mt-1 text-xs leading-6 text-amber-900">
+                  لا يمكن إدخال مبلغ نقل وهمي قبل حفظ أمر التصنيع. احفظ الأمر أولاً، ثم أنشئ إذن تسليم داخلي من شاشة المخزون واربطه بهذا الأمر؛ سيظهر الإجمالي المحفوظ في تفاصيل الأمر بعد الترحيل.
+                </p>
+                <p className="mt-2 text-[11px] text-amber-800">
+                  إعداد النقل يُدار من إعدادات التصنيع. عند تعطيله لا تُلتقط تكاليف جديدة، وتبقى الأذونات والتكاليف التاريخية قابلة للقراءة.
+                </p>
+              </div>
               <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between bg-violet-50/50 p-4 rounded-xl border border-violet-100">
                 <div className="space-y-1">
                   <h4 className="font-semibold text-violet-900">التكاليف الإضافية الفعلية</h4>

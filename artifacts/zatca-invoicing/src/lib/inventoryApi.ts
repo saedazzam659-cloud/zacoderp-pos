@@ -27,6 +27,12 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return r.json();
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(`${API}/api/inventory${path}`, { method: "PATCH", headers: authHeaders(), body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
 async function del(path: string): Promise<void> {
   const r = await fetch(`${API}/api/inventory${path}`, { method: "DELETE", headers: authHeaders() });
   if (!r.ok) throw new Error(await r.text());
@@ -186,6 +192,13 @@ export const inventoryApi = {
   createTransfer: (data: any)    => post<any>("/stock-transfers", data),
   updateTransfer: (id: number, data: any) => put<any>(`/stock-transfers/${id}`, data),
   postTransfer:   (id: number)   => post<any>(`/stock-transfers/${id}/post`, {}),
+  getManufacturingTransferOptions: () => get<{
+    enabled: boolean;
+    orders: Array<{ id: number; orderNumber: string; productName: string; status: string }>;
+    accounts: Array<{ id: number; code: string; nameAr: string; nameEn: string | null }>;
+  }>("/transfer-manufacturing-options"),
+  linkTransferProductionOrder: (id: number, productionOrderId: number | null) =>
+    patch<any>(`/stock-transfers/${id}/production-order`, { productionOrderId }),
   deleteTransfer: (id: number)   => del(`/stock-transfers/${id}`),
   // Stock Adjustments
   getAdjustments:   (cid?: number) => get<any[]>(`/stock-adjustments${cid ? `?companyId=${cid}` : ""}`),

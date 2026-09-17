@@ -166,3 +166,9 @@ Present internal delivery to manufacturing using the existing invoice-entry UI c
 **Why:** The user chose an internal delivery document for this workflow and explicitly requested the same invoice UI/UX. Charging the stock transfer value as transport would duplicate material cost, and treating delivery as consumption would duplicate the existing manufacturing issue.
 
 **How to apply:** Reuse transfer posting and production source-cost ownership when implementing the approved design. Support several delivery documents per order, and preserve independent unlinked movements.
+
+Late transport linked after material issue needs its own immutable WIP reclassification, not a rewrite of the original issue. Acquire the source's idempotency claim before posting that supplemental journal or changing order cost, and reverse its exact evidence with the manufacturing lifecycle.
+
+**Why:** Checking allocation deduplication only after creating the supplemental journal allows a lost-response retry to capitalize twice while retaining evidence for only one charge.
+
+**How to apply:** Treat source claim, supplemental journal, and cost update as one locked transaction. Keep the original delivery expense independent so manufacturing reversal does not reverse the warehouse delivery.

@@ -76,7 +76,8 @@ export type Catalog = {
       defaultFinishedGoodsAccountId?: number | null;
       defaultOverheadAccountId?: number | null;
       defaultWasteAccountId?: number | null;
-        electricityTariffPerKwh?: string | number | null;
+      electricityTariffPerKwh?: string | number | null;
+      internalTransportEnabled?: boolean;
     } | null;
     accounts: Array<{
       id: number;

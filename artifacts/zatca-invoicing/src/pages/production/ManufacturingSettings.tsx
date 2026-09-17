@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Settings2, Save, Warehouse, Calculator, Sparkles } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Settings2, Save, Warehouse, Calculator, Sparkles, Truck as TruckIcon } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -26,6 +27,7 @@ type Settings = {
   defaultOverheadAccountId: number | null;
   defaultVarianceAccountId: number | null;
   defaultWasteAccountId: number | null;
+  internalTransportEnabled: boolean;
 };
 
 const EMPTY: Settings = {
@@ -39,6 +41,7 @@ const EMPTY: Settings = {
   defaultOverheadAccountId: null,
   defaultVarianceAccountId: null,
   defaultWasteAccountId: null,
+  internalTransportEnabled: false,
 };
 
 const ACCOUNT_FIELDS: Array<{ key: keyof Settings; label: string; hint: string }> = [
@@ -295,6 +298,25 @@ export default function ManufacturingSettings() {
               <p className="mt-1 text-xs text-violet-600"><Sparkles className="inline h-3 w-3 me-1" />{aiReasons["defaultCostCenter"]}</p>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-amber-200 bg-amber-50/30">
+        <CardHeader className="flex flex-row items-center gap-2">
+          <TruckIcon className="h-4 w-4 text-amber-700" />
+          <CardTitle className="text-base">النقل الداخلي إلى التصنيع</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="font-semibold">{data.internalTransportEnabled ? "التقاط تكلفة النقل مفعّل" : "التقاط تكلفة النقل متوقف"}</p>
+            <p className="mt-1 text-xs text-slate-600">الإيقاف يمنع التكاليف الجديدة فقط؛ الأذونات والتجميعات التاريخية تبقى قابلة للقراءة.</p>
+          </div>
+          <Switch
+            checked={data.internalTransportEnabled}
+            onCheckedChange={(checked) => setData(current => ({ ...current, internalTransportEnabled: checked }))}
+            disabled={saving}
+            aria-label="تفعيل تكلفة النقل الداخلي"
+          />
         </CardContent>
       </Card>
 

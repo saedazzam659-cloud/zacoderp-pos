@@ -145,10 +145,12 @@ export function SimpleOrderWizardReadonly({
   order,
   catalog,
   resourceCost,
+  internalTransport,
 }: {
   order: ReadonlyOrder;
   catalog: Catalog;
   resourceCost?: any;
+  internalTransport?: any;
 }) {
   const [tab, setTab] = useState<StepId>("basic");
   const detail = order.detail ?? {};
@@ -334,6 +336,19 @@ export function SimpleOrderWizardReadonly({
         <Field label="فترة مصادر التكلفة المحفوظة" value={valueOrNotSaved(meta.costPeriod)} />
         <Field label="التكلفة التقديرية المحفوظة" value={savedNumber(savedOrder.estimatedCost)} />
       </div>
+      {internalTransport && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+          <div className="mb-2 text-sm font-semibold text-amber-950">النقل الداخلي المحفوظ</div>
+          <p className="mb-3 text-xs text-amber-900">
+            هذه الأرقام مصدرها أذونات النقل المرحّلة وقت فتح الأمر، ولا تُعاد قراءتها من سعر اليوم ولا تُضاف مرة أخرى إلى إجمالي التكلفة.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <SnapshotValue label="إجمالي النقل المرحّل" value={savedNumber(internalTransport.total)} />
+            <SnapshotValue label="الإجمالي المرسمل المحفوظ" value={savedNumber(internalTransport.capitalizedTotal)} />
+            <SnapshotValue label="عدد الأذونات المحفوظة" value={savedNumber(internalTransport.transfers?.length ?? 0)} />
+          </div>
+        </div>
+      )}
       {Number(resourceCost?.version) >= 1 && (
         <div className="rounded-lg border border-violet-200 bg-white p-3">
           <div className="mb-2 text-sm font-semibold text-violet-950">لقطة تكلفة المورد المحفوظة</div>

@@ -24,6 +24,7 @@ import {
   suppliersTable,
   accountsTable,
   manufacturingSettingsTable,
+  stockTransfersTable,
   productionResourcesTable,
   usersTable,
 } from "@workspace/db";
@@ -569,9 +570,17 @@ router.put("/setup/accounting", edit, async (req, res) => {
       defaultOverheadAccountId: manufacturingSettingsTable.defaultOverheadAccountId,
       defaultWasteAccountId: manufacturingSettingsTable.defaultWasteAccountId,
       electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
+      internalTransportEnabled: manufacturingSettingsTable.internalTransportEnabled,
     }).from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
     const requestedIds = new Set<number>();
+    let internalTransportEnabled = current?.internalTransportEnabled ?? false;
+    if (req.body?.internalTransportEnabled !== undefined) {
+      if (typeof req.body.internalTransportEnabled !== "boolean") {
+        return void res.status(400).json({ error: "internalTransportEnabled يجب أن يكون true أو false" });
+      }
+      internalTransportEnabled = req.body.internalTransportEnabled;
+    }
     let electricityTariffPerKwh: string | null = current?.electricityTariffPerKwh ?? null;
     if (req.body?.electricityTariffPerKwh !== undefined) {
       if (req.body.electricityTariffPerKwh === null || req.body.electricityTariffPerKwh === "") {
@@ -642,12 +651,14 @@ router.put("/setup/accounting", edit, async (req, res) => {
       companyId: cid,
       ...values,
       electricityTariffPerKwh,
+      internalTransportEnabled,
       updatedAt: new Date(),
     }).onConflictDoUpdate({
       target: manufacturingSettingsTable.companyId,
       set: {
         ...values,
         electricityTariffPerKwh,
+        internalTransportEnabled,
         updatedAt: new Date(),
       },
     }).returning();
@@ -691,6 +702,62 @@ router.get("/orders", view, async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+router.get("/orders/:id/internal-transport", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const id = Number(req.params.id);
+  try {
+    const [order] = await db.select({
+      id: productionOrdersTable.id,
+      status: productionOrdersTable.status,
+      branchId: productionOrdersTable.branchId,
+      issueJournalEntryId: productionOrdersTable.issueJournalEntryId,
+    }).from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, id),
+      eq(productionOrdersTable.companyId, cid),
+    )).limit(1);
+    if (!order) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, order.branchId);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const [settings] = await db.select({
+      enabled: manufacturingSettingsTable.internalTransportEnabled,
+    }).from(manufacturingSettingsTable).where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
+    const transfers = await db.select({
+      id: stockTransfersTable.id,
+      transferNumber: stockTransfersTable.transferNumber,
+      transferDate: stockTransfersTable.transferDate,
+      status: stockTransfersTable.status,
+      internalTransportAmount: stockTransfersTable.internalTransportAmount,
+    }).from(stockTransfersTable).where(and(
+      eq(stockTransfersTable.companyId, cid),
+      eq(stockTransfersTable.productionOrderId, id),
+    )).orderBy(desc(stockTransfersTable.transferDate), desc(stockTransfersTable.id));
+    const allocations = await db.select({
+      allocatedAmount: productionCostAllocationsTable.allocatedAmount,
+      reclassificationJournalEntryId: productionCostAllocationsTable.reclassificationJournalEntryId,
+      reversalJournalEntryId: productionCostAllocationsTable.reversalJournalEntryId,
+    }).from(productionCostAllocationsTable).where(and(
+      eq(productionCostAllocationsTable.companyId, cid),
+      eq(productionCostAllocationsTable.orderId, id),
+      eq(productionCostAllocationsTable.sourceType, "internal_transport"),
+    ));
+    const total = Number(transfers
+      .filter((row) => row.status === "posted")
+      .reduce((sum, row) => sum + Number(row.internalTransportAmount ?? 0), 0).toFixed(2));
+    const capitalizedTotal = ["in_production", "quality_check", "completed"].includes(String(order.status))
+      ? Number(allocations
+        .filter((row) => !row.reversalJournalEntryId)
+        .reduce((sum, row) => sum + Number(row.allocatedAmount ?? 0), 0).toFixed(2))
+      : 0;
+    res.json({
+      enabled: settings?.enabled === true,
+      total,
+      capitalizedTotal,
+      transfers,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // The existing wizard is configuration-only until the status route posts

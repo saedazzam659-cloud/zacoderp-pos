@@ -27,6 +27,7 @@ export default function SimpleManufacturing() {
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [sourceCosts, setSourceCosts] = useState<any[]>([]);
   const [costDrilldown, setCostDrilldown] = useState<any>(null);
+  const [internalTransport, setInternalTransport] = useState<any>(null);
 
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("orders");
@@ -117,6 +118,7 @@ export default function SimpleManufacturing() {
     setSelectedOrder(null);
     setSourceCosts([]);
     setCostDrilldown(null);
+    setInternalTransport(null);
     void load();
     return () => {
       loadRequestRef.current += 1;
@@ -150,10 +152,11 @@ export default function SimpleManufacturing() {
     const controller = new AbortController();
     orderAbortRef.current = controller;
     try {
-      const [detail, costs, drilldown] = await Promise.all([
+      const [detail, costs, drilldown, transport] = await Promise.all([
         request(`/api/simple-manufacturing/orders/${order.id}`, { signal: controller.signal }),
         request(`/api/simple-manufacturing/orders/${order.id}/source-costs`, { signal: controller.signal }),
         request(`/api/simple-manufacturing/orders/${order.id}/cost-drilldown`, { signal: controller.signal }),
+        request(`/api/simple-manufacturing/orders/${order.id}/internal-transport`, { signal: controller.signal }),
       ]);
       if (requestId !== orderRequestRef.current || controller.signal.aborted) return;
       if (!detail?.order) throw new Error("استجابة تفاصيل أمر التصنيع غير صالحة");
@@ -161,6 +164,8 @@ export default function SimpleManufacturing() {
       setSelectedOrder({ ...detail.order, detail });
       setSourceCosts(costs);
       setCostDrilldown(drilldown);
+      if (!transport || !Array.isArray(transport.transfers)) throw new Error("استجابة تكلفة النقل الداخلي غير صالحة");
+      setInternalTransport(transport);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e: any) {
       if (e?.name !== "AbortError" && requestId === orderRequestRef.current) {
@@ -175,6 +180,7 @@ export default function SimpleManufacturing() {
     setSelectedOrder(null);
     setSourceCosts([]);
     setCostDrilldown(null);
+    setInternalTransport(null);
   };
 
   const changeStatus = (order: Order, target: string) => mutate(async () => {
@@ -362,6 +368,7 @@ export default function SimpleManufacturing() {
     defaultOverheadAccountId: number | null;
     defaultWasteAccountId: number | null;
     electricityTariffPerKwh?: number | null;
+    internalTransportEnabled?: boolean;
   }) => {
     return mutate(() => request("/api/simple-manufacturing/setup/accounting", {
       method: "PUT",
@@ -430,6 +437,7 @@ export default function SimpleManufacturing() {
             ) : null}
             sourceCosts={sourceCosts}
              costDrilldown={costDrilldown}
+             internalTransport={internalTransport}
              canPost={canPost}
              canUnpost={canUnpost}
              canDelete={canDelete}
@@ -465,6 +473,7 @@ export default function SimpleManufacturing() {
              onLoadRouting={handleLoadRouting}
             onSaveTemplate={handleSaveTemplate}
             onSaveWarehouse={handleSaveWarehouse}
+            onSaveAccounting={handleSaveAccounting}
           />
         </TabsContent>
 

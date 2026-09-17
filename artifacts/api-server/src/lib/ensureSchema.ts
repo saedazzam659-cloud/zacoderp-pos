@@ -247,6 +247,8 @@ const INTERNAL_TRANSPORT_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS internal_transport_expense_account_id INTEGER`,
   `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS internal_transport_counterpart_account_id INTEGER`,
   `ALTER TABLE IF EXISTS manufacturing_settings ADD COLUMN IF NOT EXISTS internal_transport_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE IF EXISTS production_cost_allocations ADD COLUMN IF NOT EXISTS reclassification_journal_entry_id INTEGER`,
+  `ALTER TABLE IF EXISTS production_cost_allocations ADD COLUMN IF NOT EXISTS reversal_journal_entry_id INTEGER`,
   `CREATE INDEX IF NOT EXISTS stock_transfers_production_order_idx ON stock_transfers (company_id, production_order_id)`,
 ] as const;
 

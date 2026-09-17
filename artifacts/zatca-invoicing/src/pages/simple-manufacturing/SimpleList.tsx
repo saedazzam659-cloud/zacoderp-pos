@@ -36,6 +36,7 @@ export function SimpleOrderList({
   selectedOrder,
   sourceCosts,
   costDrilldown,
+  internalTransport,
   canPost,
   canUnpost,
   canDelete,
@@ -51,6 +52,7 @@ export function SimpleOrderList({
   selectedOrder: (Order & { detail?: any }) | null;
   sourceCosts: any[];
   costDrilldown: any;
+  internalTransport: any;
   canPost: boolean;
   canUnpost: boolean;
   canDelete: boolean;
@@ -103,6 +105,35 @@ export function SimpleOrderList({
                 <div><Badge className="text-sm px-2 py-0.5">{statusLabel(selectedOrder.status)}</Badge></div>
               </div>
             </div>
+            {internalTransport && (
+              <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-semibold text-amber-900">النقل الداخلي إلى التصنيع</div>
+                    <p className="text-xs text-slate-600">إجماليات محفوظة من الخادم، ولا تُضاف مرة أخرى إلى تكلفة الإنتاج.</p>
+                  </div>
+                  <Badge variant="outline" className="border-amber-300 bg-white text-amber-800">
+                    {internalTransport.enabled ? "مفعّل" : "التقاط جديد متوقف"}
+                  </Badge>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-4 text-sm">
+                  <div><span className="block text-xs text-slate-500">إجمالي النقل المرحّل</span><b>{formatMoney(internalTransport.total)}</b></div>
+                  <div><span className="block text-xs text-slate-500">المرسمل في الإنتاج</span><b>{formatMoney(internalTransport.capitalizedTotal)}</b></div>
+                  <div><span className="block text-xs text-slate-500">عدد الأذونات</span><b>{internalTransport.transfers.length}</b></div>
+                  <div><span className="block text-xs text-slate-500">إجمالي الإنتاج مع النقل (الخادم)</span><b>{actualPosted ? formatMoney(selectedOrder.actualCost) : "لم يُرحّل بعد"}</b></div>
+                </div>
+                {internalTransport.transfers.length > 0 && (
+                  <div className="mt-3 divide-y rounded-lg border bg-white text-xs">
+                    {internalTransport.transfers.map((transfer: any) => (
+                      <div key={transfer.id} className="flex flex-wrap justify-between gap-2 p-2">
+                        <span>{transfer.transferNumber} — {transfer.transferDate}</span>
+                        <span>{statusLabel(transfer.status)} · <b>{formatMoney(transfer.internalTransportAmount)}</b></span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {(selectedOrder.producedQty != null || selectedStages.length > 0) && (
               <div
@@ -150,6 +181,7 @@ export function SimpleOrderList({
                 order={selectedOrder}
                 catalog={catalog}
                 resourceCost={costDrilldown?.trace?.resourceCost ?? costDrilldown?.trace?.resourceCosts}
+                internalTransport={internalTransport}
               />
             )}
             <div className="flex gap-2 flex-wrap mb-6">
@@ -257,7 +289,7 @@ export function SimpleOrderList({
                      ? sourceCosts.reduce((sum: number, source: any) => sum + Number(source.allocatedAmount), 0)
                      : null,
                  )}</b></div>
-                 <div><span className="text-slate-500 block">إجمالي الأمر الفعلي</span><b>{actualPosted ? formatMoney(selectedOrder.actualCost) : "لم يُرحّل بعد"}</b></div>
+                  <div><span className="text-slate-500 block">{internalTransport ? "إجمالي الإنتاج الفعلي (يشمل النقل المرحّل)" : "إجمالي الأمر الفعلي"}</span><b>{actualPosted ? formatMoney(selectedOrder.actualCost) : "لم يُرحّل بعد"}</b></div>
               </div>
             </div>
             {costDrilldown?.totals && (
