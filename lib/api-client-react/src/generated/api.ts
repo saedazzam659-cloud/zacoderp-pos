@@ -34,11 +34,17 @@ import type {
   HealthStatus,
   Incident,
   IncidentAction,
+  InternalDeliveryLinkResult,
+  InternalDeliveryOrderLink,
+  InternalDeliveryPostResult,
+  InternalStockTransfer,
+  InternalStockTransferInput,
   Invoice,
   ListCustomersParams,
   ListIncidentsParams,
   ListInvoicesParams,
   ListRiskAssessmentsParams,
+  ManufacturingDeliveryEvidence,
   MonthlyStat,
   OkResponse,
   RiskAssessment,
@@ -58,6 +64,718 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+/**
+ * @summary List warehouse transfers and internal manufacturing deliveries in the caller scope
+ */
+export const getListInternalStockTransfersUrl = () => {
+  return `/api/inventory/stock-transfers`;
+};
+
+export const listInternalStockTransfers = async (
+  options?: RequestInit,
+): Promise<InternalStockTransfer[]> => {
+  return customFetch<InternalStockTransfer[]>(
+    getListInternalStockTransfersUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListInternalStockTransfersQueryKey = () => {
+  return [`/api/inventory/stock-transfers`] as const;
+};
+
+export const getListInternalStockTransfersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listInternalStockTransfers>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listInternalStockTransfers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListInternalStockTransfersQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listInternalStockTransfers>>
+  > = ({ signal }) => listInternalStockTransfers({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listInternalStockTransfers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListInternalStockTransfersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listInternalStockTransfers>>
+>;
+export type ListInternalStockTransfersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List warehouse transfers and internal manufacturing deliveries in the caller scope
+ */
+
+export function useListInternalStockTransfers<
+  TData = Awaited<ReturnType<typeof listInternalStockTransfers>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listInternalStockTransfers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListInternalStockTransfersQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Save a transfer draft without moving stock or posting transport expense
+ */
+export const getCreateInternalStockTransferUrl = () => {
+  return `/api/inventory/stock-transfers`;
+};
+
+export const createInternalStockTransfer = async (
+  internalStockTransferInput: InternalStockTransferInput,
+  options?: RequestInit,
+): Promise<InternalStockTransfer> => {
+  return customFetch<InternalStockTransfer>(
+    getCreateInternalStockTransferUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(internalStockTransferInput),
+    },
+  );
+};
+
+export const getCreateInternalStockTransferMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createInternalStockTransfer>>,
+    TError,
+    { data: BodyType<InternalStockTransferInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createInternalStockTransfer>>,
+  TError,
+  { data: BodyType<InternalStockTransferInput> },
+  TContext
+> => {
+  const mutationKey = ["createInternalStockTransfer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createInternalStockTransfer>>,
+    { data: BodyType<InternalStockTransferInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createInternalStockTransfer(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateInternalStockTransferMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createInternalStockTransfer>>
+>;
+export type CreateInternalStockTransferMutationBody =
+  BodyType<InternalStockTransferInput>;
+export type CreateInternalStockTransferMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Save a transfer draft without moving stock or posting transport expense
+ */
+export const useCreateInternalStockTransfer = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createInternalStockTransfer>>,
+    TError,
+    { data: BodyType<InternalStockTransferInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createInternalStockTransfer>>,
+  TError,
+  { data: BodyType<InternalStockTransferInput> },
+  TContext
+> => {
+  return useMutation(getCreateInternalStockTransferMutationOptions(options));
+};
+
+/**
+ * @summary Read persisted transfer lines and transport evidence
+ */
+export const getGetInternalStockTransferUrl = (id: number) => {
+  return `/api/inventory/stock-transfers/${id}`;
+};
+
+export const getInternalStockTransfer = async (
+  id: number,
+  options?: RequestInit,
+): Promise<InternalStockTransfer> => {
+  return customFetch<InternalStockTransfer>(
+    getGetInternalStockTransferUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetInternalStockTransferQueryKey = (id: number) => {
+  return [`/api/inventory/stock-transfers/${id}`] as const;
+};
+
+export const getGetInternalStockTransferQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInternalStockTransfer>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInternalStockTransfer>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetInternalStockTransferQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getInternalStockTransfer>>
+  > = ({ signal }) =>
+    getInternalStockTransfer(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInternalStockTransfer>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInternalStockTransferQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInternalStockTransfer>>
+>;
+export type GetInternalStockTransferQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Read persisted transfer lines and transport evidence
+ */
+
+export function useGetInternalStockTransfer<
+  TData = Awaited<ReturnType<typeof getInternalStockTransfer>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInternalStockTransfer>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInternalStockTransferQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Replace an editable draft; posted documents are immutable
+ */
+export const getUpdateInternalStockTransferUrl = (id: number) => {
+  return `/api/inventory/stock-transfers/${id}`;
+};
+
+export const updateInternalStockTransfer = async (
+  id: number,
+  internalStockTransferInput: InternalStockTransferInput,
+  options?: RequestInit,
+): Promise<InternalStockTransfer> => {
+  return customFetch<InternalStockTransfer>(
+    getUpdateInternalStockTransferUrl(id),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(internalStockTransferInput),
+    },
+  );
+};
+
+export const getUpdateInternalStockTransferMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateInternalStockTransfer>>,
+    TError,
+    { id: number; data: BodyType<InternalStockTransferInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateInternalStockTransfer>>,
+  TError,
+  { id: number; data: BodyType<InternalStockTransferInput> },
+  TContext
+> => {
+  const mutationKey = ["updateInternalStockTransfer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateInternalStockTransfer>>,
+    { id: number; data: BodyType<InternalStockTransferInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateInternalStockTransfer(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateInternalStockTransferMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateInternalStockTransfer>>
+>;
+export type UpdateInternalStockTransferMutationBody =
+  BodyType<InternalStockTransferInput>;
+export type UpdateInternalStockTransferMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Replace an editable draft; posted documents are immutable
+ */
+export const useUpdateInternalStockTransfer = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateInternalStockTransfer>>,
+    TError,
+    { id: number; data: BodyType<InternalStockTransferInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateInternalStockTransfer>>,
+  TError,
+  { id: number; data: BodyType<InternalStockTransferInput> },
+  TContext
+> => {
+  return useMutation(getUpdateInternalStockTransferMutationOptions(options));
+};
+
+/**
+ * @summary Delete a draft only
+ */
+export const getDeleteInternalStockTransferUrl = (id: number) => {
+  return `/api/inventory/stock-transfers/${id}`;
+};
+
+export const deleteInternalStockTransfer = async (
+  id: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteInternalStockTransferUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteInternalStockTransferMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteInternalStockTransfer>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteInternalStockTransfer>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteInternalStockTransfer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteInternalStockTransfer>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteInternalStockTransfer(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteInternalStockTransferMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteInternalStockTransfer>>
+>;
+
+export type DeleteInternalStockTransferMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a draft only
+ */
+export const useDeleteInternalStockTransfer = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteInternalStockTransfer>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteInternalStockTransfer>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteInternalStockTransferMutationOptions(options));
+};
+
+/**
+ * @summary Post the warehouse movement and a separate transport source expense exactly once
+ */
+export const getPostInternalStockTransferUrl = (id: number) => {
+  return `/api/inventory/stock-transfers/${id}/post`;
+};
+
+export const postInternalStockTransfer = async (
+  id: number,
+  options?: RequestInit,
+): Promise<InternalDeliveryPostResult> => {
+  return customFetch<InternalDeliveryPostResult>(
+    getPostInternalStockTransferUrl(id),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getPostInternalStockTransferMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postInternalStockTransfer>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof postInternalStockTransfer>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["postInternalStockTransfer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postInternalStockTransfer>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return postInternalStockTransfer(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostInternalStockTransferMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postInternalStockTransfer>>
+>;
+
+export type PostInternalStockTransferMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Post the warehouse movement and a separate transport source expense exactly once
+ */
+export const usePostInternalStockTransfer = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postInternalStockTransfer>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof postInternalStockTransfer>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getPostInternalStockTransferMutationOptions(options));
+};
+
+/**
+ * @summary Link a delivery independently; terminal orders reject cost changes
+ */
+export const getLinkInternalStockTransferOrderUrl = (id: number) => {
+  return `/api/inventory/stock-transfers/${id}/link-production-order`;
+};
+
+export const linkInternalStockTransferOrder = async (
+  id: number,
+  internalDeliveryOrderLink: InternalDeliveryOrderLink,
+  options?: RequestInit,
+): Promise<InternalDeliveryLinkResult> => {
+  return customFetch<InternalDeliveryLinkResult>(
+    getLinkInternalStockTransferOrderUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(internalDeliveryOrderLink),
+    },
+  );
+};
+
+export const getLinkInternalStockTransferOrderMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof linkInternalStockTransferOrder>>,
+    TError,
+    { id: number; data: BodyType<InternalDeliveryOrderLink> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof linkInternalStockTransferOrder>>,
+  TError,
+  { id: number; data: BodyType<InternalDeliveryOrderLink> },
+  TContext
+> => {
+  const mutationKey = ["linkInternalStockTransferOrder"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof linkInternalStockTransferOrder>>,
+    { id: number; data: BodyType<InternalDeliveryOrderLink> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return linkInternalStockTransferOrder(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type LinkInternalStockTransferOrderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof linkInternalStockTransferOrder>>
+>;
+export type LinkInternalStockTransferOrderMutationBody =
+  BodyType<InternalDeliveryOrderLink>;
+export type LinkInternalStockTransferOrderMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Link a delivery independently; terminal orders reject cost changes
+ */
+export const useLinkInternalStockTransferOrder = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof linkInternalStockTransferOrder>>,
+    TError,
+    { id: number; data: BodyType<InternalDeliveryOrderLink> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof linkInternalStockTransferOrder>>,
+  TError,
+  { id: number; data: BodyType<InternalDeliveryOrderLink> },
+  TContext
+> => {
+  return useMutation(getLinkInternalStockTransferOrderMutationOptions(options));
+};
+
+/**
+ * @summary Read delivery evidence under the compact manufacturing permission boundary
+ */
+export const getListManufacturingInternalDeliveriesUrl = (id: number) => {
+  return `/api/simple-manufacturing/orders/${id}/internal-deliveries`;
+};
+
+export const listManufacturingInternalDeliveries = async (
+  id: number,
+  options?: RequestInit,
+): Promise<ManufacturingDeliveryEvidence[]> => {
+  return customFetch<ManufacturingDeliveryEvidence[]>(
+    getListManufacturingInternalDeliveriesUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListManufacturingInternalDeliveriesQueryKey = (id: number) => {
+  return [
+    `/api/simple-manufacturing/orders/${id}/internal-deliveries`,
+  ] as const;
+};
+
+export const getListManufacturingInternalDeliveriesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listManufacturingInternalDeliveries>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listManufacturingInternalDeliveries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getListManufacturingInternalDeliveriesQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listManufacturingInternalDeliveries>>
+  > = ({ signal }) =>
+    listManufacturingInternalDeliveries(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listManufacturingInternalDeliveries>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListManufacturingInternalDeliveriesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listManufacturingInternalDeliveries>>
+>;
+export type ListManufacturingInternalDeliveriesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Read delivery evidence under the compact manufacturing permission boundary
+ */
+
+export function useListManufacturingInternalDeliveries<
+  TData = Awaited<ReturnType<typeof listManufacturingInternalDeliveries>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listManufacturingInternalDeliveries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListManufacturingInternalDeliveriesQueryOptions(
+    id,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Health check

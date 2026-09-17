@@ -20,6 +20,137 @@ tags:
   - name: safety
     description: Occupational Safety & Health (OSH / ISO 45001)
 paths:
+  /inventory/stock-transfers:
+    get:
+      operationId: listInternalStockTransfers
+      tags: [inventory]
+      summary: List warehouse transfers and internal manufacturing deliveries in the caller scope
+      responses:
+        "200":
+          description: Transfers, including historical transport evidence
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InternalStockTransfer"
+    post:
+      operationId: createInternalStockTransfer
+      tags: [inventory]
+      summary: Save a transfer draft without moving stock or posting transport expense
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalStockTransferInput"
+      responses:
+        "201":
+          description: Saved draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalStockTransfer"
+  /inventory/stock-transfers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    get:
+      operationId: getInternalStockTransfer
+      tags: [inventory]
+      summary: Read persisted transfer lines and transport evidence
+      responses:
+        "200":
+          description: Transfer detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalStockTransfer"
+    put:
+      operationId: updateInternalStockTransfer
+      tags: [inventory]
+      summary: Replace an editable draft; posted documents are immutable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalStockTransferInput"
+      responses:
+        "200":
+          description: Saved draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalStockTransfer"
+    delete:
+      operationId: deleteInternalStockTransfer
+      tags: [inventory]
+      summary: Delete a draft only
+      responses:
+        "200":
+          description: Draft deleted
+  /inventory/stock-transfers/{id}/post:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    post:
+      operationId: postInternalStockTransfer
+      tags: [inventory]
+      summary: Post the warehouse movement and a separate transport source expense exactly once
+      responses:
+        "200":
+          description: Posted; retries never create another stock movement or expense
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalDeliveryPostResult"
+  /inventory/stock-transfers/{id}/link-production-order:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    post:
+      operationId: linkInternalStockTransferOrder
+      tags: [inventory]
+      summary: Link a delivery independently; terminal orders reject cost changes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalDeliveryOrderLink"
+      responses:
+        "200":
+          description: Updated delivery; source expense is never reposted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalDeliveryLinkResult"
+  /simple-manufacturing/orders/{id}/internal-deliveries:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    get:
+      operationId: listManufacturingInternalDeliveries
+      tags: [simple-manufacturing]
+      summary: Read delivery evidence under the compact manufacturing permission boundary
+      responses:
+        "200":
+          description: Linked deliveries; draft amounts are not posted production cost
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ManufacturingDeliveryEvidence"
   /healthz:
     get:
       operationId: healthCheck
@@ -777,6 +908,117 @@ paths:
 
 components:
   schemas:
+    InternalDeliveryOrderLink:
+      type: object
+      required: [productionOrderId]
+      properties:
+        productionOrderId:
+          type: [integer, "null"]
+          minimum: 1
+          description: Requested order; unlinking is subject to accounting lifecycle guards
+    InternalStockTransferLineInput:
+      type: object
+      required: [itemId, unitId, qty]
+      properties:
+        itemId: { type: integer, minimum: 1 }
+        unitId: { type: integer, minimum: 1 }
+        qty: { type: number, exclusiveMinimum: 0 }
+        costPrice: { type: number, minimum: 0 }
+    InternalStockTransferInput:
+      type: object
+      required: [transferDate, fromWarehouseId, toWarehouseId, items]
+      properties:
+        transferNumber: { type: string }
+        transferDate: { type: string, format: date }
+        fromWarehouseId: { type: integer, minimum: 1 }
+        toWarehouseId: { type: integer, minimum: 1 }
+        transferType: { type: string, enum: [warehouse, manufacturing], default: warehouse }
+        productionOrderId: { type: [integer, "null"], minimum: 1 }
+        internalTransportAmount:
+          type: number
+          minimum: 0
+          default: 0
+          description: Separate transport charge, never the transferred goods value
+        internalTransportExpenseAccountId: { type: [integer, "null"], minimum: 1 }
+        internalTransportCounterpartAccountId: { type: [integer, "null"], minimum: 1 }
+        fromAccountId: { type: [integer, "null"], minimum: 1 }
+        toAccountId: { type: [integer, "null"], minimum: 1 }
+        notes: { type: [string, "null"] }
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/InternalStockTransferLineInput"
+    InternalStockTransferLine:
+      type: object
+      required: [id, itemId, qty]
+      properties:
+        id: { type: integer }
+        itemId: { type: integer }
+        unitId: { type: [integer, "null"] }
+        qty: { type: string }
+        costPrice: { type: string }
+        conversionFactor: { type: string }
+        item: { type: [object, "null"], additionalProperties: true }
+        unit: { type: [object, "null"], additionalProperties: true }
+    InternalStockTransfer:
+      type: object
+      required: [id, transferNumber, transferDate, status, fromWarehouseId, toWarehouseId]
+      properties:
+        id: { type: integer }
+        transferNumber: { type: string }
+        transferDate: { type: string, format: date }
+        status: { type: string, enum: [draft, posted, cancelled] }
+        fromWarehouseId: { type: integer }
+        toWarehouseId: { type: integer }
+        transferType: { type: string, enum: [warehouse, manufacturing] }
+        productionOrderId: { type: [integer, "null"] }
+        internalTransportAmount: { type: string }
+        internalTransportExpenseAccountId: { type: [integer, "null"] }
+        internalTransportCounterpartAccountId: { type: [integer, "null"] }
+        internalTransportJournalEntryId: { type: [integer, "null"] }
+        journalEntryId: { type: [integer, "null"] }
+        fromAccountId: { type: [integer, "null"] }
+        toAccountId: { type: [integer, "null"] }
+        notes: { type: [string, "null"] }
+        fromWarehouse: { type: object, additionalProperties: true }
+        toWarehouse: { type: object, additionalProperties: true }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InternalStockTransferLine"
+    ManufacturingDeliveryEvidence:
+      type: object
+      required: [id, transferNumber, transferDate, status, internalTransportAmount]
+      properties:
+        id: { type: integer }
+        transferNumber: { type: string }
+        transferDate: { type: string, format: date }
+        status: { type: string }
+        internalTransportAmount: { type: string }
+        internalTransportJournalEntryId: { type: [integer, "null"] }
+        currentProductionOrderId: { type: [integer, "null"] }
+        isCurrentlyLinked: { type: boolean }
+        associationState: { type: string, enum: [current, historical] }
+        allocatedAmount: { type: string }
+        active: { type: boolean }
+    InternalDeliveryPostResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        journalEntryId: { type: [integer, "null"] }
+        internalTransportJournalEntryId: { type: [integer, "null"] }
+        transportReclassificationJournalEntryId: { type: [integer, "null"] }
+    InternalDeliveryLinkResult:
+      type: object
+      required: [transfer, idempotent]
+      properties:
+        transfer:
+          $ref: "#/components/schemas/InternalStockTransfer"
+        allocation: { type: [object, "null"], additionalProperties: true }
+        reclassificationJournalEntryId: { type: [integer, "null"] }
+        idempotent: { type: boolean }
     HealthStatus:
       type: object
       properties:

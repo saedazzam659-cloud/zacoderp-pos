@@ -139,6 +139,12 @@ import {
 } from "../lib/stageExecution.js";
 import { getPostedIndustrialPurchaseCosts } from "../lib/industrialPurchaseCosts.js";
 import {
+  releaseInternalTransportSourceOwnership,
+  resolveLegacyInternalTransportSource,
+  listInternalDeliveryEvidence,
+  reverseLateInternalTransportDeltas,
+} from "../lib/internalManufacturingTransport.js";
+import {
   buildPendingUtilityProposal,
   isPendingUtilityClosure,
   pendingUtilityBlocksOrderTransition,
@@ -952,71 +958,6 @@ function sourceReclassificationLines(
   }));
 }
 
-/**
- * Late internal-delivery links create a supplemental WIP reclassification
- * because the original issue JE is immutable. Reverse that exact supplemental
- * JE during cancellation/completed reversal; never recalculate from today's
- * transport fields or chart-of-accounts configuration.
- */
-async function reverseLateTransportReclassifications(
-  tx: any,
-  cid: number,
-  order: any,
-  req: any,
-  date: string,
-  label: string,
-) {
-  const allocations = await tx.select().from(productionCostAllocationsTable)
-    .where(and(
-      eq(productionCostAllocationsTable.companyId, cid),
-      eq(productionCostAllocationsTable.orderId, order.id),
-      eq(productionCostAllocationsTable.sourceType, "internal_transport"),
-    )).for("update");
-  for (const allocation of allocations) {
-    if (!allocation.reclassificationJournalEntryId || allocation.reversalJournalEntryId) continue;
-    const [original] = await tx.select({
-      id: journalEntriesTable.id, status: journalEntriesTable.status,
-    }).from(journalEntriesTable).where(and(
-      eq(journalEntriesTable.id, allocation.reclassificationJournalEntryId),
-      eq(journalEntriesTable.companyId, cid),
-    )).limit(1);
-    if (!original) throw new TransactionFailure(409, {
-      error: "لا يمكن عكس النقل الداخلي: قيد إعادة التصنيف الأصلي غير موجود",
-    });
-    const lines = await tx.select({
-      accountId: journalEntryLinesTable.accountId,
-      debit: journalEntryLinesTable.debit,
-      credit: journalEntryLinesTable.credit,
-      description: journalEntryLinesTable.description,
-      costCenter: journalEntryLinesTable.costCenter,
-    }).from(journalEntryLinesTable).where(eq(
-      journalEntryLinesTable.entryId, original.id,
-    ));
-    const reversalId = await createJournalEntry({
-      companyId: cid,
-      audit: { req },
-      branchId: order.branchId,
-      date,
-      docNumber: `${order.orderNumber}-TRN-REV`,
-      entryType: "production_internal_transport_reversal",
-      status: original.status,
-      costCenter: order.costCenter ?? null,
-      description: `${label} — تسليم داخلي ${allocation.sourceRecordId}`,
-      lines: lines.map((line) => ({
-        accountId: line.accountId,
-        debit: num(line.credit),
-        credit: num(line.debit),
-        description: `عكس إعادة تصنيف النقل الداخلي: ${line.description ?? order.orderNumber}`,
-        costCenter: line.costCenter,
-      })),
-      dx: tx,
-    });
-    await tx.update(productionCostAllocationsTable).set({
-      reversalJournalEntryId: reversalId,
-    }).where(eq(productionCostAllocationsTable.id, allocation.id));
-  }
-}
-
 async function loadPostedCostSources(
   q: any,
   cid: number,
@@ -1198,31 +1139,6 @@ async function loadPostedCostSources(
     reclassificationAccounts: accountsByJournal.get(Number(row.journalId)) ?? [],
   });
 
-  const internalTransportRows = await q.select({
-    id: stockTransfersTable.id,
-    transferNumber: stockTransfersTable.transferNumber,
-    transferDate: stockTransfersTable.transferDate,
-    amount: stockTransfersTable.internalTransportAmount,
-    expenseAccountId: stockTransfersTable.internalTransportExpenseAccountId,
-    branchId: warehousesTable.branchId,
-    sourceJournalId: stockTransfersTable.journalEntryId,
-  }).from(stockTransfersTable)
-    .leftJoin(warehousesTable, and(
-      eq(warehousesTable.id, stockTransfersTable.fromWarehouseId),
-      eq(warehousesTable.companyId, cid),
-    )).innerJoin(journalEntriesTable, and(
-      eq(journalEntriesTable.id, stockTransfersTable.journalEntryId),
-      eq(journalEntriesTable.companyId, cid),
-      eq(journalEntriesTable.status, "posted"),
-    )).where(and(
-      eq(stockTransfersTable.companyId, cid),
-      eq(stockTransfersTable.status, "posted"),
-      eq(stockTransfersTable.transferType, "manufacturing"),
-      gte(stockTransfersTable.transferDate, start),
-      lte(stockTransfersTable.transferDate, end),
-      sql`${stockTransfersTable.internalTransportAmount} > 0`,
-    ));
-
   return [
     ...payroll.map((r: any) => ({ sourceType: "payroll" as const, sourceRecordId: r.id,
       label: `رواتب ${r.code}`, periodStart: start, periodEnd: end, basis: "posted_payroll_allocation",
@@ -1268,25 +1184,6 @@ async function loadPostedCostSources(
         }],
       },
     })),
-    ...internalTransportRows
-      .filter((r: any) => !req || r.branchId == null || rowInScope(req, r.branchId))
-      .map((r: any) => ({
-        sourceType: "internal_transport" as const,
-        sourceRecordId: r.id,
-        label: `تسليم داخلي — ${r.transferNumber}`,
-        periodStart: String(r.transferDate).slice(0, 10),
-        periodEnd: String(r.transferDate).slice(0, 10),
-        basis: "posted_internal_transport",
-        sourceAmount: num(r.amount),
-        meta: {
-          manufacturingEligible: true,
-          allocationMethod: "fixed_hourly_rate",
-          reclassificationAccounts: [{
-            accountId: r.expenseAccountId,
-            weight: num(r.amount),
-          }],
-        },
-      })),
   ].map((source) => ({ ...source, sourceAmount: sourceAmountCents(source.sourceAmount) }));
 }
 
@@ -1891,6 +1788,13 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
     const manualCosts = manualCostEntries(order.meta);
     const additionalActual = num(order.laborCost) + num(order.overheadCost);
     const analytical = allocations.filter((x) => (x.snapshotMeta as any)?.includeInManufacturing === false);
+    const internalTransport = allocations.filter((x) =>
+      x.sourceType === "internal_transport" &&
+      (x.snapshotMeta as any)?.internalTransportActive !== false,
+    );
+    const internalTransportAmount = internalTransport.reduce(
+      (sum, row) => sum + num(row.allocatedAmount), 0,
+    );
     const treatmentAmount = (names: string[]) => analytical
       .filter((x) => names.includes(String((x.snapshotMeta as any)?.costTreatment)))
       .reduce((s, x) => s + num(x.allocatedAmount), 0);
@@ -1970,6 +1874,7 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
          financingCost: financingAdd,
          additionalActual,
          additionalUnitCost: produced ? additionalActual / produced : null,
+          internalTransport: internalTransportAmount,
         marginBasis: snapshotUnitSalePrice == null ? "unavailable_for_legacy_order" : "creation_sale_price_snapshot",
         snapshotUnitSalePrice },
       trace: {
@@ -2005,6 +1910,14 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
           }),
         },
         analyticalSources: analytical,
+        internalTransport: internalTransport.map((row) => ({
+          allocationId: row.id,
+          transferId: row.sourceRecordId,
+          amount: num(row.allocatedAmount),
+          sourceExpenseJournalEntryId: (row.snapshotMeta as any)?.transportExpenseJournalEntryId ?? null,
+          reclassificationJournalEntryId: (row.snapshotMeta as any)?.reclassificationJournalEntryId ?? null,
+          label: (row.snapshotMeta as any)?.label ?? null,
+        })),
         stages: stages.map((x) => {
           const quantityUnitFactor = canonicalStageUnitFactor(
             x.quantityUnit,
@@ -2069,6 +1982,27 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
 }
 
 router.get("/orders/:id/cost-drilldown", productionCostDrilldownHandler);
+
+// Operational delivery evidence is separate from material consumption.  Keep
+// it discoverable on the advanced order detail without exposing a second stock
+// movement or turning delivery quantity into production issue quantity.
+router.get("/orders/:id/internal-deliveries", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const orderId = Number(req.params.id);
+    const [order] = await db.select({ branchId: productionOrdersTable.branchId })
+      .from(productionOrdersTable).where(and(
+        eq(productionOrdersTable.id, orderId),
+        eq(productionOrdersTable.companyId, cid),
+      )).limit(1);
+    if (!order || !rowInScope(req, order.branchId))
+      return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const rows = await listInternalDeliveryEvidence(db, cid, orderId, req);
+    res.json(rows);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
 
 const PACKAGING_TEST_RESULTS = new Set(["pass", "fail", "pending"]);
 
@@ -5772,6 +5706,14 @@ export async function productionWizardHandler(req: any, res: any) {
       : plannedHours;
     const period = String(b.costPeriod || String(b.plannedStartDate || "").slice(0, 7));
     const requested: any[] = Array.isArray(b.allocations) ? b.allocations : [];
+    // Internal delivery is a transfer-owned source.  It cannot be claimed by
+    // a wizard payload (which could double-capitalize the independently
+    // posted transport expense); only the locked delivery link may allocate it.
+    if (requested.some((allocation) => String(allocation?.sourceType) === "internal_transport")) {
+      return void res.status(400).json({
+        error: "مصدر النقل الداخلي يُربط من إذن التسليم المرحّل ولا يُضاف يدوياً إلى أمر الإنتاج",
+      });
+    }
     let costConfiguration: ManufacturingCostConfiguration;
     try {
       costConfiguration = validateManufacturingCostConfiguration(
@@ -6538,6 +6480,18 @@ router.patch("/orders/:id", async (req, res) => {
       });
       return;
     }
+    // A completed receipt has frozen both stock valuation and the accounting
+    // evidence.  Never allow a PATCH to rewrite its cost totals; a supported
+    // correction must first perform the exact lifecycle reversal.
+    if (existingOrder.status === "completed" && (
+      b.actualCost !== undefined || b.laborCost !== undefined ||
+      b.overheadCost !== undefined || b.estimatedCost !== undefined
+    )) {
+      res.status(409).json({
+        error: "تكاليف أمر الإنتاج المكتمل غير قابلة للتعديل؛ اعكس دورة الترحيل أولاً",
+      });
+      return;
+    }
     // HIGH fix #3 — validate resourceId ownership on update too
     if (b.resourceId !== undefined && b.resourceId !== null && b.resourceId !== "") {
       const ridNum = Number(b.resourceId);
@@ -6566,6 +6520,13 @@ router.patch("/orders/:id", async (req, res) => {
     }
     const updates: Record<string, unknown> = { updatedAt: new Date() };
     if (typeof b.title === "string") updates.title = b.title.trim();
+    const overheadWithInternalTransport = (base: number) => sql`
+      ${base.toFixed(2)}::numeric + coalesce((
+        select sum(allocated_amount) from production_cost_allocations
+        where company_id = ${cid} and order_id = ${id}
+          and source_type = 'internal_transport'
+          and snapshot_meta->>'internalTransportActive' = 'true'
+      ), 0)`;
     if (b.plannedQty !== undefined)
       updates.plannedQty = String(num(b.plannedQty));
     if (b.producedQty !== undefined)
@@ -6606,7 +6567,7 @@ router.patch("/orders/:id", async (req, res) => {
     if (b.laborCost !== undefined && !lockedAfterIssue)
       updates.laborCost = String(num(b.laborCost));
     if (b.overheadCost !== undefined && !lockedAfterIssue)
-      updates.overheadCost = String(num(b.overheadCost));
+      updates.overheadCost = overheadWithInternalTransport(num(b.overheadCost));
     // costCenter is also locked after issue — the issue JE has already been
     // posted with the original costCenter; changing it now would make the
     // receipt JE post to a different cost center than the issue.
@@ -6683,10 +6644,13 @@ router.patch("/orders/:id", async (req, res) => {
       const computedLabor = wc && finalHours > 0 ? finalHours * Number(wc.laborRatePerHour) : 0;
       const computedOverhead = wc && finalHours > 0 ? finalHours * Number(wc.overheadRatePerHour) : 0;
       if (b.laborCost === undefined) updates.laborCost = String(computedLabor);
-      if (b.overheadCost === undefined) updates.overheadCost = String(computedOverhead);
+      if (b.overheadCost === undefined) updates.overheadCost = overheadWithInternalTransport(computedOverhead);
     }
 
     const row = await db.transaction(async (tx) => {
+      // Shared with delivery linking, so the allocation subquery above sees a
+      // stable source ownership while the order's base costs are rewritten.
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${id})`);
       const [updated] = await tx
         .update(productionOrdersTable)
         .set(updates)
@@ -7033,35 +6997,41 @@ export async function productionStatusHandler(req: any, res: any) {
           eq(productionCostAllocationsTable.orderId, id)));
       const sourceCache = new Map<string, Map<string, CostSource>>();
       for (const frozen of frozenCosts) {
-        const period = String(frozen.periodStart).slice(0, 7);
-        let current: any;
+        if (frozen.sourceType === "internal_transport" &&
+            ((frozen.snapshotMeta as any)?.internalTransportActive === false || num(frozen.allocatedAmount) === 0)) continue;
+        // Delivery transport is deliberately absent from the generic source
+        // picker: its posted source JE and single-transfer ownership are
+        // validated directly, rather than letting a monthly source snapshot
+        // claim it again.
         if (frozen.sourceType === "internal_transport") {
-          const [transfer] = await tx.select({
-            id: stockTransfersTable.id,
-            transferDate: stockTransfersTable.transferDate,
-            internalTransportAmount: stockTransfersTable.internalTransportAmount,
-            productionOrderId: stockTransfersTable.productionOrderId,
-            status: stockTransfersTable.status,
-          }).from(stockTransfersTable).innerJoin(journalEntriesTable, and(
-            eq(journalEntriesTable.id, stockTransfersTable.journalEntryId),
-            eq(journalEntriesTable.companyId, cid),
-            eq(journalEntriesTable.status, "posted"),
-          )).where(and(
+          const [delivery] = await tx.select().from(stockTransfersTable).where(and(
             eq(stockTransfersTable.id, frozen.sourceRecordId),
             eq(stockTransfersTable.companyId, cid),
+            eq(stockTransfersTable.productionOrderId, id),
+            eq(stockTransfersTable.transferType, "manufacturing"),
           )).limit(1);
-          if (transfer?.status === "posted" && transfer.productionOrderId === order.id) {
-            current = {
-              sourceAmount: num(transfer.internalTransportAmount),
-              sourceType: "internal_transport",
-              sourceRecordId: transfer.id,
-            };
+          const sourceJournalId = delivery
+            ? await resolveLegacyInternalTransportSource(tx, cid, delivery) : null;
+          const [sourceJournal] = sourceJournalId
+            ? await tx.select({ status: journalEntriesTable.status }).from(journalEntriesTable).where(and(
+                eq(journalEntriesTable.id, sourceJournalId),
+                eq(journalEntriesTable.companyId, cid),
+              )).limit(1)
+            : [];
+          if (!delivery || delivery.status !== "posted" || sourceJournal?.status !== "posted" ||
+              Math.abs(num(delivery.internalTransportAmount) - num(frozen.sourceAmount)) > 0.005) {
+            res.status(409).json({ error: "تعذر التنفيذ: تكلفة النقل الداخلي غير مُرحّلة أو لم تعد مرتبطة بهذا الأمر." });
+            return;
           }
-        } else if (!sourceCache.has(period)) {
+          await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${-Number(frozen.sourceRecordId)})`);
+          continue;
+        }
+        const period = String(frozen.periodStart).slice(0, 7);
+        if (!sourceCache.has(period)) {
           const current = await loadPostedCostSources(tx, cid, period, req, order.branchId);
           sourceCache.set(period, new Map(current.map((s) => [`${s.sourceType}:${s.sourceRecordId}`, s])));
         }
-        if (!current) current = sourceCache.get(period)?.get(`${frozen.sourceType}:${frozen.sourceRecordId}`);
+        const current = sourceCache.get(period)?.get(`${frozen.sourceType}:${frozen.sourceRecordId}`);
          const frozenSourceAmount = sourceAmountCents(frozen.sourceAmount);
          if (!current || Math.abs(sourceAmountCents(current.sourceAmount) - frozenSourceAmount) > 0.005) {
           res.status(409).json({ error: "تعذر التنفيذ: أحد مصادر التكلفة أُلغي ترحيله أو تغير. أنشئ أمراً جديداً بلقطة تكلفة حديثة." });
@@ -7099,7 +7069,14 @@ export async function productionStatusHandler(req: any, res: any) {
         return;
       }
       const labor = Number(order.laborCost ?? 0);
-      const overhead = Number(order.overheadCost ?? 0);
+      // New allocations are included in stored overhead; incoming historical
+      // allocations were kept separately. Credit base overhead once, and
+      // capitalize all active transport through its source credits once.
+      const transportAlreadyInOverhead = frozenCosts.filter((row) =>
+        row.sourceType === "internal_transport" &&
+        (row.snapshotMeta as any)?.internalTransportActive === true,
+      ).reduce((sum, row) => sum + num(row.allocatedAmount), 0);
+      const overhead = Number(order.overheadCost ?? 0) - transportAlreadyInOverhead;
       const manualEntries = manualCostEntries(order.meta);
       for (const entry of manualEntries) {
         try {
@@ -8028,9 +8005,11 @@ export async function productionStatusHandler(req: any, res: any) {
           reversalJournalEntryId: reversalId,
         }).where(eq(productionDriverReconciliationsTable.id, reconciliation.id));
       }
-      await reverseLateTransportReclassifications(
-        tx, cid, order, req, todayIso, "عكس أمر إنتاج مكتمل",
-      );
+      // The completed-order reversal already inverts the original issue and
+      // receipt journals.  It does not contain a transport allocation added
+      // later, so reverse only those separately evidenced WIP deltas here.
+      await reverseLateInternalTransportDeltas(tx, cid, order, req);
+      await releaseInternalTransportSourceOwnership(tx, cid, order.id);
       updates.meta = {
         ...((order.meta as Record<string, unknown>) ?? {}),
         reversal: {
@@ -8155,12 +8134,17 @@ export async function productionStatusHandler(req: any, res: any) {
         lines: issueReversalLines,
         dx: tx,
       });
-      await reverseLateTransportReclassifications(
-        tx, cid, order, req, todayIso, "إلغاء أمر إنتاج",
-      );
+      // A transport linked after issue owns a separate WIP delta.  The normal
+      // issue reversal only covers sources present at issue time, so invert
+      // late deltas under this same order lock/transaction as well.
+      await reverseLateInternalTransportDeltas(tx, cid, order, req);
       updates.rawMaterialsCost = "0";
       updates.actualCost = "0";
       updates.issueJournalEntryId = null;
+    }
+    if (target === "cancelled") {
+      // Unissued orders own links too, but have no issue journal to reverse.
+      await releaseInternalTransportSourceOwnership(tx, cid, order.id);
     }
 
     const [row] = await tx

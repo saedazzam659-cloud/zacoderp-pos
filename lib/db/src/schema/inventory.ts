@@ -469,6 +469,10 @@ export const stockTransfersTable = pgTable("stock_transfers", {
   internalTransportAmount: numeric("internal_transport_amount", { precision: 18, scale: 2 }).notNull().default("0"),
   internalTransportExpenseAccountId: integer("internal_transport_expense_account_id").references(() => accountsTable.id),
   internalTransportCounterpartAccountId: integer("internal_transport_counterpart_account_id").references(() => accountsTable.id),
+  // The independently-owned source expense. Production reclassification is
+  // represented by immutable allocation/journal evidence, not a second source
+  // expense on this delivery document.
+  internalTransportJournalEntryId: integer("internal_transport_journal_entry_id"),
   status:          docStatusEnum("status").default("draft").notNull(),
   notes:           text("notes"),
   createdAt:       timestamp("created_at").defaultNow().notNull(),

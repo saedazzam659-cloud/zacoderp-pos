@@ -1,8 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChevronLeft, Play, Pause, RotateCcw, Boxes } from "lucide-react";
+import { ChevronLeft, Play, Pause, RotateCcw, Boxes, Truck, AlertCircle } from "lucide-react";
 import { Link } from "wouter";
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 import type { Order, Catalog } from "./types";
 import { ProductionTimeCosts } from "@/components/ProductionTimeCosts";
 import { SimpleOrderWizardReadonly } from "./SimpleOrderWizardReadonly";
@@ -62,6 +64,10 @@ export function SimpleOrderList({
   onDeleteDraft: (order: Order) => void;
   executionPanel?: import("react").ReactNode;
 }) {
+  const { token, actingCompanyId } = useAuth();
+  const [internalDeliveries, setInternalDeliveries] = useState<any[]>([]);
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [deliveriesError, setDeliveriesError] = useState<string | null>(null);
   const productName = (id: number | null) => catalog.items.find(i => i.id === id)?.nameAr || "—";
   const actualPosted = selectedOrder
     ? ["in_production", "paused", "quality_check", "completed", "reversed"].includes(selectedOrder.status) &&
@@ -73,6 +79,52 @@ export function SimpleOrderList({
   const selectedStageWaste = stageWasteSummary(selectedStages);
   const selectedHeaderWaste = Number(selectedOrder?.wasteQty ?? 0);
   const selectedAdditionalWaste = additionalHeaderWaste(selectedHeaderWaste, selectedStages);
+  const transportAllocations = useMemo(() => {
+    const allocations = Array.isArray(costDrilldown?.trace?.allocations)
+      ? costDrilldown.trace.allocations
+      : [];
+    return allocations.filter((row: any) => row?.sourceType === "internal_transport");
+  }, [costDrilldown]);
+  const activeTransport = Array.isArray(costDrilldown?.trace?.internalTransport)
+    ? costDrilldown.trace.internalTransport
+    : [];
+  const activeTransportAmount = costDrilldown?.totals?.internalTransport;
+  const knownDeliveryIds = new Set(internalDeliveries.map(row => Number(row.id)));
+  const historicalOnlyTransport = transportAllocations.filter((row: any) =>
+    !knownDeliveryIds.has(Number(row.sourceRecordId)));
+
+  useEffect(() => {
+    const orderId = selectedOrder?.id;
+    if (!orderId || !token) {
+      setInternalDeliveries([]);
+      setDeliveriesError(null);
+      setDeliveriesLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setDeliveriesLoading(true);
+    setDeliveriesError(null);
+    fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/simple-manufacturing/orders/${orderId}/internal-deliveries`, {
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+      },
+    }).then(async response => {
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+      if (!Array.isArray(body)) throw new Error("استجابة مستندات التسليم الداخلي غير صالحة");
+      setInternalDeliveries(body);
+    }).catch((error: any) => {
+      if (error?.name !== "AbortError") {
+        setInternalDeliveries([]);
+        setDeliveriesError(error?.message || "تعذر تحميل مستندات التسليم الداخلي");
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setDeliveriesLoading(false);
+    });
+    return () => controller.abort();
+  }, [selectedOrder?.id, token, actingCompanyId]);
 
   return (
     <div className="space-y-4">
@@ -105,36 +157,6 @@ export function SimpleOrderList({
                 <div><Badge className="text-sm px-2 py-0.5">{statusLabel(selectedOrder.status)}</Badge></div>
               </div>
             </div>
-            {internalTransport && (
-              <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <div>
-                    <div className="font-semibold text-amber-900">النقل الداخلي إلى التصنيع</div>
-                    <p className="text-xs text-slate-600">إجماليات محفوظة من الخادم، ولا تُضاف مرة أخرى إلى تكلفة الإنتاج.</p>
-                  </div>
-                  <Badge variant="outline" className="border-amber-300 bg-white text-amber-800">
-                    {internalTransport.enabled ? "مفعّل" : "التقاط جديد متوقف"}
-                  </Badge>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-4 text-sm">
-                  <div><span className="block text-xs text-slate-500">إجمالي النقل المرحّل</span><b>{formatMoney(internalTransport.total)}</b></div>
-                  <div><span className="block text-xs text-slate-500">المرسمل في الإنتاج</span><b>{formatMoney(internalTransport.capitalizedTotal)}</b></div>
-                  <div><span className="block text-xs text-slate-500">عدد الأذونات</span><b>{internalTransport.transfers.length}</b></div>
-                  <div><span className="block text-xs text-slate-500">إجمالي الإنتاج مع النقل (الخادم)</span><b>{actualPosted ? formatMoney(selectedOrder.actualCost) : "لم يُرحّل بعد"}</b></div>
-                </div>
-                {internalTransport.transfers.length > 0 && (
-                  <div className="mt-3 divide-y rounded-lg border bg-white text-xs">
-                    {internalTransport.transfers.map((transfer: any) => (
-                      <div key={transfer.id} className="flex flex-wrap justify-between gap-2 p-2">
-                        <span>{transfer.transferNumber} — {transfer.transferDate}</span>
-                        <span>{statusLabel(transfer.status)} · <b>{formatMoney(transfer.internalTransportAmount)}</b></span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
             {(selectedOrder.producedQty != null || selectedStages.length > 0) && (
               <div
                 className="mb-5 rounded-xl border border-rose-200 bg-rose-50/40 p-4"
@@ -224,6 +246,99 @@ export function SimpleOrderList({
             {costDrilldown?.trace && <div className="mb-4">
               <ProductionTimeCosts trace={costDrilldown.trace} status={selectedOrder.status} />
             </div>}
+            <div className="mb-4 rounded-xl border bg-white p-4" data-testid="simple-internal-deliveries">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-semibold text-slate-800">
+                  <Truck className="h-4 w-4 text-violet-600" />
+                  مستندات التسليم والنقل الداخلي
+                </div>
+                {(internalTransport?.enabled ?? catalog.accounting?.settings?.internalTransportEnabled) !== true && (
+                  <Badge variant="outline" className="bg-slate-50 text-slate-600">التحميل متوقف حالياً</Badge>
+                )}
+              </div>
+              <p className="mb-3 text-xs text-slate-500">
+                التسليم حركة نقل مستقلة وليس صرف مواد. تكلفة النقل المرحّلة مدرجة بالفعل ضمن إجمالي
+                تكلفة الإنتاج الفعلية كتكلفة غير مباشرة ولا تُجمع عليه مرة أخرى.
+              </p>
+              {deliveriesLoading && <div className="py-3 text-sm text-slate-500">جارٍ تحميل مستندات التسليم…</div>}
+              {deliveriesError && (
+                <div className="flex items-center gap-2 rounded border border-rose-200 bg-rose-50 p-2 text-sm text-rose-700">
+                  <AlertCircle className="h-4 w-4" /> {deliveriesError}
+                </div>
+              )}
+              {!deliveriesLoading && !deliveriesError && internalDeliveries.length === 0 && historicalOnlyTransport.length === 0 && (
+                <div className="rounded border border-dashed p-3 text-sm text-slate-500">لا توجد مستندات تسليم مرتبطة بهذا الأمر.</div>
+              )}
+              {internalDeliveries.length > 0 && (
+                <div className="divide-y rounded-lg border">
+                  {internalDeliveries.map((delivery: any) => {
+                    const isDraft = delivery.status === "draft";
+                    const isHistorical = delivery.associationState === "historical" ||
+                      delivery.isCurrentlyLinked === false;
+                    const isActiveCost = delivery.active === true && !isDraft && !isHistorical;
+                    // The document keeps its original charge after release.
+                    // Only the active allocation belongs in the order total.
+                    const evidenceAmount = delivery.internalTransportAmount;
+                    return (
+                      <div key={delivery.id} className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+                        <div>
+                          <div className="font-semibold">{delivery.transferNumber || `إذن #${delivery.id}`}</div>
+                          <div className="text-xs text-slate-500">
+                            {delivery.transferDate ? new Date(delivery.transferDate).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : "تاريخ غير متاح"}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant="outline"
+                            className={isDraft
+                              ? "bg-amber-50 text-amber-700"
+                              : isHistorical || !isActiveCost
+                                ? "bg-slate-50 text-slate-600"
+                                : "bg-emerald-50 text-emerald-700"}
+                          >
+                            {isDraft
+                              ? "مسودة — غير محملة"
+                              : isHistorical
+                                ? "ارتباط تاريخي/محرر — غير نشط"
+                                : delivery.status === "cancelled"
+                                  ? "ملغى/غير نشط"
+                                  : !isActiveCost
+                                    ? "مرتبط — دون تكلفة محملة"
+                                  : "مرحّل ومحمل"}
+                          </Badge>
+                          <span className="font-semibold">
+                            {formatMoney(evidenceAmount)} ر.س
+                            {!isActiveCost && !isDraft && (
+                              <span className="mr-1 font-normal text-xs text-slate-500">دليل محفوظ، غير داخل حالياً</span>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {historicalOnlyTransport.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs font-semibold text-slate-600">أدلة تخصيص تاريخية (الرابط الحالي غير موجود)</div>
+                  {historicalOnlyTransport.map((row: any) => (
+                    <div key={row.id} className="flex justify-between rounded border bg-slate-50 p-2 text-sm">
+                      <span>{row.snapshotMeta?.label || `إذن نقل #${row.sourceRecordId}`}</span>
+                      <span>
+                        {formatMoney(row.allocatedAmount)} ر.س
+                        {row.snapshotMeta?.internalTransportActive === false ? " — ملغى/غير نشط" : ""}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(activeTransport.length > 0 || Number(activeTransportAmount) !== 0) && (
+                <div className="mt-3 flex items-center justify-between border-t pt-3 text-sm">
+                  <span className="text-slate-600">تكلفة النقل الداخلة في الإجمالي الفعلي</span>
+                  <b>{formatMoney(activeTransportAmount)} ر.س <span className="font-normal text-slate-500">(مدرجة، لا تُضاف مجدداً)</span></b>
+                </div>
+              )}
+            </div>
             <div className="rounded-xl border bg-slate-50/50 p-4">
               <div className="mb-3 font-semibold text-slate-800 flex items-center gap-2">
                 <div className="w-1.5 h-4 bg-violet-500 rounded-full" />

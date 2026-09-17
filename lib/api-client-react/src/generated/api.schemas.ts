@@ -5,6 +5,203 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export interface InternalDeliveryOrderLink {
+  /**
+   * Requested order; unlinking is subject to accounting lifecycle guards
+   * @minimum 1
+   * @nullable
+   */
+  productionOrderId: number | null;
+}
+
+export interface InternalStockTransferLineInput {
+  /** @minimum 1 */
+  itemId: number;
+  /** @minimum 1 */
+  unitId: number;
+  /** @exclusiveMinimum 0 */
+  qty: number;
+  /** @minimum 0 */
+  costPrice?: number;
+}
+
+export type InternalStockTransferInputTransferType =
+  (typeof InternalStockTransferInputTransferType)[keyof typeof InternalStockTransferInputTransferType];
+
+export const InternalStockTransferInputTransferType = {
+  warehouse: "warehouse",
+  manufacturing: "manufacturing",
+} as const;
+
+export interface InternalStockTransferInput {
+  transferNumber?: string;
+  transferDate: string;
+  /** @minimum 1 */
+  fromWarehouseId: number;
+  /** @minimum 1 */
+  toWarehouseId: number;
+  transferType?: InternalStockTransferInputTransferType;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  productionOrderId?: number | null;
+  /**
+   * Separate transport charge, never the transferred goods value
+   * @minimum 0
+   */
+  internalTransportAmount?: number;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  internalTransportExpenseAccountId?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  internalTransportCounterpartAccountId?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  fromAccountId?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  toAccountId?: number | null;
+  /** @nullable */
+  notes?: string | null;
+  /** @minItems 1 */
+  items: InternalStockTransferLineInput[];
+}
+
+/**
+ * @nullable
+ */
+export type InternalStockTransferLineItem = { [key: string]: unknown } | null;
+
+/**
+ * @nullable
+ */
+export type InternalStockTransferLineUnit = { [key: string]: unknown } | null;
+
+export interface InternalStockTransferLine {
+  id: number;
+  itemId: number;
+  /** @nullable */
+  unitId?: number | null;
+  qty: string;
+  costPrice?: string;
+  conversionFactor?: string;
+  /** @nullable */
+  item?: InternalStockTransferLineItem;
+  /** @nullable */
+  unit?: InternalStockTransferLineUnit;
+}
+
+export type InternalStockTransferStatus =
+  (typeof InternalStockTransferStatus)[keyof typeof InternalStockTransferStatus];
+
+export const InternalStockTransferStatus = {
+  draft: "draft",
+  posted: "posted",
+  cancelled: "cancelled",
+} as const;
+
+export type InternalStockTransferTransferType =
+  (typeof InternalStockTransferTransferType)[keyof typeof InternalStockTransferTransferType];
+
+export const InternalStockTransferTransferType = {
+  warehouse: "warehouse",
+  manufacturing: "manufacturing",
+} as const;
+
+export type InternalStockTransferFromWarehouse = { [key: string]: unknown };
+
+export type InternalStockTransferToWarehouse = { [key: string]: unknown };
+
+export interface InternalStockTransfer {
+  id: number;
+  transferNumber: string;
+  transferDate: string;
+  status: InternalStockTransferStatus;
+  fromWarehouseId: number;
+  toWarehouseId: number;
+  transferType?: InternalStockTransferTransferType;
+  /** @nullable */
+  productionOrderId?: number | null;
+  internalTransportAmount?: string;
+  /** @nullable */
+  internalTransportExpenseAccountId?: number | null;
+  /** @nullable */
+  internalTransportCounterpartAccountId?: number | null;
+  /** @nullable */
+  internalTransportJournalEntryId?: number | null;
+  /** @nullable */
+  journalEntryId?: number | null;
+  /** @nullable */
+  fromAccountId?: number | null;
+  /** @nullable */
+  toAccountId?: number | null;
+  /** @nullable */
+  notes?: string | null;
+  fromWarehouse?: InternalStockTransferFromWarehouse;
+  toWarehouse?: InternalStockTransferToWarehouse;
+  items?: InternalStockTransferLine[];
+}
+
+export type ManufacturingDeliveryEvidenceAssociationState =
+  (typeof ManufacturingDeliveryEvidenceAssociationState)[keyof typeof ManufacturingDeliveryEvidenceAssociationState];
+
+export const ManufacturingDeliveryEvidenceAssociationState = {
+  current: "current",
+  historical: "historical",
+} as const;
+
+export interface ManufacturingDeliveryEvidence {
+  id: number;
+  transferNumber: string;
+  transferDate: string;
+  status: string;
+  internalTransportAmount: string;
+  /** @nullable */
+  internalTransportJournalEntryId?: number | null;
+  /** @nullable */
+  currentProductionOrderId?: number | null;
+  isCurrentlyLinked?: boolean;
+  associationState?: ManufacturingDeliveryEvidenceAssociationState;
+  allocatedAmount?: string;
+  active?: boolean;
+}
+
+export interface InternalDeliveryPostResult {
+  ok: boolean;
+  /** @nullable */
+  journalEntryId?: number | null;
+  /** @nullable */
+  internalTransportJournalEntryId?: number | null;
+  /** @nullable */
+  transportReclassificationJournalEntryId?: number | null;
+}
+
+/**
+ * @nullable
+ */
+export type InternalDeliveryLinkResultAllocation = {
+  [key: string]: unknown;
+} | null;
+
+export interface InternalDeliveryLinkResult {
+  transfer: InternalStockTransfer;
+  /** @nullable */
+  allocation?: InternalDeliveryLinkResultAllocation;
+  /** @nullable */
+  reclassificationJournalEntryId?: number | null;
+  idempotent: boolean;
+}
+
 export interface HealthStatus {
   status: string;
 }

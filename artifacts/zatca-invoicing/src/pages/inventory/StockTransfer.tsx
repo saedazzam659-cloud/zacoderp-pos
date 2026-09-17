@@ -25,6 +25,8 @@ import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { usePermission } from "@/hooks/usePermission";
+import { openStockTransferPrintWindow, printPersistedStockTransfer } from "@/lib/stockTransferPrint";
 
 const STATUS_CONFIG: Record<string, { color: string }> = {
   draft:     { color: "bg-amber-50 text-amber-700" },
@@ -46,13 +48,6 @@ const EMPTY_FORM = {
   notes: "",
 };
 const newLine = () => ({ itemId: "", unitId: "", qty: "1", costPrice: "0", conversionFactor: "1" });
-const escapePrint = (value: unknown) => String(value ?? "—")
-  .replace(/&/g, "&amp;")
-  .replace(/</g, "&lt;")
-  .replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;")
-  .replace(/'/g, "&#39;");
-
 export default function StockTransfer() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
@@ -63,6 +58,14 @@ export default function StockTransfer() {
   const usageModes = useScreenItemModes("stock_transfer");
   const qc = useQueryClient();
   const { toast } = useToast();
+  const canCreate = usePermission("stock_transfers", "create");
+  const canEdit = usePermission("stock_transfers", "edit");
+  const canDelete = usePermission("stock_transfers", "delete");
+  const canPost = usePermission("stock_transfers", "post");
+  const canExport = usePermission("stock_transfers", "export");
+  const canAdvancedManufacturingPost = usePermission("production", "post");
+  const canCompactManufacturingPost = usePermission("simple_manufacturing", "post");
+  const canManufacturingPost = canAdvancedManufacturingPost || canCompactManufacturingPost;
   const [aiLoading, setAiLoading] = useState(false);
   const [aiReasoning, setAiReasoning] = useState<string>("");
 
@@ -74,13 +77,13 @@ export default function StockTransfer() {
   const [deliveryTab, setDeliveryTab] = useState<"basic" | "items" | "costs">("basic");
   const [linkOrderId, setLinkOrderId] = useState("");
 
-  const seqPeek = useNextSequenceNumber("stock_transfer", showForm);
+  const seqPeek = useNextSequenceNumber("stock_transfer", showForm && !editingId);
   useEffect(() => {
-    if (!showForm) return;
+    if (!showForm || editingId) return;
     if (seqPeek.hasSequence && seqPeek.number) {
       setForm((p: any) => (p.transferNumber === seqPeek.number ? p : { ...p, transferNumber: seqPeek.number }));
     }
-  }, [showForm, seqPeek.hasSequence, seqPeek.number]);
+  }, [showForm, editingId, seqPeek.hasSequence, seqPeek.number]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // itemUnitsMap: itemId → array of unit-price rows (cached after first fetch)
   const [itemUnitsMap, setItemUnitsMap] = useState<Record<string, any[]>>({});
@@ -122,7 +125,7 @@ export default function StockTransfer() {
       // warehouse transfers retain the established one-click create/post
       // behavior, while retaining the persisted id if posting fails so a
       // retry can post that row instead of creating a duplicate.
-      if (d.transferType !== "manufacturing" && created?.id && (created.status ?? "draft") === "draft") {
+      if (canPost && d.transferType !== "manufacturing" && created?.id && (created.status ?? "draft") === "draft") {
         try {
           return await inventoryApi.postTransfer(created.id);
         } catch (e: any) {
@@ -232,6 +235,9 @@ export default function StockTransfer() {
       conversionFactor: String(line.conversionFactor ?? "1"),
     })).filter((line: any) => line.itemId);
     setLines(detailLines.length ? detailLines : [newLine()]);
+    for (const line of trDetail.items ?? []) {
+      void fetchItemUnits(String(line.itemId)).catch(() => undefined);
+    }
   }, [editingId, trDetail]);
 
   useEffect(() => {
@@ -250,16 +256,21 @@ export default function StockTransfer() {
       // Persist to cache
       setItemUnitsMap(prev => ({ ...prev, [itemId]: ups }));
       return ups;
-    } catch {
-      setItemUnitsMap(prev => ({ ...prev, [itemId]: [] }));
-      return [];
+    } catch (error: any) {
+      toast({ title: error?.message || "تعذر تحميل وحدات الصنف", variant: "destructive" });
+      throw error;
     }
   }
 
   // When user picks an item: load unit prices, pre-select base unit, auto-fill cost
   async function handleItemSelect(lineIdx: number, itemId: string) {
     const item = (items as any[]).find((it: any) => String(it.id) === itemId);
-    const ups = await fetchItemUnits(itemId);
+    let ups: any[];
+    try {
+      ups = await fetchItemUnits(itemId);
+    } catch {
+      return;
+    }
     const baseUp = ups.find((u: any) => u.isBase) ?? ups[0] ?? null;
     setLines(prev =>
       prev.map((l, idx) =>
@@ -304,52 +315,17 @@ export default function StockTransfer() {
   function removeLine(idx: number) { setLines(prev => prev.filter((_, i) => i !== idx)); }
 
   async function printTransfer(id: number) {
-    const printWindow = window.open("", "_blank", "noopener,noreferrer");
-    if (!printWindow) {
-      toast({ title: "تعذر فتح نافذة الطباعة", description: "اسمح بالنوافذ المنبثقة ثم حاول مرة أخرى.", variant: "destructive" });
-      return;
-    }
+    let printWindow: Window | undefined;
     try {
+      printWindow = openStockTransferPrintWindow();
       const detail: any = await inventoryApi.getTransfer(id);
-      const from = pickName(detail.fromWarehouse?.nameAr, detail.fromWarehouse?.nameEn);
-      const to = pickName(detail.toWarehouse?.nameAr, detail.toWarehouse?.nameEn);
-      const linesHtml = (detail.items ?? []).map((line: any, index: number) => `
-        <tr><td>${index + 1}</td><td>${escapePrint(line.item?.code || line.item?.nameAr || line.itemId)}</td>
-        <td>${escapePrint(pickName(line.item?.nameAr, line.item?.nameEn) || line.itemId)}</td>
-        <td>${escapePrint(pickName(line.unit?.nameAr, line.unit?.nameEn) || "الوحدة الأساسية")}</td>
-        <td dir="ltr">${escapePrint(line.qty)}</td><td dir="ltr">${escapePrint(line.conversionFactor ?? "1")}</td>
-        <td dir="ltr">${escapePrint(line.costPrice)}</td></tr>`).join("");
-      const transport = Number(detail.internalTransportAmount ?? 0);
-      printWindow.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-        <title>${escapePrint(detail.transferNumber || "إذن تحويل")}</title>
-        <style>
-          *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#172033;margin:32px;line-height:1.5}
-          h1{font-size:22px;margin:0 0 4px}.muted{color:#64748b;font-size:12px}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;border:1px solid #dbe3ef;padding:14px;border-radius:8px;margin:22px 0}
-          .meta b{display:block;font-size:12px;color:#64748b;font-weight:normal}.meta span{font-size:14px;font-weight:600}
-          table{width:100%;border-collapse:collapse;margin-top:18px;font-size:12px}th,td{border:1px solid #dbe3ef;padding:8px;text-align:right}th{background:#f1f5f9}
-          .cost{margin-top:18px;border:1px solid #f5c56b;background:#fff8e8;padding:12px;border-radius:8px}.notes{margin-top:18px;border:1px solid #dbe3ef;padding:12px;min-height:54px}
-          .signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:72px}.signature{border-top:1px solid #94a3b8;padding-top:8px;text-align:center;font-size:12px;color:#64748b}
-          @media print{body{margin:12mm}}
-        </style></head><body>
-        <h1>${escapePrint(detail.transferType === "manufacturing" ? "إذن تسليم داخلي إلى التصنيع" : "إذن تحويل مخزني")}</h1>
-        <div class="muted">مستند محفوظ — لا تعتمد هذه الطباعة على حالة تبويب غير ظاهر</div>
-        <div class="meta">
-          <div><b>رقم الإذن</b><span dir="ltr">${escapePrint(detail.transferNumber)}</span></div>
-          <div><b>التاريخ</b><span dir="ltr">${escapePrint(detail.transferDate)}</span></div>
-          <div><b>من</b><span>${escapePrint(from)}</span></div><div><b>إلى</b><span>${escapePrint(to)}</span></div>
-          ${detail.productionOrderId != null ? `<div><b>أمر التصنيع</b><span>#${escapePrint(detail.productionOrderId)}</span></div>` : ""}
-          <div><b>الحالة</b><span>${escapePrint(detail.status)}</span></div>
-        </div>
-        <table><thead><tr><th>#</th><th>الكود</th><th>الصنف</th><th>الوحدة</th><th>الكمية</th><th>معامل التحويل</th><th>تكلفة الوحدة</th></tr></thead>
-        <tbody>${linesHtml || `<tr><td colspan="7">لا توجد أصناف</td></tr>`}</tbody></table>
-        ${detail.transferType === "manufacturing" ? `<div class="cost"><b>تكلفة النقل الداخلي:</b> <span dir="ltr">${escapePrint(transport.toFixed(2))} ر.س</span>
-          <br><span class="muted">حساب المصروف: ${escapePrint(detail.internalTransportExpenseAccountId)} — الحساب المقابل: ${escapePrint(detail.internalTransportCounterpartAccountId)}</span></div>` : ""}
-        <div class="notes"><b>الملاحظات</b><br>${escapePrint(detail.notes || "—")}</div>
-        <div class="signatures"><div class="signature">إعداد المستند<br>الاسم والتوقيع</div><div class="signature">تسليم<br>الاسم والتوقيع</div><div class="signature">استلام المستودع<br>الاسم والتوقيع</div></div>
-        <script>window.onload=function(){window.print();}</script></body></html>`);
-      printWindow.document.close();
+      printPersistedStockTransfer(detail, {
+        isRtl,
+        companyName: pickName(user?.company?.nameAr, user?.company?.nameEn),
+        targetWindow: printWindow,
+      });
     } catch (e: any) {
-      printWindow.close();
+      printWindow?.close();
       toast({ title: "تعذر تجهيز مستند الطباعة", description: e?.message || String(e), variant: "destructive" });
     }
   }
@@ -401,8 +377,8 @@ export default function StockTransfer() {
       items: validLines.map(l => ({
         itemId: Number(l.itemId),
         unitId: l.unitId ? Number(l.unitId) : null,
-        qty: l.qty,
-        costPrice: l.costPrice,
+        qty: Number(l.qty),
+        costPrice: Number(l.costPrice),
         conversionFactor: l.conversionFactor || "1",
       })),
     };
@@ -454,13 +430,13 @@ export default function StockTransfer() {
             {t("stockTransferPage.subtitle")}
           </p>
         </div>
-        <Button
+        {canCreate && <Button
           size="sm"
           className="gap-2"
           onClick={() => { reset(); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}
         >
           <Plus className="h-4 w-4" />{t("stockTransferPage.newTransfer")}
-        </Button>
+        </Button>}
       </div>
 
       {/* ─── Form (designed to match سند القبض pattern) ──────────────────── */}
@@ -481,7 +457,7 @@ export default function StockTransfer() {
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border bg-amber-50 text-amber-700 border-amber-200">
                 {t("stockTransferPage.status.draft")}
               </span>
-              <Button
+             {(editingId ? canEdit : canCreate) && <Button
                 variant="ghost"
                 size="icon"
                 onClick={reset}
@@ -489,7 +465,7 @@ export default function StockTransfer() {
                 aria-label={t("stockTransferPage.close")}
               >
                 <X className="h-4 w-4" />
-              </Button>
+             </Button>}
             </div>
           </div>
 
@@ -561,7 +537,7 @@ export default function StockTransfer() {
                     )}
                     {form.transferType === "manufacturing" && manufacturingOptions?.enabled === false && (
                       <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                        إذن التسليم إلى التصنيع غير مفعّل في إعدادات الشركة.
+                        تكلفة النقل الداخلي غير مفعلة؛ يظل إذن التسليم بتكلفة صفر والربط الاختياري بأمر تصنيع متاحين.
                       </p>
                     )}
                   </CardContent>
@@ -580,11 +556,11 @@ export default function StockTransfer() {
                         <Input
                           placeholder={seqPeek.loading ? "…" : t("stockTransferPage.transferNumberPlaceholder")}
                           dir="ltr"
-                          className={cn("text-left h-9 text-sm", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                          className={cn("text-left h-9 text-sm", (editingId || seqPeek.hasSequence) && "bg-muted/40 cursor-not-allowed")}
                           value={form.transferNumber}
-                          onChange={e => { if (!seqPeek.hasSequence) setForm((p: any) => ({ ...p, transferNumber: e.target.value })); }}
-                          readOnly={seqPeek.hasSequence}
-                          title={seqPeek.hasSequence ? t("stockTransferPage.sequenceTitle", { code: seqPeek.sequenceCode ?? "" }) : undefined}
+                          onChange={e => { if (!editingId && !seqPeek.hasSequence) setForm((p: any) => ({ ...p, transferNumber: e.target.value })); }}
+                          readOnly={!!editingId || seqPeek.hasSequence}
+                          title={!editingId && seqPeek.hasSequence ? t("stockTransferPage.sequenceTitle", { code: seqPeek.sequenceCode ?? "" }) : undefined}
                         />
                       </Field>
                       <Field label={t("stockTransferPage.date")} required>
@@ -615,7 +591,7 @@ export default function StockTransfer() {
                               value={form.productionOrderId}
                               onValueChange={v => setForm((p: any) => ({ ...p, productionOrderId: v }))}
                               placeholder={manufacturingOptionsLoading ? "جاري تحميل أوامر التصنيع…" : "اختر أمر تصنيع (اختياري)"}
-                              disabled={manufacturingOptionsLoading || manufacturingOptions?.enabled === false}
+                              disabled={manufacturingOptionsLoading}
                             />
                           </Field>
                           <p className="mt-2 text-[10px] text-muted-foreground">
@@ -732,6 +708,7 @@ export default function StockTransfer() {
                             value={form.internalTransportAmount}
                             onChange={e => setForm((p: any) => ({ ...p, internalTransportAmount: e.target.value }))}
                             placeholder="0"
+                            disabled={manufacturingOptions?.enabled === false}
                           />
                         </Field>
                         <div className="hidden sm:block" />
@@ -741,6 +718,7 @@ export default function StockTransfer() {
                             onValueChange={v => setForm((p: any) => ({ ...p, internalTransportExpenseAccountId: v }))}
                             placeholder="اختر حساب المصروف"
                             grouped={false}
+                            disabled={manufacturingOptions?.enabled === false}
                           />
                         </Field>
                         <Field label="الحساب المقابل">
@@ -749,12 +727,18 @@ export default function StockTransfer() {
                             onValueChange={v => setForm((p: any) => ({ ...p, internalTransportCounterpartAccountId: v }))}
                             placeholder="اختر الحساب المقابل"
                             grouped={false}
+                            disabled={manufacturingOptions?.enabled === false}
                           />
                         </Field>
                       </FormGrid>
                       <p className="text-[10px] text-muted-foreground">
                         الحسابان مطلوبان فقط عند إدخال مبلغ موجب. المبالغ التاريخية تبقى مقروءة حتى عند تعطيل الإعداد.
                       </p>
+                      {manufacturingOptions?.enabled === false && (
+                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                          تكلفة النقل الجديدة معطلة في الإعدادات. يمكنك حفظ وترحيل إذن بتكلفة صفر، وتبقى أي تكلفة تاريخية ظاهرة دون تعديل.
+                        </p>
+                      )}
                     </CardContent>
                   </Card>
                 )}
@@ -1067,7 +1051,6 @@ export default function StockTransfer() {
               onClick={() => handleSubmit({ preventDefault() {} } as any)}
                disabled={
                  createMut.isPending || updateMut.isPending ||
-                 (form.transferType === "manufacturing" && manufacturingOptions?.enabled === false) ||
                  !form.fromWarehouseId || !form.toWarehouseId || !form.transferDate
                }
             >
@@ -1169,7 +1152,7 @@ export default function StockTransfer() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex gap-1 items-center">
-                             <Button
+                             {canExport && <Button
                                size="sm"
                                variant="ghost"
                                className="h-7 text-xs"
@@ -1177,10 +1160,10 @@ export default function StockTransfer() {
                                title="طباعة المستند المحفوظ"
                              >
                                <FileText className="h-3 w-3" />
-                             </Button>
+                             </Button>}
                             {tr.status === "draft" && (
                               <>
-                                 <Button
+                                  {canEdit && <Button
                                    size="sm"
                                    variant="outline"
                                    className="h-7 text-xs gap-1"
@@ -1193,16 +1176,20 @@ export default function StockTransfer() {
                                    title="تعديل المسودة"
                                  >
                                    <Pencil className="h-3 w-3" />تعديل
-                                 </Button>
-                                <Button
+                                  </Button>}
+                                 {canPost && (
+                                   tr.transferType !== "manufacturing" ||
+                                   !tr.productionOrderId ||
+                                   canManufacturingPost
+                                 ) && <Button
                                   size="sm"
                                   variant="outline"
                                   className="h-7 text-xs gap-1 text-green-700 border-green-200 hover:bg-green-50"
                                   onClick={() => { if (confirm(t("stockTransferPage.confirmPost"))) postMut.mutate(tr.id); }}
                                 >
                                   <Send className="h-3 w-3" />{t("stockTransferPage.post")}
-                                </Button>
-                                <Button
+                                 </Button>}
+                                 {canDelete && <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-7 w-7 text-destructive"
@@ -1211,7 +1198,7 @@ export default function StockTransfer() {
                                   title={t("stockTransferPage.deleteTransfer")}
                                 >
                                   <Trash2 className="h-3 w-3" />
-                                </Button>
+                                 </Button>}
                               </>
                             )}
                             {tr.status === "posted" && (
@@ -1280,7 +1267,7 @@ export default function StockTransfer() {
                                     <p className="text-[10px] text-muted-foreground">يمكن تغيير الرابط أو فكه بعد الترحيل؛ لا يُنشأ أمر تصنيع جديد.</p>
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    <SearchCombobox
+                                     <SearchCombobox
                                       className="h-8 min-w-[240px] text-xs"
                                       items={[
                                         { value: "", label: "بدون ربط" },
@@ -1293,11 +1280,12 @@ export default function StockTransfer() {
                                       value={linkOrderId}
                                       onValueChange={setLinkOrderId}
                                       placeholder="اختر أمر تصنيع"
+                                       disabled={!canPost || !canManufacturingPost || linkMut.isPending}
                                     />
                                     <Button
                                       size="sm"
                                       className="h-8 text-xs"
-                                      disabled={linkMut.isPending || (linkOrderId === String(trDetail?.productionOrderId ?? "") && trDetail?.productionOrderId != null)}
+                                       disabled={!canPost || !canManufacturingPost || linkMut.isPending || linkOrderId === String(trDetail?.productionOrderId ?? "")}
                                       onClick={() => linkMut.mutate({ id: tr.id, productionOrderId: linkOrderId ? Number(linkOrderId) : null })}
                                     >
                                       {linkMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "حفظ الرابط"}

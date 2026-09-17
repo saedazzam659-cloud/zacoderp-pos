@@ -35,8 +35,9 @@ export type PeriodWritability =
 export async function resolvePeriodForDate(
   cid: number,
   isoDate: string,
+  executor: any = db,
 ): Promise<typeof fiscalPeriodsTable.$inferSelect | null> {
-  const [row] = await db.select().from(fiscalPeriodsTable).where(and(
+  const [row] = await executor.select().from(fiscalPeriodsTable).where(and(
     eq(fiscalPeriodsTable.companyId, cid),
     lte(fiscalPeriodsTable.startDate, isoDate),
     gte(fiscalPeriodsTable.endDate, isoDate),
@@ -52,8 +53,9 @@ export async function resolvePeriodForDate(
 export async function resolveYearForDate(
   cid: number,
   isoDate: string,
+  executor: any = db,
 ): Promise<typeof fiscalYearsTable.$inferSelect | null> {
-  const [row] = await db.select().from(fiscalYearsTable).where(and(
+  const [row] = await executor.select().from(fiscalYearsTable).where(and(
     eq(fiscalYearsTable.companyId, cid),
     lte(fiscalYearsTable.startDate, isoDate),
     gte(fiscalYearsTable.endDate, isoDate),
@@ -83,8 +85,9 @@ function reasonForStatus(name: string, status: "closed" | "permanently_closed", 
 export async function assertWritableForDate(
   cid: number,
   isoDate: string,
+  executor: any = db,
 ): Promise<PeriodWritability> {
-  const period = await resolvePeriodForDate(cid, isoDate);
+  const period = await resolvePeriodForDate(cid, isoDate, executor);
 
   if (period && period.status !== "open") {
     return {
@@ -98,7 +101,7 @@ export async function assertWritableForDate(
   // Year-level fallback — also catches the case where the period row IS
   // open but the parent year was hard-closed (cascade missed it, or the
   // year was closed via /years/:id/status without touching periods).
-  const year = await resolveYearForDate(cid, isoDate);
+  const year = await resolveYearForDate(cid, isoDate, executor);
   if (year && year.status !== "open") {
     return {
       ok: false,

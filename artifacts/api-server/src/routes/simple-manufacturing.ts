@@ -42,6 +42,7 @@ import {
 import { setContextModuleKey } from "../lib/requestContext.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { requireItemUnit } from "../lib/requiredItemUnit.js";
+import { listInternalDeliveryEvidence } from "../lib/internalManufacturingTransport.js";
 import {
   productionOrderDetailHandler,
   productionCostDrilldownHandler,
@@ -545,6 +546,26 @@ router.post("/setup/warehouses", create, async (req, res) => {
 // to post a simple order.  It deliberately reuses the company's existing
 // posting accounts instead of creating a second chart of accounts or exposing
 // the advanced production settings screen.
+router.get("/setup/accounting", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  try {
+    const [settings] = await db.select({
+      defaultWipAccountId: manufacturingSettingsTable.defaultWipAccountId,
+      defaultRawInventoryAccountId: manufacturingSettingsTable.defaultRawInventoryAccountId,
+      defaultFinishedGoodsAccountId: manufacturingSettingsTable.defaultFinishedGoodsAccountId,
+      defaultOverheadAccountId: manufacturingSettingsTable.defaultOverheadAccountId,
+      defaultWasteAccountId: manufacturingSettingsTable.defaultWasteAccountId,
+      electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
+      internalTransportEnabled: manufacturingSettingsTable.internalTransportEnabled,
+    }).from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
+    res.json({ settings: settings ?? { internalTransportEnabled: false } });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.put("/setup/accounting", edit, async (req, res) => {
   const cid = companyId(req, res);
   if (!cid) return;
@@ -1610,6 +1631,29 @@ const sourceCostHandler = async (req: any, res: any) => {
 
 router.get("/orders/:id/source-costs", view, sourceCostHandler);
 router.get("/orders/:id/costs", view, sourceCostHandler);
+// Compact users need the same independently-owned delivery evidence without
+// being granted the inventory module.  This projection deliberately exposes
+// only deliveries already linked to their in-scope order, never a warehouse
+// picker or stock-movement mutation surface.
+router.get("/orders/:id/internal-deliveries", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const orderId = Number(req.params.id);
+  try {
+    const [order] = await db.select({ branchId: productionOrdersTable.branchId })
+      .from(productionOrdersTable).where(and(
+        eq(productionOrdersTable.id, orderId),
+        eq(productionOrdersTable.companyId, cid),
+      )).limit(1);
+    if (!order) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, order.branchId);
+    if ("deny" in branchResult) return void res.status(404).json({ error: "أمر الإنتاج غير موجود" });
+    const rows = await listInternalDeliveryEvidence(db, cid, orderId, req);
+    res.json(rows);
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
 // The detail page is shared with advanced production and expects the canonical
 // drilldown envelope (`totals`, `trace.labor`, `trace.overhead`, etc.). Reuse
 // the guarded handler instead of returning a compact placeholder shape that

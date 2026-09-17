@@ -246,6 +246,7 @@ const INTERNAL_TRANSPORT_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS internal_transport_amount NUMERIC(18,2) NOT NULL DEFAULT '0'`,
   `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS internal_transport_expense_account_id INTEGER`,
   `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS internal_transport_counterpart_account_id INTEGER`,
+  `ALTER TABLE IF EXISTS stock_transfers ADD COLUMN IF NOT EXISTS internal_transport_journal_entry_id INTEGER`,
   `ALTER TABLE IF EXISTS manufacturing_settings ADD COLUMN IF NOT EXISTS internal_transport_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
   `ALTER TABLE IF EXISTS production_cost_allocations ADD COLUMN IF NOT EXISTS reclassification_journal_entry_id INTEGER`,
   `ALTER TABLE IF EXISTS production_cost_allocations ADD COLUMN IF NOT EXISTS reversal_journal_entry_id INTEGER`,
@@ -4349,13 +4350,13 @@ async function runHeal(options: {
   // agent package update, so a partially-upgraded agent must heal first.
   await ensureSupplierMetadataCompatibility();
   await ensureIndustrialPurchaseCostCompatibility();
-  await ensureInternalTransportCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must
   // exist in the shared heal pass before strict reconciliation and backup
   // catalog checks. The POST helper retains its lazy fallback for test/agent
   // callers which invoke a route without bootstrapping the full server.
   await ensureContractCreateIdempotencySchema();
+  await ensureBillCreateIdempotencySchema();
   await ensureContractingResourceInventoryCompatibility();
   await ensureContractingProjectCustomerCompatibility();
   await ensureContractingCostCenterCompatibility();

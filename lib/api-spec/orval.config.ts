@@ -52,6 +52,9 @@ export default defineConfig({
       client: "zod",
       target: "generated",
       mode: "split",
+      // Zod emits api.ts only; its automatic index also exports a nonexistent
+      // api.schemas module. Keep the package's explicit barrel instead.
+      indexFiles: false,
       clean: true,
       prettier: true,
       override: {

@@ -172,3 +172,8 @@ Late transport linked after material issue needs its own immutable WIP reclassif
 **Why:** Checking allocation deduplication only after creating the supplemental journal allows a lost-response retry to capitalize twice while retaining evidence for only one charge.
 
 **How to apply:** Treat source claim, supplemental journal, and cost update as one locked transaction. Keep the original delivery expense independent so manufacturing reversal does not reverse the warehouse delivery.
+Transport source ownership belongs to the delivery's explicit order link, not the generic manufacturing cost-source picker. The same production allocation/reclassification accounting still owns its cost after linkage.
+
+**Why:** Allowing both a transfer link and a separate manual source selection creates two independent ways to capitalize the same transport charge. A zero-charge delivery must remain linkable without creating a financial allocation.
+
+**How to apply:** Keep original transport expense independent of order cancellation. For open-order relinks, preserve every standalone reclassification delta, including round trips back to the same order; lifecycle reversal must invert the full saved delta history rather than only the latest link.

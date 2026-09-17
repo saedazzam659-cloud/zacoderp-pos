@@ -8,6 +8,331 @@
 import * as zod from "zod";
 
 /**
+ * @summary List warehouse transfers and internal manufacturing deliveries in the caller scope
+ */
+export const ListInternalStockTransfersResponseItem = zod.object({
+  id: zod.number(),
+  transferNumber: zod.string(),
+  transferDate: zod.coerce.date(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  fromWarehouseId: zod.number(),
+  toWarehouseId: zod.number(),
+  transferType: zod.enum(["warehouse", "manufacturing"]).optional(),
+  productionOrderId: zod.number().nullish(),
+  internalTransportAmount: zod.string().optional(),
+  internalTransportExpenseAccountId: zod.number().nullish(),
+  internalTransportCounterpartAccountId: zod.number().nullish(),
+  internalTransportJournalEntryId: zod.number().nullish(),
+  journalEntryId: zod.number().nullish(),
+  fromAccountId: zod.number().nullish(),
+  toAccountId: zod.number().nullish(),
+  notes: zod.string().nullish(),
+  fromWarehouse: zod.record(zod.string(), zod.unknown()).optional(),
+  toWarehouse: zod.record(zod.string(), zod.unknown()).optional(),
+  items: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        itemId: zod.number(),
+        unitId: zod.number().nullish(),
+        qty: zod.string(),
+        costPrice: zod.string().optional(),
+        conversionFactor: zod.string().optional(),
+        item: zod.record(zod.string(), zod.unknown()).nullish(),
+        unit: zod.record(zod.string(), zod.unknown()).nullish(),
+      }),
+    )
+    .optional(),
+});
+export const ListInternalStockTransfersResponse = zod.array(
+  ListInternalStockTransfersResponseItem,
+);
+
+/**
+ * @summary Save a transfer draft without moving stock or posting transport expense
+ */
+
+export const createInternalStockTransferBodyTransferTypeDefault = `warehouse`;
+export const createInternalStockTransferBodyInternalTransportAmountDefault = 0;
+export const createInternalStockTransferBodyInternalTransportAmountMin = 0;
+
+export const createInternalStockTransferBodyItemsItemQtyExclusiveMin = 0;
+
+export const createInternalStockTransferBodyItemsItemCostPriceMin = 0;
+
+export const CreateInternalStockTransferBody = zod.object({
+  transferNumber: zod.string().optional(),
+  transferDate: zod.coerce.date(),
+  fromWarehouseId: zod.number().min(1),
+  toWarehouseId: zod.number().min(1),
+  transferType: zod
+    .enum(["warehouse", "manufacturing"])
+    .default(createInternalStockTransferBodyTransferTypeDefault),
+  productionOrderId: zod.number().min(1).nullish(),
+  internalTransportAmount: zod
+    .number()
+    .min(createInternalStockTransferBodyInternalTransportAmountMin)
+    .default(createInternalStockTransferBodyInternalTransportAmountDefault)
+    .describe("Separate transport charge, never the transferred goods value"),
+  internalTransportExpenseAccountId: zod.number().min(1).nullish(),
+  internalTransportCounterpartAccountId: zod.number().min(1).nullish(),
+  fromAccountId: zod.number().min(1).nullish(),
+  toAccountId: zod.number().min(1).nullish(),
+  notes: zod.string().nullish(),
+  items: zod
+    .array(
+      zod.object({
+        itemId: zod.number().min(1),
+        unitId: zod.number().min(1),
+        qty: zod
+          .number()
+          .gt(createInternalStockTransferBodyItemsItemQtyExclusiveMin),
+        costPrice: zod
+          .number()
+          .min(createInternalStockTransferBodyItemsItemCostPriceMin)
+          .optional(),
+      }),
+    )
+    .min(1),
+});
+
+/**
+ * @summary Read persisted transfer lines and transport evidence
+ */
+
+export const GetInternalStockTransferParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const GetInternalStockTransferResponse = zod.object({
+  id: zod.number(),
+  transferNumber: zod.string(),
+  transferDate: zod.coerce.date(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  fromWarehouseId: zod.number(),
+  toWarehouseId: zod.number(),
+  transferType: zod.enum(["warehouse", "manufacturing"]).optional(),
+  productionOrderId: zod.number().nullish(),
+  internalTransportAmount: zod.string().optional(),
+  internalTransportExpenseAccountId: zod.number().nullish(),
+  internalTransportCounterpartAccountId: zod.number().nullish(),
+  internalTransportJournalEntryId: zod.number().nullish(),
+  journalEntryId: zod.number().nullish(),
+  fromAccountId: zod.number().nullish(),
+  toAccountId: zod.number().nullish(),
+  notes: zod.string().nullish(),
+  fromWarehouse: zod.record(zod.string(), zod.unknown()).optional(),
+  toWarehouse: zod.record(zod.string(), zod.unknown()).optional(),
+  items: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        itemId: zod.number(),
+        unitId: zod.number().nullish(),
+        qty: zod.string(),
+        costPrice: zod.string().optional(),
+        conversionFactor: zod.string().optional(),
+        item: zod.record(zod.string(), zod.unknown()).nullish(),
+        unit: zod.record(zod.string(), zod.unknown()).nullish(),
+      }),
+    )
+    .optional(),
+});
+
+/**
+ * @summary Replace an editable draft; posted documents are immutable
+ */
+
+export const UpdateInternalStockTransferParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const updateInternalStockTransferBodyTransferTypeDefault = `warehouse`;
+export const updateInternalStockTransferBodyInternalTransportAmountDefault = 0;
+export const updateInternalStockTransferBodyInternalTransportAmountMin = 0;
+
+export const updateInternalStockTransferBodyItemsItemQtyExclusiveMin = 0;
+
+export const updateInternalStockTransferBodyItemsItemCostPriceMin = 0;
+
+export const UpdateInternalStockTransferBody = zod.object({
+  transferNumber: zod.string().optional(),
+  transferDate: zod.coerce.date(),
+  fromWarehouseId: zod.number().min(1),
+  toWarehouseId: zod.number().min(1),
+  transferType: zod
+    .enum(["warehouse", "manufacturing"])
+    .default(updateInternalStockTransferBodyTransferTypeDefault),
+  productionOrderId: zod.number().min(1).nullish(),
+  internalTransportAmount: zod
+    .number()
+    .min(updateInternalStockTransferBodyInternalTransportAmountMin)
+    .default(updateInternalStockTransferBodyInternalTransportAmountDefault)
+    .describe("Separate transport charge, never the transferred goods value"),
+  internalTransportExpenseAccountId: zod.number().min(1).nullish(),
+  internalTransportCounterpartAccountId: zod.number().min(1).nullish(),
+  fromAccountId: zod.number().min(1).nullish(),
+  toAccountId: zod.number().min(1).nullish(),
+  notes: zod.string().nullish(),
+  items: zod
+    .array(
+      zod.object({
+        itemId: zod.number().min(1),
+        unitId: zod.number().min(1),
+        qty: zod
+          .number()
+          .gt(updateInternalStockTransferBodyItemsItemQtyExclusiveMin),
+        costPrice: zod
+          .number()
+          .min(updateInternalStockTransferBodyItemsItemCostPriceMin)
+          .optional(),
+      }),
+    )
+    .min(1),
+});
+
+export const UpdateInternalStockTransferResponse = zod.object({
+  id: zod.number(),
+  transferNumber: zod.string(),
+  transferDate: zod.coerce.date(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  fromWarehouseId: zod.number(),
+  toWarehouseId: zod.number(),
+  transferType: zod.enum(["warehouse", "manufacturing"]).optional(),
+  productionOrderId: zod.number().nullish(),
+  internalTransportAmount: zod.string().optional(),
+  internalTransportExpenseAccountId: zod.number().nullish(),
+  internalTransportCounterpartAccountId: zod.number().nullish(),
+  internalTransportJournalEntryId: zod.number().nullish(),
+  journalEntryId: zod.number().nullish(),
+  fromAccountId: zod.number().nullish(),
+  toAccountId: zod.number().nullish(),
+  notes: zod.string().nullish(),
+  fromWarehouse: zod.record(zod.string(), zod.unknown()).optional(),
+  toWarehouse: zod.record(zod.string(), zod.unknown()).optional(),
+  items: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        itemId: zod.number(),
+        unitId: zod.number().nullish(),
+        qty: zod.string(),
+        costPrice: zod.string().optional(),
+        conversionFactor: zod.string().optional(),
+        item: zod.record(zod.string(), zod.unknown()).nullish(),
+        unit: zod.record(zod.string(), zod.unknown()).nullish(),
+      }),
+    )
+    .optional(),
+});
+
+/**
+ * @summary Delete a draft only
+ */
+
+export const DeleteInternalStockTransferParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+/**
+ * @summary Post the warehouse movement and a separate transport source expense exactly once
+ */
+
+export const PostInternalStockTransferParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const PostInternalStockTransferResponse = zod.object({
+  ok: zod.boolean(),
+  journalEntryId: zod.number().nullish(),
+  internalTransportJournalEntryId: zod.number().nullish(),
+  transportReclassificationJournalEntryId: zod.number().nullish(),
+});
+
+/**
+ * @summary Link a delivery independently; terminal orders reject cost changes
+ */
+
+export const LinkInternalStockTransferOrderParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const LinkInternalStockTransferOrderBody = zod.object({
+  productionOrderId: zod
+    .number()
+    .min(1)
+    .nullable()
+    .describe(
+      "Requested order; unlinking is subject to accounting lifecycle guards",
+    ),
+});
+
+export const LinkInternalStockTransferOrderResponse = zod.object({
+  transfer: zod.object({
+    id: zod.number(),
+    transferNumber: zod.string(),
+    transferDate: zod.coerce.date(),
+    status: zod.enum(["draft", "posted", "cancelled"]),
+    fromWarehouseId: zod.number(),
+    toWarehouseId: zod.number(),
+    transferType: zod.enum(["warehouse", "manufacturing"]).optional(),
+    productionOrderId: zod.number().nullish(),
+    internalTransportAmount: zod.string().optional(),
+    internalTransportExpenseAccountId: zod.number().nullish(),
+    internalTransportCounterpartAccountId: zod.number().nullish(),
+    internalTransportJournalEntryId: zod.number().nullish(),
+    journalEntryId: zod.number().nullish(),
+    fromAccountId: zod.number().nullish(),
+    toAccountId: zod.number().nullish(),
+    notes: zod.string().nullish(),
+    fromWarehouse: zod.record(zod.string(), zod.unknown()).optional(),
+    toWarehouse: zod.record(zod.string(), zod.unknown()).optional(),
+    items: zod
+      .array(
+        zod.object({
+          id: zod.number(),
+          itemId: zod.number(),
+          unitId: zod.number().nullish(),
+          qty: zod.string(),
+          costPrice: zod.string().optional(),
+          conversionFactor: zod.string().optional(),
+          item: zod.record(zod.string(), zod.unknown()).nullish(),
+          unit: zod.record(zod.string(), zod.unknown()).nullish(),
+        }),
+      )
+      .optional(),
+  }),
+  allocation: zod.record(zod.string(), zod.unknown()).nullish(),
+  reclassificationJournalEntryId: zod.number().nullish(),
+  idempotent: zod.boolean(),
+});
+
+/**
+ * @summary Read delivery evidence under the compact manufacturing permission boundary
+ */
+
+export const ListManufacturingInternalDeliveriesParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const ListManufacturingInternalDeliveriesResponseItem = zod.object({
+  id: zod.number(),
+  transferNumber: zod.string(),
+  transferDate: zod.coerce.date(),
+  status: zod.string(),
+  internalTransportAmount: zod.string(),
+  internalTransportJournalEntryId: zod.number().nullish(),
+  currentProductionOrderId: zod.number().nullish(),
+  isCurrentlyLinked: zod.boolean().optional(),
+  associationState: zod.enum(["current", "historical"]).optional(),
+  allocatedAmount: zod.string().optional(),
+  active: zod.boolean().optional(),
+});
+export const ListManufacturingInternalDeliveriesResponse = zod.array(
+  ListManufacturingInternalDeliveriesResponseItem,
+);
+
+/**
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({

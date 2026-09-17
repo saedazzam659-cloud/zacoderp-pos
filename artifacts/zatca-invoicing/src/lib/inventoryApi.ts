@@ -38,9 +38,11 @@ async function del(path: string): Promise<void> {
   if (!r.ok) throw new Error(await r.text());
 }
 
-// ─── PRO Extension #17 — Item Suppliers ─────────────────────────────────────
-// Per-link metadata between an item and one of the company's suppliers.
-// `supplierName`/`supplierCode` come from the LEFT JOIN on the GET endpoint.
+async function apiGet<T>(path: string): Promise<T> {
+  const r = await fetch(`${API}/api${path}`, { headers: authHeaders() });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
 export interface ItemSupplier {
   id: number;
   companyId: number;
@@ -191,6 +193,7 @@ export const inventoryApi = {
   getTransfer:    (id: number)   => get<any>(`/stock-transfers/${id}`),
   createTransfer: (data: any)    => post<any>("/stock-transfers", data),
   updateTransfer: (id: number, data: any) => put<any>(`/stock-transfers/${id}`, data),
+  updateInternalStockTransfer: (id: number, data: any) => put<any>(`/stock-transfers/${id}`, data),
   postTransfer:   (id: number)   => post<any>(`/stock-transfers/${id}/post`, {}),
   getManufacturingTransferOptions: () => get<{
     enabled: boolean;
@@ -216,6 +219,14 @@ export const inventoryApi = {
   updateCount: (id: number, data: any) => put<any>(`/stock-counts/${id}`, data),
   postCount:   (id: number)   => post<any>(`/stock-counts/${id}/post`, {}),
   deleteCount: (id: number)   => del(`/stock-counts/${id}`),
+  // Production Orders (Contract for task-448)
+  getProductionOrders: () => apiGet<any[]>("/simple-manufacturing/orders"),
+  getManufacturingAccountingSettings: () =>
+    apiGet<{ settings: { internalTransportEnabled?: boolean } }>("/simple-manufacturing/setup/accounting"),
+  getProductionOrderInternalDeliveries: (orderId: number) =>
+    apiGet<any[]>(`/simple-manufacturing/orders/${orderId}/internal-deliveries`),
+  // Contract for linking after creation
+  linkTransferToProductionOrder: (transferId: number, data: { productionOrderId: number | null }) => post<any>(`/stock-transfers/${transferId}/link-production-order`, data),
   // Ledger & Balance
   getLedger:  (params: Record<string, string>) => get<any[]>(`/stock-ledger?${new URLSearchParams(params)}`),
   getLedgerPage: (params: Record<string, string>) => get<{

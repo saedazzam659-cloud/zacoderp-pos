@@ -33,9 +33,6 @@ import {
   notificationsTable,
   subscriptionsTable,
   accountingMappingsTable,
-  productionOrdersTable,
-  productionCostAllocationsTable,
-  manufacturingSettingsTable,
 } from "@workspace/db";
 import { eq, ne, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or, count } from "drizzle-orm";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -82,6 +79,17 @@ import {
   validateBaseUnitAssignment,
   assertUnitGraphTenantOwnership,
 } from "../lib/unitConversion.js";
+import {
+  assertInternalTransportEnabledForCapture,
+  internalTransportAmount,
+  linkPostedInternalTransport,
+  postInternalTransportExpense,
+  validateInternalTransportAccounts,
+  validateInternalTransportOrder,
+  lockInternalTransportMutation,
+  assertInternalDeliveryOrderPermission,
+  recordInternalDeliveryLink,
+} from "../lib/internalManufacturingTransport.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -130,187 +138,40 @@ function getCompanyId(req: any): number | undefined {
 
 const TRANSPORT_TYPES = new Set(["warehouse", "manufacturing"]);
 
-async function validateInternalTransportAccounts(
+async function transferWarehouses(
   q: any,
   cid: number,
-  amount: number,
-  expenseAccountId: unknown,
-  counterpartAccountId: unknown,
-) {
-  if (!(amount > 0)) return;
-  const expenseId = Number(expenseAccountId);
-  const counterpartId = Number(counterpartAccountId);
-  if (!Number.isInteger(expenseId) || expenseId <= 0 ||
-      !Number.isInteger(counterpartId) || counterpartId <= 0 ||
-      expenseId === counterpartId) {
-    throw new Error("مبلغ النقل الداخلي الموجب يتطلب حساب مصروف وحساب مقابل مختلفين");
-  }
-  const rows = await q.select({
-    id: accountsTable.id, accountType: accountsTable.accountType,
-    isActive: accountsTable.isActive, isPosting: accountsTable.isPosting,
-  }).from(accountsTable).where(and(
-    eq(accountsTable.companyId, cid),
-    inArray(accountsTable.id, [expenseId, counterpartId]),
-  ));
-  const byId = new Map(rows.map((row: any) => [row.id, row]));
-  const expense = byId.get(expenseId);
-  const counterpart = byId.get(counterpartId);
-  if (!expense || !expense.isActive || !expense.isPosting || expense.accountType !== "expense") {
-    throw new Error("حساب مصروف النقل الداخلي يجب أن يكون حساب مصروف نشطاً وقابلاً للترحيل في الشركة");
-  }
-  if (!counterpart || !counterpart.isActive || !counterpart.isPosting) {
-    throw new Error("حساب مقابل النقل الداخلي غير موجود أو غير نشط أو غير قابل للترحيل");
-  }
-}
-
-async function validateTransportOrder(
-  q: any,
-  cid: number,
-  orderId: number | null,
-  warehouseIds: number[],
+  fromWarehouseId: unknown,
+  toWarehouseId: unknown,
   req?: any,
 ) {
-  if (orderId == null) return null;
-  const [order] = await q.select({
-    id: productionOrdersTable.id, status: productionOrdersTable.status,
-    branchId: productionOrdersTable.branchId, orderNumber: productionOrdersTable.orderNumber,
-  }).from(productionOrdersTable).where(and(
-    eq(productionOrdersTable.id, orderId),
-    eq(productionOrdersTable.companyId, cid),
-  )).limit(1);
-  if (!order) throw new Error("أمر الإنتاج غير موجود في الشركة");
-  if (["completed", "cancelled", "reversed"].includes(String(order.status))) {
-    throw new Error("لا يمكن إضافة أو ربط تكلفة نقل داخلي بأمر مكتمل أو ملغى أو معكوس");
+  const fromId = Number(fromWarehouseId);
+  const toId = Number(toWarehouseId);
+  if (!Number.isInteger(fromId) || !Number.isInteger(toId) || fromId <= 0 || toId <= 0 || fromId === toId) {
+    throw Object.assign(new Error("يجب تحديد مخزن مصدر ووجهة مختلفين"), { status: 400 });
   }
-  if (req && order.branchId != null) {
-    const allowed = getAllowedBranchIds(req);
-    if (allowed != null && !allowed.includes(order.branchId)) {
-      throw new Error("أمر الإنتاج خارج نطاق الفرع المسموح");
-    }
+  const rows = await q.select({ id: warehousesTable.id, branchId: warehousesTable.branchId })
+    .from(warehousesTable).where(and(
+      eq(warehousesTable.companyId, cid),
+      inArray(warehousesTable.id, [fromId, toId]),
+    ));
+  if (rows.length !== 2) throw Object.assign(new Error("مخزن غير صالح أو لا ينتمي للشركة"), { status: 400 });
+  const allowed = req ? getAllowedBranchIds(req) : null;
+  if (allowed !== null && rows.some((row) => row.branchId == null || !allowed.includes(row.branchId))) {
+    throw Object.assign(new Error("أحد مخازن التحويل خارج نطاق الفرع المسموح"), { status: 403 });
   }
-  const warehouses = warehouseIds.length
-    ? await q.select({ id: warehousesTable.id, branchId: warehousesTable.branchId })
-      .from(warehousesTable).where(and(
-        eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, warehouseIds),
-      ))
-    : [];
-  if (order.branchId != null && warehouses.some((w: any) => w.branchId != null && w.branchId !== order.branchId)) {
-    throw new Error("يجب أن يتبع أمر الإنتاج ومخازن التحويل نفس الفرع");
-  }
-  return order;
+  return rows;
 }
 
-async function allocatePostedInternalTransport(
-  tx: any,
-  cid: number,
-  transfer: any,
-  actorId: number | null,
-  reclassificationJournalEntryId: number | null = null,
+function assertManufacturingDeliveryBranches(
+  transferType: unknown,
+  warehouseRows: Array<{ branchId: number | null }>,
 ) {
-  if (!transfer.productionOrderId || Number(transfer.internalTransportAmount) <= 0) return;
-  const [order] = await tx.select().from(productionOrdersTable).where(and(
-    eq(productionOrdersTable.id, transfer.productionOrderId),
-    eq(productionOrdersTable.companyId, cid),
-  )).for("update");
-  if (!order || ["completed", "cancelled", "reversed"].includes(String(order.status))) {
-    throw new Error("لا يمكن توزيع النقل الداخلي على أمر إنتاج مكتمل أو ملغى أو معكوس");
-  }
-  const [alreadyUsed] = await tx.select({
-    id: productionCostAllocationsTable.id,
-    orderId: productionCostAllocationsTable.orderId,
-  })
-    .from(productionCostAllocationsTable).where(and(
-      eq(productionCostAllocationsTable.companyId, cid),
-      eq(productionCostAllocationsTable.sourceType, "internal_transport"),
-      eq(productionCostAllocationsTable.sourceRecordId, transfer.id),
-    )).limit(1);
-  if (alreadyUsed) {
-    if (alreadyUsed.orderId !== order.id) throw new Error("التحويل مرتبط بأمر إنتاج آخر");
-    return;
-  }
-  const date = String(transfer.transferDate).slice(0, 10);
-  await tx.insert(productionCostAllocationsTable).values({
-    companyId: cid,
-    orderId: order.id,
-    sourceType: "internal_transport",
-    sourceRecordId: transfer.id,
-    periodStart: date,
-    periodEnd: date,
-    basis: "posted_internal_transport",
-    sourceAmount: Number(transfer.internalTransportAmount).toFixed(2),
-    sharePct: "100",
-    allocatedAmount: Number(transfer.internalTransportAmount).toFixed(2),
-    reclassificationJournalEntryId,
-    snapshotMeta: {
-      label: `نقل داخلي للتحويل ${transfer.transferNumber}`,
-      includeInManufacturing: true,
-      costTreatment: "manufacturing_overhead",
-      reclassificationAccounts: [{
-        accountId: transfer.internalTransportExpenseAccountId,
-        weight: Number(transfer.internalTransportAmount),
-      }],
-    },
-    createdBy: actorId,
-  });
-}
-
-async function reclassifyLateInternalTransport(
-  tx: any,
-  cid: number,
-  transfer: any,
-  order: any,
-  req: any,
-): Promise<number | null> {
-  const amount = Number(transfer.internalTransportAmount ?? 0);
-  if (!(amount > 0) || !order.issueJournalEntryId) return null;
-  if (!order.wipAccountId) throw new Error("حساب WIP مطلوب لربط نقل داخلي بأمر بدأ الإنتاج");
-  const writable = await assertWritableForDate(cid, String(transfer.transferDate));
-  if (!writable.ok) throw new Error(writable.reason ?? "الفترة مغلقة");
-  // A late link capitalizes an already-posted source. It must never create a
-  // draft WIP reclassification while the order reports the amount as actual.
-  const status = "posted";
-  const docNumber = (await nextSequenceNumber(cid, "journal_entry", {
-    userId: req.authUser?.id ?? null,
-    refTable: "journal_entries", branchId: order.branchId ?? null,
-    docDate: transfer.transferDate as any,
-  }, tx)) ?? `${order.orderNumber}-TRN-${transfer.id}`;
-  const [entry] = await tx.insert(journalEntriesTable).values({
-    companyId: cid, docNumber, entryDate: transfer.transferDate,
-    currency: "SAR", exchangeRate: "1",
-    description: `إعادة تصنيف تسليم داخلي إلى WIP — ${transfer.transferNumber}`,
-    entryType: "production_internal_transport",
-    status, periodId: writable.period?.id ?? null,
-    ...fullAuditFor(req, status),
-  }).returning();
-  await tx.insert(journalEntryLinesTable).values([
-    { entryId: entry.id, accountId: order.wipAccountId, debit: amount.toFixed(2), credit: "0.00",
-      description: `نقل داخلي إلى WIP (${transfer.transferNumber})`, sortOrder: 0 },
-    { entryId: entry.id, accountId: transfer.internalTransportExpenseAccountId, debit: "0.00", credit: amount.toFixed(2),
-      description: `إلغاء مصروف النقل الداخلي (${transfer.transferNumber})`, sortOrder: 1 },
-  ]);
-  return entry.id;
-}
-
-function transportAmount(value: unknown): number {
-  if (value == null || value === "") return 0;
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount < 0) throw new Error("مبلغ النقل الداخلي يجب أن يكون صفراً أو موجباً");
-  return Number(amount.toFixed(2));
-}
-
-async function assertTransportCaptureEnabled(
-  q: any,
-  cid: number,
-  amount: number,
-  productionOrderId: number | null,
-  existingAmount = 0,
-  existingOrderId: number | null = null,
-) {
-  if ((amount > 0 && amount !== existingAmount) ||
-      productionOrderId !== existingOrderId) {
-    const [settings] = await q.select({ enabled: manufacturingSettingsTable.internalTransportEnabled })
-      .from(manufacturingSettingsTable).where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
-    if (!settings?.enabled) throw new Error("النقل الداخلي غير مفعّل في إعدادات التصنيع");
+  if (transferType !== "manufacturing") return;
+  const branchIds = warehouseRows.map((row) => row.branchId);
+  if (branchIds.length !== 2 || branchIds[0] == null || branchIds[1] == null ||
+      branchIds[0] !== branchIds[1]) {
+    throw Object.assign(new Error("يجب أن يكون مخزنا إذن تسليم التصنيع ضمن الفرع نفسه"), { status: 400 });
   }
 }
 
@@ -2092,23 +1953,23 @@ router.post("/items/:id/convert", async (req, res) => {
 // STOCK TRANSFERS
 // ═══════════════════════════════════════════════════════════════════
 router.get("/stock-transfers", async (req, res) => {
-  const cid = getCompanyId(req);
-  const rows = cid
-    ? await db.select({ tr: stockTransfersTable, from: warehousesTable, to: warehousesTable })
-        .from(stockTransfersTable)
-        .leftJoin(warehousesTable, eq(stockTransfersTable.fromWarehouseId, warehousesTable.id))
-        .where(eq(stockTransfersTable.companyId, cid))
-        .orderBy(desc(stockTransfersTable.transferDate))
-    : [];
-  // Fix: join both warehouses properly via alias - simpler approach:
-  const transfers = await (cid
-    ? db.select().from(stockTransfersTable).where(eq(stockTransfersTable.companyId, cid)).orderBy(desc(stockTransfersTable.transferDate))
-    : db.select().from(stockTransfersTable).orderBy(desc(stockTransfersTable.transferDate)));
+  const cid = guard(req, res); if (!cid) return;
+  const transfers = await db.select().from(stockTransfersTable)
+    .where(eq(stockTransfersTable.companyId, cid)).orderBy(desc(stockTransfersTable.transferDate));
   // Attach warehouse names
   const whIds = [...new Set(transfers.flatMap(t => [t.fromWarehouseId, t.toWarehouseId]))];
-  const whs = whIds.length ? await db.select().from(warehousesTable).where(inArray(warehousesTable.id, whIds)) : [];
+  const whs = whIds.length ? await db.select().from(warehousesTable).where(and(
+    eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, whIds),
+  )) : [];
   const whMap = Object.fromEntries(whs.map(w => [w.id, w]));
-  res.json(transfers.map(t => ({ ...t, fromWarehouse: whMap[t.fromWarehouseId], toWarehouse: whMap[t.toWarehouseId] })));
+  const allowed = getAllowedBranchIds(req);
+  const visible = allowed === null ? transfers : transfers.filter((transfer) => {
+    const from = whMap[transfer.fromWarehouseId];
+    const to = whMap[transfer.toWarehouseId];
+    return !!from && !!to && from.branchId != null && to.branchId != null &&
+      allowed.includes(from.branchId) && allowed.includes(to.branchId);
+  });
+  res.json(visible.map(t => ({ ...t, fromWarehouse: whMap[t.fromWarehouseId], toWarehouse: whMap[t.toWarehouseId] })));
 });
 
 // Manufacturing-only transport selectors. The transferred goods value is
@@ -2151,119 +2012,43 @@ router.get("/transfer-manufacturing-options", async (req, res) => {
 async function linkTransferToProductionOrder(req: any, res: any) {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
+  if (!Object.prototype.hasOwnProperty.call(req.body ?? {}, "productionOrderId")) {
+    res.status(400).json({ error: "productionOrderId مطلوب؛ أرسل null صراحةً لفك الربط" });
+    return;
+  }
   const requested = req.body?.productionOrderId;
   const orderId = requested == null || requested === "" ? null : Number(requested);
   if (orderId != null && (!Number.isInteger(orderId) || orderId <= 0)) {
     res.status(400).json({ error: "productionOrderId غير صحيح" }); return;
   }
   try {
-    const row = await db.transaction(async (tx) => {
-      // Production status transitions lock the order first. Keep this lock
-      // order here so link/post and issue cannot deadlock each other.
-      let targetOrder: any = null;
-      if (orderId != null) {
-        [targetOrder] = await tx.select().from(productionOrdersTable).where(and(
-          eq(productionOrdersTable.id, orderId),
-          eq(productionOrdersTable.companyId, cid),
-        )).for("update");
-        if (!targetOrder) throw new Error("أمر الإنتاج غير موجود في الشركة");
+    const result = await db.transaction(async (tx) => {
+      const transfer = await lockInternalTransportMutation(tx, cid, id, req, orderId);
+      if (transfer.transferType !== "manufacturing") {
+        throw Object.assign(new Error("ربط أمر الإنتاج متاح لإذن تسليم التصنيع فقط"), { status: 409 });
       }
-      const [tr] = await tx.select().from(stockTransfersTable)
-        .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid))).for("update");
-      if (!tr) throw new Error("الحركة غير موجودة");
-      if (tr.status !== "posted") throw new Error("لا يمكن ربط تكلفة قبل ترحيل التحويل");
-      if (Number(tr.internalTransportAmount ?? 0) > 0) {
-        if (!tr.journalEntryId) throw new Error("لا يمكن رسملة النقل الداخلي بلا قيد مصدر");
-        const [sourceJe] = await tx.select({ status: journalEntriesTable.status })
-          .from(journalEntriesTable).where(and(
-            eq(journalEntriesTable.id, tr.journalEntryId),
-            eq(journalEntriesTable.companyId, cid),
-          )).limit(1);
-        if (sourceJe?.status !== "posted") {
-          throw new Error("لا يمكن رسملة النقل الداخلي قبل ترحيل قيد التحويل الأصلي");
-        }
-      }
-      if (orderId != null) {
-        await assertTransportCaptureEnabled(tx, cid, Number(tr.internalTransportAmount ?? 0),
-          orderId, Number(tr.internalTransportAmount ?? 0), tr.productionOrderId ?? null);
-      }
-      const order = await validateTransportOrder(tx, cid, orderId,
-        [tr.fromWarehouseId, tr.toWarehouseId], req);
-      if (orderId != null && String(tr.transferType ?? "warehouse") !== "manufacturing") {
-        throw new Error("لا يمكن ربط تحويل warehouse بتكلفة تصنيع؛ استخدم transferType=manufacturing");
-      }
-      if (tr.productionOrderId != null && tr.productionOrderId !== orderId) {
-        const [old] = await tx.select({
-          id: productionOrdersTable.id, status: productionOrdersTable.status,
-          issueJournalEntryId: productionOrdersTable.issueJournalEntryId,
-        })
-          .from(productionOrdersTable).where(eq(productionOrdersTable.id, tr.productionOrderId)).for("update");
-        if (["completed", "cancelled", "reversed"].includes(String(old?.status))) {
-          throw new Error("لا يمكن فك ربط نقل داخلي من أمر مكتمل أو ملغى أو معكوس");
-        }
-        if (old?.issueJournalEntryId) throw new Error("لا يمكن فك ربط تكلفة سبق استهلاكها في أمر الإنتاج");
-      }
-      const [existingAllocation] = await tx.select({
-        id: productionCostAllocationsTable.id,
-        orderId: productionCostAllocationsTable.orderId,
-        reversalJournalEntryId: productionCostAllocationsTable.reversalJournalEntryId,
-      }).from(productionCostAllocationsTable).where(and(
-        eq(productionCostAllocationsTable.companyId, cid),
-        eq(productionCostAllocationsTable.sourceType, "internal_transport"),
-        eq(productionCostAllocationsTable.sourceRecordId, id),
-      )).for("update").limit(1);
-      // The transfer lock serializes retries. Once this source allocation is
-      // attached to the same order, the PATCH is an idempotent no-op: do not
-      // create another WIP JE or increment actualCost a second time.
-      if (orderId != null && existingAllocation &&
-          existingAllocation.orderId === orderId &&
-          !existingAllocation.reversalJournalEntryId) {
-        return tr;
-      }
-      if (orderId != null) {
-        if (existingAllocation && existingAllocation.orderId !== orderId) {
-          throw new Error("التحويل مرتبط بأمر إنتاج آخر");
-        }
-      }
-      const [updated] = await tx.update(stockTransfersTable).set({
-        productionOrderId: orderId, updatedAt: new Date(),
-      }).where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid))).returning();
-      let supplementalJournalId: number | null = null;
-      if (orderId != null && targetOrder?.issueJournalEntryId) {
-        supplementalJournalId = await reclassifyLateInternalTransport(
-          tx, cid, updated, targetOrder, req,
-        );
-        if (supplementalJournalId) {
-          await tx.update(productionOrdersTable).set({
-            actualCost: sql`${productionOrdersTable.actualCost} + ${Number(updated.internalTransportAmount ?? 0).toFixed(2)}`,
-            updatedAt: new Date(),
-          }).where(eq(productionOrdersTable.id, orderId));
-        }
-      }
-      if (orderId != null) {
-        await allocatePostedInternalTransport(
-          tx, cid, updated, req.authUser?.id ?? null, supplementalJournalId,
-        );
-      }
-      if (orderId == null) await tx.delete(productionCostAllocationsTable).where(and(
-        eq(productionCostAllocationsTable.companyId, cid),
-        eq(productionCostAllocationsTable.sourceType, "internal_transport"),
-        eq(productionCostAllocationsTable.sourceRecordId, id),
-      ));
-      return updated;
+      const warehouses = await transferWarehouses(tx, cid, transfer.fromWarehouseId, transfer.toWarehouseId, req);
+      assertManufacturingDeliveryBranches(transfer.transferType, warehouses);
+      return linkPostedInternalTransport(tx, cid, transfer, orderId, req, warehouses.map((row) => row.branchId));
     });
-    res.json(row);
-  } catch (e: any) { res.status(400).json({ error: e.message }); }
+    // Keep the incoming PATCH response shape; the POST contract is an envelope.
+    res.json(result.transfer);
+  } catch (e: any) { res.status(e.status ?? 400).json({ error: e.message }); }
 }
 
-router.patch("/transfers/:id/production-order", linkTransferToProductionOrder);
-router.patch("/stock-transfers/:id/production-order", linkTransferToProductionOrder);
+router.patch("/transfers/:id/production-order", requirePostRight("stockMovement"), linkTransferToProductionOrder);
+router.patch("/stock-transfers/:id/production-order", requirePostRight("stockMovement"), linkTransferToProductionOrder);
 
 router.get("/stock-transfers/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const [tr] = await db.select().from(stockTransfersTable).where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)));
   if (!tr) { res.status(404).json({ error: "غير موجود" }); return; }
+  try {
+    await transferWarehouses(db, cid, tr.fromWarehouseId, tr.toWarehouseId, req);
+  } catch (e: any) {
+    res.status(e.status ?? 404).json({ error: e.message }); return;
+  }
   const lineItems = await db.select({ li: stockTransferItemsTable, item: itemsTable, unit: unitsTable })
     .from(stockTransferItemsTable)
     .leftJoin(itemsTable, eq(stockTransferItemsTable.itemId, itemsTable.id))
@@ -2330,25 +2115,29 @@ async function movementUnitSnapshot(
 router.post("/stock-transfers", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const {
-    transferNumber, transferDate, fromWarehouseId, toWarehouseId, accountId,
-    fromAccountId, toAccountId, notes, items,
-    transferType = "warehouse", productionOrderId: rawProductionOrderId = null,
-    internalTransportAmount: rawTransportAmount = 0,
-    internalTransportExpenseAccountId, internalTransportCounterpartAccountId,
+    transferNumber, transferDate, fromWarehouseId, toWarehouseId, accountId, fromAccountId, toAccountId,
+    transferType = "warehouse", productionOrderId, internalTransportAmount: rawTransportAmount = 0,
+    internalTransportExpenseAccountId, internalTransportCounterpartAccountId, notes, items,
   } = req.body;
   if (!transferDate || !fromWarehouseId || !toWarehouseId) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
-  if (!TRANSPORT_TYPES.has(String(transferType))) { res.status(400).json({ error: "نوع التحويل غير صحيح" }); return; }
-  let internalAmount: number;
-  try { internalAmount = transportAmount(rawTransportAmount); } catch (e: any) {
-    res.status(400).json({ error: e.message }); return;
-  }
-  const productionId = rawProductionOrderId == null || rawProductionOrderId === ""
-    ? null : Number(rawProductionOrderId);
-  if (productionId != null && (!Number.isInteger(productionId) || productionId <= 0)) {
-    res.status(400).json({ error: "productionOrderId غير صحيح" }); return;
-  }
-  if ((internalAmount > 0 || productionId != null) && String(transferType) !== "manufacturing") {
-    res.status(400).json({ error: "النقل الداخلي المرتبط بالتصنيع يتطلب transferType=manufacturing" }); return;
+  let transportAmount = 0;
+  let orderId: number | null = null;
+  let warehouseRows: any[] = [];
+  try {
+    if (!TRANSPORT_TYPES.has(String(transferType))) throw Object.assign(new Error("نوع التحويل غير صحيح"), { status: 400 });
+    transportAmount = internalTransportAmount(rawTransportAmount);
+    orderId = productionOrderId == null || productionOrderId === "" ? null : Number(productionOrderId);
+    if (orderId != null) assertInternalDeliveryOrderPermission(req, "edit");
+    if (transferType !== "manufacturing" && (transportAmount > 0 || orderId != null)) {
+      throw Object.assign(new Error("تكلفة النقل أو ربط أمر الإنتاج متاحان لإذن تسليم التصنيع فقط"), { status: 400 });
+    }
+    warehouseRows = await transferWarehouses(db, cid, fromWarehouseId, toWarehouseId, req);
+    assertManufacturingDeliveryBranches(transferType, warehouseRows);
+    await assertInternalTransportEnabledForCapture(db, cid, transportAmount);
+    await validateInternalTransportAccounts(db, cid, transportAmount, internalTransportExpenseAccountId, internalTransportCounterpartAccountId);
+    await validateInternalTransportOrder(db, cid, orderId, warehouseRows.map((row) => row.branchId), req);
+  } catch (e: any) {
+    res.status(e.status ?? 400).json({ error: e.message }); return;
   }
   // Item Usage Control (Phase ب): block a save containing restricted items.
   {
@@ -2359,15 +2148,9 @@ router.post("/stock-transfers", async (req, res) => {
   try {
     await assertCompanyOwned(cid, {
       warehouses: [Number(fromWarehouseId), Number(toWarehouseId)],
-      accounts:   [accountId, fromAccountId, toAccountId,
-        internalTransportExpenseAccountId, internalTransportCounterpartAccountId]
+      accounts: [accountId, fromAccountId, toAccountId, internalTransportExpenseAccountId, internalTransportCounterpartAccountId]
         .map(Number).filter(Boolean) as number[],
     });
-    await validateInternalTransportAccounts(db, cid, internalAmount,
-      internalTransportExpenseAccountId, internalTransportCounterpartAccountId);
-    await assertTransportCaptureEnabled(db, cid, internalAmount, productionId);
-    await validateTransportOrder(db, cid, productionId,
-      [Number(fromWarehouseId), Number(toWarehouseId)], req);
   } catch (e: any) { res.status(400).json({ error: e.message }); return; }
   // Central sequence engine is authoritative when an active sequence is
   // configured for "stock_transfer"; otherwise fall back to the caller-
@@ -2396,11 +2179,11 @@ router.post("/stock-transfers", async (req, res) => {
         accountId: accountId || null,
         fromAccountId: fromAccountId || null,
         toAccountId: toAccountId || null,
-        transferType: String(transferType),
-        productionOrderId: productionId,
-        internalTransportAmount: internalAmount.toFixed(2),
-        internalTransportExpenseAccountId: internalAmount > 0 ? Number(internalTransportExpenseAccountId) : null,
-        internalTransportCounterpartAccountId: internalAmount > 0 ? Number(internalTransportCounterpartAccountId) : null,
+         transferType,
+         productionOrderId: orderId,
+         internalTransportAmount: transportAmount.toFixed(2),
+         internalTransportExpenseAccountId: transportAmount ? Number(internalTransportExpenseAccountId) : null,
+         internalTransportCounterpartAccountId: transportAmount ? Number(internalTransportCounterpartAccountId) : null,
         notes, status: "draft",
       }).returning();
       if (items?.length) {
@@ -2421,6 +2204,9 @@ router.post("/stock-transfers", async (req, res) => {
         }
         await tx.insert(stockTransferItemsTable).values(itemRows);
       }
+      if (transferType === "manufacturing" && orderId != null) {
+        await recordInternalDeliveryLink(tx, cid, orderId, created.id, req);
+      }
       return created;
     });
   } catch (e: any) {
@@ -2433,42 +2219,55 @@ router.post("/stock-transfers", async (req, res) => {
 router.put("/stock-transfers/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { transferDate, fromWarehouseId, toWarehouseId, fromAccountId, toAccountId, notes, items } = req.body;
+  const {
+    transferDate, fromWarehouseId, toWarehouseId, fromAccountId, toAccountId, notes, items,
+    transferType, productionOrderId, internalTransportAmount: rawTransportAmount,
+    internalTransportExpenseAccountId, internalTransportCounterpartAccountId,
+  } = req.body;
   const [existing] = await db.select().from(stockTransfersTable).where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)));
-  if (!existing || existing.status === "posted") { res.status(400).json({ error: "لا يمكن التعديل" }); return; }
-  const nextType = req.body.transferType === undefined ? String(existing.transferType ?? "warehouse") : String(req.body.transferType);
+  if (!existing || existing.status !== "draft") { res.status(400).json({ error: "لا يمكن التعديل" }); return; }
   const nextFrom = fromWarehouseId === undefined ? existing.fromWarehouseId : Number(fromWarehouseId);
   const nextTo = toWarehouseId === undefined ? existing.toWarehouseId : Number(toWarehouseId);
-  const nextOrder = req.body.productionOrderId === undefined
-    ? (existing.productionOrderId ?? null)
-    : (req.body.productionOrderId == null || req.body.productionOrderId === "" ? null : Number(req.body.productionOrderId));
-  let nextAmount: number;
+  const effectiveType = transferType ?? existing.transferType;
+  let transportAmount = 0;
+  const orderId = productionOrderId === undefined
+    ? existing.productionOrderId
+    : (productionOrderId == null || productionOrderId === "" ? null : Number(productionOrderId));
+  const expenseAccountId = internalTransportExpenseAccountId === undefined
+    ? existing.internalTransportExpenseAccountId : internalTransportExpenseAccountId;
+  const counterpartAccountId = internalTransportCounterpartAccountId === undefined
+    ? existing.internalTransportCounterpartAccountId : internalTransportCounterpartAccountId;
   try {
-    nextAmount = req.body.internalTransportAmount === undefined
-      ? Number(existing.internalTransportAmount ?? 0)
-      : transportAmount(req.body.internalTransportAmount);
-  } catch (e: any) { res.status(400).json({ error: e.message }); return; }
-  const nextExpense = req.body.internalTransportExpenseAccountId === undefined
-    ? existing.internalTransportExpenseAccountId : req.body.internalTransportExpenseAccountId;
-  const nextCounterpart = req.body.internalTransportCounterpartAccountId === undefined
-    ? existing.internalTransportCounterpartAccountId : req.body.internalTransportCounterpartAccountId;
-  if (!TRANSPORT_TYPES.has(nextType) ||
-      (nextOrder != null && (!Number.isInteger(nextOrder) || nextOrder <= 0)) ||
-      ((nextAmount > 0 || nextOrder != null) && nextType !== "manufacturing")) {
-    res.status(400).json({ error: "بيانات النقل الداخلي غير صحيحة" }); return;
-  }
-  try {
+    await transferWarehouses(db, cid, existing.fromWarehouseId, existing.toWarehouseId, req);
+    if (orderId != null || existing.productionOrderId != null) {
+      assertInternalDeliveryOrderPermission(req, "edit");
+      await validateInternalTransportOrder(db, cid, existing.productionOrderId, [], req);
+    }
+    transportAmount = internalTransportAmount(rawTransportAmount === undefined
+      ? existing.internalTransportAmount : rawTransportAmount);
+    if (!TRANSPORT_TYPES.has(String(effectiveType))) throw Object.assign(new Error("نوع التحويل غير صحيح"), { status: 400 });
+    if (effectiveType !== "manufacturing" && (transportAmount > 0 || orderId != null)) {
+      throw Object.assign(new Error("تكلفة النقل أو ربط أمر الإنتاج متاحان لإذن تسليم التصنيع فقط"), { status: 400 });
+    }
+    const warehouseRows = await transferWarehouses(db, cid, nextFrom, nextTo, req);
+    assertManufacturingDeliveryBranches(effectiveType, warehouseRows);
+    await assertInternalTransportEnabledForCapture(db, cid, transportAmount, Number(existing.internalTransportAmount));
+    await validateInternalTransportAccounts(db, cid, transportAmount, expenseAccountId, counterpartAccountId);
+    await validateInternalTransportOrder(db, cid, orderId, warehouseRows.map((row) => row.branchId), req);
     await assertCompanyOwned(cid, {
       warehouses: [nextFrom, nextTo].filter(Boolean) as number[],
-      accounts: [fromAccountId, toAccountId, nextExpense, nextCounterpart].map(Number).filter(Boolean) as number[],
+      accounts: [fromAccountId, toAccountId, expenseAccountId, counterpartAccountId].map(Number).filter(Boolean) as number[],
     });
-    await validateInternalTransportAccounts(db, cid, nextAmount, nextExpense, nextCounterpart);
-    await assertTransportCaptureEnabled(db, cid, nextAmount, nextOrder,
-      Number(existing.internalTransportAmount ?? 0), existing.productionOrderId ?? null);
-    await validateTransportOrder(db, cid, nextOrder, [nextFrom, nextTo], req);
-  } catch (e: any) { res.status(400).json({ error: e.message }); return; }
+  } catch (e: any) { res.status(e.status ?? 400).json({ error: e.message }); return; }
   try {
     await db.transaction(async (tx) => {
+      const [lockedTransfer] = await tx.select().from(stockTransfersTable).where(and(
+        eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid),
+      )).for("update");
+      if (!lockedTransfer || lockedTransfer.status !== "draft") {
+        throw Object.assign(new Error("لا يمكن تعديل إذن تسليم مُرحّل"), { status: 409 });
+      }
+      await transferWarehouses(tx, cid, lockedTransfer.fromWarehouseId, lockedTransfer.toWarehouseId, req);
       const oldLines = await tx.select().from(stockTransferItemsTable)
         .where(eq(stockTransferItemsTable.transferId, id))
         .orderBy(asc(stockTransferItemsTable.id));
@@ -2476,13 +2275,16 @@ router.put("/stock-transfers/:id", async (req, res) => {
         transferDate, fromWarehouseId: nextFrom, toWarehouseId: nextTo,
         fromAccountId: fromAccountId || null,
         toAccountId: toAccountId || null,
-        transferType: nextType,
-        productionOrderId: nextOrder,
-        internalTransportAmount: nextAmount.toFixed(2),
-        internalTransportExpenseAccountId: nextAmount > 0 ? Number(nextExpense) : null,
-        internalTransportCounterpartAccountId: nextAmount > 0 ? Number(nextCounterpart) : null,
+         transferType: effectiveType,
+         productionOrderId: orderId,
+         internalTransportAmount: transportAmount.toFixed(2),
+         internalTransportExpenseAccountId: transportAmount ? Number(expenseAccountId) : null,
+         internalTransportCounterpartAccountId: transportAmount ? Number(counterpartAccountId) : null,
         notes, updatedAt: new Date(),
       }).where(eq(stockTransfersTable.id, id));
+      if (effectiveType === "manufacturing" && orderId != null && orderId !== lockedTransfer.productionOrderId) {
+        await recordInternalDeliveryLink(tx, cid, orderId, id, req);
+      }
       if (items) {
         await tx.delete(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
         if (items.length) {
@@ -2533,7 +2335,7 @@ router.put("/stock-transfers/:id", async (req, res) => {
       }
     });
   } catch (e: any) {
-    res.status(400).json({ error: e?.message ?? "تعذر تعديل التحويل" });
+    res.status(e.status ?? 400).json({ error: e?.message ?? "تعذر تعديل التحويل" });
     return;
   }
   res.json({ ok: true });
@@ -2568,27 +2370,32 @@ router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), asyn
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "post"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
     const result = await db.transaction(async (tx) => {
-      const [linkHint] = await tx.select({
-        productionOrderId: stockTransfersTable.productionOrderId,
-      }).from(stockTransfersTable).where(and(
-        eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid),
-      )).limit(1);
-      if (linkHint?.productionOrderId) {
-        await tx.select({ id: productionOrdersTable.id }).from(productionOrdersTable)
-          .where(and(
-            eq(productionOrdersTable.id, linkHint.productionOrderId),
-            eq(productionOrdersTable.companyId, cid),
-          )).for("update");
-      }
       // Row-lock + re-check status under the lock. Pessimistic FOR UPDATE
       // is the right tool here: posting touches many rows, so the
       // serialisable retry path of an optimistic CAS would amplify
       // contention. Lock window = the whole posting flow (intentional).
-      const [tr] = await tx.select().from(stockTransfersTable)
-        .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)))
-        .for("update");
+      const tr = await lockInternalTransportMutation(tx, cid, id, req);
       if (!tr) throw new HttpError(404, "الحركة غير موجودة");
       if (tr.status !== "draft") throw new HttpError(400, "الحركة مُرحَّلة مسبقاً");
+      if (!TRANSPORT_TYPES.has(String(tr.transferType))) throw new HttpError(400, "نوع التحويل غير صحيح");
+      if (tr.transferType !== "manufacturing" &&
+          (Number(tr.internalTransportAmount) > 0 || tr.productionOrderId != null)) {
+        throw new HttpError(400, "تكلفة النقل أو ربط أمر الإنتاج متاحان لإذن تسليم التصنيع فقط");
+      }
+      const transferWarehouseRows = await transferWarehouses(
+        tx, cid, tr.fromWarehouseId, tr.toWarehouseId, req,
+      );
+      assertManufacturingDeliveryBranches(tr.transferType, transferWarehouseRows);
+      const transferBranches = transferWarehouseRows.map((row) => row.branchId);
+      try {
+        await validateInternalTransportAccounts(
+          tx, cid, internalTransportAmount(tr.internalTransportAmount),
+          tr.internalTransportExpenseAccountId, tr.internalTransportCounterpartAccountId,
+        );
+        await validateInternalTransportOrder(tx, cid, tr.productionOrderId, transferBranches, req);
+      } catch (error: any) {
+        throw new HttpError(error.status ?? 400, error.message);
+      }
       const lines = await tx.select().from(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
       if (!lines.length) throw new HttpError(400, "لا توجد أصناف");
       await lockStockBalances(lines.flatMap(line => [
@@ -2602,16 +2409,6 @@ router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), asyn
       // upfront — same intent as production-order/sales-invoice posting.
       const writability = await assertWritableForDate(cid, tr.transferDate);
       if (!writability.ok) throw new HttpError(423, writability.reason ?? "الفترة مغلقة");
-      const transportCharge = Number(tr.internalTransportAmount ?? 0);
-      await validateInternalTransportAccounts(
-        tx, cid, transportCharge,
-        tr.internalTransportExpenseAccountId,
-        tr.internalTransportCounterpartAccountId,
-      );
-      if (tr.productionOrderId) {
-        await validateTransportOrder(tx, cid, tr.productionOrderId,
-          [tr.fromWarehouseId, tr.toWarehouseId], req);
-      }
 
       // ── Round 8: batch-aware transfers ──
       // For items with batch_tracking_mode='fifo'|'fefo', the source
@@ -2726,18 +2523,9 @@ router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), asyn
             { accountId: fromAcc, debit: 0, credit: totalAmount, description: `صرف من المخزن (${tr.transferNumber})` },
           ]
         : [];
-      const transportLines = transportCharge > 0
-        ? [
-            { accountId: tr.internalTransportExpenseAccountId, debit: transportCharge, credit: 0, description: `مصروف تسليم داخلي (${tr.transferNumber})` },
-            { accountId: tr.internalTransportCounterpartAccountId, debit: 0, credit: transportCharge, description: `مقابل تسليم داخلي (${tr.transferNumber})` },
-          ]
-        : [];
-      if (stockLines.length || transportLines.length) {
+      if (stockLines.length) {
         const desc = `تحويل مخزني ${tr.transferNumber}${tr.notes ? " - " + tr.notes : ""}`;
         const jeStatus = await resolvePostingStatus(cid, "stockMovement");
-        if (transportCharge > 0 && jeStatus !== "posted") {
-          throw new HttpError(409, "يجب أن يكون قيد النقل الداخلي مرحّلاً قبل رسملة تكلفته");
-        }
         // JE draws its own continuous "journal_entry" number; the transfer
         // number stays in the description + source link. Falls back to it.
         const jeDocNumber = (await nextJeSubSequence(cid, "stock_transfer_je", {
@@ -2752,7 +2540,7 @@ router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), asyn
           periodId: writability.period?.id ?? null,
           ...fullAuditFor(req, jeStatus),
         }).returning();
-        await tx.insert(journalEntryLinesTable).values([...stockLines, ...transportLines].map((line, sortOrder) => ({
+        await tx.insert(journalEntryLinesTable).values(stockLines.map((line, sortOrder) => ({
           entryId: entry.id, accountId: line.accountId,
           debit: Number(line.debit).toFixed(2), credit: Number(line.credit).toFixed(2),
           description: line.description, sortOrder,
@@ -2760,52 +2548,100 @@ router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), asyn
         journalEntryId = entry.id;
       }
 
-      const [postedTransfer] = await tx.update(stockTransfersTable).set({ status: "posted", journalEntryId, updatedAt: new Date() })
-        .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)))
-        .returning();
-      if (tr.productionOrderId) {
-        const [linkedOrder] = await tx.select().from(productionOrdersTable).where(and(
-          eq(productionOrdersTable.id, tr.productionOrderId),
-          eq(productionOrdersTable.companyId, cid),
-        )).for("update");
-        if (!linkedOrder || ["completed", "cancelled", "reversed"].includes(String(linkedOrder.status))) {
-          throw new HttpError(409, "لا يمكن توزيع النقل الداخلي على أمر إنتاج منتهي");
-        }
-        const supplementalJournalId = linkedOrder.issueJournalEntryId
-          ? await reclassifyLateInternalTransport(
-            tx, cid, { ...tr, ...postedTransfer }, linkedOrder, req,
-          )
-          : null;
-        if (supplementalJournalId) {
-          await tx.update(productionOrdersTable).set({
-            actualCost: sql`${productionOrdersTable.actualCost} + ${Number((postedTransfer ?? tr).internalTransportAmount ?? 0).toFixed(2)}`,
-            updatedAt: new Date(),
-          }).where(eq(productionOrdersTable.id, tr.productionOrderId));
-        }
-        await allocatePostedInternalTransport(
-          tx, cid, { ...tr, ...postedTransfer }, req.authUser?.id ?? null,
-          supplementalJournalId,
+      await tx.update(stockTransfersTable).set({ status: "posted", journalEntryId, updatedAt: new Date() })
+        .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)));
+      const postedTransfer = { ...tr, status: "posted", journalEntryId };
+      let internalTransportJournalEntryId: number | null = null;
+      let transportReclassificationJournalEntryId: number | null = null;
+      if (tr.transferType === "manufacturing" && Number(tr.internalTransportAmount) > 0) {
+        internalTransportJournalEntryId = await postInternalTransportExpense(
+          tx, cid, { ...postedTransfer, status: tr.status }, req, transferWarehouseRows[0]?.branchId ?? null,
         );
+        postedTransfer.internalTransportJournalEntryId = internalTransportJournalEntryId;
       }
-      return { journalEntryId };
+      if (tr.transferType === "manufacturing" && tr.productionOrderId != null) {
+        const linked = await linkPostedInternalTransport(
+          tx, cid, postedTransfer, Number(tr.productionOrderId), req, transferBranches,
+        );
+        transportReclassificationJournalEntryId = linked.reclassificationJournalEntryId;
+        if (Number(tr.internalTransportAmount) === 0) {
+          await recordInternalDeliveryLink(tx, cid, tr.productionOrderId, tr.id, req);
+        }
+      }
+      return { journalEntryId, internalTransportJournalEntryId, transportReclassificationJournalEntryId };
     });
-    res.json({ ok: true, journalEntryId: result.journalEntryId });
+    res.json({ ok: true, journalEntryId: result.journalEntryId,
+      internalTransportJournalEntryId: result.internalTransportJournalEntryId,
+      transportReclassificationJournalEntryId: result.transportReclassificationJournalEntryId });
   } catch (e: any) {
     if (e instanceof HttpError) {
       res.status(e.httpStatus).json({ error: e.message });
+      return;
+    }
+    if (e.status) {
+      res.status(e.status).json({ error: e.message });
       return;
     }
     throw e;
   }
 });
 
+// A delivery can be posted before a production order exists.  This endpoint
+// changes only the manufacturing source ownership; it never creates another
+// warehouse movement or another source expense.
+router.post("/stock-transfers/:id/link-production-order", requirePostRight("stockMovement"), async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Object.prototype.hasOwnProperty.call(req.body ?? {}, "productionOrderId")) {
+    res.status(400).json({ error: "productionOrderId مطلوب؛ أرسل null صراحةً لفك الربط" });
+    return;
+  }
+  const productionOrderId = req.body?.productionOrderId == null || req.body?.productionOrderId === ""
+    ? null : Number(req.body.productionOrderId);
+  try {
+    const result = await db.transaction(async (tx) => {
+      const transfer = await lockInternalTransportMutation(tx, cid, id, req, productionOrderId);
+      if (!transfer) throw Object.assign(new Error("إذن التسليم غير موجود"), { status: 404 });
+      if (transfer.transferType !== "manufacturing") {
+        throw Object.assign(new Error("ربط أمر الإنتاج متاح لإذن تسليم التصنيع فقط"), { status: 409 });
+      }
+      const warehouseRows = await transferWarehouses(
+        tx, cid, transfer.fromWarehouseId, transfer.toWarehouseId, req,
+      );
+      assertManufacturingDeliveryBranches(transfer.transferType, warehouseRows);
+      return linkPostedInternalTransport(
+        tx, cid, transfer, productionOrderId, req, warehouseRows.map((row) => row.branchId),
+      );
+    });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e.status ?? 500).json({ error: e.message });
+  }
+});
+
 router.delete("/stock-transfers/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const [tr] = await db.select().from(stockTransfersTable).where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)));
-  if (!tr || tr.status === "posted") { res.status(400).json({ error: "لا يمكن الحذف" }); return; }
-  await db.delete(stockTransfersTable).where(eq(stockTransfersTable.id, id));
-  res.json({ ok: true });
+  try {
+    await db.transaction(async (tx) => {
+      // Deletion never waits for an order lock, and holds the row through the
+      // status check and delete so posting cannot win between those actions.
+      const [tr] = await tx.select().from(stockTransfersTable).where(and(
+        eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid),
+      )).for("update");
+      if (!tr || tr.status !== "draft") {
+        throw Object.assign(new Error("لا يمكن الحذف"), { status: 400 });
+      }
+      await transferWarehouses(tx, cid, tr.fromWarehouseId, tr.toWarehouseId, req);
+      await tx.delete(stockTransfersTable).where(and(
+        eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid),
+        eq(stockTransfersTable.status, "draft"),
+      ));
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(e.status ?? 500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════

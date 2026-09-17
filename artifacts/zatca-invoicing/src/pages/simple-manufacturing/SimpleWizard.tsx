@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { ClipboardList, Boxes, GitBranch, Cog, Calculator, CheckCircle2, Save, Play, Plus, Trash2, RefreshCw } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { DateField } from "@/components/ui/date-field";
+import { Switch } from "@/components/ui/switch";
 import type {
   WizardState,
   Catalog,
@@ -45,6 +46,7 @@ export function SimpleWizard({
     defaultOverheadAccountId: number | null;
     defaultWasteAccountId: number | null;
     electricityTariffPerKwh?: number | null;
+    internalTransportEnabled?: boolean;
   }) => Promise<unknown>;
   onSubmit: (mode: "draft" | "execute", payload: any) => Promise<void>;
   onCancel: () => void;
@@ -97,6 +99,7 @@ export function SimpleWizard({
     defaultOverheadAccountId: "",
     defaultWasteAccountId: "",
     electricityTariffPerKwh: "",
+    internalTransportEnabled: false,
   });
 
   // Inline BOM creation
@@ -296,6 +299,7 @@ export function SimpleWizard({
       defaultOverheadAccountId: settings.defaultOverheadAccountId ? String(settings.defaultOverheadAccountId) : "",
       defaultWasteAccountId: settings.defaultWasteAccountId ? String(settings.defaultWasteAccountId) : "",
       electricityTariffPerKwh: settings.electricityTariffPerKwh == null ? "" : String(settings.electricityTariffPerKwh),
+      internalTransportEnabled: settings.internalTransportEnabled === true,
     });
   }, [catalog.accounting?.settings]);
 
@@ -641,7 +645,8 @@ export function SimpleWizard({
       String(configuredSettings?.defaultRawInventoryAccountId ?? "") !== accountSettings.defaultRawInventoryAccountId ||
       String(configuredSettings?.defaultFinishedGoodsAccountId ?? "") !== accountSettings.defaultFinishedGoodsAccountId ||
       String(configuredSettings?.defaultOverheadAccountId ?? "") !== accountSettings.defaultOverheadAccountId ||
-      String(configuredSettings?.defaultWasteAccountId ?? "") !== accountSettings.defaultWasteAccountId
+      String(configuredSettings?.defaultWasteAccountId ?? "") !== accountSettings.defaultWasteAccountId ||
+      (configuredSettings?.internalTransportEnabled === true) !== accountSettings.internalTransportEnabled
     );
     if (accountingChanged) {
       try {
@@ -651,6 +656,7 @@ export function SimpleWizard({
           defaultFinishedGoodsAccountId: accountSettings.defaultFinishedGoodsAccountId ? Number(accountSettings.defaultFinishedGoodsAccountId) : null,
           defaultOverheadAccountId: accountSettings.defaultOverheadAccountId ? Number(accountSettings.defaultOverheadAccountId) : null,
           defaultWasteAccountId: accountSettings.defaultWasteAccountId ? Number(accountSettings.defaultWasteAccountId) : null,
+          internalTransportEnabled: accountSettings.internalTransportEnabled,
         });
       } catch {
         setTab("resources");
@@ -728,6 +734,7 @@ export function SimpleWizard({
         ? Number(accountSettings.defaultWasteAccountId) : null,
       electricityTariffPerKwh: accountSettings.electricityTariffPerKwh
         ? Number(accountSettings.electricityTariffPerKwh) : null,
+      internalTransportEnabled: accountSettings.internalTransportEnabled,
     });
   };
 
@@ -1195,6 +1202,25 @@ export function SimpleWizard({
                       ))}
                     </div>
                   )}
+                  <div className="flex items-start justify-between gap-4 rounded-lg border border-amber-200 bg-white p-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="simple-internal-transport">تحميل تكلفة النقل الداخلي على أوامر التصنيع</Label>
+                      <p className="text-xs text-slate-500">
+                        اختياري ومتوقف افتراضياً. عند التفعيل يمكن لإذن التسليم الداخلي تحميل تكلفة النقل فقط؛
+                        قيمة البضاعة المنقولة لا تُعد تكلفة نقل. إيقافه لا يحذف مستندات أو تخصيصات سابقة.
+                      </p>
+                    </div>
+                    <Switch
+                      id="simple-internal-transport"
+                      checked={accountSettings.internalTransportEnabled}
+                      onCheckedChange={checked => setAccountSettings(current => ({
+                        ...current,
+                        internalTransportEnabled: checked,
+                      }))}
+                      disabled={!canEdit || busy}
+                      data-testid="switch-simple-internal-transport"
+                    />
+                  </div>
                    {accountSettings.defaultWipAccountId &&
                      accountSettings.defaultRawInventoryAccountId &&
                      accountSettings.defaultWipAccountId === accountSettings.defaultRawInventoryAccountId && (

@@ -101,7 +101,8 @@ export default function ManufacturingSettings() {
         await loadLookups();
         if (cancelled) return;
         const sR = await fetch(`${API}/api/production/manufacturing-settings`, { headers });
-        const s = sR.ok ? await sR.json() : null;
+        const s = await sR.json().catch(() => null);
+        if (!sR.ok) throw new Error(s?.error || `HTTP ${sR.status}`);
         if (cancelled) return;
         if (s) setData({ ...EMPTY, ...s });
       } catch (e: any) {
@@ -309,13 +310,17 @@ export default function ManufacturingSettings() {
         <CardContent className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="font-semibold">{data.internalTransportEnabled ? "التقاط تكلفة النقل مفعّل" : "التقاط تكلفة النقل متوقف"}</p>
-            <p className="mt-1 text-xs text-slate-600">الإيقاف يمنع التكاليف الجديدة فقط؛ الأذونات والتجميعات التاريخية تبقى قابلة للقراءة.</p>
+            <p className="mt-1 text-xs leading-5 text-slate-600">
+              عند التفعيل تُحمّل تكلفة النقل فقط كتكلفة صناعية غير مباشرة، ولا تُحمّل قيمة الأصناف المنقولة.
+              الإيقاف يمنع التكاليف الجديدة فقط؛ الأذونات والتجميعات التاريخية تبقى قابلة للقراءة.
+            </p>
           </div>
           <Switch
             checked={data.internalTransportEnabled}
             onCheckedChange={(checked) => setData(current => ({ ...current, internalTransportEnabled: checked }))}
             disabled={saving}
             aria-label="تفعيل تكلفة النقل الداخلي"
+            data-testid="switch-internal-transport"
           />
         </CardContent>
       </Card>
