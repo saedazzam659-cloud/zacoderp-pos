@@ -5,7 +5,7 @@ import { eq, and, isNull, asc, sql } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 import { z } from "zod";
 import { extractAuth } from "../middleware/auth.js";
-import { requirePermission, audit } from "../middleware/permissions.js";
+import { requirePermission, audit, writeAudit } from "../middleware/permissions.js";
 import { seedDefaultChartOfAccounts } from "../lib/seedDefaultChartOfAccounts.js";
 import { logger } from "../lib/logger.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
@@ -191,6 +191,68 @@ router.put("/:id/rename", async (req, res) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: "فشل تعديل الاسم" });
+  }
+});
+
+// Login identity only: keep numeric IDs, ledger records and agent ownership
+// unchanged. Use the same active-database scope as the company directory.
+router.put("/:id/code", async (req, res) => {
+  const user = req.authUser;
+  if (user?.role !== "superadmin") {
+    res.status(403).json({ error: "تغيير كود الشركة متاح للسوبر أدمن فقط" }); return;
+  }
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    res.status(400).json({ error: "معرّف الشركة غير صالح" }); return;
+  }
+  const rawAgent = req.query.agent;
+  if (rawAgent !== undefined && (typeof rawAgent !== "string"
+    || !/^[1-9]\d*$/.test(rawAgent) || !Number.isSafeInteger(Number(rawAgent)))) {
+    res.status(400).json({ error: "معرّف الوكيل غير صالح" }); return;
+  }
+  const parsed = z.object({
+    code: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{1,15}$/, "الكود يجب أن يكون حروفًا إنجليزية أو أرقامًا فقط، حتى 15 خانة"),
+    expectedCode: z.string().max(255).nullable(),
+  }).strict().safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message || "بيانات الكود غير صحيحة" }); return;
+  }
+  try {
+    const { runWithAgentScope } = await import("../lib/agentScope.js");
+    await runWithAgentScope(req, res, async () => {
+      const result = await db.transaction(async tx => {
+        const [current] = await tx.select().from(companiesTable)
+          .where(and(eq(companiesTable.id, id), isNull(companiesTable.deletedAt))).for("update");
+        if (!current) throw Object.assign(new Error("الشركة غير موجودة أو محذوفة"), { status: 404 });
+        // Lost-response retry is safe; never overwrite a newer concurrent edit.
+        if (current.code === parsed.data.code) return { company: current, changed: false, previousCode: current.code };
+        if (current.code !== parsed.data.expectedCode) {
+          throw Object.assign(new Error("تغيّر الكود بواسطة مسؤول آخر. حدّث قائمة الشركات ثم أعد المحاولة."), { status: 409 });
+        }
+        const [duplicate] = await tx.select({ id: companiesTable.id }).from(companiesTable)
+          .where(sql`upper(trim(${companiesTable.code})) = ${parsed.data.code}`).limit(1);
+        if (duplicate) throw Object.assign(new Error("كود الشركة مستخدم بالفعل؛ اختر كودًا آخر."), { status: 409 });
+        const [company] = await tx.update(companiesTable).set({ code: parsed.data.code, updatedAt: new Date() })
+          .where(eq(companiesTable.id, id)).returning();
+        return { company, changed: true, previousCode: current.code };
+      });
+      if (result.changed) await writeAudit({
+        userId: user.id, username: user.username, role: user.role, companyId: id,
+        module: "companies", action: "update", entityType: "company", entityId: String(id),
+        method: req.method, path: req.originalUrl, statusCode: 200,
+        ip: req.ip ?? null, userAgent: req.headers["user-agent"]?.slice(0, 500) ?? null,
+        metadata: { operation: "company_code_changed", previousCode: result.previousCode,
+          newCode: result.company.code, agentInstanceId: rawAgent == null ? null : Number(rawAgent) },
+      });
+      res.json({ id: result.company.id, code: result.company.code });
+    });
+  } catch (caught: any) {
+    const uniqueConflict = caught?.code === "23505" || caught?.cause?.code === "23505";
+    const status = uniqueConflict ? 409 : caught?.status ?? 500;
+    if (status === 500) logger.error({ err: caught }, "Failed to change company code");
+    if (!res.headersSent) res.status(status).json({ error: uniqueConflict
+      ? "كود الشركة مستخدم بالفعل؛ اختر كودًا آخر."
+      : status === 500 ? "تعذّر تغيير كود الشركة" : caught.message });
   }
 });
 

@@ -10,6 +10,7 @@ import {
   ListOrdered, ScanSearch, ShieldAlert
 } from "lucide-react";
 import ExportButtons from "@/components/ExportButtons";
+import CompanyCodeDialog, { type CompanyCodeTarget } from "@/components/CompanyCodeDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -67,6 +68,11 @@ export default function Companies() {
   const [editTarget, setEditTarget]     = useState<{ id: number; name: string; agent?: number } | null>(null);
   const [editName, setEditName]         = useState("");
   const [renaming, setRenaming]         = useState(false);
+  const [codeTarget, setCodeTarget] = useState<CompanyCodeTarget | null>(null);
+  const openCodeEditor = (company: any) => setCodeTarget({
+    id: company.id, name: company.nameAr, code: company.code ?? null,
+    agent: company.agentInstanceId ?? undefined,
+  });
   const [sequenceTarget, setSequenceTarget] = useState<{ id: number; name: string; agent?: number } | null>(null);
   const [sequenceSummary, setSequenceSummary] = useState<any>(null);
   const [currentJournalNumber, setCurrentJournalNumber] = useState("");
@@ -496,13 +502,17 @@ export default function Companies() {
                   {/* Company code (used at /login). Mono + chip style so
                       the SuperAdmin can spot and copy it at a glance — the
                       code is what tenants type on the login page. */}
-                  <span
+                  <button
                     className="inline-flex items-center justify-center font-mono text-[11px] font-semibold tracking-wide bg-primary/5 text-primary border border-primary/20 rounded-md px-2 py-0.5 w-fit truncate"
                     data-testid={`company-code-${company.id}`}
-                    title={company.code ?? ""}
+                    title={isSuperAdmin ? "تغيير كود الشركة" : company.code ?? ""}
+                    disabled={!isSuperAdmin}
+                    onClick={event => { event.stopPropagation(); openCodeEditor(company); }}
+                    aria-label={`كود الشركة ${company.code ?? ""}${isSuperAdmin ? " — تغيير الكود" : ""}`}
                   >
                     {company.code || "—"}
-                  </span>
+                    {isSuperAdmin && <Pencil className="ms-1 h-3 w-3 shrink-0" />}
+                  </button>
 
                   {/* VAT */}
                   <span className="font-mono text-xs text-muted-foreground tracking-wide truncate">
@@ -600,6 +610,10 @@ export default function Companies() {
 
                     {/* Action buttons */}
                     <div className="flex items-center gap-2 pt-1 flex-wrap">
+                      {isSuperAdmin && <Button size="sm" variant="outline" className="gap-1.5 h-8"
+                        onClick={() => openCodeEditor(company)} data-testid={`button-change-company-code-${company.id}`}>
+                        <Pencil className="h-3.5 w-3.5" />تغيير كود الشركة
+                      </Button>}
                       {/* ZATCA onboarding endpoints are not agent-DB-scoped —
                           hide the shortcut for agent companies to avoid
                           touching a colliding central company ID. */}
@@ -752,6 +766,11 @@ export default function Companies() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {codeTarget && <CompanyCodeDialog
+        key={`${codeTarget.agent ?? "central"}:${codeTarget.id}`}
+        company={codeTarget} onClose={() => setCodeTarget(null)}
+        onSaved={() => { void queryClient.invalidateQueries({ queryKey: ["companies"] }); }}
+      />}
 
       {/* ── Journal sequence repair (SuperAdmin) ── */}
       <AlertDialog open={!!sequenceTarget} onOpenChange={open => !open && !sequenceSaving && setSequenceTarget(null)}>
