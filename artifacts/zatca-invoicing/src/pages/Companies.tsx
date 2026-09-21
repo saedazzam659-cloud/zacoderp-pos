@@ -95,7 +95,10 @@ export default function Companies() {
   const [invoiceRepairForeign, setInvoiceRepairForeign] = useState(false);
   const [invoiceRepairConfirm, setInvoiceRepairConfirm] = useState("");
   const [invoiceRepairResetNext, setInvoiceRepairResetNext] = useState(true);
-  const [invoiceRepairPreview, setInvoiceRepairPreview] = useState<{ key: string; nextNumber: string; newNumber?: string } | null>(null);
+  const [invoiceRepairLegacyOverride, setInvoiceRepairLegacyOverride] = useState(false);
+  const [invoiceRepairLegacyReason, setInvoiceRepairLegacyReason] = useState("");
+  const invoiceRepairLegacyActive = invoiceRepairMode === "correct_draft" && invoiceRepairResetNext && invoiceRepairLegacyOverride;
+  const [invoiceRepairPreview, setInvoiceRepairPreview] = useState<{ key: string; nextNumber: string; newNumber?: string; warnings: string[] } | null>(null);
   const [invoiceRepairError, setInvoiceRepairError] = useState("");
   const invoiceRepairRequest = {
     mode: invoiceRepairMode,
@@ -104,6 +107,8 @@ export default function Companies() {
     branchId: invoiceRepairBranch ? Number(invoiceRepairBranch) : 0,
     invoiceDate: invoiceRepairDate, paymentType: invoiceRepairPayment, isForeign: invoiceRepairForeign,
     resetNext: invoiceRepairMode === "correct_draft" && invoiceRepairResetNext,
+    legacyReservationOverride: invoiceRepairLegacyActive,
+    legacyReservationReason: invoiceRepairLegacyActive ? invoiceRepairLegacyReason.trim() : "",
   };
   const invoiceRepairKey = JSON.stringify({ target: invoiceRepairTarget, ...invoiceRepairRequest });
   const invoiceRepairPreviewValid = invoiceRepairPreview?.key === invoiceRepairKey;
@@ -251,17 +256,27 @@ export default function Companies() {
     setInvoiceRepairNumber(""); setInvoiceRepairConfirm(""); setInvoiceRepairDate(""); setInvoiceRepairPayment("credit");
     setInvoiceRepairForeign(false);
     setInvoiceRepairPreview(null); setInvoiceRepairError(""); setInvoiceRepairResetNext(true);
+    setInvoiceRepairLegacyOverride(false); setInvoiceRepairLegacyReason("");
     void scanInvoiceNumbers(target);
   };
 
   const selectInvoiceRepairDoc = (doc: any) => {
     setInvoiceRepairPreview(null); setInvoiceRepairError("");
+    setInvoiceRepairLegacyOverride(false); setInvoiceRepairLegacyReason("");
     setInvoiceRepairDoc(doc); setInvoiceRepairMode("correct_draft"); setInvoiceRepairNumber("");
     setInvoiceRepairDate(doc.invoiceDate ?? ""); setInvoiceRepairPayment(doc.paymentType ?? "credit");
     setInvoiceRepairBranch(doc.branchId == null ? "" : String(doc.branchId));
   };
 
   const applyInvoiceRepair = async (dryRun = false) => {
+    if (invoiceRepairLegacyActive && invoiceRepairScan?.supportsLegacyReservationOverride !== true) {
+      setInvoiceRepairError("الخادم لا يدعم الاستثناء اليدوي بعد. حدّث الخادم ثم أعد الفحص؛ لم يُرسل طلب تعديل.");
+      return;
+    }
+    if (invoiceRepairLegacyActive && invoiceRepairLegacyReason.trim().length < 10) {
+      setInvoiceRepairError("اكتب سبب الاستثناء بوضوح (10 أحرف على الأقل) ليُحفظ في سجل المراجعة.");
+      return;
+    }
     if (invoiceRepairScan?.supportsAtomicDraftRepair !== true) {
       setInvoiceRepairError("الخادم لا يدعم المعاينة الآمنة وتصحيح العداد مع المسودة بعد. انشر تحديث الخادم ثم أعد الفحص؛ لم يُرسل طلب تعديل.");
       return;
@@ -287,6 +302,8 @@ export default function Companies() {
           invoiceId: invoiceRepairDoc?.id, branchId: invoiceRepairBranch ? Number(invoiceRepairBranch) : 0,
           invoiceDate: invoiceRepairDate, paymentType: invoiceRepairPayment, isForeign: invoiceRepairForeign,
           resetNext: invoiceRepairMode === "correct_draft" && invoiceRepairResetNext,
+          legacyReservationOverride: invoiceRepairLegacyActive,
+          legacyReservationReason: invoiceRepairLegacyActive ? invoiceRepairLegacyReason.trim() : "",
           dryRun,
         }),
       });
@@ -294,15 +311,16 @@ export default function Companies() {
       if (!r.ok) throw new Error(body?.error || "تعذر تنفيذ الإصلاح");
       if (dryRun) {
         if (body.canApply !== true) throw new Error("لم يؤكد الخادم صلاحية التنفيذ. حدّث الخادم قبل استخدام معاينة الإصلاح.");
-        setInvoiceRepairPreview({ key: invoiceRepairKey, nextNumber: body.nextNumber, newNumber: body.newNumber });
+        setInvoiceRepairPreview({ key: invoiceRepairKey, nextNumber: body.nextNumber, newNumber: body.newNumber, warnings: Array.isArray(body.legacyReservationWarnings) ? body.legacyReservationWarnings : [] });
         return;
       }
       toast({ title: "تم إصلاح الترقيم", description: `الرقم التالي: ${body.nextNumber}` });
       setInvoiceRepairConfirm(""); setInvoiceRepairDoc(null); setInvoiceRepairNumber("");
+      setInvoiceRepairLegacyOverride(false); setInvoiceRepairLegacyReason("");
       await scanInvoiceNumbers();
     } catch (e: any) {
       setInvoiceRepairError(e?.message || "تعذر تنفيذ الإصلاح");
-      toast({ title: "لم يتم تنفيذ الإصلاح", description: e?.message ?? "", variant: "destructive" });
+      toast({ title: "تعذر تأكيد نتيجة الإصلاح", description: e?.message ?? "", variant: "destructive" });
     } finally { setInvoiceRepairSaving(false); }
   };
 
@@ -934,6 +952,11 @@ export default function Companies() {
               <p>المسودة المختارة: <strong dir="ltr">{invoiceRepairDoc.docNumber}</strong> — #{invoiceRepairDoc.id}</p>
               <label className="flex items-center gap-2"><input type="checkbox" checked={invoiceRepairResetNext} onChange={e => setInvoiceRepairResetNext(e.target.checked)} />ضبط العداد ليستكمل بعد الرقم المصحح مباشرةً، في العملية نفسها</label>
               <p className="text-xs text-muted-foreground">مثال: تصحيح 00004 إلى 00002، ثم التالية 00003. يُفحص المسلسل كاملًا؛ الأرقام المحجوزة دون دليل آمن لا تُحرّر تلقائيًا.</p>
+               {invoiceRepairResetNext && <div className="rounded border border-amber-300 bg-amber-50 p-3 space-y-2 text-amber-950">
+                 <label className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={invoiceRepairLegacyOverride} onChange={e => setInvoiceRepairLegacyOverride(e.target.checked)} />أوافق على استثناء يدوي لحجوزات قديمة مجهولة المصدر، مع تسجيل مسؤوليتي وسبب الاستثناء</label>
+                 <p className="text-xs">غياب الفاتورة لا يثبت أن الرقم لم يُستخدم سابقًا. هذا الاستثناء ليس إثباتًا بأن السجل القديم كان مسودة غير موقعة. لا يسمح بتجاوز فاتورة قائمة أو دليل توقيع أو إصدار سابق مثبت، ولا يحذف تاريخ الحجز.</p>
+                 {invoiceRepairLegacyOverride && <div><label className="text-xs" htmlFor="invoice-repair-legacy-reason">سبب الاستثناء (إلزامي، 10 أحرف على الأقل)</label><Input id="invoice-repair-legacy-reason" value={invoiceRepairLegacyReason} maxLength={1000} onChange={e => setInvoiceRepairLegacyReason(e.target.value)} placeholder="اشرح سبب اعتماد إعادة استخدام الحجوزات القديمة" /></div>}
+               </div>}
             </div>}
             <div className="grid md:grid-cols-3 gap-2">
               <div><label className="text-xs">الرقم المطلوب (مطابق لإعداد المسلسل)</label><Input value={invoiceRepairNumber} onChange={e => setInvoiceRepairNumber(e.target.value)} dir="ltr" className="font-mono" placeholder="INV-0012" /></div>
@@ -943,6 +966,7 @@ export default function Companies() {
             <div><label className="text-xs">للتأكيد اكتب اسم الشركة: <strong>{invoiceRepairTarget?.name}</strong></label><Input value={invoiceRepairConfirm} onChange={e => setInvoiceRepairConfirm(e.target.value)} /></div>
             <Button variant="outline" disabled={invoiceRepairSaving || !invoiceRepairNumber.trim() || (invoiceRepairMode === "correct_draft" && !invoiceRepairDoc)} onClick={() => applyInvoiceRepair(true)}>فحص الرقم ومعاينة النتيجة دون تعديل</Button>
             {invoiceRepairPreviewValid && <p role="status" className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">الفحص ناجح. {invoiceRepairMode === "correct_draft" && <>رقم المسودة بعد التصحيح: <b dir="ltr">{invoiceRepairPreview?.newNumber ?? invoiceRepairNumber}</b> — </>}رقم الفاتورة التالية: <b dir="ltr">{invoiceRepairPreview?.nextNumber}</b>. يعاد التحقق عند التأكيد.</p>}
+             {invoiceRepairPreviewValid && !!invoiceRepairPreview?.warnings.length && <div role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><strong>الاستثناءات التي ستُسجل عند التأكيد:</strong><ul className="list-disc ps-5">{invoiceRepairPreview.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
             {invoiceRepairError && <p role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{invoiceRepairError}<br />إذا انقطع الاتصال أثناء التأكيد، أعد فحص القائمة قبل المحاولة مرة أخرى للتحقق من النتيجة.</p>}
           </div>
           <AlertDialogFooter className="flex-row-reverse gap-2">

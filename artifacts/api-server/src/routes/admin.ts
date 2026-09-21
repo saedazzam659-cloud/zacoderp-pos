@@ -1651,6 +1651,66 @@ function asDocDate(value: unknown) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function hasKnownInvoiceFiscalEvidence(record: any) {
+  const zatcaStatus = String(record?.zatca_status ?? record?.zatcaStatus ?? "").trim().toLowerCase();
+  if (zatcaStatus !== "" && zatcaStatus !== "pending") return true;
+  return [
+    record?.zatca_submitted_at, record?.zatcaSubmittedAt,
+    record?.zatca_uuid, record?.zatcaUuid,
+    record?.xml_content, record?.xmlContent,
+    record?.invoice_hash, record?.invoiceHash,
+    record?.zatca_icv, record?.zatcaIcv,
+    record?.zatca_pih, record?.zatcaPih,
+    record?.zatca_response_code, record?.zatcaResponseCode,
+    record?.zatca_error_messages, record?.zatcaErrorMessages,
+    record?.zatca_warning_messages, record?.zatcaWarningMessages,
+  ].some((value) => value !== null && value !== undefined && String(value).trim() !== "");
+}
+
+async function matchingLiveInvoiceEvidence(
+  tx: any, companyId: number, table: string, number: string,
+) {
+  const rows = await tx.execute(sql`
+    SELECT id, status, doc_number, ${table === "sales_invoices"
+      ? sql`zatca_status, zatca_submitted_at, zatca_uuid, xml_content, invoice_hash,
+          zatca_icv, zatca_pih, zatca_response_code, zatca_error_messages,
+          zatca_warning_messages`
+      : sql`NULL::text AS zatca_status, NULL::timestamp AS zatca_submitted_at,
+          NULL::text AS zatca_uuid, NULL::text AS xml_content,
+          NULL::text AS invoice_hash, NULL::integer AS zatca_icv,
+          NULL::text AS zatca_pih, NULL::text AS zatca_response_code,
+          NULL::text AS zatca_error_messages, NULL::text AS zatca_warning_messages`}
+    FROM ${sql.raw(table)}
+    WHERE company_id = ${companyId} AND doc_number IS NOT NULL
+  `);
+  const parts = invoiceNumberParts(number);
+  return (rows.rows ?? []).find((row: any) => {
+    const rowParts = invoiceNumberParts(row.doc_number);
+    return String(row.doc_number) === number
+      || (!!parts && rowParts?.equivalent === parts.equivalent);
+  }) as any | undefined;
+}
+
+async function hasKnownLegalDeletedInvoiceEvidence(
+  tx: any, companyId: number, table: string, number: string,
+) {
+  // Restored tombstones remain evidence of historical issuance even if the
+  // restored live row was subsequently moved to another display number.
+  const rows = await tx.execute(sql`
+    SELECT payload FROM deleted_records
+    WHERE company_id = ${companyId} AND table_name = ${table}
+  `);
+  const parts = invoiceNumberParts(number);
+  return (rows.rows ?? []).some((row: any) => {
+    const payload = row.payload ?? {};
+    const docNumber = String(payload.docNumber ?? payload.doc_number ?? "");
+    const docParts = invoiceNumberParts(docNumber);
+    if (docNumber !== number && (!parts || docParts?.equivalent !== parts.equivalent)) return false;
+    return String(payload.status ?? "").toLowerCase() !== "draft"
+      || hasKnownInvoiceFiscalEvidence(payload);
+  });
+}
+
 /** Mirrors nextSequenceForPayment's priority without allocating a number. */
 async function resolveInvoiceRepairSequence(
   tx: any, companyId: number, kind: InvoiceKind, paymentType: string,
@@ -1745,6 +1805,40 @@ async function reclaimableInvoiceLog(
       LIMIT 1
     `);
     if (release.rows?.[0]) return true;
+
+    // A manual legacy exception is deliberately not proof that the historical
+    // invoice was unsigned. It only records the SuperAdmin's acceptance of an
+    // otherwise-unprovable, null-reference reservation in this exact stream.
+    // Revalidate known evidence every time so a later-restored/live or known
+    // legal record invalidates the exception.
+    if (scope && (log.ref_id == null || String(log.ref_id) === "")) {
+      const liveRow = await matchingLiveInvoiceEvidence(
+        tx, companyId, table, String(log.generated_number),
+      );
+      if (!liveRow || (!hasKnownInvoiceFiscalEvidence(liveRow) && liveRow.status === "draft"
+        && scope.exclude?.kind === scope.kind && scope.exclude.id === Number(liveRow.id))) {
+        const knownLegal = await hasKnownLegalDeletedInvoiceEvidence(
+          tx, companyId, table, String(log.generated_number),
+        );
+        if (!knownLegal) {
+          const manualRelease = await tx.execute(sql`
+            SELECT 1 FROM audit_log
+            WHERE company_id = ${companyId}
+              AND module = 'invoice_numbering'
+              AND action = 'superadmin_sequence_repair'
+              AND metadata->>'op' = 'manualLegacyReservationOverride'
+              AND metadata->>'evidenceUncertainty' = 'unknownLegacyDeletionHistory'
+              AND (metadata->>'sequenceId')::bigint = ${Number(scope.seq.id)}
+              AND (metadata->>'branchId')::integer = ${scope.branchId}
+              AND COALESCE(metadata->>'bucket', '') = ${scope.bucket}
+              AND metadata->>'kind' = ${scope.kind}
+              AND metadata->'overriddenSequenceLogIds' @> ${JSON.stringify([Number(log.id)])}::jsonb
+            LIMIT 1
+          `);
+          if (manualRelease.rows?.[0]) return true;
+        }
+      }
+    }
   }
   return false;
 }
@@ -1775,6 +1869,7 @@ async function invoiceStreamDocuments(tx: any, companyId: number, scope: Invoice
 }
 async function assertInvoiceNumberAvailable(
   tx: any, companyId: number, number: string, scope: InvoiceRepairScope,
+  legacyOverride?: { enabled: boolean; logIds: number[]; warnings: string[] },
 ) {
   // Display numbers are only unique within the sequence's real issuance
   // stream.  Sales and purchases, independent branches, and different month
@@ -1814,6 +1909,26 @@ async function assertInvoiceNumberAvailable(
       continue;
     }
     if (!await reclaimableInvoiceLog(tx, companyId, log, scope)) {
+      const nullLegacyClaim = legacyOverride?.enabled
+        && String((log as any).ref_table) === table
+        && ((log as any).ref_id == null || String((log as any).ref_id) === "");
+      if (nullLegacyClaim) {
+        const matchingLive = await matchingLiveInvoiceEvidence(tx, companyId, table, number);
+        const foreignLiveOwner = matchingLive
+          && !(scope.exclude?.kind === scope.kind && scope.exclude.id === Number(matchingLive.id))
+          ? matchingLive : null;
+        if (foreignLiveOwner) {
+          throw Object.assign(new Error(`الرقم ${number} محجوز بسجل فاتورة نشط خارج نطاق الإصلاح`), { status: 409, code: "ACTIVE_INVOICE_NUMBER" });
+        }
+        const knownLegal = await hasKnownLegalDeletedInvoiceEvidence(
+          tx, companyId, table, String((log as any).generated_number),
+        );
+        if (!knownLegal) {
+          legacyOverride.logIds.push(Number((log as any).id));
+          legacyOverride.warnings.push(`سجل الحجز القديم #${Number((log as any).id)} للرقم ${String((log as any).generated_number)} بلا مرجع؛ تاريخ الحذف والتوقيع غير قابل للإثبات`);
+          continue;
+        }
+      }
       throw Object.assign(new Error(`الرقم ${number} محجوز بسجل إصدار موقّع أو يفتقد إثبات حذف مسودة غير موقعة`), { status: 409, code: "MISSING_DELETED_DRAFT_PROOF" });
     }
   }
@@ -1873,6 +1988,7 @@ router.get("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async (
     res.json({
       companyId, scanned: rows.length,
       supportsAtomicDraftRepair: true,
+      supportsLegacyReservationOverride: true,
       exactDuplicates: group(r => `${r.kind}|${r.docNumber}`),
       // Keep this bucket distinct from exact duplicates: it is specifically
       // the misleading display case such as 00001 versus 0001.
@@ -1896,11 +2012,19 @@ router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async 
     const requestedNumber = String(req.body?.number ?? "").trim();
     const resetNext = req.body?.resetNext === true;
     const dryRun = req.body?.dryRun === true;
+    const legacyReservationOverride = req.body?.legacyReservationOverride === true;
+    const legacyReservationReason = String(req.body?.legacyReservationReason ?? "").trim();
     if (!Number.isInteger(companyId) || companyId <= 0 || !["sales", "purchase"].includes(kind)
       || !["correct_draft", "repair_next"].includes(mode) || !requestedNumber
       || (req.body?.resetNext != null && typeof req.body.resetNext !== "boolean")
       || (req.body?.dryRun != null && typeof req.body.dryRun !== "boolean")
-      || (resetNext && mode !== "correct_draft")) {
+      || (req.body?.legacyReservationOverride != null && typeof req.body.legacyReservationOverride !== "boolean")
+      || (req.body?.legacyReservationReason != null && typeof req.body.legacyReservationReason !== "string")
+      || (resetNext && mode !== "correct_draft")
+      || (req.body?.legacyReservationOverride != null && (mode !== "correct_draft" || !resetNext))
+      || (legacyReservationOverride
+        && (legacyReservationReason.length < 10 || legacyReservationReason.length > 1000))
+      || (!legacyReservationOverride && req.body?.legacyReservationReason != null)) {
       res.status(400).json({ error: "بيانات الإصلاح غير صحيحة" }); return;
     }
     try {
@@ -1918,12 +2042,7 @@ router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async 
           `);
           invoice = q.rows?.[0];
           if (!invoice) throw Object.assign(new Error("الفاتورة غير موجودة ضمن الشركة"), { status: 404 });
-          const zatcaStatus = String(invoice.zatca_status ?? "").trim().toLowerCase();
-          const signed = kind === "sales" && ((zatcaStatus !== "" && zatcaStatus !== "pending")
-            || [invoice.zatca_submitted_at, invoice.zatca_uuid, invoice.xml_content, invoice.invoice_hash,
-              invoice.zatca_icv, invoice.zatca_pih, invoice.zatca_response_code,
-              invoice.zatca_error_messages, invoice.zatca_warning_messages]
-              .some((value) => value !== null && value !== undefined && String(value).trim() !== ""));
+          const signed = kind === "sales" && hasKnownInvoiceFiscalEvidence(invoice);
           if (invoice.status !== "draft") {
             throw Object.assign(new Error(`الرقم ${invoice.doc_number}: السجل ليس مسودة نشطة`), { status: 409, code: "ACTIVE_NON_DRAFT" });
           }
@@ -1969,7 +2088,14 @@ router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async 
           kind, branchId, bucket, seq, paymentType, isForeign,
           exclude: invoice ? { kind, id: Number(invoice.id) } : undefined,
         };
-        await assertInvoiceNumberAvailable(tx, companyId, requestedNumber, repairScope);
+        const legacyReservationWarnings: string[] = [];
+        const overriddenSequenceLogIds: number[] = [];
+        const legacyOverride = {
+          enabled: legacyReservationOverride,
+          logIds: overriddenSequenceLogIds,
+          warnings: legacyReservationWarnings,
+        };
+        await assertInvoiceNumberAvailable(tx, companyId, requestedNumber, repairScope, legacyOverride);
         const counter = await tx.execute(sql`
           SELECT id, current_number FROM sequence_counters
           WHERE sequence_id = ${seq.id} AND branch_id = ${branchId} AND period = ${bucket}
@@ -2028,7 +2154,20 @@ router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async 
               String(log.ref_id ?? "") !== String(invoice.id)
               && log.ref_id != null && String(log.ref_id) !== "");
             if (foreignClaims.length || nullRefs.length > 0) {
-              throw Object.assign(new Error(`الرقم ${oldNumber} له سجل إصدار آخر أو غير معروف؛ لا يمكن اعتبار السجل القديم خاصاً بالمسودة المحددة`), { status: 409, code: "UNKNOWN_OLD_NUMBER_CLAIM" });
+              if (foreignClaims.length || !legacyReservationOverride) {
+                throw Object.assign(new Error(`الرقم ${oldNumber} له سجل إصدار آخر أو غير معروف؛ لا يمكن اعتبار السجل القديم خاصاً بالمسودة المحددة`), { status: 409, code: "UNKNOWN_OLD_NUMBER_CLAIM" });
+              }
+              const knownOldLegal = await hasKnownLegalDeletedInvoiceEvidence(
+                tx, companyId, INVOICE_TABLE[kind], oldNumber,
+              );
+              if (knownOldLegal) {
+                throw Object.assign(new Error(`الرقم ${oldNumber} له سجل قانوني معروف ولا يقبل الاستثناء اليدوي`), { status: 409, code: "KNOWN_ISSUED_LEGACY_CLAIM" });
+              }
+              for (const log of nullRefs) {
+                const logId = Number(log.id);
+                overriddenSequenceLogIds.push(logId);
+                legacyReservationWarnings.push(`سجل الحجز القديم #${logId} للرقم ${oldNumber} بلا مرجع؛ لا يمكن إثبات أنه يخص المسودة المحددة أو أنه غير موقع`);
+              }
             }
             releasedSequenceLogIds.push(...direct.map((log: any) => Number(log.id)));
           }
@@ -2047,6 +2186,31 @@ router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async 
               if (liveElsewhere.rows?.[0]) continue;
             }
             if (!await reclaimableInvoiceLog(tx, companyId, log, repairScope)) {
+              const oldParts = invoice ? invoiceNumberParts(String(invoice.doc_number)) : null;
+              const isAuthorizedLegacyRange = legacyReservationOverride && invoice && oldParts
+                && lp.suffix >= parts.suffix && lp.suffix <= oldParts.suffix
+                && ((log as any).ref_id == null || String((log as any).ref_id) === "");
+              if (isAuthorizedLegacyRange) {
+                const legacyNumber = String((log as any).generated_number);
+                const matchingLive = await matchingLiveInvoiceEvidence(
+                  tx, companyId, INVOICE_TABLE[kind], legacyNumber,
+                );
+                const isSelectedDraft = matchingLive
+                  && Number(matchingLive.id) === Number(invoice.id)
+                  && matchingLive.status === "draft"
+                  && !hasKnownInvoiceFiscalEvidence(matchingLive);
+                const knownLegal = await hasKnownLegalDeletedInvoiceEvidence(
+                  tx, companyId, INVOICE_TABLE[kind], legacyNumber,
+                );
+                if ((!matchingLive || isSelectedDraft) && !knownLegal) {
+                  const logId = Number((log as any).id);
+                  if (!overriddenSequenceLogIds.includes(logId)) {
+                    overriddenSequenceLogIds.push(logId);
+                    legacyReservationWarnings.push(`سجل الحجز القديم #${logId} للرقم ${legacyNumber} بلا مرجع ضمن نطاق التصحيح؛ تاريخ الحذف والتوقيع غير قابل للإثبات`);
+                  }
+                  continue;
+                }
+              }
               throw Object.assign(new Error(`الرقم ${(log as any).generated_number} محجوز بسجل موقّع أو يفتقد إثبات حذف مسودة غير موقعة`), { status: 409, code: "PROTECTED_HIGH_WATER" });
             }
           }
@@ -2054,7 +2218,9 @@ router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async 
         const result = { mode, kind, invoiceId: invoice ? Number(invoice.id) : null,
           oldNumber: invoice?.doc_number ?? null, newNumber: requestedNumber,
           number: requestedNumber, nextNumber: invoiceFormattedNumber(seq, next, effectiveDate),
-          sequenceCode: seq.code, branchId, bucket, resetNext };
+          sequenceCode: seq.code, branchId, bucket, resetNext,
+          legacyReservationWarnings,
+          overriddenSequenceLogIds: Array.from(new Set(overriddenSequenceLogIds)) };
         if (dryRun) return { ...result, canApply: true };
 
         if (counter.rows?.[0]) {
@@ -2082,6 +2248,26 @@ router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async 
           entityType: `${kind}_invoice`, entityId: result.invoiceId ? String(result.invoiceId) : null,
           statusCode: 200, metadata: auditMetadata,
         });
+        if (legacyReservationOverride && result.overriddenSequenceLogIds.length > 0) {
+          await tx.insert(auditLogTable).values({
+            userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,
+            role: "superadmin", companyId, module: "invoice_numbering",
+            action: "superadmin_sequence_repair", method: req.method, path: req.originalUrl,
+            entityType: `${kind}_invoice`, entityId: result.invoiceId ? String(result.invoiceId) : null,
+            statusCode: 200,
+            metadata: {
+              op: "manualLegacyReservationOverride",
+              kind, sequenceId: Number(seq.id), sequenceCode: seq.code,
+              branchId, bucket, invoiceId: result.invoiceId,
+              oldNumber: result.oldNumber, newNumber: result.newNumber,
+              overriddenSequenceLogIds: result.overriddenSequenceLogIds,
+              legacyReservationReason,
+              actor: { id: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null },
+              evidenceUncertainty: "unknownLegacyDeletionHistory",
+              legacyReservationWarnings,
+            },
+          });
+        }
         return result;
       });
       res.json({ ok: true, ...result });

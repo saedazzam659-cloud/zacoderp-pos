@@ -516,5 +516,172 @@ test("SA repair reclaims only deleted drafts and serializes with real issuance",
   );
   assert.equal(futureRepair.status, 200, JSON.stringify(futureRepair.body));
   assert.equal(await issueSalesNumber(), "SA-204");
+
+  // Explicitly authorized legacy exception: both the requested target and the
+  // selected draft's old number have unprovable null-reference reservations.
+  // Strict mode remains fail-closed, while preview reports exact evidence and
+  // performs no writes.
+  const legacyDraft = await insertInvoice("SA-304", "draft");
+  const [oldDirect, oldUnknown, targetUnknown, intermediateUnknown] = await db.insert(sequenceLogsTable).values([
+    {
+      sequenceId: salesSequenceId, companyId, transactionType: "sales_invoice",
+      generatedNumber: "SA-304", refTable: "sales_invoices", refId: String(legacyDraft.id),
+    },
+    {
+      sequenceId: salesSequenceId, companyId, transactionType: "sales_invoice",
+      generatedNumber: "SA-304", refTable: "sales_invoices", refId: null,
+    },
+    {
+      sequenceId: salesSequenceId, companyId, transactionType: "sales_invoice",
+      generatedNumber: "SA-302", refTable: "sales_invoices", refId: null,
+    },
+    {
+      sequenceId: salesSequenceId, companyId, transactionType: "sales_invoice",
+      generatedNumber: "SA-303", refTable: "sales_invoices", refId: null,
+    },
+  ]).returning({ id: sequenceLogsTable.id });
+  await db.update(sequenceCountersTable).set({ currentNumber: 305 }).where(and(
+    eq(sequenceCountersTable.sequenceId, salesSequenceId),
+    eq(sequenceCountersTable.branchId, mainBranchId),
+    eq(sequenceCountersTable.period, ""),
+  ));
+  const strictLegacy = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-302", {
+      mode: "correct_draft", invoiceId: legacyDraft.id, resetNext: true, dryRun: true,
+    }),
+  );
+  assert.equal(strictLegacy.status, 409, "legacy unknown claims remain blocked by default");
+
+  const missingReason = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-302", {
+      mode: "correct_draft", invoiceId: legacyDraft.id, resetNext: true,
+      legacyReservationOverride: true, legacyReservationReason: "short",
+    }),
+  );
+  assert.equal(missingReason.status, 400, "manual exception requires a meaningful reason");
+
+  const [knownLegalTombstone] = await db.insert(deletedRecordsTable).values({
+    tableName: "sales_invoices",
+    companyId,
+    recordId: 999_999_991,
+    payload: {
+      docNumber: "SA-0302",
+      status: "draft",
+      zatcaWarningMessages: ["known fiscal warning"],
+    },
+    reason: "restored numeric-equivalent known-legal guard fixture",
+    restoredAt: new Date(),
+  }).returning({ id: deletedRecordsTable.id });
+  const knownLegalBlocked = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-302", {
+      mode: "correct_draft", invoiceId: legacyDraft.id, resetNext: true, dryRun: true,
+      legacyReservationOverride: true,
+      legacyReservationReason: "Approved incident exception for unknown legacy deletion history",
+    }),
+  );
+  assert.equal(knownLegalBlocked.status, 409,
+    "restored numeric-equivalent tombstones with any known fiscal evidence remain protected");
+  await db.delete(deletedRecordsTable).where(eq(deletedRecordsTable.id, knownLegalTombstone.id));
+
+  const [aboveOldUnknown] = await db.insert(sequenceLogsTable).values({
+    sequenceId: salesSequenceId,
+    companyId,
+    transactionType: "sales_invoice",
+    generatedNumber: "SA-305",
+    refTable: "sales_invoices",
+    refId: null,
+  }).returning({ id: sequenceLogsTable.id });
+  const aboveOldBlocked = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-302", {
+      mode: "correct_draft", invoiceId: legacyDraft.id, resetNext: true, dryRun: true,
+      legacyReservationOverride: true,
+      legacyReservationReason: "Approved incident exception for unknown legacy deletion history",
+    }),
+  );
+  assert.equal(aboveOldBlocked.status, 409,
+    "the exception range ends at the selected old number");
+  await db.delete(sequenceLogsTable).where(eq(sequenceLogsTable.id, aboveOldUnknown.id));
+
+  const legacyAuditsBefore = await db.select({ id: auditLogTable.id }).from(auditLogTable)
+    .where(eq(auditLogTable.companyId, companyId));
+  const legacyCounterBefore = (await db.select({ currentNumber: sequenceCountersTable.currentNumber })
+    .from(sequenceCountersTable).where(and(
+      eq(sequenceCountersTable.sequenceId, salesSequenceId),
+      eq(sequenceCountersTable.branchId, mainBranchId),
+      eq(sequenceCountersTable.period, ""),
+    )))[0].currentNumber;
+  const legacyPreview = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-302", {
+      mode: "correct_draft", invoiceId: legacyDraft.id, resetNext: true, dryRun: true,
+      legacyReservationOverride: true,
+      legacyReservationReason: "Approved incident exception for unknown legacy deletion history",
+    }),
+  );
+  assert.equal(legacyPreview.status, 200, JSON.stringify(legacyPreview.body));
+  assert.deepEqual(
+    new Set(legacyPreview.body.overriddenSequenceLogIds as number[]),
+    new Set([oldUnknown.id, targetUnknown.id, intermediateUnknown.id]),
+    "preview returns target, selected old, and every intermediate unknown reservation",
+  );
+  assert.equal((legacyPreview.body.legacyReservationWarnings as string[]).length, 3);
+  assert.equal((await db.select({ docNumber: salesInvoicesTable.docNumber })
+    .from(salesInvoicesTable).where(eq(salesInvoicesTable.id, legacyDraft.id)))[0].docNumber, "SA-304");
+  assert.equal((await db.select({ currentNumber: sequenceCountersTable.currentNumber })
+    .from(sequenceCountersTable).where(and(
+      eq(sequenceCountersTable.sequenceId, salesSequenceId),
+      eq(sequenceCountersTable.branchId, mainBranchId),
+      eq(sequenceCountersTable.period, ""),
+    )))[0].currentNumber, legacyCounterBefore);
+  assert.equal((await db.select({ id: auditLogTable.id }).from(auditLogTable)
+    .where(eq(auditLogTable.companyId, companyId))).length, legacyAuditsBefore.length);
+
+  const legacyApplied = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-302", {
+      mode: "correct_draft", invoiceId: legacyDraft.id, resetNext: true,
+      legacyReservationOverride: true,
+      legacyReservationReason: "Approved incident exception for unknown legacy deletion history",
+    }),
+  );
+  assert.equal(legacyApplied.status, 200, JSON.stringify(legacyApplied.body));
+  const manualAudits = await db.select({ metadata: auditLogTable.metadata }).from(auditLogTable)
+    .where(eq(auditLogTable.companyId, companyId));
+  const manual = manualAudits.find((row: any) => row.metadata?.op === "manualLegacyReservationOverride");
+  assert.ok(manual, "commit writes a separate durable manual-exception audit");
+  assert.deepEqual(new Set((manual as any).metadata.overriddenSequenceLogIds),
+    new Set([oldUnknown.id, targetUnknown.id, intermediateUnknown.id]));
+  assert.equal((manual as any).metadata.evidenceUncertainty, "unknownLegacyDeletionHistory");
+  assert.equal("noZatcaArtifactsVerified" in (manual as any).metadata, false,
+    "unknown legacy claims must not be falsely described as verified unsigned");
+
+  assert.equal(await issueSalesNumber(), "SA-303",
+    "the allocator must genuinely issue the overridden intermediate number next");
+
+  // The old direct claim and exact manually-audited null claim are both
+  // recognized on a later repair, after the intermediate issue advanced the
+  // counter; sequence logs themselves were never deleted.
+  const repeat = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-304"),
+  );
+  assert.equal(repeat.status, 200, JSON.stringify(repeat.body));
+  assert.equal(await issueSalesNumber(), "SA-304",
+    "the allocator must issue the overridden selected-old number after 303");
+  const retainedLogs = await db.select({ id: sequenceLogsTable.id }).from(sequenceLogsTable)
+    .where(inArray(sequenceLogsTable.id,
+      [oldDirect.id, oldUnknown.id, targetUnknown.id, intermediateUnknown.id]));
+  assert.equal(retainedLogs.length, 4, "manual exception must never delete sequence logs");
   await assertOwnedTenant("after behaviour assertions");
 });

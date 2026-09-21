@@ -15,6 +15,7 @@ test("invoice repair is a SA-only, read-first API contract", () => {
   assert.match(source, /numericEquivalentDuplicates/);
   assert.match(source, /runWithAgentScope\(req, res/);
   assert.match(source, /supportsAtomicDraftRepair: true/);
+  assert.match(source, /supportsLegacyReservationOverride: true/);
 });
 
 test("invoice repair never permits legal ZATCA or posted purchase changes", () => {
@@ -54,4 +55,20 @@ test("atomic draft repair preflights without mutation and records exact release 
   assert.match(source, /noZatcaArtifactsVerified/);
   assert.match(source, /invoiceNumberReclaimable/);
   assert.match(source, /await tx\.insert\(auditLogTable\)/);
+});
+
+test("legacy reservation exception is explicit, scoped, uncertain, and separately audited", () => {
+  assert.match(source, /legacyReservationOverride/);
+  assert.match(source, /legacyReservationReason\.length < 10/);
+  assert.match(source, /legacyReservationReason\.length > 1000/);
+  assert.match(source, /mode !== "correct_draft" \|\| !resetNext/);
+  assert.match(source, /legacyReservationWarnings/);
+  assert.match(source, /overriddenSequenceLogIds/);
+  assert.match(source, /op: "manualLegacyReservationOverride"/);
+  assert.match(source, /evidenceUncertainty: "unknownLegacyDeletionHistory"/);
+  assert.match(source, /metadata->>'sequenceId'/);
+  assert.match(source, /metadata->>'branchId'/);
+  assert.match(source, /metadata->>'kind'/);
+  assert.match(source, /KNOWN_ISSUED_LEGACY_CLAIM/);
+  assert.doesNotMatch(source, /op: "manualLegacyReservationOverride"[\s\S]{0,1000}noZatcaArtifactsVerified/);
 });
