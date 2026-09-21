@@ -52,6 +52,12 @@ export async function tombstoneAndDeleteDraftInvoice(
       companyId: meta.companyId,
       docNumber: snapshot.docNumber ?? null,
       status: snapshot.status,
+      // These flags are the durable, fail-closed evidence consumed by the
+      // SuperAdmin numbering repair tool.  A legacy snapshot which merely
+      // says "draft" is not enough to reclaim a legal invoice number.
+      invoiceNumberReclaimable: true,
+      noZatcaArtifactsVerified: true,
+      invoiceNumberReclaimProofVersion: 1,
     },
     deletedBy: meta.deletedBy,
     deletedByUsername: meta.deletedByUsername,

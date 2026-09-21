@@ -393,7 +393,9 @@ test("SA repair reclaims only deleted drafts and serializes with real issuance",
     saToken,
     repairPayload("SA-012", { branchId: otherBranchId }),
   );
-  assert.equal(otherBranch.status, 200, "an independent branch stream may reclaim 012");
+  assert.equal(otherBranch.status, 409,
+    "a branchless historical log must not be guessed to belong to another branch");
+  assert.equal(otherBranch.body.code, "MISSING_DELETED_DRAFT_PROOF");
 
   const purchase = await api(
     `/api/admin/companies/${companyId}/invoice-numbering-repair`,
@@ -425,5 +427,94 @@ test("SA repair reclaims only deleted drafts and serializes with real issuance",
   const afterConcurrentIssue = await issueSalesNumber();
   assert.notEqual(concurrentlyIssued, afterConcurrentIssue,
     "concurrent repair and issuance must never allocate a duplicate number");
+
+  // Atomic 204 -> 202 correction. Its own direct allocation claim is
+  // releasable; an additional legacy null-ref claim must fail closed.
+  const atomicDraft = await insertInvoice("SA-204", "draft");
+  await db.insert(sequenceLogsTable).values({
+    sequenceId: salesSequenceId,
+    companyId,
+    transactionType: "sales_invoice",
+    generatedNumber: "SA-204",
+    refTable: "sales_invoices",
+    refId: String(atomicDraft.id),
+  });
+  const [unknownDuplicateClaim] = await db.insert(sequenceLogsTable).values({
+    sequenceId: salesSequenceId,
+    companyId,
+    transactionType: "sales_invoice",
+    generatedNumber: "SA-204",
+    refTable: "sales_invoices",
+    refId: null,
+  }).returning({ id: sequenceLogsTable.id });
+  const blockedUnknownClaim = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-202", {
+      mode: "correct_draft", invoiceId: atomicDraft.id, resetNext: true, dryRun: true,
+    }),
+  );
+  assert.equal(blockedUnknownClaim.status, 409,
+    "a second unknown old-number claim must not be waived by matching text");
+  assert.equal(blockedUnknownClaim.body.code, "UNKNOWN_OLD_NUMBER_CLAIM");
+  await db.delete(sequenceLogsTable).where(eq(sequenceLogsTable.id, unknownDuplicateClaim.id));
+
+  const [counterBeforeDry] = await db.select({
+    currentNumber: sequenceCountersTable.currentNumber,
+  }).from(sequenceCountersTable).where(and(
+    eq(sequenceCountersTable.sequenceId, salesSequenceId),
+    eq(sequenceCountersTable.branchId, mainBranchId),
+    eq(sequenceCountersTable.period, ""),
+  ));
+  const auditsBeforeDry = await db.select({ id: auditLogTable.id }).from(auditLogTable)
+    .where(eq(auditLogTable.companyId, companyId));
+  const preflight = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-202", {
+      mode: "correct_draft", invoiceId: atomicDraft.id, resetNext: true, dryRun: true,
+    }),
+  );
+  assert.equal(preflight.status, 200, JSON.stringify(preflight.body));
+  assert.equal(preflight.body.canApply, true);
+  assert.equal(preflight.body.oldNumber, "SA-204");
+  assert.equal(preflight.body.newNumber, "SA-202");
+  assert.equal(preflight.body.nextNumber, "SA-203");
+  const [draftAfterDry] = await db.select({ docNumber: salesInvoicesTable.docNumber })
+    .from(salesInvoicesTable).where(eq(salesInvoicesTable.id, atomicDraft.id));
+  const [counterAfterDry] = await db.select({
+    currentNumber: sequenceCountersTable.currentNumber,
+  }).from(sequenceCountersTable).where(and(
+    eq(sequenceCountersTable.sequenceId, salesSequenceId),
+    eq(sequenceCountersTable.branchId, mainBranchId),
+    eq(sequenceCountersTable.period, ""),
+  ));
+  const auditsAfterDry = await db.select({ id: auditLogTable.id }).from(auditLogTable)
+    .where(eq(auditLogTable.companyId, companyId));
+  assert.equal(draftAfterDry.docNumber, "SA-204", "dryRun must not renumber the draft");
+  assert.equal(counterAfterDry.currentNumber, counterBeforeDry.currentNumber,
+    "dryRun must not reset or insert a counter");
+  assert.equal(auditsAfterDry.length, auditsBeforeDry.length, "dryRun must not write an audit");
+
+  const atomic = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-202", {
+      mode: "correct_draft", invoiceId: atomicDraft.id, resetNext: true, dryRun: false,
+    }),
+  );
+  assert.equal(atomic.status, 200, JSON.stringify(atomic.body));
+  assert.equal(atomic.body.nextNumber, "SA-203");
+  assert.equal(await issueSalesNumber(), "SA-203");
+
+  // The exact-log audit proof written atomically above releases 204 for a
+  // later repair; a mere same-number audit could not do this.
+  const futureRepair = await api(
+    `/api/admin/companies/${companyId}/invoice-numbering-repair`,
+    saToken,
+    repairPayload("SA-204"),
+  );
+  assert.equal(futureRepair.status, 200, JSON.stringify(futureRepair.body));
+  assert.equal(await issueSalesNumber(), "SA-204");
   await assertOwnedTenant("after behaviour assertions");
 });

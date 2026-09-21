@@ -14,12 +14,14 @@ test("invoice repair is a SA-only, read-first API contract", () => {
   assert.match(source, /exactDuplicates/);
   assert.match(source, /numericEquivalentDuplicates/);
   assert.match(source, /runWithAgentScope\(req, res/);
+  assert.match(source, /supportsAtomicDraftRepair: true/);
 });
 
 test("invoice repair never permits legal ZATCA or posted purchase changes", () => {
   assert.match(source, /zatca_uuid.*xml_content.*invoice_hash/s);
-  assert.match(source, /invoice\.status !== "draft" \|\| signed/);
-  assert.match(source, /مسودة غير موقعة فقط/);
+  assert.match(source, /invoice\.status !== "draft"/);
+  assert.match(source, /if \(signed\)/);
+  assert.match(source, /الفاتورة موقعة أو لها آثار ZATCA/);
   const repairBlock = source.slice(source.indexOf('router.post("/companies/:id/invoice-numbering-repair"'));
   assert.doesNotMatch(repairBlock.slice(0, repairBlock.indexOf('// PUT /api/admin/companies/:id/journal-sequence-control')),
     /SET (?:[^;]*)(?:zatca_uuid|zatca_icv|zatca_pih|invoice_hash|xml_content)\s*=/);
@@ -28,7 +30,7 @@ test("invoice repair never permits legal ZATCA or posted purchase changes", () =
 test("counter reclaim fails closed unless its log is a deleted draft", () => {
   assert.match(source, /payload->>'status' = 'draft'/);
   assert.match(source, /restored_at IS NULL/);
-  assert.match(source, /لا يمكن إعادة استخدامه/);
+  assert.match(source, /يفتقد إثبات حذف مسودة غير موقعة/);
   assert.match(source, /LIMIT 1 FOR UPDATE/);
   assert.match(source, /sequence_counters[\s\S]*FOR UPDATE/);
   assert.match(source, /superadmin_sequence_repair/);
@@ -37,7 +39,19 @@ test("counter reclaim fails closed unless its log is a deleted draft", () => {
 test("draft correction locks only the invoice row and cannot rewind its counter", () => {
   assert.match(source, /LEFT JOIN customers c[\s\S]*FOR UPDATE OF i/);
   assert.match(source, /Math\.max\(currentCounter, parts\.suffix \+ 1\)/);
-  assert.match(source, /رقم أو مكافئه الرقمي مستخدم في نفس مسار/);
+  assert.match(source, /محجوز بسجل فاتورة نشط/);
   assert.match(source, /COALESCE\(i\.branch_id, 0\) = \$\{scope\.branchId\}/);
   assert.match(source, /to_char\(i\.invoice_date, 'YYYY-MM'\)/);
+});
+
+test("atomic draft repair preflights without mutation and records exact release proof", () => {
+  assert.match(source, /const resetNext = req\.body\?\.resetNext === true/);
+  assert.match(source, /const dryRun = req\.body\?\.dryRun === true/);
+  assert.match(source, /if \(dryRun\) return \{ \.\.\.result, canApply: true \}/);
+  assert.match(source, /op: resetNext \? "draft_renumber_release"/);
+  assert.match(source, /releasedSequenceLogIds/);
+  assert.match(source, /metadata->'releasedSequenceLogIds' @>/);
+  assert.match(source, /noZatcaArtifactsVerified/);
+  assert.match(source, /invoiceNumberReclaimable/);
+  assert.match(source, /await tx\.insert\(auditLogTable\)/);
 });
