@@ -52,7 +52,7 @@ import {
   stripAgentReleaseCredentialsFromUrl,
   buildCustomAgentReleaseUrl,
 } from "../lib/agentReleasePolicy.js";
-import { agentOwnsHost, resolvedAgentBranding } from "../lib/agentPublicBranding.js";
+import { agentOwnsHost, resolvedAgentBranding, localAgentPublicBranding } from "../lib/agentPublicBranding.js";
 import {
   EXTERNAL_PACKAGE_KINDS,
   type ExternalPackageEntry,
@@ -7232,18 +7232,19 @@ export const agentPublicRouter = Router();
 
 // GET /api/branding?host=... — light login-page branding for agent domains.
 agentPublicRouter.get("/branding", async (req, res) => {
+  const local = await readLocalAgentRuntimeState();
+  if (local.isLocalAgent) {
+    const remote = await localAgentPublicBranding(local);
+    res.json(remote ?? {
+      isAgentDomain: true,
+      localSuperadminEnabled: local.localSuperadminEnabled,
+      localSuperadminScreens: local.localSuperadminScreens,
+    });
+    return;
+  }
   const host = typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
   const hit = await lookupAgentByHost(host);
   if (!hit) {
-    const local = await readLocalAgentRuntimeState();
-    if (local.isLocalAgent) {
-      res.json({
-        isAgentDomain: true,
-        localSuperadminEnabled: local.localSuperadminEnabled,
-        localSuperadminScreens: local.localSuperadminScreens,
-      });
-      return;
-    }
     res.json({ isAgentDomain: false, localSuperadminEnabled: true, localSuperadminScreens: [...LOCAL_SUPERADMIN_SCREEN_IDS] });
     return;
   }
@@ -7261,9 +7262,10 @@ agentPublicRouter.get("/branding", async (req, res) => {
 // Covered by AGENT_PUBLIC_PATHS ("/branding" prefix) — works even for
 // suspended agents (harmless, read-only, central-DB only).
 agentPublicRouter.get("/branding/manifest", async (req, res) => {
-  const host = typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
-  const hit = await lookupAgentByHost(host);
-  const brand = hit?.brandName?.trim() || null;
+  const local = await readLocalAgentRuntimeState();
+  const host = local.isLocalAgent ? null : typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
+  const hit = local.isLocalAgent ? null : await lookupAgentByHost(host);
+  const brand = (local.isLocalAgent ? (await localAgentPublicBranding(local))?.brandName : hit?.brandName)?.trim() || null;
   const name = brand ? `${brand} - ZATCA e-Invoicing` : "زاكود المحاسبي - ZATCA e-Invoicing";
   const shortName = brand ?? "زاكود";
   res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
@@ -7299,9 +7301,10 @@ agentPublicRouter.get("/branding/manifest", async (req, res) => {
 // Covered by AGENT_PUBLIC_PATHS ("/branding" prefix).
 agentPublicRouter.get("/branding/index", async (req, res) => {
   try {
-    const host = typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
-    const hit = await lookupAgentByHost(host);
-    const brand = hit?.brandName?.trim();
+    const local = await readLocalAgentRuntimeState();
+    const host = local.isLocalAgent ? null : typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
+    const hit = local.isLocalAgent ? null : await lookupAgentByHost(host);
+    const brand = (local.isLocalAgent ? (await localAgentPublicBranding(local))?.brandName : hit?.brandName)?.trim();
     if (!brand) { res.status(404).json({ error: "not_agent_domain" }); return; }
     const { readSpaIndexHtml, rebrandIndexHtml } = await import("../app.js");
     let html = (await readSpaIndexHtml())?.html ?? null;

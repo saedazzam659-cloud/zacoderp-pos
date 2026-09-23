@@ -25,3 +25,9 @@ Rule: on registered agent domains (agent_instances.brand_name), the static index
 **Why:** the API release may carry its own frontend snapshot for external-agent installation, but central production serves `/assets/*` from the separately built web artifact.
 
 **How to apply:** resolve the web artifact relative to both monorepo cwd and the API runtime directory, prefer it when present, and verify the branded index's main asset exists in that same web `dist/public`.
+
+Independent full-agent branding must come from the configured controller's public display data, not from an assumed local copy of the central agent registry. Keep local SuperAdmin authorization separate from remote branding.
+
+**Why:** An independent database can correctly have no central registry rows; the resulting local branding fallback omitted saved logos/names. Central public branding deliberately does not grant local SuperAdmin permissions, so copying its policy would disable local access.
+
+**How to apply:** Use installer-owned controller/domain identity, cache display fields with bounded network failures, and retain local enablement/screens on every response. Support the existing uploaded base64 logo size, not merely URL-length limits. Existing runtimes need an app-only update, never a database restore for this change.

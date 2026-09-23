@@ -5,6 +5,9 @@ export type LocalAgentRuntimeConfig = {
   mode?: string;
   domain?: string;
   installationId?: string;
+  centralOrigin?: string;
+  controllerOrigins?: Array<{ platformId?: string; origin?: string }>;
+  activeControllerId?: string;
   localSuperadminEnabled?: boolean;
   localSuperadminScreens?: string[];
 };
