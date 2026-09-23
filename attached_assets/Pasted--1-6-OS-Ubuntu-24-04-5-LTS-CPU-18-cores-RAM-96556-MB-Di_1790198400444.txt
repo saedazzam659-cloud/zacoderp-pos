@@ -1,0 +1,88 @@
+■ 1/6 فحص السيرفر
+OS: Ubuntu 24.04.5 LTS
+CPU: 18 cores
+RAM: 96556 MB
+Disk: 579G free
+ZACOD_CHECK_OK
+
+
+■ 2/6 قاعدة البيانات PostgreSQL
+الرابط المحفوظ غير صالح — سيتم إنشاء قاعدة بيانات جديدة على السيرفر وحفظ رابطها تلقائيًا.
+
+Running kernel seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+ZACOD_DB_READY
+
+تم إنشاء قاعدة البيانات zacod_agent_5 والمستخدم zacod_a5 وحفظ الرابط مشفّرًا. (اتصال مشفّر)
+
+■ 3/6 بوابة الدخول والنبض (Caddy)
+/archive.ubuntu.com/ubuntu noble-backports InRelease
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following additional packages will be installed:
+  libnss3-tools
+The following NEW packages will be installed:
+  caddy libnss3-tools
+0 upgraded, 2 newly installed, 0 to remove and 12 not upgraded.
+Need to get 11.2 MB of archives.
+After this operation, 41.2 MB of additional disk space will be used.
+Get:1 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libnss3-tools amd64 2:3.98-1ubuntu0.2 [615 kB]
+Get:2 http://archive.ubuntu.com/ubuntu noble-updates/universe amd64 caddy amd64 2.6.2-6ubuntu0.24.04.3 [10.5 MB]
+Fetched 11.2 MB in 1s (20.5 MB/s)
+Selecting previously unselected package libnss3-tools.
+(Reading database ... 
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 77020 files and directories currently installed.)
+Preparing to unpack .../libnss3-tools_2%3a3.98-1ubuntu0.2_amd64.deb ...
+Unpacking libnss3-tools (2:3.98-1ubuntu0.2) ...
+Selecting previously unselected package caddy.
+Preparing to unpack .../caddy_2.6.2-6ubuntu0.24.04.3_amd64.deb ...
+Unpacking caddy (2.6.2-6ubuntu0.24.04.3) ...
+Setting up libnss3-tools (2:3.98-1ubuntu0.2) ...
+Setting up caddy (2.6.2-6ubuntu0.24.04.3) ...
+Created symlink /etc/systemd/system/multi-user.target.wants/caddy.service → /usr/lib/systemd/system/caddy.service.
+
+Processing triggers for man-db (2.12.0-4build2) ...
+{"level":"info","ts":1790198347.437959,"msg":"using provided configuration","config_file":"/etc/caddy/Caddyfile","config_adapter":""}
+{"level":"warn","ts":1790198347.4427373,"msg":"Caddyfile input is not formatted; run the 'caddy fmt' command to fix inconsistencies","adapter":"caddyfile","file":"/etc/caddy/Caddyfile","line":2}
+{"level":"info","ts":1790198347.443115,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+{"level":"info","ts":1790198347.4431536,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+{"level":"info","ts":1790198347.443242,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc000370700"}
+Valid configuration
+{"level":"info","ts":1790198347.4439592,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc000370700"}
+/opt/zacod/heartbeat.sh: line 24: node: command not found
+ZACOD_BOOTSTRAP_DONE
+
+
+■ استعادة نسخة قاعدة البيانات المرفوعة
+/tmp/zacod-db.bak.enc: OK
+psql:/tmp/zacod-db.bak:1858: ERROR:  syntax error at or near ")"
+LINE 63: );
