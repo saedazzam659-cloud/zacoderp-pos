@@ -73,6 +73,11 @@ export const contractingTendersTable = pgTable(
       AND ((${t.status} = 'awarded') = (${t.awardedContractKind} IS NOT NULL))
     `),
     ...(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? {
+      customerCompanyFk: foreignKey({
+        columns: [t.companyId, t.customerId],
+        foreignColumns: [customersTable.companyId, customersTable.id],
+        name: "ctg_tender_customer_company_fk",
+      }).onDelete("restrict"),
       ownerContractProjectFk: foreignKey({
         columns: [t.companyId, t.projectId, t.awardedOwnerContractId],
         foreignColumns: [
@@ -170,6 +175,16 @@ export const contractingGuaranteesTable = pgTable(
         OR (${t.guaranteeType} = 'performance' AND ${t.parentGuaranteeId} IS NOT NULL))
     `),
     ...(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? {
+      bankCompanyFk: foreignKey({
+        columns: [t.companyId, t.bankAccountId],
+        foreignColumns: [bankAccountsTable.companyId, bankAccountsTable.id],
+        name: "ctg_guarantee_bank_company_fk",
+      }).onDelete("restrict"),
+      customerCompanyFk: foreignKey({
+        columns: [t.companyId, t.beneficiaryCustomerId],
+        foreignColumns: [customersTable.companyId, customersTable.id],
+        name: "ctg_guarantee_customer_company_fk",
+      }).onDelete("restrict"),
       tenderProjectFk: foreignKey({
         columns: [t.companyId, t.projectId, t.tenderId],
         foreignColumns: [

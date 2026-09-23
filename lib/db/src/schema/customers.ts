@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, numeric, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, numeric, boolean, unique } from "drizzle-orm/pg-core";
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -69,7 +69,9 @@ export const customersTable = pgTable("customers", {
    */
   includeInStatements: boolean("include_in_statements").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  companyIdIdUq: unique("customers_company_id_id_uq").on(t.companyId, t.id),
+}));
 
 export const insertCustomerSchema = createInsertSchema(customersTable).omit({ id: true, createdAt: true });
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;

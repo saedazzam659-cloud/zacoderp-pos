@@ -51,6 +51,12 @@ With explicit user approval, dependency-order failures may use two Publish stage
 
 **How to apply:** Defer only relationships confirmed absent from production; retain application scoping and existing production protections. Before the second stage, verify the prerequisite keys in production read-only. Never mark the full migration complete after only the prerequisite release.
 
+Audit every FK in the ordered Publish SQL against production keys plus keys created by earlier statements, not just a handwritten module-specific list.
+
+**Why:** Customer and bank composite relationships existed in runtime DDL outside the initial contracting staging list, so a partial audit missed the next dependency failure.
+
+**How to apply:** Include cross-module target tables, catalog-only relationships, and primary keys declared in new tables. Restart once after staging changes and confirm readiness has not recreated deferred constraints.
+
 Release-managed application tables must be created in the shared active-database reconciliation pass before strict missing-table validation, not only during central startup or a lazy feature request.
 
 **Why:** External-agent upgrade and request-readiness paths can validate newly exported schema tables before central-only initialization ever reaches their database.

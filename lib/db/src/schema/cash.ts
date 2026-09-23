@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum, jsonb,
+  pgTable, serial, text, integer, boolean, timestamp, numeric, pgEnum, jsonb, unique,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
@@ -54,7 +54,9 @@ export const bankAccountsTable = pgTable("bank_accounts", {
   isActive:      boolean("is_active").notNull().default(true),
   notes:         text("notes"),
   createdAt:     timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  companyIdIdUq: unique("bank_accounts_company_id_id_uq").on(t.companyId, t.id),
+}));
 
 // ─── Receipt Vouchers (سندات القبض) ───────────────────────────────────────────
 export const receiptVouchersTable = pgTable("receipt_vouchers", {

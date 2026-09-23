@@ -170,17 +170,20 @@ async function createTables(): Promise<void> {
             FOREIGN KEY (company_id, project_id, parent_guarantee_id)
             REFERENCES contracting_guarantees(company_id, project_id, id) ON DELETE RESTRICT;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_bank_company_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_bank_company_fk') THEN
           ALTER TABLE contracting_guarantees ADD CONSTRAINT ctg_guarantee_bank_company_fk
             FOREIGN KEY (company_id, bank_account_id)
             REFERENCES bank_accounts(company_id, id) ON DELETE RESTRICT;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_customer_company_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_customer_company_fk') THEN
           ALTER TABLE contracting_guarantees ADD CONSTRAINT ctg_guarantee_customer_company_fk
             FOREIGN KEY (company_id, beneficiary_customer_id)
             REFERENCES customers(company_id, id) ON DELETE RESTRICT;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_tender_customer_company_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_tender_customer_company_fk') THEN
           ALTER TABLE contracting_tenders ADD CONSTRAINT ctg_tender_customer_company_fk
             FOREIGN KEY (company_id, customer_id)
             REFERENCES customers(company_id, id) ON DELETE RESTRICT;
