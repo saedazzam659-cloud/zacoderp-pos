@@ -447,7 +447,11 @@ export default function ContractingProjects() {
               />
             </Field>
             <Field label={t("contracting.projects.nameAr", "الاسم بالعربية")} required>
-              <Input value={editing.nameAr ?? ""} onChange={e => setEditing({ ...editing, nameAr: e.target.value })} />
+              <Input
+                value={editing.nameAr ?? ""}
+                onChange={e => setEditing({ ...editing, nameAr: e.target.value })}
+                data-testid="input-project-name-ar"
+              />
             </Field>
             <Field label={t("contracting.projects.nameEn", "الاسم بالإنجليزية")}>
               <Input value={editing.nameEn ?? ""} onChange={e => setEditing({ ...editing, nameEn: e.target.value })} />

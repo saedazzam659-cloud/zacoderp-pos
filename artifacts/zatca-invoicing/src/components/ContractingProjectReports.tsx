@@ -247,7 +247,7 @@ function SideSummary({ title, side, cost = false }: { title: string; side: Dashb
 
 function ScopeSummary({ title, side, tone }: { title: string; side: DashboardSide; tone: "local" | "rollup" }) {
   return (
-    <div className={tone === "rollup"
+    <div data-testid={`project-report-scope-${tone}`} className={tone === "rollup"
       ? "rounded-lg border border-indigo-200 bg-indigo-50/60 p-3 dark:border-indigo-900 dark:bg-indigo-950/20"
       : "rounded-lg border bg-white p-3 dark:bg-slate-900"}>
       <div className="mb-2 text-sm font-bold">{title}</div>
