@@ -21,6 +21,8 @@ import { ensureContractingBillDetailsTables, contractingBillsReport } from "./co
 import { ensureContractingBoqTables } from "./contracting-boq-service.js";
 import { reportBillIsCertified, reportOwnerContractScope } from "./contracting-report-math.js";
 import { sumExactCents } from "./contracting-bill-adjustment-math.js";
+import { contractingCostReportBreakdown } from "./contracting-cost-allocation-service.js";
+import { categoryCoverage } from "./contracting-cost-allocation-helper.js";
 
 type BranchUser = Pick<AuthUser, "id" | "role" | "viewAllBranches" | "branchIds">;
 
@@ -185,12 +187,26 @@ function aggregateSide(rows: any[]) {
 export function aggregateProjectReportRollup(entries: Array<{ projectId: number; report: any }>) {
   const owner = aggregateSide(entries.map(entry => entry.report.dashboard.ownerRevenue));
   const subcontract = aggregateSide(entries.map(entry => entry.report.dashboard.subcontractCost));
-  const detailNames = ["boqStatement", "executedQuantities", "bills", "cumulative", "advance", "retention", "deductions", "variations", "pricingProfitability"];
+  const detailNames = ["boqStatement", "executedQuantities", "bills", "cumulative", "advance", "retention", "deductions", "variations", "pricingProfitability", "costSources"];
   const reports: Record<string, any> = {};
   for (const name of detailNames) {
     reports[name] = entries.flatMap(entry =>
       (entry.report.reports[name] ?? []).map((row: any) => ({ ...row, projectId: entry.projectId })));
   }
+  const rollupCostCoverage = categoryCoverage(
+    reports.costSources.map((row: any) => String(row.category)),
+  );
+  reports.costReconciliation = {
+    authoritativeActualCost: null,
+    sourceBreakdownTotal: sumMetric(reports.costSources, "amount"),
+    consolidatedProjectActualCost: null,
+    variance: null,
+    coverageComplete: rollupCostCoverage.complete,
+    missingCategories: rollupCostCoverage.missingCategories,
+    note: rollupCostCoverage.complete
+      ? "تفصيل مصادر التكلفة مكتمل لكل المشاريع في النطاق."
+      : "تغطية التجميع غير مكتملة؛ الفئات المفقودة ليست صفراً.",
+  };
 
   const profitabilityRows = entries.map(entry => entry.report.reports.profitability);
   const revenue = sumMetric(profitabilityRows, "revenue");
@@ -350,7 +366,7 @@ async function getLocalContractingProjectReports(
       `),
     ]);
 
-  const [billsReport, settlementResult] = await Promise.all([
+  const [billsReport, settlementResult, analyticalCosts] = await Promise.all([
     contractingBillsReport(companyId, { projectId }, user),
     db.execute(sql`
       SELECT id, bill_id, owner_contract_id, subcontractor_contract_id, kind,
@@ -360,6 +376,7 @@ async function getLocalContractingProjectReports(
          AND project_id = ${projectId}
        ORDER BY settlement_date ASC, id ASC
     `),
+    contractingCostReportBreakdown(companyId, projectId),
   ]);
 
   const allBills = Array.isArray(billsReport?.bills) ? billsReport.bills : [];
@@ -671,17 +688,57 @@ async function getLocalContractingProjectReports(
     const amount = numberValue(row.total_cost);
     return sum + (String(row.direction) === "return" ? -amount : amount);
   }, 0);
-  // Project actualCost is the authoritative consolidated figure when present.
-  // Work-item actuals and posted material issues are only a transparent
-  // fallback for older projects that predate that field; they are never added
-  // to it and planned resource totals are never treated as actual.
-  const actualCost = projectActualCost > 0
+  // Posted analytical allocations exclude inventory movements, which already
+  // have a first-class contracting source table. Add each source family once:
+  // materials from posted movements, all other categories from allocations.
+  const allocatedNonMaterialCost = analyticalCosts.sources
+    .filter(row => row.category !== "material")
+    .reduce((sum, row) => sum + numberValue(row.amount), 0);
+  const analyticalCostAvailable = analyticalCosts.sources.length > 0;
+  // Once explicit analytical references exist they are the authoritative
+  // execution breakdown. project.actualCost is retained as a legacy fallback:
+  // material posting already increments it, so adding allocations to that
+  // field would count issued inventory twice and still obscure attribution.
+  const fallbackActualCost = projectActualCost > 0
     ? projectActualCost
-    : Math.max(0, workItemActualCost + materialActualCost);
-  const actualCostAvailable = projectActualCost > 0 || workItemActualCost > 0 || materialActualCost > 0;
-  const costSource = projectActualCost > 0
-    ? "contracting_projects.actualCost"
-    : actualCostAvailable ? "work_items.totalActualCost + posted_material_movements" : null;
+    : workItemActualCost > 0 ? workItemActualCost : materialActualCost;
+  const actualCost = analyticalCostAvailable
+    ? Math.max(0, materialActualCost + allocatedNonMaterialCost)
+    : Math.max(0, fallbackActualCost);
+  const actualCostAvailable = projectActualCost > 0
+    || analyticalCostAvailable || workItemActualCost > 0 || materialActualCost > 0;
+  const costSource = analyticalCostAvailable
+    ? "posted_material_movements + analytical_posted_source_allocations"
+    : projectActualCost > 0
+      ? "contracting_projects.actualCost"
+      : workItemActualCost > 0
+        ? "work_items.totalActualCost"
+        : materialActualCost > 0 ? "posted_material_movements" : null;
+  const costSources = [
+    ...(materialActualCost !== 0 ? [{
+      category: "material",
+      sourceType: "contracting_material_movement",
+      amount: rounded(materialActualCost),
+      allocationCount: materialRows.length,
+      reversalCount: materialRows.filter(row => String(row.direction) === "return").length,
+      ownership: "inventory",
+    }] : []),
+    ...analyticalCosts.sources.map(row => ({ ...row, ownership: "analytical_reference" })),
+  ];
+  const effectiveCostCoverage = categoryCoverage(costSources.map(row => row.category));
+  const costReconciliation = {
+    authoritativeActualCost: actualCostAvailable ? rounded(actualCost) : null,
+    sourceBreakdownTotal: rounded(materialActualCost + allocatedNonMaterialCost),
+    consolidatedProjectActualCost: projectActualCost > 0 ? rounded(projectActualCost) : null,
+    variance: projectActualCost > 0
+      ? rounded(projectActualCost - materialActualCost - allocatedNonMaterialCost)
+      : analyticalCostAvailable ? 0 : null,
+    coverageComplete: effectiveCostCoverage.complete,
+    missingCategories: effectiveCostCoverage.missingCategories,
+    note: effectiveCostCoverage.complete
+      ? "التفصيل التحليلي مكتمل حسب الفئات المعرفة."
+      : "الفئات المفقودة غير مكتملة وليست صفراً. تكلفة المواد مأخوذة من حركات المخزون مرة واحدة، وتكلفة الباطن التحليلية لا تُجمع مع لوحة المستخلصات.",
+  };
   const profitability = {
     revenue: owner.executedValue,
     actualCost: actualCostAvailable ? rounded(actualCost) : null,
@@ -691,7 +748,9 @@ async function getLocalContractingProjectReports(
       ? rounded((owner.executedValue - actualCost) / owner.executedValue * 100) : null,
     costAvailable: actualCostAvailable,
     costSource,
-    note: "الربحية تستخدم التكلفة الفعلية المتاحة فقط؛ لا تجمع تكلفة المقاول الباطن أو المخزون مرتين، ولا تعتبر موارد التخطيط تكلفة فعلية.",
+    costCoverageComplete: effectiveCostCoverage.complete,
+    missingCostCategories: effectiveCostCoverage.missingCategories,
+    note: "الربحية تستخدم التكلفة الفعلية المتاحة فقط؛ المواد من حركة المخزون، وبقية المصادر من مراجع التوزيع التحليلي، دون تكرار تكلفة الباطن أو القيود.",
   };
 
   const limitations = [
@@ -700,6 +759,9 @@ async function getLocalContractingProjectReports(
     "الربحية لا تقدّر تكلفة مستقبلية؛ تستخدم project.actualCost أو مصادر التنفيذ الفعلية القديمة كبديل واضح، ولا تجمع تكلفة المقاول الباطن أو المخزون مرتين.",
     ...(unmappedCertifiedLineCount > 0
       ? [`يوجد ${unmappedCertifiedLineCount} سطر مستخلص معتمد قديم غير مربوط بسطر BOQ؛ لم يُخمّن ربطه.`]
+      : []),
+    ...(!effectiveCostCoverage.complete
+      ? [`تغطية فئات التكلفة التحليلية غير مكتملة: ${effectiveCostCoverage.missingCategories.join("، ")}؛ لا تُعرض الفئات المفقودة كصفر.`]
       : []),
   ];
 
@@ -714,6 +776,8 @@ async function getLocalContractingProjectReports(
     variations,
     profitability,
     pricingProfitability,
+    costSources,
+    costReconciliation,
   };
 
   return {

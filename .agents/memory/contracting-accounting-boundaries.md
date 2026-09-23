@@ -111,6 +111,12 @@ Runtime-created financial tables must also be represented in the exported declar
 
 Financial release verification must distinguish real isolated database evidence from browser fixtures. A mocked successful replay cannot establish server idempotency, and a seeded subcontract does not establish its payable lifecycle.
 
+Analytical contracting cost attribution must consume existing posted source capacity, not create replacement accounting transactions. Stock capitalization and subsequent material consumption must never both become project expense.
+
+**Why:** The full contracting enhancement explicitly forbids duplicate master data, cost and journal entries. Planned equipment hours cannot legitimately substitute for an absent posted utilization source.
+
+**How to apply:** Require traceable posted expense sources, share allocation capacity with other consuming modules, and show incomplete coverage rather than inventing actual costs. New material postings may use the execution item's cost center; reversals must preserve the original posting snapshot.
+
 **Why:** Separate frontend and arithmetic checks can pass while a lost-response retry still creates duplicate financial documents or an entire accounting direction remains untested.
 
 **How to apply:** Exercise persisted replay, posting, settlements and corrections in a disposable database for each direction; use browser fixtures only for explicitly identified UI behavior, never as evidence of database correctness.

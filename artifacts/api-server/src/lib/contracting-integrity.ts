@@ -241,6 +241,24 @@ async function runContractingProjectIntegrityMigration(): Promise<ContractingInt
       BEGIN
         PERFORM pg_advisory_xact_lock(20831, NEW.company_id);
         IF NEW.parent_id IS NOT NULL THEN
+          -- Enforce exactly two levels for new hierarchy writes while keeping
+          -- deeper legacy rows readable and editable when parent_id is not
+          -- being changed.
+          IF (TG_OP = 'INSERT' OR OLD.parent_id IS DISTINCT FROM NEW.parent_id)
+            AND EXISTS (
+              SELECT 1 FROM contracting_projects parent
+               WHERE parent.id = NEW.parent_id AND parent.company_id = NEW.company_id
+                 AND parent.parent_id IS NOT NULL
+            ) THEN
+            RAISE EXCEPTION 'project hierarchy supports a root and one child level only';
+          END IF;
+          IF (TG_OP = 'INSERT' OR OLD.parent_id IS DISTINCT FROM NEW.parent_id)
+            AND EXISTS (
+              SELECT 1 FROM contracting_projects child
+               WHERE child.parent_id = NEW.id AND child.company_id = NEW.company_id
+            ) THEN
+            RAISE EXCEPTION 'a project that already owns children cannot become a child';
+          END IF;
           IF EXISTS (
             SELECT 1 FROM contracting_projects p
              WHERE p.id = NEW.parent_id AND p.company_id = NEW.company_id

@@ -60,6 +60,8 @@ export * from "./contractingBillDetails";
 export * from "./contractingBoq";
 export * from "./contractingSettings";
 export * from "./contractingAccounting";
+export * from "./contractingCostAllocations";
+export * from "./contractingGuarantees";
 export * from "./kioskTokens";
 export * from "./maintenance";
 export * from "./hotel";

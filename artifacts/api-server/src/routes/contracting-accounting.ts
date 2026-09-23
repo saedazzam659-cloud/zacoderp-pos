@@ -333,6 +333,11 @@ router.post(
          ownerContractId: body.ownerContractId == null || body.ownerContractId === "" ? null : Number(body.ownerContractId),
          subcontractorContractId: body.subcontractorContractId == null || body.subcontractorContractId === "" ? null : Number(body.subcontractorContractId),
          boqLineId: body.boqLineId == null || body.boqLineId === "" ? null : Number(body.boqLineId),
+          costCenterId: body.costCenterId === undefined
+            ? undefined
+            : body.costCenterId == null || body.costCenterId === ""
+              ? null
+              : Number(body.costCenterId),
         itemId: Number(body.itemId),
         unitId: Number(body.unitId),
         warehouseId: Number(body.warehouseId),

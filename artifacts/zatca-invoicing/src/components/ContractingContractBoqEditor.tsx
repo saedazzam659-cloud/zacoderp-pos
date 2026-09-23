@@ -10,6 +10,7 @@ import {
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { contractWorkItemDefaults } from "@/lib/contractingWorkItemDefaults";
 import ContractingProjectScope from "./ContractingProjectScope";
+import { ContractingArchiveAction } from "./ContractingArchiveAction";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -95,7 +96,7 @@ export default function ContractingContractBoqEditor({
   parentContractId?: number | null;
   onChanged?: () => void;
 }) {
-  const { token } = useAuth() as any;
+  const { token, user } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<BoqLine[]>([]);
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
@@ -381,6 +382,12 @@ export default function ContractingContractBoqEditor({
                 <TableCell className="tabular-nums">{Number(row.unitPrice).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums font-semibold">{Number(row.totalAmount).toLocaleString("en-US")} ر.س</TableCell>
                 <TableCell className="text-end">
+                   <ContractingArchiveAction
+                     entityType="boqLine"
+                     entityId={row.id}
+                     companyName={user?.company?.nameAr || user?.company?.nameEn}
+                     className="h-8 gap-1.5 text-xs"
+                   />
                   <Button size="sm" variant="ghost" onClick={() => beginEdit(row)}><Pencil className="h-4 w-4" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => void remove(row.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                 </TableCell>

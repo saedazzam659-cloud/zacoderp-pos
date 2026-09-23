@@ -12,6 +12,7 @@ import {
   contractingProjectsTable,
   contractingProgressBillsTable,
   contractingResourcesTable,
+  contractingWorkItemsTable,
   contractingSubContractsTable,
   contractingBillDeductionsTable,
   contractingBillAdditionsTable,
@@ -3443,6 +3444,12 @@ export async function issueOrReturnMaterial(input: {
   ownerContractId?: number | null;
   subcontractorContractId?: number | null;
   boqLineId?: number | null;
+  /**
+   * Explicit posting dimension. undefined = derive from the selected BOQ's
+   * execution work item; null = intentionally leave the JE dimension empty.
+   * Returns always retain the original issue journal's dimension.
+   */
+  costCenterId?: number | null;
   itemId: number;
   unitId: number;
   warehouseId: number;
@@ -3465,6 +3472,7 @@ export async function issueOrReturnMaterial(input: {
     ownerContractId: input.ownerContractId ?? null,
     subcontractorContractId: input.subcontractorContractId ?? null,
     boqLineId: input.boqLineId ?? null,
+    costCenterId: input.costCenterId === undefined ? "__derive__" : input.costCenterId,
     itemId: input.itemId,
     unitId: input.unitId,
     warehouseId: input.warehouseId,
@@ -3513,6 +3521,7 @@ export async function issueOrReturnMaterial(input: {
     const suppliedOwnerContractId = input.ownerContractId ?? null;
     const suppliedSubcontractorContractId = input.subcontractorContractId ?? null;
     const suppliedBoqLineId = input.boqLineId ?? null;
+    let boqWorkItemCostCenterId: number | null = null;
     for (const [value, label] of [
       [suppliedOwnerContractId, "عقد المالك"],
       [suppliedSubcontractorContractId, "عقد الباطن"],
@@ -3552,7 +3561,13 @@ export async function issueOrReturnMaterial(input: {
         direction: contractingContractBoqLinesTable.direction,
         ownerContractId: contractingContractBoqLinesTable.ownerContractId,
         subcontractorContractId: contractingContractBoqLinesTable.subcontractorContractId,
-      }).from(contractingContractBoqLinesTable).where(and(
+        workItemCostCenterId: contractingWorkItemsTable.costCenterId,
+      }).from(contractingContractBoqLinesTable)
+        .innerJoin(contractingWorkItemsTable, and(
+          eq(contractingWorkItemsTable.id, contractingContractBoqLinesTable.workItemId),
+          eq(contractingWorkItemsTable.companyId, input.companyId),
+          eq(contractingWorkItemsTable.projectId, input.projectId),
+        )).where(and(
         eq(contractingContractBoqLinesTable.id, suppliedBoqLineId),
         eq(contractingContractBoqLinesTable.companyId, input.companyId),
         eq(contractingContractBoqLinesTable.projectId, input.projectId),
@@ -3566,6 +3581,8 @@ export async function issueOrReturnMaterial(input: {
       if (!boqLine || (!matchesOwner && !matchesSubcontract)) {
         throw failure("سطر جدول الكميات لا يتبع العقد المحدد");
       }
+      boqWorkItemCostCenterId = boqLine.workItemCostCenterId == null
+        ? null : Number(boqLine.workItemCostCenterId);
     }
     const [warehouse] = await tx.select({
       id: warehousesTable.id,
@@ -3917,6 +3934,42 @@ export async function issueOrReturnMaterial(input: {
     const inventory = map.get("inventory");
     const wip = map.get("wip");
     if (!inventory || !wip) throw failure("أكمل ربط حساب المخزون وأعمال تحت التنفيذ لحركة مواد المقاولات");
+    let journalCostCenter: string | null;
+    if (input.direction === "return") {
+      const originalCenter = await tx.execute(sql`
+        SELECT cost_center
+          FROM journal_entry_lines
+         WHERE journal_entry_id = ${sourceMovement.journal_entry_id}
+         ORDER BY id ASC
+         LIMIT 1
+      `);
+      journalCostCenter = resultRows(originalCenter)[0]?.cost_center ?? null;
+    } else {
+      const chosenId = input.costCenterId === undefined
+        ? boqWorkItemCostCenterId
+        : input.costCenterId;
+      if (chosenId == null) {
+        journalCostCenter = input.costCenterId === null
+          ? null
+          : `contracting-project:${input.projectId}`;
+      } else {
+        if (!Number.isInteger(chosenId) || chosenId <= 0) {
+          throw failure("مركز تكلفة حركة المواد غير صالح");
+        }
+        const [center] = await tx.select({
+          code: costCentersTable.code,
+          isActive: costCentersTable.isActive,
+          isPosting: costCentersTable.isPosting,
+        }).from(costCentersTable).where(and(
+          eq(costCentersTable.id, chosenId),
+          eq(costCentersTable.companyId, input.companyId),
+        ));
+        if (!center || !center.isActive || !center.isPosting) {
+          throw failure("مركز تكلفة حركة المواد غير موجود أو غير نشط/ترحيلي");
+        }
+        journalCostCenter = center.code;
+      }
+    }
     const jeNumber = await nextJeNumber(input.companyId, "contracting_material", input.movementDate, input.userId);
     const jeId = await insertJournal(tx, input.companyId, {
       docNumber: jeNumber,
@@ -3926,12 +3979,12 @@ export async function issueOrReturnMaterial(input: {
       entryType: "contracting_material_movement",
       lines: input.direction === "issue"
         ? [
-            { accountId: wip, debit: money(totalCost), credit: "0.00", description: "تكلفة مواد فعلية للمشروع", costCenter: `contracting-project:${input.projectId}` },
-            { accountId: inventory, debit: "0.00", credit: money(totalCost), description: "إخراج من المخزون", costCenter: `contracting-project:${input.projectId}` },
+            { accountId: wip, debit: money(totalCost), credit: "0.00", description: "تكلفة مواد فعلية للمشروع", costCenter: journalCostCenter },
+            { accountId: inventory, debit: "0.00", credit: money(totalCost), description: "إخراج من المخزون", costCenter: journalCostCenter },
           ]
         : [
-            { accountId: inventory, debit: money(totalCost), credit: "0.00", description: "إرجاع إلى المخزون", costCenter: `contracting-project:${input.projectId}` },
-            { accountId: wip, debit: "0.00", credit: money(totalCost), description: "تخفيض تكلفة مواد المشروع", costCenter: `contracting-project:${input.projectId}` },
+            { accountId: inventory, debit: money(totalCost), credit: "0.00", description: "إرجاع إلى المخزون", costCenter: journalCostCenter },
+            { accountId: wip, debit: "0.00", credit: money(totalCost), description: "تخفيض تكلفة مواد المشروع", costCenter: journalCostCenter },
           ],
       req: input.req,
     });

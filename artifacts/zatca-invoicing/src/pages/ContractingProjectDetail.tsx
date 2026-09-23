@@ -22,8 +22,12 @@ import {
 } from "@/components/ui/table";
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
 import ContractingAccountingPanel from "@/components/ContractingAccountingPanel";
+import ContractingCostAllocations from "@/components/ContractingCostAllocations";
+import ContractingGuaranteesPanel from "@/components/ContractingGuaranteesPanel";
+import ExecutionPlanningPanel from "@/components/ExecutionPlanningPanel";
 import ContractingBillDetailEditor from "@/components/ContractingBillDetailEditor";
 import ContractingContractBoqEditor from "@/components/ContractingContractBoqEditor";
+import { ContractingArchiveAction } from "@/components/ContractingArchiveAction";
 import ContractingProjectScope from "@/components/ContractingProjectScope";
 import ContractingAdvanceRecoveryFields, { type AdvanceRecoveryPolicy } from "@/components/ContractingAdvanceRecoveryFields";
 import ContractingAdvanceRecoverySummary, { type RecoveryOverride } from "@/components/ContractingAdvanceRecoverySummary";
@@ -54,14 +58,9 @@ import {
   EVENT_TYPE_LABEL,
   PROJECT_STATUS_LABEL,
   PROJECT_TYPE_LABEL,
-  RESOURCE_STATUS_LABEL,
-  RESOURCE_TYPE_LABEL,
   RISK_CATEGORY_LABEL,
   RISK_LEVEL_LABEL,
   RISK_STATUS_LABEL,
-  UNIT_LABEL,
-  WORK_CATEGORY_LABEL,
-  WORK_STATUS_LABEL,
   labelEnum,
 } from "@/lib/contractingLabels";
 
@@ -81,31 +80,6 @@ type ProjectBranch = { id: number; code: string; nameAr: string; nameEn: string 
 type IntegrityDiagnostics = {
   deferredValidation: boolean;
   offendingIds: Record<string, number[]>;
-};
-type WorkItem = {
-  id: number; projectId: number; code: string | null; nameAr: string;
-  category: string; unit: string; plannedQty: string; actualQty: string;
-  unitCost: string; totalPlannedCost: string; totalActualCost: string;
-  progressPercent: string; status: string; notes: string | null;
-};
-type Resource = {
-  id: number; projectId: number | null; name: string; type: string; unit: string;
-  qty: string; unitCost: string; totalCost: string; status: string; notes: string | null;
-  itemId?: number | null; unitId?: number | null; warehouseId?: number | null;
-  qtyBase?: string | null; conversionFactor?: string | null;
-  itemNameAr?: string | null; itemCode?: string | null; unitNameAr?: string | null;
-  warehouseNameAr?: string | null; availableStockBase?: string | null;
-};
-type InventoryUnit = { id: number; code: string; nameAr: string; factor: string; isBase: boolean };
-type InventoryItem = {
-  id: number; code: string; nameAr: string; baseUnitId: number;
-  baseUnit: InventoryUnit; units: InventoryUnit[];
-};
-type InventoryWarehouse = { id: number; code: string; nameAr: string; branchId: number | null };
-type InventoryBalance = { itemId: number; warehouseId: number; qtyBase: string; avgCost: string | null };
-type InventoryOptions = {
-  items: InventoryItem[]; warehouses: InventoryWarehouse[]; balances: InventoryBalance[];
-  projectBranchId?: number | null; requiresProjectBranch?: boolean;
 };
 type Bill = AdvanceRecoveryPolicy & Partial<RecoveryOverride> & {
   id: number; billNumber: string; billType: string; billDate: string;
@@ -219,7 +193,7 @@ export default function ContractingProjectDetail() {
   const [, params] = useRoute("/contracting/projects/:id");
   const search = useSearch();
   const projectId = Number(params?.id);
-  const { token } = useAuth() as any;
+  const { token, user } = useAuth() as any;
   const { toast } = useToast();
   const routeQuery = parseProjectDetailQuery(search);
   const [project, setProject] = useState<Project | null>(null);
@@ -285,6 +259,11 @@ export default function ContractingProjectDetail() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <ContractingArchiveAction
+            entityType="project"
+            entityId={project.id}
+            companyName={user?.company?.nameAr || user?.company?.nameEn}
+          />
           <ContractingProjectExportActions
             project={{
               ...project,
@@ -353,6 +332,7 @@ export default function ContractingProjectDetail() {
           <TabsTrigger value="resources">{t("contracting.tabs.resources", "الموارد")}</TabsTrigger>
           <TabsTrigger value="bills">{t("contracting.tabs.bills", "المستخلصات")}</TabsTrigger>
           <TabsTrigger value="accounting">{t("contracting.tabs.accounting", "المحاسبة والتسويات")}</TabsTrigger>
+          <TabsTrigger value="guarantees">{t("contracting.tabs.guarantees", "الضمانات والمناقصات")}</TabsTrigger>
           <TabsTrigger value="reports">{t("contracting.tabs.reports", "التقارير")}</TabsTrigger>
           <TabsTrigger value="risks">{t("contracting.tabs.risks", "المخاطر")}</TabsTrigger>
           <TabsTrigger value="events">{t("contracting.tabs.events", "الأحداث")}</TabsTrigger>
@@ -391,8 +371,13 @@ export default function ContractingProjectDetail() {
 
         <TabsContent value="owner-contract" className="mt-4"><OwnerContractTab projectId={projectId} project={project} /></TabsContent>
         <TabsContent value="sub-contracts"  className="mt-4"><SubContractsTab  projectId={projectId} project={project} /></TabsContent>
-        <TabsContent value="work-items" className="mt-4"><WorkItemsTab key={projectId} projectId={projectId} project={project} onChange={loadProject} /></TabsContent>
-        <TabsContent value="resources"  className="mt-4"><ResourcesTab projectId={projectId} /></TabsContent>
+        <TabsContent value="work-items" className="mt-4 space-y-3">
+          <ContractingProjectScope projectId={projectId} projectName={project.nameAr} projectCode={project.code} />
+          <ExecutionPlanningPanel key={`${projectId}:work-items`} projectId={projectId} section="work-items" onChange={loadProject} />
+        </TabsContent>
+        <TabsContent value="resources" className="mt-4">
+          <ExecutionPlanningPanel key={`${projectId}:resources`} projectId={projectId} section="resources" onChange={loadProject} />
+        </TabsContent>
         <TabsContent value="bills" className="mt-4">
           <BillsTab
             projectId={projectId}
@@ -402,7 +387,13 @@ export default function ContractingProjectDetail() {
             autoOpen={routeQuery.createBill}
           />
         </TabsContent>
-        <TabsContent value="accounting" className="mt-4"><ContractingAccountingPanel projectId={projectId} /></TabsContent>
+        <TabsContent value="accounting" className="mt-4 space-y-4">
+          <ContractingAccountingPanel projectId={projectId} />
+          <ContractingCostAllocations projectId={projectId} />
+        </TabsContent>
+        <TabsContent value="guarantees" className="mt-4">
+          <ContractingGuaranteesPanel projectId={projectId} />
+        </TabsContent>
         <TabsContent value="reports" className="mt-4"><ContractingProjectReports projectId={projectId} mode="hub" /></TabsContent>
         <TabsContent value="risks"      className="mt-4"><RisksTab     projectId={projectId} /></TabsContent>
         <TabsContent value="events"     className="mt-4"><EventsTab    projectId={projectId} /></TabsContent>
@@ -461,410 +452,6 @@ function Field({ label, required, children }: { label: string; required?: boolea
     <div className="space-y-1">
       <label className="text-xs font-medium text-slate-600">{label}{required && <span className="text-red-500"> *</span>}</label>
       {children}
-    </div>
-  );
-}
-
-// ─────────────────── WORK ITEMS TAB ───────────────────
-function WorkItemsTab({ projectId, project, onChange }: { projectId: number; project: Project; onChange: () => void }) {
-  const { t } = useTranslation();
-  const { token } = useAuth() as any;
-  const { toast } = useToast();
-  const [rows, setRows] = useState<WorkItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState<Partial<WorkItem> | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch(`${API}/api/contracting/projects/${projectId}/work-items`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setRows(await r.json());
-    } catch (e: any) {
-      toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });
-    } finally { setLoading(false); }
-  }, [token, projectId, t, toast]);
-  useEffect(() => { void load(); }, [load]);
-
-  async function save() {
-    if (!editing?.nameAr?.trim()) {
-      toast({ title: t("common.required", "الاسم مطلوب"), variant: "destructive" }); return;
-    }
-    try {
-      const isEdit = (editing as any).id != null;
-      const url = isEdit
-        ? `${API}/api/contracting/work-items/${(editing as any).id}`
-        : `${API}/api/contracting/projects/${projectId}/work-items`;
-      const r = await fetch(url, {
-        method: isEdit ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(editing),
-      });
-      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
-      setEditing(null);
-      await load();
-      onChange();
-    } catch (e: any) {
-      toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });
-    }
-  }
-
-  async function del(id: number) {
-    if (!confirm(t("common.confirmDelete", "تأكيد الحذف؟"))) return;
-    try {
-      await fetch(`${API}/api/contracting/work-items/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
-      await load(); onChange();
-    } catch (e: any) {
-      toast({ title: e?.message, variant: "destructive" });
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      <ContractingProjectScope projectId={projectId} projectName={project.nameAr} projectCode={project.code} />
-      <div className="flex justify-between">
-        <h3 className="font-bold">{t("contracting.workItems.title", "بنود التنفيذ")} ({rows.length})</h3>
-        <Button size="sm" onClick={() => setEditing({
-          nameAr: "", category: "other", unit: "m3", plannedQty: "0", actualQty: "0",
-          unitCost: "0", progressPercent: "0", status: "pending",
-        })}>
-          <Plus className="h-4 w-4 mx-1" /> {t("contracting.workItems.add", "إضافة بند")}
-        </Button>
-      </div>
-
-      {editing && (
-        <div className="rounded-lg border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
-              {(editing as any)?.id ? t("contracting.workItems.edit", "تعديل البند") : t("contracting.workItems.add", "إضافة بند")}
-            </h4>
-            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label={t("contracting.workItems.code", "الكود")}><Input value={editing.code ?? ""} onChange={e => setEditing({ ...editing, code: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.name", "الاسم")} required><Input value={editing.nameAr ?? ""} onChange={e => setEditing({ ...editing, nameAr: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.unit", "الوحدة")}><Input value={editing.unit ?? "m3"} onChange={e => setEditing({ ...editing, unit: e.target.value })} placeholder="م³ / م² / ساعة" /></Field>
-            <Field label={t("contracting.workItems.category", "التصنيف")}>
-              <ContractingPicker
-                items={["earthworks","excavation","concrete","steel","masonry","electrical","plumbing","mep","finishing","other"].map(c => ({ value: c, label: labelEnum(WORK_CATEGORY_LABEL, c) }))}
-                value={editing.category ?? "other"}
-                onValueChange={category => setEditing({ ...editing, category })}
-                placeholder={t("contracting.workItems.categoryPlaceholder", "اختر التصنيف")}
-                searchPlaceholder={t("contracting.workItems.categorySearchPlaceholder", "بحث في التصنيفات...")}
-                testId="work-item-category-picker"
-              />
-            </Field>
-            <Field label={t("contracting.workItems.plannedQty", "كمية مخططة")}><Input type="number" value={editing.plannedQty ?? "0"} onChange={e => setEditing({ ...editing, plannedQty: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.actualQty", "كمية فعلية")}><Input type="number" value={editing.actualQty ?? "0"} onChange={e => setEditing({ ...editing, actualQty: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.unitCost", "سعر الوحدة (ر.س)")}><Input type="number" value={editing.unitCost ?? "0"} onChange={e => setEditing({ ...editing, unitCost: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.progress", "نسبة الإنجاز %")}><Input type="number" min={0} max={100} value={editing.progressPercent ?? "0"} onChange={e => setEditing({ ...editing, progressPercent: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.status", "الحالة")}>
-              <ContractingPicker
-                items={["pending","in_progress","completed","blocked"].map(s => ({ value: s, label: labelEnum(WORK_STATUS_LABEL, s) }))}
-                value={editing.status ?? "pending"}
-                onValueChange={status => setEditing({ ...editing, status })}
-                placeholder={t("contracting.workItems.statusPlaceholder", "اختر الحالة")}
-                searchPlaceholder={t("contracting.workItems.statusSearchPlaceholder", "بحث في الحالات...")}
-                testId="work-item-status-picker"
-              />
-             </Field>
-           </div>
-           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
-            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
-          </div>
-        </div>
-      )}
-
-      <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
-        <Table>
-          <TableHeader><TableRow>
-            <TableHead>{t("contracting.workItems.name", "الاسم")}</TableHead>
-            <TableHead>{t("contracting.workItems.unit", "الوحدة")}</TableHead>
-            <TableHead>{t("contracting.workItems.plannedQty", "كمية مخططة")}</TableHead>
-            <TableHead>{t("contracting.workItems.actualQty", "كمية فعلية")}</TableHead>
-            <TableHead>{t("contracting.workItems.unitCost", "سعر الوحدة")}</TableHead>
-            <TableHead>{t("contracting.workItems.totalActual", "تكلفة فعلية")}</TableHead>
-            <TableHead>{t("contracting.workItems.progress", "إنجاز %")}</TableHead>
-            <TableHead className="text-end">—</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {loading && rows.length === 0 && <TableRow><TableCell colSpan={8}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
-            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-sm text-slate-500 py-4">{t("contracting.workItems.empty", "لا توجد بنود — أضف بنود التنفيذ للبدء")}</TableCell></TableRow>}
-            {rows.map(r => (
-              <TableRow key={r.id}>
-                <TableCell className="font-medium">{r.nameAr}<div className="text-[10px] text-slate-400">{r.code || ""}</div></TableCell>
-                <TableCell>{UNIT_LABEL[r.unit] ?? r.unit}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.plannedQty).toLocaleString("en-US")}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.actualQty).toLocaleString("en-US")}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.unitCost).toLocaleString("en-US")}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.totalActualCost).toLocaleString("en-US")}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.progressPercent).toFixed(0)}%</TableCell>
-                <TableCell className="text-end">
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-4 w-4" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => del(r.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────── RESOURCES TAB ───────────────────
-function ResourcesTab({ projectId }: { projectId: number }) {
-  const { t } = useTranslation();
-  const { token } = useAuth() as any;
-  const { toast } = useToast();
-  const [rows, setRows] = useState<Resource[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState<Partial<Resource> | null>(null);
-  const [inventory, setInventory] = useState<InventoryOptions>({ items: [], warehouses: [], balances: [] });
-  const [inventoryLoading, setInventoryLoading] = useState(false);
-  const [inventoryError, setInventoryError] = useState<string | null>(null);
-  const [inventoryRetry, setInventoryRetry] = useState(0);
-  const [resourceError, setResourceError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setResourceError(null);
-    try {
-      const r = await fetch(`${API}/api/contracting/resources?projectId=${projectId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setRows(await r.json());
-    } catch (e: any) {
-      setResourceError(e?.message ?? t("common.errorOccurred", "حدث خطأ"));
-      toast({ title: e?.message, variant: "destructive" });
-    }
-    finally { setLoading(false); }
-  }, [token, projectId, t, toast]);
-  useEffect(() => { void load(); }, [load]);
-
-  useEffect(() => {
-    if (!token) return;
-    setInventoryLoading(true);
-    setInventoryError(null);
-    fetch(`${API}/api/contracting/resources/inventory-options?projectId=${projectId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then(async (r) => {
-      const payload = await r.json().catch(() => null) as
-        (Partial<InventoryOptions> & { error?: unknown }) | null;
-      if (!r.ok) {
-        const message = typeof payload?.error === "string" ? payload.error : `HTTP ${r.status}`;
-        throw new Error(message);
-      }
-      if (!payload || !Array.isArray(payload.items) || !Array.isArray(payload.warehouses) || !Array.isArray(payload.balances)) {
-        throw new Error(t("contracting.resources.inventoryOptionsInvalid", "استجابة المخزون غير صالحة"));
-      }
-      return payload as InventoryOptions;
-    }).then(setInventory).catch((e: any) => {
-      setInventoryError(e?.message ?? t("common.errorOccurred", "حدث خطأ"));
-      toast({ title: e?.message ?? t("common.errorOccurred", "حدث خطأ"), variant: "destructive" });
-    }).finally(() => setInventoryLoading(false));
-  }, [token, projectId, inventoryRetry, t, toast]);
-
-  async function save() {
-    if (!editing?.name?.trim()) { toast({ title: t("common.required", "الاسم مطلوب"), variant: "destructive" }); return; }
-    if (editing.type === "material" && (!editing.itemId || !editing.unitId || !editing.warehouseId)) {
-      toast({ title: t("contracting.resources.materialFieldsRequired", "اختر صنف المخزون والوحدة والمخزن للمواد"), variant: "destructive" }); return;
-    }
-    if (Number(editing.qty ?? 0) <= 0) {
-      toast({ title: t("contracting.resources.positiveQty", "يجب أن تكون الكمية أكبر من صفر"), variant: "destructive" }); return;
-    }
-    try {
-      const isEdit = (editing as any).id != null;
-      const url = isEdit
-        ? `${API}/api/contracting/resources/${(editing as any).id}`
-        : `${API}/api/contracting/resources`;
-      const body = { ...editing, projectId };
-      const r = await fetch(url, {
-        method: isEdit ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
-      setEditing(null); await load();
-    } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
-  }
-  async function del(id: number) {
-    if (!confirm(t("common.confirmDelete", "تأكيد الحذف؟"))) return;
-    await fetch(`${API}/api/contracting/resources/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
-    await load();
-  }
-
-  return (
-    <div className="space-y-3">
-      {resourceError && (
-        <div className="flex items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
-          <span>{resourceError}</span>
-          <Button size="sm" variant="outline" onClick={() => void load()}>{t("common.retry", "إعادة المحاولة")}</Button>
-        </div>
-      )}
-      {inventoryError && (
-        <div className="flex items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
-          <span>{inventoryError}</span>
-          <Button size="sm" variant="outline" onClick={() => setInventoryRetry(value => value + 1)}>{t("common.retry", "إعادة المحاولة")}</Button>
-        </div>
-      )}
-      {inventory.requiresProjectBranch && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-          <span>{t("contracting.resources.projectBranchRequired", "هذا المشروع بلا فرع. المخازن المشتركة متاحة للتخطيط، لكن اختر فرع المشروع قبل استخدام مخزن مرتبط بفرع.")}</span>
-          <Link href="/contracting/projects" className="font-medium underline">{t("contracting.resources.editProjectBranch", "فتح المشاريع لتحديد الفرع")}</Link>
-        </div>
-      )}
-      <div className="flex justify-between">
-        <h3 className="font-bold">{t("contracting.resources.title", "الموارد")} ({rows.length})</h3>
-        <Button size="sm" onClick={() => setEditing({ name: "", type: "material", unit: "", qty: "0", unitCost: "0", status: "planned" })}>
-          <Plus className="h-4 w-4 mx-1" /> {t("contracting.resources.add", "إضافة مورد")}
-        </Button>
-      </div>
-
-      {editing && (
-        <div className="rounded-lg border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
-              {(editing as any)?.id ? t("contracting.resources.edit", "تعديل المورد") : t("contracting.resources.add", "إضافة مورد")}
-            </h4>
-            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label={t("contracting.resources.name", "اسم المورد")} required>
-              <Input value={editing.name ?? ""} readOnly={editing.type === "material"} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder={editing.type === "material" ? t("contracting.resources.selectItem", "يُحدد من صنف المخزون") : ""} />
-            </Field>
-            <Field label={t("contracting.resources.type", "النوع")}>
-              <ContractingPicker
-                items={["labor","equipment","material","subcontractor","other"].map(x => ({ value: x, label: labelEnum(RESOURCE_TYPE_LABEL, x) }))}
-                value={editing.type ?? "material"}
-                onValueChange={type => setEditing({ ...editing, type, ...(type === "material" ? {} : { itemId: null, unitId: null, warehouseId: null, unit: "hr" }) })}
-                placeholder={t("contracting.resources.typePlaceholder", "اختر النوع")}
-                searchPlaceholder={t("contracting.resources.typeSearchPlaceholder", "بحث في الأنواع...")}
-                testId="resource-type-picker"
-              />
-            </Field>
-            {editing.type === "material" ? (
-              <>
-                <Field label={t("contracting.resources.item", "صنف المخزون")} required>
-                  <ContractingPicker
-                    items={inventory.items.map(item => ({ value: String(item.id), label: `${item.code} — ${item.nameAr}` }))}
-                    value={editing.itemId ? String(editing.itemId) : ""}
-                    onValueChange={value => {
-                      const item = inventory.items.find(x => x.id === Number(value));
-                      setEditing({ ...editing, itemId: Number(value), unitId: item?.baseUnitId ?? null, unit: item?.baseUnit.code ?? "", name: item?.nameAr ?? "" });
-                    }}
-                    placeholder={inventoryLoading ? t("common.loading", "جار التحميل…") : t("contracting.resources.selectItem", "اختر صنفاً")}
-                    searchPlaceholder={t("contracting.resources.searchItem", "بحث بالكود أو اسم الصنف...")}
-                    emptyText={inventoryError ? t("contracting.resources.inventoryUnavailable", "تعذر تحميل أصناف المخزون") : t("contracting.resources.noItems", "لا توجد أصناف")}
-                    disabled={inventoryLoading || !!inventoryError}
-                    testId="resource-item-picker"
-                  />
-                </Field>
-                <Field label={t("contracting.resources.unit", "وحدة الصنف")} required>
-                  <ContractingPicker
-                    items={(inventory.items.find(x => x.id === Number(editing.itemId))?.units ?? []).map(unit => ({ value: String(unit.id), label: `${unit.nameAr || UNIT_LABEL[unit.code] || unit.code}${unit.isBase ? ` (${t("contracting.resources.baseUnit", "أساسية")})` : ""}` }))}
-                    value={editing.unitId ? String(editing.unitId) : ""}
-                    onValueChange={value => {
-                      const item = inventory.items.find(x => x.id === Number(editing.itemId));
-                      const unit = item?.units.find(x => x.id === Number(value));
-                      setEditing({ ...editing, unitId: Number(value), unit: unit?.code ?? "" });
-                    }}
-                    placeholder={t("contracting.resources.selectUnit", "اختر وحدة قانونية")}
-                    searchPlaceholder={t("contracting.resources.searchUnit", "بحث في الوحدات...")}
-                    emptyText={t("contracting.resources.noUnits", "لا توجد وحدات لهذا الصنف")}
-                    disabled={inventoryLoading || !!inventoryError || !editing.itemId}
-                    testId="resource-unit-picker"
-                  />
-                </Field>
-                <Field label={t("contracting.resources.warehouse", "المخزن")} required>
-                  <ContractingPicker
-                    items={inventory.warehouses.map(warehouse => ({ value: String(warehouse.id), label: `${warehouse.code} — ${warehouse.nameAr}` }))}
-                    value={editing.warehouseId ? String(editing.warehouseId) : ""}
-                    onValueChange={value => setEditing({ ...editing, warehouseId: Number(value) })}
-                    placeholder={t("contracting.resources.selectWarehouse", "اختر مخزناً")}
-                    searchPlaceholder={t("contracting.resources.searchWarehouse", "بحث بالكود أو اسم المخزن...")}
-                    emptyText={t("contracting.resources.noWarehouses", "لا توجد مخازن متاحة")}
-                    disabled={inventoryLoading || !!inventoryError}
-                    testId="resource-warehouse-picker"
-                  />
-                </Field>
-              </>
-            ) : (
-              <Field label={t("contracting.resources.unit", "الوحدة")}><Input value={editing.unit ?? "hr"} onChange={e => setEditing({ ...editing, unit: e.target.value })} placeholder="ساعة / يوم / قطعة" /></Field>
-            )}
-            <Field label={t("contracting.resources.qty", "الكمية")}><Input type="number" value={editing.qty ?? "0"} onChange={e => setEditing({ ...editing, qty: e.target.value })} /></Field>
-            <Field label={t("contracting.resources.unitCost", "سعر الوحدة")}><Input type="number" value={editing.unitCost ?? "0"} onChange={e => setEditing({ ...editing, unitCost: e.target.value })} /></Field>
-            <Field label={t("contracting.resources.status", "الحالة")}>
-              <ContractingPicker
-                items={["planned","in_use","consumed","returned"].map(x => ({ value: x, label: labelEnum(RESOURCE_STATUS_LABEL, x) }))}
-                value={editing.status ?? "planned"}
-                onValueChange={status => setEditing({ ...editing, status })}
-                placeholder={t("contracting.resources.statusPlaceholder", "اختر الحالة")}
-                searchPlaceholder={t("contracting.resources.statusSearchPlaceholder", "بحث في الحالات...")}
-                testId="resource-status-picker"
-              />
-            </Field>
-          </div>
-          {editing.type === "material" && editing.itemId && editing.unitId && editing.warehouseId && (() => {
-            const item = inventory.items.find(x => x.id === Number(editing.itemId));
-            const unit = item?.units.find(x => x.id === Number(editing.unitId));
-            const balance = inventory.balances.find(x => x.itemId === Number(editing.itemId) && x.warehouseId === Number(editing.warehouseId));
-            const availableBase = Number(balance?.qtyBase ?? 0);
-            const factor = Number(unit?.factor ?? 1);
-            return (
-              <div className="rounded-md border border-blue-200 bg-blue-50/70 dark:bg-blue-950/20 p-3 text-sm">
-                <span className="font-medium">{t("contracting.resources.availableStock", "المتاح في المخزن")}:</span>{" "}
-                {availableBase.toLocaleString("en-US")} {item?.baseUnit.nameAr ?? t("contracting.resources.baseUnit", "الوحدة الأساسية")}
-                {" · "}
-                {(factor > 0 ? availableBase / factor : 0).toLocaleString("en-US")} {unit?.nameAr ?? editing.unit}
-                <div className="text-[11px] text-slate-500 mt-1">{t("contracting.resources.planningNoIssue", "التخطيط لا يصرف المخزون ولا ينشئ حركة أو قيداً محاسبياً")}</div>
-              </div>
-            );
-          })()}
-          <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
-            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
-          </div>
-        </div>
-      )}
-
-      <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
-        <Table>
-          <TableHeader><TableRow>
-            <TableHead>{t("contracting.resources.name", "المورد")}</TableHead>
-            <TableHead>{t("contracting.resources.type", "النوع")}</TableHead>
-            <TableHead>{t("contracting.resources.qty", "الكمية")}</TableHead>
-            <TableHead>{t("contracting.resources.totalCost", "التكلفة")}</TableHead>
-            <TableHead>{t("contracting.resources.status", "الحالة")}</TableHead>
-            <TableHead className="text-end">—</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {loading && rows.length === 0 && <TableRow><TableCell colSpan={6}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
-            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-sm text-slate-500 py-4">{t("contracting.resources.empty", "لا توجد موارد")}</TableCell></TableRow>}
-            {rows.map(r => (
-              <TableRow key={r.id}>
-                <TableCell className="font-medium">{r.name}</TableCell>
-                 <TableCell><Badge variant="outline">{labelEnum(RESOURCE_TYPE_LABEL, r.type)}</Badge></TableCell>
-                 <TableCell className="tabular-nums">{Number(r.qty).toLocaleString("en-US")} {r.unitNameAr ?? UNIT_LABEL[r.unit] ?? r.unit}</TableCell>
-                <TableCell className="tabular-nums">{Number(r.totalCost).toLocaleString("en-US")} ر.س</TableCell>
-                 <TableCell><Badge>{labelEnum(RESOURCE_STATUS_LABEL, r.status)}</Badge></TableCell>
-                <TableCell className="text-end">
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-4 w-4" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => del(r.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
     </div>
   );
 }
@@ -1979,7 +1566,7 @@ function AITab({ projectId }: { projectId: number }) {
 // ─────────────────── OWNER CONTRACT TAB ───────────────────
 function OwnerContractTab({ projectId, project }: { projectId: number; project: Project }) {
   const { t } = useTranslation();
-  const { token } = useAuth() as any;
+  const { token, user } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<OwnerContract[]>([]);
   const [loading, setLoading] = useState(false);
@@ -2100,6 +1687,12 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
                 <TableCell>{c.signedAt ?? "—"}</TableCell>
                <TableCell><Badge>{labelEnum(CONTRACT_STATUS_LABEL, c.status)}</Badge></TableCell>
                 <TableCell className="text-end">
+                  <ContractingArchiveAction
+                    entityType="ownerContract"
+                    entityId={c.id}
+                    companyName={user?.company?.nameAr || user?.company?.nameEn}
+                    className="h-8 gap-1.5 text-xs"
+                  />
                   <Button size="sm" variant="ghost" onClick={() => setEditing(c)}><Pencil className="h-4 w-4" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                 </TableCell>
@@ -2196,6 +1789,21 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
               contractId={editing.id} contractType={editing.contractType}
               parentContractId={editing.parentContractId ?? null} />
           ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنوده وربطها ببنود تنفيذ المشروع بكميات وأسعار هذا العقد.</p>}
+          {editing.id != null && (
+            <details className="rounded-lg border bg-background">
+              <summary className="cursor-pointer px-4 py-3 font-medium">
+                {t("contracting.guarantees.contractSection", "خطابات الضمان المرتبطة بالعقد")}
+              </summary>
+              <div className="border-t p-4">
+                <ContractingGuaranteesPanel
+                  projectId={projectId}
+                  contractKind="owner"
+                  contractId={editing.id}
+                  onSummaryChange={load}
+                />
+              </div>
+            </details>
+          )}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button disabled={saving} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
@@ -2209,7 +1817,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
 // ─────────────────── SUB CONTRACTS TAB ───────────────────
 function SubContractsTab({ projectId, project }: { projectId: number; project: Project }) {
   const { t } = useTranslation();
-  const { token } = useAuth() as any;
+  const { token, user } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<SubContract[]>([]);
   const [contractors, setContractors] = useState<Contractor[]>([]);
@@ -2322,6 +1930,12 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
                   <TableCell>{c.signedAt ?? "—"}</TableCell>
                <TableCell><Badge>{labelEnum(CONTRACT_STATUS_LABEL, c.status)}</Badge></TableCell>
                   <TableCell className="text-end">
+                     <ContractingArchiveAction
+                       entityType="subcontract"
+                       entityId={c.id}
+                       companyName={user?.company?.nameAr || user?.company?.nameEn}
+                       className="h-8 gap-1.5 text-xs"
+                     />
                     <Button size="sm" variant="ghost" onClick={() => setEditing(c)}><Pencil className="h-4 w-4" /></Button>
                     <Button size="sm" variant="ghost" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                   </TableCell>
@@ -2402,6 +2016,21 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
           {editing.id != null ? (
             <ContractingContractBoqEditor key={`${projectId}:subcontract:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="subcontract" contractId={editing.id} />
           ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنود الباطن بأسعارها المستقلة وربطها ببنود التنفيذ أو مصدرها في عقد المالك.</p>}
+          {editing.id != null && (
+            <details className="rounded-lg border bg-background">
+              <summary className="cursor-pointer px-4 py-3 font-medium">
+                {t("contracting.guarantees.contractSection", "خطابات الضمان المرتبطة بالعقد")}
+              </summary>
+              <div className="border-t p-4">
+                <ContractingGuaranteesPanel
+                  projectId={projectId}
+                  contractKind="subcontract"
+                  contractId={editing.id}
+                  onSummaryChange={load}
+                />
+              </div>
+            </details>
+          )}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button disabled={saving} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>

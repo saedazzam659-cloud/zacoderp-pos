@@ -121,8 +121,12 @@ export const contractingWorkItemsTable = pgTable(
       .references(() => companiesTable.id, { onDelete: "cascade" }),
     projectId: integer("project_id").notNull()
       .references(() => contractingProjectsTable.id, { onDelete: "cascade" }),
+    // Optional WBS parent. The composite key below keeps the complete WBS
+    // inside one tenant/project; service validation rejects indirect cycles.
+    parentWorkItemId: integer("parent_work_item_id"),
     code: text("code"),
     nameAr: text("name_ar").notNull(),
+    description: text("description"),
     // excavation | concrete | finishing | electrical | plumbing | mep | other
     category: text("category").notNull().default("other"),
     unit: text("unit").notNull().default("m3"),
@@ -134,10 +138,14 @@ export const contractingWorkItemsTable = pgTable(
     progressPercent: numeric("progress_percent", { precision: 5, scale: 2 }).notNull().default("0"),
     plannedStartDate: date("planned_start_date"),
     plannedEndDate:   date("planned_end_date"),
+    actualStartDate: date("actual_start_date"),
+    actualEndDate: date("actual_end_date"),
     // pending | in_progress | done | blocked
     status: text("status").notNull().default("pending"),
     contractorId: integer("contractor_id")
       .references(() => contractingContractorsTable.id, { onDelete: "set null" }),
+    costCenterId: integer("cost_center_id")
+      .references(() => costCentersTable.id, { onDelete: "set null" }),
     notes: text("notes"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -145,6 +153,15 @@ export const contractingWorkItemsTable = pgTable(
   (t) => ({
     byProject: index("ctg_wi_project_idx").on(t.projectId),
     byCompany: index("ctg_wi_company_idx").on(t.companyId),
+    byParent: index("ctg_wi_parent_idx").on(t.companyId, t.projectId, t.parentWorkItemId),
+    byCostCenter: index("ctg_wi_cost_center_idx").on(t.companyId, t.costCenterId),
+    companyProjectIdUq: unique("ctg_wi_company_project_id_uq").on(t.companyId, t.projectId, t.id),
+    parentWorkItemFk: foreignKey({
+      columns: [t.companyId, t.projectId, t.parentWorkItemId],
+      foreignColumns: [t.companyId, t.projectId, t.id],
+      name: "ctg_wi_parent_project_fk",
+    }).onDelete("restrict"),
+    notOwnParent: check("ctg_wi_not_own_parent_ck", sql`${t.parentWorkItemId} IS NULL OR ${t.parentWorkItemId} <> ${t.id}`),
   }),
 );
 
@@ -191,6 +208,64 @@ export const contractingResourcesTable = pgTable(
   (t) => ({
     byCompany: index("ctg_res_company_idx").on(t.companyId),
     byProject: index("ctg_res_project_idx").on(t.projectId),
+    companyProjectIdUq: unique("ctg_res_company_project_id_uq").on(t.companyId, t.projectId, t.id),
+  }),
+);
+
+/**
+ * A planning-only resource analysis for an existing project resource.
+ * It never issues inventory, posts payroll, or records actual cost. Actual
+ * cost remains owned by the source integrations.
+ */
+export const contractingWorkItemResourcesTable = pgTable(
+  "contracting_work_item_resources",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    projectId: integer("project_id").notNull()
+      .references(() => contractingProjectsTable.id, { onDelete: "cascade" }),
+    workItemId: integer("work_item_id").notNull(),
+    resourceId: integer("resource_id").notNull(),
+    plannedQty: numeric("planned_qty", { precision: 14, scale: 4 }).notNull().default("0"),
+    // NULL means the user did not model wastage, which is distinct from an
+    // explicit zero-percent assumption.
+    wastagePercent: numeric("wastage_percent", { precision: 7, scale: 4 }),
+    estimatedUnitCost: numeric("estimated_unit_cost", { precision: 14, scale: 2 }).notNull().default("0"),
+    estimatedTotalCost: numeric("estimated_total_cost", { precision: 14, scale: 2 }).notNull().default("0"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byWorkItem: index("ctg_wir_work_item_idx").on(t.companyId, t.projectId, t.workItemId),
+    byResource: index("ctg_wir_resource_idx").on(t.companyId, t.projectId, t.resourceId),
+    oneResourcePerWorkItem: uniqueIndex("ctg_wir_work_item_resource_uidx")
+      .on(t.companyId, t.projectId, t.workItemId, t.resourceId),
+    workItemProjectFk: foreignKey({
+      columns: [t.companyId, t.projectId, t.workItemId],
+      foreignColumns: [
+        contractingWorkItemsTable.companyId,
+        contractingWorkItemsTable.projectId,
+        contractingWorkItemsTable.id,
+      ],
+      name: "ctg_wir_work_item_project_fk",
+    }).onDelete("cascade"),
+    resourceProjectFk: foreignKey({
+      columns: [t.companyId, t.projectId, t.resourceId],
+      foreignColumns: [
+        contractingResourcesTable.companyId,
+        contractingResourcesTable.projectId,
+        contractingResourcesTable.id,
+      ],
+      name: "ctg_wir_resource_project_fk",
+    }).onDelete("restrict"),
+    nonNegative: check("ctg_wir_non_negative_ck", sql`
+      ${t.plannedQty} >= 0
+      AND ${t.estimatedUnitCost} >= 0
+      AND ${t.estimatedTotalCost} >= 0
+      AND (${t.wastagePercent} IS NULL OR (${t.wastagePercent} >= 0 AND ${t.wastagePercent} <= 100))
+    `),
   }),
 );
 

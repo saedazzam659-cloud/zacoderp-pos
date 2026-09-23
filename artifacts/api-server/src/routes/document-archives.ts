@@ -17,6 +17,10 @@ import {
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { ObjectStorageService, ObjectNotFoundError } from "../lib/objectStorage.js";
 import { sendEmail } from "../lib/email.js";
+import {
+  assertContractingArchiveAccess,
+  ContractingArchiveAccessError,
+} from "../lib/contracting-archive-access.js";
 
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
@@ -70,6 +74,12 @@ function modeFor(settings: ArchiveSettings | null, screenKey: string): ArchiveMo
   return settings?.screens?.[screenKey] ?? settings?.defaultMode ?? "local";
 }
 
+function archiveAccessError(res: Response, error: unknown): boolean {
+  if (!(error instanceof ContractingArchiveAccessError)) return false;
+  res.status(error.status).json({ error: error.message });
+  return true;
+}
+
 const RecordBody = z.object({
   screenKey: z.string().min(1).max(64),
   docKey: z.string().min(1).max(256),
@@ -93,6 +103,14 @@ router.post("/", async (req: Request, res: Response) => {
   if (!parsed.data.objectPath.startsWith("/objects/")) {
     res.status(400).json({ error: "مسار الملف غير صالح" });
     return;
+  }
+  try {
+    await assertContractingArchiveAccess(
+      req, cid, parsed.data.screenKey, parsed.data.docKey, "edit",
+    );
+  } catch (error) {
+    if (archiveAccessError(res, error)) return;
+    throw error;
   }
   const settings = await loadSettings(cid);
   if (!userAllowed(req, settings)) {
@@ -133,6 +151,12 @@ router.get("/", async (req: Request, res: Response) => {
     // Always return an array so the frontend list-fetch contract holds.
     res.json([]);
     return;
+  }
+  try {
+    await assertContractingArchiveAccess(req, cid, screenKey, docKey, "view");
+  } catch (error) {
+    if (archiveAccessError(res, error)) return;
+    throw error;
   }
   const settings = await loadSettings(cid);
   // Users without archive permission must not enumerate archived documents.
@@ -289,6 +313,12 @@ router.post("/:id/share-link", async (req: Request, res: Response) => {
     .from(documentArchivesTable)
     .where(and(eq(documentArchivesTable.id, id), eq(documentArchivesTable.companyId, cid)));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  try {
+    await assertContractingArchiveAccess(req, cid, row.screenKey, row.docKey, "view");
+  } catch (error) {
+    if (archiveAccessError(res, error)) return;
+    throw error;
+  }
   const settings = await loadSettings(cid);
   if (!userAllowed(req, settings)) { res.status(403).json({ error: "ليست لديك صلاحية الوصول للأرشفة" }); return; }
   if (modeFor(settings, row.screenKey) === "off") { res.status(403).json({ error: "الأرشفة معطّلة لهذه الشاشة" }); return; }
@@ -354,6 +384,12 @@ router.get("/:id/download", async (req: Request, res: Response) => {
     res.status(404).json({ error: "غير موجود" });
     return;
   }
+  try {
+    await assertContractingArchiveAccess(req, cid, row.screenKey, row.docKey, "view");
+  } catch (error) {
+    if (archiveAccessError(res, error)) return;
+    throw error;
+  }
   const settings = await loadSettings(cid);
   if (!userAllowed(req, settings)) {
     res.status(403).json({ error: "ليست لديك صلاحية الوصول للأرشفة" });
@@ -403,6 +439,12 @@ router.post("/:id/email", async (req: Request, res: Response) => {
     .from(documentArchivesTable)
     .where(and(eq(documentArchivesTable.id, id), eq(documentArchivesTable.companyId, cid)));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  try {
+    await assertContractingArchiveAccess(req, cid, row.screenKey, row.docKey, "view");
+  } catch (error) {
+    if (archiveAccessError(res, error)) return;
+    throw error;
+  }
   const settings = await loadSettings(cid);
   if (!userAllowed(req, settings)) { res.status(403).json({ error: "ليست لديك صلاحية الوصول للأرشفة" }); return; }
   if (modeFor(settings, row.screenKey) === "off") { res.status(403).json({ error: "الأرشفة معطّلة لهذه الشاشة" }); return; }
@@ -446,6 +488,21 @@ router.patch("/rekey", async (req: Request, res: Response) => {
   });
   const parsed = Body.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
+  try {
+    const oldRef = await assertContractingArchiveAccess(
+      req, cid, parsed.data.screenKey, parsed.data.oldDocKey, "edit",
+    );
+    const newRef = await assertContractingArchiveAccess(
+      req, cid, parsed.data.screenKey, parsed.data.newDocKey, "edit",
+    );
+    if (oldRef || newRef) {
+      res.status(400).json({ error: "لا تدعم مستندات المقاولات تغيير المعرّف" });
+      return;
+    }
+  } catch (error) {
+    if (archiveAccessError(res, error)) return;
+    throw error;
+  }
   const settings = await loadSettings(cid);
   if (!userAllowed(req, settings)) {
     res.status(403).json({ error: "ليست لديك صلاحية أرشفة المستندات" });
@@ -472,6 +529,20 @@ router.delete("/:id", async (req: Request, res: Response) => {
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: "معرّف غير صالح" });
     return;
+  }
+  const [row] = await (await adb())
+    .select()
+    .from(documentArchivesTable)
+    .where(and(eq(documentArchivesTable.id, id), eq(documentArchivesTable.companyId, cid)));
+  if (!row) {
+    res.status(404).json({ error: "غير موجود" });
+    return;
+  }
+  try {
+    await assertContractingArchiveAccess(req, cid, row.screenKey, row.docKey, "delete");
+  } catch (error) {
+    if (archiveAccessError(res, error)) return;
+    throw error;
   }
   const deleted = await (await adb())
     .delete(documentArchivesTable)

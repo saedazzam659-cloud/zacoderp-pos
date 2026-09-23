@@ -58,6 +58,13 @@ const ARCHIVE_SCREENS: { key: string; label: string }[] = [
   { key: "customers",        label: "العملاء" },
   { key: "suppliers",        label: "الموردون" },
   { key: "hr_documents",     label: "مستندات الموظفين" },
+  { key: "contracting_projects",        label: "مشاريع المقاولات" },
+  { key: "contracting_owner_contracts", label: "عقود المالك" },
+  { key: "contracting_subcontracts",    label: "عقود المقاولين من الباطن" },
+  { key: "contracting_boq_lines",       label: "بنود جداول كميات العقود" },
+  { key: "contracting_work_items",      label: "بنود التنفيذ" },
+  { key: "contracting_tenders",         label: "المناقصات" },
+  { key: "contracting_guarantees",      label: "خطابات الضمان" },
 ];
 
 const ARCHIVE_MODES: { value: ArchiveMode; label: string; desc: string; icon: typeof Cloud }[] = [

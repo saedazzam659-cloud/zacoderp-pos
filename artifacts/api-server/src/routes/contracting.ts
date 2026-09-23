@@ -53,6 +53,7 @@ import {
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 import { ensureContractingBillDetailsTables } from "../lib/contracting-bill-details-service.js";
 import { ensureContractingBoqTables } from "../lib/contracting-boq-service.js";
+import { ensureContractingGuaranteeTables } from "../lib/contracting-guarantees-storage.js";
 import {
   aggregateContractProgressAmounts,
   priorCertifiedContractGross,
@@ -83,6 +84,15 @@ import {
   ensureContractingProjectIntegrity,
   getContractingIntegrityDiagnostics,
 } from "../lib/contracting-integrity.js";
+import { ensureContractingExecutionSchema } from "../lib/contracting-execution-storage.js";
+import {
+  createExecutionWorkItem,
+  deleteResourceAnalysis,
+  listExecutionWorkItems,
+  syncExecutionProjectProgress,
+  updateExecutionWorkItem,
+  upsertResourceAnalysis,
+} from "../lib/contracting-execution-service.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -94,6 +104,11 @@ router.use(async (_req, res, next) => {
   try {
     await ensureContractingBoqTables();
     await ensureContractingProjectIntegrity();
+    // This runs against the ambient request database. Do not replace it with a
+    // central-only boot promise: external tenant databases require the same
+    // additive readiness before any execution query references new columns.
+    await ensureContractingExecutionSchema();
+    await ensureContractingGuaranteeTables();
     next();
   } catch (caught) {
     next(caught);
@@ -184,6 +199,7 @@ async function ensureProjectParent(
   branchId: number | null,
   req: any,
   childId?: number,
+  preserveLegacyDepth = false,
 ): Promise<string | null> {
   if (!Number.isInteger(parentId) || parentId <= 0 || parentId === childId) {
     return "المشروع الأب غير صالح";
@@ -191,16 +207,29 @@ async function ensureProjectParent(
   const [parent] = await db.select({
     id: contractingProjectsTable.id,
     branchId: contractingProjectsTable.branchId,
+    parentId: contractingProjectsTable.parentId,
   }).from(contractingProjectsTable).where(and(
     eq(contractingProjectsTable.id, parentId),
     eq(contractingProjectsTable.companyId, cid),
   ));
   if (!parent) return "المشروع الأب لا يتبع نفس الشركة";
+  if (!preserveLegacyDepth && parent.parentId != null) {
+    return "يدعم هيكل المشاريع مستويين فقط: مشروع رئيسي ثم مشروع فرعي";
+  }
   if (!projectBranchVisible(req, parent.branchId)) return "ليس لديك صلاحية فرع المشروع الأب";
   if ((parent.branchId == null ? null : Number(parent.branchId)) !== branchId) {
     return "المشروع الأب يجب أن يكون ضمن نفس الفرع ونطاق الرؤية";
   }
   if (childId != null) {
+      const [existingChild] = await db.select({ id: contractingProjectsTable.id })
+        .from(contractingProjectsTable)
+        .where(and(
+          eq(contractingProjectsTable.companyId, cid),
+          eq(contractingProjectsTable.parentId, childId),
+        )).limit(1);
+      if (!preserveLegacyDepth && existingChild) {
+        return "لا يمكن جعل مشروع رئيسي له مشاريع فرعية تابعاً لمشروع آخر";
+      }
     const result = await db.execute(sql`
       WITH RECURSIVE ancestors(id, parent_id) AS (
         SELECT id, parent_id FROM contracting_projects
@@ -521,6 +550,54 @@ async function ensureSubContract(cid: number, projectId: number, scId: number): 
       eq(contractingSubContractsTable.projectId, projectId),
     ));
   return r ? null : "عقد الباطن غير صالح";
+}
+
+async function contractBoqLineCount(
+  cid: number,
+  projectId: number,
+  kind: "owner" | "subcontract",
+  contractId: number,
+  executor: any = db,
+): Promise<number> {
+  await ensureContractingBoqTables();
+  const result = await executor.execute(kind === "owner" ? sql`
+    SELECT count(*)::int AS count
+      FROM contracting_contract_boq_lines
+     WHERE company_id = ${cid} AND project_id = ${projectId}
+       AND direction = 'owner' AND owner_contract_id = ${contractId}
+  ` : sql`
+    SELECT count(*)::int AS count
+      FROM contracting_contract_boq_lines
+     WHERE company_id = ${cid} AND project_id = ${projectId}
+       AND direction = 'subcontract' AND subcontractor_contract_id = ${contractId}
+  `);
+  const rows = Array.isArray(result) ? result : (result as any).rows ?? [];
+  return Number(rows[0]?.count ?? 0);
+}
+
+async function ensureApprovedContract(
+  cid: number,
+  projectId: number,
+  direction: BillDirection,
+  ownerContractId: number | null,
+  subcontractorContractId: number | null,
+): Promise<string | null> {
+  if (direction === "incoming") {
+    const [contract] = await db.select({ status: contractingSubContractsTable.status })
+      .from(contractingSubContractsTable).where(and(
+        eq(contractingSubContractsTable.id, Number(subcontractorContractId)),
+        eq(contractingSubContractsTable.companyId, cid),
+        eq(contractingSubContractsTable.projectId, projectId),
+      ));
+    return contract?.status === "approved" ? null : "لا يمكن بدء التنفيذ أو إنشاء مستخلص قبل اعتماد عقد الباطن";
+  }
+  const [contract] = await db.select({ status: contractingOwnerContractsTable.status })
+    .from(contractingOwnerContractsTable).where(and(
+      eq(contractingOwnerContractsTable.id, Number(ownerContractId)),
+      eq(contractingOwnerContractsTable.companyId, cid),
+      eq(contractingOwnerContractsTable.projectId, projectId),
+    ));
+  return contract?.status === "approved" ? null : "لا يمكن بدء التنفيذ أو إنشاء مستخلص قبل اعتماد عقد المالك";
 }
 
 /**
@@ -1167,6 +1244,7 @@ router.put("/projects/:id", async (req, res) => {
           nextProjectBranchId,
           req,
           id,
+          b.parentId === undefined || Number(nextParentId) === Number(prev.parentId),
         );
         if (parentError) {
           res.status(parentError.includes("صلاحية") ? 403 : 400).json({ error: parentError }); return;
@@ -1278,13 +1356,7 @@ router.get("/projects/:projectId/work-items", async (req, res) => {
     if (projectError) {
       res.status(projectErrorStatus(projectError)).json({ error: projectError }); return;
     }
-    const rows = await db.select().from(contractingWorkItemsTable)
-      .where(and(
-        eq(contractingWorkItemsTable.companyId, cid),
-        eq(contractingWorkItemsTable.projectId, projectId),
-      ))
-      .orderBy(contractingWorkItemsTable.id);
-    res.json(rows);
+    res.json(await listExecutionWorkItems(cid, projectId));
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
 });
 
@@ -1302,34 +1374,10 @@ router.post("/projects/:projectId/work-items", async (req, res) => {
     const status = String(b.status ?? "pending");
     if (!WORK_CATEGORIES.has(category)) { res.status(400).json({ error: "تصنيف البند غير صالح" }); return; }
     if (!WORK_STATUSES.has(status)) { res.status(400).json({ error: "حالة البند غير صالحة" }); return; }
-    const plannedQty = Number(b.plannedQty ?? 0);
-    const unitCost   = Number(b.unitCost   ?? 0);
-    const actualQty = Number(b.actualQty ?? 0);
-    const progress = Number(b.progressPercent ?? 0);
-    if (![plannedQty, unitCost, actualQty, progress].every(Number.isFinite) || plannedQty < 0 || unitCost < 0 || actualQty < 0 || progress < 0 || progress > 100) {
-      res.status(400).json({ error: "كميات وتكلفة ونسبة الإنجاز البند غير صالحة" }); return;
-    }
-    const [row] = await db.insert(contractingWorkItemsTable).values({
-      companyId: cid,
-      projectId,
-      code: b.code ?? null,
-      nameAr: String(b.nameAr),
-      category,
-      unit: b.unit ?? "m3",
-      plannedQty: String(plannedQty),
-      actualQty:  String(actualQty),
-      unitCost:   String(unitCost),
-      totalPlannedCost: String(plannedQty * unitCost),
-      totalActualCost:  String(actualQty * unitCost),
-      progressPercent: String(progress),
-      plannedStartDate: b.plannedStartDate ?? null,
-      plannedEndDate:   b.plannedEndDate   ?? null,
-      status,
-      contractorId: b.contractorId ?? null,
-      notes: b.notes ?? null,
-    }).returning();
+    const row = await createExecutionWorkItem(cid, projectId, { ...b, category, status });
+    await syncExecutionProjectProgress(cid, projectId);
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) { res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" }); }
 });
 
 router.put("/work-items/:id", async (req, res) => {
@@ -1350,59 +1398,11 @@ router.put("/work-items/:id", async (req, res) => {
     if (b.status !== undefined && !WORK_STATUSES.has(String(b.status))) {
       res.status(400).json({ error: "حالة البند غير صالحة" }); return;
     }
-    const upd: any = { updatedAt: new Date() };
-    for (const k of ["code","nameAr","category","unit","status","notes"]) if (b[k] !== undefined) upd[k] = b[k];
-    for (const k of ["plannedQty","actualQty","unitCost","progressPercent"]) {
-      if (b[k] === undefined) continue;
-      const error = validateNonNegative(b[k], k);
-      if (error) { res.status(400).json({ error }); return; }
-      if (k === "progressPercent" && Number(b[k]) > 100) {
-        res.status(400).json({ error: "نسبة الإنجاز يجب ألا تتجاوز 100" }); return;
-      }
-      upd[k] = String(b[k]);
-    }
-    if (b.contractorId !== undefined) upd.contractorId = b.contractorId;
-    if (b.plannedStartDate !== undefined) upd.plannedStartDate = b.plannedStartDate;
-    if (b.plannedEndDate   !== undefined) upd.plannedEndDate   = b.plannedEndDate;
-
-    // Recompute totals if any input changed.
-    if (b.plannedQty !== undefined || b.unitCost !== undefined || b.actualQty !== undefined) {
-      const pq = Number(b.plannedQty ?? current.plannedQty);
-      const aq = Number(b.actualQty  ?? current.actualQty);
-      const uc = Number(b.unitCost   ?? current.unitCost);
-      upd.totalPlannedCost = String(pq * uc);
-      upd.totalActualCost  = String(aq * uc);
-    }
-
-    const [row] = await db.update(contractingWorkItemsTable).set(upd)
-      .where(and(eq(contractingWorkItemsTable.id, id), eq(contractingWorkItemsTable.companyId, cid)))
-      .returning();
-    if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
-
-    // After updating a work item, recompute parent project progress as
-    // weighted average (by planned cost) so the project headline metric
-    // tracks reality without manual sync.
-    const items = await db.select().from(contractingWorkItemsTable)
-      .where(and(
-        eq(contractingWorkItemsTable.projectId, row.projectId),
-        eq(contractingWorkItemsTable.companyId, cid),
-      ));
-    const totalWeight = items.reduce((s, i) => s + Number(i.totalPlannedCost), 0);
-    const weighted = totalWeight > 0
-      ? items.reduce((s, i) => s + Number(i.progressPercent) * Number(i.totalPlannedCost), 0) / totalWeight
-      : items.reduce((s, i) => s + Number(i.progressPercent), 0) / Math.max(1, items.length);
-    const actualSum = items.reduce((s, i) => s + Number(i.totalActualCost), 0);
-    await db.update(contractingProjectsTable).set({
-      progressPercent: String(Math.round(weighted * 100) / 100),
-      actualCost:      String(Math.round(actualSum * 100) / 100),
-      updatedAt: new Date(),
-    }).where(and(
-      eq(contractingProjectsTable.id, row.projectId),
-      eq(contractingProjectsTable.companyId, cid),
-    ));
+    const row = await updateExecutionWorkItem(cid, id, b);
+    await syncExecutionProjectProgress(cid, row.projectId);
 
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) { res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" }); }
 });
 
 router.delete("/work-items/:id", async (req, res) => {
@@ -1419,8 +1419,58 @@ router.delete("/work-items/:id", async (req, res) => {
     }
     await db.delete(contractingWorkItemsTable)
       .where(and(eq(contractingWorkItemsTable.id, id), eq(contractingWorkItemsTable.companyId, cid)));
+    await syncExecutionProjectProgress(cid, current.projectId);
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    const isReferenced = e?.code === "23503";
+    res.status(isReferenced ? 409 : 500).json({
+      error: isReferenced ? "لا يمكن حذف بند مرتبط ببند WBS فرعي أو ببند عقد" : e?.message ?? "خطأ",
+    });
+  }
+});
+
+router.post("/projects/:projectId/work-items/:workItemId/resource-analysis", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const projectId = Number(req.params.projectId);
+    const workItemId = Number(req.params.workItemId);
+    const projectError = await ensureProject(cid, projectId, req);
+    if (projectError) {
+      res.status(projectErrorStatus(projectError)).json({ error: projectError }); return;
+    }
+    res.status(201).json(await upsertResourceAnalysis(cid, projectId, workItemId, req.body ?? {}));
+  } catch (e: any) {
+    const duplicate = e?.code === "23505";
+    res.status(duplicate ? 409 : Number(e?.status) || 500).json({
+      error: duplicate ? "هذا المورد مضاف بالفعل إلى تحليل البند" : e?.message ?? "خطأ",
+    });
+  }
+});
+
+router.put("/projects/:projectId/work-items/:workItemId/resource-analysis/:analysisId", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const projectId = Number(req.params.projectId);
+    const workItemId = Number(req.params.workItemId);
+    const analysisId = Number(req.params.analysisId);
+    const projectError = await ensureProject(cid, projectId, req);
+    if (projectError) {
+      res.status(projectErrorStatus(projectError)).json({ error: projectError }); return;
+    }
+    res.json(await upsertResourceAnalysis(cid, projectId, workItemId, req.body ?? {}, analysisId));
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" });
+  }
+});
+
+router.delete("/work-item-resource-analysis/:analysisId", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    await deleteResourceAnalysis(cid, Number(req.params.analysisId));
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" });
+  }
 });
 
 // ─────────────────── RESOURCES ───────────────────
@@ -1895,6 +1945,9 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
       if (cusErr) { res.status(400).json({ error: cusErr }); return; }
     }
     const contractType = String(b.contractType ?? "main");
+    if (["active", "approved"].includes(String(b.status ?? "draft"))) {
+      res.status(422).json({ error: "احفظ العقد كمسودة ثم أضف بند تنفيذ واحداً على الأقل واستخدم مسار الاعتماد" }); return;
+    }
     const parentContractId = b.parentContractId == null || b.parentContractId === ""
       ? null : Number(b.parentContractId);
     if (["change_order", "addendum"].includes(contractType) && parentContractId == null) {
@@ -2026,6 +2079,10 @@ router.put("/owner-contracts/:id", async (req, res) => {
     if (["change_order", "addendum"].includes(String(b.contractType ?? cur.contractType))
       && ["approved", "rejected"].includes(String(b.status ?? ""))) {
       res.status(409).json({ error: "استخدم مسار قرار أمر التغيير لتسجيل الاعتماد أو الرفض" }); return;
+    }
+    if (["active", "approved"].includes(String(b.status ?? ""))
+      && String(b.status) !== String(cur.status)) {
+      res.status(422).json({ error: "استخدم مسار اعتماد العقد بعد إضافة بند تنفيذ واحد على الأقل" }); return;
     }
     const upd: any = { updatedAt: new Date() };
     let nextProjectId = Number(cur.projectId);
@@ -2206,7 +2263,12 @@ router.put("/owner-contracts/:id/change-order-decision", requirePermission("cont
         ))
         .for("update");
       if (!locked) throw Object.assign(new Error("أمر التغيير غير موجود"), { status: 404 });
-      if (decision === "approved") await assertChangeOrderReductionSafe(cid, locked.projectId, id, "owner", tx);
+      if (decision === "approved") {
+        if (await contractBoqLineCount(cid, locked.projectId, "owner", id, tx) < 1) {
+          throw Object.assign(new Error("لا يمكن اعتماد العقد قبل إضافة بند تنفيذ واحد على الأقل."), { status: 422 });
+        }
+        await assertChangeOrderReductionSafe(cid, locked.projectId, id, "owner", tx);
+      }
       const [updated] = await tx.update(contractingOwnerContractsTable).set({
         status: decision,
         updatedAt: new Date(),
@@ -2228,6 +2290,39 @@ router.put("/owner-contracts/:id/change-order-decision", requirePermission("cont
     res.json(row);
   } catch (e: any) {
     res.status(Number(e?.status) || 500).json({ error: e?.message ?? "خطأ" });
+  }
+});
+
+router.put("/owner-contracts/:id/approve", requirePermission("contracting", "approve"), async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const row = await db.transaction(async (tx) => {
+      const [contract] = await tx.select().from(contractingOwnerContractsTable).where(and(
+        eq(contractingOwnerContractsTable.id, id),
+        eq(contractingOwnerContractsTable.companyId, cid),
+      )).for("update");
+      if (!contract) throw Object.assign(new Error("العقد غير موجود"), { status: 404 });
+      const projectError = await ensureProject(cid, contract.projectId, req);
+      if (projectError) throw Object.assign(new Error(projectError), { status: projectErrorStatus(projectError) });
+      if (contract.contractType !== "main") {
+        throw Object.assign(new Error("اعتماد أوامر التغيير يتم من مسار قرار أمر التغيير"), { status: 409 });
+      }
+      if (await contractBoqLineCount(cid, contract.projectId, "owner", id, tx) < 1) {
+        throw Object.assign(new Error("لا يمكن اعتماد العقد قبل إضافة بند تنفيذ واحد على الأقل."), { status: 422 });
+      }
+      const [updated] = await tx.update(contractingOwnerContractsTable).set({
+        status: "approved",
+        updatedAt: new Date(),
+      }).where(and(
+        eq(contractingOwnerContractsTable.id, id),
+        eq(contractingOwnerContractsTable.companyId, cid),
+      )).returning();
+      return updated;
+    });
+    res.json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر اعتماد العقد" });
   }
 });
 
@@ -2283,6 +2378,9 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
     const conErr  = await ensureContractor(cid, Number(b.contractorId));
     if (conErr)  { res.status(400).json({ error: conErr }); return; }
     const contractType = String(b.contractType ?? "main");
+    if (["active", "approved"].includes(String(b.status ?? "draft"))) {
+      res.status(422).json({ error: "احفظ العقد كمسودة ثم أضف بند تنفيذ واحداً على الأقل واستخدم مسار الاعتماد" }); return;
+    }
     const parentContractId = b.parentContractId == null || b.parentContractId === ""
       ? null : Number(b.parentContractId);
     if (!["main", "change_order"].includes(contractType)) {
@@ -2415,6 +2513,10 @@ router.put("/sub-contracts/:id", async (req, res) => {
     if (String(b.contractType ?? cur.contractType) === "change_order"
       && ["approved", "rejected"].includes(String(b.status ?? ""))) {
       res.status(409).json({ error: "استخدم مسار قرار أمر تغيير الباطن لتسجيل الاعتماد أو الرفض" }); return;
+    }
+    if (["active", "approved"].includes(String(b.status ?? ""))
+      && String(b.status) !== String(cur.status)) {
+      res.status(422).json({ error: "استخدم مسار اعتماد العقد بعد إضافة بند تنفيذ واحد على الأقل" }); return;
     }
     const upd: any = { updatedAt: new Date() };
     let nextProjectId = Number(cur.projectId);
@@ -2591,7 +2693,12 @@ router.put("/sub-contracts/:id/change-order-decision", requirePermission("contra
         ))
         .for("update");
       if (!locked) throw Object.assign(new Error("أمر تغيير الباطن غير موجود"), { status: 404 });
-      if (decision === "approved") await assertChangeOrderReductionSafe(cid, locked.projectId, id, "subcontract", tx);
+      if (decision === "approved") {
+        if (await contractBoqLineCount(cid, locked.projectId, "subcontract", id, tx) < 1) {
+          throw Object.assign(new Error("لا يمكن اعتماد العقد قبل إضافة بند تنفيذ واحد على الأقل."), { status: 422 });
+        }
+        await assertChangeOrderReductionSafe(cid, locked.projectId, id, "subcontract", tx);
+      }
       const [updated] = await tx.update(contractingSubContractsTable).set({
         status: decision,
         updatedAt: new Date(),
@@ -2616,6 +2723,39 @@ router.put("/sub-contracts/:id/change-order-decision", requirePermission("contra
   }
 });
 
+router.put("/sub-contracts/:id/approve", requirePermission("contracting", "approve"), async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const row = await db.transaction(async (tx) => {
+      const [contract] = await tx.select().from(contractingSubContractsTable).where(and(
+        eq(contractingSubContractsTable.id, id),
+        eq(contractingSubContractsTable.companyId, cid),
+      )).for("update");
+      if (!contract) throw Object.assign(new Error("العقد غير موجود"), { status: 404 });
+      const projectError = await ensureProject(cid, contract.projectId, req);
+      if (projectError) throw Object.assign(new Error(projectError), { status: projectErrorStatus(projectError) });
+      if (contract.contractType !== "main") {
+        throw Object.assign(new Error("اعتماد أوامر التغيير يتم من مسار قرار أمر التغيير"), { status: 409 });
+      }
+      if (await contractBoqLineCount(cid, contract.projectId, "subcontract", id, tx) < 1) {
+        throw Object.assign(new Error("لا يمكن اعتماد العقد قبل إضافة بند تنفيذ واحد على الأقل."), { status: 422 });
+      }
+      const [updated] = await tx.update(contractingSubContractsTable).set({
+        status: "approved",
+        updatedAt: new Date(),
+      }).where(and(
+        eq(contractingSubContractsTable.id, id),
+        eq(contractingSubContractsTable.companyId, cid),
+      )).returning();
+      return updated;
+    });
+    res.json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر اعتماد العقد" });
+  }
+});
+
 router.delete("/sub-contracts/:id", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
@@ -2632,6 +2772,788 @@ router.delete("/sub-contracts/:id", async (req, res) => {
       .where(and(eq(contractingSubContractsTable.id, id), eq(contractingSubContractsTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+// ─────────────────── TENDERS + BANK GUARANTEES ───────────────────
+// Initial guarantees belong to a tender/project and intentionally have no
+// contract. Awarding selects an existing contract. A resulting performance
+// guarantee is always a new child row; the initial row is never converted.
+const TENDER_STATUSES = new Set(["draft", "submitted", "under_review", "awarded", "lost", "cancelled"]);
+const GUARANTEE_TYPES = new Set(["initial", "performance", "advance_payment", "maintenance", "other"]);
+const GUARANTEE_STATUSES = new Set(["draft", "issued", "active", "extended", "released", "expired", "cancelled"]);
+const GUARANTEE_TRANSITIONS: Record<string, Set<string>> = {
+  draft: new Set(["issued", "cancelled"]),
+  issued: new Set(["active", "cancelled"]),
+  active: new Set(["extended", "released", "expired", "cancelled"]),
+  extended: new Set(["active", "released", "expired", "cancelled"]),
+  expired: new Set(["released"]),
+  released: new Set(),
+  cancelled: new Set(),
+};
+
+function resultRows(result: any): any[] {
+  return Array.isArray(result) ? result : result?.rows ?? [];
+}
+
+function positiveId(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function ensureGuaranteeBank(cid: number, id: number): Promise<string | null> {
+  const result = await db.execute(sql`
+    SELECT id FROM bank_accounts
+     WHERE id = ${id} AND company_id = ${cid} AND is_active = true
+     LIMIT 1
+  `);
+  return resultRows(result).length ? null : "الحساب البنكي غير صالح أو غير نشط";
+}
+
+async function ensureGuaranteeCustomer(cid: number, id: number): Promise<string | null> {
+  const result = await db.execute(sql`
+    SELECT id FROM customers WHERE id = ${id} AND company_id = ${cid} LIMIT 1
+  `);
+  return resultRows(result).length ? null : "المستفيد غير صالح أو يتبع شركة أخرى";
+}
+
+async function guaranteeRelationship(
+  cid: number,
+  projectId: number,
+  body: any,
+): Promise<{ tenderId: number | null; contractKind: string | null; ownerContractId: number | null; subcontractId: number | null; parentGuaranteeId: number | null } | string> {
+  const guaranteeType = String(body.guaranteeType ?? "");
+  let tenderId = positiveId(body.tenderId);
+  const contractKind = body.contractKind == null || body.contractKind === "" ? null : String(body.contractKind);
+  const ownerContractId = contractKind === "owner" ? positiveId(body.ownerContractId ?? body.contractId) : null;
+  const subcontractId = contractKind === "subcontract" ? positiveId(body.subcontractId ?? body.contractId) : null;
+  const parentGuaranteeId = positiveId(body.parentGuaranteeId);
+
+  if (guaranteeType === "initial") {
+    if (!tenderId || contractKind || ownerContractId || subcontractId || parentGuaranteeId) {
+      return "الضمان الابتدائي يرتبط بالمناقصة والمشروع فقط ولا يرتبط بعقد أو ضمان أب";
+    }
+  } else if (
+    !["owner", "subcontract"].includes(String(contractKind))
+    || (contractKind === "owner" ? !ownerContractId : !subcontractId)
+  ) {
+    return "الضمان بعد الترسية يجب أن يرتبط بعقد مالك أو عقد باطن محدد داخل المشروع";
+  }
+
+  if (tenderId) {
+    const tender = resultRows(await db.execute(sql`
+      SELECT id, status FROM contracting_tenders
+       WHERE id = ${tenderId} AND company_id = ${cid} AND project_id = ${projectId}
+         AND archived_at IS NULL
+       LIMIT 1
+    `))[0];
+    if (!tender) return "المناقصة لا تتبع المشروع والشركة المحددين";
+    if (guaranteeType === "initial" && !["draft", "submitted", "under_review"].includes(String(tender.status))) {
+      return "لا يمكن إصدار ضمان ابتدائي لمناقصة تمت ترسيتها أو إغلاقها";
+    }
+  }
+  if (ownerContractId) {
+    const error = await ensureOwnerContract(cid, projectId, ownerContractId);
+    if (error) return error;
+  }
+  if (subcontractId) {
+    const error = await ensureSubContract(cid, projectId, subcontractId);
+    if (error) return error;
+  }
+  if (parentGuaranteeId) {
+    if (guaranteeType !== "performance") return "الضمان الأب يستخدم فقط للضمان النهائي الناتج عن ضمان ابتدائي";
+    const parent = resultRows(await db.execute(sql`
+      SELECT g.id, g.tender_id, t.status AS tender_status,
+             t.awarded_contract_kind, t.awarded_owner_contract_id, t.awarded_subcontract_id
+        FROM contracting_guarantees g
+        JOIN contracting_tenders t ON t.id = g.tender_id AND t.company_id = g.company_id
+       WHERE g.id = ${parentGuaranteeId} AND g.company_id = ${cid} AND g.project_id = ${projectId}
+         AND g.guarantee_type = 'initial' AND g.archived_at IS NULL AND t.archived_at IS NULL
+       LIMIT 1
+    `))[0];
+    if (!parent) return "الضمان الابتدائي الأب غير صالح";
+    if (parent.tender_status !== "awarded") return "لا يمكن إنشاء الضمان النهائي قبل ترسية مناقصة الضمان الابتدائي";
+    if (String(parent.awarded_contract_kind) !== contractKind
+      || (contractKind === "owner" && Number(parent.awarded_owner_contract_id) !== ownerContractId)
+      || (contractKind === "subcontract" && Number(parent.awarded_subcontract_id) !== subcontractId)) {
+      return "العقد المحدد لا يطابق العقد الذي رست عليه مناقصة الضمان الابتدائي";
+    }
+    if (tenderId && Number(parent.tender_id) !== tenderId) return "المناقصة لا تطابق الضمان الابتدائي الأب";
+    tenderId = Number(parent.tender_id);
+    const existingChild = resultRows(await db.execute(sql`
+      SELECT id FROM contracting_guarantees
+       WHERE company_id = ${cid} AND parent_guarantee_id = ${parentGuaranteeId}
+         AND guarantee_type = 'performance' AND archived_at IS NULL
+       LIMIT 1
+    `))[0];
+    if (existingChild) return "تم إنشاء ضمان نهائي لهذا الضمان الابتدائي بالفعل";
+  }
+  return { tenderId, contractKind, ownerContractId, subcontractId, parentGuaranteeId };
+}
+
+router.get("/guarantees/options", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const allowed = getAllowedBranchIds(req);
+    const bankScope = allowed === null
+      ? sql`true`
+      : allowed.length === 0
+        ? sql`false`
+        : sql`(b.branch_id IS NULL OR b.branch_id IN (${sql.join(allowed.map(id => sql`${id}`), sql`, `)})
+          OR b.branch_ids && ARRAY[${sql.join(allowed.map(id => sql`${id}`), sql`, `)}]::integer[])`;
+    const banks = resultRows(await db.execute(sql`
+      SELECT b.id, b.code, b.name_ar AS "nameAr", b.name_en AS "nameEn", b.bank_name AS "bankName"
+        FROM bank_accounts b
+       WHERE b.company_id = ${cid} AND b.is_active = true AND ${bankScope}
+       ORDER BY b.code
+    `));
+    const customers = canAccessModule(req.authUser, "customers", "view")
+      ? resultRows(await db.execute(sql`
+          SELECT id, code, name_ar AS "nameAr", name_en AS "nameEn"
+            FROM customers WHERE company_id = ${cid}
+           ORDER BY name_ar
+        `))
+      : [];
+    res.json({ banks, customers });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذر تحميل خيارات الضمانات" });
+  }
+});
+
+router.get("/tenders", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const projectId = positiveId(req.query.projectId);
+    const rootProjectId = positiveId(req.query.rootProjectId);
+    const status = String(req.query.status ?? "");
+    const conditions: any[] = [sql`t.company_id = ${cid}`, sql`t.archived_at IS NULL`];
+    if (projectId) conditions.push(sql`t.project_id = ${projectId}`);
+    if (rootProjectId) conditions.push(sql`(p.id = ${rootProjectId} OR p.parent_id = ${rootProjectId})`);
+    if (status) conditions.push(sql`t.status = ${status}`);
+    const allowed = getAllowedBranchIds(req);
+    if (allowed !== null) {
+      conditions.push(allowed.length
+        ? sql`p.branch_id IN (${sql.join(allowed.map(id => sql`${id}`), sql`, `)})`
+        : sql`false`);
+    }
+    const rows = resultRows(await db.execute(sql`
+      SELECT t.*, p.code AS "projectCode", p.name_ar AS "projectName",
+             c.name_ar AS "customerName",
+             COALESCE(oc.contract_number, sc.contract_number) AS "awardedContractNumber"
+        FROM contracting_tenders t
+        JOIN contracting_projects p ON p.id = t.project_id AND p.company_id = t.company_id
+        LEFT JOIN customers c ON c.id = t.customer_id AND c.company_id = t.company_id
+        LEFT JOIN contracting_owner_contracts oc ON oc.id = t.awarded_owner_contract_id
+        LEFT JOIN contracting_sub_contracts sc ON sc.id = t.awarded_subcontract_id
+       WHERE ${sql.join(conditions, sql` AND `)}
+       ORDER BY t.tender_date DESC, t.id DESC
+    `));
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذر تحميل المناقصات" });
+  }
+});
+
+router.get("/tenders/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = positiveId(req.params.id);
+    if (!id) { res.status(400).json({ error: "المناقصة غير صالحة" }); return; }
+    const row = resultRows(await db.execute(sql`
+      SELECT t.*, p.code AS "projectCode", p.name_ar AS "projectName",
+             c.name_ar AS "customerName",
+             COALESCE(oc.contract_number, sc.contract_number) AS "awardedContractNumber"
+        FROM contracting_tenders t
+        JOIN contracting_projects p ON p.id = t.project_id AND p.company_id = t.company_id
+        LEFT JOIN customers c ON c.id = t.customer_id AND c.company_id = t.company_id
+        LEFT JOIN contracting_owner_contracts oc ON oc.id = t.awarded_owner_contract_id
+        LEFT JOIN contracting_sub_contracts sc ON sc.id = t.awarded_subcontract_id
+       WHERE t.id = ${id} AND t.company_id = ${cid} AND t.archived_at IS NULL
+       LIMIT 1
+    `))[0];
+    if (!row) { res.status(404).json({ error: "المناقصة غير موجودة" }); return; }
+    const projectError = await ensureProject(cid, Number(row.project_id), req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    res.json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذر تحميل المناقصة" });
+  }
+});
+
+router.post("/tenders", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const b = req.body ?? {};
+    const projectId = positiveId(b.projectId);
+    if (!projectId || !String(b.tenderNumber ?? "").trim() || !String(b.title ?? "").trim() || !b.tenderDate) {
+      res.status(400).json({ error: "المشروع ورقم المناقصة والعنوان والتاريخ مطلوبة" }); return;
+    }
+    const projectError = await ensureProject(cid, projectId, req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    const customerId = positiveId(b.customerId);
+    if (customerId) {
+      if (!canAccessModule(req.authUser, "customers", "view")) {
+        res.status(403).json({ error: "لا تملك صلاحية عرض العملاء" }); return;
+      }
+      const customerError = await ensureGuaranteeCustomer(cid, customerId);
+      if (customerError) { res.status(400).json({ error: customerError }); return; }
+    }
+    const status = String(b.status ?? "draft");
+    if (!["draft", "submitted", "under_review"].includes(status)) {
+      res.status(400).json({ error: "تبدأ المناقصة كمسودة أو مقدمة أو قيد المراجعة" }); return;
+    }
+    const amountError = validateNonNegative(b.estimatedValue ?? 0, "القيمة التقديرية");
+    if (amountError) { res.status(400).json({ error: amountError }); return; }
+    const row = resultRows(await db.execute(sql`
+      INSERT INTO contracting_tenders (
+        company_id, project_id, customer_id, tender_number, title, tender_date,
+        submission_date, estimated_value, status, notes, created_by_user_id
+      ) VALUES (
+        ${cid}, ${projectId}, ${customerId}, ${String(b.tenderNumber).trim()},
+        ${String(b.title).trim()}, ${String(b.tenderDate)}, ${b.submissionDate || null},
+        ${String(b.estimatedValue ?? 0)}, ${status}, ${b.notes || null}, ${req.authUser?.id ?? null}
+      ) RETURNING *
+    `))[0];
+    res.status(201).json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر إنشاء المناقصة" });
+  }
+});
+
+router.put("/tenders/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = positiveId(req.params.id);
+    if (!id) { res.status(400).json({ error: "المناقصة غير صالحة" }); return; }
+    const b = req.body ?? {};
+    const current = resultRows(await db.execute(sql`
+      SELECT * FROM contracting_tenders
+       WHERE id = ${id} AND company_id = ${cid} AND archived_at IS NULL LIMIT 1
+    `))[0];
+    if (!current) { res.status(404).json({ error: "المناقصة غير موجودة" }); return; }
+    const currentProjectError = await ensureProject(cid, Number(current.project_id), req);
+    if (currentProjectError) {
+      res.status(projectErrorStatus(currentProjectError)).json({ error: currentProjectError }); return;
+    }
+    if (current.status === "awarded" && (b.projectId !== undefined || b.status !== undefined)) {
+      res.status(409).json({ error: "لا يمكن نقل أو تغيير حالة مناقصة تمت ترسيتها" }); return;
+    }
+    const projectId = b.projectId === undefined ? Number(current.project_id) : positiveId(b.projectId);
+    if (!projectId) { res.status(400).json({ error: "المشروع غير صالح" }); return; }
+    const projectError = await ensureProject(cid, projectId, req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    if (projectId !== Number(current.project_id)) {
+      const linked = resultRows(await db.execute(sql`
+        SELECT 1 FROM contracting_guarantees
+         WHERE company_id = ${cid} AND tender_id = ${id} AND archived_at IS NULL LIMIT 1
+      `)).length;
+      if (linked) { res.status(409).json({ error: "لا يمكن نقل مناقصة لها خطابات ضمان" }); return; }
+    }
+    const customerId = b.customerId === undefined
+      ? current.customer_id == null ? null : Number(current.customer_id)
+      : positiveId(b.customerId);
+    if (customerId) {
+      if (!canAccessModule(req.authUser, "customers", "view")) {
+        res.status(403).json({ error: "لا تملك صلاحية عرض العملاء" }); return;
+      }
+      const customerError = await ensureGuaranteeCustomer(cid, customerId);
+      if (customerError) { res.status(400).json({ error: customerError }); return; }
+    }
+    const status = b.status === undefined ? String(current.status) : String(b.status);
+    if (!TENDER_STATUSES.has(status) || status === "awarded") {
+      res.status(400).json({ error: "حالة المناقصة غير صالحة أو تتطلب مسار الترسية" }); return;
+    }
+    const estimatedValue = b.estimatedValue === undefined ? current.estimated_value : b.estimatedValue;
+    const amountError = validateNonNegative(estimatedValue, "القيمة التقديرية");
+    if (amountError) { res.status(400).json({ error: amountError }); return; }
+    const row = resultRows(await db.execute(sql`
+      UPDATE contracting_tenders SET
+        project_id = ${projectId}, customer_id = ${customerId},
+        tender_number = ${String(b.tenderNumber ?? current.tender_number).trim()},
+        title = ${String(b.title ?? current.title).trim()},
+        tender_date = ${String(b.tenderDate ?? current.tender_date)},
+        submission_date = ${b.submissionDate === undefined ? current.submission_date : b.submissionDate || null},
+        estimated_value = ${String(estimatedValue)}, status = ${status},
+        notes = ${b.notes === undefined ? current.notes : b.notes || null}, updated_at = NOW()
+       WHERE id = ${id} AND company_id = ${cid}
+       RETURNING *
+    `))[0];
+    res.json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر تعديل المناقصة" });
+  }
+});
+
+router.put("/tenders/:id/award", requirePermission("contracting", "approve"), async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = positiveId(req.params.id);
+    const kind = String(req.body?.contractKind ?? "");
+    const contractId = positiveId(req.body?.contractId);
+    if (!id || !contractId || !["owner", "subcontract"].includes(kind)) {
+      res.status(400).json({ error: "نوع العقد والعقد الحالي مطلوبان للترسية" }); return;
+    }
+    const row = await db.transaction(async (tx) => {
+      const tender = resultRows(await tx.execute(sql`
+        SELECT * FROM contracting_tenders
+         WHERE id = ${id} AND company_id = ${cid} AND archived_at IS NULL FOR UPDATE
+      `))[0];
+      if (!tender) throw Object.assign(new Error("المناقصة غير موجودة"), { status: 404 });
+      if (tender.status === "awarded") throw Object.assign(new Error("تمت ترسية المناقصة بالفعل"), { status: 409 });
+      if (!["submitted", "under_review"].includes(String(tender.status))) {
+        throw Object.assign(new Error("يجب أن تكون المناقصة مقدمة أو قيد المراجعة قبل الترسية"), { status: 422 });
+      }
+      const projectError = await ensureProject(cid, Number(tender.project_id), req);
+      if (projectError) throw Object.assign(new Error(projectError), { status: projectErrorStatus(projectError) });
+      const contractError = kind === "owner"
+        ? await ensureOwnerContract(cid, Number(tender.project_id), contractId)
+        : await ensureSubContract(cid, Number(tender.project_id), contractId);
+      if (contractError) throw Object.assign(new Error(contractError), { status: 422 });
+      return resultRows(await tx.execute(sql`
+        UPDATE contracting_tenders SET
+          status = 'awarded', awarded_contract_kind = ${kind},
+          awarded_owner_contract_id = ${kind === "owner" ? contractId : null},
+          awarded_subcontract_id = ${kind === "subcontract" ? contractId : null},
+          awarded_at = NOW(), updated_at = NOW()
+         WHERE id = ${id} AND company_id = ${cid}
+         RETURNING *
+      `))[0];
+    });
+    res.json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر ترسية المناقصة" });
+  }
+});
+
+router.delete("/tenders/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = positiveId(req.params.id);
+    if (!id) { res.status(400).json({ error: "المناقصة غير صالحة" }); return; }
+    const tender = resultRows(await db.execute(sql`
+      SELECT project_id FROM contracting_tenders
+       WHERE company_id = ${cid} AND id = ${id} AND archived_at IS NULL LIMIT 1
+    `))[0];
+    if (!tender) { res.status(404).json({ error: "المناقصة غير موجودة" }); return; }
+    const projectError = await ensureProject(cid, Number(tender.project_id), req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    const linked = resultRows(await db.execute(sql`
+      SELECT 1 FROM contracting_guarantees
+       WHERE company_id = ${cid} AND tender_id = ${id} AND archived_at IS NULL LIMIT 1
+    `)).length;
+    if (linked) { res.status(409).json({ error: "لا يمكن أرشفة مناقصة لها خطابات ضمان نشطة" }); return; }
+    const rows = resultRows(await db.execute(sql`
+      UPDATE contracting_tenders SET archived_at = NOW(), archived_by_user_id = ${req.authUser?.id ?? null}, updated_at = NOW()
+       WHERE id = ${id} AND company_id = ${cid} AND archived_at IS NULL
+       RETURNING id
+    `));
+    if (!rows.length) { res.status(404).json({ error: "المناقصة غير موجودة" }); return; }
+    res.json({ ok: true, archived: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذر أرشفة المناقصة" });
+  }
+});
+
+router.get("/guarantees", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const conditions: any[] = [sql`g.company_id = ${cid}`, sql`g.archived_at IS NULL`];
+    const numericFilters: Array<[unknown, any]> = [
+      [req.query.projectId, sql`g.project_id`],
+      [req.query.rootProjectId, sql`COALESCE(p.parent_id, p.id)`],
+      [req.query.tenderId, sql`g.tender_id`],
+      [req.query.bankAccountId ?? req.query.bankId, sql`g.bank_account_id`],
+      [req.query.beneficiaryCustomerId ?? req.query.beneficiaryId, sql`g.beneficiary_customer_id`],
+    ];
+    for (const [raw, column] of numericFilters) {
+      const value = positiveId(raw);
+      if (value) conditions.push(sql`${column} = ${value}`);
+    }
+    const contractId = positiveId(req.query.contractId);
+    const contractKind = String(req.query.contractKind ?? "");
+    if (contractId && contractKind === "owner") conditions.push(sql`g.owner_contract_id = ${contractId}`);
+    if (contractId && contractKind === "subcontract") conditions.push(sql`g.subcontract_id = ${contractId}`);
+    if (contractKind) conditions.push(sql`g.contract_kind = ${contractKind}`);
+    for (const [raw, column] of [
+      [req.query.guaranteeType ?? req.query.type, sql`g.guarantee_type`],
+      [req.query.status ?? req.query.state, sql`g.status`],
+      [req.query.contractType, sql`COALESCE(oc.contract_type, sc.contract_type)`],
+    ] as const) {
+      const value = String(raw ?? "");
+      if (value) conditions.push(sql`${column} = ${value}`);
+    }
+    for (const [raw, expression, operator] of [
+      [req.query.issueFrom, sql`g.issue_date`, ">="],
+      [req.query.issueTo, sql`g.issue_date`, "<="],
+      [req.query.expiryFrom, sql`g.expiry_date`, ">="],
+      [req.query.expiryTo, sql`g.expiry_date`, "<="],
+    ] as const) {
+      const value = String(raw ?? "");
+      if (!value) continue;
+      if (operator === ">=") conditions.push(sql`${expression} >= ${value}`);
+      else conditions.push(sql`${expression} <= ${value}`);
+    }
+    const search = String(req.query.q ?? "").trim();
+    if (search) {
+      conditions.push(sql`(
+        g.guarantee_number ILIKE ${`%${search}%`}
+        OR COALESCE(g.purpose, '') ILIKE ${`%${search}%`}
+        OR COALESCE(t.tender_number, '') ILIKE ${`%${search}%`}
+        OR COALESCE(oc.contract_number, sc.contract_number, '') ILIKE ${`%${search}%`}
+      )`);
+    }
+    const allowed = getAllowedBranchIds(req);
+    if (allowed !== null) {
+      conditions.push(allowed.length
+        ? sql`p.branch_id IN (${sql.join(allowed.map(id => sql`${id}`), sql`, `)})`
+        : sql`false`);
+    }
+    const rows = resultRows(await db.execute(sql`
+      SELECT g.*, p.code AS "projectCode", p.name_ar AS "projectName",
+             parent_p.code AS "rootProjectCode", parent_p.name_ar AS "rootProjectName",
+             t.tender_number AS "tenderNumber", t.title AS "tenderTitle",
+             COALESCE(oc.contract_number, sc.contract_number) AS "contractNumber",
+             COALESCE(oc.contract_type, sc.contract_type) AS "contractType",
+             b.name_ar AS "bankName", b.bank_name AS "bankInstitutionName",
+             c.name_ar AS "beneficiaryName",
+             pg.guarantee_number AS "parentGuaranteeNumber"
+        FROM contracting_guarantees g
+        JOIN contracting_projects p ON p.id = g.project_id AND p.company_id = g.company_id
+        LEFT JOIN contracting_projects parent_p ON parent_p.id = p.parent_id AND parent_p.company_id = p.company_id
+        LEFT JOIN contracting_tenders t ON t.id = g.tender_id AND t.company_id = g.company_id
+        LEFT JOIN contracting_owner_contracts oc ON oc.id = g.owner_contract_id
+        LEFT JOIN contracting_sub_contracts sc ON sc.id = g.subcontract_id
+        JOIN bank_accounts b ON b.id = g.bank_account_id AND b.company_id = g.company_id
+        LEFT JOIN customers c ON c.id = g.beneficiary_customer_id AND c.company_id = g.company_id
+        LEFT JOIN contracting_guarantees pg ON pg.id = g.parent_guarantee_id AND pg.company_id = g.company_id
+       WHERE ${sql.join(conditions, sql` AND `)}
+       ORDER BY g.issue_date DESC, g.id DESC
+    `));
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذر تحميل خطابات الضمان" });
+  }
+});
+
+router.post("/guarantees", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const b = req.body ?? {};
+    const projectId = positiveId(b.projectId);
+    const bankAccountId = positiveId(b.bankAccountId);
+    const beneficiaryCustomerId = positiveId(b.beneficiaryCustomerId);
+    const guaranteeType = String(b.guaranteeType ?? "");
+    if (!projectId || !bankAccountId || !String(b.guaranteeNumber ?? "").trim()
+      || !GUARANTEE_TYPES.has(guaranteeType) || !b.issueDate || !b.expiryDate) {
+      res.status(400).json({ error: "المشروع والبنك ورقم ونوع وتواريخ خطاب الضمان مطلوبة" }); return;
+    }
+    const projectError = await ensureProject(cid, projectId, req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    const bankError = await ensureGuaranteeBank(cid, bankAccountId);
+    if (bankError) { res.status(400).json({ error: bankError }); return; }
+    if (beneficiaryCustomerId) {
+      if (!canAccessModule(req.authUser, "customers", "view")) {
+        res.status(403).json({ error: "لا تملك صلاحية عرض العملاء" }); return;
+      }
+      const customerError = await ensureGuaranteeCustomer(cid, beneficiaryCustomerId);
+      if (customerError) { res.status(400).json({ error: customerError }); return; }
+    }
+    const amountError = validateNonNegative(b.amount, "قيمة خطاب الضمان");
+    if (amountError || Number(b.amount) <= 0) {
+      res.status(400).json({ error: amountError || "قيمة خطاب الضمان يجب أن تكون أكبر من صفر" }); return;
+    }
+    if (String(b.expiryDate) < String(b.issueDate)) {
+      res.status(400).json({ error: "تاريخ الانتهاء يجب ألا يسبق تاريخ الإصدار" }); return;
+    }
+    const relationship = await guaranteeRelationship(cid, projectId, b);
+    if (typeof relationship === "string") { res.status(422).json({ error: relationship }); return; }
+    const status = String(b.status ?? "draft");
+    if (!["draft", "issued"].includes(status)) {
+      res.status(400).json({ error: "يبدأ خطاب الضمان كمسودة أو مُصدر" }); return;
+    }
+    const row = resultRows(await db.execute(sql`
+      INSERT INTO contracting_guarantees (
+        company_id, project_id, tender_id, contract_kind, owner_contract_id,
+        subcontract_id, parent_guarantee_id, bank_account_id, beneficiary_customer_id,
+        guarantee_number, guarantee_type, amount, issue_date, expiry_date,
+        status, purpose, notes, created_by_user_id
+      ) VALUES (
+        ${cid}, ${projectId}, ${relationship.tenderId}, ${relationship.contractKind},
+        ${relationship.ownerContractId}, ${relationship.subcontractId},
+        ${relationship.parentGuaranteeId}, ${bankAccountId}, ${beneficiaryCustomerId},
+        ${String(b.guaranteeNumber).trim()}, ${guaranteeType}, ${String(b.amount)},
+        ${String(b.issueDate)}, ${String(b.expiryDate)}, ${status},
+        ${b.purpose || null}, ${b.notes || null}, ${req.authUser?.id ?? null}
+      ) RETURNING *
+    `))[0];
+    res.status(201).json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر إنشاء خطاب الضمان" });
+  }
+});
+
+router.patch("/guarantees/:id", async (req, res) => {
+  const cid = await scope(req, res); if (!cid) return;
+  const id = positiveId(req.params.id);
+  if (!id) { res.status(400).json({ error: "خطاب الضمان غير صالح" }); return; }
+  const current = resultRows(await db.execute(sql`
+    SELECT project_id, guarantee_type FROM contracting_guarantees
+     WHERE id = ${id} AND company_id = ${cid} AND archived_at IS NULL LIMIT 1
+  `))[0];
+  if (!current) { res.status(404).json({ error: "خطاب الضمان غير موجود" }); return; }
+  const projectError = await ensureProject(cid, Number(current.project_id), req);
+  if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+  const b = req.body ?? {};
+  const relationshipFields = [
+    "projectId", "project_id", "tenderId", "tender_id", "contractKind", "contract_kind",
+    "contractId", "ownerContractId", "owner_contract_id", "subcontractId", "subcontract_id",
+    "parentGuaranteeId", "parent_guarantee_id", "guaranteeType", "guarantee_type",
+  ];
+  if (relationshipFields.some((field) => b[field] !== undefined)) {
+    res.status(409).json({
+      error: current.guarantee_type === "initial"
+        ? "لا يمكن تحويل الضمان الابتدائي أو تغيير روابطه؛ أنشئ ضمان أداء جديداً كابن له"
+        : "نوع وروابط خطاب الضمان غير قابلة للتعديل",
+    });
+    return;
+  }
+  res.status(405).json({ error: "استخدم PUT لتعديل البيانات أو مسار lifecycle لتغيير الحالة" });
+});
+
+router.put("/guarantees/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = positiveId(req.params.id);
+    if (!id) { res.status(400).json({ error: "خطاب الضمان غير صالح" }); return; }
+    const b = req.body ?? {};
+    const current = resultRows(await db.execute(sql`
+      SELECT * FROM contracting_guarantees
+       WHERE id = ${id} AND company_id = ${cid} AND archived_at IS NULL LIMIT 1
+    `))[0];
+    if (!current) { res.status(404).json({ error: "خطاب الضمان غير موجود" }); return; }
+    const projectError = await ensureProject(cid, Number(current.project_id), req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    for (const immutable of [
+      "projectId", "project_id", "tenderId", "tender_id", "contractKind", "contract_kind",
+      "contractId", "ownerContractId", "owner_contract_id", "subcontractId", "subcontract_id",
+      "parentGuaranteeId", "parent_guarantee_id", "guaranteeType", "guarantee_type", "status",
+    ]) {
+      if (b[immutable] !== undefined) {
+        res.status(409).json({ error: "نوع وروابط وحالة خطاب الضمان لا تعدل من نموذج البيانات؛ استخدم مسار دورة الحالة أو أنشئ ضماناً جديداً" }); return;
+      }
+    }
+    const bankAccountId = b.bankAccountId === undefined ? Number(current.bank_account_id) : positiveId(b.bankAccountId);
+    if (!bankAccountId) { res.status(400).json({ error: "البنك مطلوب" }); return; }
+    const bankError = await ensureGuaranteeBank(cid, bankAccountId);
+    if (bankError) { res.status(400).json({ error: bankError }); return; }
+    const beneficiaryCustomerId = b.beneficiaryCustomerId === undefined
+      ? current.beneficiary_customer_id == null ? null : Number(current.beneficiary_customer_id)
+      : positiveId(b.beneficiaryCustomerId);
+    if (beneficiaryCustomerId) {
+      if (!canAccessModule(req.authUser, "customers", "view")) {
+        res.status(403).json({ error: "لا تملك صلاحية عرض العملاء" }); return;
+      }
+      const customerError = await ensureGuaranteeCustomer(cid, beneficiaryCustomerId);
+      if (customerError) { res.status(400).json({ error: customerError }); return; }
+    }
+    const amount = b.amount === undefined ? current.amount : b.amount;
+    const amountError = validateNonNegative(amount, "قيمة خطاب الضمان");
+    if (amountError || Number(amount) <= 0) {
+      res.status(400).json({ error: amountError || "قيمة خطاب الضمان يجب أن تكون أكبر من صفر" }); return;
+    }
+    const issueDate = String(b.issueDate ?? current.issue_date);
+    const expiryDate = String(b.expiryDate ?? current.expiry_date);
+    if (expiryDate < issueDate) { res.status(400).json({ error: "تاريخ الانتهاء يجب ألا يسبق تاريخ الإصدار" }); return; }
+    const row = resultRows(await db.execute(sql`
+      UPDATE contracting_guarantees SET
+        bank_account_id = ${bankAccountId}, beneficiary_customer_id = ${beneficiaryCustomerId},
+        guarantee_number = ${String(b.guaranteeNumber ?? current.guarantee_number).trim()},
+        amount = ${String(amount)}, issue_date = ${issueDate}, expiry_date = ${expiryDate},
+        purpose = ${b.purpose === undefined ? current.purpose : b.purpose || null},
+        notes = ${b.notes === undefined ? current.notes : b.notes || null}, updated_at = NOW()
+       WHERE id = ${id} AND company_id = ${cid}
+       RETURNING *
+    `))[0];
+    res.json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر تعديل خطاب الضمان" });
+  }
+});
+
+router.put("/guarantees/:id/lifecycle", requirePermission("contracting", "approve"), async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = positiveId(req.params.id);
+    const nextStatus = String(req.body?.status ?? "");
+    if (!id || !GUARANTEE_STATUSES.has(nextStatus)) {
+      res.status(400).json({ error: "حالة خطاب الضمان غير صالحة" }); return;
+    }
+    const row = await db.transaction(async (tx) => {
+      const current = resultRows(await tx.execute(sql`
+        SELECT g.*, p.branch_id FROM contracting_guarantees g
+        JOIN contracting_projects p ON p.id = g.project_id AND p.company_id = g.company_id
+         WHERE g.id = ${id} AND g.company_id = ${cid} AND g.archived_at IS NULL FOR UPDATE
+      `))[0];
+      if (!current) throw Object.assign(new Error("خطاب الضمان غير موجود"), { status: 404 });
+      if (!projectBranchVisible(req, current.branch_id == null ? null : Number(current.branch_id))) {
+        throw Object.assign(new Error("ليس لديك صلاحية هذا الفرع"), { status: 403 });
+      }
+      if (!GUARANTEE_TRANSITIONS[String(current.status)]?.has(nextStatus)) {
+        throw Object.assign(new Error(`لا يمكن نقل خطاب الضمان من ${current.status} إلى ${nextStatus}`), { status: 409 });
+      }
+      const extendedExpiry = nextStatus === "extended"
+        ? String(req.body?.expiryDate ?? "")
+        : String(current.expiry_date);
+      if (nextStatus === "extended" && (!extendedExpiry || extendedExpiry <= String(current.expiry_date))) {
+        throw Object.assign(new Error("تمديد خطاب الضمان يتطلب تاريخ انتهاء جديداً لاحقاً للتاريخ الحالي"), { status: 422 });
+      }
+      return resultRows(await tx.execute(sql`
+        UPDATE contracting_guarantees SET status = ${nextStatus},
+          expiry_date = ${extendedExpiry},
+          released_at = ${nextStatus === "released" ? new Date() : current.released_at},
+          updated_at = NOW()
+         WHERE id = ${id} AND company_id = ${cid}
+         RETURNING *
+      `))[0];
+    });
+    res.json(row);
+  } catch (e: any) {
+    res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر تحديث دورة خطاب الضمان" });
+  }
+});
+
+router.delete("/guarantees/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = positiveId(req.params.id);
+    if (!id) { res.status(400).json({ error: "خطاب الضمان غير صالح" }); return; }
+    const current = resultRows(await db.execute(sql`
+      SELECT project_id FROM contracting_guarantees
+       WHERE company_id = ${cid} AND id = ${id} AND archived_at IS NULL LIMIT 1
+    `))[0];
+    if (!current) { res.status(404).json({ error: "خطاب الضمان غير موجود" }); return; }
+    const projectError = await ensureProject(cid, Number(current.project_id), req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    const child = resultRows(await db.execute(sql`
+      SELECT 1 FROM contracting_guarantees
+       WHERE company_id = ${cid} AND parent_guarantee_id = ${id} AND archived_at IS NULL LIMIT 1
+    `)).length;
+    if (child) { res.status(409).json({ error: "لا يمكن أرشفة ضمان ابتدائي مرتبط بضمان نهائي لاحق" }); return; }
+    const rows = resultRows(await db.execute(sql`
+      UPDATE contracting_guarantees SET archived_at = NOW(),
+        archived_by_user_id = ${req.authUser?.id ?? null}, updated_at = NOW()
+       WHERE id = ${id} AND company_id = ${cid} AND archived_at IS NULL
+       RETURNING id
+    `));
+    if (!rows.length) { res.status(404).json({ error: "خطاب الضمان غير موجود" }); return; }
+    res.json({ ok: true, archived: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذر أرشفة خطاب الضمان" });
+  }
+});
+
+router.get("/contracts/:kind/:id/guarantee-summary", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const kind = String(req.params.kind);
+    const id = positiveId(req.params.id);
+    if (!id || !["owner", "subcontract"].includes(kind)) {
+      res.status(400).json({ error: "العقد غير صالح" }); return;
+    }
+    const contract = resultRows(await db.execute(kind === "owner" ? sql`
+      SELECT project_id FROM contracting_owner_contracts WHERE id = ${id} AND company_id = ${cid}
+    ` : sql`
+      SELECT project_id FROM contracting_sub_contracts WHERE id = ${id} AND company_id = ${cid}
+    `))[0];
+    if (!contract) { res.status(404).json({ error: "العقد غير موجود" }); return; }
+    const projectError = await ensureProject(cid, Number(contract.project_id), req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    const rows = resultRows(await db.execute(sql`
+      SELECT guarantee_type AS "guaranteeType", status, count(*)::int AS count,
+             COALESCE(sum(amount), 0)::text AS amount
+        FROM contracting_guarantees
+       WHERE company_id = ${cid} AND archived_at IS NULL AND contract_kind = ${kind}
+         AND ${kind === "owner" ? sql`owner_contract_id = ${id}` : sql`subcontract_id = ${id}`}
+       GROUP BY guarantee_type, status ORDER BY guarantee_type, status
+    `));
+    res.json({
+      contractKind: kind,
+      contractId: id,
+      totalCount: rows.reduce((sum, item) => sum + Number(item.count), 0),
+      totalAmount: rows.reduce((sum, item) => sum + Number(item.amount), 0).toFixed(2),
+      rows,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذر تحميل ملخص ضمانات العقد" });
+  }
+});
+
+router.get("/guarantees/report", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const rootProjectId = positiveId(req.query.rootProjectId);
+    const allowed = getAllowedBranchIds(req);
+    const conditions: any[] = [sql`p.company_id = ${cid}`];
+    if (rootProjectId) conditions.push(sql`(p.id = ${rootProjectId} OR p.parent_id = ${rootProjectId})`);
+    if (allowed !== null) conditions.push(allowed.length
+      ? sql`p.branch_id IN (${sql.join(allowed.map(id => sql`${id}`), sql`, `)})`
+      : sql`false`);
+    const rows = resultRows(await db.execute(sql`
+      SELECT COALESCE(root.id, p.id) AS "rootProjectId",
+             COALESCE(root.code, p.code) AS "rootProjectCode",
+             COALESCE(root.name_ar, p.name_ar) AS "rootProjectName",
+             p.id AS "projectId", p.code AS "projectCode", p.name_ar AS "projectName",
+             g.contract_kind AS "contractKind",
+             COALESCE(g.owner_contract_id, g.subcontract_id) AS "contractId",
+             COALESCE(oc.contract_number, sc.contract_number) AS "contractNumber",
+             count(g.id)::int AS "guaranteeCount",
+             COALESCE(sum(g.amount), 0)::text AS "guaranteeAmount"
+        FROM contracting_projects p
+        LEFT JOIN contracting_projects root ON root.id = p.parent_id AND root.company_id = p.company_id
+        LEFT JOIN contracting_guarantees g ON g.project_id = p.id AND g.company_id = p.company_id AND g.archived_at IS NULL
+        LEFT JOIN contracting_owner_contracts oc ON oc.id = g.owner_contract_id
+        LEFT JOIN contracting_sub_contracts sc ON sc.id = g.subcontract_id
+       WHERE ${sql.join(conditions, sql` AND `)}
+       GROUP BY COALESCE(root.id, p.id), COALESCE(root.code, p.code), COALESCE(root.name_ar, p.name_ar),
+                p.id, p.code, p.name_ar, g.contract_kind,
+                COALESCE(g.owner_contract_id, g.subcontract_id),
+                COALESCE(oc.contract_number, sc.contract_number)
+       ORDER BY COALESCE(root.code, p.code), p.code, "contractNumber"
+    `));
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذر تحميل تقرير الضمانات" });
+  }
+});
+
+router.get("/guarantees/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = positiveId(req.params.id);
+    if (!id) { res.status(400).json({ error: "خطاب الضمان غير صالح" }); return; }
+    const row = resultRows(await db.execute(sql`
+      SELECT g.*, p.code AS "projectCode", p.name_ar AS "projectName",
+             t.tender_number AS "tenderNumber", t.title AS "tenderTitle",
+             COALESCE(oc.contract_number, sc.contract_number) AS "contractNumber",
+             b.name_ar AS "bankName", c.name_ar AS "beneficiaryName",
+             pg.guarantee_number AS "parentGuaranteeNumber"
+        FROM contracting_guarantees g
+        JOIN contracting_projects p ON p.id = g.project_id AND p.company_id = g.company_id
+        LEFT JOIN contracting_tenders t ON t.id = g.tender_id AND t.company_id = g.company_id
+        LEFT JOIN contracting_owner_contracts oc ON oc.id = g.owner_contract_id
+        LEFT JOIN contracting_sub_contracts sc ON sc.id = g.subcontract_id
+        JOIN bank_accounts b ON b.id = g.bank_account_id AND b.company_id = g.company_id
+        LEFT JOIN customers c ON c.id = g.beneficiary_customer_id AND c.company_id = g.company_id
+        LEFT JOIN contracting_guarantees pg ON pg.id = g.parent_guarantee_id AND pg.company_id = g.company_id
+       WHERE g.id = ${id} AND g.company_id = ${cid} AND g.archived_at IS NULL
+       LIMIT 1
+    `))[0];
+    if (!row) { res.status(404).json({ error: "خطاب الضمان غير موجود" }); return; }
+    const projectError = await ensureProject(cid, Number(row.project_id), req);
+    if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    res.json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "تعذر تحميل خطاب الضمان" });
+  }
 });
 
 // ─────────────────── PROGRESS BILLS (مستخلصات) ───────────────────
@@ -3049,6 +3971,16 @@ router.post("/projects/:projectId/bills", async (req, res) => {
     if (contractIntegrityError) {
       res.status(400).json({ error: contractIntegrityError }); return;
     }
+    const contractApprovalError = await ensureApprovedContract(
+      cid,
+      projectId,
+      direction,
+      b.ownerContractId ? Number(b.ownerContractId) : null,
+      b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
+    );
+    if (contractApprovalError) {
+      res.status(422).json({ error: contractApprovalError }); return;
+    }
     const billRecoverySettings = await contractAdvanceRecoverySettings(
       cid,
       projectId,
@@ -3298,6 +4230,27 @@ router.put("/bills/:id", async (req, res) => {
     });
     if (contractIntegrityError) {
       res.status(400).json({ error: contractIntegrityError }); return;
+    }
+    const approvalOwnerContractId = upd.ownerContractId !== undefined ? upd.ownerContractId : cur.ownerContractId;
+    const approvalSubcontractId = upd.subcontractorContractId !== undefined
+      ? upd.subcontractorContractId
+      : cur.subcontractorContractId;
+    const executionRequested = [
+      "progressPercent", "grossAmount", "retentionPercent", "retentionAmount",
+      "dueAmount", "vatPercent", "vatAmount", "netAmount", "paidAmount",
+    ].some((key) => b[key] !== undefined)
+      || (b.status !== undefined && String(b.status) !== "draft");
+    if (executionRequested) {
+      const contractApprovalError = await ensureApprovedContract(
+        cid,
+        cur.projectId,
+        direction,
+        approvalOwnerContractId,
+        approvalSubcontractId,
+      );
+      if (contractApprovalError) {
+        res.status(422).json({ error: contractApprovalError }); return;
+      }
     }
 
     const finalOwnerContractId = upd.ownerContractId !== undefined

@@ -102,6 +102,7 @@ import contractingAccountingRouter from "./contracting-accounting";
 import contractingBillDetailsRouter from "./contracting-bill-details";
 import contractingBoqRouter from "./contracting-boq";
 import contractingAiRouter from "./contracting-ai";
+import contractingCostAllocationsRouter from "./contracting-cost-allocations";
 import maintenanceRouter from "./maintenance";
 import installmentsRouter from "./installments";
 import hotelRouter from "./hotel";
@@ -362,6 +363,9 @@ router.use("/contracting", contractingProjectReportsRouter);
 // or stock posting; those remain behind contracting-accountingRouter.
 router.use("/contracting", contractingBillDetailsRouter);
 router.use("/contracting", contractingBoqRouter);
+// Analytical source references must be resolved before the legacy contracting
+// router. Tender/guarantee endpoints remain owned by contractingRouter below.
+router.use("/contracting", contractingCostAllocationsRouter);
 router.use("/contracting", contractingRouter);
 // Dedicated namespace for integrations that do not use legacy contracting
 // CRUD paths; it shares the same tenant and permission guards.

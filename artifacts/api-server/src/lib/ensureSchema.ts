@@ -12,6 +12,9 @@ import { ensureContractCreateIdempotencySchema } from "./contracting-contract-cr
 import { ensureBillCreateIdempotencySchema } from "./contracting-bill-create-idempotency.js";
 import { ensureContractingProjectIntegrity } from "./contracting-integrity.js";
 import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
+import { ensureContractingCostAllocationTables } from "./contracting-cost-allocation-service.js";
+import { ensureContractingExecutionSchema } from "./contracting-execution-storage.js";
+import { ensureContractingGuaranteeTables } from "./contracting-guarantees-storage.js";
 
 let healPromise: Promise<void> | null = null;
 type SchemaReconciliationState =
@@ -4373,6 +4376,9 @@ async function runHeal(options: {
   // every active database before strict column inspection (startup, agent
   // upgrade, and request readiness), not only on the first accounting route.
   await ensureContractingAccountingTables();
+  await ensureContractingExecutionSchema();
+  await ensureContractingCostAllocationTables();
+  await ensureContractingGuaranteeTables();
   await ensureContractingProjectIntegrity();
 
   // These release-managed tables have complete additive DDL here, unlike
@@ -4477,6 +4483,9 @@ async function runHeal(options: {
   // memoized promise). Do not suppress missing tables via the optional list.
   await ensureContractingBillDetailsTables();
   await ensureContractingAccountingTables();
+  await ensureContractingExecutionSchema();
+  await ensureContractingCostAllocationTables();
+  await ensureContractingGuaranteeTables();
   await ensureContractingProjectIntegrity();
 
   // These release-managed tables have complete additive DDL here, unlike
