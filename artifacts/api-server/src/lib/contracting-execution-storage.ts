@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import {
   db,
+  CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED,
   contractingResourcesTable,
   contractingWorkItemResourcesTable,
   contractingWorkItemsTable,
@@ -92,7 +93,8 @@ export async function ensureContractingExecutionSchema(): Promise<void> {
           ADD CONSTRAINT ctg_wi_not_own_parent_ck
           CHECK (parent_work_item_id IS NULL OR parent_work_item_id <> id);
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_wi_parent_project_fk') THEN
+       IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_wi_parent_project_fk') THEN
         ALTER TABLE contracting_work_items
           ADD CONSTRAINT ctg_wi_parent_project_fk
           FOREIGN KEY (company_id, project_id, parent_work_item_id)
@@ -160,18 +162,30 @@ export async function ensureContractingExecutionSchema(): Promise<void> {
       notes TEXT,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      CONSTRAINT ctg_wir_work_item_project_fk
-        FOREIGN KEY (company_id, project_id, work_item_id)
-        REFERENCES contracting_work_items(company_id, project_id, id) ON DELETE CASCADE,
-      CONSTRAINT ctg_wir_resource_project_fk
-        FOREIGN KEY (company_id, project_id, resource_id)
-        REFERENCES contracting_resources(company_id, project_id, id) ON DELETE RESTRICT,
       CONSTRAINT ctg_wir_non_negative_ck CHECK (
         planned_qty >= 0 AND estimated_unit_cost >= 0 AND estimated_total_cost >= 0
         AND (wastage_percent IS NULL OR (wastage_percent >= 0 AND wastage_percent <= 100))
       )
     )
   `);
+  if (CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED) {
+    await db.execute(sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_wir_work_item_project_fk') THEN
+          ALTER TABLE contracting_work_item_resources
+            ADD CONSTRAINT ctg_wir_work_item_project_fk
+            FOREIGN KEY (company_id, project_id, work_item_id)
+            REFERENCES contracting_work_items(company_id, project_id, id) ON DELETE CASCADE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_wir_resource_project_fk') THEN
+          ALTER TABLE contracting_work_item_resources
+            ADD CONSTRAINT ctg_wir_resource_project_fk
+            FOREIGN KEY (company_id, project_id, resource_id)
+            REFERENCES contracting_resources(company_id, project_id, id) ON DELETE RESTRICT;
+        END IF;
+      END $$;
+    `);
+  }
   await db.execute(sql`
     CREATE UNIQUE INDEX IF NOT EXISTS ctg_wir_work_item_resource_uidx
       ON contracting_work_item_resources(company_id, project_id, work_item_id, resource_id)

@@ -13,6 +13,7 @@ import {
   check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED } from "./contractingPublishStage";
 import { companiesTable } from "./companies";
 import { customersTable } from "./customers";
 import { usersTable } from "./users";
@@ -71,24 +72,26 @@ export const contractingTendersTable = pgTable(
       ${t.status} IN ('draft', 'submitted', 'under_review', 'awarded', 'lost', 'cancelled')
       AND ((${t.status} = 'awarded') = (${t.awardedContractKind} IS NOT NULL))
     `),
-    ownerContractProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.awardedOwnerContractId],
-      foreignColumns: [
-        contractingOwnerContractsTable.companyId,
-        contractingOwnerContractsTable.projectId,
-        contractingOwnerContractsTable.id,
-      ],
-      name: "ctg_tender_owner_contract_project_fk",
-    }).onDelete("restrict"),
-    subcontractProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.awardedSubcontractId],
-      foreignColumns: [
-        contractingSubContractsTable.companyId,
-        contractingSubContractsTable.projectId,
-        contractingSubContractsTable.id,
-      ],
-      name: "ctg_tender_subcontract_project_fk",
-    }).onDelete("restrict"),
+    ...(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? {
+      ownerContractProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.awardedOwnerContractId],
+        foreignColumns: [
+          contractingOwnerContractsTable.companyId,
+          contractingOwnerContractsTable.projectId,
+          contractingOwnerContractsTable.id,
+        ],
+        name: "ctg_tender_owner_contract_project_fk",
+      }).onDelete("restrict"),
+      subcontractProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.awardedSubcontractId],
+        foreignColumns: [
+          contractingSubContractsTable.companyId,
+          contractingSubContractsTable.projectId,
+          contractingSubContractsTable.id,
+        ],
+        name: "ctg_tender_subcontract_project_fk",
+      }).onDelete("restrict"),
+    } : {}),
   }),
 );
 
@@ -166,38 +169,40 @@ export const contractingGuaranteesTable = pgTable(
       AND (${t.tenderId} IS NULL OR ${t.guaranteeType} = 'initial'
         OR (${t.guaranteeType} = 'performance' AND ${t.parentGuaranteeId} IS NOT NULL))
     `),
-    tenderProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.tenderId],
-      foreignColumns: [
-        contractingTendersTable.companyId,
-        contractingTendersTable.projectId,
-        contractingTendersTable.id,
-      ],
-      name: "ctg_guarantee_tender_project_fk",
-    }).onDelete("restrict"),
-    ownerContractProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.ownerContractId],
-      foreignColumns: [
-        contractingOwnerContractsTable.companyId,
-        contractingOwnerContractsTable.projectId,
-        contractingOwnerContractsTable.id,
-      ],
-      name: "ctg_guarantee_owner_contract_project_fk",
-    }).onDelete("restrict"),
-    subcontractProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.subcontractId],
-      foreignColumns: [
-        contractingSubContractsTable.companyId,
-        contractingSubContractsTable.projectId,
-        contractingSubContractsTable.id,
-      ],
-      name: "ctg_guarantee_subcontract_project_fk",
-    }).onDelete("restrict"),
-    parentProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.parentGuaranteeId],
-      foreignColumns: [t.companyId, t.projectId, t.id],
-      name: "ctg_guarantee_parent_project_fk",
-    }).onDelete("restrict"),
+    ...(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? {
+      tenderProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.tenderId],
+        foreignColumns: [
+          contractingTendersTable.companyId,
+          contractingTendersTable.projectId,
+          contractingTendersTable.id,
+        ],
+        name: "ctg_guarantee_tender_project_fk",
+      }).onDelete("restrict"),
+      ownerContractProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.ownerContractId],
+        foreignColumns: [
+          contractingOwnerContractsTable.companyId,
+          contractingOwnerContractsTable.projectId,
+          contractingOwnerContractsTable.id,
+        ],
+        name: "ctg_guarantee_owner_contract_project_fk",
+      }).onDelete("restrict"),
+      subcontractProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.subcontractId],
+        foreignColumns: [
+          contractingSubContractsTable.companyId,
+          contractingSubContractsTable.projectId,
+          contractingSubContractsTable.id,
+        ],
+        name: "ctg_guarantee_subcontract_project_fk",
+      }).onDelete("restrict"),
+      parentProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.parentGuaranteeId],
+        foreignColumns: [t.companyId, t.projectId, t.id],
+        name: "ctg_guarantee_parent_project_fk",
+      }).onDelete("restrict"),
+    } : {}),
   }),
 );
 

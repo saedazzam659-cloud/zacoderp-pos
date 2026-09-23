@@ -45,6 +45,12 @@ Managed Publish needs explicit prerequisite-order review for new composite forei
 
 **How to apply:** Keep declarative UNIQUE definitions matched to real database constraints and check that every referenced key is created before its FK. Do not claim publishing is fixed solely because all statements appear. Do not bypass this failure with production writes, startup migrations, or silently weakened relationships.
 
+With explicit user approval, dependency-order failures may use two Publish stages: prerequisite keys first, then new composite relationships.
+
+**Why:** The generated single-pass ordering could not express prerequisite-first creation. The user approved a staged release, not deletion of production data or permanent removal of relationship protection.
+
+**How to apply:** Defer only relationships confirmed absent from production; retain application scoping and existing production protections. Before the second stage, verify the prerequisite keys in production read-only. Never mark the full migration complete after only the prerequisite release.
+
 Release-managed application tables must be created in the shared active-database reconciliation pass before strict missing-table validation, not only during central startup or a lazy feature request.
 
 **Why:** External-agent upgrade and request-readiness paths can validate newly exported schema tables before central-only initialization ever reaches their database.

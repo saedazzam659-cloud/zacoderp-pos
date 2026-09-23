@@ -1,4 +1,8 @@
-import { db, getActiveExternalDb } from "@workspace/db";
+import {
+  CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED,
+  db,
+  getActiveExternalDb,
+} from "@workspace/db";
 import { sql } from "drizzle-orm";
 
 export type ContractingIntegrityDiagnostics = {
@@ -182,7 +186,8 @@ async function runContractingProjectIntegrityMigration(): Promise<ContractingInt
 
     await tx.execute(sql`
       DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_proj_parent_company_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_proj_parent_company_fk') THEN
           ALTER TABLE contracting_projects ADD CONSTRAINT ctg_proj_parent_company_fk
             FOREIGN KEY (company_id, parent_id)
             REFERENCES contracting_projects(company_id, id) ON DELETE RESTRICT NOT VALID;
@@ -203,12 +208,14 @@ async function runContractingProjectIntegrityMigration(): Promise<ContractingInt
             )
           );
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_bill_owner_contract_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_bill_owner_contract_project_fk') THEN
           ALTER TABLE contracting_progress_bills ADD CONSTRAINT ctg_bill_owner_contract_project_fk
             FOREIGN KEY (company_id, project_id, owner_contract_id)
             REFERENCES contracting_owner_contracts(company_id, project_id, id) ON DELETE RESTRICT NOT VALID;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_bill_subcontract_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_bill_subcontract_project_fk') THEN
           ALTER TABLE contracting_progress_bills ADD CONSTRAINT ctg_bill_subcontract_project_fk
             FOREIGN KEY (company_id, project_id, subcontractor_contract_id)
             REFERENCES contracting_sub_contracts(company_id, project_id, id) ON DELETE RESTRICT NOT VALID;
@@ -222,17 +229,20 @@ async function runContractingProjectIntegrityMigration(): Promise<ContractingInt
               AND subcontractor_contract_id IS NOT NULL)
           ) NOT VALID;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_boq_owner_contract_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_boq_owner_contract_project_fk') THEN
           ALTER TABLE contracting_contract_boq_lines ADD CONSTRAINT ctg_boq_owner_contract_project_fk
             FOREIGN KEY (company_id, project_id, owner_contract_id)
             REFERENCES contracting_owner_contracts(company_id, project_id, id) ON DELETE RESTRICT NOT VALID;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_boq_subcontract_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_boq_subcontract_project_fk') THEN
           ALTER TABLE contracting_contract_boq_lines ADD CONSTRAINT ctg_boq_subcontract_project_fk
             FOREIGN KEY (company_id, project_id, subcontractor_contract_id)
             REFERENCES contracting_sub_contracts(company_id, project_id, id) ON DELETE RESTRICT NOT VALID;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_boq_source_owner_project_item_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_boq_source_owner_project_item_fk') THEN
           ALTER TABLE contracting_contract_boq_lines ADD CONSTRAINT ctg_boq_source_owner_project_item_fk
             FOREIGN KEY (company_id, project_id, source_owner_line_id, work_item_id)
             REFERENCES contracting_contract_boq_lines(company_id, project_id, id, work_item_id)
@@ -338,24 +348,36 @@ async function runContractingProjectIntegrityMigration(): Promise<ContractingInt
 
     if (!grouped.project_parent) {
       await tx.execute(sql`
-        ALTER TABLE contracting_projects VALIDATE CONSTRAINT ctg_proj_parent_company_fk;
         ALTER TABLE contracting_projects VALIDATE CONSTRAINT ctg_proj_not_own_parent_ck
       `);
+      if (CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED) {
+        await tx.execute(sql`
+          ALTER TABLE contracting_projects VALIDATE CONSTRAINT ctg_proj_parent_company_fk
+        `);
+      }
     }
     if (!grouped.progress_bill_contract) {
       await tx.execute(sql`
-        ALTER TABLE contracting_progress_bills VALIDATE CONSTRAINT ctg_bill_exact_direction_contract_ck;
-        ALTER TABLE contracting_progress_bills VALIDATE CONSTRAINT ctg_bill_owner_contract_project_fk;
-        ALTER TABLE contracting_progress_bills VALIDATE CONSTRAINT ctg_bill_subcontract_project_fk
+        ALTER TABLE contracting_progress_bills VALIDATE CONSTRAINT ctg_bill_exact_direction_contract_ck
       `);
+      if (CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED) {
+        await tx.execute(sql`
+          ALTER TABLE contracting_progress_bills VALIDATE CONSTRAINT ctg_bill_owner_contract_project_fk;
+          ALTER TABLE contracting_progress_bills VALIDATE CONSTRAINT ctg_bill_subcontract_project_fk
+        `);
+      }
     }
     if (!grouped.boq_contract && !grouped.boq_source_owner) {
       await tx.execute(sql`
-        ALTER TABLE contracting_contract_boq_lines VALIDATE CONSTRAINT ctg_boq_exact_direction_contract_ck;
-        ALTER TABLE contracting_contract_boq_lines VALIDATE CONSTRAINT ctg_boq_owner_contract_project_fk;
-        ALTER TABLE contracting_contract_boq_lines VALIDATE CONSTRAINT ctg_boq_subcontract_project_fk;
-        ALTER TABLE contracting_contract_boq_lines VALIDATE CONSTRAINT ctg_boq_source_owner_project_item_fk
+        ALTER TABLE contracting_contract_boq_lines VALIDATE CONSTRAINT ctg_boq_exact_direction_contract_ck
       `);
+      if (CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED) {
+        await tx.execute(sql`
+          ALTER TABLE contracting_contract_boq_lines VALIDATE CONSTRAINT ctg_boq_owner_contract_project_fk;
+          ALTER TABLE contracting_contract_boq_lines VALIDATE CONSTRAINT ctg_boq_subcontract_project_fk;
+          ALTER TABLE contracting_contract_boq_lines VALIDATE CONSTRAINT ctg_boq_source_owner_project_item_fk
+        `);
+      }
     }
     return {
       deferredValidation: invalid.length > 0,

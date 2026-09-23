@@ -1,4 +1,8 @@
-import { db, getActiveExternalDb } from "@workspace/db";
+import {
+  CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED,
+  db,
+  getActiveExternalDb,
+} from "@workspace/db";
 import { sql } from "drizzle-orm";
 
 let centralReady: Promise<void> | null = null;
@@ -104,12 +108,14 @@ async function createTables(): Promise<void> {
             AND ((status = 'awarded') = (awarded_contract_kind IS NOT NULL))
           );
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_tender_owner_contract_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_tender_owner_contract_project_fk') THEN
           ALTER TABLE contracting_tenders ADD CONSTRAINT ctg_tender_owner_contract_project_fk
             FOREIGN KEY (company_id, project_id, awarded_owner_contract_id)
             REFERENCES contracting_owner_contracts(company_id, project_id, id) ON DELETE RESTRICT;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_tender_subcontract_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_tender_subcontract_project_fk') THEN
           ALTER TABLE contracting_tenders ADD CONSTRAINT ctg_tender_subcontract_project_fk
             FOREIGN KEY (company_id, project_id, awarded_subcontract_id)
             REFERENCES contracting_sub_contracts(company_id, project_id, id) ON DELETE RESTRICT;
@@ -140,22 +146,26 @@ async function createTables(): Promise<void> {
               OR (guarantee_type = 'performance' AND parent_guarantee_id IS NOT NULL))
           );
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_tender_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_tender_project_fk') THEN
           ALTER TABLE contracting_guarantees ADD CONSTRAINT ctg_guarantee_tender_project_fk
             FOREIGN KEY (company_id, project_id, tender_id)
             REFERENCES contracting_tenders(company_id, project_id, id) ON DELETE RESTRICT;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_owner_contract_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_owner_contract_project_fk') THEN
           ALTER TABLE contracting_guarantees ADD CONSTRAINT ctg_guarantee_owner_contract_project_fk
             FOREIGN KEY (company_id, project_id, owner_contract_id)
             REFERENCES contracting_owner_contracts(company_id, project_id, id) ON DELETE RESTRICT;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_subcontract_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_subcontract_project_fk') THEN
           ALTER TABLE contracting_guarantees ADD CONSTRAINT ctg_guarantee_subcontract_project_fk
             FOREIGN KEY (company_id, project_id, subcontract_id)
             REFERENCES contracting_sub_contracts(company_id, project_id, id) ON DELETE RESTRICT;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_parent_project_fk') THEN
+        IF ${sql.raw(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? "TRUE" : "FALSE")}
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_guarantee_parent_project_fk') THEN
           ALTER TABLE contracting_guarantees ADD CONSTRAINT ctg_guarantee_parent_project_fk
             FOREIGN KEY (company_id, project_id, parent_guarantee_id)
             REFERENCES contracting_guarantees(company_id, project_id, id) ON DELETE RESTRICT;

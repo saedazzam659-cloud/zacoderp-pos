@@ -12,6 +12,7 @@ import {
   check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED } from "./contractingPublishStage";
 import { companiesTable } from "./companies";
 import {
   contractingProjectsTable,
@@ -82,29 +83,31 @@ export const contractingContractBoqLinesTable = pgTable(
       (${t.direction} = 'subcontract' AND ${t.ownerContractId} IS NULL
         AND ${t.subcontractorContractId} IS NOT NULL)
     `),
-    ownerContractProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.ownerContractId],
-      foreignColumns: [
-        contractingOwnerContractsTable.companyId,
-        contractingOwnerContractsTable.projectId,
-        contractingOwnerContractsTable.id,
-      ],
-      name: "ctg_boq_owner_contract_project_fk",
-    }).onDelete("restrict"),
-    subcontractProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.subcontractorContractId],
-      foreignColumns: [
-        contractingSubContractsTable.companyId,
-        contractingSubContractsTable.projectId,
-        contractingSubContractsTable.id,
-      ],
-      name: "ctg_boq_subcontract_project_fk",
-    }).onDelete("restrict"),
-    sourceOwnerProjectWorkItemFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.sourceOwnerLineId, t.workItemId],
-      foreignColumns: [t.companyId, t.projectId, t.id, t.workItemId],
-      name: "ctg_boq_source_owner_project_item_fk",
-    }).onDelete("restrict"),
+    ...(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? {
+      ownerContractProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.ownerContractId],
+        foreignColumns: [
+          contractingOwnerContractsTable.companyId,
+          contractingOwnerContractsTable.projectId,
+          contractingOwnerContractsTable.id,
+        ],
+        name: "ctg_boq_owner_contract_project_fk",
+      }).onDelete("restrict"),
+      subcontractProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.subcontractorContractId],
+        foreignColumns: [
+          contractingSubContractsTable.companyId,
+          contractingSubContractsTable.projectId,
+          contractingSubContractsTable.id,
+        ],
+        name: "ctg_boq_subcontract_project_fk",
+      }).onDelete("restrict"),
+      sourceOwnerProjectWorkItemFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.sourceOwnerLineId, t.workItemId],
+        foreignColumns: [t.companyId, t.projectId, t.id, t.workItemId],
+        name: "ctg_boq_source_owner_project_item_fk",
+      }).onDelete("restrict"),
+    } : {}),
   }),
 );
 

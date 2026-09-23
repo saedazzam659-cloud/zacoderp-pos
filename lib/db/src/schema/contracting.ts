@@ -11,6 +11,7 @@ import { usersTable } from "./users";
 import { itemsTable, unitsTable, warehousesTable } from "./inventory";
 import { costCentersTable } from "./costCenters";
 import { sql } from "drizzle-orm";
+import { CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED } from "./contractingPublishStage";
 
 // ─────────────────────────────────────────────────────────────────────
 // Contracting / Construction ERP module (نظام إدارة المقاولات)
@@ -78,11 +79,13 @@ export const contractingProjectsTable = pgTable(
     byCostCenter:index("ctg_proj_cost_center_idx").on(t.companyId, t.costCenterId),
     byParent:    index("ctg_proj_parent_idx").on(t.companyId, t.parentId),
     companyIdIdUq: unique("ctg_proj_company_id_id_uq").on(t.companyId, t.id),
-    parentProjectFk: foreignKey({
-      columns: [t.companyId, t.parentId],
-      foreignColumns: [t.companyId, t.id],
-      name: "ctg_proj_parent_company_fk",
-    }).onDelete("restrict"),
+    ...(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? {
+      parentProjectFk: foreignKey({
+        columns: [t.companyId, t.parentId],
+        foreignColumns: [t.companyId, t.id],
+        name: "ctg_proj_parent_company_fk",
+      }).onDelete("restrict"),
+    } : {}),
     notOwnParent: check("ctg_proj_not_own_parent_ck", sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`),
   }),
 );
@@ -156,11 +159,13 @@ export const contractingWorkItemsTable = pgTable(
     byParent: index("ctg_wi_parent_idx").on(t.companyId, t.projectId, t.parentWorkItemId),
     byCostCenter: index("ctg_wi_cost_center_idx").on(t.companyId, t.costCenterId),
     companyProjectIdUq: unique("ctg_wi_company_project_id_uq").on(t.companyId, t.projectId, t.id),
-    parentWorkItemFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.parentWorkItemId],
-      foreignColumns: [t.companyId, t.projectId, t.id],
-      name: "ctg_wi_parent_project_fk",
-    }).onDelete("restrict"),
+    ...(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? {
+      parentWorkItemFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.parentWorkItemId],
+        foreignColumns: [t.companyId, t.projectId, t.id],
+        name: "ctg_wi_parent_project_fk",
+      }).onDelete("restrict"),
+    } : {}),
     notOwnParent: check("ctg_wi_not_own_parent_ck", sql`${t.parentWorkItemId} IS NULL OR ${t.parentWorkItemId} <> ${t.id}`),
   }),
 );
@@ -242,24 +247,26 @@ export const contractingWorkItemResourcesTable = pgTable(
     byResource: index("ctg_wir_resource_idx").on(t.companyId, t.projectId, t.resourceId),
     oneResourcePerWorkItem: uniqueIndex("ctg_wir_work_item_resource_uidx")
       .on(t.companyId, t.projectId, t.workItemId, t.resourceId),
-    workItemProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.workItemId],
-      foreignColumns: [
-        contractingWorkItemsTable.companyId,
-        contractingWorkItemsTable.projectId,
-        contractingWorkItemsTable.id,
-      ],
-      name: "ctg_wir_work_item_project_fk",
-    }).onDelete("cascade"),
-    resourceProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.resourceId],
-      foreignColumns: [
-        contractingResourcesTable.companyId,
-        contractingResourcesTable.projectId,
-        contractingResourcesTable.id,
-      ],
-      name: "ctg_wir_resource_project_fk",
-    }).onDelete("restrict"),
+    ...(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? {
+      workItemProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.workItemId],
+        foreignColumns: [
+          contractingWorkItemsTable.companyId,
+          contractingWorkItemsTable.projectId,
+          contractingWorkItemsTable.id,
+        ],
+        name: "ctg_wir_work_item_project_fk",
+      }).onDelete("cascade"),
+      resourceProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.resourceId],
+        foreignColumns: [
+          contractingResourcesTable.companyId,
+          contractingResourcesTable.projectId,
+          contractingResourcesTable.id,
+        ],
+        name: "ctg_wir_resource_project_fk",
+      }).onDelete("restrict"),
+    } : {}),
     nonNegative: check("ctg_wir_non_negative_ck", sql`
       ${t.plannedQty} >= 0
       AND ${t.estimatedUnitCost} >= 0
@@ -491,24 +498,26 @@ export const contractingProgressBillsTable = pgTable(
           AND ${t.subcontractorContractId} IS NOT NULL AND ${t.contractorId} IS NOT NULL)
       )
     `),
-    ownerContractProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.ownerContractId],
-      foreignColumns: [
-        contractingOwnerContractsTable.companyId,
-        contractingOwnerContractsTable.projectId,
-        contractingOwnerContractsTable.id,
-      ],
-      name: "ctg_bill_owner_contract_project_fk",
-    }).onDelete("restrict"),
-    subcontractProjectFk: foreignKey({
-      columns: [t.companyId, t.projectId, t.subcontractorContractId],
-      foreignColumns: [
-        contractingSubContractsTable.companyId,
-        contractingSubContractsTable.projectId,
-        contractingSubContractsTable.id,
-      ],
-      name: "ctg_bill_subcontract_project_fk",
-    }).onDelete("restrict"),
+    ...(CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED ? {
+      ownerContractProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.ownerContractId],
+        foreignColumns: [
+          contractingOwnerContractsTable.companyId,
+          contractingOwnerContractsTable.projectId,
+          contractingOwnerContractsTable.id,
+        ],
+        name: "ctg_bill_owner_contract_project_fk",
+      }).onDelete("restrict"),
+      subcontractProjectFk: foreignKey({
+        columns: [t.companyId, t.projectId, t.subcontractorContractId],
+        foreignColumns: [
+          contractingSubContractsTable.companyId,
+          contractingSubContractsTable.projectId,
+          contractingSubContractsTable.id,
+        ],
+        name: "ctg_bill_subcontract_project_fk",
+      }).onDelete("restrict"),
+    } : {}),
   }),
 );
 
