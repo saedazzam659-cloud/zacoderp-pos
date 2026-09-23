@@ -67,6 +67,13 @@ const UNSAFE_COMPANY_SETTING = /(?:^|_)(?:id|company_id|code|status|domain|ident
 
 export type ForeignKey = {
   column: string; referencedTable: string; referencedColumn: string; nullable: boolean;
+  /**
+   * Present on backups produced after composite-FK support.  `group` is a
+   * catalog-stable description of the ordered tuple (never the constraint
+   * name, which may differ between servers).  Missing fields mean a legacy
+   * single-column FK.
+   */
+  group?: string; position?: number; size?: number;
 };
 export type BackupTable = {
   name: string; primaryKey: string | null; primaryKeys: string[]; columns: string[]; foreignKeys: ForeignKey[];
@@ -293,7 +300,64 @@ export function topologicalTableOrder(tables: Record<string, BackupTable>): stri
   return ordered;
 }
 function fkSignature(fk: ForeignKey): string {
-  return `${fk.column}\0${fk.referencedTable}\0${fk.referencedColumn}\0${fk.nullable ? "1" : "0"}`;
+  const tuple = (fk.size ?? 1) > 1 ? `\0${fk.group ?? ""}\0${fk.position ?? 0}\0${fk.size}` : "";
+  return `${fk.column}\0${fk.referencedTable}\0${fk.referencedColumn}\0${fk.nullable ? "1" : "0"}${tuple}`;
+}
+export type ForeignKeyGroup = { key: string; foreignKeys: ForeignKey[]; referencedTable: string };
+export function foreignKeyGroups(table: BackupTable): ForeignKeyGroup[] {
+  const grouped = new Map<string, ForeignKey[]>();
+  for (const fk of table.foreignKeys) {
+    const key = (fk.size ?? 1) > 1 && fk.group ? fk.group : `legacy:${fk.column}:${fk.referencedTable}:${fk.referencedColumn}`;
+    const current = grouped.get(key) ?? [];
+    current.push(fk);
+    grouped.set(key, current);
+  }
+  return [...grouped].map(([key, foreignKeys]) => ({
+    key,
+    foreignKeys: foreignKeys.sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
+    referencedTable: foreignKeys[0].referencedTable,
+  }));
+}
+function tupleKey(values: unknown[]): string {
+  return values.map(restoreReferenceKey).join("\0");
+}
+export function sourceForeignKeyTupleIndexes(
+  payload: FullCompanyPayload,
+  tables: Record<string, BackupTable>,
+): Map<string, Map<string, number>> {
+  const indexes = new Map<string, Map<string, number>>();
+  for (const table of Object.values(tables)) {
+    for (const group of foreignKeyGroups(table)) {
+      if (indexes.has(group.key)) continue;
+      const index = new Map<string, number>();
+      for (const parent of payload.data[group.referencedTable] ?? []) {
+        const tuple = group.foreignKeys.map((foreignKey) => parent[foreignKey.referencedColumn]);
+        if (tuple.some((value) => value == null)) continue;
+        const key = tupleKey(tuple);
+        index.set(key, (index.get(key) ?? 0) + 1);
+      }
+      indexes.set(group.key, index);
+    }
+  }
+  return indexes;
+}
+export function compositeTargetTuple(
+  group: ForeignKeyGroup,
+  parent: BackupTable,
+  source: Record<string, unknown>,
+  targetValues: Record<string, unknown>,
+  newId: unknown,
+): { sourceKey: string; targetTuple: unknown[] } {
+  const sourceTuple = group.foreignKeys.map((foreignKey) => source[foreignKey.referencedColumn]);
+  if (sourceTuple.some((value) => value == null)) {
+    throw new Error(`Cannot map null composite FK target ${parent.name}`);
+  }
+  const targetTuple = group.foreignKeys.map((foreignKey) => {
+    if (foreignKey.referencedColumn === parent.primaryKey) return newId;
+    if (foreignKey.referencedColumn in targetValues) return targetValues[foreignKey.referencedColumn];
+    throw new Error(`Cannot map composite FK target ${parent.name}.${foreignKey.referencedColumn}`);
+  });
+  return { sourceKey: tupleKey(sourceTuple), targetTuple };
 }
 export function catalogsMatch(
   manifest: Record<string, BackupTable>,
@@ -353,12 +417,14 @@ function tenantPredicate(
   }
   if (seen.has(name)) throw new Error(`Cannot establish tenant ownership for cyclic table ${name}`);
   const nextSeen = new Set(seen).add(name);
-  const options = table.foreignKeys.filter((fk) => tables[fk.referencedTable]).map((fk, index) => {
+  const options = foreignKeyGroups(table).filter((group) => tables[group.referencedTable]).map((group, index) => {
     const parent = `owner_${name}_${index}`;
-    const parentTable = tables[fk.referencedTable];
+    const parentTable = tables[group.referencedTable];
+    const tupleMatch = sql.join(group.foreignKeys.map((fk) => sql`
+      ${sql.raw(`${ident(parent)}.${ident(fk.referencedColumn)}`)} =
+        ${sql.raw(`${ident(alias)}.${ident(fk.column)}`)}`), sql` AND `);
     return sql`EXISTS (SELECT 1 FROM ${sql.raw(ident(parentTable.name))} AS ${sql.raw(ident(parent))}
-      WHERE ${sql.raw(`${ident(parent)}.${ident(fk.referencedColumn)}`)} =
-        ${sql.raw(`${ident(alias)}.${ident(fk.column)}`)}
+      WHERE ${tupleMatch}
       AND ${tenantPredicate(parentTable.name, tables, companyId, parent, nextSeen)})`;
   });
   if (!options.length) throw new Error(`Cannot establish tenant ownership for ${name}`);
@@ -399,23 +465,21 @@ async function catalog(tx: any): Promise<Record<string, BackupTable>> {
     if (target) target.primaryKeys.push(column);
   }
   const fkRows = rows(await tx.execute(sql`
-    SELECT tc.table_name, kcu.column_name, ccu.table_name AS referenced_table,
-      ccu.column_name AS referenced_column
-    FROM information_schema.table_constraints tc
-    JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name
-      AND tc.table_schema=kcu.table_schema
-    JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name
-      AND ccu.table_schema=tc.table_schema
-    WHERE tc.table_schema='public' AND tc.constraint_type='FOREIGN KEY'
-      AND (SELECT count(*) FROM information_schema.key_column_usage one_col
-           WHERE one_col.constraint_name=tc.constraint_name AND one_col.table_schema=tc.table_schema)=1`));
-  const compositeFkRows = rows(await tx.execute(sql`
-    SELECT tc.table_name, tc.constraint_name
-    FROM information_schema.table_constraints tc
-    JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name
-      AND tc.table_schema=kcu.table_schema
-    WHERE tc.table_schema='public' AND tc.constraint_type='FOREIGN KEY'
-    GROUP BY tc.table_name, tc.constraint_name HAVING count(*) > 1`));
+    SELECT child.relname AS table_name, con.conname AS constraint_name,
+      child_col.attname AS column_name, parent.relname AS referenced_table,
+      parent_col.attname AS referenced_column, child_key.ordinality AS position,
+      cardinality(con.conkey) AS key_count
+    FROM pg_constraint con
+    JOIN pg_class child ON child.oid = con.conrelid
+    JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace
+    JOIN pg_class parent ON parent.oid = con.confrelid
+    JOIN LATERAL unnest(con.conkey) WITH ORDINALITY child_key(attnum, ordinality) ON true
+    JOIN LATERAL unnest(con.confkey) WITH ORDINALITY parent_key(attnum, ordinality)
+      ON parent_key.ordinality = child_key.ordinality
+    JOIN pg_attribute child_col ON child_col.attrelid = child.oid AND child_col.attnum = child_key.attnum
+    JOIN pg_attribute parent_col ON parent_col.attrelid = parent.oid AND parent_col.attnum = parent_key.attnum
+    WHERE con.contype = 'f' AND child_ns.nspname = 'public'
+    ORDER BY child.relname, con.conname, child_key.ordinality`));
   // Grow from company-owned roots to children without company_id.
   let changed = true;
   while (changed) {
@@ -436,19 +500,31 @@ async function catalog(tx: any): Promise<Record<string, BackupTable>> {
       }
     }
   }
-  const selectedComposite = compositeFkRows
-    .map((record) => String(cell(record, "table_name")))
-    .filter((name) => selected.has(name));
-  if (selectedComposite.length) {
-    throw new Error(`Composite foreign keys are not supported by full-company backup: ${[...new Set(selectedComposite)].join(", ")}`);
-  }
+  const constraintRows = new Map<string, Record<string, any>[]>();
   for (const f of fkRows) {
+    const key = `${String(cell(f, "table_name"))}\0${String(cell(f, "constraint_name"))}`;
+    const current = constraintRows.get(key) ?? [];
+    current.push(f);
+    constraintRows.set(key, current);
+  }
+  for (const entries of constraintRows.values()) {
+    const ordered = entries.sort((a, b) => Number(cell(a, "position")) - Number(cell(b, "position")));
+    const tupleGroup = ordered.length > 1
+      ? `${ordered.map((f) => String(cell(f, "column_name"))).join(",")}->${String(cell(ordered[0], "referenced_table"))}(${ordered.map((f) => String(cell(f, "referenced_column"))).join(",")})`
+      : undefined;
+    for (const f of ordered) {
     const child = String(cell(f, "table_name")); const parent = String(cell(f, "referenced_table"));
     if (selected.has(child) && selected.has(parent)) selected.get(child)!.foreignKeys.push({
       column: String(cell(f, "column_name")), referencedTable: parent,
       referencedColumn: String(cell(f, "referenced_column")),
       nullable: nullable.get(`${child}.${String(cell(f, "column_name"))}`) === true,
+      ...(tupleGroup ? {
+        group: tupleGroup,
+        position: Number(cell(f, "position")) - 1,
+        size: ordered.length,
+      } : {}),
     });
+    }
   }
   for (const table of selected.values()) table.primaryKey = table.primaryKeys.length === 1 ? table.primaryKeys[0] : null;
   return Object.fromEntries(selected);
@@ -474,12 +550,17 @@ export async function buildFullCompanyBackup(companyId: number, exportedBy: stri
     while (changed) {
       changed = false;
       for (const table of Object.values(tables).filter((t) => t.classification === "dependent-child")) {
-        for (const fk of table.foreignKeys) {
-          const parents = data[fk.referencedTable] ?? [];
-          const ids = parents.map((r) => r[fk.referencedColumn]).filter((v) => v != null);
-          if (!ids.length) continue;
+        for (const group of foreignKeyGroups(table)) {
+          const parents = data[group.referencedTable] ?? [];
+          const parentTuples = parents.map((parent) => group.foreignKeys.map((fk) => parent[fk.referencedColumn]))
+            .filter((tuple) => tuple.every((value) => value != null));
+          if (!parentTuples.length) continue;
+          const tuplePredicates = parentTuples.map((tuple) => sql`(${sql.join(
+            group.foreignKeys.map((fk, index) => sql`${sql.raw(ident(fk.column))} = ${tuple[index]}`),
+            sql` AND `,
+          )})`);
           const found = rows(await tx.execute(sql`SELECT * FROM ${sql.raw(ident(table.name))}
-            WHERE ${sql.raw(ident(fk.column))} IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})`))
+            WHERE ${sql.join(tuplePredicates, sql` OR `)}`))
             .map((row) => sanitizeRow(row, table.name));
           const pk = table.primaryKey;
           const known = new Set(data[table.name].map((row) => pk ? row[pk] : JSON.stringify(row)));
@@ -632,19 +713,20 @@ async function analyzeRestore(
       }
     }
   }
-  const sourceIndexes = sourceReferenceIndexes(payload, tables);
+  const sourceTupleIndexes = sourceForeignKeyTupleIndexes(payload, tables);
   let physicalReferences = 0;
   for (const [name, table] of Object.entries(tables)) {
     for (const record of payload.data[name] ?? []) {
-      for (const foreignKey of table.foreignKeys) {
-        const value = record[foreignKey.column];
-        if (value == null) continue;
+      for (const group of foreignKeyGroups(table)) {
+        const sourceTuple = group.foreignKeys.map((foreignKey) => record[foreignKey.column]);
+        // PostgreSQL does not check a MATCH SIMPLE FK when any component is
+        // NULL. Preserve that exact behavior rather than resolving a partial
+        // tuple against an unrelated parent.
+        if (sourceTuple.some((value) => value == null)) continue;
         physicalReferences++;
-        const count = sourceIndexes
-          .get(foreignKey.referencedTable)
-          ?.get(foreignKey.referencedColumn)
-          ?.get(restoreReferenceKey(value)) ?? 0;
+        const count = sourceTupleIndexes.get(group.key)?.get(tupleKey(sourceTuple)) ?? 0;
         if (count !== 1) {
+          const foreignKey = group.foreignKeys[0];
           // Audit history may legitimately reference users deleted before the
           // backup was created. Older agents also reported this FK as NOT NULL
           // even when the current restore target allows NULL, so do not make
@@ -658,7 +740,8 @@ async function analyzeRestore(
           }
           if (
             count === 0
-            && columnMeta.get(`${name}.${foreignKey.column}`)?.nullable === true
+            && group.foreignKeys.some((candidate) =>
+              columnMeta.get(`${name}.${candidate.column}`)?.nullable === true)
           ) {
             continue;
           }
@@ -666,13 +749,13 @@ async function analyzeRestore(
             severity: "error",
             code: "missing_physical_reference",
             table: name,
-            column: foreignKey.column,
+            column: group.foreignKeys.map((candidate) => candidate.column).join(","),
             rowId: table.primaryKey ? record[table.primaryKey] : null,
-            sourceValue: value,
+            sourceValue: sourceTuple,
             referencedTable: foreignKey.referencedTable,
             message: count > 1
-              ? `المرجع الفعلي ${name}.${foreignKey.column} ملتبس داخل ${foreignKey.referencedTable}`
-              : `المرجع الفعلي ${name}.${foreignKey.column} لا يطابق صفًا داخل ${foreignKey.referencedTable}`,
+              ? `المرجع الفعلي ${name}.(${group.foreignKeys.map((candidate) => candidate.column).join(",")}) ملتبس داخل ${foreignKey.referencedTable}`
+              : `المرجع الفعلي ${name}.(${group.foreignKeys.map((candidate) => candidate.column).join(",")}) لا يطابق صفًا داخل ${foreignKey.referencedTable}`,
           });
         }
       }
@@ -682,6 +765,31 @@ async function analyzeRestore(
     ? buildRestoreReferencePlan(payload, tables)
     : { references: [], issues: [], checked: 0, physicalForeignKeysSkipped: 0 };
   issues.push(...referencePlan.issues);
+  for (const [name, table] of Object.entries(tables)) {
+    for (const group of foreignKeyGroups(table).filter((candidate) => candidate.foreignKeys.length > 1)) {
+      const parent = tables[group.referencedTable];
+      const unsupportedColumn = group.foreignKeys.find((foreignKey) =>
+        foreignKey.referencedColumn !== parent?.primaryKey
+        && (
+          isSensitiveColumn(foreignKey.referencedColumn)
+          || (PROTECTED_RESTORE_TABLES.has(group.referencedTable)
+            && foreignKey.referencedColumn !== "company_id")
+        ));
+      if (parent?.primaryKey && !unsupportedColumn) continue;
+      issues.push({
+        severity: "error",
+        code: "missing_physical_reference",
+        table: name,
+        column: group.foreignKeys.map((foreignKey) => foreignKey.column).join(","),
+        rowId: null,
+        sourceValue: null,
+        referencedTable: group.referencedTable,
+        message: unsupportedColumn
+          ? `لا يمكن استعادة العلاقة المركبة في ${name} لأن العمود ${group.referencedTable}.${unsupportedColumn.referencedColumn} لا يمكن إعادة ربطه بأمان`
+          : `لا يمكن استعادة العلاقة المركبة في ${name} لأن ${group.referencedTable} بلا مفتاح أساسي مفرد لإعادة الربط الآمن`,
+      });
+    }
+  }
   for (const reference of referencePlan.references) {
     if (canDropMissingRestoreReferenceOwner(reference)) {
       issues.push({
@@ -855,7 +963,9 @@ export async function restoreFullCompanyBackup(
     const maps = new Map<string, Map<unknown, unknown>>();
     for (const name of Object.keys(tables)) maps.set(name, new Map());
     const restoreSourceIndexes = sourceReferenceIndexes(payload, tables);
-    const deferred: Array<{ table: BackupTable; pk: unknown; fk: ForeignKey; source: unknown }> = [];
+    const restoreSourceTupleIndexes = sourceForeignKeyTupleIndexes(payload, tables);
+    const deferred: Array<{ table: BackupTable; pk: unknown; group: ForeignKeyGroup; sourceTuple: unknown[] }> = [];
+    const compositeTupleMaps = new Map<string, Map<string, unknown[]>>();
     const logicalDeferred: PlannedRestoreReference[] = [];
     const logicalByRow = new Map<string, PlannedRestoreReference[]>();
     for (const reference of referencePlan.references.filter((item) => item.table !== "companies")) {
@@ -930,6 +1040,25 @@ export async function restoreFullCompanyBackup(
         rememberMappedValue(maps.get("users")!, sourceUserId, archived.id);
       }
     }
+    const rememberCompositeTargetTuples = (
+      name: string,
+      table: BackupTable,
+      source: Record<string, unknown>,
+      targetValues: Record<string, unknown>,
+      newId: unknown,
+    ) => {
+      for (const consumer of Object.values(tables)) {
+        for (const group of foreignKeyGroups(consumer).filter((candidate) =>
+          candidate.foreignKeys.length > 1 && candidate.referencedTable === name)) {
+          const sourceTuple = group.foreignKeys.map((fk) => source[fk.referencedColumn]);
+          if (sourceTuple.some((value) => value == null)) continue;
+          const mappedTuple = compositeTargetTuple(group, table, source, targetValues, newId);
+          const tupleMap = compositeTupleMaps.get(group.key) ?? new Map<string, unknown[]>();
+          tupleMap.set(mappedTuple.sourceKey, mappedTuple.targetTuple);
+          compositeTupleMaps.set(group.key, tupleMap);
+        }
+      }
+    };
     for (const name of topologicalTableOrder(tables)) {
       const table = tables[name]; const records = Array.isArray(payload.data[name]) ? payload.data[name] : [];
       report[name] = { received: records.length, inserted: 0, updated: 0 };
@@ -970,6 +1099,13 @@ export async function restoreFullCompanyBackup(
           `))[0];
           if (found) {
             rememberMappedValue(maps.get(name)!, source[table.primaryKey], found.id);
+            rememberCompositeTargetTuples(
+              name,
+              table,
+              source,
+              { company_id: companyId },
+              found.id,
+            );
             continue;
           }
           // Restored users are intentionally disabled. Always give a newly
@@ -1034,8 +1170,38 @@ export async function restoreFullCompanyBackup(
             }
           }
         }
-        for (const fk of table.foreignKeys) if (values[fk.column] != null) {
-          const mapped = mappedValue(maps.get(fk.referencedTable), values[fk.column]);
+        for (const group of foreignKeyGroups(table).filter((candidate) => candidate.foreignKeys.length > 1)) {
+          const sourceTuple = group.foreignKeys.map((fk) => source[fk.column]);
+          if (sourceTuple.some((value) => value == null)) continue;
+          const mappedTuple = compositeTupleMaps.get(group.key)?.get(tupleKey(sourceTuple));
+          if (mappedTuple) {
+            group.foreignKeys.forEach((fk, index) => {
+              values[fk.column] = mappedTuple[index];
+            });
+            continue;
+          }
+          const parentCount = restoreSourceTupleIndexes.get(group.key)?.get(tupleKey(sourceTuple)) ?? 0;
+          const nullableParts = group.foreignKeys.filter((fk) =>
+            columnMeta.get(`${name}.${fk.column}`)?.nullable === true);
+          if (parentCount === 0 && nullableParts.length) {
+            for (const fk of nullableParts) values[fk.column] = null;
+          } else if (nullableParts.length) {
+            deferred.push({ table, pk: source[table.primaryKey ?? "id"], group, sourceTuple });
+            // MATCH SIMPLE is safely deferred by nulling one nullable tuple
+            // component; tenant/project scope columns remain correctly mapped
+            // by their own relationships.
+            values[nullableParts[0].column] = null;
+          } else {
+            throw new Error(`Unresolved required composite FK ${name}.(${group.foreignKeys.map((fk) => fk.column).join(",")})`);
+          }
+        }
+        for (const fk of table.foreignKeys.filter((candidate) => (candidate.size ?? 1) === 1)) if (values[fk.column] != null) {
+          // Always resolve from the source row. A column may also participate
+          // in a composite FK which has already written its target tuple into
+          // `values`; feeding that target ID back into a source-ID map can
+          // silently bind to an unrelated row when numeric IDs overlap.
+          const sourceFkValue = source[fk.column];
+          const mapped = mappedValue(maps.get(fk.referencedTable), sourceFkValue);
           if (mapped !== undefined) values[fk.column] = mapped;
           else if (
             name === "audit_log"
@@ -1046,14 +1212,19 @@ export async function restoreFullCompanyBackup(
             const sourceCount = restoreSourceIndexes
               .get(fk.referencedTable)
               ?.get(fk.referencedColumn)
-              ?.get(restoreReferenceKey(values[fk.column])) ?? 0;
+              ?.get(restoreReferenceKey(sourceFkValue)) ?? 0;
             if (
               sourceCount === 0
               && columnMeta.get(`${name}.${fk.column}`)?.nullable === true
             ) {
               values[fk.column] = null;
             } else if (fk.nullable) {
-              deferred.push({ table, pk: source[table.primaryKey ?? "id"], fk, source: values[fk.column] });
+              deferred.push({
+                table,
+                pk: source[table.primaryKey ?? "id"],
+                group: { key: `legacy:${fk.column}:${fk.referencedTable}:${fk.referencedColumn}`, foreignKeys: [fk], referencedTable: fk.referencedTable },
+                sourceTuple: [sourceFkValue],
+              });
               values[fk.column] = null;
             } else {
               throw new Error(`Unresolved required FK ${name}.${fk.column}`);
@@ -1105,22 +1276,32 @@ export async function restoreFullCompanyBackup(
           // Most relationships target the PK, but catalog metadata also permits
           // a single-column FK to a unique business column.
           for (const consumer of Object.values(tables)) {
-            for (const fk of consumer.foreignKeys.filter((candidate) => candidate.referencedTable === name)) {
+            for (const fk of consumer.foreignKeys.filter((candidate) =>
+              candidate.referencedTable === name && (candidate.size ?? 1) === 1)) {
               if (source[fk.referencedColumn] != null) {
                 rememberMappedValue(ownMap, source[fk.referencedColumn], newId);
               }
             }
           }
         }
+        rememberCompositeTargetTuples(name, table, source, values, newId);
         if (didUpdate) report[name].updated++;
         else report[name].inserted++;
       }
     }
     for (const item of deferred) {
-      const mappedFk = mappedValue(maps.get(item.fk.referencedTable), item.source);
       const mappedPk = mappedValue(maps.get(item.table.name), item.pk);
-      if (mappedFk === undefined || mappedPk === undefined) throw new Error(`Unresolved cyclic FK ${item.table.name}.${item.fk.column}`);
-      await tx.execute(sql`UPDATE ${sql.raw(ident(item.table.name))} SET ${sql.raw(ident(item.fk.column))} = ${mappedFk}
+      const mappedTuple = item.group.foreignKeys.length === 1
+        ? [mappedValue(maps.get(item.group.referencedTable), item.sourceTuple[0])]
+        : compositeTupleMaps.get(item.group.key)?.get(tupleKey(item.sourceTuple));
+      if (!mappedTuple || mappedTuple.some((value) => value === undefined) || mappedPk === undefined) {
+        throw new Error(`Unresolved cyclic FK ${item.table.name}.(${item.group.foreignKeys.map((fk) => fk.column).join(",")})`);
+      }
+      await tx.execute(sql`UPDATE ${sql.raw(ident(item.table.name))} SET ${sql.join(
+          item.group.foreignKeys.map((fk, index) =>
+            sql`${sql.raw(ident(fk.column))} = ${mappedTuple[index]}`),
+          sql`,`,
+        )}
         WHERE ${sql.raw(ident(item.table.primaryKey ?? "id"))} = ${mappedPk}`);
       report[item.table.name].updated++;
     }

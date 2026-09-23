@@ -7,6 +7,7 @@ import {
   restoreCatalogsCompatible, restoreParameterValue, restoredUsername, restoredUsernames,
   archivedRestoreUsername,
   canDropMissingRestoreReferenceOwner, canSynthesizeMissingRestoreReference,
+  compositeTargetTuple, foreignKeyGroups, sourceForeignKeyTupleIndexes,
 } from "../src/lib/fullCompanyBackup.js";
 import {
   buildRestoreReferencePlan,
@@ -127,6 +128,95 @@ test("canonical catalog validation rejects omitted tables and foreign keys", () 
   assert.equal(catalogsMatch({ parent, child }, { parent, child }), true);
   assert.equal(catalogsMatch({ parent }, { parent, child }), false);
   assert.equal(catalogsMatch({ parent, child: { ...child, foreignKeys: [] } }, { parent, child }), false);
+});
+
+test("composite FK helpers preserve ordered tenant/project/entity tuples", () => {
+  const parent: any = {
+    name: "contracting_tenders", primaryKey: "id", primaryKeys: ["id"],
+    columns: ["id", "company_id", "project_id"], foreignKeys: [], classification: "tenant-root",
+  };
+  const tupleGroup = "company_id,project_id,tender_id->contracting_tenders(company_id,project_id,id)";
+  const child: any = {
+    name: "contracting_guarantees", primaryKey: "id", primaryKeys: ["id"],
+    columns: ["id", "company_id", "project_id", "tender_id"],
+    // Deliberately shuffled: metadata position, not array order, defines tuple order.
+    foreignKeys: [
+      { column: "tender_id", referencedTable: parent.name, referencedColumn: "id", nullable: true, group: tupleGroup, position: 2, size: 3 },
+      { column: "company_id", referencedTable: parent.name, referencedColumn: "company_id", nullable: false, group: tupleGroup, position: 0, size: 3 },
+      { column: "project_id", referencedTable: parent.name, referencedColumn: "project_id", nullable: false, group: tupleGroup, position: 1, size: 3 },
+    ],
+    classification: "tenant-root",
+  };
+  const group = foreignKeyGroups(child)[0];
+  assert.deepEqual(group.foreignKeys.map((fk) => fk.column), ["company_id", "project_id", "tender_id"]);
+
+  const projectIdMap = new Map<any, any>([[10, 210]]);
+  const mapped = compositeTargetTuple(
+    group,
+    parent,
+    { company_id: 1, project_id: 10, id: 30 },
+    { company_id: 9, project_id: 210 },
+    430,
+  );
+  assert.deepEqual(mapped.targetTuple, [9, 210, 430]);
+  // Composite tuple construction is isolated from scalar entity-ID maps.
+  assert.equal(projectIdMap.get(10), 210);
+  assert.equal(projectIdMap.has(1), false);
+});
+
+test("composite FK tuple index exposes exact, missing, and ambiguous parents", () => {
+  const tupleGroup = "company_id,project_id,tender_id->contracting_tenders(company_id,project_id,id)";
+  const parent: any = {
+    name: "contracting_tenders", primaryKey: "id", primaryKeys: ["id"],
+    columns: ["id", "company_id", "project_id"], foreignKeys: [], classification: "tenant-root",
+  };
+  const child: any = {
+    name: "contracting_guarantees", primaryKey: "id", primaryKeys: ["id"],
+    columns: ["id", "company_id", "project_id", "tender_id"],
+    foreignKeys: [
+      { column: "company_id", referencedTable: parent.name, referencedColumn: "company_id", nullable: false, group: tupleGroup, position: 0, size: 3 },
+      { column: "project_id", referencedTable: parent.name, referencedColumn: "project_id", nullable: false, group: tupleGroup, position: 1, size: 3 },
+      { column: "tender_id", referencedTable: parent.name, referencedColumn: "id", nullable: true, group: tupleGroup, position: 2, size: 3 },
+    ],
+    classification: "tenant-root",
+  };
+  const payload: any = {
+    data: {
+      contracting_tenders: [
+        { company_id: 1, project_id: 10, id: 30 },
+        { company_id: 1, project_id: 10, id: 30 },
+        { company_id: 1, project_id: 11, id: 30 },
+      ],
+    },
+  };
+  const index = sourceForeignKeyTupleIndexes(payload, {
+    contracting_tenders: parent,
+    contracting_guarantees: child,
+  }).get(tupleGroup)!;
+  const sourceKey = (values: unknown[]) => values.map(restoreReferenceKey).join("\0");
+  assert.equal(index.get(sourceKey([1, 11, 30])), 1);
+  assert.equal(index.get(sourceKey([1, 99, 30])) ?? 0, 0);
+  assert.equal(index.get(sourceKey([1, 10, 30])), 2);
+  assert.notEqual(index.get(sourceKey([1, 11, 30])), index.get(sourceKey([1, 10, 30])));
+});
+
+test("legacy scalar FK metadata remains compatible while composite order is strict", () => {
+  const table = (foreignKeys: any[]): any => ({
+    name: "child", primaryKey: "id", primaryKeys: ["id"], columns: ["id", "parent_id"],
+    foreignKeys, classification: "tenant-root",
+  });
+  const legacy = table([
+    { column: "parent_id", referencedTable: "parent", referencedColumn: "id", nullable: false },
+  ]);
+  assert.equal(catalogsMatch({ child: legacy }, { child: structuredClone(legacy) }), true);
+
+  const composite = table([
+    { column: "parent_id", referencedTable: "parent", referencedColumn: "id", nullable: false, group: "parent_id,scope_id->parent(id,scope_id)", position: 0, size: 2 },
+  ]);
+  const wrongOrder = table([
+    { ...composite.foreignKeys[0], position: 1 },
+  ]);
+  assert.equal(catalogsMatch({ child: composite }, { child: wrongOrder }), false);
 });
 
 test("restore compatibility permits only protected-user column drift", () => {
