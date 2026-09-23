@@ -2897,21 +2897,31 @@ rm -rf "$ZACOD_SAFE_BAK"`
   const installScript = `#!/usr/bin/env bash
 # zacod agent bootstrap — idempotent. Run as root on the agent server.
 set -e
+# Print only a fixed stage label and exit status, never BASH_COMMAND: later
+# commands may contain credentials or other private configuration.
+ZACOD_BOOTSTRAP_STAGE=preflight
+trap 'rc=$?; printf "ERROR: bootstrap stage %s failed (exit %s)\\n" "$ZACOD_BOOTSTRAP_STAGE" "$rc" >&2' ERR
 ${safeSetupGuard}
 # The heartbeat uses Node's built-in fetch even before a full-edition app is
 # installed (and on editions with no local app). Provision it before cron or
 # the first heartbeat; the app installer below reuses the same Node version.
+ZACOD_BOOTSTRAP_STAGE=node
 export DEBIAN_FRONTEND=noninteractive
 NEED_NODE=1
 if command -v node >/dev/null 2>&1; then MAJ=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0); [ "$MAJ" -ge 20 ] && NEED_NODE=0; fi
 if [ "$NEED_NODE" = "1" ]; then
   command -v apt-get >/dev/null 2>&1 || { echo "ERROR: apt-get not found — Node.js 20+ is required for heartbeat" >&2; exit 1; }
   command -v curl >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y curl >/dev/null; }
-  set -o pipefail
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+  # Restrict pipefail to this download: leaking it into cron/Caddy pipelines
+  # changes the bootstrap's established error behavior on fresh servers.
+  ZACOD_BOOTSTRAP_STAGE=node-repository
+  ( set -o pipefail; curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null )
+  ZACOD_BOOTSTRAP_STAGE=node-package
   apt-get install -y nodejs >/dev/null
 fi
+ZACOD_BOOTSTRAP_STAGE=node-verify
 node -e 'if (Number(process.versions.node.split(".")[0]) < 20 || typeof fetch !== "function") process.exit(1)' || { echo "ERROR: Node.js 20+ with fetch is required for heartbeat" >&2; exit 1; }
+ZACOD_BOOTSTRAP_STAGE=heartbeat-config
 mkdir -p /opt/zacod
 cat > /opt/zacod/config.json <<'ZACOD_CFG'
 ${JSON.stringify(config, null, 2)}
@@ -2920,7 +2930,11 @@ cat > /opt/zacod/heartbeat.sh <<'ZACOD_HB'
 ${heartbeatScript}
 ZACOD_HB
 chmod 700 /opt/zacod/heartbeat.sh; chmod 600 /opt/zacod/config.json
-( crontab -l 2>/dev/null | grep -v zacod-heartbeat ; echo "*/5 * * * * /opt/zacod/heartbeat.sh # zacod-heartbeat" ) | crontab -
+ZACOD_BOOTSTRAP_STAGE=heartbeat-cron
+# No prior crontab, or one containing only our old entry, makes grep return 1.
+# Do not let set -e (or inherited pipefail) skip the replacement heartbeat.
+# The final crontab install is NOT optional: a write failure still aborts setup.
+( crontab -l 2>/dev/null | grep -v zacod-heartbeat || true; echo "*/5 * * * * /opt/zacod/heartbeat.sh # zacod-heartbeat" ) | crontab -
 # حصانة دائمة ضد حظر fail2ban: أضف عنوان المنصة المتصلة حاليًا إلى القائمة
 # البيضاء وفك أي حظر قائم — فلا تتعطل التحديثات المستقبلية بعد اليوم.
 if command -v fail2ban-client >/dev/null 2>&1; then
@@ -2935,6 +2949,7 @@ if command -v fail2ban-client >/dev/null 2>&1; then
 fi
 # Caddy is REQUIRED — any failure below aborts the script (set -e) so the
 # central API records the deploy as failed instead of a silent half-install.
+ZACOD_BOOTSTRAP_STAGE=caddy-package
 if ! command -v caddy >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
@@ -2952,12 +2967,14 @@ if ! command -v caddy >/dev/null 2>&1; then
     exit 1
   fi
 fi
+ZACOD_BOOTSTRAP_STAGE=caddy-config
 mkdir -p /etc/caddy
 cat > /etc/caddy/Caddyfile <<'ZACOD_CADDY'
 ${caddyfile}
 ZACOD_CADDY
 caddy validate --config /etc/caddy/Caddyfile
 ${webServerConflictPolicy}
+ZACOD_BOOTSTRAP_STAGE=caddy-service
 systemctl enable caddy
 systemctl restart caddy
 sleep 2
@@ -2967,6 +2984,7 @@ if ! systemctl is-active --quiet caddy; then
   (command -v ss >/dev/null 2>&1 && ss -ltnp | grep -E ':80 |:443 ' || true) >&2
   exit 1
 fi
+ZACOD_BOOTSTRAP_STAGE=heartbeat-first-run
 /opt/zacod/heartbeat.sh || true
 ${safeSetupCommit}
 echo "ZACOD_BOOTSTRAP_DONE"

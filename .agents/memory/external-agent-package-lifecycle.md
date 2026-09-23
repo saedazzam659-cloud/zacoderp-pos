@@ -26,3 +26,9 @@ Portable raw downloads are distinct from installation-bound encrypted backups. R
 **Why:** The user needs reusable files for the external upload workflow, but editable raw files cannot carry the original signed restore policy safely. Downloaded databases may contain sensitive data.
 
 **How to apply:** Keep raw downloads authenticated and explicitly labelled unencrypted; verify stored signed ciphertext before releasing plaintext. Preserve ordinary upload validation and require platform regeneration for signed fresh-schema restore policy.
+
+Bootstrap shell changes must preserve both first-install and retry behavior under inherited shell options.
+
+**Why:** Enabling `pipefail` globally changed an unrelated heartbeat cron pipeline's behavior; filtering an absent or heartbeat-only crontab also returns nonzero under `set -e`. A successful dependency install was therefore not evidence that bootstrap could continue.
+
+**How to apply:** Scope stricter shell options to the operation that needs them. Exercise empty, own-entry-only, and mixed existing configuration, including inherited `pipefail`; keep final writes fail-fast and report fixed stage labels rather than command text that could expose secrets.
