@@ -32,6 +32,20 @@ async function createTables(): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(20831, 4)`);
     await tx.execute(sql`
+      -- External agent databases do not pass through the two-stage managed
+      -- Publish used by the central database. Materialize every referenced
+      -- composite key before any guarantee FK can depend on it.
+      CREATE UNIQUE INDEX IF NOT EXISTS ctg_proj_company_id_id_uq
+        ON contracting_projects(company_id, id);
+      CREATE UNIQUE INDEX IF NOT EXISTS ctg_oc_company_project_id_uq
+        ON contracting_owner_contracts(company_id, project_id, id);
+      CREATE UNIQUE INDEX IF NOT EXISTS ctg_sc_company_project_id_uq
+        ON contracting_sub_contracts(company_id, project_id, id);
+      CREATE UNIQUE INDEX IF NOT EXISTS bank_accounts_company_id_id_uq
+        ON bank_accounts(company_id, id);
+      CREATE UNIQUE INDEX IF NOT EXISTS customers_company_id_id_uq
+        ON customers(company_id, id);
+
       CREATE TABLE IF NOT EXISTS contracting_tenders (
         id SERIAL PRIMARY KEY,
         company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -92,8 +106,6 @@ async function createTables(): Promise<void> {
       CREATE UNIQUE INDEX IF NOT EXISTS ctg_guarantee_one_performance_child_uq
         ON contracting_guarantees(parent_guarantee_id)
         WHERE guarantee_type = 'performance' AND parent_guarantee_id IS NOT NULL AND archived_at IS NULL;
-      CREATE UNIQUE INDEX IF NOT EXISTS bank_accounts_company_id_id_uq ON bank_accounts(company_id, id);
-      CREATE UNIQUE INDEX IF NOT EXISTS customers_company_id_id_uq ON customers(company_id, id);
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_tender_award_shape_ck') THEN
           ALTER TABLE contracting_tenders ADD CONSTRAINT ctg_tender_award_shape_ck CHECK (

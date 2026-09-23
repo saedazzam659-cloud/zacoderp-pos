@@ -507,6 +507,17 @@ export async function agentDataSourceRouter(req: Request, res: any, next: (err?:
       await serveAgentRequestAfterSchemaReady(hit.id, ctx, runWithExternalDb, res, next);
       return;
     }
+    // A configured external database is an ownership boundary even while its
+    // status is being repaired. Never let agent-domain business/auth requests
+    // fall through to the central tenant database merely because readiness
+    // changed from initialized to error/not_configured.
+    if (hit.dbUrlEnc) {
+      res.status(503).json({
+        error: "قاعدة بيانات الوكيل غير جاهزة حالياً — أعد المحاولة بعد اكتمال التهيئة أو الإصلاح",
+        code: "AGENT_DB_NOT_READY",
+      });
+      return;
+    }
     // Fail-closed: ANY accelerated mode (trial OR on) without a working
     // external DB must NEVER fall through to the central DB. This protects
     // the invariant that accelerated requests always hit the agent's own DB.

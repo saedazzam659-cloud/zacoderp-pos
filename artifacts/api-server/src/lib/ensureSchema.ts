@@ -10,7 +10,10 @@ import { ensureContractingBillDetailsTables } from "./contracting-bill-details-s
 import { ensureContractingSettingsTable } from "./contracting-settings.js";
 import { ensureContractCreateIdempotencySchema } from "./contracting-contract-create-idempotency.js";
 import { ensureBillCreateIdempotencySchema } from "./contracting-bill-create-idempotency.js";
-import { ensureContractingProjectIntegrity } from "./contracting-integrity.js";
+import {
+  ensureContractingProjectIntegrity,
+  ensureContractingProjectIntegrityPrerequisites,
+} from "./contracting-integrity.js";
 import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
 import { ensureContractingCostAllocationTables } from "./contracting-cost-allocation-service.js";
 import { ensureContractingExecutionSchema } from "./contracting-execution-storage.js";
@@ -4379,7 +4382,7 @@ async function runHeal(options: {
   await ensureContractingExecutionSchema();
   await ensureContractingCostAllocationTables();
   await ensureContractingGuaranteeTables();
-  await ensureContractingProjectIntegrity();
+  await ensureContractingProjectIntegrityPrerequisites();
 
   // These release-managed tables have complete additive DDL here, unlike
   // generic schema entities. Create them before strict missing-table
@@ -4415,6 +4418,11 @@ async function runHeal(options: {
     logger.error({ err }, "ensureSchema: column reconciliation failed");
     throw err;
   }
+  // Integrity diagnostics and constraints read columns introduced by generic
+  // reconciliation (legacy_contract_link_pending in particular). Validate only
+  // after those columns exist; required runtime tables were created above so
+  // strict missing-table checks still cannot strand an external agent.
+  await ensureContractingProjectIntegrity();
   // Generic reconciliation materializes any newly declared snapshot/factor
   // columns first; this pass then widens existing numeric columns and performs
   // the guarded legacy item-unit backfill.
@@ -4486,7 +4494,7 @@ async function runHeal(options: {
   await ensureContractingExecutionSchema();
   await ensureContractingCostAllocationTables();
   await ensureContractingGuaranteeTables();
-  await ensureContractingProjectIntegrity();
+  await ensureContractingProjectIntegrityPrerequisites();
 
   // These release-managed tables have complete additive DDL here, unlike
   // generic schema entities. Create them before strict missing-table
@@ -4522,6 +4530,11 @@ async function runHeal(options: {
     logger.error({ err }, "ensureSchema: column reconciliation failed");
     throw err;
   }
+  // Integrity diagnostics and constraints read columns introduced by generic
+  // reconciliation (legacy_contract_link_pending in particular). Validate only
+  // after those columns exist; required runtime tables were created above so
+  // strict missing-table checks still cannot strand an external agent.
+  await ensureContractingProjectIntegrity();
   // Generic reconciliation materializes any newly declared snapshot/factor
   // columns first; this pass then widens existing numeric columns and performs
   // the guarded legacy item-unit backfill.

@@ -227,6 +227,25 @@ test("source invariant: router fail-closed includes BOTH trial and on", () => {
   );
 });
 
+test("source invariant: configured external DB never falls through to central while unready", () => {
+  const fnStart = routerSrc.indexOf("export async function agentDataSourceRouter(");
+  const fnEnd = routerSrc.indexOf("\nexport async function ", fnStart + 1);
+  const fnBody = fnEnd !== -1 ? routerSrc.slice(fnStart, fnEnd) : routerSrc.slice(fnStart, fnStart + 6000);
+  const initialized = fnBody.indexOf('hit.dbStatus === "initialized" && hit.dbUrlEnc');
+  const configuredButUnready = fnBody.indexOf("if (hit.dbUrlEnc)", initialized + 1);
+  const notReadyCode = fnBody.indexOf('"AGENT_DB_NOT_READY"', configuredButUnready);
+  const accelerationGuard = fnBody.indexOf('hit.accelerationMode === "on"', configuredButUnready);
+  const centralFallthrough = fnBody.lastIndexOf("next()");
+  assert.ok(initialized >= 0, "initialized external DB branch must remain first");
+  assert.ok(
+    initialized < configuredButUnready
+      && configuredButUnready < notReadyCode
+      && notReadyCode < accelerationGuard
+      && accelerationGuard < centralFallthrough,
+    "configured unready DB must return 503 before acceleration handling and central fallthrough",
+  );
+});
+
 test("source invariant: router stamps trialStartAt on agentDomainHit", () => {
   const fnStart = routerSrc.indexOf("export async function agentDataSourceRouter(");
   const fnEnd   = routerSrc.indexOf("\nexport async function ", fnStart + 1);

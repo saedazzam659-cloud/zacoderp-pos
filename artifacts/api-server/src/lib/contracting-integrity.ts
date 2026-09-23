@@ -18,6 +18,18 @@ function rowsOf(result: any): any[] {
 }
 
 /**
+ * The integrity migration reads this marker before generic reconciliation can
+ * safely validate the rest of the contracting schema. Add it as nullable first
+ * so pre-marker rows remain distinguishable from strict new writes.
+ */
+export async function ensureContractingProjectIntegrityPrerequisites(): Promise<void> {
+  await db.execute(sql`
+    ALTER TABLE IF EXISTS contracting_progress_bills
+      ADD COLUMN IF NOT EXISTS legacy_contract_link_pending BOOLEAN
+  `);
+}
+
+/**
  * Additive, data-preserving upgrade for project hierarchy and contract-owned
  * financial scope. It only backfills a missing contract when exactly one
  * tenant/project candidate exists. Ambiguous or impossible legacy rows defer
@@ -127,6 +139,48 @@ async function runContractingProjectIntegrityMigration(): Promise<ContractingInt
          )
          AND 1 = (SELECT count(*) FROM contracting_sub_contracts c
                    WHERE c.company_id = l.company_id AND c.project_id = l.project_id)
+    `);
+
+    // Preserve unresolved pre-constraint bills explicitly. Only NULL means the
+    // marker was introduced by this migration; never bless a later invalid row
+    // whose strict marker is already FALSE.
+    await tx.execute(sql`
+      UPDATE contracting_progress_bills b
+         SET legacy_contract_link_pending = TRUE
+        FROM (
+          SELECT candidate.id
+            FROM contracting_progress_bills candidate
+            LEFT JOIN contracting_owner_contracts oc
+              ON oc.id = candidate.owner_contract_id
+            LEFT JOIN contracting_sub_contracts sc
+              ON sc.id = candidate.subcontractor_contract_id
+           WHERE candidate.legacy_contract_link_pending IS NULL
+             AND NOT (
+               candidate.direction = 'outgoing'
+                 AND candidate.owner_contract_id IS NOT NULL
+                 AND candidate.subcontractor_contract_id IS NULL
+                 AND candidate.contractor_id IS NULL
+                 AND (oc.company_id, oc.project_id)
+                     = (candidate.company_id, candidate.project_id)
+               OR
+               candidate.direction = 'incoming'
+                 AND candidate.owner_contract_id IS NULL
+                 AND candidate.subcontractor_contract_id IS NOT NULL
+                 AND candidate.contractor_id IS NOT NULL
+                 AND (sc.company_id, sc.project_id, sc.contractor_id)
+                     = (candidate.company_id, candidate.project_id, candidate.contractor_id)
+             )
+        ) legacy
+       WHERE b.id = legacy.id
+    `);
+    await tx.execute(sql`
+      UPDATE contracting_progress_bills
+         SET legacy_contract_link_pending = FALSE
+       WHERE legacy_contract_link_pending IS NULL;
+      ALTER TABLE contracting_progress_bills
+        ALTER COLUMN legacy_contract_link_pending SET DEFAULT FALSE;
+      ALTER TABLE contracting_progress_bills
+        ALTER COLUMN legacy_contract_link_pending SET NOT NULL
     `);
 
     const invalid = rowsOf(await tx.execute(sql`

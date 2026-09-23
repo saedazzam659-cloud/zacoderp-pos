@@ -23,6 +23,13 @@ test("contracting tables are created in the shared pass before strict validation
   assert.ok(shared.indexOf("await ensureContractingCostCenterCompatibility()") < create);
 });
 
+test("contracting integrity prerequisites precede column heal and validation follows it", () => {
+  const prerequisite = shared.indexOf("await ensureContractingProjectIntegrityPrerequisites()");
+  const columnHeal = shared.indexOf("const r = await ensureColumns(");
+  const validation = shared.indexOf("await ensureContractingProjectIntegrity()");
+  assert.ok(prerequisite >= 0 && prerequisite < columnHeal && columnHeal < validation);
+});
+
 test("startup, manual upgrade and request readiness all use the shared pass", () => {
   for (const name of ["ensureSchemaUpToDate", "runSchemaHealOnActiveDb", "runAgentRequestSchemaHealOnActiveDb"]) {
     const start = source.search(new RegExp(`export (?:async )?function ${name}\\(`));
@@ -48,4 +55,21 @@ test("required contracting tables have additive DDL and no cross-database promis
   const ddl = service.slice(start, end);
   for (const table of detailTables) assert.ok(ddl.includes(`CREATE TABLE IF NOT EXISTS ${table}`), table);
   assert.doesNotMatch(ddl, /\b(?:tablesReady|healPromise)\b/);
+});
+
+test("guarantee runtime DDL creates all external-agent composite targets first", () => {
+  const storage = readFileSync(new URL("../src/lib/contracting-guarantees-storage.ts", import.meta.url), "utf8");
+  const tenderCreate = storage.indexOf("CREATE TABLE IF NOT EXISTS contracting_tenders");
+  assert.ok(tenderCreate > 0);
+  for (const prerequisite of [
+    "ctg_proj_company_id_id_uq",
+    "ctg_oc_company_project_id_uq",
+    "ctg_sc_company_project_id_uq",
+    "bank_accounts_company_id_id_uq",
+    "customers_company_id_id_uq",
+  ]) {
+    assert.ok(storage.indexOf(`CREATE UNIQUE INDEX IF NOT EXISTS ${prerequisite}`) < tenderCreate, prerequisite);
+  }
+  assert.ok(storage.indexOf("ctg_tender_company_project_id_uq") < storage.indexOf("ctg_guarantee_tender_project_fk"));
+  assert.ok(storage.indexOf("ctg_guarantee_company_project_id_uq") < storage.indexOf("ctg_guarantee_parent_project_fk"));
 });

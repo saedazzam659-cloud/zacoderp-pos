@@ -58,6 +58,11 @@ test("shared reconciliation backfills only unique candidates and defers legacy v
   assert.match(integritySource, /VALIDATE CONSTRAINT ctg_bill_exact_direction_contract_ck/);
   assert.match(integritySource, /progress_bill_contract/);
   assert.match(integritySource, /boq_source_owner/);
+  assert.match(integritySource, /ADD COLUMN IF NOT EXISTS legacy_contract_link_pending BOOLEAN/);
+  assert.match(integritySource, /SET legacy_contract_link_pending = TRUE/);
+  assert.match(integritySource, /candidate\.legacy_contract_link_pending IS NULL/);
+  assert.doesNotMatch(integritySource, /NOT COALESCE\(candidate\.legacy_contract_link_pending/);
+  assert.match(integritySource, /ALTER COLUMN legacy_contract_link_pending SET NOT NULL/);
   assert.doesNotMatch(integritySource, /INSERT INTO contracting_(?:projects|owner_contracts|sub_contracts)/);
 
   const activeRunHealStart = ensureSchemaSource.lastIndexOf("async function runHeal(");
@@ -79,7 +84,7 @@ test("shared reconciliation backfills only unique candidates and defers legacy v
   );
   assert.ok(
     shared.indexOf("await ensureContractingProjectIntegrity()")
-      < shared.indexOf("const r = await ensureColumns("),
+      > shared.indexOf("const r = await ensureColumns("),
   );
 });
 
