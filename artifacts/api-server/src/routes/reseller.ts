@@ -267,6 +267,22 @@ router.post("/clients", requireResellerPermission("add_companies"), async (req, 
   } catch (err) { logger.warn({ err, companyId: company.id }, "reseller add-client: fiscal year seed failed"); }
   try { await seedDefaultChartOfAccounts(company.id); }
   catch (err) { logger.warn({ err, companyId: company.id }, "reseller add-client: COA seed failed"); }
+  let accountingDefaults: Awaited<ReturnType<typeof import("../lib/newCompanyAccountingDefaults.js").seedNewCompanyAccountingDefaults>>;
+  try {
+    const { seedNewCompanyDefaults } = await import("../lib/newCompanyDefaults.js");
+    await seedNewCompanyDefaults(company.id);
+    const { seedNewCompanyAccountingDefaults } = await import("../lib/newCompanyAccountingDefaults.js");
+    accountingDefaults = await seedNewCompanyAccountingDefaults(company.id);
+    if (!accountingDefaults.complete) {
+      logger.error({ companyId: company.id, missingAccountCodes: accountingDefaults.missingAccountCodes, unresolvedMappings: accountingDefaults.unresolvedMappings.length }, "reseller add-client: accounting defaults incomplete");
+      res.status(500).json({ error: "تعذّر إكمال الربط المحاسبي للشركة الجديدة", companyId: company.id, accountingDefaults });
+      return;
+    }
+  } catch (err) {
+    logger.error({ err, companyId: company.id }, "reseller add-client: new company defaults failed");
+    res.status(500).json({ error: "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
+    return;
+  }
 
   // Link the company to this reseller.
   await db.insert(resellerCompaniesTable).values({ resellerId: req.reseller!.id, companyId: company.id });
@@ -287,7 +303,8 @@ router.post("/clients", requireResellerPermission("add_companies"), async (req, 
     description: `اشتراك جديد — ${planKey} (${billingCycle})`,
   });
 
-  res.status(201).json({ ok: true, company: { ...company }, companyCode: generatedCompanyCode, subscription });
+  const [configured] = await db.select().from(companiesTable).where(eq(companiesTable.id, company.id));
+  res.status(201).json({ ok: true, company: configured, companyCode: generatedCompanyCode, subscription, accountingDefaults });
 });
 
 // ─── Renew a client's subscription (requires renew_subscriptions) ────────

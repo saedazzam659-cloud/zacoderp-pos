@@ -1904,6 +1904,25 @@ router.post("/register", async (req, res) => {
     req.log?.warn?.({ err, companyId: company.id }, "company template defaults failed");
   }
 
+  // Only this newly inserted company gets the canonical initial settings.
+  // A failure must not be reported as a successful registration.
+  let accountingDefaults: Awaited<ReturnType<typeof import("../lib/newCompanyAccountingDefaults.js").seedNewCompanyAccountingDefaults>>;
+  try {
+    const { seedNewCompanyDefaults } = await import("../lib/newCompanyDefaults.js");
+    await seedNewCompanyDefaults(company.id);
+    const { seedNewCompanyAccountingDefaults } = await import("../lib/newCompanyAccountingDefaults.js");
+    accountingDefaults = await seedNewCompanyAccountingDefaults(company.id);
+    if (!accountingDefaults.complete) {
+      req.log?.error?.({ companyId: company.id, missingAccountCodes: accountingDefaults.missingAccountCodes, unresolvedMappings: accountingDefaults.unresolvedMappings.length }, "register: accounting defaults incomplete");
+      res.status(500).json({ error: "تعذّر إكمال الربط المحاسبي للشركة الجديدة", companyId: company.id, accountingDefaults });
+      return;
+    }
+  } catch (err) {
+    req.log?.error?.({ err, companyId: company.id }, "register: new company defaults failed");
+    res.status(500).json({ error: "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
+    return;
+  }
+
   // ── DEMO EDITION SEED ──────────────────────────────────────────────
   // Runs AFTER the template/COA seed so the ledger-minting helpers find
   // their parent accounts. Fail-safe: never blocks registration.
@@ -1943,7 +1962,8 @@ router.post("/register", async (req, res) => {
     res.status(201).json({
       token: sessionToken,
       sessionId,
-      user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role, companyId: company.id, company, subscription },
+      user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role, companyId: company.id, company: { ...company, menuLayout: "topnav", hideQuickAddBar: true }, subscription },
+      accountingDefaults,
       ...(domainBindWarning ? { domainBindWarning } : {}),
     });
   } else {
@@ -1957,6 +1977,7 @@ router.post("/register", async (req, res) => {
       companyId: company.id,
       companyCode: generatedCompanyCode,
       username: newUser.username,
+      accountingDefaults,
     });
   }
 });

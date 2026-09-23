@@ -14,6 +14,7 @@ import { encryptSecret, testCompanySender } from "../lib/email.js";
 import { propagateDemoWorkspaceMenuPermissions } from "../lib/demoDeviceIsolation.js";
 import { emitSessionRefreshMany } from "../lib/sessionEvents.js";
 import { normalizeCompanyMenuPermissions } from "../lib/menuPermissionCatalog.js";
+import { seedNewCompanyDefaults } from "../lib/newCompanyDefaults.js";
 
 const router = Router();
 
@@ -114,8 +115,9 @@ router.post("/", async (req, res) => {
   // Seed the new tenant from the designated TEMPLATE company (display
   // settings, numbering sequences, chart of accounts — without the template's
   // party sub-accounts). Falls back to the generic default COA when the
-  // template company doesn't exist. Failures are logged but do not block
-  // company creation — the user can re-seed later.
+  // template company doesn't exist. The fresh-company settings override the
+  // template numbering below; template reads never modify the source company.
+  let accountingDefaults: Awaited<ReturnType<typeof import("../lib/newCompanyAccountingDefaults.js").seedNewCompanyAccountingDefaults>>;
   try {
     const { applyCompanyTemplateDefaults } = await import("../lib/companyTemplate.js");
     // Internally falls back to seedDefaultChartOfAccounts whenever the
@@ -126,7 +128,22 @@ router.post("/", async (req, res) => {
     try { await seedDefaultChartOfAccounts(company.id); } catch { /* logged above */ }
   }
 
-  res.status(201).json(company);
+  try {
+    await seedNewCompanyDefaults(company.id);
+    const { seedNewCompanyAccountingDefaults } = await import("../lib/newCompanyAccountingDefaults.js");
+    accountingDefaults = await seedNewCompanyAccountingDefaults(company.id);
+    if (!accountingDefaults.complete) {
+      logger.error({ companyId: company.id, missingAccountCodes: accountingDefaults.missingAccountCodes, unresolvedMappings: accountingDefaults.unresolvedMappings.length }, "new company accounting defaults incomplete");
+      res.status(500).json({ error: "تعذّر إكمال الربط المحاسبي للشركة الجديدة", companyId: company.id, accountingDefaults });
+      return;
+    }
+  } catch (err) {
+    logger.error({ err, companyId: company.id }, "new company defaults failed");
+    res.status(500).json({ error: "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
+    return;
+  }
+  const [configured] = await db.select().from(companiesTable).where(eq(companiesTable.id, company.id));
+  res.status(201).json({ ...configured, accountingDefaults });
 });
 
 router.get("/:id", async (req, res) => {

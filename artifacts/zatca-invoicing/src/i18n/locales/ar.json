@@ -3984,6 +3984,8 @@
       "purchase_invoice": "فاتورة مشتريات",
       "purchase_order": "أمر شراء",
       "purchase_return": "مرتجع مشتريات",
+      "goods_receipt": "إذن استلام بضاعة",
+      "goods_delivery": "إذن تسليم بضاعة",
       "journal_entry": "قيد محاسبي",
       "stock_transfer": "تحويل مخزني",
       "stock_adjustment": "تسوية مخزنية",
