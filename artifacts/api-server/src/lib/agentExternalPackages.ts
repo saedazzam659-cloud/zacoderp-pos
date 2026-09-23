@@ -8,6 +8,7 @@ import { Transform, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { File } from "@google-cloud/storage";
 import { ObjectStorageService } from "./objectStorage.js";
+import { sanitizeSchemaDumpForExternalAgent } from "./agentExternalSchema.js";
 
 export const EXTERNAL_PACKAGE_KINDS = ["backend", "frontend", "db"] as const;
 export const AGENT_DB_EXCLUDED_TABLE_DATA = [
@@ -40,6 +41,8 @@ export type ExternalPackageEntry = {
   encrypted: true;
   verified: true;
   origin: "generated" | "uploaded";
+  /** Only generated, signed schema-only dumps can request the fresh restore path. */
+  databaseSource?: "fresh" | "agent";
 };
 
 export type ExternalPackageMap = Partial<Record<ExternalPackageKind, ExternalPackageEntry>>;
@@ -65,20 +68,28 @@ export function packageSignature(input: {
   sha256: string;
   sizeBytes: number;
   format: ExternalPackageFormat;
+  databaseSource?: "fresh" | "agent";
 }): string {
+  // Preserve v1 signatures for existing packages. Fresh requires v2, binding
+  // the restore policy to the verified encrypted bytes rather than a UI flag.
+  const prefix = input.databaseSource === "fresh" ? "agent-package-v2:fresh" : "agent-package-v1";
   return createHmac("sha256", signingSecret())
-    .update(`agent-package-v1:${input.agentId}:${input.kind}:${input.sha256}:${input.sizeBytes}:${input.format}`)
+    .update(`${prefix}:${input.agentId}:${input.kind}:${input.sha256}:${input.sizeBytes}:${input.format}`)
     .digest("hex");
 }
 
 export function verifyPackageEntry(agentId: number, kind: ExternalPackageKind, entry: ExternalPackageEntry): boolean {
   if (!entry?.encrypted || !entry?.verified || !/^[a-f0-9]{64}$/.test(entry.sha256)) return false;
+  if (entry.databaseSource !== undefined &&
+      (kind !== "db" || !["fresh", "agent"].includes(entry.databaseSource))) return false;
+  if (entry.databaseSource === "fresh" && (entry.origin !== "generated" || entry.format !== "sql")) return false;
   const expected = packageSignature({
     agentId,
     kind,
     sha256: entry.sha256,
     sizeBytes: entry.sizeBytes,
     format: entry.format,
+    databaseSource: entry.databaseSource,
   });
   const actualBuffer = Buffer.from(entry.signature ?? "", "utf8");
   const expectedBuffer = Buffer.from(expected, "utf8");
@@ -422,6 +433,32 @@ export async function buildAgentDatabaseDump(databaseUrl: string, outputDir: str
     "--file", out,
     databaseUrl,
   ], 15 * 60_000);
+  return out;
+}
+
+/** Schema only: no rows, no tenant data, no installation identity or credentials. */
+export async function buildFreshAgentDatabaseSchema(databaseUrl: string, outputDir: string): Promise<string> {
+  if (!databaseUrl) throw new Error("رابط قاعدة البيانات المركزية غير مضبوط");
+  const raw = path.join(outputDir, "database-schema.raw.sql");
+  const out = path.join(outputDir, "database-schema.sql");
+  try {
+    await execChecked("pg_dump", [
+      "--schema-only", "--no-owner", "--no-privileges", "--no-comments",
+      "--exclude-table=public.agent_invoice_samples",
+      "--exclude-table=public.agent_invoice_samples_id_seq",
+      "--file", raw, databaseUrl,
+    ], 15 * 60_000);
+  } catch {
+    // pg_dump stderr can include connection details: never return it to the browser.
+    throw new Error("فشل تصدير مخطط قاعدة البيانات المركزية (pg_dump)");
+  }
+  // A newly created PostgreSQL database already contains the public schema.
+  // Its tables do not: leave CREATE TABLE statements intact, but don't try to
+  // recreate the default namespace when restoring via psql.
+  const cleaned = sanitizeSchemaDumpForExternalAgent(await fs.readFile(raw, "utf8"))
+    .replace(/^CREATE SCHEMA public;\r?\n/gm, "");
+  await fs.writeFile(out, cleaned, { mode: 0o600 });
+  await fs.rm(raw, { force: true });
   return out;
 }
 

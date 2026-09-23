@@ -58,6 +58,7 @@ import {
   type ExternalPackageKind,
   type ExternalPackageMap,
   buildAgentDatabaseDump,
+  buildFreshAgentDatabaseSchema,
   buildFrontendArchive,
   createDirectUploadTarget,
   encryptLocalFileToPrivateObject,
@@ -5078,6 +5079,7 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
         const releaseAuthPathR = "/opt/zacod/.release-auth.curl";
         const isGz = metaR.db.format === "sql_gzip";
         const isSql = metaR.db.format === "sql" || metaR.db.format === "sql_gzip";
+        const freshSchema = metaR.db.databaseSource === "fresh";
         const dlR = encR
           ? `curl --config ${releaseAuthPathR} -fsS ${shQ(dUrl)} -o /tmp/zacod-db.bak.enc
 printf '%s  %s\\n' ${shQ(metaR.db.sha256)} /tmp/zacod-db.bak.enc | sha256sum -c -
@@ -5095,13 +5097,16 @@ printf 'header = "X-Zacod-Installation-Id: %s"\\nheader = "X-Zacod-License-Key: 
 unset RELEASE_INSTALLATION_ID RELEASE_LICENSE_KEY
 command -v psql >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y postgresql-client >/dev/null; }
 ${encR ? `command -v openssl >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y openssl >/dev/null; }` : `true`}
+${freshSchema ? `# Refuse even empty application tables: fresh schema must not replace an existing installation.
+EXISTING_OBJECTS=$(psql "${restoreDbUrl}" -X -Atq -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp_%' AND c.relkind IN ('r','p','v','m','f','S')")
+if [ "$EXISTING_OBJECTS" != "0" ]; then echo "ZACOD_FRESH_DB_NOT_EMPTY: قاعدة البيانات تحتوي جداول أو بيانات قائمة — لن تُستبدل"; exit 78; fi` : `true`}
 ${dlR}
 rm -f ${releaseAuthPathR}
 trap - EXIT
 ${isSql
   ? (isGz
       ? `gunzip -c /tmp/zacod-db.bak | psql "${restoreDbUrl}" -v ON_ERROR_STOP=1 >/dev/null`
-      : `psql "${restoreDbUrl}" -v ON_ERROR_STOP=1 -f /tmp/zacod-db.bak >/dev/null`)
+      : `psql "${restoreDbUrl}" ${freshSchema ? "-X --single-transaction " : ""}-v ON_ERROR_STOP=1 -f /tmp/zacod-db.bak >/dev/null`)
   : `pg_restore --clean --if-exists --no-owner --exit-on-error -d "${restoreDbUrl}" /tmp/zacod-db.bak >/dev/null`}
 rm -f /tmp/zacod-db.bak
 echo ZACOD_DB_RESTORED`, "ZACOD_DB_RESTORED", 600_000);
@@ -5540,10 +5545,15 @@ router.post("/:id/provision", async (req, res) => {
 
 router.post("/:id/external-package/prepare", async (req, res) => {
   const id = Number(req.params.id);
+  const databaseSource = req.body?.databaseSource === undefined ? "agent" : req.body.databaseSource;
+  if (databaseSource !== "agent" && databaseSource !== "fresh") {
+    res.status(400).json({ error: "مصدر قاعدة البيانات غير صالح: اختر fresh أو agent" });
+    return;
+  }
   const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
   if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
   if (inst.mode !== "full") { res.status(400).json({ error: "تجهيز الحزمة الخارجية متاح للنسخة الكاملة فقط" }); return; }
-  if (!inst.dbUrlEnc) {
+  if (databaseSource === "agent" && !inst.dbUrlEnc) {
     res.status(400).json({ error: "أدخل رابط قاعدة بيانات الوكيل واختبره قبل تجهيز النسخة الكاملة" });
     return;
   }
@@ -5555,19 +5565,24 @@ router.post("/:id/external-package/prepare", async (req, res) => {
   const created: ExternalPackageMap = {};
   const createdObjectPaths: string[] = [];
   try {
-    const dbUrl = decryptSecret(inst.dbUrlEnc);
-    if (!dbUrl) throw new Error("تعذّر قراءة رابط قاعدة بيانات الوكيل");
-    let parsedDbUrl: URL;
-    try {
-      parsedDbUrl = new URL(dbUrl);
-    } catch {
-      throw new Error("رابط قاعدة بيانات الوكيل غير صالح. ارفع ملف Database الجاهز من تبويب «الحزمة الخارجية»، أو أدخل رابط PostgreSQL كاملًا يبدأ بـ postgresql://");
+    let dbUrl: string;
+    if (databaseSource === "fresh") {
+      dbUrl = process.env.DATABASE_URL ?? "";
+      if (!dbUrl) throw new Error("رابط قاعدة البيانات المركزية غير مضبوط");
+    } else {
+      dbUrl = decryptSecret(inst.dbUrlEnc!) ?? "";
+      if (!dbUrl) throw new Error("تعذّر قراءة رابط قاعدة بيانات الوكيل");
+      let parsedDbUrl: URL;
+      try {
+        parsedDbUrl = new URL(dbUrl);
+      } catch {
+        throw new Error("رابط قاعدة بيانات الوكيل غير صالح. ارفع ملف Database الجاهز من تبويب «الحزمة الخارجية»، أو أدخل رابط PostgreSQL كاملًا يبدأ بـ postgresql://");
+      }
+      if (!["postgres:", "postgresql:"].includes(parsedDbUrl.protocol) || !parsedDbUrl.hostname) {
+        throw new Error("رابط قاعدة بيانات الوكيل يجب أن يكون رابط PostgreSQL كاملًا يبدأ بـ postgresql://");
+      }
+      await assertProbeTargetAllowed(parsedDbUrl.hostname);
     }
-    if (!["postgres:", "postgresql:"].includes(parsedDbUrl.protocol) || !parsedDbUrl.hostname) {
-      throw new Error("رابط قاعدة بيانات الوكيل يجب أن يكون رابط PostgreSQL كاملًا يبدأ بـ postgresql://");
-    }
-    const dbHost = parsedDbUrl.hostname;
-    await assertProbeTargetAllowed(dbHost);
     workDir = await fsp.mkdtemp(path.join("/tmp", ".zacod-external-build-"));
     const [{ getReleaseInfo, findDistDir }] = await Promise.all([import("../lib/agentRelease.js")]);
     // The user explicitly requested a new package. Rebuild from the current
@@ -5575,12 +5590,14 @@ router.post("/:id/external-package/prepare", async (req, res) => {
     const release = await getReleaseInfo({ forceRebuild: true });
     const distDir = await findDistDir();
     const frontendPath = await buildFrontendArchive(distDir, workDir);
-    const databasePath = await buildAgentDatabaseDump(dbUrl, workDir);
+    const databasePath = databaseSource === "fresh"
+      ? await buildFreshAgentDatabaseSchema(dbUrl, workDir)
+      : await buildAgentDatabaseDump(dbUrl, workDir);
     const passphrase = bundlePassphrase(inst);
     const inputs: Record<ExternalPackageKind, { path: string; filename: string }> = {
       backend: { path: release.tarPath, filename: `zacod-backend-${release.version}.tgz` },
       frontend: { path: frontendPath, filename: `zacod-frontend-${release.version}.tgz` },
-      db: { path: databasePath, filename: `zacod-database-${release.version}.dump` },
+      db: { path: databasePath, filename: `zacod-database-${release.version}.${databaseSource === "fresh" ? "sql" : "dump"}` },
     };
     for (const kind of EXTERNAL_PACKAGE_KINDS) {
       const inspected = await inspectPlainPackagePath(inputs[kind].path, kind);
@@ -5604,8 +5621,9 @@ router.post("/:id/external-package/prepare", async (req, res) => {
         encrypted: true,
         verified: true,
         origin: "generated",
+        ...(kind === "db" ? { databaseSource } : {}),
       };
-      entry.signature = packageSignature({ agentId: id, kind, sha256: entry.sha256, sizeBytes: entry.sizeBytes, format: entry.format });
+      entry.signature = packageSignature({ agentId: id, kind, sha256: entry.sha256, sizeBytes: entry.sizeBytes, format: entry.format, databaseSource: entry.databaseSource });
       created[kind] = entry;
     }
     const previous = await replacePackageMap(id, created);
@@ -5615,10 +5633,10 @@ router.post("/:id/external-package/prepare", async (req, res) => {
       by: (req as any).authUser?.username ?? null,
       version: release.version,
       files: EXTERNAL_PACKAGE_KINDS.map(kind => ({ kind, sizeBytes: created[kind]!.sizeBytes, sha256: created[kind]!.sha256 })),
-      databaseSource: "agent_database",
+      databaseSource,
       excludedIdentityData: true,
     }, req);
-    res.json({ ok: true, version: release.version, externalPackage: publicPackageMap(created) });
+    res.json({ ok: true, version: release.version, databaseSource, externalPackage: publicPackageMap(created) });
   } catch (error: any) {
     await Promise.all(createdObjectPaths.map(objectPath => removePackageObject(objectPath)));
     res.status(502).json({ error: String(error?.message ?? error).slice(0, 500) });

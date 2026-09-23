@@ -126,6 +126,7 @@ type AutoDomainPreviewResp = {
 };
 
 type PackageKind = "backend" | "frontend" | "db";
+type DatabaseSource = "agent" | "fresh";
 type PackageInfo = {
   filename: string;
   sizeBytes: number;
@@ -136,6 +137,7 @@ type PackageInfo = {
   encrypted: true;
   verified: true;
   origin: "generated" | "uploaded";
+  databaseSource?: DatabaseSource;
 };
 type PackageStatus = Record<PackageKind, PackageInfo | null>;
 
@@ -442,6 +444,8 @@ export default function AgentServers() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
   const [formPackageFiles, setFormPackageFiles] = useState<Record<PackageKind, File | null>>({ backend: null, frontend: null, db: null });
+  const [formDatabaseSource, setFormDatabaseSource] = useState<DatabaseSource>("agent");
+  const [cardDatabaseSources, setCardDatabaseSources] = useState<Record<number, DatabaseSource>>({});
   const [formPackageProgress, setFormPackageProgress] = useState<string | null>(null);
   const [smtpRepair, setSmtpRepair] = useState({
     host: "smtp.gmail.com",
@@ -554,13 +558,16 @@ export default function AgentServers() {
         } else {
           const existingReady = (["backend", "frontend", "db"] as PackageKind[])
             .every(kind => !!editingAgent?.externalPackage?.[kind]);
-          if (existingReady) {
-            // Existing verified package can be adopted without rebuilding.
+          if (existingReady && (editingAgent?.externalPackage?.db?.databaseSource ?? "agent") === formDatabaseSource) {
+            // Keep a complete package only when its DB provenance matches the
+            // chosen source. An unrelated save must not rebuild a fresh package.
           } else {
-          setFormPackageProgress("تجهيز الحزمة المشفّرة من قاعدة بيانات الوكيل");
-          const prep = await fetch(`${API}/api/admin/agent-instances/${agentId}/external-package/prepare`, { method: "POST", headers });
-          const prepJson = await prep.json().catch(() => ({}));
-          if (!prep.ok) throw new Error(prepJson.error ?? "فشل تجهيز الحزمة الخارجية");
+            setFormPackageProgress(formDatabaseSource === "fresh" ? "تجهيز حزمة مستقلة بقاعدة بيانات فارغة" : "تجهيز الحزمة المشفّرة من قاعدة بيانات الوكيل");
+            const prep = await fetch(`${API}/api/admin/agent-instances/${agentId}/external-package/prepare`, {
+              method: "POST", headers, body: JSON.stringify({ databaseSource: formDatabaseSource }),
+            });
+            const prepJson = await prep.json().catch(() => ({}));
+            if (!prep.ok) throw new Error(prepJson.error ?? "فشل تجهيز الحزمة الخارجية");
           }
         }
 
@@ -883,15 +890,17 @@ export default function AgentServers() {
     } finally { setPkgBusy(null); }
   }
 
-  async function prepareExternalPackage(a: Agent) {
+  async function prepareExternalPackage(a: Agent, databaseSource: DatabaseSource) {
     setPkgBusy("prepare");
     try {
-      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/external-package/prepare`, { method: "POST", headers });
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/external-package/prepare`, {
+        method: "POST", headers, body: JSON.stringify({ databaseSource }),
+      });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error ?? "فشل تجهيز الحزمة");
       await refreshPkgStatus(a.id);
       invalidate();
-      toast({ title: "تم تجهيز النسخة الخارجية", description: `الإصدار ${j.version} — الملفات الثلاثة مشفّرة ومتحقق منها` });
+      toast({ title: "تم تجهيز النسخة الخارجية", description: `الإصدار ${j.version} — الملفات الثلاثة مشفّرة ومتحقق منها${databaseSource === "fresh" ? "؛ قاعدة البيانات جداول فارغة فقط" : ""}` });
     } catch (e: any) {
       toast({ title: "فشل تجهيز النسخة الخارجية", description: String(e.message ?? e), variant: "destructive" });
     } finally { setPkgBusy(null); }
@@ -1056,10 +1065,12 @@ export default function AgentServers() {
 
   function openCreate() {
     setForm({ ...emptyForm });
+    setFormDatabaseSource("agent");
     setFormPackageFiles({ backend: null, frontend: null, db: null });
     setShowForm(true);
   }
   function openEdit(a: Agent) {
+    setFormDatabaseSource(a.externalPackage?.db?.databaseSource ?? "agent");
     setForm({
       id: a.id, name: a.name, contactPhone: a.contactPhone ?? "", contactEmail: a.contactEmail ?? "",
       domain: a.domain, extraDomainsText: (a.extraDomains ?? []).join("\n"),
@@ -1392,12 +1403,34 @@ export default function AgentServers() {
                     <div className="flex items-center gap-2">
                       <ZatcaTransferAction agentId={a.id} agentName={a.name} agentDomain={a.domain} onComplete={invalidate} />
                       <Button variant="outline" size="sm" className="h-7 text-xs"
-                        disabled={!a.dbUrlSet || pkgBusy === "prepare" || a.deployStatus === "deploying"}
-                        onClick={() => prepareExternalPackage(a)} data-testid={`button-prepare-external-${a.id}`}>
+                        disabled={((cardDatabaseSources[a.id] ?? "agent") === "agent" && !a.dbUrlSet) || pkgBusy === "prepare" || a.deployStatus === "deploying"}
+                        onClick={() => prepareExternalPackage(a, cardDatabaseSources[a.id] ?? "agent")} data-testid={`button-prepare-external-${a.id}`}>
                         {pkgBusy === "prepare" ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}
                         تجهيز إصدار جديد
                       </Button>
                     </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-medium">مصدر قاعدة بيانات الحزمة</label>
+                    <Select value={cardDatabaseSources[a.id] ?? "agent"}
+                      onValueChange={(value: DatabaseSource) => setCardDatabaseSources(current => ({ ...current, [a.id]: value }))}>
+                      <SelectTrigger className="h-8 text-xs" data-testid={`select-package-database-source-${a.id}`}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="agent">قاعدة بيانات الوكيل الحالية (مع بياناته)</SelectItem>
+                        <SelectItem value="fresh">قاعدة جديدة فارغة (جداول فقط)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground" data-testid={`text-package-source-description-${a.id}`}>
+                      {(cardDatabaseSources[a.id] ?? "agent") === "fresh"
+                        ? "Backend وFrontend من بناء المنصة الجاري حاليًا + مخطط جداول فارغ فقط، دون شركات أو مستخدمين أو فواتير مركزية. لا يحتاج رابط قاعدة بيانات الوكيل. التجهيز لا يثبّت الحزمة."
+                        : "Backend وFrontend من بناء المنصة الجاري حاليًا + نسخة كاملة من قاعدة بيانات الوكيل الحالية. يتطلب رابط قاعدة بيانات الوكيل؛ التجهيز لا يثبّت الحزمة."}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">للحصول على ملفات إصدار الإنتاج، جهّز الحزمة من بيئة الإنتاج بعد نشر الإصدار؛ بناء التطوير ليس إصدار الإنتاج المنشور.</p>
+                    {(cardDatabaseSources[a.id] ?? "agent") === "fresh" && !a.localSuperadminEnabled && (
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400" data-testid={`text-local-sa-guidance-${a.id}`}>
+                        لوحة Super Admin المحلية معطّلة لهذا الوكيل. لتمكينها وإعداد هوية الدخول، افتح تعديل الوكيل ← البيانات ← لوحة Super Admin المحلية واحفظ إعداداتها من زر «حفظ إعدادات Super Admin فقط». لن تتغير تلقائيًا عند تجهيز الحزمة.
+                      </p>
+                    )}
                   </div>
                   <div className="grid md:grid-cols-3 gap-2">
                     {(["backend", "frontend", "db"] as PackageKind[]).map(kind => {
@@ -1412,6 +1445,9 @@ export default function AgentServers() {
                           </div>
                           {info ? (
                             <>
+                              {kind === "db" && info.databaseSource === "fresh" && (
+                                <div className="text-[10px] text-emerald-700" data-testid={`text-package-db-source-${a.id}`}>مخطط جداول فارغ (دون بيانات)</div>
+                              )}
                               <div className="mt-1 text-[10px] text-muted-foreground truncate" dir="ltr" title={info.filename}>{info.filename}</div>
                               <div className="text-[10px] font-mono text-muted-foreground" dir="ltr">SHA {info.sha256.slice(0, 12)}…</div>
                               <Button variant="ghost" size="sm" className="h-6 mt-1 px-1.5 text-[10px]"
@@ -2438,6 +2474,9 @@ export default function AgentServers() {
                             ) : existing ? (
                               <>
                                 <div className="text-[11px] text-emerald-700 truncate mt-1" dir="ltr">✓ {existing.filename} ({Math.max(1, Math.round(existing.sizeBytes / 1024 / 1024))}MB)</div>
+                                {row.kind === "db" && existing.databaseSource === "fresh" && (
+                                  <div className="text-[10px] text-emerald-700" data-testid="text-form-package-db-source">مخطط جداول فارغ (دون بيانات)</div>
+                                )}
                                 <div className="text-[10px] font-mono text-muted-foreground" dir="ltr">SHA-256 {existing.sha256.slice(0, 16)}…</div>
                               </>
                             ) : <div className="text-[11px] text-rose-600 mt-1">غير موجود</div>}
@@ -2481,22 +2520,43 @@ export default function AgentServers() {
 
                 <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
                   <div className="text-xs font-medium">أو جهّز الملفات الثلاثة من المنصة</div>
-                  <div className="text-[11px] text-muted-foreground leading-relaxed">
-                    يُستخدم إصدار Backend/Frontend المنشور حاليًا، وتُؤخذ نسخة كاملة من <b>قاعدة بيانات الوكيل الخارجية</b> المسجّلة.
-                    لا تُنسخ هوية المنصة المركزية أو جلسات السوبر أدمن، وتُعاد هوية هذا الوكيل وبصمته بعد الاستعادة.
-                    {!isEdit && " عند إنشاء الوكيل ستتم هذه الخطوة تلقائيًا إذا لم تختر ملفات."}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-medium">مصدر قاعدة بيانات الحزمة المُولّدة</label>
+                    <Select value={formDatabaseSource} onValueChange={(value: DatabaseSource) => setFormDatabaseSource(value)}>
+                      <SelectTrigger className="h-9 text-xs" data-testid="select-form-package-database-source"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="agent">قاعدة بيانات الوكيل الحالية (مع بياناته)</SelectItem>
+                        <SelectItem value="fresh">قاعدة جديدة فارغة (جداول فقط)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
+                  <div className="text-[11px] text-muted-foreground leading-relaxed">
+                    {formDatabaseSource === "fresh"
+                      ? "يُستخدم Backend/Frontend من بناء المنصة الجاري حاليًا مع قاعدة بيانات جداول فارغة فقط: لا شركات أو مستخدمين أو فواتير من المنصة المركزية، ولا حاجة لرابط قاعدة بيانات الوكيل. التجهيز لا يثبّت الحزمة."
+                      : "يُستخدم Backend/Frontend من بناء المنصة الجاري حاليًا وتُؤخذ نسخة كاملة من قاعدة بيانات الوكيل الخارجية المسجّلة، وليس من بيانات المنصة المركزية. يلزم رابط قاعدة بيانات الوكيل. التجهيز لا يثبّت الحزمة."}
+                    {!isEdit && " عند إنشاء الوكيل ستُجهز الحزمة تلقائيًا إذا لم تختر ملفات."}
+                    {isEdit && !!editingAgent?.externalPackage?.db
+                      && (editingAgent.externalPackage.db.databaseSource ?? "agent") === formDatabaseSource
+                      && " الحزمة الحالية محفوظة عند حفظ النموذج؛ اضغط تجهيز لعمل إصدار جديد."}
+                    {(["backend", "frontend", "db"] as PackageKind[]).some(kind => !!formPackageFiles[kind]) && " عند اختيار ملفات يدوية، تُرفع الملفات المختارة بدلًا من توليد حزمة من هذا المصدر."}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">للحصول على ملفات إصدار الإنتاج، جهّز الحزمة من بيئة الإنتاج بعد نشر الإصدار؛ بناء التطوير ليس إصدار الإنتاج المنشور.</div>
+                  {formDatabaseSource === "fresh" && !form.localSuperadminEnabled && (
+                    <div className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="text-form-local-sa-guidance">
+                      لوحة Super Admin المحلية معطّلة. للوكيل الموجود، فعّلها من تبويب البيانات واضبط هوية الدخول ثم اضغط «حفظ إعدادات Super Admin فقط»؛ حفظ الحزمة لا يفعّلها ولا يغيّر بيانات الحساب. للوكيل الجديد، اضبط بياناتها في تبويب البيانات قبل الحفظ إذا أردتها.
+                    </div>
+                  )}
                   {isEdit && (
                     <Button type="button" variant="outline" size="sm"
-                      disabled={!editingAgent?.dbUrlSet || editingAgent?.mode !== "full" || pkgBusy === "prepare"}
-                      onClick={() => editingAgent && prepareExternalPackage(editingAgent)}
+                      disabled={(formDatabaseSource === "agent" && !editingAgent?.dbUrlSet) || editingAgent?.mode !== "full" || pkgBusy === "prepare" || editingAgent?.deployStatus === "deploying"}
+                      onClick={() => editingAgent && prepareExternalPackage(editingAgent, formDatabaseSource)}
                       data-testid="button-prepare-external-form">
                       {pkgBusy === "prepare" ? <Loader2 className="h-3.5 w-3.5 ms-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 ms-1" />}
                       تجهيز Backend + Frontend + Database
                     </Button>
                   )}
                   {isEdit && editingAgent?.mode !== "full" && (
-                    <div className="text-[10px] text-amber-700">احفظ الوكيل أولًا كنسخة كاملة؛ بعدها يمكن تجهيز الحزمة من قاعدة بياناته.</div>
+                    <div className="text-[10px] text-amber-700">احفظ الوكيل أولًا كنسخة كاملة؛ بعدها يمكن تجهيز الحزمة من المصدر الذي تختاره.</div>
                   )}
                 </div>
 

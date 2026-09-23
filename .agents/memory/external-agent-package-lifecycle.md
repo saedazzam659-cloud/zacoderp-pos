@@ -8,3 +8,9 @@ An externally supplied agent edition remains the existing full runtime mode; pac
 **Why:** Treating the package source as a runtime mode would fork licensing and heartbeat behavior. Requiring browser-side encryption would expose or duplicate the agent key, while unconstrained upload URLs and temporary plaintext copies create storage-abuse and scratch-space risks. Coupling SSH repair to full-edition validation can leave a stale encrypted password in place while an unrelated SuperAdmin error blocks the replacement.
 
 **How to apply:** Keep later central releases manual and gated by the local SuperAdmin, with no automatic restart. Any new upload path must preserve storage-enforced length, private staging cleanup, server-side structural validation and encryption, signed metadata, pre-install object rehashing, and target-side SHA verification before decryption. Edition forms may still save everything together, but their server tab must also expose a narrow SSH-only update that preserves an omitted secret and resets connection status independently.
+
+New independent installations should use the published application's release with schema-only database content, not a clone of central tenant data; routine updates retain the target's data.
+
+**Why:** The user chose an independent, empty installation equivalent in capabilities to the existing full platform, not a copy of its customer records. Development builds are not evidence of the currently published release.
+
+**How to apply:** Generate production packages through the authenticated published platform. Make database provenance explicit, retain legacy agent-data behavior unless fresh is selected, bind fresh restore policy to signed metadata, and reject fresh installation into a nonempty target. Configure local SuperAdmin through its existing separate credential flow.
