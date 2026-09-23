@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   buildFreshAgentDatabaseSchema,
   packageSignature,
+  rawPackageFilename,
   verifyPackageEntry,
   type ExternalPackageEntry,
 } from "../src/lib/agentExternalPackages.js";
@@ -22,7 +23,7 @@ case " $* " in *" --exclude-table=public.agent_invoice_samples_id_seq "*) ;; *) 
 for last; do :; done
 [ "$last" = "postgresql://central.example/test" ] || exit 18
 while [ "$1" != "--file" ]; do shift; done
-printf '%s\\n' '-- PostgreSQL database dump' 'CREATE SCHEMA public;' 'CREATE TABLE public.companies (id integer);' '    invoice_acceleration_mode text,' '\\\\restrict secret' > "$2"
+printf '%s\\n' '-- PostgreSQL database dump' 'CREATE SCHEMA public;' 'CREATE TABLE public.companies (id integer);' 'ALTER TABLE ONLY public.agent_instances ALTER COLUMN invoice_acceleration_mode SET DEFAULT '\\''off'\\''::text;' '\\\\restrict secret' > "$2"
 `, { mode: 0o700 });
     await chmod(fakeDump, 0o700);
     process.env.PATH = `${dir}:${priorPath}`;
@@ -67,4 +68,12 @@ test("fresh restore policy is signed and cannot be added to an agent dump", () =
     if (previous === undefined) delete process.env.SESSION_SECRET;
     else process.env.SESSION_SECRET = previous;
   }
+});
+
+test("raw download filenames use the verified package format, not the supplied extension", () => {
+  const entry = { filename: "../../old.tgz", format: "tgz" } as ExternalPackageEntry;
+  assert.equal(rawPackageFilename(entry, "backend"), "old.tar.gz");
+  assert.equal(rawPackageFilename({ ...entry, filename: "database.dump", format: "sql" }, "db"), "database.sql");
+  assert.equal(rawPackageFilename({ ...entry, filename: "database.sql", format: "pg_custom" }, "db"), "database.dump");
+  assert.equal(rawPackageFilename({ ...entry, filename: "database.dump", format: "sql_gzip" }, "db"), "database.sql.gz");
 });

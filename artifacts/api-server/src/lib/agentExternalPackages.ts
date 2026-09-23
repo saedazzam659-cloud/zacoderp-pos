@@ -396,6 +396,82 @@ export async function streamPrivatePackage(res: any, entry: ExternalPackageEntry
   file.createReadStream().pipe(res);
 }
 
+/**
+ * Materialize and verify a raw download before sending any bytes to the client.
+ * CBC is not authenticated: the signed ciphertext SHA-256 must match exactly
+ * before this temporary plaintext is exposed. Caller owns removal of the dir.
+ */
+export async function verifiedRawPackageTemp(
+  entry: ExternalPackageEntry,
+  kind: ExternalPackageKind,
+  passphrase: string,
+): Promise<{ dir: string; filePath: string; sizeBytes: number }> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), ".zacod-raw-download-"));
+  const filePath = path.join(dir, "package.raw");
+  try {
+    const file = privateFileForObjectPath(entry.objectPath);
+    const [metadata] = await file.getMetadata();
+    const size = Number(metadata.size);
+    if (!Number.isSafeInteger(size) || size !== entry.sizeBytes || size <= 16 || size > MAX_ENCRYPTED_PACKAGE_BYTES) {
+      throw new Error("حجم الحزمة المشفّرة غير صالح");
+    }
+    const encryptedHash = createHash("sha256");
+    let header = Buffer.alloc(0);
+    let readBytes = 0;
+    const withoutHeader = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        readBytes += chunk.length;
+        if (readBytes > size) { callback(new Error("حجم الحزمة غير مطابق")); return; }
+        encryptedHash.update(chunk);
+        if (header.length < 16) {
+          const count = Math.min(16 - header.length, chunk.length);
+          header = Buffer.concat([header, chunk.subarray(0, count)]);
+          chunk = chunk.subarray(count);
+        }
+        callback(null, chunk);
+      },
+    });
+    // Read salt first, then stream the complete ciphertext through the hash
+    // and decipher. Never return the temp path until all checks pass.
+    const chunks: Buffer[] = [];
+    for await (const chunk of file.createReadStream({ start: 0, end: 15 })) chunks.push(Buffer.from(chunk));
+    const saltHeader = Buffer.concat(chunks);
+    if (saltHeader.length !== 16 || !saltHeader.subarray(0, 8).equals(HEADER)) {
+      throw new Error("الملف غير مشفّر بصيغة الحزمة المعتمدة");
+    }
+    const { key, iv } = keyIv(passphrase, saltHeader.subarray(8, 16));
+    await pipeline(file.createReadStream(), withoutHeader, createDecipheriv("aes-256-cbc", key, iv),
+      createWriteStream(filePath, { mode: 0o600, flags: "wx" }));
+    const actualHash = encryptedHash.digest("hex");
+    const expected = Buffer.from(entry.sha256, "hex");
+    const actual = Buffer.from(actualHash, "hex");
+    if (readBytes !== size || expected.length !== actual.length || !timingSafeEqual(expected, actual) ||
+        !header.equals(saltHeader)) {
+      throw new Error("بصمة الحزمة المشفّرة غير مطابقة");
+    }
+    const inspected = await inspectPlainPackagePath(filePath, kind);
+    if (inspected.format !== entry.format || encryptedPackageSize(inspected.sizeBytes) !== size) {
+      throw new Error("صيغة الحزمة الخام غير مطابقة");
+    }
+    return { dir, filePath, sizeBytes: inspected.sizeBytes };
+  } catch (error) {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+export function rawPackageFilename(entry: ExternalPackageEntry, kind: ExternalPackageKind): string {
+  const extension = entry.format === "tgz" ? ".tar.gz"
+    : entry.format === "sql_gzip" ? ".sql.gz"
+    : entry.format === "sql" ? ".sql" : ".dump";
+  // The filename is display metadata, not signed. Never use its path or extension
+  // to decide the bytes' format; use the signed format and inspected contents.
+  const base = path.basename(entry.filename || kind)
+    .replace(/\.(tar\.gz|tgz|sql\.gz|sql|dump|backup|gz|zacpkg\.enc|enc)$/i, "")
+    .replace(/[^a-zA-Z0-9_.-]/g, "_").replace(/^\.+/, "").slice(0, 120) || kind;
+  return `${base}${extension}`;
+}
+
 export async function buildFrontendArchive(distDir: string, outputDir: string): Promise<string> {
   const candidates = [
     path.join(distDir, "public"),

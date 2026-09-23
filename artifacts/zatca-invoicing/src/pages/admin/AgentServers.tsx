@@ -920,14 +920,15 @@ export default function AgentServers() {
     } finally { setPkgBusy(null); }
   }
 
-  async function downloadPkg(agentId: number, kind: PackageKind) {
-    setPkgBusy(`download-${kind}`);
+  async function downloadPkg(agentId: number, kind: PackageKind, format: "encrypted" | "raw" = "encrypted") {
+    const busyKey = `download-${kind}-${format}`;
+    setPkgBusy(busyKey);
     try {
-      const r = await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}/download`, { headers });
+      const r = await fetch(`${API}/api/admin/agent-instances/${agentId}/custom-package/${kind}/download${format === "raw" ? "?format=raw" : ""}`, { headers });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "فشل التنزيل");
       const blob = await r.blob();
       const cd = r.headers.get("Content-Disposition") ?? "";
-      const filename = cd.match(/filename="([^"]+)"/)?.[1] ?? `${kind}.zacpkg.enc`;
+      const filename = cd.match(/filename="([^"]+)"/)?.[1] ?? (format === "raw" ? `${kind}.bin` : `${kind}.zacpkg.enc`);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = filename; a.click();
@@ -1465,10 +1466,16 @@ export default function AgentServers() {
                               <div className="mt-1 text-[10px] text-muted-foreground truncate" dir="ltr" title={info.filename}>{info.filename}</div>
                               <div className="text-[10px] font-mono text-muted-foreground" dir="ltr">SHA {info.sha256.slice(0, 12)}…</div>
                               <Button variant="ghost" size="sm" className="h-6 mt-1 px-1.5 text-[10px]"
-                                disabled={pkgBusy === `download-${kind}`}
+                                disabled={!!pkgBusy}
                                 onClick={() => downloadPkg(a.id, kind)}>
-                                {pkgBusy === `download-${kind}` ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <FileDown className="h-3 w-3 ms-1" />}
-                                تنزيل
+                                {pkgBusy === `download-${kind}-encrypted` ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <FileDown className="h-3 w-3 ms-1" />}
+                                تنزيل مشفّر
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-6 mt-1 px-1.5 text-[10px]"
+                                disabled={!!pkgBusy}
+                                onClick={() => downloadPkg(a.id, kind, "raw")}>
+                                {pkgBusy === `download-${kind}-raw` ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <FileDown className="h-3 w-3 ms-1" />}
+                                تنزيل خام لإعادة الرفع
                               </Button>
                             </>
                           ) : <div className="mt-1 text-[10px] text-rose-600">لا يمكن بدء التسطيب قبل اكتمال الملفات الثلاثة.</div>}
@@ -1476,6 +1483,7 @@ export default function AgentServers() {
                       );
                     })}
                   </div>
+                  <p className="text-[10px] text-amber-700">تنبيه: التنزيل الخام غير مشفّر وقد يحتوي بيانات حساسة، خصوصًا ملف قاعدة البيانات. احفظه في مكان آمن واحذفه بعد الاستخدام. إعادة رفع مخطط قاعدة فارغة لا تحفظ صفة «قاعدة جديدة» الموثّقة؛ يلزم توليد حزمة جديدة للاحتفاظ بهذه الصفة.</p>
                   <div className="text-[10px] text-muted-foreground">
                     الإصدارات المركزية اللاحقة تظهر داخل النسخة المثبتة، ولا تُثبّت إلا بعد موافقة السوبر أدمن المحلي؛ لا توجد إعادة تشغيل تلقائية.
                   </div>
@@ -2512,9 +2520,16 @@ export default function AgentServers() {
                             )}
                             {existing && (
                               <Button type="button" variant="ghost" size="sm" className="h-8 text-[11px]"
-                                disabled={pkgBusy === `download-${row.kind}`}
+                                disabled={!!pkgBusy}
                                 onClick={() => downloadPkg(form.id, row.kind)}>
-                                <FileDown className="h-3.5 w-3.5 ms-1" />تنزيل
+                                <FileDown className="h-3.5 w-3.5 ms-1" />تنزيل مشفّر
+                              </Button>
+                            )}
+                            {existing && (
+                              <Button type="button" variant="ghost" size="sm" className="h-8 text-[11px]"
+                                disabled={!!pkgBusy}
+                                onClick={() => downloadPkg(form.id, row.kind, "raw")}>
+                                <FileDown className="h-3.5 w-3.5 ms-1" />تنزيل خام لإعادة الرفع
                               </Button>
                             )}
                           </div>
@@ -2523,6 +2538,7 @@ export default function AgentServers() {
                     );
                   })}
                 </div>
+                <p className="text-[11px] text-amber-700">التنزيل الخام غير مشفّر وقد يحتوي بيانات حساسة؛ احفظه بأمان واحذفه بعد الرفع. إعادة رفع قاعدة «جداول فقط» لا تحتفظ بسياسة استعادتها كقاعدة جديدة؛ أعد توليد الحزمة من المنصة لهذه السياسة.</p>
 
                  <div className="text-[11px] text-muted-foreground border-s-2 border-emerald-400 ps-3">
                    بعد التثبيت تظل الإصدارات المركزية الجديدة قابلة للتثبيت يدويًا من داخل السيرفر الخارجي. يلزم تأكيد السوبر أدمن المحلي، ويُجرى فحص صحة ورجوع تلقائي عند الفشل، ولا يُعاد تشغيل السيرفر دون الموافقة.
@@ -2593,14 +2609,21 @@ export default function AgentServers() {
                          <div key={kind} className="flex items-center justify-between gap-2">
                            <span className="truncate">{packageLabel(kind)}: {info.filename}{kind === "db" && info.databaseSource === "fresh" ? " — مخطط جداول فارغ" : ""}</span>
                            <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0"
-                             disabled={pkgBusy === `download-${kind}`}
+                             disabled={!!pkgBusy}
                              onClick={() => downloadPkg(form.id, kind)}
                              data-testid={`button-download-generated-${kind}`}>
                              <FileDown className="h-3.5 w-3.5 ms-1" />تنزيل مشفّر
                            </Button>
+                           <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0"
+                             disabled={!!pkgBusy}
+                             onClick={() => downloadPkg(form.id, kind, "raw")}
+                             data-testid={`button-download-generated-raw-${kind}`}>
+                             <FileDown className="h-3.5 w-3.5 ms-1" />تنزيل خام لإعادة الرفع
+                           </Button>
                          </div>
                        );
                      })}
+                     <p className="text-amber-700">الملف الخام غير مشفّر وقد يتضمن بيانات حساسة. احفظه بأمان واحذفه بعد الاستخدام. إعادة رفع مخطط جداول فارغ لا تحتفظ تلقائيًا بسياسة استعادة قاعدة جديدة؛ أعد توليده للاحتفاظ بها.</p>
                    </div>
                  )}
               </TabsContent>

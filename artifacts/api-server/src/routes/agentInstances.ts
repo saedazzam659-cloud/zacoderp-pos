@@ -25,6 +25,7 @@ import express, { Router, type Request } from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { promises as fsp } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { pbkdf2Sync, createCipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 // Control-plane module: ALL registry reads/writes here must hit the CENTRAL
 // DB even when the request is running inside an agent-DB ALS context (an
@@ -68,12 +69,14 @@ import {
   packageSignature,
   privateFileForObjectPath,
   promoteStagedUploadToEncryptedPackage,
+  rawPackageFilename,
   removeAllAgentPackageObjects,
   removePackageObject,
   streamPrivatePackage,
   sweepStalePackageUploads,
   verifyEncryptedPackageObject,
   verifyPackageEntry,
+  verifiedRawPackageTemp,
 } from "../lib/agentExternalPackages.js";
 import {
   effectiveLocalSuperadminEnabled,
@@ -2895,6 +2898,20 @@ rm -rf "$ZACOD_SAFE_BAK"`
 # zacod agent bootstrap — idempotent. Run as root on the agent server.
 set -e
 ${safeSetupGuard}
+# The heartbeat uses Node's built-in fetch even before a full-edition app is
+# installed (and on editions with no local app). Provision it before cron or
+# the first heartbeat; the app installer below reuses the same Node version.
+export DEBIAN_FRONTEND=noninteractive
+NEED_NODE=1
+if command -v node >/dev/null 2>&1; then MAJ=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0); [ "$MAJ" -ge 20 ] && NEED_NODE=0; fi
+if [ "$NEED_NODE" = "1" ]; then
+  command -v apt-get >/dev/null 2>&1 || { echo "ERROR: apt-get not found — Node.js 20+ is required for heartbeat" >&2; exit 1; }
+  command -v curl >/dev/null 2>&1 || { apt-get update -y >/dev/null; apt-get install -y curl >/dev/null; }
+  set -o pipefail
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+  apt-get install -y nodejs >/dev/null
+fi
+node -e 'if (Number(process.versions.node.split(".")[0]) < 20 || typeof fetch !== "function") process.exit(1)' || { echo "ERROR: Node.js 20+ with fetch is required for heartbeat" >&2; exit 1; }
 mkdir -p /opt/zacod
 cat > /opt/zacod/config.json <<'ZACOD_CFG'
 ${JSON.stringify(config, null, 2)}
@@ -5061,7 +5078,10 @@ echo ZACOD_DB_READY`, "ZACOD_DB_READY", 300_000);
     if (opts.variant === "upload" && opts.restoreUploadedDb !== false && inst.mode === "full") {
       const metaR = readPackageMap(inst.externalPackageMeta);
       if (metaR.db && verifyPackageEntry(inst.id, "db", metaR.db)) {
-        await step("استعادة نسخة قاعدة البيانات المرفوعة");
+        // The progress UI tracks numbered stages. Attribute restore failures
+        // to the DB stage, not the already-completed Caddy stage; the normal
+        // 4/6 schema heading replaces this one after a successful restore.
+        await step("4/6 استعادة نسخة قاعدة البيانات المرفوعة");
         await reload();
         const originR = resolveCentralOrigin();
         const storedDbUrlR = decryptSecret(inst.dbUrlEnc!) ?? "";
@@ -5827,20 +5847,41 @@ router.get("/:id/custom-package/:kind/download", async (req, res) => {
   const id = Number(req.params.id);
   const kind = String(req.params.kind) as CustomKind;
   if (!CUSTOM_KINDS.includes(kind)) { res.status(400).json({ error: "نوع ملف غير معروف" }); return; }
+  const format = req.query.format;
+  if (format !== undefined && format !== "raw") {
+    res.status(400).json({ error: "صيغة التنزيل غير معروفة" }); return;
+  }
   const [inst] = await db.select({
     id: agentInstancesTable.id,
     externalPackageMeta: agentInstancesTable.externalPackageMeta,
+    installationId: agentInstancesTable.installationId,
+    licenseKey: agentInstancesTable.licenseKey,
   }).from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
   if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
   const entry = readPackageMap(inst.externalPackageMeta)[kind];
   if (!entry || !verifyPackageEntry(id, kind, entry)) { res.status(404).json({ error: "الملف غير متاح" }); return; }
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  let temp: Awaited<ReturnType<typeof verifiedRawPackageTemp>> | null = null;
   try {
-    res.setHeader("Content-Disposition", `attachment; filename="${kind}-${entry.sha256.slice(0, 12)}.zacpkg.enc"`);
-    await logAgentEvent(id, "external_package_downloaded", { kind, sha256: entry.sha256, by: (req as any).authUser?.username ?? null }, req);
-    await streamPrivatePackage(res, entry);
+    if (format === "raw") {
+      temp = await verifiedRawPackageTemp(entry, kind, bundlePassphrase(inst));
+      res.setHeader("Content-Disposition", `attachment; filename="${rawPackageFilename(entry, kind)}"`);
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Length", String(temp.sizeBytes));
+      await logAgentEvent(id, "external_package_downloaded", { kind, format: "raw", sha256: entry.sha256, by: (req as any).authUser?.username ?? null }, req);
+      await pipeline(fs.createReadStream(temp.filePath), res);
+    } else {
+      // Default behavior remains byte-for-byte compatible with older clients.
+      res.setHeader("Content-Disposition", `attachment; filename="${kind}-${entry.sha256.slice(0, 12)}.zacpkg.enc"`);
+      await logAgentEvent(id, "external_package_downloaded", { kind, sha256: entry.sha256, by: (req as any).authUser?.username ?? null }, req);
+      await streamPrivatePackage(res, entry);
+    }
   } catch (error: any) {
-    if (!res.headersSent) res.status(503).json({ error: String(error?.message ?? error).slice(0, 300) });
+    if (!res.headersSent) res.status(503).json({ error: "تعذّر التحقق من الحزمة أو تنزيلها" });
     else res.destroy();
+  } finally {
+    if (temp) await fsp.rm(temp.dir, { recursive: true, force: true }).catch(() => {});
   }
 });
 

@@ -20,3 +20,9 @@ Keep external file import separate from central package generation, and require 
 **Why:** The user needs to import compatible packages from other platforms without central code or database content silently replacing those inputs.
 
 **How to apply:** Preserve existing upload checks and settings, separate generation controls from import controls, and reject mixed pending upload/generation intent. Missing uploads must produce validation, not trigger a central rebuild.
+
+Portable raw downloads are distinct from installation-bound encrypted backups. Re-uploading raw SQL must not infer trusted fresh-schema provenance from filenames or user-provided markers.
+
+**Why:** The user needs reusable files for the external upload workflow, but editable raw files cannot carry the original signed restore policy safely. Downloaded databases may contain sensitive data.
+
+**How to apply:** Keep raw downloads authenticated and explicitly labelled unencrypted; verify stored signed ciphertext before releasing plaintext. Preserve ordinary upload validation and require platform regeneration for signed fresh-schema restore policy.
