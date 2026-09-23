@@ -10,6 +10,7 @@ import { ensureContractingAccountingTables } from "./contracting-accounting-stor
 import {
   analyticalAllocationAmount,
   categoryCoverage,
+  equipmentHoursAllocation,
   validateSourceCategory,
 } from "./contracting-cost-allocation-helper.js";
 
@@ -23,6 +24,7 @@ type SourceSnapshot = {
   date: string;
   label: string;
   category: string;
+  branchId: number | null;
   meta: Record<string, unknown>;
 };
 
@@ -49,6 +51,35 @@ function isoDateValue(value: unknown): string {
   return match[0];
 }
 
+function assertAllocationReplay(row: any, expected: {
+  projectId: number;
+  sourceType: string;
+  sourceRecordId: number;
+  ownerContractId: number | null;
+  subcontractorContractId: number | null;
+  boqLineId: number | null;
+  body: any;
+}) {
+  const sameNullableId = (left: unknown, right: number | null) =>
+    (left == null ? null : Number(left)) === right;
+  const amountMatches = expected.body.amount == null
+    || Math.abs(Number(row.allocated_amount) - Number(expected.body.amount)) < 0.005;
+  const shareMatches = expected.body.sharePct == null
+    || Math.abs(Number(row.share_pct) - Number(expected.body.sharePct)) < 0.0000005;
+  const hoursMatches = expected.body.equipmentHours == null
+    || Math.abs(Number(row.equipment_hours) - Number(expected.body.equipmentHours)) < 0.00005;
+  if (Number(row.project_id) !== expected.projectId
+    || String(row.source_type) !== expected.sourceType
+    || Number(row.source_record_id) !== expected.sourceRecordId
+    || !sameNullableId(row.owner_contract_id, expected.ownerContractId)
+    || !sameNullableId(row.subcontractor_contract_id, expected.subcontractorContractId)
+    || !sameNullableId(row.boq_line_id, expected.boqLineId)
+    || (expected.body.category != null && String(row.category) !== String(expected.body.category))
+    || !amountMatches || !shareMatches || !hoursMatches) {
+    fail("مفتاح منع التكرار مستخدم لعملية أخرى", 409, "IDEMPOTENCY_KEY_REUSED");
+  }
+}
+
 export async function ensureContractingCostAllocationTables(): Promise<void> {
   // db is the request-scoped ALS proxy, so readiness is applied to the active
   // tenant database rather than only to the central control-plane database.
@@ -68,6 +99,10 @@ export async function ensureContractingCostAllocationTables(): Promise<void> {
       basis TEXT NOT NULL DEFAULT 'percentage',
       share_pct NUMERIC(9,6),
       allocated_amount NUMERIC(18,2) NOT NULL,
+      equipment_asset_id INTEGER,
+      equipment_hours NUMERIC(14,4),
+      source_hours_denominator NUMERIC(14,4),
+      hourly_rate_evidence NUMERIC(18,6),
       reversal_of_id INTEGER REFERENCES contracting_cost_allocations(id) ON DELETE RESTRICT,
       idempotency_key TEXT NOT NULL,
       source_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -82,6 +117,43 @@ export async function ensureContractingCostAllocationTables(): Promise<void> {
         NOT (owner_contract_id IS NOT NULL AND subcontractor_contract_id IS NOT NULL)
       )
     )
+  `);
+  await db.execute(sql`
+    ALTER TABLE contracting_cost_allocations
+      ADD COLUMN IF NOT EXISTS equipment_asset_id INTEGER,
+      ADD COLUMN IF NOT EXISTS equipment_hours NUMERIC(14,4),
+      ADD COLUMN IF NOT EXISTS source_hours_denominator NUMERIC(14,4),
+      ADD COLUMN IF NOT EXISTS hourly_rate_evidence NUMERIC(18,6)
+  `);
+  await db.execute(sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname='ctg_cost_alloc_equipment_asset_fk'
+           AND conrelid='contracting_cost_allocations'::regclass
+      ) THEN
+        ALTER TABLE contracting_cost_allocations
+          ADD CONSTRAINT ctg_cost_alloc_equipment_asset_fk
+          FOREIGN KEY (equipment_asset_id) REFERENCES fixed_assets(id) ON DELETE RESTRICT NOT VALID;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname='ctg_cost_alloc_equipment_evidence_ck'
+           AND conrelid='contracting_cost_allocations'::regclass
+      ) THEN
+        ALTER TABLE contracting_cost_allocations
+          ADD CONSTRAINT ctg_cost_alloc_equipment_evidence_ck CHECK (
+            (category='equipment' AND equipment_asset_id IS NOT NULL
+              AND equipment_hours > 0 AND source_hours_denominator > 0
+              AND hourly_rate_evidence > 0)
+            OR
+            (category<>'equipment' AND equipment_asset_id IS NULL
+              AND equipment_hours IS NULL AND source_hours_denominator IS NULL
+              AND hourly_rate_evidence IS NULL)
+          ) NOT VALID;
+      END IF;
+    END $$;
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS ctg_cost_alloc_source_idx ON contracting_cost_allocations(company_id, source_type, source_record_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS ctg_cost_alloc_target_idx ON contracting_cost_allocations(company_id, project_id, owner_contract_id, subcontractor_contract_id, boq_line_id)`);
@@ -153,12 +225,13 @@ async function lockPostedSource(
   sourceType: string,
   sourceRecordId: number,
   requestedCategory: unknown,
+  user: BranchUser,
 ): Promise<SourceSnapshot> {
   const category = validateSourceCategory(sourceType, requestedCategory);
   let query = "";
   if (sourceType === "payroll_snapshot") {
     query = `
-      SELECT s.id, s.company_id, s.allocated_amount amount, s.period_end source_date,
+      SELECT s.id, s.company_id, r.branch_id, s.allocated_amount amount, s.period_end source_date,
              ('Payroll snapshot #' || s.id) label,
              jsonb_build_object('payrollRunId', s.payroll_run_id, 'payrollLineId', s.payroll_line_id,
                'employeeId', s.employee_id, 'days', s.days, 'costBasis', s.cost_basis) meta
@@ -169,18 +242,20 @@ async function lockPostedSource(
        FOR UPDATE OF s`;
   } else if (sourceType === "fixed_asset_depreciation") {
     query = `
-      SELECT r.id, r.company_id, r.depreciation_amount amount,
+      SELECT r.id, r.company_id, a.branch_id, r.depreciation_amount amount,
              make_date(r.period_year, r.period_month, 1) source_date,
              (a.code || ' — ' || a.name_ar) label,
              jsonb_build_object('assetId', r.asset_id, 'periodYear', r.period_year,
-               'periodMonth', r.period_month, 'journalEntryId', r.journal_entry_id) meta
+               'periodMonth', r.period_month, 'journalEntryId', r.journal_entry_id,
+               'approvedOperatingHours', a.approved_operating_hours,
+               'allocationMethod', a.manufacturing_allocation_method) meta
         FROM fa_depreciation_runs r
         JOIN fixed_assets a ON a.id=r.asset_id AND a.company_id=r.company_id
        WHERE r.company_id=$1 AND r.id=$2 AND r.status='posted' AND r.journal_entry_id IS NOT NULL
        FOR UPDATE OF r`;
   } else if (sourceType === "purchase_invoice_line") {
     query = `
-      SELECT l.id, l.company_id, COALESCE(NULLIF(l.final_cost,0), l.line_total) amount,
+      SELECT l.id, l.company_id, i.branch_id, COALESCE(NULLIF(l.final_cost,0), l.line_total) amount,
              i.invoice_date::date source_date,
              COALESCE(l.item_code || ' — ', '') || l.item_name label,
              jsonb_build_object('invoiceId', i.id, 'documentNumber', i.doc_number,
@@ -196,19 +271,57 @@ async function lockPostedSource(
        FOR UPDATE OF l`;
   } else if (sourceType === "subcontract_bill") {
     query = `
-      SELECT b.id, b.company_id, b.net_amount amount, b.bill_date source_date,
+      SELECT b.id, b.company_id, p.branch_id, b.net_amount amount, b.bill_date source_date,
              ('Subcontract certificate ' || b.bill_number) label,
              jsonb_build_object('projectId', b.project_id, 'subcontractorContractId',
                b.subcontractor_contract_id, 'journalEntryId', b.journal_entry_id) meta
         FROM contracting_progress_bills b
+        JOIN contracting_projects p ON p.id=b.project_id AND p.company_id=b.company_id
        WHERE b.company_id=$1 AND b.id=$2 AND b.direction='incoming'
          AND b.status IN ('approved','posted','partially_paid','paid')
          AND b.journal_entry_id IS NOT NULL AND b.reversal_journal_entry_id IS NULL
        FOR UPDATE OF b`;
+  } else if (sourceType === "journal_expense_line") {
+    query = `
+      SELECT l.id, j.company_id, j.branch_id, l.debit amount, j.entry_date::date source_date,
+             (COALESCE(j.doc_number, 'JE #' || j.id) || ' — ' ||
+               COALESCE(l.description, a.name_ar)) label,
+             jsonb_build_object('journalEntryId', j.id, 'accountId', l.account_id,
+               'entryType', j.entry_type, 'costCenter', l.cost_center,
+               'paymentVoucherId', (
+                 SELECT v.id FROM payment_vouchers v
+                  WHERE v.company_id=j.company_id AND v.journal_entry_id=j.id LIMIT 1
+               )) meta
+        FROM journal_entry_lines l
+        JOIN journal_entries j ON j.id=l.entry_id
+        JOIN accounts a ON a.id=l.account_id AND a.company_id=j.company_id
+          AND a.account_type='expense'
+       WHERE j.company_id=$1 AND l.id=$2 AND j.status='posted' AND l.debit > 0
+         AND j.entry_type NOT LIKE 'contracting_%'
+         AND NOT EXISTS (SELECT 1 FROM payroll_runs r WHERE r.company_id=j.company_id AND r.posted_journal_id=j.id)
+         AND NOT EXISTS (SELECT 1 FROM fa_depreciation_runs r WHERE r.company_id=j.company_id AND r.journal_entry_id=j.id)
+         AND NOT EXISTS (SELECT 1 FROM purchase_invoices i WHERE i.company_id=j.company_id AND i.journal_entry_id=j.id)
+         AND NOT EXISTS (SELECT 1 FROM contracting_progress_bills b WHERE b.company_id=j.company_id AND b.journal_entry_id=j.id)
+         AND NOT EXISTS (SELECT 1 FROM contracting_material_movements m WHERE m.company_id=j.company_id AND m.journal_entry_id=j.id)
+         AND NOT EXISTS (SELECT 1 FROM accounting_adjustment_runs ar WHERE ar.company_id=j.company_id AND ar.journal_entry_id=j.id)
+         AND NOT EXISTS (
+           SELECT 1 FROM production_cost_allocations pa
+            WHERE pa.company_id=j.company_id
+              AND (pa.reclassification_journal_entry_id=j.id OR pa.reversal_journal_entry_id=j.id)
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM payment_vouchers v
+            WHERE v.company_id=j.company_id AND v.journal_entry_id=j.id
+              AND v.purchase_invoice_id IS NOT NULL
+         )
+       FOR UPDATE OF l`;
   }
   const result = await client.query(query, [companyId, sourceRecordId]);
   const row = result.rows[0];
   if (!row) fail("مصدر التكلفة غير موجود أو غير مرحّل أو تم عكسه", 422, "POSTED_SOURCE_REQUIRED");
+  if (!contractingBranchAllowed(user, row.branch_id == null ? null : Number(row.branch_id))) {
+    fail("لا تملك صلاحية فرع مصدر التكلفة", 403);
+  }
   const amount = Number(row.amount);
   if (!Number.isFinite(amount) || amount <= 0) fail("مصدر التكلفة لا يحتوي مبلغاً موجباً قابلاً للتوزيع", 422);
   return {
@@ -219,6 +332,7 @@ async function lockPostedSource(
     date: isoDateValue(row.source_date),
     label: String(row.label),
     category,
+    branchId: row.branch_id == null ? null : Number(row.branch_id),
     meta: row.meta ?? {},
   };
 }
@@ -273,16 +387,15 @@ export async function createContractingCostAllocation(
       [companyId, idempotencyKey],
     );
     if (replay.rows[0]) {
-      if (Number(replay.rows[0].project_id) !== projectId
-        || String(replay.rows[0].source_type) !== sourceType
-        || Number(replay.rows[0].source_record_id) !== sourceRecordId) {
-        fail("مفتاح منع التكرار مستخدم لعملية أخرى", 409, "IDEMPOTENCY_KEY_REUSED");
-      }
+      assertAllocationReplay(replay.rows[0], {
+        projectId, sourceType, sourceRecordId, ownerContractId,
+        subcontractorContractId, boqLineId, body,
+      });
       await client.query("COMMIT");
       return replay.rows[0];
     }
     const source = await lockPostedSource(
-      client, companyId, sourceType, sourceRecordId, body.category,
+      client, companyId, sourceType, sourceRecordId, body.category, user,
     );
     // A concurrent retry can only reach this point after the same source lock
     // has been released. Re-check under that lock so idempotent retries return
@@ -292,11 +405,10 @@ export async function createContractingCostAllocation(
       [companyId, idempotencyKey],
     );
     if (lockedReplay.rows[0]) {
-      if (Number(lockedReplay.rows[0].project_id) !== projectId
-        || String(lockedReplay.rows[0].source_type) !== sourceType
-        || Number(lockedReplay.rows[0].source_record_id) !== sourceRecordId) {
-        fail("مفتاح منع التكرار مستخدم لعملية أخرى", 409, "IDEMPOTENCY_KEY_REUSED");
-      }
+      assertAllocationReplay(lockedReplay.rows[0], {
+        projectId, sourceType, sourceRecordId, ownerContractId,
+        subcontractorContractId, boqLineId, body,
+      });
       await client.query("COMMIT");
       return lockedReplay.rows[0];
     }
@@ -316,23 +428,64 @@ export async function createContractingCostAllocation(
     const allocatedByOtherModules = await otherModuleAllocatedAmount(
       client, companyId, sourceType, sourceRecordId,
     );
-    const calculated = analyticalAllocationAmount({
-      sourceAmount: source.amount,
-      alreadyAllocated: Number(usedResult.rows[0]?.used ?? 0) + allocatedByOtherModules,
-      amount: body.amount == null ? null : Number(body.amount),
-      sharePct: body.sharePct == null ? null : Number(body.sharePct),
-    });
+    const alreadyAllocated = Number(usedResult.rows[0]?.used ?? 0) + allocatedByOtherModules;
+    let equipmentAssetId: number | null = null;
+    let equipmentHours: number | null = null;
+    let sourceHoursDenominator: number | null = null;
+    let hourlyRateEvidence: number | null = null;
+    const calculated = source.category === "equipment"
+      ? (() => {
+          equipmentAssetId = Number(source.meta.assetId);
+          equipmentHours = Number(body.equipmentHours);
+          sourceHoursDenominator = Number(source.meta.approvedOperatingHours);
+          if (!Number.isInteger(equipmentAssetId) || equipmentAssetId <= 0
+            || !Number.isFinite(equipmentHours) || equipmentHours <= 0
+            || !Number.isFinite(sourceHoursDenominator) || sourceHoursDenominator <= 0
+            || source.meta.allocationMethod !== "operating_hours") {
+            fail("توزيع ساعات المعدات يتطلب أصلاً مضبوطاً بطريقة ساعات التشغيل وساعات معتمدة", 422);
+          }
+          if (equipmentHours > sourceHoursDenominator + 0.00005) {
+            fail("ساعات المعدة تتجاوز ساعات المصدر المعتمدة", 422);
+          }
+          const availableHours = sourceHoursDenominator
+            * Math.max(0, source.amount - alreadyAllocated) / source.amount;
+          if (equipmentHours > availableHours + 0.00005) {
+            fail("ساعات المعدة تتجاوز الساعات المتبقية من تكلفة المصدر", 422);
+          }
+          const amount = equipmentHoursAllocation(
+            source.amount, equipmentHours, sourceHoursDenominator,
+          );
+          hourlyRateEvidence = Number((source.amount / sourceHoursDenominator).toFixed(6));
+          return {
+            ...analyticalAllocationAmount({
+              sourceAmount: source.amount,
+              alreadyAllocated,
+              amount,
+            }),
+            basis: "equipment_hours",
+            sharePct: null,
+          };
+        })()
+      : analyticalAllocationAmount({
+          sourceAmount: source.amount,
+          alreadyAllocated,
+          amount: body.amount == null ? null : Number(body.amount),
+          sharePct: body.sharePct == null ? null : Number(body.sharePct),
+        });
     const inserted = await client.query(
       `INSERT INTO contracting_cost_allocations(
          company_id, project_id, owner_contract_id, subcontractor_contract_id, boq_line_id,
          category, source_type, source_record_id, source_date, source_amount, basis,
-         share_pct, allocated_amount, idempotency_key, source_snapshot, notes, created_by
-       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)
+         share_pct, allocated_amount, equipment_asset_id, equipment_hours,
+         source_hours_denominator, hourly_rate_evidence,
+         idempotency_key, source_snapshot, notes, created_by
+       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21)
        RETURNING *`,
       [
         companyId, projectId, ownerContractId, subcontractorContractId, boqLineId,
         source.category, sourceType, sourceRecordId, source.date, source.amount,
-        calculated.basis, calculated.sharePct, calculated.amount, idempotencyKey,
+        calculated.basis, calculated.sharePct, calculated.amount,
+        equipmentAssetId, equipmentHours, sourceHoursDenominator, hourlyRateEvidence, idempotencyKey,
         JSON.stringify({ label: source.label, ...source.meta }),
         body.notes ? String(body.notes).slice(0, 1000) : null, user.id,
       ],
@@ -390,11 +543,15 @@ export async function reverseContractingCostAllocation(
       `INSERT INTO contracting_cost_allocations(
          company_id, project_id, owner_contract_id, subcontractor_contract_id, boq_line_id,
          category, source_type, source_record_id, source_date, source_amount, basis,
-         share_pct, allocated_amount, reversal_of_id, idempotency_key, source_snapshot,
+         share_pct, allocated_amount, equipment_asset_id, equipment_hours,
+         source_hours_denominator, hourly_rate_evidence,
+         reversal_of_id, idempotency_key, source_snapshot,
          notes, created_by
        ) SELECT company_id, project_id, owner_contract_id, subcontractor_contract_id, boq_line_id,
          category, source_type, source_record_id, source_date, source_amount, 'reversal',
-         share_pct, -allocated_amount, id, $3, source_snapshot,
+         share_pct, -allocated_amount, equipment_asset_id, equipment_hours,
+         source_hours_denominator, hourly_rate_evidence,
+         id, $3, source_snapshot,
          $4, $5
        FROM contracting_cost_allocations WHERE company_id=$1 AND id=$2
        RETURNING *`,
@@ -472,7 +629,7 @@ export async function listContractingCostSources(
     let params: unknown[] = [companyId];
     if (sourceType === "payroll_snapshot") {
       query = `
-        SELECT s.id, s.allocated_amount amount, s.period_end source_date,
+        SELECT s.id, r.branch_id, s.allocated_amount amount, s.period_end source_date,
                ('Payroll #' || r.code || ' / employee #' || s.employee_id) label
           FROM payroll_allocation_snapshots s
           JOIN payroll_runs r ON r.id=s.payroll_run_id AND r.company_id=s.company_id
@@ -482,16 +639,18 @@ export async function listContractingCostSources(
       params.push(projectId);
     } else if (sourceType === "fixed_asset_depreciation") {
       query = `
-        SELECT r.id, r.depreciation_amount amount,
+        SELECT r.id, a.branch_id, r.depreciation_amount amount,
                make_date(r.period_year, r.period_month, 1) source_date,
-               (a.code || ' — ' || a.name_ar || ' (' || r.period_month || '/' || r.period_year || ')') label
+               (a.code || ' — ' || a.name_ar || ' (' || r.period_month || '/' || r.period_year || ')') label,
+               a.id equipment_asset_id, a.approved_operating_hours,
+               a.manufacturing_allocation_method allocation_method
           FROM fa_depreciation_runs r
           JOIN fixed_assets a ON a.id=r.asset_id AND a.company_id=r.company_id
          WHERE r.company_id=$1 AND r.status='posted' AND r.journal_entry_id IS NOT NULL
          ORDER BY r.period_year DESC, r.period_month DESC, r.id DESC LIMIT 100`;
     } else if (sourceType === "purchase_invoice_line") {
       query = `
-        SELECT l.id, COALESCE(NULLIF(l.final_cost,0), l.line_total) amount,
+        SELECT l.id, i.branch_id, COALESCE(NULLIF(l.final_cost,0), l.line_total) amount,
                i.invoice_date::date source_date,
                (COALESCE(i.doc_number, 'Purchase invoice #' || i.id) || ' — ' || l.item_name) label
           FROM purchase_invoice_lines l
@@ -503,16 +662,45 @@ export async function listContractingCostSources(
          WHERE l.company_id=$1 AND i.status='posted' AND i.journal_entry_id IS NOT NULL
            AND (l.item_id IS NULL OR item.item_type <> 'stock')
          ORDER BY i.invoice_date DESC, l.id DESC LIMIT 100`;
-    } else {
+    } else if (sourceType === "subcontract_bill") {
       query = `
-        SELECT b.id, b.net_amount amount, b.bill_date source_date,
+        SELECT b.id, p.branch_id, b.net_amount amount, b.bill_date source_date,
                ('Subcontract certificate ' || b.bill_number) label
           FROM contracting_progress_bills b
+          JOIN contracting_projects p ON p.id=b.project_id AND p.company_id=b.company_id
          WHERE b.company_id=$1 AND b.project_id=$2 AND b.direction='incoming'
            AND b.status IN ('approved','posted','partially_paid','paid')
            AND b.journal_entry_id IS NOT NULL AND b.reversal_journal_entry_id IS NULL
          ORDER BY b.bill_date DESC, b.id DESC LIMIT 100`;
       params.push(projectId);
+    } else {
+      query = `
+        SELECT l.id, j.branch_id, l.debit amount, j.entry_date::date source_date,
+               (COALESCE(j.doc_number, 'JE #' || j.id) || ' — ' ||
+                 COALESCE(l.description, a.name_ar)) label
+          FROM journal_entry_lines l
+          JOIN journal_entries j ON j.id=l.entry_id
+          JOIN accounts a ON a.id=l.account_id AND a.company_id=j.company_id
+            AND a.account_type='expense'
+         WHERE j.company_id=$1 AND j.status='posted' AND l.debit > 0
+           AND j.entry_type NOT LIKE 'contracting_%'
+           AND NOT EXISTS (SELECT 1 FROM payroll_runs r WHERE r.company_id=j.company_id AND r.posted_journal_id=j.id)
+           AND NOT EXISTS (SELECT 1 FROM fa_depreciation_runs r WHERE r.company_id=j.company_id AND r.journal_entry_id=j.id)
+           AND NOT EXISTS (SELECT 1 FROM purchase_invoices i WHERE i.company_id=j.company_id AND i.journal_entry_id=j.id)
+           AND NOT EXISTS (SELECT 1 FROM contracting_progress_bills b WHERE b.company_id=j.company_id AND b.journal_entry_id=j.id)
+           AND NOT EXISTS (SELECT 1 FROM contracting_material_movements m WHERE m.company_id=j.company_id AND m.journal_entry_id=j.id)
+           AND NOT EXISTS (SELECT 1 FROM accounting_adjustment_runs ar WHERE ar.company_id=j.company_id AND ar.journal_entry_id=j.id)
+           AND NOT EXISTS (
+             SELECT 1 FROM production_cost_allocations pa
+              WHERE pa.company_id=j.company_id
+                AND (pa.reclassification_journal_entry_id=j.id OR pa.reversal_journal_entry_id=j.id)
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM payment_vouchers v
+              WHERE v.company_id=j.company_id AND v.journal_entry_id=j.id
+                AND v.purchase_invoice_id IS NOT NULL
+           )
+         ORDER BY j.entry_date DESC, l.id DESC LIMIT 100`;
     }
     const selected = await client.query(query, params);
     const ids = selected.rows.map(row => Number(row.id));
@@ -544,7 +732,9 @@ export async function listContractingCostSources(
       }
     }
     return {
-      sources: selected.rows.map(row => {
+      sources: selected.rows.filter(row =>
+        contractingBranchAllowed(user, row.branch_id == null ? null : Number(row.branch_id)),
+      ).map(row => {
         const amount = Number(row.amount);
         const allocated = usedById.get(Number(row.id)) ?? 0;
         return {
@@ -554,6 +744,14 @@ export async function listContractingCostSources(
           amount,
           allocated,
           available: Number(Math.max(0, amount - allocated).toFixed(2)),
+          equipmentAssetId: row.equipment_asset_id == null ? null : Number(row.equipment_asset_id),
+          approvedOperatingHours: row.approved_operating_hours == null
+            ? null : Number(row.approved_operating_hours),
+          availableOperatingHours: row.approved_operating_hours == null || amount <= 0
+            ? null
+            : Number((Number(row.approved_operating_hours)
+              * Math.max(0, amount - allocated) / amount).toFixed(4)),
+          allocationMethod: row.allocation_method ?? null,
         };
       }).filter(row => row.available > 0),
       capabilities: {

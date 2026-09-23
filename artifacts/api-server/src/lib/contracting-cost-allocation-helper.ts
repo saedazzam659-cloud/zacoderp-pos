@@ -1,5 +1,6 @@
 import {
   assertAllocationCapacity,
+  calculateFormulaAllocation,
   calculateSourceAllocation,
 } from "./productionCostAllocation.js";
 
@@ -20,6 +21,7 @@ export const CONTRACTING_SOURCE_CATEGORY: Record<string, ContractingCostCategory
   fixed_asset_depreciation: "depreciation",
   purchase_invoice_line: "purchases",
   subcontract_bill: "subcontract",
+  journal_expense_line: "direct_expense",
 };
 
 export function sourceCategory(sourceType: string): ContractingCostCategory {
@@ -44,6 +46,7 @@ export function validateSourceCategory(
     fixed_asset_depreciation: ["depreciation", "equipment"],
     purchase_invoice_line: ["purchases", "direct_expense"],
     subcontract_bill: ["subcontract"],
+    journal_expense_line: ["direct_expense"],
   };
   if (!allowed[sourceType]?.includes(category)) {
     throw Object.assign(new Error("فئة التكلفة لا تتوافق مع نوع المصدر"), {
@@ -74,6 +77,14 @@ export function analyticalAllocationAmount(input: {
     sharePct: percentage,
     basis: input.amount == null ? "percentage" : "amount",
   };
+}
+
+export function equipmentHoursAllocation(
+  sourceAmount: number,
+  hours: number,
+  approvedHours: number,
+): number {
+  return calculateFormulaAllocation("operating_hours", sourceAmount, hours, approvedHours);
 }
 
 export function categoryCoverage(categories: Iterable<string>) {

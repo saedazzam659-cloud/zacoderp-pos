@@ -34,6 +34,10 @@ type CostSourceOption = {
   amount: number;
   allocated: number;
   available: number;
+  equipmentAssetId?: number | null;
+  approvedOperatingHours?: number | null;
+  availableOperatingHours?: number | null;
+  allocationMethod?: string | null;
 };
 
 const SOURCE_TYPES = [
@@ -41,6 +45,7 @@ const SOURCE_TYPES = [
   ["fixed_asset_depreciation", "إهلاك أصل مرحّل"],
   ["purchase_invoice_line", "سطر فاتورة شراء مرحلة"],
   ["subcontract_bill", "مستخلص مقاول باطن مرحّل"],
+  ["journal_expense_line", "سطر مصروف من قيد/سند صرف مرحّل"],
 ] as const;
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -75,8 +80,10 @@ export default function ContractingCostAllocations({
   const [sourceOptions, setSourceOptions] = useState<CostSourceOption[]>([]);
   const [sourceCapabilities, setSourceCapabilities] = useState<Record<string, string>>({});
   const [sourcesLoading, setSourcesLoading] = useState(false);
+  const [sourceRefreshGeneration, setSourceRefreshGeneration] = useState(0);
   const [amount, setAmount] = useState("");
   const [sharePct, setSharePct] = useState("");
+  const [equipmentHours, setEquipmentHours] = useState("");
   const [busy, setBusy] = useState(false);
   const operationKeys = useRef(new Map<string, string>());
 
@@ -123,7 +130,7 @@ export default function ContractingCostAllocations({
       })
       .finally(() => { if (!cancelled) setSourcesLoading(false); });
     return () => { cancelled = true; };
-  }, [headers, projectId, sourceType, toast, token]);
+  }, [category, headers, projectId, sourceRefreshGeneration, sourceType, toast, token]);
 
   function key(scope: string) {
     const existing = operationKeys.current.get(scope);
@@ -134,7 +141,7 @@ export default function ContractingCostAllocations({
   }
 
   async function allocate() {
-    const scope = `allocate:${projectId}:${sourceType}:${category}:${sourceRecordId}:${amount}:${sharePct}:${ownerContractId}:${subcontractorContractId}:${boqLineId}`;
+    const scope = `allocate:${projectId}:${sourceType}:${category}:${sourceRecordId}:${amount}:${sharePct}:${equipmentHours}:${ownerContractId}:${subcontractorContractId}:${boqLineId}`;
     setBusy(true);
     try {
       const response = await fetch(`${API}/api/contracting/projects/${projectId}/cost-allocations`, {
@@ -144,7 +151,9 @@ export default function ContractingCostAllocations({
           sourceType,
           category,
           sourceRecordId: Number(sourceRecordId),
-          ...(amount ? { amount: Number(amount) } : { sharePct: Number(sharePct) }),
+          ...(category === "equipment"
+            ? { equipmentHours: Number(equipmentHours) }
+            : amount ? { amount: Number(amount) } : { sharePct: Number(sharePct) }),
           ownerContractId,
           subcontractorContractId,
           boqLineId,
@@ -156,6 +165,8 @@ export default function ContractingCostAllocations({
       operationKeys.current.delete(scope);
       setAmount("");
       setSharePct("");
+      setEquipmentHours("");
+      setSourceRefreshGeneration(value => value + 1);
       toast({ title: "تم حفظ التوزيع التحليلي دون إنشاء قيد جديد" });
       await load();
     } catch (error: any) {
@@ -178,6 +189,7 @@ export default function ContractingCostAllocations({
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
       operationKeys.current.delete(scope);
+      setSourceRefreshGeneration(value => value + 1);
       toast({ title: "تم عكس أثر التكلفة التحليلي" });
       await load();
     } catch (error: any) {
@@ -190,6 +202,12 @@ export default function ContractingCostAllocations({
   const reversedIds = new Set(
     payload?.allocations.filter(row => row.reversal_of_id != null).map(row => Number(row.reversal_of_id)) ?? [],
   );
+  const eligibleSourceOptions = category === "equipment"
+    ? sourceOptions.filter(option =>
+        option.allocationMethod === "operating_hours"
+        && Number(option.approvedOperatingHours) > 0
+        && Number(option.equipmentAssetId) > 0)
+    : sourceOptions;
 
   return (
     <section dir="rtl" className="space-y-4" data-testid="contracting-cost-allocations">
@@ -208,13 +226,17 @@ export default function ContractingCostAllocations({
               setSourceType(value);
               setCategory(value === "payroll_snapshot" ? "labor"
                 : value === "fixed_asset_depreciation" ? "depreciation"
-                  : value === "subcontract_bill" ? "subcontract" : "purchases");
+                  : value === "subcontract_bill" ? "subcontract"
+                    : value === "journal_expense_line" ? "direct_expense" : "purchases");
             }}>
               {SOURCE_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
           <label className="text-sm">الفئة
-            <select className="mt-1 h-10 w-full rounded-md border bg-background px-3" value={category} onChange={event => setCategory(event.target.value)}>
+            <select className="mt-1 h-10 w-full rounded-md border bg-background px-3" value={category} onChange={event => {
+              setCategory(event.target.value);
+              setSourceRecordId("");
+            }}>
               {sourceType === "payroll_snapshot" && <option value="labor">عمالة</option>}
               {sourceType === "fixed_asset_depreciation" && <>
                 <option value="depreciation">إهلاك</option><option value="equipment">معدات — توزيع إهلاك مرحّل فقط</option>
@@ -223,24 +245,35 @@ export default function ContractingCostAllocations({
                 <option value="purchases">مشتريات</option><option value="direct_expense">مصروف مباشر</option>
               </>}
               {sourceType === "subcontract_bill" && <option value="subcontract">مقاول باطن</option>}
+              {sourceType === "journal_expense_line" && <option value="direct_expense">مصروف مباشر عام</option>}
             </select>
           </label>
           <label className="text-sm">السجل المرحّل المتاح
             <select className="mt-1 h-10 w-full rounded-md border bg-background px-3" value={sourceRecordId} onChange={event => setSourceRecordId(event.target.value)} disabled={sourcesLoading}>
-              <option value="">{sourcesLoading ? "جارٍ التحميل…" : sourceOptions.length ? "اختر المصدر" : "لا توجد مصادر قابلة للتوزيع"}</option>
-              {sourceOptions.map(option => (
+              <option value="">{sourcesLoading ? "جارٍ التحميل…" : eligibleSourceOptions.length ? "اختر المصدر" : "لا توجد مصادر قابلة للتوزيع"}</option>
+              {eligibleSourceOptions.map(option => (
                 <option key={option.id} value={option.id}>
                   {option.label} — {option.sourceDate} — متاح {option.available.toLocaleString("en-US")}
                 </option>
               ))}
             </select>
           </label>
-          <label className="text-sm">المبلغ (أو اتركه واستخدم النسبة)
-            <Input className="mt-1" type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} />
-          </label>
-          <label className="text-sm">النسبة %
-            <Input className="mt-1" type="number" min="0.000001" max="100" step="any" value={sharePct} onChange={event => setSharePct(event.target.value)} disabled={Boolean(amount)} />
-          </label>
+          {category === "equipment" ? (
+            <label className="text-sm">ساعات تشغيل المعدة الفعلية
+              <Input className="mt-1" type="number" min="0.0001" step="0.0001" value={equipmentHours} onChange={event => setEquipmentHours(event.target.value)} />
+              <span className="mt-1 block text-xs text-muted-foreground">
+                المقام المعتمد: {eligibleSourceOptions.find(option => String(option.id) === sourceRecordId)?.approvedOperatingHours ?? "—"} ساعة؛
+                المتبقي القابل للتوزيع: {eligibleSourceOptions.find(option => String(option.id) === sourceRecordId)?.availableOperatingHours ?? "—"} ساعة
+              </span>
+            </label>
+          ) : <>
+            <label className="text-sm">المبلغ (أو اتركه واستخدم النسبة)
+              <Input className="mt-1" type="number" min="0.01" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} />
+            </label>
+            <label className="text-sm">النسبة %
+              <Input className="mt-1" type="number" min="0.000001" max="100" step="any" value={sharePct} onChange={event => setSharePct(event.target.value)} disabled={Boolean(amount)} />
+            </label>
+          </>}
         </div>
         {(sourceType === "fixed_asset_depreciation" || sourceType === "purchase_invoice_line") && (
           <p className="mt-2 text-xs text-muted-foreground">
@@ -249,7 +282,7 @@ export default function ContractingCostAllocations({
               : `${sourceCapabilities.directExpense ?? ""} ${sourceCapabilities.inventory ?? ""}`}
           </p>
         )}
-        <Button className="mt-3" disabled={busy || !sourceRecordId || (!amount && !sharePct)} onClick={() => void allocate()}>
+        <Button className="mt-3" disabled={busy || !sourceRecordId || (category === "equipment" ? !equipmentHours : (!amount && !sharePct))} onClick={() => void allocate()}>
           حفظ التوزيع
         </Button>
       </div>

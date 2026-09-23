@@ -21,6 +21,7 @@ import {
   contractingSubContractsTable,
 } from "./contracting";
 import { contractingContractBoqLinesTable } from "./contractingBoq";
+import { fixedAssetsTable } from "./fixedAssets";
 
 /**
  * Analytical attribution of costs posted by their owning ERP module.
@@ -50,6 +51,11 @@ export const contractingCostAllocationsTable = pgTable(
     basis: text("basis").notNull().default("percentage"),
     sharePct: numeric("share_pct", { precision: 9, scale: 6 }),
     allocatedAmount: numeric("allocated_amount", { precision: 18, scale: 2 }).notNull(),
+    equipmentAssetId: integer("equipment_asset_id")
+      .references(() => fixedAssetsTable.id, { onDelete: "restrict" }),
+    equipmentHours: numeric("equipment_hours", { precision: 14, scale: 4 }),
+    sourceHoursDenominator: numeric("source_hours_denominator", { precision: 14, scale: 4 }),
+    hourlyRateEvidence: numeric("hourly_rate_evidence", { precision: 18, scale: 6 }),
     reversalOfId: integer("reversal_of_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     sourceSnapshot: jsonb("source_snapshot").$type<Record<string, unknown>>().notNull().default({}),
@@ -78,6 +84,19 @@ export const contractingCostAllocationsTable = pgTable(
     `),
     targetContractSide: check("ctg_cost_alloc_contract_side_ck", sql`
       NOT (${t.ownerContractId} IS NOT NULL AND ${t.subcontractorContractId} IS NOT NULL)
+    `),
+    equipmentEvidence: check("ctg_cost_alloc_equipment_evidence_ck", sql`
+      (${t.category} = 'equipment'
+        AND ${t.equipmentAssetId} IS NOT NULL
+        AND ${t.equipmentHours} > 0
+        AND ${t.sourceHoursDenominator} > 0
+        AND ${t.hourlyRateEvidence} > 0)
+      OR
+      (${t.category} <> 'equipment'
+        AND ${t.equipmentAssetId} IS NULL
+        AND ${t.equipmentHours} IS NULL
+        AND ${t.sourceHoursDenominator} IS NULL
+        AND ${t.hourlyRateEvidence} IS NULL)
     `),
     ownerTarget: foreignKey({
       columns: [t.companyId, t.projectId, t.ownerContractId],
