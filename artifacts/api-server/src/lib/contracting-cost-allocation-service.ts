@@ -151,7 +151,7 @@ export async function ensureContractingCostAllocationTables(): Promise<void> {
             (category<>'equipment' AND equipment_asset_id IS NULL
               AND equipment_hours IS NULL AND source_hours_denominator IS NULL
               AND hourly_rate_evidence IS NULL)
-          ) NOT VALID;
+          );
       END IF;
     END $$;
   `);

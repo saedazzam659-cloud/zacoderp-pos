@@ -90,7 +90,7 @@ export async function ensureContractingExecutionSchema(): Promise<void> {
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_wi_not_own_parent_ck') THEN
         ALTER TABLE contracting_work_items
           ADD CONSTRAINT ctg_wi_not_own_parent_ck
-          CHECK (parent_work_item_id IS NULL OR parent_work_item_id <> id) NOT VALID;
+          CHECK (parent_work_item_id IS NULL OR parent_work_item_id <> id);
       END IF;
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_wi_parent_project_fk') THEN
         ALTER TABLE contracting_work_items

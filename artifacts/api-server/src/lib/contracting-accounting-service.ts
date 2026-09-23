@@ -1612,6 +1612,17 @@ export async function approveBill(input: {
         throw failure("للمستخلص قيد سابق غير معكوس؛ استخدم فك الاعتماد الصريح", 409);
       }
     }
+    const hasStrictContractSelection = locked.direction === "outgoing"
+      ? locked.ownerContractId != null
+        && locked.subcontractorContractId == null
+        && locked.contractorId == null
+      : locked.direction === "incoming"
+        && locked.ownerContractId == null
+        && locked.subcontractorContractId != null
+        && locked.contractorId != null;
+    if (!hasStrictContractSelection) {
+      throw failure("يجب ربط المستخلص بعقد واحد مطابق لاتجاهه قبل الاعتماد", 422);
+    }
     await recertifyBoqBill(tx, input.companyId, locked);
     Object.assign(locked, await certifyBillAmounts(tx, input.companyId, locked));
     // Unapproved drafts follow the live contract. Approval is the boundary:

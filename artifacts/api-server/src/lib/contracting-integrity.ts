@@ -131,7 +131,8 @@ async function runContractingProjectIntegrityMigration(): Promise<ContractingInt
           FROM contracting_progress_bills b
           LEFT JOIN contracting_owner_contracts oc ON oc.id = b.owner_contract_id
           LEFT JOIN contracting_sub_contracts sc ON sc.id = b.subcontractor_contract_id
-         WHERE NOT (
+         WHERE NOT b.legacy_contract_link_pending
+           AND NOT (
            b.direction = 'outgoing' AND b.owner_contract_id IS NOT NULL
              AND b.subcontractor_contract_id IS NULL AND b.contractor_id IS NULL
              AND (oc.company_id, oc.project_id) = (b.company_id, b.project_id)
@@ -192,12 +193,15 @@ async function runContractingProjectIntegrityMigration(): Promise<ContractingInt
         END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_bill_exact_direction_contract_ck') THEN
           ALTER TABLE contracting_progress_bills ADD CONSTRAINT ctg_bill_exact_direction_contract_ck CHECK (
-            (direction = 'outgoing' AND owner_contract_id IS NOT NULL
-              AND subcontractor_contract_id IS NULL AND contractor_id IS NULL)
-            OR
-            (direction = 'incoming' AND owner_contract_id IS NULL
-              AND subcontractor_contract_id IS NOT NULL AND contractor_id IS NOT NULL)
-          ) NOT VALID;
+            legacy_contract_link_pending
+            OR (
+              (direction = 'outgoing' AND owner_contract_id IS NOT NULL
+                AND subcontractor_contract_id IS NULL AND contractor_id IS NULL)
+              OR
+              (direction = 'incoming' AND owner_contract_id IS NULL
+                AND subcontractor_contract_id IS NOT NULL AND contractor_id IS NOT NULL)
+            )
+          );
         END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ctg_bill_owner_contract_project_fk') THEN
           ALTER TABLE contracting_progress_bills ADD CONSTRAINT ctg_bill_owner_contract_project_fk
@@ -379,6 +383,7 @@ export async function getContractingIntegrityDiagnostics(
         LEFT JOIN contracting_sub_contracts sc ON sc.id = b.subcontractor_contract_id
        WHERE b.company_id = ${companyId}
          AND b.project_id IN (${visibleSql})
+         AND NOT b.legacy_contract_link_pending
          AND NOT (
            b.direction = 'outgoing' AND b.owner_contract_id IS NOT NULL
              AND b.subcontractor_contract_id IS NULL AND b.contractor_id IS NULL

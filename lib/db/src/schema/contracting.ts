@@ -415,6 +415,9 @@ export const contractingProgressBillsTable = pgTable(
       .references(() => contractingOwnerContractsTable.id, { onDelete: "set null" }),
     subcontractorContractId: integer("subcontractor_contract_id")
       .references(() => contractingSubContractsTable.id, { onDelete: "set null" }),
+    // Explicit quarantine for pre-contract-link bills. Only the controlled
+    // development data repair may set this; request handlers never map it.
+    legacyContractLinkPending: boolean("legacy_contract_link_pending").notNull().default(false),
     billNumber: text("bill_number").notNull(),
     // interim (مرحلي) | final (نهائي)
     billType: text("bill_type").notNull().default("interim"),
@@ -479,11 +482,14 @@ export const contractingProgressBillsTable = pgTable(
     byCostCenter:index("ctg_bill_cost_center_idx").on(t.companyId, t.costCenterId),
     byCorrection: index("ctg_bill_correction_idx").on(t.companyId, t.correctionOfId),
     exactDirectionContract: check("ctg_bill_exact_direction_contract_ck", sql`
-      (${t.direction} = 'outgoing' AND ${t.ownerContractId} IS NOT NULL
-        AND ${t.subcontractorContractId} IS NULL AND ${t.contractorId} IS NULL)
-      OR
-      (${t.direction} = 'incoming' AND ${t.ownerContractId} IS NULL
-        AND ${t.subcontractorContractId} IS NOT NULL AND ${t.contractorId} IS NOT NULL)
+      ${t.legacyContractLinkPending}
+      OR (
+        (${t.direction} = 'outgoing' AND ${t.ownerContractId} IS NOT NULL
+          AND ${t.subcontractorContractId} IS NULL AND ${t.contractorId} IS NULL)
+        OR
+        (${t.direction} = 'incoming' AND ${t.ownerContractId} IS NULL
+          AND ${t.subcontractorContractId} IS NOT NULL AND ${t.contractorId} IS NOT NULL)
+      )
     `),
     ownerContractProjectFk: foreignKey({
       columns: [t.companyId, t.projectId, t.ownerContractId],

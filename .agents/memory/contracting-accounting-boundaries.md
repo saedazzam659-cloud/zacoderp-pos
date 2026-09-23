@@ -27,11 +27,17 @@ Project-centered contracting must reuse the existing owner/subcontract split and
 
 **How to apply:** Keep subprojects independent for execution and posting; make parent rollups an explicit report scope. Preserve optional owner-line mapping without copying owner prices into subcontract costs.
 
-Do not assume “test-only data” means legacy relationships can be deleted or guessed. Install constraints enforcing future writes while deferring validation of unresolved old rows; expose scoped, actionable diagnostics without blocking project/contract creation needed for remediation.
+Do not assume “test-only data” means legacy relationships can be deleted or guessed. Preserve unresolved records through an explicit server-owned legacy marker and validated compatibility checks; keep new writes and approval strict.
 
 **Why:** Existing test certificates can have no contract candidates even when the user expects clean data. A global readiness failure would prevent the very repair needed to satisfy the new constraints.
 
 **How to apply:** Never relink posted snapshots automatically. Keep schema reconciliation cached per active database, diagnostics read-only and tenant/branch scoped, and explicit validation separate from routine reads.
+
+Avoid unvalidated CHECK constraints in the managed development schema intended for Publish.
+
+**Why:** Publish introspection has embedded the trailing `NOT VALID` inside generated CHECK expressions, producing invalid SQL. Validating clean constraints and explicitly marking unresolved legacy records avoids that parser failure without deleting or inventing financial relationships.
+
+**How to apply:** Inspect the actual generated publish statements, not just safety flags. Fix and validate development only; keep production read-only and let Publish apply the schema. Never accept the legacy marker from normal create/update requests.
 
 Release-managed application tables must be created in the shared active-database reconciliation pass before strict missing-table validation, not only during central startup or a lazy feature request.
 
