@@ -39,6 +39,12 @@ Avoid unvalidated CHECK constraints in the managed development schema intended f
 
 **How to apply:** Inspect the actual generated publish statements, not just safety flags. Fix and validate development only; keep production read-only and let Publish apply the schema. Never accept the legacy marker from normal create/update requests.
 
+Managed Publish needs explicit prerequisite-order review for new composite foreign keys, even when source and development schemas are correct.
+
+**Why:** Standalone composite unique indexes were omitted from a generated diff. Attaching them as UNIQUE constraints made them visible, but Publish still placed new foreign keys before the required UNIQUE additions on existing tables.
+
+**How to apply:** Keep declarative UNIQUE definitions matched to real database constraints and check that every referenced key is created before its FK. Do not claim publishing is fixed solely because all statements appear. Do not bypass this failure with production writes, startup migrations, or silently weakened relationships.
+
 Release-managed application tables must be created in the shared active-database reconciliation pass before strict missing-table validation, not only during central startup or a lazy feature request.
 
 **Why:** External-agent upgrade and request-readiness paths can validate newly exported schema tables before central-only initialization ever reaches their database.
