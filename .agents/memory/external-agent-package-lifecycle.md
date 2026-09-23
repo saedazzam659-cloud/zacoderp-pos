@@ -14,3 +14,9 @@ New independent installations should use the published application's release wit
 **Why:** The user chose an independent, empty installation equivalent in capabilities to the existing full platform, not a copy of its customer records. Development builds are not evidence of the currently published release.
 
 **How to apply:** Generate production packages through the authenticated published platform. Make database provenance explicit, retain legacy agent-data behavior unless fresh is selected, bind fresh restore policy to signed metadata, and reject fresh installation into a nonempty target. Configure local SuperAdmin through its existing separate credential flow.
+
+Keep external file import separate from central package generation, and require an explicit generation action rather than generating on ordinary form save.
+
+**Why:** The user needs to import compatible packages from other platforms without central code or database content silently replacing those inputs.
+
+**How to apply:** Preserve existing upload checks and settings, separate generation controls from import controls, and reject mixed pending upload/generation intent. Missing uploads must produce validation, not trigger a central rebuild.
