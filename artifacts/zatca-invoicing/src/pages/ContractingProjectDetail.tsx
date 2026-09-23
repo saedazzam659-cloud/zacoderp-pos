@@ -28,6 +28,7 @@ import ContractingProjectScope from "@/components/ContractingProjectScope";
 import ContractingAdvanceRecoveryFields, { type AdvanceRecoveryPolicy } from "@/components/ContractingAdvanceRecoveryFields";
 import ContractingAdvanceRecoverySummary, { type RecoveryOverride } from "@/components/ContractingAdvanceRecoverySummary";
 import ContractingDraftExecution, { emptyDraftExecution, draftExecutionScope, type DraftExecutionState } from "@/components/ContractingDraftExecution";
+import { ContractingProjectReports } from "@/components/ContractingProjectReports";
 import { executionEstimate, executionInput, executionPayload, executionValidation, type ExecutionInputs } from "@/lib/contractingExecution";
 import {
   ContractingBillExportActions,
@@ -68,6 +69,7 @@ const API = import.meta.env.VITE_API_URL || "";
 
 type Project = {
   id: number; code: string; nameAr: string; nameEn: string | null;
+  parentId: number | null;
   branchId: number | null;
   clientName: string | null; location: string | null; projectType: string;
   costCenterId: number | null;
@@ -76,6 +78,10 @@ type Project = {
   progressPercent: string; description: string | null;
 };
 type ProjectBranch = { id: number; code: string; nameAr: string; nameEn: string | null };
+type IntegrityDiagnostics = {
+  deferredValidation: boolean;
+  offendingIds: Record<string, number[]>;
+};
 type WorkItem = {
   id: number; projectId: number; code: string | null; nameAr: string;
   category: string; unit: string; plannedQty: string; actualQty: string;
@@ -218,6 +224,8 @@ export default function ContractingProjectDetail() {
   const routeQuery = parseProjectDetailQuery(search);
   const [project, setProject] = useState<Project | null>(null);
   const [projectBranches, setProjectBranches] = useState<ProjectBranch[]>([]);
+  const [projectOptions, setProjectOptions] = useState<Project[]>([]);
+  const [integrityDiagnostics, setIntegrityDiagnostics] = useState<IntegrityDiagnostics | null>(null);
   const [tab, setTab] = useState(routeQuery.tab);
 
   const loadProject = useCallback(async () => {
@@ -242,6 +250,10 @@ export default function ContractingProjectDetail() {
       if (!response.ok) return;
       const payload = await response.json();
       if (Array.isArray(payload?.branches)) setProjectBranches(payload.branches);
+      if (Array.isArray(payload?.projects)) setProjectOptions(payload.projects);
+      setIntegrityDiagnostics(payload?.integrityDiagnostics?.deferredValidation
+        ? payload.integrityDiagnostics
+        : null);
     }).catch(() => undefined);
   }, [token]);
   useEffect(() => { setTab(routeQuery.tab); }, [routeQuery.tab]);
@@ -287,6 +299,51 @@ export default function ContractingProjectDetail() {
         </div>
       </div>
 
+      {(project.parentId != null || projectOptions.some(item => item.parentId === project.id)) && (
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-3 text-sm dark:border-indigo-900 dark:bg-indigo-950/20">
+          {project.parentId != null && (
+            <div>
+              <span className="text-muted-foreground">{t("contracting.projects.parentProject", "المشروع الأب")}: </span>
+              <Link href={`/contracting/projects/${project.parentId}`} className="font-semibold text-indigo-700 hover:underline dark:text-indigo-300">
+                {projectOptions.find(item => item.id === project.parentId)?.nameAr || `#${project.parentId}`}
+              </Link>
+            </div>
+          )}
+          {projectOptions.some(item => item.parentId === project.id) && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-muted-foreground">{t("contracting.projects.children", "المشاريع الفرعية")}:</span>
+              {projectOptions.filter(item => item.parentId === project.id).map(child => (
+                <Link key={child.id} href={`/contracting/projects/${child.id}`} className="rounded border border-indigo-200 bg-white px-2 py-1 font-medium text-indigo-700 hover:underline dark:bg-slate-900 dark:text-indigo-300">
+                  {child.code} — {child.nameAr}
+                </Link>
+              ))}
+            </div>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">{t("contracting.projects.independentAccounting", "لكل مشروع فرعي عقوده ومستخلصاته وتكاليفه المستقلة.")}</p>
+        </div>
+      )}
+
+      {integrityDiagnostics?.deferredValidation && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" data-testid="contracting-integrity-warning">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="space-y-1">
+              <p className="font-bold">{t("contracting.projects.deferredIntegrityTitle", "توجد مستخلصات قديمة بلا عقد مرتبط")}</p>
+              <p>{t("contracting.projects.deferredIntegrityHelp", "أنشئ أو اختر العقد الصحيح لهذا المشروع أولاً، ثم افتح المستخلص القديم وعدّله لاختيار العقد. لا يتم إنشاء ربط تلقائي أو تخمينه.")}</p>
+              <p className="font-mono text-xs">
+                {Object.entries(integrityDiagnostics.offendingIds ?? {})
+                  .filter(([, ids]) => Array.isArray(ids) && ids.length > 0)
+                  .map(([kind, ids]) => `${kind}: ${ids.join(", ")}`)
+                  .join(" · ")}
+              </p>
+              <Button size="sm" variant="outline" onClick={() => setTab("bills")} data-testid="button-open-project-bills-integrity">
+                {t("contracting.projects.openProjectBillsToRepair", "فتح مستخلصات المشروع وربط العقد")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex flex-wrap w-full h-auto gap-1 justify-start">
           <TabsTrigger value="overview">{t("contracting.tabs.overview", "نظرة عامة")}</TabsTrigger>
@@ -296,6 +353,7 @@ export default function ContractingProjectDetail() {
           <TabsTrigger value="resources">{t("contracting.tabs.resources", "الموارد")}</TabsTrigger>
           <TabsTrigger value="bills">{t("contracting.tabs.bills", "المستخلصات")}</TabsTrigger>
           <TabsTrigger value="accounting">{t("contracting.tabs.accounting", "المحاسبة والتسويات")}</TabsTrigger>
+          <TabsTrigger value="reports">{t("contracting.tabs.reports", "التقارير")}</TabsTrigger>
           <TabsTrigger value="risks">{t("contracting.tabs.risks", "المخاطر")}</TabsTrigger>
           <TabsTrigger value="events">{t("contracting.tabs.events", "الأحداث")}</TabsTrigger>
           <TabsTrigger value="ai">
@@ -328,6 +386,7 @@ export default function ContractingProjectDetail() {
               </div>
             )}
           </div>
+          <ContractingProjectReports projectId={projectId} mode="dashboard" />
         </TabsContent>
 
         <TabsContent value="owner-contract" className="mt-4"><OwnerContractTab projectId={projectId} project={project} /></TabsContent>
@@ -344,6 +403,7 @@ export default function ContractingProjectDetail() {
           />
         </TabsContent>
         <TabsContent value="accounting" className="mt-4"><ContractingAccountingPanel projectId={projectId} /></TabsContent>
+        <TabsContent value="reports" className="mt-4"><ContractingProjectReports projectId={projectId} mode="hub" /></TabsContent>
         <TabsContent value="risks"      className="mt-4"><RisksTab     projectId={projectId} /></TabsContent>
         <TabsContent value="events"     className="mt-4"><EventsTab    projectId={projectId} /></TabsContent>
         <TabsContent value="ai"         className="mt-4"><AITab        projectId={projectId} /></TabsContent>
@@ -1226,11 +1286,19 @@ function BillsTab({
         : editing.grossAmount,
       aggregateProgress: nextValue > 0,
     });
+    setDraftExecution(emptyDraftExecution);
+    setRecoveredExecution(null);
   }
 
   return (
     <div className="space-y-3">
-      <Tabs value={direction} onValueChange={v => setDirection(v as any)}>
+      <Tabs value={direction} onValueChange={v => {
+        setDirection(v as BillDirection);
+        setEditing(null);
+        setDraftExecution(emptyDraftExecution);
+        setRecoveredExecution(null);
+        createAttempt.current = null;
+      }}>
         <TabsList className="grid grid-cols-2 w-full max-w-md">
           <TabsTrigger value="outgoing">{t("contracting.bills.outgoing", "للمالك (صادر)")}</TabsTrigger>
           <TabsTrigger value="incoming">{t("contracting.bills.incoming", "من الباطن (وارد)")}</TabsTrigger>

@@ -79,6 +79,10 @@ import {
   updateContractingSettings,
   validateContractingSettingAccounts,
 } from "../lib/contracting-settings.js";
+import {
+  ensureContractingProjectIntegrity,
+  getContractingIntegrityDiagnostics,
+} from "../lib/contracting-integrity.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -86,9 +90,10 @@ router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   next();
 });
-router.use(async (_req, _res, next) => {
+router.use(async (_req, res, next) => {
   try {
     await ensureContractingBoqTables();
+    await ensureContractingProjectIntegrity();
     next();
   } catch (caught) {
     next(caught);
@@ -172,6 +177,46 @@ async function ensureProject(cid: number, projectId: number, req?: any): Promise
     .where(and(eq(contractingProjectsTable.id, projectId), eq(contractingProjectsTable.companyId, cid)));
   if (r && req && !projectBranchVisible(req, r.branchId)) return "ليس لديك صلاحية هذا الفرع";
   return r ? null : "المشروع غير صالح";
+}
+async function ensureProjectParent(
+  cid: number,
+  parentId: number,
+  branchId: number | null,
+  req: any,
+  childId?: number,
+): Promise<string | null> {
+  if (!Number.isInteger(parentId) || parentId <= 0 || parentId === childId) {
+    return "المشروع الأب غير صالح";
+  }
+  const [parent] = await db.select({
+    id: contractingProjectsTable.id,
+    branchId: contractingProjectsTable.branchId,
+  }).from(contractingProjectsTable).where(and(
+    eq(contractingProjectsTable.id, parentId),
+    eq(contractingProjectsTable.companyId, cid),
+  ));
+  if (!parent) return "المشروع الأب لا يتبع نفس الشركة";
+  if (!projectBranchVisible(req, parent.branchId)) return "ليس لديك صلاحية فرع المشروع الأب";
+  if ((parent.branchId == null ? null : Number(parent.branchId)) !== branchId) {
+    return "المشروع الأب يجب أن يكون ضمن نفس الفرع ونطاق الرؤية";
+  }
+  if (childId != null) {
+    const result = await db.execute(sql`
+      WITH RECURSIVE ancestors(id, parent_id) AS (
+        SELECT id, parent_id FROM contracting_projects
+         WHERE id = ${parentId} AND company_id = ${cid}
+        UNION ALL
+        SELECT p.id, p.parent_id
+          FROM contracting_projects p
+          JOIN ancestors a ON p.id = a.parent_id
+         WHERE p.company_id = ${cid}
+      )
+      SELECT 1 FROM ancestors WHERE id = ${childId} LIMIT 1
+    `);
+    const rows = Array.isArray(result) ? result : (result as any).rows ?? [];
+    if (rows.length) return "لا يمكن نقل المشروع تحت أحد فروعه لأن ذلك ينشئ دورة";
+  }
+  return null;
 }
 async function ensureContractor(cid: number, contractorId: number): Promise<string | null> {
   if (!contractorId) return "المقاول الباطن مطلوب";
@@ -886,7 +931,26 @@ router.get("/projects/options", async (req, res) => {
     }).from(branchesTable)
       .where(and(...conditions))
       .orderBy(branchesTable.code);
-    res.json({ branches });
+    const projects = await db.select({
+      id: contractingProjectsTable.id,
+      code: contractingProjectsTable.code,
+      nameAr: contractingProjectsTable.nameAr,
+      nameEn: contractingProjectsTable.nameEn,
+      parentId: contractingProjectsTable.parentId,
+      branchId: contractingProjectsTable.branchId,
+    }).from(contractingProjectsTable).where(and(
+      eq(contractingProjectsTable.companyId, cid),
+      ...projectBranchCondition(req, contractingProjectsTable.branchId),
+    )).orderBy(contractingProjectsTable.code);
+    const integrityDiagnostics = await getContractingIntegrityDiagnostics(
+      cid,
+      projects.map((project) => project.id),
+    );
+    res.json({
+      branches,
+      projects,
+      integrityDiagnostics,
+    });
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "خطأ" });
   }
@@ -928,6 +992,13 @@ router.post("/projects", async (req, res) => {
     if (branchError) { res.status(400).json({ error: branchError }); return; }
     if (!projectBranchVisible(req, branchId)) {
       res.status(403).json({ error: "ليس لديك صلاحية هذا الفرع" }); return;
+    }
+    const parentId = b.parentId == null || b.parentId === "" ? null : Number(b.parentId);
+    if (parentId != null) {
+      const parentError = await ensureProjectParent(cid, parentId, branchId, req);
+      if (parentError) {
+        res.status(parentError.includes("صلاحية") ? 403 : 400).json({ error: parentError }); return;
+      }
     }
     const customerId = parseOptionalCustomerId(b.customerId);
     if (Number.isNaN(customerId)) {
@@ -987,26 +1058,33 @@ router.post("/projects", async (req, res) => {
       }
     }
 
-    const [row] = await db.insert(contractingProjectsTable).values({
-      companyId: cid,
-      branchId,
-      code,
-      nameAr: String(b.nameAr),
-      nameEn: b.nameEn ?? null,
-      customerId: customerId ?? null,
-      costCenterId: costCenterId ?? null,
-      clientName,
-      location:   b.location   ?? null,
-      projectType,
-      status: projectStatus,
-      contractValue: String(b.contractValue ?? "0"),
-      plannedBudget: String(b.plannedBudget ?? "0"),
-      actualCost:    String(b.actualCost    ?? "0"),
-      plannedStartDate: b.plannedStartDate ?? null,
-      plannedEndDate:   b.plannedEndDate ?? null,
-      progressPercent: String(b.progressPercent ?? "0"),
-      description: b.description ?? null,
-    }).returning();
+    const row = await db.transaction(async (tx) => {
+      // Serialize hierarchy writes per tenant. The DB trigger repeats this
+      // protection for direct SQL writers.
+      await tx.execute(sql`SELECT id FROM companies WHERE id = ${cid} FOR UPDATE`);
+      const [created] = await tx.insert(contractingProjectsTable).values({
+        companyId: cid,
+        branchId,
+        parentId,
+        code,
+        nameAr: String(b.nameAr),
+        nameEn: b.nameEn ?? null,
+        customerId: customerId ?? null,
+        costCenterId: costCenterId ?? null,
+        clientName,
+        location:   b.location   ?? null,
+        projectType,
+        status: projectStatus,
+        contractValue: String(b.contractValue ?? "0"),
+        plannedBudget: String(b.plannedBudget ?? "0"),
+        actualCost:    String(b.actualCost    ?? "0"),
+        plannedStartDate: b.plannedStartDate ?? null,
+        plannedEndDate:   b.plannedEndDate ?? null,
+        progressPercent: String(b.progressPercent ?? "0"),
+        description: b.description ?? null,
+      }).returning();
+      return created;
+    });
     await logEvent({
       companyId: cid, projectId: row.id, userId: req.authUser!.id,
       eventType: "project_created", title: `إنشاء مشروع: ${row.nameAr}`,
@@ -1078,6 +1156,24 @@ router.put("/projects/:id", async (req, res) => {
       updates.branchId = nextBranchId;
       nextProjectBranchId = nextBranchId;
     }
+    if (b.parentId !== undefined || b.branchId !== undefined) {
+      const nextParentId = b.parentId === undefined
+        ? prev.parentId
+        : b.parentId == null || b.parentId === "" ? null : Number(b.parentId);
+      if (nextParentId != null) {
+        const parentError = await ensureProjectParent(
+          cid,
+          Number(nextParentId),
+          nextProjectBranchId,
+          req,
+          id,
+        );
+        if (parentError) {
+          res.status(parentError.includes("صلاحية") ? 403 : 400).json({ error: parentError }); return;
+        }
+      }
+      if (b.parentId !== undefined) updates.parentId = nextParentId;
+    }
     if (b.plannedStartDate !== undefined) updates.plannedStartDate = b.plannedStartDate;
     if (b.plannedEndDate   !== undefined) updates.plannedEndDate   = b.plannedEndDate;
 
@@ -1124,10 +1220,14 @@ router.put("/projects/:id", async (req, res) => {
     if (b.status === "in_progress" && !prev.actualStartAt) updates.actualStartAt = new Date();
     if (b.status === "completed"   && !prev.actualEndAt)   updates.actualEndAt   = new Date();
 
-    const [row] = await db.update(contractingProjectsTable)
-      .set(updates)
-      .where(and(eq(contractingProjectsTable.id, id), eq(contractingProjectsTable.companyId, cid)))
-      .returning();
+    const row = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM companies WHERE id = ${cid} FOR UPDATE`);
+      const [updated] = await tx.update(contractingProjectsTable)
+        .set(updates)
+        .where(and(eq(contractingProjectsTable.id, id), eq(contractingProjectsTable.companyId, cid)))
+        .returning();
+      return updated;
+    });
     if (b.status && b.status !== prev.status) {
       await logEvent({
         companyId: cid, projectId: id, userId: req.authUser!.id,
@@ -1150,6 +1250,16 @@ router.delete("/projects/:id", async (req, res) => {
     const projectError = await ensureProject(cid, id, req);
     if (projectError) {
       res.status(projectErrorStatus(projectError)).json({ error: projectError }); return;
+    }
+    const [child] = await db.select({ id: contractingProjectsTable.id })
+      .from(contractingProjectsTable)
+      .where(and(
+        eq(contractingProjectsTable.companyId, cid),
+        eq(contractingProjectsTable.parentId, id),
+      )).limit(1);
+    if (child) {
+      res.status(409).json({ error: "لا يمكن حذف مشروع أب قبل نقل أو حذف مشاريعه الفرعية" });
+      return;
     }
     await db.delete(contractingProjectsTable)
       .where(and(eq(contractingProjectsTable.id, id), eq(contractingProjectsTable.companyId, cid)));
@@ -3185,14 +3295,6 @@ router.put("/bills/:id", async (req, res) => {
       subcontractorContractId: upd.subcontractorContractId !== undefined
         ? upd.subcontractorContractId
         : cur.subcontractorContractId,
-      // Preserve imported/unlinked drafts during ordinary edits.  Selecting
-      // either contract (or posting through accounting) never uses this
-      // compatibility path.
-      allowLegacyUnlinked:
-        cur.ownerContractId == null
-        && cur.subcontractorContractId == null
-        && (b.ownerContractId == null || b.ownerContractId === "")
-        && (b.subcontractorContractId == null || b.subcontractorContractId === ""),
     });
     if (contractIntegrityError) {
       res.status(400).json({ error: contractIntegrityError }); return;

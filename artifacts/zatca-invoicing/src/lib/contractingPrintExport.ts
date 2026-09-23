@@ -849,6 +849,7 @@ export type ContractingProjectReportKey =
   | "retention"
   | "deductions"
   | "variations"
+  | "pricingProfitability"
   | "profitability";
 
 export interface ContractingProjectReportsSnapshot {
@@ -878,6 +879,10 @@ const PROJECT_REPORT_COLUMNS: Record<ContractingProjectReportKey, ExportColumn[]
     { key: "remainingValue", header: "القيمة المتبقية", width: 18, numFmt: "#,##0.00" },
     { key: "completionPercent", header: "الإنجاز %", width: 13, numFmt: "0.00" },
     { key: "latestBillStatus", header: "حالة آخر مستخلص", width: 18 },
+    { key: "expectedRevenue", header: "الإيراد المتوقع", width: 18, numFmt: "#,##0.00" },
+    { key: "expectedMappedCost", header: "تكلفة الباطن المرتبطة", width: 20, numFmt: "#,##0.00" },
+    { key: "expectedProfit", header: "الربح المتوقع", width: 18, numFmt: "#,##0.00" },
+    { key: "expectedMarginPercent", header: "الهامش المتوقع %", width: 18, numFmt: "0.00" },
   ],
   executedQuantities: [],
   bills: [
@@ -947,6 +952,14 @@ const PROJECT_REPORT_COLUMNS: Record<ContractingProjectReportKey, ExportColumn[]
     { key: "variationValue", header: "قيمة التغيير", width: 17, numFmt: "#,##0.00" },
     { key: "adjustedValue", header: "القيمة المعدلة", width: 17, numFmt: "#,##0.00" },
   ],
+  pricingProfitability: [
+    { key: "ownerBoqLineId", header: "سطر المالك", width: 16 },
+    { key: "mappedSubcontractLineIds", header: "أسطر الباطن المرتبطة", width: 24 },
+    { key: "expectedRevenue", header: "الإيراد المتوقع", width: 18, numFmt: "#,##0.00" },
+    { key: "expectedMappedCost", header: "تكلفة الباطن المرتبطة", width: 20, numFmt: "#,##0.00" },
+    { key: "expectedProfit", header: "الربح المتوقع", width: 18, numFmt: "#,##0.00" },
+    { key: "expectedMarginPercent", header: "الهامش المتوقع %", width: 18, numFmt: "0.00" },
+  ],
   profitability: [
     { key: "revenue", header: "إيراد المالك المنفذ", width: 21, numFmt: "#,##0.00" },
     { key: "actualCost", header: "التكلفة الفعلية", width: 18, numFmt: "#,##0.00" },
@@ -968,6 +981,7 @@ const PROJECT_REPORT_TITLES: Record<ContractingProjectReportKey, string> = {
   retention: "كشف المحتجز",
   deductions: "كشف الاستقطاعات والغرامات والتسويات",
   variations: "مقارنة العقد الأصلي والمعدل",
+  pricingProfitability: "هامش التسعير المتوقع من ربط أسطر المالك بالباطن",
   profitability: "ربحية المشروع من التكلفة الفعلية المتاحة",
 };
 

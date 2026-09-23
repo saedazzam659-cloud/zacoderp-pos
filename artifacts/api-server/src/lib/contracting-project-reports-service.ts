@@ -24,6 +24,12 @@ import { sumExactCents } from "./contracting-bill-adjustment-math.js";
 
 type BranchUser = Pick<AuthUser, "id" | "role" | "viewAllBranches" | "branchIds">;
 
+type ProjectHierarchyRow = {
+  id: number;
+  name: string;
+  parentId: number | null;
+};
+
 function numberValue(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -85,13 +91,179 @@ async function readableProject(companyId: number, projectId: number, user?: Bran
 }
 
 /**
+ * parent_id is an additive compatibility column because contracting projects
+ * predate project hierarchies. Keep this close to the only feature that reads
+ * it so old tenant databases can serve the endpoint during a rolling upgrade.
+ */
+export async function ensureContractingProjectHierarchy(): Promise<void> {
+  await db.execute(sql`
+    ALTER TABLE IF EXISTS contracting_projects
+      ADD COLUMN IF NOT EXISTS parent_id INTEGER NULL
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS ctg_proj_parent_idx
+      ON contracting_projects(company_id, parent_id)
+  `);
+}
+
+async function descendantProjects(
+  companyId: number,
+  projectId: number,
+  user: BranchUser,
+): Promise<ProjectHierarchyRow[]> {
+  const unrestricted = user.role === "admin" || user.role === "superadmin" || user.viewAllBranches;
+  const branchIds = (user.branchIds ?? []).map(Number).filter(Number.isInteger);
+  const branchPredicate = unrestricted
+    ? sql`TRUE`
+    : branchIds.length > 0
+      ? sql`p.branch_id IN (${sql.join(branchIds.map(id => sql`${id}`), sql`, `)})`
+      : sql`FALSE`;
+  const childBranchPredicate = unrestricted
+    ? sql`TRUE`
+    : branchIds.length > 0
+      ? sql`child.branch_id IN (${sql.join(branchIds.map(id => sql`${id}`), sql`, `)})`
+      : sql`FALSE`;
+
+  const result = await db.execute(sql`
+    WITH RECURSIVE project_tree AS (
+      SELECT p.id, p.name_ar, p.parent_id, ARRAY[p.id]::integer[] AS path, 0 AS depth
+        FROM contracting_projects p
+       WHERE p.company_id = ${companyId}
+         AND p.id = ${projectId}
+         AND ${branchPredicate}
+      UNION ALL
+      SELECT child.id, child.name_ar, child.parent_id,
+             tree.path || child.id, tree.depth + 1
+        FROM contracting_projects child
+        JOIN project_tree tree ON child.parent_id = tree.id
+       WHERE child.company_id = ${companyId}
+         AND ${childBranchPredicate}
+         AND NOT child.id = ANY(tree.path)
+    )
+    SELECT id, name_ar, parent_id, depth
+      FROM project_tree
+     ORDER BY depth ASC, id ASC
+  `);
+  return rowsOf(result).map(row => ({
+    id: Number(row.id),
+    name: String(row.name_ar ?? ""),
+    parentId: row.parent_id == null ? null : Number(row.parent_id),
+  }));
+}
+
+function sumMetric(rows: any[], key: string): number {
+  return rounded(rows.reduce((sum, row) => sum + numberValue(row?.[key]), 0));
+}
+
+function aggregateSide(rows: any[]) {
+  const latestBill = rows.map(row => row?.latestBill).filter(Boolean)
+    .sort((left, right) => String(right.billDate ?? "").localeCompare(String(left.billDate ?? ""))
+      || Number(right.id) - Number(left.id))[0] ?? null;
+  return {
+    baseContractValue: sumMetric(rows, "baseContractValue"),
+    approvedVariationsValue: sumMetric(rows, "approvedVariationsValue"),
+    adjustedContractValue: sumMetric(rows, "adjustedContractValue"),
+    executedValue: sumMetric(rows, "executedValue"),
+    remainingValue: sumMetric(rows, "remainingValue"),
+    billCount: sumMetric(rows, "billCount"),
+    certifiedBillCount: sumMetric(rows, "certifiedBillCount"),
+    actualPaid: sumMetric(rows, "actualPaid"),
+    due: sumMetric(rows, "due"),
+    advanceActual: sumMetric(rows, "advanceActual"),
+    advanceRecovered: sumMetric(rows, "advanceRecovered"),
+    advanceRemaining: sumMetric(rows, "advanceRemaining"),
+    retention: sumMetric(rows, "retention"),
+    latestBill,
+  };
+}
+
+/**
+ * Combines already isolated per-project reports. Additive money/count fields
+ * are summed; percentages and cumulative certificate rows are never averaged
+ * or re-summed. Detail arrays are concatenated once and retain projectId.
+ */
+export function aggregateProjectReportRollup(entries: Array<{ projectId: number; report: any }>) {
+  const owner = aggregateSide(entries.map(entry => entry.report.dashboard.ownerRevenue));
+  const subcontract = aggregateSide(entries.map(entry => entry.report.dashboard.subcontractCost));
+  const detailNames = ["boqStatement", "executedQuantities", "bills", "cumulative", "advance", "retention", "deductions", "variations", "pricingProfitability"];
+  const reports: Record<string, any> = {};
+  for (const name of detailNames) {
+    reports[name] = entries.flatMap(entry =>
+      (entry.report.reports[name] ?? []).map((row: any) => ({ ...row, projectId: entry.projectId })));
+  }
+
+  const profitabilityRows = entries.map(entry => entry.report.reports.profitability);
+  const revenue = sumMetric(profitabilityRows, "revenue");
+  const availableCosts = profitabilityRows.filter(row => row?.costAvailable);
+  const actualCost = sumMetric(availableCosts, "actualCost");
+  const completeCostCoverage = entries.length > 0 && availableCosts.length === entries.length;
+  reports.profitability = {
+    revenue,
+    actualCost: completeCostCoverage ? actualCost : null,
+    estimatedCost: null,
+    profit: completeCostCoverage ? rounded(revenue - actualCost) : null,
+    marginPercent: completeCostCoverage && revenue > 0
+      ? rounded((revenue - actualCost) / revenue * 100) : null,
+    costAvailable: completeCostCoverage,
+    costCoverageProjectCount: availableCosts.length,
+    projectCount: entries.length,
+    costSource: "project report actual-cost sources",
+    note: "هامش التجميع مشتق من إجمالي الإيراد والتكلفة المتاحة، ولا يجمع نسب المشاريع أو متوسطاتها.",
+  };
+
+  return {
+    dashboard: {
+      ...owner,
+      state: entries[0]?.report.dashboard.state ?? null,
+      ownerRevenue: owner,
+      subcontractCost: subcontract,
+      latestBill: entries.map(entry => entry.report.dashboard.latestBill).filter(Boolean)
+        .sort((left, right) => String(right.billDate ?? "").localeCompare(String(left.billDate ?? ""))
+          || Number(right.id) - Number(left.id))[0] ?? null,
+    },
+    reports,
+    limitations: Array.from(new Set(entries.flatMap(entry => entry.report.limitations ?? []))),
+    completeness: {
+      certifiedBillCount: sumMetric(entries.map(entry => entry.report.completeness), "certifiedBillCount"),
+      unmappedCertifiedLineCount: sumMetric(entries.map(entry => entry.report.completeness), "unmappedCertifiedLineCount"),
+      profitabilityActualCostAvailable: completeCostCoverage,
+    },
+  };
+}
+
+export function buildBoqPricingProfitability(boqLines: any[]) {
+  const subcontractByOwner = new Map<number, any[]>();
+  for (const line of boqLines) {
+    if (String(line.direction) !== "subcontract" || line.sourceOwnerLineId == null) continue;
+    const id = Number(line.sourceOwnerLineId);
+    const bucket = subcontractByOwner.get(id) ?? [];
+    bucket.push(line);
+    subcontractByOwner.set(id, bucket);
+  }
+  return boqLines.filter(line => String(line.direction) === "owner").map(line => {
+    const mapped = subcontractByOwner.get(Number(line.id)) ?? [];
+    const expectedRevenue = rounded(numberValue(line.totalAmount));
+    const expectedMappedCost = rounded(mapped.reduce((sum, child) => sum + numberValue(child.totalAmount), 0));
+    const expectedProfit = rounded(expectedRevenue - expectedMappedCost);
+    return {
+      ownerBoqLineId: line.id,
+      mappedSubcontractLineIds: mapped.map(child => child.id),
+      expectedRevenue,
+      expectedMappedCost,
+      expectedProfit,
+      expectedMarginPercent: expectedRevenue > 0 ? rounded(expectedProfit / expectedRevenue * 100) : null,
+    };
+  });
+}
+
+/**
  * Read-only project reporting facade.
  *
  * It deliberately consumes the existing bill report and accounting/detail
  * services. In particular, cumulative bill values are selected from the
  * latest certified row per contract/BOQ line; they are never summed.
  */
-export async function getContractingProjectReports(
+async function getLocalContractingProjectReports(
   companyId: number,
   projectId: number,
   user?: BranchUser | null,
@@ -128,6 +300,7 @@ export async function getContractingProjectReports(
         direction: contractingContractBoqLinesTable.direction,
         ownerContractId: contractingContractBoqLinesTable.ownerContractId,
         subcontractorContractId: contractingContractBoqLinesTable.subcontractorContractId,
+        sourceOwnerLineId: contractingContractBoqLinesTable.sourceOwnerLineId,
         lineCode: contractingContractBoqLinesTable.lineCode,
         description: contractingContractBoqLinesTable.description,
         unit: contractingContractBoqLinesTable.unit,
@@ -359,8 +532,16 @@ export async function getContractingProjectReports(
       latestBillId: latest?.billId ?? null,
       latestBillNumber: latest?.bill.billNumber ?? null,
       latestBillStatus: latest?.bill.status ?? null,
+      sourceOwnerLineId: line.sourceOwnerLineId ?? null,
     };
   });
+  const pricingProfitability = buildBoqPricingProfitability(boqLines);
+  const pricingByOwnerLine = new Map(pricingProfitability.map(row => [Number(row.ownerBoqLineId), row]));
+  for (const row of boqStatement) {
+    if (String(row.direction) === "owner") {
+      Object.assign(row, pricingByOwnerLine.get(Number(row.id)) ?? {});
+    }
+  }
 
   const billRows = allBills.map((row: any) => ({
     ...row,
@@ -532,6 +713,7 @@ export async function getContractingProjectReports(
     deductions,
     variations,
     profitability,
+    pricingProfitability,
   };
 
   return {
@@ -549,6 +731,44 @@ export async function getContractingProjectReports(
       certifiedBillCount: certifiedRows.length,
       unmappedCertifiedLineCount,
     profitabilityActualCostAvailable: actualCostAvailable,
+    },
+  };
+}
+
+export async function getContractingProjectReports(
+  companyId: number,
+  projectId: number,
+  user?: BranchUser | null,
+  options: { includeDescendants?: boolean } = {},
+) {
+  if (!user) throw error("غير مصرح", 401);
+  await ensureContractingProjectHierarchy();
+  const local = await getLocalContractingProjectReports(companyId, projectId, user);
+  if (!options.includeDescendants) return local;
+
+  const hierarchyRows = await descendantProjects(companyId, projectId, user);
+
+  const entries = [{ projectId, report: local }];
+  for (const project of hierarchyRows) {
+    if (project.id === projectId) continue;
+    entries.push({
+      projectId: project.id,
+      report: await getLocalContractingProjectReports(companyId, project.id, user),
+    });
+  }
+  const rollup = aggregateProjectReportRollup(entries);
+  return {
+    ...local,
+    dashboard: rollup.dashboard,
+    reports: rollup.reports,
+    limitations: rollup.limitations,
+    completeness: rollup.completeness,
+    hierarchy: {
+      includesDescendants: true,
+      projectIds: hierarchyRows.map(project => project.id),
+      projects: hierarchyRows,
+      localSummary: local.dashboard,
+      summary: rollup.dashboard,
     },
   };
 }

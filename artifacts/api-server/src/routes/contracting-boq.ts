@@ -8,6 +8,7 @@ import {
   updateContractBoqLine,
   deleteContractBoqLine,
 } from "../lib/contracting-boq-service.js";
+import { ensureContractingProjectIntegrity } from "../lib/contracting-integrity.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -22,6 +23,7 @@ router.use(requirePermission("contracting", "view"));
 router.use(async (_req, _res, next) => {
   try {
     await ensureContractingBoqTables();
+    await ensureContractingProjectIntegrity();
     next();
   } catch (caught) {
     next(caught);

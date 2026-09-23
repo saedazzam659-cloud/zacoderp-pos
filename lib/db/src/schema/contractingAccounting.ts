@@ -23,6 +23,7 @@ import {
   contractingResourcesTable,
   contractingSubContractsTable,
 } from "./contracting";
+import { contractingContractBoqLinesTable } from "./contractingBoq";
 import { branchesTable } from "./branches";
 import { companiesTable } from "./companies";
 import { journalEntriesTable } from "./journalEntries";
@@ -179,6 +180,9 @@ export const contractingMaterialMovementsTable = pgTable(
     projectId: integer("project_id").notNull(),
     projectBranchId: integer("project_branch_id"),
     resourceId: integer("resource_id"),
+    ownerContractId: integer("owner_contract_id"),
+    subcontractorContractId: integer("subcontractor_contract_id"),
+    boqLineId: integer("boq_line_id"),
     itemId: integer("item_id").notNull(),
     unitId: integer("unit_id").notNull(),
     warehouseId: integer("warehouse_id").notNull(),
@@ -220,6 +224,21 @@ export const contractingMaterialMovementsTable = pgTable(
       columns: [t.resourceId],
       foreignColumns: [contractingResourcesTable.id],
     }).onDelete("set null"),
+    foreignKey({
+      name: "contracting_material_movements_owner_contract_id_fkey",
+      columns: [t.ownerContractId],
+      foreignColumns: [contractingOwnerContractsTable.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "contracting_material_movements_subcontractor_contract_id_fkey",
+      columns: [t.subcontractorContractId],
+      foreignColumns: [contractingSubContractsTable.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "contracting_material_movements_boq_line_id_fkey",
+      columns: [t.boqLineId],
+      foreignColumns: [contractingContractBoqLinesTable.id],
+    }).onDelete("restrict"),
     foreignKey({
       name: "contracting_material_movements_item_id_fkey",
       columns: [t.itemId],
@@ -268,6 +287,10 @@ export const contractingMaterialMovementsTable = pgTable(
       "contracting_material_movements_total_cost_check",
       sql`${t.totalCost} >= 0`,
     ),
+    check(
+      "contracting_material_movements_contract_side_check",
+      sql`${t.ownerContractId} IS NULL OR ${t.subcontractorContractId} IS NULL`,
+    ),
     uniqueIndex("contracting_material_idempotency_idx").on(
       t.companyId,
       t.idempotencyKey,
@@ -276,6 +299,13 @@ export const contractingMaterialMovementsTable = pgTable(
       t.companyId,
       t.projectId,
       t.movementDate.desc(),
+    ),
+    index("contracting_material_contract_idx").on(
+      t.companyId,
+      t.projectId,
+      t.ownerContractId,
+      t.subcontractorContractId,
+      t.boqLineId,
     ),
   ],
 );

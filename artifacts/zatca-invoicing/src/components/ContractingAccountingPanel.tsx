@@ -24,6 +24,8 @@ type MaterialMovement = {
   id: number; direction: "issue" | "return"; qty_base: string | number;
   total_cost: string | number; movement_date: string; journal_entry_id?: number | null;
   batch_number?: string | null; expiry_date?: string | null;
+  ownerContractId?: number | null; subcontractorContractId?: number | null; boqLineId?: number | null;
+  owner_contract_id?: number | null; subcontractor_contract_id?: number | null; boq_line_id?: number | null;
 };
 type Options = {
   items: Array<{ id: number; code: string; nameAr: string; unitId: number | null; batchTrackingMode?: string | null }>;
@@ -34,6 +36,15 @@ type Options = {
   balances: Array<{ itemId: number; warehouseId: number; qtyBase: string | number; avgCost: string | number | null }>;
   ownerContracts: Array<{ id: number; contractNumber: string; clientName?: string | null }>;
   subcontractorContracts: Array<{ id: number; contractNumber: string }>;
+  boqLines?: Array<{
+    id: number;
+    direction: "owner" | "subcontract";
+    ownerContractId: number | null;
+    subcontractorContractId: number | null;
+    lineCode?: string | null;
+    description?: string | null;
+    workItemName?: string | null;
+  }>;
 };
 
 const labelKind: Record<string, string> = {
@@ -68,6 +79,9 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   const [qty, setQty] = useState("");
   const [movementDirection, setMovementDirection] = useState<"issue" | "return">("issue");
   const [sourceMovementId, setSourceMovementId] = useState("");
+  const [materialContract, setMaterialContract] = useState("");
+  const [materialBoqLineId, setMaterialBoqLineId] = useState("");
+  const [materialBoqLines, setMaterialBoqLines] = useState<NonNullable<Options["boqLines"]>>([]);
   const [lotNumber, setLotNumber] = useState("");
   const [lotExpiryDate, setLotExpiryDate] = useState("");
   const [lots, setLots] = useState<Array<{
@@ -122,6 +136,32 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         toast({ title: error?.message || "تعذر تحميل التشغيلات", variant: "destructive" });
       });
   }, [headers, itemId, warehouseId, movementDirection, projectId, selectedBatchMode, settlementDate, token, toast]);
+
+  useEffect(() => {
+    setMaterialBoqLineId("");
+    if (!token || !projectId || !materialContract || movementDirection !== "issue") {
+      setMaterialBoqLines([]);
+      return;
+    }
+    const [contractDirection, contractId] = materialContract.split(":");
+    const direction = contractDirection === "owner" ? "owner" : "subcontract";
+    const contractParam = direction === "owner" ? "ownerContractId" : "subcontractorContractId";
+    const abort = new AbortController();
+    fetch(`${API}/api/contracting/projects/${projectId}/boq-lines?direction=${direction}&${contractParam}=${contractId}`, {
+      headers,
+      signal: abort.signal,
+    }).then(async response => {
+      const body = await response.json().catch(() => []);
+      if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+      if (!abort.signal.aborted) setMaterialBoqLines(Array.isArray(body) ? body : []);
+    }).catch((error: any) => {
+      if (error?.name !== "AbortError") {
+        setMaterialBoqLines([]);
+        toast({ title: error?.message || "تعذر تحميل بنود جدول الكميات للعقد", variant: "destructive" });
+      }
+    });
+    return () => abort.abort();
+  }, [headers, materialContract, movementDirection, projectId, token, toast]);
 
   function operationKey(scope: string) {
     const existing = operationKeys.current.get(scope);
@@ -207,12 +247,22 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   }
 
   async function saveMaterialMovement() {
-    const scope = `material:${movementDirection}:${itemId}:${unitId}:${warehouseId}:${qty}:${sourceMovementId || "new"}:${lotNumber}:${lotExpiryDate}:${settlementDate}`;
+    const [contractDirection, rawContractId] = materialContract.split(":");
+    const selectedContractId = Number(rawContractId);
+    const issueScope = movementDirection === "issue"
+      ? `${materialContract || "project"}:${materialBoqLineId || "no-boq"}`
+      : "inherit-source";
+    const scope = `material:${movementDirection}:${itemId}:${unitId}:${warehouseId}:${qty}:${sourceMovementId || "new"}:${issueScope}:${lotNumber}:${lotExpiryDate}:${settlementDate}`;
     const result = await post(`/api/contracting/projects/${projectId}/material-movements`, {
       direction: movementDirection, itemId: Number(itemId), unitId: Number(unitId),
       warehouseId: Number(warehouseId), qty,
       resourceId: resourceId ? Number(resourceId) : null,
       sourceMovementId: movementDirection === "return" && sourceMovementId ? Number(sourceMovementId) : null,
+      ...(movementDirection === "issue" ? {
+        ownerContractId: contractDirection === "owner" && selectedContractId ? selectedContractId : null,
+        subcontractorContractId: contractDirection === "subcontract" && selectedContractId ? selectedContractId : null,
+        boqLineId: materialBoqLineId ? Number(materialBoqLineId) : null,
+      } : {}),
       batchNumber: movementDirection === "issue" && lotNumber ? lotNumber : null,
       expiryDate: movementDirection === "issue" && lotNumber ? lotExpiryDate || null : undefined,
       movementDate: settlementDate, idempotencyKey: operationKey(scope),
@@ -222,6 +272,15 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
 
   const approvedBills = bills.filter((bill) => bill.status === "approved");
   const selectedBalance = options.balances.find((row) => row.itemId === Number(itemId) && row.warehouseId === Number(warehouseId));
+  const [materialContractDirection, materialContractIdText] = materialContract.split(":");
+  const materialContractId = Number(materialContractIdText);
+  const filteredMaterialBoqLines = materialBoqLines.filter(line =>
+    materialContractDirection === "owner"
+      ? line.direction === "owner" && line.ownerContractId === materialContractId
+      : materialContractDirection === "subcontract"
+        ? line.direction === "subcontract" && line.subcontractorContractId === materialContractId
+        : false,
+  );
 
   return (
     <div dir="rtl" className="space-y-5">
@@ -303,7 +362,14 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         <h3 className="mb-3 font-bold">صرف وإرجاع مواد فعلية للمشروع</h3>
         <p className="mb-3 text-xs text-slate-500">لا يغيّر هذا النموذج حالة المورد المخطط؛ بل ينشئ حركة مخزون فعلية وقيد تكلفة مشروع متوازناً.</p>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <PickerField label="الحركة" value={movementDirection} onValueChange={(value) => setMovementDirection(value as "issue" | "return")} items={[{ value: "issue", label: "صرف مواد" }, { value: "return", label: "إرجاع مواد" }]} testId="accounting-movement-direction-picker" />
+          <PickerField label="الحركة" value={movementDirection} onValueChange={(value) => {
+            const next = value as "issue" | "return";
+            setMovementDirection(next);
+            if (next === "return") {
+              setMaterialContract("");
+              setMaterialBoqLineId("");
+            }
+          }} items={[{ value: "issue", label: "صرف مواد" }, { value: "return", label: "إرجاع مواد" }]} testId="accounting-movement-direction-picker" />
           <PickerField label="الصنف" value={itemId} onValueChange={setItemId} placeholder="اختر الصنف" items={options.items.map((row) => ({ value: String(row.id), label: `${row.code} — ${row.nameAr}` }))} testId="accounting-item-picker" />
           <PickerField label="الوحدة" value={unitId} onValueChange={setUnitId} placeholder="اختر الوحدة" items={options.units.map((row) => ({ value: String(row.id), label: `${row.code} — ${row.nameAr}` }))} testId="accounting-unit-picker" />
           <div>
@@ -339,16 +405,66 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
           </label>}
           <label className="text-sm">الكمية<Input type="number" min="0.000000000000000001" step="any" value={qty} onChange={(e) => setQty(e.target.value)} /></label>
           <label className="text-sm">معرّف المورد (اختياري)<Input type="number" value={resourceId} onChange={(e) => setResourceId(e.target.value)} /></label>
+          {movementDirection === "issue" && (
+            <PickerField
+              label="العقد (اختياري)"
+              value={materialContract || "__none__"}
+              onValueChange={(value) => {
+                setMaterialContract(value === "__none__" ? "" : value);
+                setMaterialBoqLineId("");
+              }}
+              placeholder="بدون ربط بعقد"
+              items={[
+                { value: "__none__", label: "بدون ربط بعقد" },
+                ...options.ownerContracts.map(contract => ({
+                  value: `owner:${contract.id}`,
+                  label: `مالك — ${contract.contractNumber}`,
+                })),
+                ...options.subcontractorContracts.map(contract => ({
+                  value: `subcontract:${contract.id}`,
+                  label: `باطن — ${contract.contractNumber}`,
+                })),
+              ]}
+              testId="accounting-material-contract-picker"
+            />
+          )}
+          {movementDirection === "issue" && materialContract && (
+            <PickerField
+              label="سطر جدول الكميات (اختياري)"
+              value={materialBoqLineId || "__none__"}
+              onValueChange={value => setMaterialBoqLineId(value === "__none__" ? "" : value)}
+              placeholder="بدون ربط بسطر"
+              items={[
+                { value: "__none__", label: "بدون ربط بسطر جدول الكميات" },
+                ...filteredMaterialBoqLines.map(line => ({
+                  value: String(line.id),
+                  label: `${line.lineCode ? `${line.lineCode} — ` : ""}${line.workItemName || line.description || `سطر #${line.id}`}`,
+                })),
+              ]}
+              testId="accounting-material-boq-picker"
+            />
+          )}
           {movementDirection === "return" && <label className="text-sm">رقم حركة الصرف الأصلية<Input type="number" value={sourceMovementId} onChange={(e) => setSourceMovementId(e.target.value)} /></label>}
         </div>
+        {movementDirection === "return" && (
+          <p className="mt-2 text-xs text-muted-foreground">الإرجاع يرث العقد وسطر جدول الكميات من حركة الصرف الأصلية ولا يستبدلهما.</p>
+        )}
         <Button className="mt-3" disabled={busy || !itemId || !unitId || !warehouseId || !qty || (movementDirection === "return" && !sourceMovementId)} onClick={() => void saveMaterialMovement()}>ترحيل حركة المواد والقيد</Button>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-xs">
-             <thead><tr className="border-b text-right text-slate-500"><th className="p-2">الحركة</th><th className="p-2">التاريخ</th><th className="p-2">التشغيلة</th><th className="p-2">كمية الأساس</th><th className="p-2">التكلفة</th><th className="p-2">القيد</th></tr></thead>
+             <thead><tr className="border-b text-right text-slate-500"><th className="p-2">الحركة</th><th className="p-2">التاريخ</th><th className="p-2">العقد / بند الكميات</th><th className="p-2">التشغيلة</th><th className="p-2">كمية الأساس</th><th className="p-2">التكلفة</th><th className="p-2">القيد</th></tr></thead>
             <tbody>{movements.map((row) => (
               <tr key={row.id} className="border-b last:border-0">
                 <td className="p-2">{row.direction === "issue" ? "صرف" : "إرجاع"} #{row.id}</td>
                 <td className="p-2">{row.movement_date}</td>
+                 <td className="p-2">
+                   {(row.ownerContractId ?? row.owner_contract_id) != null
+                     ? `مالك #${row.ownerContractId ?? row.owner_contract_id}`
+                     : (row.subcontractorContractId ?? row.subcontractor_contract_id) != null
+                       ? `باطن #${row.subcontractorContractId ?? row.subcontractor_contract_id}`
+                       : "المشروع"}
+                   {(row.boqLineId ?? row.boq_line_id) != null ? ` • بند #${row.boqLineId ?? row.boq_line_id}` : ""}
+                 </td>
                  <td className="p-2">{row.batch_number ?? "—"}{row.expiry_date ? ` • ${row.expiry_date}` : ""}</td>
                  <td className="p-2">{String(row.qty_base)}</td>
                  <td className="p-2">{String(row.total_cost)}</td>

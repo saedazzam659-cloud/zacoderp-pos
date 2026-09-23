@@ -319,6 +319,9 @@ export default function ContractingContractBoqEditor({
                 searchPlaceholder="بحث في أسطر عقد المالك..."
                 testId="contract-boq-source-owner-picker"
               />
+              <p className="mt-1 text-[11px] text-slate-500">
+                الربط اختياري للتتبع فقط ومن أسطر مالك هذا المشروع. سعر وكمية عقد الباطن مستقلان ولا يُنسخان أو يُستبدلان بسعر المالك.
+              </p>
             </div>
           )}
            {isChangeOrder && (
@@ -370,6 +373,7 @@ export default function ContractingContractBoqEditor({
                 <TableCell className="font-medium">
                   {row.workItemCode ? `${row.workItemCode} — ` : ""}{row.workItemName || "بند محذوف"}
                   {row.sourceOwnerLineId != null && <div className="text-[10px] text-slate-500">مرتبط بسطر مالك #{row.sourceOwnerLineId}</div>}
+                   {direction === "subcontract" && row.sourceOwnerLineId == null && <div className="text-[10px] text-amber-700">تسعير باطن مستقل — بدون ربط بسطر مالك</div>}
                    {row.baseLineId != null && <div className="text-[10px] text-indigo-600">تغيير للسطر الأساسي #{row.baseLineId} · كمية: {row.quantityDelta ?? "0"} · سعر: {row.unitPriceDelta ?? "0"}</div>}
                 </TableCell>
                 <TableCell>{row.unit}</TableCell>

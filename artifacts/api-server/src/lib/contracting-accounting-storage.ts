@@ -1,4 +1,4 @@
-import { db } from "@workspace/db";
+import { db, getActiveExternalDb } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
 /**
@@ -10,10 +10,13 @@ import { sql } from "drizzle-orm";
  * introduced without changing the meaning of an existing resource row.
  */
 let ready: Promise<void> | null = null;
+const externalReady = new WeakMap<object, Promise<void>>();
 
 export function ensureContractingAccountingTables(): Promise<void> {
-  if (ready) return ready;
-  ready = (async () => {
+  const externalContext = getActiveExternalDb();
+  const current = externalContext ? externalReady.get(externalContext) : ready;
+  if (current) return current;
+  const initialization = (async () => {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS contracting_accounting_settlements (
         id SERIAL PRIMARY KEY,
@@ -101,6 +104,9 @@ export function ensureContractingAccountingTables(): Promise<void> {
         project_id INTEGER NOT NULL REFERENCES contracting_projects(id) ON DELETE RESTRICT,
         project_branch_id INTEGER REFERENCES branches(id) ON DELETE RESTRICT,
         resource_id INTEGER REFERENCES contracting_resources(id) ON DELETE SET NULL,
+        owner_contract_id INTEGER REFERENCES contracting_owner_contracts(id) ON DELETE RESTRICT,
+        subcontractor_contract_id INTEGER REFERENCES contracting_sub_contracts(id) ON DELETE RESTRICT,
+        boq_line_id INTEGER REFERENCES contracting_contract_boq_lines(id) ON DELETE RESTRICT,
         item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
         unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE RESTRICT,
         warehouse_id INTEGER NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
@@ -121,7 +127,9 @@ export function ensureContractingAccountingTables(): Promise<void> {
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         CONSTRAINT contracting_material_direction_ck
-          CHECK (direction IN ('issue','return'))
+          CHECK (direction IN ('issue','return')),
+        CONSTRAINT contracting_material_movements_contract_side_check
+          CHECK (owner_contract_id IS NULL OR subcontractor_contract_id IS NULL)
       )
     `);
     await db.execute(sql`
@@ -131,7 +139,25 @@ export function ensureContractingAccountingTables(): Promise<void> {
     await db.execute(sql`
       ALTER TABLE contracting_material_movements
         ADD COLUMN IF NOT EXISTS project_branch_id INTEGER REFERENCES branches(id) ON DELETE RESTRICT,
-        ADD COLUMN IF NOT EXISTS warehouse_branch_id INTEGER REFERENCES branches(id) ON DELETE RESTRICT
+        ADD COLUMN IF NOT EXISTS warehouse_branch_id INTEGER REFERENCES branches(id) ON DELETE RESTRICT,
+        ADD COLUMN IF NOT EXISTS owner_contract_id INTEGER REFERENCES contracting_owner_contracts(id) ON DELETE RESTRICT,
+        ADD COLUMN IF NOT EXISTS subcontractor_contract_id INTEGER REFERENCES contracting_sub_contracts(id) ON DELETE RESTRICT,
+        ADD COLUMN IF NOT EXISTS boq_line_id INTEGER REFERENCES contracting_contract_boq_lines(id) ON DELETE RESTRICT
+    `);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+            FROM pg_constraint
+           WHERE conname = 'contracting_material_movements_contract_side_check'
+             AND conrelid = 'contracting_material_movements'::regclass
+        ) THEN
+          ALTER TABLE contracting_material_movements
+            ADD CONSTRAINT contracting_material_movements_contract_side_check
+            CHECK (owner_contract_id IS NULL OR subcontractor_contract_id IS NULL);
+        END IF;
+      END $$;
     `);
     await db.execute(sql`
       ALTER TABLE contracting_material_movements
@@ -147,6 +173,12 @@ export function ensureContractingAccountingTables(): Promise<void> {
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS contracting_material_project_idx
         ON contracting_material_movements(company_id, project_id, movement_date DESC)
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS contracting_material_contract_idx
+        ON contracting_material_movements(
+          company_id, project_id, owner_contract_id, subcontractor_contract_id, boq_line_id
+        )
     `);
 
     // Immutable per-lot provenance.  An issue has one row per valuation-layer
@@ -211,8 +243,11 @@ export function ensureContractingAccountingTables(): Promise<void> {
         ON contracting_accounting_audit(company_id, bill_id, created_at DESC)
     `);
   })().catch((error) => {
-    ready = null;
+    if (externalContext) externalReady.delete(externalContext);
+    else ready = null;
     throw error;
   });
-  return ready;
+  if (externalContext) externalReady.set(externalContext, initialization);
+  else ready = initialization;
+  return initialization;
 }

@@ -21,6 +21,18 @@ Preserve legacy project customer names without automatic name matching, and exte
 
 **How to apply:** Link clients by validated IDs when explicitly selected, calculate certified amounts separately from cash paid, and use existing ledger/settlement references as authoritative.
 
+Project-centered contracting must reuse the existing owner/subcontract split and BOQ, not introduce parallel generic contract, payment-application, or execution-item systems. A bill's mandatory contract means exactly the appropriate side's contract, belonging to its project and tenant.
+
+**Why:** The user explicitly forbids duplicate screens/data while requesting strict project ownership and independent owner/subcontract prices.
+
+**How to apply:** Keep subprojects independent for execution and posting; make parent rollups an explicit report scope. Preserve optional owner-line mapping without copying owner prices into subcontract costs.
+
+Do not assume “test-only data” means legacy relationships can be deleted or guessed. Install constraints enforcing future writes while deferring validation of unresolved old rows; expose scoped, actionable diagnostics without blocking project/contract creation needed for remediation.
+
+**Why:** Existing test certificates can have no contract candidates even when the user expects clean data. A global readiness failure would prevent the very repair needed to satisfy the new constraints.
+
+**How to apply:** Never relink posted snapshots automatically. Keep schema reconciliation cached per active database, diagnostics read-only and tenant/branch scoped, and explicit validation separate from routine reads.
+
 Release-managed application tables must be created in the shared active-database reconciliation pass before strict missing-table validation, not only during central startup or a lazy feature request.
 
 **Why:** External-agent upgrade and request-readiness paths can validate newly exported schema tables before central-only initialization ever reaches their database.

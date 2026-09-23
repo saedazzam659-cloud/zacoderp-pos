@@ -27,7 +27,16 @@ router.get("/projects/:projectId/reports", async (req, res) => {
     return;
   }
   try {
-    res.json(await getContractingProjectReports(companyId, projectId, req.authUser));
+    const rawIncludeDescendants = req.query.includeDescendants;
+    if (rawIncludeDescendants != null
+      && rawIncludeDescendants !== "true"
+      && rawIncludeDescendants !== "false") {
+      res.status(400).json({ error: "includeDescendants يجب أن تكون true أو false" });
+      return;
+    }
+    res.json(await getContractingProjectReports(companyId, projectId, req.authUser, {
+      includeDescendants: rawIncludeDescendants === "true",
+    }));
   } catch (caught: any) {
     const status = Number(caught?.status) || 500;
     res.status(status).json({ error: caught?.message ?? "تعذر تحميل تقارير المشروع" });

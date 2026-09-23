@@ -59,6 +59,13 @@ type ProjectReportsPayload = ContractingProjectReportsSnapshot & {
     unmappedCertifiedLineCount: number;
     profitabilityActualCostAvailable: boolean;
   };
+  hierarchy?: {
+    includesDescendants: boolean;
+    projectIds: number[];
+    projects: Array<{ id: number; name: string; parentId: number | null }>;
+    localSummary: DashboardSide;
+    summary: DashboardSide;
+  };
 };
 
 const REPORT_OPTIONS: Array<{ value: ContractingProjectReportKey; label: string }> = [
@@ -70,6 +77,7 @@ const REPORT_OPTIONS: Array<{ value: ContractingProjectReportKey; label: string 
   { value: "retention", label: "المحتجز" },
   { value: "deductions", label: "الاستقطاعات والغرامات والتسويات" },
   { value: "variations", label: "مقارنة العقد الأصلي والمعدل" },
+  { value: "pricingProfitability", label: "هامش التسعير المتوقع (المالك مقابل الباطن المرتبط)" },
   { value: "profitability", label: "ربحية المشروع" },
 ];
 
@@ -129,6 +137,12 @@ const LABELS: Record<string, string> = {
   marginPercent: "الهامش %",
   costSource: "مصدر التكلفة",
   note: "حدود التقرير",
+  ownerBoqLineId: "سطر المالك",
+  mappedSubcontractLineIds: "أسطر الباطن المرتبطة",
+  expectedRevenue: "الإيراد المتوقع",
+  expectedMappedCost: "تكلفة الباطن المرتبطة",
+  expectedProfit: "الربح المتوقع",
+  expectedMarginPercent: "الهامش المتوقع %",
 };
 
 function money(value: unknown): string {
@@ -155,6 +169,7 @@ function displayValue(key: string, value: unknown): ReactNode {
     return status(value);
   }
   if (typeof value === "number") return money(value);
+  if (Array.isArray(value)) return value.length ? value.join("، ") : "—";
   return String(value);
 }
 
@@ -166,7 +181,10 @@ function ReportTable({ rows }: { rows: Record<string, unknown>[] }) {
         if (!keys.includes(key) && key !== "id" && !key.endsWith("Id")) keys.push(key);
       }
     }
-    return keys.slice(0, 16);
+    // BOQ rows include the mapped owner/subcontract pricing margin after the
+    // execution columns. Keep those authoritative fields visible rather than
+    // truncating them behind the historical 16-column limit.
+    return keys.slice(0, 20);
   }, [rows]);
   if (rows.length === 0) {
     return <div className="rounded-lg border bg-white p-8 text-center text-sm text-slate-500">لا توجد بيانات لهذا التقرير.</div>;
@@ -227,6 +245,22 @@ function SideSummary({ title, side, cost = false }: { title: string; side: Dashb
   );
 }
 
+function ScopeSummary({ title, side, tone }: { title: string; side: DashboardSide; tone: "local" | "rollup" }) {
+  return (
+    <div className={tone === "rollup"
+      ? "rounded-lg border border-indigo-200 bg-indigo-50/60 p-3 dark:border-indigo-900 dark:bg-indigo-950/20"
+      : "rounded-lg border bg-white p-3 dark:bg-slate-900"}>
+      <div className="mb-2 text-sm font-bold">{title}</div>
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        <Metric label="القيمة المعدلة" value={side.adjustedContractValue} tone="violet" />
+        <Metric label="الأعمال المنفذة" value={side.executedValue} tone="emerald" />
+        <Metric label="المدفوع فعلياً" value={side.actualPaid} tone="emerald" />
+        <Metric label="المستحق" value={side.due} tone="sky" />
+      </div>
+    </div>
+  );
+}
+
 export function ContractingProjectReports({
   projectId,
   mode,
@@ -240,6 +274,7 @@ export function ContractingProjectReports({
   const [payload, setPayload] = useState<ProjectReportsPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<ContractingProjectReportKey>("boqStatement");
+  const [includeDescendants, setIncludeDescendants] = useState(false);
 
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token ?? ""}`,
@@ -250,7 +285,8 @@ export function ContractingProjectReports({
     if (!token || !projectId) return;
     setLoading(true);
     try {
-      const response = await fetch(`${API}/api/contracting/projects/${projectId}/reports`, { headers });
+      const query = includeDescendants ? "?includeDescendants=true" : "";
+      const response = await fetch(`${API}/api/contracting/projects/${projectId}/reports${query}`, { headers });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
       setPayload(body);
@@ -259,7 +295,7 @@ export function ContractingProjectReports({
     } finally {
       setLoading(false);
     }
-  }, [headers, projectId, t, toast, token]);
+  }, [headers, includeDescendants, projectId, t, toast, token]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -267,6 +303,9 @@ export function ContractingProjectReports({
   if (!payload) return null;
 
   const snapshot = payload as ContractingProjectReportsSnapshot;
+  const hierarchy = payload.hierarchy;
+  const rollupEnabled = Boolean(hierarchy?.includesDescendants);
+  const scopeProjects = hierarchy?.projects ?? [];
   const reportRows = selected === "profitability"
     ? (payload.reports.profitability ? [payload.reports.profitability as Record<string, unknown>] : [])
     : (Array.isArray(payload.reports[selected]) ? payload.reports[selected] as Record<string, unknown>[] : []);
@@ -275,7 +314,34 @@ export function ContractingProjectReports({
     const d = payload.dashboard;
     return (
       <div className="space-y-3">
-        <div className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-indigo-600" /><h3 className="font-bold">لوحة متابعة المشروع</h3><Badge variant="outline">{status(d.state)}</Badge></div>
+        <div className="flex flex-wrap items-center gap-2">
+          <BarChart3 className="h-5 w-5 text-indigo-600" />
+          <h3 className="font-bold">لوحة متابعة المشروع</h3>
+          <Badge variant="outline">{status(d.state)}</Badge>
+          <Button
+            size="sm"
+            variant={includeDescendants ? "default" : "outline"}
+            onClick={() => setIncludeDescendants(value => !value)}
+            disabled={loading}
+            data-testid="toggle-project-descendants"
+          >
+            {includeDescendants ? "عرض هذا المشروع فقط" : "تجميع المشاريع الفرعية"}
+          </Button>
+        </div>
+        {rollupEnabled && hierarchy && (
+          <div className="space-y-2" data-testid="project-hierarchy-rollup">
+            <div className="text-xs text-indigo-700 dark:text-indigo-300">
+              نطاق التجميع: {scopeProjects.map(item => item.name).join("، ")}
+            </div>
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              <ScopeSummary title="إجمالي المشروع الحالي فقط" side={hierarchy.localSummary} tone="local" />
+              <ScopeSummary title={`إجمالي المشروع مع الفروع (${hierarchy.projectIds.length} مشاريع)`} side={hierarchy.summary} tone="rollup" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              الإجمالي المجمّع مستقل عن الإجمالي المحلي؛ لا تُضاف القيم المحلية إليه مرة أخرى.
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <Metric label="قيمة العقد الأساسية" value={d.baseContractValue} tone="violet" />
           <Metric label="الأوامر التغييرية المعتمدة" value={d.approvedVariationsValue} tone="amber" />
@@ -319,6 +385,15 @@ export function ContractingProjectReports({
           <p className="text-xs text-slate-500 mt-1">مصدر واحد للبيانات المعتمدة مع فصل إيراد المالك عن تكلفة الباطن.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={includeDescendants ? "default" : "outline"}
+            onClick={() => setIncludeDescendants(value => !value)}
+            disabled={loading}
+            data-testid="toggle-project-descendants"
+          >
+            {includeDescendants ? "عرض هذا المشروع فقط" : "تجميع المشاريع الفرعية"}
+          </Button>
           <select
             value={selected}
             onChange={event => setSelected(event.target.value as ContractingProjectReportKey)}
@@ -331,6 +406,17 @@ export function ContractingProjectReports({
           <Button size="sm" variant="ghost" onClick={() => void load()} disabled={loading}>تحديث</Button>
         </div>
       </div>
+      {rollupEnabled && hierarchy && (
+        <div className="space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/60 p-3 text-sm dark:border-indigo-900 dark:bg-indigo-950/20">
+          <div className="font-bold">التقرير المجمّع للمشروع وفروعه</div>
+          <div className="text-xs">المشاريع المشمولة: {scopeProjects.map(item => item.name).join("، ")}</div>
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            <ScopeSummary title="المشروع الحالي فقط" side={hierarchy.localSummary} tone="local" />
+            <ScopeSummary title="المشروع مع جميع الفروع" side={hierarchy.summary} tone="rollup" />
+          </div>
+          <p className="text-xs text-muted-foreground">صفوف التقرير أدناه مقدمة من نطاق الخادم المختار ولا يتم دمجها مع الصفوف المحلية في الواجهة.</p>
+        </div>
+      )}
       <div className="rounded-lg border bg-indigo-50/60 p-3 text-sm flex flex-wrap items-center gap-x-5 gap-y-1">
         <span>المنفذ للمالك: <b>{money(payload.dashboard.ownerRevenue.executedValue)}</b></span>
         <span>تكلفة الباطن: <b>{money(payload.dashboard.subcontractCost.executedValue)}</b></span>

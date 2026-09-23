@@ -1,5 +1,6 @@
 import {
   pgTable, serial, text, integer, numeric, boolean, timestamp, date, jsonb, index,
+  uniqueIndex, unique, foreignKey, check,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
@@ -9,6 +10,7 @@ import { suppliersTable } from "./suppliers";
 import { usersTable } from "./users";
 import { itemsTable, unitsTable, warehousesTable } from "./inventory";
 import { costCentersTable } from "./costCenters";
+import { sql } from "drizzle-orm";
 
 // ─────────────────────────────────────────────────────────────────────
 // Contracting / Construction ERP module (نظام إدارة المقاولات)
@@ -29,6 +31,10 @@ export const contractingProjectsTable = pgTable(
       .references(() => companiesTable.id, { onDelete: "cascade" }),
     branchId: integer("branch_id")
       .references(() => branchesTable.id, { onDelete: "set null" }),
+    // Optional project hierarchy. The composite FK below prevents a project
+    // from being attached to a parent owned by another tenant. Runtime/DB
+    // cycle guards additionally require compatible branch visibility.
+    parentId: integer("parent_id"),
     // Stable per-company code (e.g. "PRJ-2026-001"). NOT globally unique
     // because multiple tenants will reuse common formats.
     code: text("code").notNull(),
@@ -70,6 +76,14 @@ export const contractingProjectsTable = pgTable(
     byCode:      index("ctg_proj_code_idx").on(t.companyId, t.code),
     byCustomer:  index("ctg_proj_customer_idx").on(t.companyId, t.customerId),
     byCostCenter:index("ctg_proj_cost_center_idx").on(t.companyId, t.costCenterId),
+    byParent:    index("ctg_proj_parent_idx").on(t.companyId, t.parentId),
+    companyIdIdUq: unique("ctg_proj_company_id_id_uq").on(t.companyId, t.id),
+    parentProjectFk: foreignKey({
+      columns: [t.companyId, t.parentId],
+      foreignColumns: [t.companyId, t.id],
+      name: "ctg_proj_parent_company_fk",
+    }).onDelete("restrict"),
+    notOwnParent: check("ctg_proj_not_own_parent_ck", sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`),
   }),
 );
 
@@ -240,6 +254,7 @@ export const contractingOwnerContractsTable = pgTable(
     byProject: index("ctg_oc_project_idx").on(t.projectId),
     byCompany: index("ctg_oc_company_idx").on(t.companyId),
     byParent: index("ctg_oc_parent_idx").on(t.companyId, t.parentContractId),
+    companyProjectIdUq: unique("ctg_oc_company_project_id_uq").on(t.companyId, t.projectId, t.id),
   }),
 );
 
@@ -294,6 +309,7 @@ export const contractingSubContractsTable = pgTable(
     byProject:    index("ctg_sc_project_idx").on(t.projectId),
     byContractor: index("ctg_sc_contractor_idx").on(t.contractorId),
     byCompany:    index("ctg_sc_company_idx").on(t.companyId),
+    companyProjectIdUq: unique("ctg_sc_company_project_id_uq").on(t.companyId, t.projectId, t.id),
   }),
 );
 
@@ -387,6 +403,31 @@ export const contractingProgressBillsTable = pgTable(
     byDirection: index("ctg_bill_direction_idx").on(t.projectId, t.direction),
     byCostCenter:index("ctg_bill_cost_center_idx").on(t.companyId, t.costCenterId),
     byCorrection: index("ctg_bill_correction_idx").on(t.companyId, t.correctionOfId),
+    exactDirectionContract: check("ctg_bill_exact_direction_contract_ck", sql`
+      (${t.direction} = 'outgoing' AND ${t.ownerContractId} IS NOT NULL
+        AND ${t.subcontractorContractId} IS NULL AND ${t.contractorId} IS NULL)
+      OR
+      (${t.direction} = 'incoming' AND ${t.ownerContractId} IS NULL
+        AND ${t.subcontractorContractId} IS NOT NULL AND ${t.contractorId} IS NOT NULL)
+    `),
+    ownerContractProjectFk: foreignKey({
+      columns: [t.companyId, t.projectId, t.ownerContractId],
+      foreignColumns: [
+        contractingOwnerContractsTable.companyId,
+        contractingOwnerContractsTable.projectId,
+        contractingOwnerContractsTable.id,
+      ],
+      name: "ctg_bill_owner_contract_project_fk",
+    }).onDelete("restrict"),
+    subcontractProjectFk: foreignKey({
+      columns: [t.companyId, t.projectId, t.subcontractorContractId],
+      foreignColumns: [
+        contractingSubContractsTable.companyId,
+        contractingSubContractsTable.projectId,
+        contractingSubContractsTable.id,
+      ],
+      name: "ctg_bill_subcontract_project_fk",
+    }).onDelete("restrict"),
   }),
 );
 

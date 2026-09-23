@@ -7,7 +7,11 @@ import {
   timestamp,
   index,
   uniqueIndex,
+  unique,
+  foreignKey,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
 import {
   contractingProjectsTable,
@@ -69,6 +73,38 @@ export const contractingContractBoqLinesTable = pgTable(
     bySourceOwner: index("ctg_boq_source_owner_idx").on(t.companyId, t.sourceOwnerLineId),
     oneLinePerContractWorkItem: uniqueIndex("ctg_boq_contract_work_item_uidx")
       .on(t.companyId, t.direction, t.ownerContractId, t.subcontractorContractId, t.workItemId),
+    companyProjectIdWorkItemUq: unique("ctg_boq_company_project_id_work_item_uq")
+      .on(t.companyId, t.projectId, t.id, t.workItemId),
+    exactDirectionContract: check("ctg_boq_exact_direction_contract_ck", sql`
+      (${t.direction} = 'owner' AND ${t.ownerContractId} IS NOT NULL
+        AND ${t.subcontractorContractId} IS NULL AND ${t.sourceOwnerLineId} IS NULL)
+      OR
+      (${t.direction} = 'subcontract' AND ${t.ownerContractId} IS NULL
+        AND ${t.subcontractorContractId} IS NOT NULL)
+    `),
+    ownerContractProjectFk: foreignKey({
+      columns: [t.companyId, t.projectId, t.ownerContractId],
+      foreignColumns: [
+        contractingOwnerContractsTable.companyId,
+        contractingOwnerContractsTable.projectId,
+        contractingOwnerContractsTable.id,
+      ],
+      name: "ctg_boq_owner_contract_project_fk",
+    }).onDelete("restrict"),
+    subcontractProjectFk: foreignKey({
+      columns: [t.companyId, t.projectId, t.subcontractorContractId],
+      foreignColumns: [
+        contractingSubContractsTable.companyId,
+        contractingSubContractsTable.projectId,
+        contractingSubContractsTable.id,
+      ],
+      name: "ctg_boq_subcontract_project_fk",
+    }).onDelete("restrict"),
+    sourceOwnerProjectWorkItemFk: foreignKey({
+      columns: [t.companyId, t.projectId, t.sourceOwnerLineId, t.workItemId],
+      foreignColumns: [t.companyId, t.projectId, t.id, t.workItemId],
+      name: "ctg_boq_source_owner_project_item_fk",
+    }).onDelete("restrict"),
   }),
 );
 

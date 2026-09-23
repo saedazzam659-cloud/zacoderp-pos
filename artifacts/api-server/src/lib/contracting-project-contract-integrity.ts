@@ -10,12 +10,6 @@ export type ProjectContractSelection = {
   contractorId?: number | null;
   ownerContractId?: number | null;
   subcontractorContractId?: number | null;
-  /**
-   * Rows imported before contract links existed may be edited for non-financial
-   * fields without inventing a link. Posting still calls this helper without
-   * this escape hatch.
-   */
-  allowLegacyUnlinked?: boolean;
 };
 
 /**
@@ -28,7 +22,7 @@ export async function ensureProjectContractSelection(
 ): Promise<string | null> {
   try {
     await assertBillContractScope(db, selection.companyId, selection, {
-      requireSelection: !selection.allowLegacyUnlinked,
+      requireSelection: true,
     });
     return null;
   } catch (error: any) {

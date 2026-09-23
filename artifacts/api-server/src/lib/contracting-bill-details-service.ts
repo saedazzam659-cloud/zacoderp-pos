@@ -1742,7 +1742,10 @@ export async function createBillLine(companyId: number, billId: number, req: any
 export async function saveBillLines(companyId: number, billId: number, req: any) {
   const { bill } = await assertEditable(companyId, billId, req.authUser);
   const requested = Array.isArray(req.body) ? req.body
-    : Array.isArray(req.body?.lines) ? req.body.lines : [];
+    : Array.isArray(req.body?.lines) ? req.body.lines : null;
+  if (!requested) {
+    throw error("الحفظ الجماعي يتطلب مصفوفة lines صريحة", 400);
+  }
   const seen = new Set<number>();
   const result = await db.transaction(async (tx: any) => {
     const locked = await tx.execute(sql`SELECT status FROM contracting_progress_bills

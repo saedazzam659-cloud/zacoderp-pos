@@ -7,6 +7,7 @@ import {
   cashBoxesTable,
   costCentersTable,
   contractingEventsTable,
+  contractingContractBoqLinesTable,
   contractingOwnerContractsTable,
   contractingProjectsTable,
   contractingProgressBillsTable,
@@ -3439,6 +3440,9 @@ export async function issueOrReturnMaterial(input: {
   companyId: number;
   projectId: number;
   resourceId?: number | null;
+  ownerContractId?: number | null;
+  subcontractorContractId?: number | null;
+  boqLineId?: number | null;
   itemId: number;
   unitId: number;
   warehouseId: number;
@@ -3458,6 +3462,9 @@ export async function issueOrReturnMaterial(input: {
   const payloadHash = idempotencyFingerprint({
     projectId: input.projectId,
     resourceId: input.resourceId ?? null,
+    ownerContractId: input.ownerContractId ?? null,
+    subcontractorContractId: input.subcontractorContractId ?? null,
+    boqLineId: input.boqLineId ?? null,
     itemId: input.itemId,
     unitId: input.unitId,
     warehouseId: input.warehouseId,
@@ -3503,6 +3510,63 @@ export async function issueOrReturnMaterial(input: {
     const project = await projectFor(tx, input.companyId, input.projectId);
     if (!project) throw failure("المشروع غير موجود", 404);
     assertProjectBranchAccess(input.req, project.branchId);
+    const suppliedOwnerContractId = input.ownerContractId ?? null;
+    const suppliedSubcontractorContractId = input.subcontractorContractId ?? null;
+    const suppliedBoqLineId = input.boqLineId ?? null;
+    for (const [value, label] of [
+      [suppliedOwnerContractId, "عقد المالك"],
+      [suppliedSubcontractorContractId, "عقد الباطن"],
+      [suppliedBoqLineId, "سطر جدول الكميات"],
+    ] as const) {
+      if (value != null && (!Number.isInteger(value) || value <= 0)) {
+        throw failure(`${label} غير صالح`);
+      }
+    }
+    if (suppliedOwnerContractId != null && suppliedSubcontractorContractId != null) {
+      throw failure("لا يمكن ربط حركة المواد بعقد مالك وعقد باطن معاً");
+    }
+    if (suppliedBoqLineId != null &&
+        suppliedOwnerContractId == null && suppliedSubcontractorContractId == null) {
+      throw failure("اختر العقد المرتبط قبل اختيار سطر جدول الكميات");
+    }
+    if (suppliedOwnerContractId != null) {
+      const [contract] = await tx.select({ id: contractingOwnerContractsTable.id })
+        .from(contractingOwnerContractsTable).where(and(
+          eq(contractingOwnerContractsTable.id, suppliedOwnerContractId),
+          eq(contractingOwnerContractsTable.companyId, input.companyId),
+          eq(contractingOwnerContractsTable.projectId, input.projectId),
+        ));
+      if (!contract) throw failure("عقد المالك لا يتبع الشركة والمشروع المحددين");
+    }
+    if (suppliedSubcontractorContractId != null) {
+      const [contract] = await tx.select({ id: contractingSubContractsTable.id })
+        .from(contractingSubContractsTable).where(and(
+          eq(contractingSubContractsTable.id, suppliedSubcontractorContractId),
+          eq(contractingSubContractsTable.companyId, input.companyId),
+          eq(contractingSubContractsTable.projectId, input.projectId),
+        ));
+      if (!contract) throw failure("عقد الباطن لا يتبع الشركة والمشروع المحددين");
+    }
+    if (suppliedBoqLineId != null) {
+      const [boqLine] = await tx.select({
+        direction: contractingContractBoqLinesTable.direction,
+        ownerContractId: contractingContractBoqLinesTable.ownerContractId,
+        subcontractorContractId: contractingContractBoqLinesTable.subcontractorContractId,
+      }).from(contractingContractBoqLinesTable).where(and(
+        eq(contractingContractBoqLinesTable.id, suppliedBoqLineId),
+        eq(contractingContractBoqLinesTable.companyId, input.companyId),
+        eq(contractingContractBoqLinesTable.projectId, input.projectId),
+      ));
+      const matchesOwner = suppliedOwnerContractId != null &&
+        boqLine?.direction === "owner" &&
+        Number(boqLine.ownerContractId) === suppliedOwnerContractId;
+      const matchesSubcontract = suppliedSubcontractorContractId != null &&
+        boqLine?.direction === "subcontract" &&
+        Number(boqLine.subcontractorContractId) === suppliedSubcontractorContractId;
+      if (!boqLine || (!matchesOwner && !matchesSubcontract)) {
+        throw failure("سطر جدول الكميات لا يتبع العقد المحدد");
+      }
+    }
     const [warehouse] = await tx.select({
       id: warehousesTable.id,
       branchId: warehousesTable.branchId,
@@ -3591,6 +3655,18 @@ export async function issueOrReturnMaterial(input: {
       if (!sourceMovement || Number(sourceMovement.item_id) !== input.itemId ||
           Number(sourceMovement.warehouse_id) !== input.warehouseId) {
         throw failure("حركة الصرف الأصلية غير صالحة لهذا الإرجاع");
+      }
+      const sourceOwnerContractId = sourceMovement.owner_contract_id == null
+        ? null : Number(sourceMovement.owner_contract_id);
+      const sourceSubcontractorContractId = sourceMovement.subcontractor_contract_id == null
+        ? null : Number(sourceMovement.subcontractor_contract_id);
+      const sourceBoqLineId = sourceMovement.boq_line_id == null
+        ? null : Number(sourceMovement.boq_line_id);
+      if ((suppliedOwnerContractId != null && suppliedOwnerContractId !== sourceOwnerContractId) ||
+          (suppliedSubcontractorContractId != null &&
+            suppliedSubcontractorContractId !== sourceSubcontractorContractId) ||
+          (suppliedBoqLineId != null && suppliedBoqLineId !== sourceBoqLineId)) {
+        throw failure("يجب أن يحتفظ الإرجاع بإسناد العقد وجدول الكميات من حركة الصرف الأصلية");
       }
       const sourceAllocations = await tx.execute(sql`
         SELECT id, source_ledger_id, batch_number, expiry_date, qty_base, unit_cost
@@ -3772,12 +3848,17 @@ export async function issueOrReturnMaterial(input: {
     }
     const insertedMovement = await tx.execute(sql`
       INSERT INTO contracting_material_movements
-        (company_id, project_id, project_branch_id, resource_id, item_id, unit_id, warehouse_id,
+        (company_id, project_id, project_branch_id, resource_id,
+         owner_contract_id, subcontractor_contract_id, boq_line_id,
+         item_id, unit_id, warehouse_id,
          warehouse_branch_id,
          direction, movement_date, qty, qty_base, unit_cost, total_cost,
          source_movement_id, idempotency_key, idempotency_payload_hash, notes, created_by)
       VALUES (
         ${input.companyId}, ${input.projectId}, ${project.branchId ?? null}, ${input.resourceId ?? null},
+        ${input.direction === "return" ? sourceMovement.owner_contract_id : suppliedOwnerContractId},
+        ${input.direction === "return" ? sourceMovement.subcontractor_contract_id : suppliedSubcontractorContractId},
+        ${input.direction === "return" ? sourceMovement.boq_line_id : suppliedBoqLineId},
         ${input.itemId}, ${input.unitId}, ${input.warehouseId},
         ${warehouse.branchId ?? null},
         ${input.direction}, ${input.movementDate}, ${exactQuantity(requestedQty)},

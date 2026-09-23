@@ -10,6 +10,8 @@ import { ensureContractingBillDetailsTables } from "./contracting-bill-details-s
 import { ensureContractingSettingsTable } from "./contracting-settings.js";
 import { ensureContractCreateIdempotencySchema } from "./contracting-contract-create-idempotency.js";
 import { ensureBillCreateIdempotencySchema } from "./contracting-bill-create-idempotency.js";
+import { ensureContractingProjectIntegrity } from "./contracting-integrity.js";
+import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
 
 let healPromise: Promise<void> | null = null;
 type SchemaReconciliationState =
@@ -4367,6 +4369,11 @@ async function runHeal(options: {
   // upgrades and strict request readiness all use it (without a central-only
   // memoized promise). Do not suppress missing tables via the optional list.
   await ensureContractingBillDetailsTables();
+  // Accounting storage is exported declaratively and must be reconciled on
+  // every active database before strict column inspection (startup, agent
+  // upgrade, and request readiness), not only on the first accounting route.
+  await ensureContractingAccountingTables();
+  await ensureContractingProjectIntegrity();
 
   // These release-managed tables have complete additive DDL here, unlike
   // generic schema entities. Create them before strict missing-table
@@ -4469,6 +4476,8 @@ async function runHeal(options: {
   // upgrades and strict request readiness all use it (without a central-only
   // memoized promise). Do not suppress missing tables via the optional list.
   await ensureContractingBillDetailsTables();
+  await ensureContractingAccountingTables();
+  await ensureContractingProjectIntegrity();
 
   // These release-managed tables have complete additive DDL here, unlike
   // generic schema entities. Create them before strict missing-table

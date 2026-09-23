@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { Briefcase, Plus, Search, Pencil, Trash2, ExternalLink, X } from "lucide-react";
+import { AlertTriangle, Briefcase, Plus, Search, Pencil, Trash2, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,7 @@ const API = import.meta.env.VITE_API_URL || "";
 
 type Project = {
   id: number; code: string; nameAr: string; nameEn: string | null;
+  parentId: number | null;
   branchId: number | null;
   customerId: number | null;
   costCenterId: number | null;
@@ -40,6 +41,10 @@ type Project = {
   progressPercent: string; description: string | null;
 };
 type ProjectBranch = { id: number; code: string; nameAr: string; nameEn: string | null; isActive?: boolean };
+type IntegrityDiagnostics = {
+  deferredValidation: boolean;
+  offendingIds: Record<string, number[]>;
+};
 
 const STATUSES = ["draft", "study", "contract", "planning", "in_progress", "on_hold", "completed", "cancelled"] as const;
 const TYPES = ["building", "road", "infrastructure", "renovation", "maintenance", "other"] as const;
@@ -51,7 +56,7 @@ const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "out
 };
 
 const empty = (): Partial<Project> => ({
-  code: "", nameAr: "", nameEn: "", branchId: null, customerId: null, costCenterId: null, clientName: "", location: "",
+  code: "", nameAr: "", nameEn: "", parentId: null, branchId: null, customerId: null, costCenterId: null, clientName: "", location: "",
   projectType: "building", status: "draft", contractValue: "0",
   plannedBudget: "0", actualCost: "0", plannedStartDate: "", plannedEndDate: "",
   progressPercent: "0", description: "",
@@ -81,6 +86,8 @@ export default function ContractingProjects() {
     includeInactive: true,
   });
   const [branches, setBranches] = useState<ProjectBranch[]>([]);
+  const [projectOptions, setProjectOptions] = useState<Project[]>([]);
+  const [integrityDiagnostics, setIntegrityDiagnostics] = useState<IntegrityDiagnostics | null>(null);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [branchesError, setBranchesError] = useState<string | null>(null);
   const editingOpen = editing != null;
@@ -100,8 +107,14 @@ export default function ContractingProjects() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
       setBranches(Array.isArray(payload?.branches) ? payload.branches : []);
+      setProjectOptions(Array.isArray(payload?.projects) ? payload.projects : []);
+      setIntegrityDiagnostics(payload?.integrityDiagnostics?.deferredValidation
+        ? payload.integrityDiagnostics
+        : null);
     } catch (error: any) {
       setBranches([]);
+      setProjectOptions([]);
+      setIntegrityDiagnostics(null);
       setBranchesError(error?.message || t("contracting.projects.branchesLoadError", "تعذر تحميل الفروع"));
     } finally {
       setBranchesLoading(false);
@@ -326,6 +339,37 @@ export default function ContractingProjects() {
     return items;
   }, [branches, editing?.branchId, t]);
 
+  const parentItems: ComboboxItem[] = useMemo(() => {
+    const editingId = Number((editing as any)?.id || 0);
+    const descendants = new Set<number>();
+    if (editingId) {
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const project of projectOptions) {
+          if (project.parentId === editingId || (project.parentId != null && descendants.has(project.parentId))) {
+            if (!descendants.has(project.id)) {
+              descendants.add(project.id);
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+    return [
+      { value: "__root__", label: t("contracting.projects.rootProject", "مشروع رئيسي (بدون مشروع أب)") },
+      ...projectOptions
+        .filter(project =>
+          project.id !== editingId
+          && !descendants.has(project.id)
+          && (editing?.branchId == null || project.branchId === editing.branchId))
+        .map(project => ({
+          value: String(project.id),
+          label: `${project.code} — ${project.nameAr}`,
+        })),
+    ];
+  }, [editing, projectOptions, t]);
+
   const exportProjects: ContractingProjectSnapshot[] = rows.map(project => ({
     ...project,
     branchName: project.branchId == null
@@ -351,6 +395,29 @@ export default function ContractingProjects() {
           </Button>
         </div>
       </div>
+
+      {integrityDiagnostics?.deferredValidation && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" data-testid="contracting-integrity-warning">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="space-y-1">
+              <p className="font-bold">{t("contracting.projects.deferredIntegrityTitle", "توجد مستخلصات قديمة بلا عقد مرتبط")}</p>
+              <p>
+                {t("contracting.projects.deferredIntegrityHelp", "البيانات القديمة ما زالت متاحة للقراءة. افتح المستخلصات، وأنشئ أو اختر العقد الصحيح داخل مشروع المستخلص، ثم عدّل المستخلص واربطه بالعقد. لا تخمّن الربط.")}
+              </p>
+              <p className="font-mono text-xs">
+                {Object.entries(integrityDiagnostics.offendingIds ?? {})
+                  .filter(([, ids]) => Array.isArray(ids) && ids.length > 0)
+                  .map(([kind, ids]) => `${kind}: ${ids.join(", ")}`)
+                  .join(" · ")}
+              </p>
+              <Link href="/contracting/bills" className="inline-flex font-semibold text-amber-800 underline dark:text-amber-200">
+                {t("contracting.projects.openBillsToRepair", "فتح المستخلصات لاختيار المشروع والعقد الصحيح")}
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editing && (
         <FormPanel
@@ -385,6 +452,24 @@ export default function ContractingProjects() {
             <Field label={t("contracting.projects.nameEn", "الاسم بالإنجليزية")}>
               <Input value={editing.nameEn ?? ""} onChange={e => setEditing({ ...editing, nameEn: e.target.value })} />
             </Field>
+            <Field label={t("contracting.projects.parentProject", "المشروع الأب")}>
+              <SearchCombobox
+                items={parentItems}
+                value={editing.parentId == null ? "__root__" : String(editing.parentId)}
+                onValueChange={value => setEditing({
+                  ...editing,
+                  parentId: value === "__root__" ? null : Number(value),
+                })}
+                placeholder={t("contracting.projects.rootProject", "مشروع رئيسي (بدون مشروع أب)")}
+                searchPlaceholder={t("contracting.projects.parentSearch", "بحث بكود أو اسم المشروع...")}
+                emptyText={t("contracting.projects.noParentProjects", "لا توجد مشاريع متاحة")}
+                testId="project-parent-picker"
+                openOnFocus={false}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                {t("contracting.projects.parentHint", "المشروع الفرعي يحتفظ بعقوده ومستخلصاته وتكاليفه بشكل مستقل.")}
+              </p>
+            </Field>
             <Field label={t("contracting.projects.branch", "الفرع")} required={isCreating}>
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
@@ -395,11 +480,17 @@ export default function ContractingProjects() {
                     onValueChange={value => {
                       const branchId = value ? Number(value) : null;
                       const changed = Number(editing.branchId ?? 0) !== Number(branchId ?? 0);
+                      const selectedParent = projectOptions.find(project => project.id === editing.parentId);
                       setEditing({
                         ...editing,
                         branchId,
                         ...(changed
-                          ? { customerId: null, clientName: "", costCenterId: null }
+                          ? {
+                              customerId: null,
+                              clientName: "",
+                              costCenterId: null,
+                              ...(selectedParent && selectedParent.branchId !== branchId ? { parentId: null } : {}),
+                            }
                           : {}),
                       });
                     }}
@@ -622,6 +713,7 @@ export default function ContractingProjects() {
                 <div className="h-10 w-10 rounded-lg bg-amber-100 grid place-items-center text-amber-700 shrink-0"><Briefcase className="h-5 w-5" /></div>
                 <div className="flex-1 min-w-0">
                   <Link href={`/contracting/projects/${p.id}`} className="font-bold text-sm hover:underline text-amber-900 block truncate">{p.nameAr}</Link>
+                  {p.parentId != null && <p className="text-[11px] text-indigo-600 truncate">{t("contracting.projects.subprojectOf", "فرعي من")}: {projectOptions.find(project => project.id === p.parentId)?.nameAr || `#${p.parentId}`}</p>}
                   {p.location && <p className="text-[11px] text-slate-500 truncate">{p.location}</p>}
                    <p className="text-[11px] text-slate-500 truncate">{t("contracting.projects.branch", "الفرع")}: {p.branchId == null ? "—" : branches.find(branch => branch.id === p.branchId)?.nameAr || `#${p.branchId}`}</p>
                   {p.clientName && <p className="text-xs text-slate-700 truncate">{p.clientName}</p>}
@@ -689,6 +781,7 @@ export default function ContractingProjects() {
                   <Link href={`/contracting/projects/${p.id}`} className="hover:underline text-primary">
                     {p.nameAr}
                   </Link>
+                  {p.parentId != null && <div className="text-[11px] text-indigo-600">{t("contracting.projects.subprojectOf", "فرعي من")}: {projectOptions.find(project => project.id === p.parentId)?.nameAr || `#${p.parentId}`}</div>}
                   {p.location && <div className="text-[11px] text-slate-500">{p.location}</div>}
                 </TableCell>
                  <TableCell>{p.branchId == null ? "—" : branches.find(branch => branch.id === p.branchId)?.nameAr || `#${p.branchId}`}</TableCell>

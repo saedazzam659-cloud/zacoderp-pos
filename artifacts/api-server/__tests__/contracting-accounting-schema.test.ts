@@ -96,6 +96,12 @@ test("contracting schema keeps self references, named checks, and settlement ind
 
   const movementFks = foreignKeyNames(contractingMaterialMovementsTable);
   assert.ok(movementFks.has("contracting_material_movements_source_movement_id_fkey"));
+  assert.ok(movementFks.has("contracting_material_movements_owner_contract_id_fkey"));
+  assert.ok(movementFks.has("contracting_material_movements_subcontractor_contract_id_fkey"));
+  assert.ok(movementFks.has("contracting_material_movements_boq_line_id_fkey"));
+  for (const name of ["owner_contract_id", "subcontractor_contract_id", "boq_line_id"]) {
+    assert.equal(column(contractingMaterialMovementsTable, name).notNull, false);
+  }
   const movementSource = config(contractingMaterialMovementsTable).foreignKeys.find(
     (foreignKey) => foreignKey.getName() === "contracting_material_movements_source_movement_id_fkey",
   );
@@ -130,6 +136,7 @@ test("contracting schema keeps self references, named checks, and settlement ind
       "contracting_material_movements_qty_base_check",
       "contracting_material_movements_unit_cost_check",
       "contracting_material_movements_total_cost_check",
+      "contracting_material_movements_contract_side_check",
     ].sort(),
   );
   assert.deepEqual(
@@ -147,4 +154,5 @@ test("contracting schema keeps self references, named checks, and settlement ind
     assert.ok(index(contractingAccountingSettlementsTable, name));
   }
   assert.ok(index(contractingContractCreateIdempotencyTable, "contracting_contract_create_idempotency_result_idx"));
+  assert.ok(index(contractingMaterialMovementsTable, "contracting_material_contract_idx"));
 });

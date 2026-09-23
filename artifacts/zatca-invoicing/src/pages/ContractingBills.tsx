@@ -61,7 +61,7 @@ type BillRow = {
   status: string;
 };
 
-type Project   = { id: number; code: string; nameAr: string };
+type Project   = { id: number; code: string; nameAr: string; parentId?: number | null };
 type Contractor= { id: number; name: string };
 type ReportTotals = {
   grossWorks: number;
@@ -310,7 +310,7 @@ export default function ContractingBills() {
                   .filter(project => Number.isInteger(Number(project.id)) && Number(project.id) > 0)
                   .map(project => ({
                     value: String(project.id),
-                    label: `${project.code} — ${project.nameAr}`,
+                    label: `${project.code} — ${project.nameAr}${project.parentId != null ? " (مشروع فرعي)" : ""}`,
                   }))}
                 value={createProjectId}
                 onValueChange={setCreateProjectId}
@@ -410,7 +410,7 @@ export default function ContractingBills() {
             value={projectId}
             onChange={setProjectId}
             placeholder="كل المشاريع"
-            options={projects.map(p => ({ value: String(p.id), label: `${p.code} — ${p.nameAr}` }))}
+            options={projects.map(p => ({ value: String(p.id), label: `${p.code} — ${p.nameAr}${p.parentId != null ? " (فرعي)" : ""}` }))}
             testId="filter-project"
           />
           <FilterSelect

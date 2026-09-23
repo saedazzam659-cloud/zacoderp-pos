@@ -35,6 +35,7 @@ import {
   unapproveBill,
   createSettlement,
   createPostedCorrection,
+  issueOrReturnMaterial,
   reverseBillSettlement,
 } from "../src/lib/contracting-accounting-service.ts";
 import { createContractIdempotently } from "../src/lib/contracting-contract-create-idempotency.ts";
@@ -284,6 +285,60 @@ test("isolated PostgreSQL contracting lifecycle", { skip: !armed }, async (t) =>
       unit: "m3", quantity: "100", unitPrice: "7", totalAmount: "700",
     }).returning();
     assert.notEqual(String(ownerBoq.unitPrice), String(subBoq.unitPrice), "BOQ commercial prices are contract-specific");
+
+    const materialScopeInput = {
+      companyId,
+      projectId: project.id,
+      itemId: 999_999_991,
+      unitId: 999_999_992,
+      warehouseId: 999_999_993,
+      qty: "1",
+      direction: "issue" as const,
+      movementDate: "2026-01-25",
+      idempotencyKey: `${tag}-material-scope`,
+      userId: user.id,
+      req,
+    };
+    await assert.rejects(
+      issueOrReturnMaterial({
+        ...materialScopeInput,
+        ownerContractId: owner.id,
+        subcontractorContractId: sub.id,
+      }),
+      /عقد مالك وعقد باطن/,
+    );
+    await assert.rejects(
+      issueOrReturnMaterial({
+        ...materialScopeInput,
+        idempotencyKey: `${tag}-material-link-mismatch`,
+        ownerContractId: owner.id,
+        boqLineId: subBoq.id,
+      }),
+      /لا يتبع العقد المحدد/,
+    );
+    const [otherProject] = await db.insert(contractingProjectsTable).values({
+      companyId, code: `${tag}-other`, nameAr: "مشروع نطاق آخر", contractValue: "10",
+    }).returning();
+    const [otherOwner] = await db.insert(contractingOwnerContractsTable).values({
+      companyId, projectId: otherProject.id, contractNumber: `${tag}-other-owner`,
+      contractDate: "2026-01-01", value: "10",
+    }).returning();
+    await assert.rejects(
+      issueOrReturnMaterial({
+        ...materialScopeInput,
+        idempotencyKey: `${tag}-material-cross-project`,
+        ownerContractId: otherOwner.id,
+      }),
+      /لا يتبع الشركة والمشروع/,
+    );
+    await assert.rejects(
+      issueOrReturnMaterial({
+        ...materialScopeInput,
+        idempotencyKey: `${tag}-material-project-only`,
+      }),
+      /المخزن غير موجود أو غير نشط/,
+      "legacy project-only posting reaches ordinary inventory validation",
+    );
 
     // The approved change order changes the owner ceiling from 1,000 to 1,200.
     const [changeOrder] = await db.insert(contractingOwnerContractsTable).values({
