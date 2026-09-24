@@ -24,6 +24,10 @@ const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   bank:                  ["bank_main", "bank_fees"],
   letter_of_credit:      ["lc_margin", "lc_liability", "lc_commission", "lc_expenses", "lc_fx_diff", "inventory", "bank"],
   entity_account_parents: ["cash_account_parent", "bank_account_parent", "customer_account_parent", "warehouse_account_parent", "supplier_account_parent"],
+  contracting_advance_receipt: ["advance_liability"],
+  contracting_advance_payment: ["advance_asset"],
+  contracting_outgoing_bill: ["receivable", "retention_receivable", "revenue", "vat_output"],
+  contracting_incoming_bill: ["wip", "vat_input", "payable", "retention_payable"],
 };
 
 // Default LC chart-of-accounts seed used by /seed-lc

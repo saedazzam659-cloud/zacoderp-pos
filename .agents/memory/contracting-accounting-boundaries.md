@@ -23,6 +23,12 @@ Keep project visibility separate from contract eligibility for cash allocation.
 
 **How to apply:** Show explicitly linked projects in authorized scope, but require an eligible contract before posting. Only a missing contract customer may inherit the project's explicit customer; never override a different explicit contract customer or infer identity from names.
 
+Missing contracting advance account mappings require explicit accountant setup, not automatic fallback to receivables/payables or newly created accounts.
+
+**Why:** An owner advance is a liability and a subcontract advance is an asset; silently substituting an ordinary settlement account changes the accounting meaning.
+
+**How to apply:** Expose the correct roles in mapping settings and direct failed saves to that setup, preserving existing tenant mappings and chart of accounts.
+
 **Why:** Selecting an inventory item or marking a resource allocated must not silently consume stock or create costs.
 
 **How to apply:** Use real item-owned conversion snapshots and warehouse scope. Unsupported lot/costing paths must fail clearly rather than silently substitute weighted-average costing.

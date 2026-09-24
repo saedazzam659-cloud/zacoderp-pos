@@ -184,6 +184,7 @@ import SafetyIncidents from "@/pages/safety/Incidents";
 import ContractingDashboard from "@/pages/ContractingDashboard";
 import ContractingProjects from "@/pages/ContractingProjects";
 import ContractingProjectDetail from "@/pages/ContractingProjectDetail";
+import ContractingTenderGuaranteeForm from "@/pages/ContractingTenderGuaranteeForm";
 import ContractingContractors from "@/pages/ContractingContractors";
 import ContractingBills from "@/pages/ContractingBills";
 import ContractingSettings from "@/pages/ContractingSettings";
@@ -956,6 +957,10 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/contracting"                  module="contracting"    component={ContractingDashboard} />}
             {!isSuperAdmin && <PermRoute path="/contracting/projects"         module="contracting"    component={ContractingProjects} />}
             {!isSuperAdmin && <PermRoute path="/contracting/projects/:id"     module="contracting"    component={ContractingProjectDetail} />}
+            {!isSuperAdmin && <PermRoute path="/contracting/projects/:projectId/tenders/new" module="contracting" component={ContractingTenderGuaranteeForm} />}
+            {!isSuperAdmin && <PermRoute path="/contracting/projects/:projectId/tenders/:id/edit" module="contracting" component={ContractingTenderGuaranteeForm} />}
+            {!isSuperAdmin && <PermRoute path="/contracting/projects/:projectId/guarantees/new" module="contracting" component={ContractingTenderGuaranteeForm} />}
+            {!isSuperAdmin && <PermRoute path="/contracting/projects/:projectId/guarantees/:id/edit" module="contracting" component={ContractingTenderGuaranteeForm} />}
             {!isSuperAdmin && <PermRoute path="/contracting/contractors"      module="contracting"    component={ContractingContractors} />}
             {!isSuperAdmin && <PermRoute path="/contracting/bills"            module="contracting"    component={ContractingBills} />}
             {!isSuperAdmin && <PermRoute path="/contracting/settings"          module="contracting"    component={ContractingSettings} />}

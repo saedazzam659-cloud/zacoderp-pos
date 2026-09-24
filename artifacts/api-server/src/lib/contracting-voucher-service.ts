@@ -69,7 +69,7 @@ export async function resolveContractingLine(tx: any, companyId: number, voucher
     JOIN accounts a ON a.id = m.account_id AND a.company_id = m.company_id
     WHERE m.company_id = ${companyId} AND m.document_type = ${s.mapping}
       AND m.role_key = ${s.role} LIMIT 1`))[0];
-  if (!mapped) fail("حساب المقاولات غير مربوط بالدور المحاسبي الصحيح");
+  if (!mapped) fail(`ربط محاسبي مفقود: المستند ${s.mapping}، الدور ${s.role}. افتح «ربط القيود المحاسبية» واربط حساب ترحيل مناسباً لهذا الدور قبل حفظ سند المقاولات.`);
   return Number(mapped.id);
 }
 

@@ -104,24 +104,20 @@ export function VoucherContractingAllocation({
   return (
     <div className="rounded-md border border-sky-200 bg-sky-50/50 p-3 space-y-2" data-testid="voucher-contracting-allocation">
       <label className="block text-xs font-semibold">توزيع مقاولات (اختياري)</label>
-      <select
-        className="w-full h-9 rounded-md border bg-background px-2 text-sm"
-        value={value?.kind ?? ""}
-        disabled={disabled}
-        onChange={event => {
-          const kind = event.target.value as ContractingAllocation["kind"] | "";
-           chooseKind(kind);
-        }}
-      >
-        <option value="">بند عادي — بدون ربط مقاولات</option>
-        {direction === "receipt" ? <>
-          <option value="owner_advance">سلفة من المالك</option>
-          <option value="owner_bill">تحصيل مستخلص المالك</option>
-        </> : <>
-          <option value="subcontract_advance">سلفة للمقاول الباطن</option>
-          <option value="subcontract_bill">سداد مستخلص المقاول الباطن</option>
-        </>}
-      </select>
+       <SearchCombobox
+         items={[
+           { value: "none", label: "بند عادي — بدون ربط مقاولات" },
+           ...(direction === "receipt"
+             ? [{ value: "owner_advance", label: "سلفة من المالك" }, { value: "owner_bill", label: "تحصيل مستخلص المالك" }]
+             : [{ value: "subcontract_advance", label: "سلفة للمقاول الباطن" }, { value: "subcontract_bill", label: "سداد مستخلص المقاول الباطن" }]),
+         ]}
+         value={value?.kind ?? "none"}
+         onValueChange={kind => chooseKind(kind === "none" ? "" : kind as ContractingAllocation["kind"])}
+         disabled={disabled}
+         placeholder="نوع التوزيع"
+         searchPlaceholder="بحث عن نوع التوزيع..."
+         testId="combobox-contracting-allocation-kind"
+       />
       {value && (!entityId ? <p className="text-xs text-amber-700">اختر {direction === "receipt" ? "العميل" : "المورد"} أولاً لعرض المشاريع المرتبطة.</p> : <>
          {error && <p role="alert" className="text-xs text-destructive">تعذر تحميل خيارات المقاولات: {(error as Error).message}</p>}
         {isLoading && <p className="text-xs text-muted-foreground">جار تحميل المشاريع والعقود...</p>}

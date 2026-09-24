@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { ShieldCheck, Plus, Pencil, Archive, Award, RefreshCw } from "lucide-react";
+import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { DateField } from "@/components/ui/date-field";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { ContractingArchiveAction } from "@/components/ContractingArchiveAction";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -57,7 +57,6 @@ type Tender = {
   notes: string | null;
   awardedContractNumber?: string;
 };
-type Option = { id: number; code?: string; nameAr?: string; bankName?: string };
 type Contract = { id: number; contractNumber: string; status: string };
 type GuaranteeSummary = {
   contractKind: ContractKind;
@@ -104,32 +103,6 @@ const NEXT_STATUS: Record<string, string[]> = {
   expired: ["released"],
 };
 
-const emptyGuarantee = {
-  guaranteeNumber: "",
-  guaranteeType: "performance",
-  tenderId: "",
-  parentGuaranteeId: "",
-  contractKind: "owner" as ContractKind,
-  contractId: "",
-  bankAccountId: "",
-  beneficiaryCustomerId: "",
-  amount: "",
-  issueDate: new Date().toISOString().slice(0, 10),
-  expiryDate: "",
-  status: "draft",
-  purpose: "",
-  notes: "",
-};
-const emptyTender = {
-  tenderNumber: "",
-  title: "",
-  customerId: "",
-  tenderDate: new Date().toISOString().slice(0, 10),
-  submissionDate: "",
-  estimatedValue: "0",
-  status: "draft",
-  notes: "",
-};
 
 async function readResponse(response: Response) {
   const payload = await response.json().catch(() => ({}));
@@ -144,7 +117,9 @@ export default function ContractingGuaranteesPanel({
   onSummaryChange,
   className,
 }: ContractingGuaranteesPanelProps) {
-  const { token, user } = useAuth() as any;
+  const [, navigate] = useLocation();
+  const search = useSearch();
+  const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
   const canCreate = usePermission("contracting", "create");
   const canEdit = usePermission("contracting", "edit");
@@ -152,30 +127,25 @@ export default function ContractingGuaranteesPanel({
   const canApprove = user?.role === "admin"
     || user?.role === "super_admin"
     || user?.permissions?.contracting?.approve === true;
-  const [tab, setTab] = useState("guarantees");
+  const [tab, setTab] = useState(new URLSearchParams(search).get("records") === "tenders" ? "tenders" : "guarantees");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [guarantees, setGuarantees] = useState<Guarantee[]>([]);
   const [tenders, setTenders] = useState<Tender[]>([]);
-  const [banks, setBanks] = useState<Option[]>([]);
-  const [customers, setCustomers] = useState<Option[]>([]);
   const [ownerContracts, setOwnerContracts] = useState<Contract[]>([]);
   const [subcontracts, setSubcontracts] = useState<Contract[]>([]);
   const [summary, setSummary] = useState<GuaranteeSummary | null>(null);
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [guaranteeEditor, setGuaranteeEditor] = useState<any | null>(null);
-  const [editingGuaranteeId, setEditingGuaranteeId] = useState<number | null>(null);
-  const [tenderEditor, setTenderEditor] = useState<any | null>(null);
-  const [editingTenderId, setEditingTenderId] = useState<number | null>(null);
   const [awardTender, setAwardTender] = useState<Tender | null>(null);
   const [award, setAward] = useState({ contractKind: "owner" as ContractKind, contractId: "" });
 
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
-  }), [token]);
+    ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+  }), [token, actingCompanyId]);
 
   const load = useCallback(async () => {
     if (!token || !projectId) return;
@@ -187,10 +157,9 @@ export default function ContractingGuaranteesPanel({
       if (contractId) query.set("contractId", String(contractId));
       if (typeFilter) query.set("guaranteeType", typeFilter);
       if (statusFilter) query.set("status", statusFilter);
-      const [guaranteeRows, tenderRows, options, owners, subs, contractSummary] = await Promise.all([
+      const [guaranteeRows, tenderRows, owners, subs, contractSummary] = await Promise.all([
         fetch(`${API}/api/contracting/guarantees?${query}`, { headers }).then(readResponse),
         fetch(`${API}/api/contracting/tenders?projectId=${projectId}`, { headers }).then(readResponse),
-        fetch(`${API}/api/contracting/guarantees/options`, { headers }).then(readResponse),
         fetch(`${API}/api/contracting/projects/${projectId}/owner-contracts`, { headers }).then(readResponse),
         fetch(`${API}/api/contracting/projects/${projectId}/sub-contracts`, { headers }).then(readResponse),
         contractKind && contractId
@@ -199,8 +168,6 @@ export default function ContractingGuaranteesPanel({
       ]);
       setGuarantees(Array.isArray(guaranteeRows) ? guaranteeRows : []);
       setTenders(Array.isArray(tenderRows) ? tenderRows : []);
-      setBanks(Array.isArray(options?.banks) ? options.banks : []);
-      setCustomers(Array.isArray(options?.customers) ? options.customers : []);
       setOwnerContracts(Array.isArray(owners) ? owners : []);
       setSubcontracts(Array.isArray(subs) ? subs : []);
       setSummary(contractSummary);
@@ -236,79 +203,14 @@ export default function ContractingGuaranteesPanel({
     }
   }
 
-  function openGuarantee(row?: Guarantee, fromInitial?: Guarantee) {
-    if (row) {
-      setEditingGuaranteeId(row.id);
-      setGuaranteeEditor({
-        ...emptyGuarantee,
-        bankAccountId: String(row.bank_account_id),
-        beneficiaryCustomerId: row.beneficiary_customer_id == null ? "" : String(row.beneficiary_customer_id),
-        guaranteeNumber: row.guarantee_number,
-        amount: row.amount,
-        issueDate: row.issue_date,
-        expiryDate: row.expiry_date,
-        purpose: row.purpose ?? "",
-        notes: row.notes ?? "",
-      });
-      return;
+  function openEditor(kind: "guarantees" | "tenders", id?: number, parent?: number) {
+    const query = new URLSearchParams();
+    if (contractKind && contractId) {
+      query.set("contractKind", contractKind);
+      query.set("contractId", String(contractId));
     }
-    setEditingGuaranteeId(null);
-    setGuaranteeEditor({
-      ...emptyGuarantee,
-      guaranteeType: fromInitial ? "performance" : contractId ? "performance" : "initial",
-      tenderId: fromInitial?.tender_id ? String(fromInitial.tender_id) : "",
-      parentGuaranteeId: fromInitial ? String(fromInitial.id) : "",
-      contractKind: contractKind ?? "owner",
-      contractId: contractId ? String(contractId) : "",
-    });
-  }
-
-  async function saveGuarantee() {
-    if (!guaranteeEditor) return;
-    const body = editingGuaranteeId ? {
-      guaranteeNumber: guaranteeEditor.guaranteeNumber,
-      bankAccountId: guaranteeEditor.bankAccountId,
-      beneficiaryCustomerId: guaranteeEditor.beneficiaryCustomerId || null,
-      amount: guaranteeEditor.amount,
-      issueDate: guaranteeEditor.issueDate,
-      expiryDate: guaranteeEditor.expiryDate,
-      purpose: guaranteeEditor.purpose,
-      notes: guaranteeEditor.notes,
-    } : {
-      ...guaranteeEditor,
-      projectId,
-      tenderId: guaranteeEditor.tenderId || null,
-      parentGuaranteeId: guaranteeEditor.parentGuaranteeId || null,
-      contractId: guaranteeEditor.contractId || null,
-      beneficiaryCustomerId: guaranteeEditor.beneficiaryCustomerId || null,
-    };
-    await mutate(editingGuaranteeId ? `/guarantees/${editingGuaranteeId}` : "/guarantees", editingGuaranteeId ? "PUT" : "POST", body);
-    setGuaranteeEditor(null);
-  }
-
-  function openTender(row?: Tender) {
-    setEditingTenderId(row?.id ?? null);
-    setTenderEditor(row ? {
-      tenderNumber: row.tender_number,
-      title: row.title,
-      customerId: row.customer_id == null ? "" : String(row.customer_id),
-      tenderDate: row.tender_date,
-      submissionDate: row.submission_date ?? "",
-      estimatedValue: row.estimated_value,
-      status: row.status,
-      notes: row.notes ?? "",
-    } : { ...emptyTender });
-  }
-
-  async function saveTender() {
-    if (!tenderEditor) return;
-    await mutate(editingTenderId ? `/tenders/${editingTenderId}` : "/tenders", editingTenderId ? "PUT" : "POST", {
-      ...tenderEditor,
-      projectId,
-      customerId: tenderEditor.customerId || null,
-      submissionDate: tenderEditor.submissionDate || null,
-    });
-    setTenderEditor(null);
+    if (parent) query.set("parent", String(parent));
+    navigate(`/contracting/projects/${projectId}/${kind}/${id ? `${id}/edit` : "new"}${query.size ? `?${query}` : ""}`);
   }
 
   const selectedContracts = award.contractKind === "owner" ? ownerContracts : subcontracts;
@@ -361,15 +263,13 @@ export default function ContractingGuaranteesPanel({
         </TabsList>
         <TabsContent value="guarantees" className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            <select className="h-9 rounded-md border bg-background px-3 text-sm" value={typeFilter} onChange={event => setTypeFilter(event.target.value)}>
-              <option value="">كل الأنواع</option>
-              {Object.entries(TYPE_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-            <select className="h-9 rounded-md border bg-background px-3 text-sm" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}>
-              <option value="">كل الحالات</option>
-              {["draft", "issued", "active", "extended", "released", "expired", "cancelled"].map(value => <option key={value} value={value}>{STATUS_LABEL[value]}</option>)}
-            </select>
-            {canCreate && <Button size="sm" onClick={() => openGuarantee()}><Plus className="me-1 h-4 w-4" /> خطاب ضمان</Button>}
+            <SearchCombobox className="w-44" value={typeFilter} onValueChange={setTypeFilter} clearable
+              placeholder="كل الأنواع" searchPlaceholder="بحث عن نوع..." testId="filter-guarantee-type"
+              items={Object.entries(TYPE_LABEL).map(([value, label]) => ({ value, label }))} />
+            <SearchCombobox className="w-44" value={statusFilter} onValueChange={setStatusFilter} clearable
+              placeholder="كل الحالات" searchPlaceholder="بحث عن حالة..." testId="filter-guarantee-status"
+              items={["draft", "issued", "active", "extended", "released", "expired", "cancelled"].map(value => ({ value, label: STATUS_LABEL[value] }))} />
+            {canCreate && <Button size="sm" onClick={() => openEditor("guarantees")}><Plus className="me-1 h-4 w-4" /> خطاب ضمان</Button>}
           </div>
           <div className="overflow-x-auto rounded-md border">
             <Table>
@@ -391,9 +291,9 @@ export default function ContractingGuaranteesPanel({
                   <TableCell>{row.expiry_date}</TableCell>
                   <TableCell><Badge variant="outline">{STATUS_LABEL[row.status] ?? row.status}</Badge></TableCell>
                   <TableCell><div className="flex flex-wrap gap-1">
-                    {canEdit && <Button variant="ghost" size="icon" onClick={() => openGuarantee(row)}><Pencil className="h-4 w-4" /></Button>}
+                    {canEdit && <Button variant="ghost" size="icon" onClick={() => openEditor("guarantees", row.id)}><Pencil className="h-4 w-4" /></Button>}
                     {canApprove && NEXT_STATUS[row.status]?.map(status => <Button key={status} variant="outline" size="sm" disabled={saving} onClick={() => updateLifecycle(row, status)}>{STATUS_LABEL[status]}</Button>)}
-                    {canCreate && row.guarantee_type === "initial" && <Button variant="outline" size="sm" onClick={() => openGuarantee(undefined, row)}>إنشاء نهائي</Button>}
+                    {canCreate && row.guarantee_type === "initial" && <Button variant="outline" size="sm" onClick={() => openEditor("guarantees", undefined, row.id)}>إنشاء نهائي</Button>}
                     <ContractingArchiveAction entityType="guarantee" entityId={row.id} readOnly={!canEdit} />
                     {canDelete && <Button variant="ghost" size="icon" onClick={() => void mutate(`/guarantees/${row.id}`, "DELETE")}><Archive className="h-4 w-4" /></Button>}
                   </div></TableCell>
@@ -403,7 +303,7 @@ export default function ContractingGuaranteesPanel({
           </div>
         </TabsContent>
         <TabsContent value="tenders" className="space-y-3">
-          {canCreate && <Button size="sm" onClick={() => openTender()}><Plus className="me-1 h-4 w-4" /> مناقصة</Button>}
+          {canCreate && <Button size="sm" onClick={() => openEditor("tenders")}><Plus className="me-1 h-4 w-4" /> مناقصة</Button>}
           <div className="overflow-x-auto rounded-md border">
             <Table>
               <TableHeader><TableRow><TableHead>الرقم</TableHead><TableHead>العنوان</TableHead><TableHead>التاريخ</TableHead><TableHead>القيمة</TableHead><TableHead>الحالة</TableHead><TableHead>العقد المرسي</TableHead><TableHead /></TableRow></TableHeader>
@@ -416,7 +316,7 @@ export default function ContractingGuaranteesPanel({
                   <TableCell><Badge variant="outline">{STATUS_LABEL[row.status] ?? row.status}</Badge></TableCell>
                   <TableCell>{row.awardedContractNumber || "—"}</TableCell>
                   <TableCell><div className="flex gap-1">
-                    {canEdit && row.status !== "awarded" && <Button variant="ghost" size="icon" onClick={() => openTender(row)}><Pencil className="h-4 w-4" /></Button>}
+                    {canEdit && row.status !== "awarded" && <Button variant="ghost" size="icon" onClick={() => openEditor("tenders", row.id)}><Pencil className="h-4 w-4" /></Button>}
                     {canApprove && row.status !== "awarded" && <Button variant="outline" size="sm" onClick={() => { setAwardTender(row); setAward({ contractKind: "owner", contractId: "" }); }}><Award className="me-1 h-4 w-4" /> ترسية</Button>}
                     <ContractingArchiveAction entityType="tender" entityId={row.id} readOnly={!canEdit} />
                     {canDelete && row.status !== "awarded" && <Button variant="ghost" size="icon" onClick={() => void mutate(`/tenders/${row.id}`, "DELETE")}><Archive className="h-4 w-4" /></Button>}
@@ -428,45 +328,6 @@ export default function ContractingGuaranteesPanel({
         </TabsContent>
       </Tabs>
 
-      <Dialog open={Boolean(guaranteeEditor)} onOpenChange={open => !open && setGuaranteeEditor(null)}>
-        <DialogContent className="max-w-3xl" dir="rtl">
-          <DialogHeader><DialogTitle>{editingGuaranteeId ? "تعديل خطاب الضمان" : "خطاب ضمان جديد"}</DialogTitle></DialogHeader>
-          {guaranteeEditor && <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="رقم الخطاب"><Input value={guaranteeEditor.guaranteeNumber} onChange={e => setGuaranteeEditor({ ...guaranteeEditor, guaranteeNumber: e.target.value })} /></Field>
-            {!editingGuaranteeId && <Field label="النوع"><Select value={guaranteeEditor.guaranteeType} onChange={value => setGuaranteeEditor({ ...guaranteeEditor, guaranteeType: value })} options={Object.entries(TYPE_LABEL)} /></Field>}
-            {!editingGuaranteeId && guaranteeEditor.guaranteeType === "initial" && <Field label="المناقصة"><Select value={guaranteeEditor.tenderId} onChange={value => setGuaranteeEditor({ ...guaranteeEditor, tenderId: value })} options={tenders.map(row => [String(row.id), `${row.tender_number} — ${row.title}`])} /></Field>}
-            {!editingGuaranteeId && guaranteeEditor.guaranteeType !== "initial" && <>
-              <Field label="جهة العقد"><Select value={guaranteeEditor.contractKind} onChange={value => setGuaranteeEditor({ ...guaranteeEditor, contractKind: value, contractId: "" })} options={[["owner", "عقد مالك"], ["subcontract", "عقد باطن"]]} /></Field>
-              <Field label="العقد"><Select value={guaranteeEditor.contractId} onChange={value => setGuaranteeEditor({ ...guaranteeEditor, contractId: value })} options={(guaranteeEditor.contractKind === "owner" ? ownerContracts : subcontracts).map(row => [String(row.id), row.contractNumber])} /></Field>
-            </>}
-            <Field label="البنك"><Select value={guaranteeEditor.bankAccountId} onChange={value => setGuaranteeEditor({ ...guaranteeEditor, bankAccountId: value })} options={banks.map(row => [String(row.id), `${row.code || ""} — ${row.nameAr || row.bankName || row.id}`])} /></Field>
-            <Field label="المستفيد (عميل مسجل)"><Select allowEmpty value={guaranteeEditor.beneficiaryCustomerId} onChange={value => setGuaranteeEditor({ ...guaranteeEditor, beneficiaryCustomerId: value })} options={customers.map(row => [String(row.id), `${row.code || ""} — ${row.nameAr || row.id}`])} /></Field>
-            <Field label="القيمة"><Input type="number" min="0.01" step="0.01" value={guaranteeEditor.amount} onChange={e => setGuaranteeEditor({ ...guaranteeEditor, amount: e.target.value })} /></Field>
-            <Field label="تاريخ الإصدار"><DateField value={guaranteeEditor.issueDate} onChange={event => setGuaranteeEditor({ ...guaranteeEditor, issueDate: event.target.value })} /></Field>
-            <Field label="تاريخ الانتهاء"><DateField value={guaranteeEditor.expiryDate} onChange={event => setGuaranteeEditor({ ...guaranteeEditor, expiryDate: event.target.value })} /></Field>
-            <Field label="الغرض"><Input value={guaranteeEditor.purpose} onChange={e => setGuaranteeEditor({ ...guaranteeEditor, purpose: e.target.value })} /></Field>
-            <Field label="ملاحظات"><Input value={guaranteeEditor.notes} onChange={e => setGuaranteeEditor({ ...guaranteeEditor, notes: e.target.value })} /></Field>
-          </div>}
-          <DialogFooter><Button disabled={saving} onClick={() => void saveGuarantee()}>حفظ</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={Boolean(tenderEditor)} onOpenChange={open => !open && setTenderEditor(null)}>
-        <DialogContent className="max-w-2xl" dir="rtl">
-          <DialogHeader><DialogTitle>{editingTenderId ? "تعديل المناقصة" : "مناقصة جديدة"}</DialogTitle></DialogHeader>
-          {tenderEditor && <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="رقم المناقصة"><Input value={tenderEditor.tenderNumber} onChange={e => setTenderEditor({ ...tenderEditor, tenderNumber: e.target.value })} /></Field>
-            <Field label="العنوان"><Input value={tenderEditor.title} onChange={e => setTenderEditor({ ...tenderEditor, title: e.target.value })} /></Field>
-            <Field label="العميل/المالك"><Select allowEmpty value={tenderEditor.customerId} onChange={value => setTenderEditor({ ...tenderEditor, customerId: value })} options={customers.map(row => [String(row.id), `${row.code || ""} — ${row.nameAr || row.id}`])} /></Field>
-            <Field label="التاريخ"><DateField value={tenderEditor.tenderDate} onChange={event => setTenderEditor({ ...tenderEditor, tenderDate: event.target.value })} /></Field>
-            <Field label="آخر موعد للتقديم"><DateField value={tenderEditor.submissionDate} onChange={event => setTenderEditor({ ...tenderEditor, submissionDate: event.target.value })} /></Field>
-            <Field label="القيمة التقديرية"><Input type="number" min="0" step="0.01" value={tenderEditor.estimatedValue} onChange={e => setTenderEditor({ ...tenderEditor, estimatedValue: e.target.value })} /></Field>
-            <Field label="الحالة"><Select value={tenderEditor.status} onChange={value => setTenderEditor({ ...tenderEditor, status: value })} options={[["draft", "مسودة"], ["submitted", "مقدمة"], ["under_review", "قيد المراجعة"], ["lost", "غير فائزة"], ["cancelled", "ملغاة"]]} /></Field>
-            <Field label="ملاحظات"><Input value={tenderEditor.notes} onChange={e => setTenderEditor({ ...tenderEditor, notes: e.target.value })} /></Field>
-          </div>}
-          <DialogFooter><Button disabled={saving} onClick={() => void saveTender()}>حفظ</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={Boolean(awardTender)} onOpenChange={open => !open && setAwardTender(null)}>
         <DialogContent dir="rtl">

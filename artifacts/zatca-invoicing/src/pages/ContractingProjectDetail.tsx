@@ -181,7 +181,7 @@ function parseProjectDetailQuery(search: string): {
   return {
     // Only known tabs are accepted from the URL. The create-bill shortcut
     // uses the bills tab; all other values retain the normal overview start.
-    tab: params.get("tab") === "bills" ? "bills" : "overview",
+    tab: params.get("tab") === "bills" ? "bills" : params.get("tab") === "guarantees" ? "guarantees" : "overview",
     billDirection: rawDirection === "incoming" ? "incoming" : "outgoing",
     createBill: params.get("createBill") === "1",
   };
@@ -193,7 +193,7 @@ export default function ContractingProjectDetail() {
   const [, params] = useRoute("/contracting/projects/:id");
   const search = useSearch();
   const projectId = Number(params?.id);
-  const { token, user } = useAuth() as any;
+  const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
   const routeQuery = parseProjectDetailQuery(search);
   const [project, setProject] = useState<Project | null>(null);
@@ -206,20 +206,20 @@ export default function ContractingProjectDetail() {
     if (!token || !projectId) return;
     try {
       const r = await fetch(`${API}/api/contracting/projects/${projectId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+         headers: { Authorization: `Bearer ${token}`, ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}) },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setProject(await r.json());
     } catch (e: any) {
       toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });
     }
-  }, [token, projectId, t, toast]);
+   }, [token, actingCompanyId, projectId, t, toast]);
 
   useEffect(() => { void loadProject(); }, [loadProject]);
   useEffect(() => {
     if (!token) return;
     void fetch(`${API}/api/contracting/projects/options`, {
-      headers: { Authorization: `Bearer ${token}` },
+       headers: { Authorization: `Bearer ${token}`, ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}) },
     }).then(async response => {
       if (!response.ok) return;
       const payload = await response.json();
@@ -229,7 +229,7 @@ export default function ContractingProjectDetail() {
         ? payload.integrityDiagnostics
         : null);
     }).catch(() => undefined);
-  }, [token]);
+   }, [token, actingCompanyId]);
   useEffect(() => { setTab(routeQuery.tab); }, [routeQuery.tab]);
 
   const fmt = (n: string | number) => Number(n || 0).toLocaleString("en-US");

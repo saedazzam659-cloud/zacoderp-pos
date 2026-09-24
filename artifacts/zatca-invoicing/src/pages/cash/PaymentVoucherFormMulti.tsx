@@ -835,10 +835,13 @@ export default function PaymentVoucherForm() {
       qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
       qc.invalidateQueries({ queryKey: ["payment-contracting-options"] });
       if (data?._postError) {
+        const mappingMissing = String(data._postError).includes("ربط محاسبي مفقود:");
         toast({
           variant: "destructive",
           title: t(`${NS}.savedButPostFailed`, "تم الحفظ كمسودة — لكن فشل الترحيل"),
-          description: data._postError,
+          description: mappingMissing
+            ? <span>{data._postError} <button type="button" className="underline font-semibold" onClick={() => navigate("/settings/accounting-mappings")}>افتح ربط القيود المحاسبية</button></span>
+            : data._postError,
         });
       } else {
         toast({
@@ -849,7 +852,16 @@ export default function PaymentVoucherForm() {
       }
       navigate("/cash/payment-vouchers/multi");
     },
-    onError: (e: any) => toast({ title: t(`${NS}.err_save`), description: parseError(e), variant: "destructive" }),
+    onError: (e: any) => {
+      const message = parseError(e);
+      toast({
+        title: t(`${NS}.err_save`),
+        description: message.includes("ربط محاسبي مفقود:")
+          ? <span>{message} <button type="button" className="underline font-semibold" onClick={() => navigate("/settings/accounting-mappings")}>افتح ربط القيود المحاسبية</button></span>
+          : message,
+        variant: "destructive",
+      });
+    },
     onSettled: () => setPendingMode(null),
   });
 
