@@ -7,6 +7,8 @@ Treat selecting another mobile server as a new authentication realm, even when c
 
 **Why:** The native settings previously changed the destination while retaining the old session and in-memory user. Public checks confirmed agent domains already answered branding correctly; a working domain registry is not proof that switching an authenticated mobile client is safe.
 
+The user confirmed successful real-device agent-domain login on 2026-09-25 after enforcing this session boundary. Preserve that behavior when adding mobile reports or changing authentication.
+
 **How to apply:** Preserve the central and branded build defaults, require explicit login to the chosen server, reject stale asynchronous auth results, and never forward the previous server's bearer. Legacy unbound tokens may be retained only on the original central domain, not on an arbitrary branded build default.
 
 Pending or failed offline financial operations block server/account changes and intentional logout until reviewed or synchronized.
