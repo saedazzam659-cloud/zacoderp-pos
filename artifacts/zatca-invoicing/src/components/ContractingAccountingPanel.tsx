@@ -33,13 +33,14 @@ type MaterialMovement = {
   owner_contract_id?: number | null; subcontractor_contract_id?: number | null; boq_line_id?: number | null;
 };
 type Options = {
+  projectCustomerId?: number | null;
   items: Array<{ id: number; code: string; nameAr: string; unitId: number | null; batchTrackingMode?: string | null }>;
   units: Array<{ id: number; code: string; nameAr: string }>;
   warehouses: Array<{ id: number; code: string; nameAr: string }>;
   cashBoxes: Array<{ id: number; code: string; nameAr: string }>;
   banks: Array<{ id: number; code: string; nameAr: string }>;
   balances: Array<{ itemId: number; warehouseId: number; qtyBase: string | number; avgCost: string | number | null }>;
-  ownerContracts: Array<{ id: number; contractNumber: string; clientName?: string | null }>;
+  ownerContracts: Array<{ id: number; contractNumber: string; clientName?: string | null; customerId: number | null }>;
   subcontractorContracts: Array<{ id: number; contractNumber: string }>;
   boqLines?: Array<{
     id: number;
@@ -71,7 +72,6 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   const [movements, setMovements] = useState<MaterialMovement[]>([]);
   const [audit, setAudit] = useState<any[]>([]);
   const [options, setOptions] = useState<Options>({ items: [], units: [], warehouses: [], cashBoxes: [], banks: [], balances: [], ownerContracts: [], subcontractorContracts: [] });
-  const [ownerLinks, setOwnerLinks] = useState<Array<{ id: number; customerId: number | null }>>([]);
   const [subLinks, setSubLinks] = useState<Array<{ id: number; contractorId: number | null }>>([]);
   const [contractors, setContractors] = useState<Array<{ id: number; supplierId: number | null }>>([]);
   const [busy, setBusy] = useState(false);
@@ -108,12 +108,11 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const reload = useCallback(async () => {
     if (!token || !projectId) return;
-    const [billResponse, accountingResponse, materialResponse, optionsResponse, ownerResponse, subResponse, contractorResponse] = await Promise.all([
+    const [billResponse, accountingResponse, materialResponse, optionsResponse, subResponse, contractorResponse] = await Promise.all([
       fetch(`${API}/api/contracting/projects/${projectId}/bills`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/settlements`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/material-movements`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/accounting/options`, { headers }),
-      fetch(`${API}/api/contracting/projects/${projectId}/owner-contracts`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/sub-contracts`, { headers }),
       fetch(`${API}/api/contracting/contractors`, { headers }),
     ]);
@@ -125,10 +124,13 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
     }
     if (materialResponse.ok) setMovements(await materialResponse.json());
     if (optionsResponse.ok) setOptions(await optionsResponse.json());
-    if (ownerResponse.ok) setOwnerLinks(await ownerResponse.json());
+    else {
+      const error = await optionsResponse.json().catch(() => ({}));
+      toast({ title: error.error || `تعذر تحميل خيارات المحاسبة (HTTP ${optionsResponse.status})`, variant: "destructive" });
+    }
     if (subResponse.ok) setSubLinks(await subResponse.json());
     if (contractorResponse.ok) setContractors(await contractorResponse.json());
-  }, [headers, projectId, token]);
+  }, [headers, projectId, token, toast]);
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => {
     if (!token) return;
@@ -254,6 +256,11 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
 
   const requiresBill = kind.startsWith("retention_") || kind.startsWith("bill_");
   const advances = settlements.filter((s) => s.kind === "advance_receipt" || s.kind === "advance_payment");
+  // An explicit contract customer wins; only a missing one inherits the project's explicit ID.
+  function ownerPartyId(contractId: number) {
+    const contract = options.ownerContracts.find(row => row.id === contractId);
+    return contract ? contract.customerId ?? options.projectCustomerId ?? null : null;
+  }
   function selectBill(value: string) {
     amountSelectionRef.current++;
     setBillId(value);
@@ -270,7 +277,7 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
     setAmount("");
     if (!value) return;
     const partyId = direction === "receipt"
-      ? ownerLinks.find(row => String(row.id) === value)?.customerId
+      ? ownerPartyId(Number(value))
       : contractors.find(row => row.id === subLinks.find(link => String(link.id) === value)?.contractorId)?.supplierId;
     if (!partyId) {
       toast({ title: "العقد غير مرتبط بعميل/مورد؛ تعذر تحديد المتبقي", variant: "destructive" });
@@ -290,26 +297,49 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         toast({ title: error?.message || "تعذر تحميل المبلغ المتبقي للعقد", variant: "destructive" });
     }
   }
-  function openVoucher() {
+  async function openVoucher() {
     const receipt = kind === "advance_receipt" || kind === "bill_receipt";
     const isBill = kind === "bill_receipt" || kind === "bill_payment";
     if (!["advance_receipt", "bill_receipt", "advance_payment", "bill_payment"].includes(kind)) return;
     const bill = isBill ? bills.find(row => row.id === Number(billId) && ["approved", "posted", "partially_paid"].includes(row.status)) : null;
     const contractId = isBill ? Number(receipt ? bill?.ownerContractId : bill?.subcontractorContractId)
       : Number(receipt ? ownerContractId : subcontractorContractId);
-    const partyId = receipt ? ownerLinks.find(row => row.id === contractId)?.customerId
+    const partyId = receipt ? ownerPartyId(contractId)
       : contractors.find(row => row.id === subLinks.find(link => link.id === contractId)?.contractorId)?.supplierId;
     if (!contractId || !partyId || (isBill && !bill)) {
       toast({ title: "يجب اختيار عقد مرتبط بعميل/مورد صريح ومستخلص معتمد عند التحصيل/السداد", variant: "destructive" });
       return;
     }
-    const query = new URLSearchParams({
-      contractingKind: receipt ? (isBill ? "owner_bill" : "owner_advance") : (isBill ? "subcontract_bill" : "subcontract_advance"),
-      projectId: String(projectId), contractId: String(contractId), entityId: String(partyId),
-    });
-    if (isBill) query.set("billId", String(bill!.id));
-    if (Number(amount) > 0 && Number.isFinite(Number(amount))) query.set("amount", amount);
-    navigate(`/cash/${receipt ? "receipt" : "payment"}-vouchers/multi/new?${query}`);
+    setBusy(true);
+    try {
+      const direction = receipt ? "receipt" : "payment";
+      const lookup = new URLSearchParams({ entityId: String(partyId), companyId: String(user?.companyId ?? "") });
+      const response = await fetch(`${API}/api/${direction}-vouchers/contracting-options?${lookup}`, { headers });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      const contract = data.contracts?.find((row: any) => Number(row.id) === contractId && Number(row.projectId) === projectId);
+      if (!contract) throw new Error("العقد غير متاح لهذا الطرف في خيارات المقاولات");
+      const eligible = isBill ? data.bills?.find((row: any) =>
+        Number(row.id) === bill!.id && Number(row.projectId) === projectId && Number(row.contractId) === contractId) : contract;
+      if (!eligible) throw new Error("المستخلص غير متاح لهذا الطرف أو العقد");
+      const remaining = Number(eligible.remainingAmount);
+      if (!Number.isFinite(remaining) || remaining <= 0) throw new Error("لا يوجد مبلغ متبقٍ لهذا العقد/المستخلص");
+      const requested = amount.trim() ? Number(amount) : remaining;
+      if ((amount.trim() && !/^\d+(?:\.\d{1,2})?$/.test(amount.trim())) ||
+        !Number.isFinite(requested) || requested <= 0 || requested > remaining)
+        throw new Error("المبلغ يجب أن يكون أكبر من صفر ولا يتجاوز المتبقي");
+      const query = new URLSearchParams({
+        contractingKind: receipt ? (isBill ? "owner_bill" : "owner_advance") : (isBill ? "subcontract_bill" : "subcontract_advance"),
+        projectId: String(projectId), contractId: String(contractId), entityId: String(partyId),
+        amount: requested.toFixed(2),
+      });
+      if (isBill) query.set("billId", String(bill!.id));
+      navigate(`/cash/${direction}-vouchers/multi/new?${query}`);
+    } catch (error: any) {
+      toast({ title: error?.message || "تعذر فتح السند", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveSettlement() {

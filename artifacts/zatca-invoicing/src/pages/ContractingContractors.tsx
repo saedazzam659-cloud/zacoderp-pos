@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -21,7 +22,7 @@ import ContractingAIAssistant from "@/components/ContractingAIAssistant";
 const API = import.meta.env.VITE_API_URL || "";
 
 type Contractor = {
-  id: number; name: string; contactPerson: string | null;
+  id: number; name: string; supplierId: number | null; contactPerson: string | null;
   phone: string | null; email: string | null; address: string | null;
   specialty: string; rating: string; status: string; notes: string | null;
 };
@@ -47,6 +48,8 @@ export default function ContractingContractors() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<Contractor[]>([]);
+  const [suppliers, setSuppliers] = useState<Array<{ id: number; nameAr: string; code?: string | null }>>([]);
+  const [supplierLoadError, setSupplierLoadError] = useState("");
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Contractor> | null>(null);
   const [saving, setSaving] = useState(false);
@@ -67,6 +70,19 @@ export default function ContractingContractors() {
   }, [token, t, toast]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!token || !editing) return;
+    let active = true;
+    fetch(`${API}/api/suppliers`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        if (!Array.isArray(data)) throw new Error("استجابة الموردين غير صالحة");
+        if (active) { setSuppliers(data); setSupplierLoadError(""); }
+      })
+      .catch((error: Error) => { if (active) setSupplierLoadError(error.message); });
+    return () => { active = false; };
+  }, [token, !!editing]);
 
   async function save() {
     if (!editing) return;
@@ -142,6 +158,25 @@ export default function ContractingContractors() {
           saveDisabled={!editing.name?.trim()}
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
+            <div className="md:col-span-2">
+              <Field label="المورد المرتبط (اختياري)">
+                <SearchCombobox
+                  items={[
+                    { value: "none", label: "بدون مورد مرتبط" },
+                    ...suppliers.map(s => ({ value: String(s.id), label: `${s.code ? `${s.code} — ` : ""}${s.nameAr}` })),
+                    ...(editing.supplierId && !suppliers.some(s => s.id === editing.supplierId)
+                      ? [{ value: String(editing.supplierId), label: `مورد مرتبط #${editing.supplierId} (غير متاح في القائمة)` }] : []),
+                  ]}
+                  value={editing.supplierId ? String(editing.supplierId) : "none"}
+                  onValueChange={value => setEditing({ ...editing, supplierId: value === "none" ? null : Number(value) })}
+                  placeholder="اختر مورداً موجوداً"
+                  searchPlaceholder="بحث في الموردين..."
+                  testId="contractor-supplier-picker"
+                />
+              </Field>
+              <p className="mt-1 text-xs text-slate-500">لصرف سلفة أو مستخلص بسند متعدد، اربط المقاول بمورد موجود. لا يُنشأ مورد تلقائياً. <Link href="/suppliers" className="underline">فتح الموردين</Link></p>
+              {supplierLoadError && <p role="alert" className="text-xs text-destructive">تعذر تحميل الموردين: {supplierLoadError}</p>}
+            </div>
             <Field label={t("contracting.contractors.name", "الاسم")} required>
               <Input value={editing.name ?? ""} onChange={e => setEditing({ ...editing, name: e.target.value })} />
             </Field>
@@ -212,7 +247,7 @@ export default function ContractingContractors() {
                 )}
                 {!loading && rows.length === 0 && (
                   <TableRow><TableCell colSpan={6} className="text-center text-sm text-slate-500 py-6">
-                    {t("contracting.contractors.empty", "لا يوجد مقاولون — اضغط «مقاول جديد» لإضافة الأول")}
+                     لا يوجد مقاولون باطن مسجلون. أضف «مقاول جديد» ثم اختر المورد المرتبط (أو أنشئ مورداً من قائمة الموردين أولاً). سجل المورد وحده لا يظهر هنا.
                   </TableCell></TableRow>
                 )}
                 {rows.map(c => (
@@ -220,6 +255,7 @@ export default function ContractingContractors() {
                     <TableCell className="font-medium">
                       {c.name}
                       {c.contactPerson && <div className="text-[11px] text-slate-500">{c.contactPerson}</div>}
+                      <div className="text-[11px] text-slate-500">{c.supplierId ? `مرتبط بمورد #${c.supplierId}` : "غير مرتبط بمورد — السند المتعدد يتطلب الربط"}</div>
                     </TableCell>
                     <TableCell><Badge variant="outline">{SPECIALTY_LABEL[c.specialty] ?? c.specialty}</Badge></TableCell>
                     <TableCell>

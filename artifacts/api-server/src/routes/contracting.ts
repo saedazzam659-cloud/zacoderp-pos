@@ -18,6 +18,7 @@ import {
   contractingOwnerContractsTable,
   contractingSubContractsTable,
   customersTable,
+  suppliersTable,
   branchesTable,
   itemsTable,
   itemUnitPricesTable,
@@ -101,17 +102,22 @@ router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   next();
 });
-router.use(async (_req, res, next) => {
+router.use(requirePermission("contracting", "view"));
+router.use(async (req, res, next) => {
   try {
     // The central BOQ definition is managed by Publish; ensureSchema
     // reconciles columns and project integrity/trigger at startup. Execution
-    // and guarantee tables are reconciled in that shared pass too. Avoid
-    // running DDL on every central read. Agents still use their own additive
-    // readiness against the active external database.
+    // and guarantee tables are reconciled in that shared pass too. The server
+    // can open its port while that pass is still running; tender/guarantee
+    // requests must wait for their own additive reconciliation even centrally.
+    // Readiness is memoized per database, so no DDL repeats after success.
     if (getActiveExternalDb()) {
       await ensureContractingBoqTables();
       await ensureContractingProjectIntegrity();
       await ensureContractingExecutionSchema();
+      await ensureContractingGuaranteeTables();
+    } else if (req.path.startsWith("/tenders") || req.path.startsWith("/guarantees")
+      || /^\/contracts\/(owner|subcontract)\/\d+\/guarantee-summary$/.test(req.path)) {
       await ensureContractingGuaranteeTables();
     }
     next();
@@ -120,7 +126,6 @@ router.use(async (_req, res, next) => {
     res.status(503).json({ error: contractingLoadError(caught, "تعذر تجهيز بيانات المقاولات") });
   }
 });
-router.use(requirePermission("contracting", "view"));
 // The old router only checked `contracting:view`, which made every legacy
 // POST/PUT/DELETE reachable by any user who could read the module.  Keep reads
 // behind the existing view gate, but map each mutation to the existing RBAC
@@ -1881,6 +1886,16 @@ router.get("/contractors", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
 });
 
+async function validateContractorSupplier(cid: number, value: unknown): Promise<number | null> {
+  if (value == null || value === "") return null;
+  const supplierId = Number(value);
+  if (!Number.isSafeInteger(supplierId) || supplierId <= 0) throw new Error("معرّف المورد غير صالح");
+  const [supplier] = await db.select({ id: suppliersTable.id }).from(suppliersTable)
+    .where(and(eq(suppliersTable.companyId, cid), eq(suppliersTable.id, supplierId)));
+  if (!supplier) throw new Error("المورد المختار لا يتبع الشركة الحالية");
+  return supplierId;
+}
+
 router.post("/contractors", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
@@ -1888,7 +1903,7 @@ router.post("/contractors", async (req, res) => {
     if (!b?.name) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
     const [row] = await db.insert(contractingContractorsTable).values({
       companyId: cid,
-      supplierId: b.supplierId ?? null,
+      supplierId: await validateContractorSupplier(cid, b.supplierId),
       name: String(b.name),
       contactPerson: b.contactPerson ?? null,
       phone: b.phone ?? null,
@@ -1900,7 +1915,7 @@ router.post("/contractors", async (req, res) => {
       notes: b.notes ?? null,
     }).returning();
     res.status(201).json(row);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) { res.status(e?.message?.includes("المورد") ? 400 : 500).json({ error: e?.message ?? "خطأ" }); }
 });
 
 router.put("/contractors/:id", async (req, res) => {
@@ -1913,12 +1928,12 @@ router.put("/contractors/:id", async (req, res) => {
       if (b[k] !== undefined) upd[k] = b[k];
     }
     if (b.rating !== undefined) upd.rating = String(b.rating);
-    if (b.supplierId !== undefined) upd.supplierId = b.supplierId;
+    if (b.supplierId !== undefined) upd.supplierId = await validateContractorSupplier(cid, b.supplierId);
     const [row] = await db.update(contractingContractorsTable).set(upd)
       .where(and(eq(contractingContractorsTable.id, id), eq(contractingContractorsTable.companyId, cid)))
       .returning();
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) { res.status(e?.message?.includes("المورد") ? 400 : 500).json({ error: e?.message ?? "خطأ" }); }
 });
 
 router.delete("/contractors/:id", async (req, res) => {

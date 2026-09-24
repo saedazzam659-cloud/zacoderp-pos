@@ -120,7 +120,7 @@ type SubContract = AdvanceRecoveryPolicy & {
   status: string; notes: string | null;
 };
 type Contractor = {
-  id: number; name: string; specialty: string; phone: string | null; status: string;
+  id: number; name: string; specialty: string; phone: string | null; status: string; supplierId: number | null;
 };
 type Risk = {
   id: number; title: string; description: string | null; category: string;
@@ -1921,7 +1921,10 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
       ]);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setRows(await r.json());
-      if (cr.ok) setContractors(await cr.json());
+      const contractorData = await cr.json().catch(() => ({}));
+      if (!cr.ok) throw new Error(contractorData.error || `تعذر تحميل المقاولين (HTTP ${cr.status})`);
+      if (!Array.isArray(contractorData)) throw new Error("استجابة المقاولين غير صالحة");
+      setContractors(contractorData);
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
     finally { setLoading(false); }
   }, [token, projectId, toast]);
@@ -2050,9 +2053,11 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
                 onValueChange={value => setEditing({ ...editing, contractorId: value ? Number(value) : undefined })}
                 placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")}
                 searchPlaceholder={t("contracting.subContract.searchContractor", "بحث باسم المقاول...")}
-                emptyText={t("contracting.subContract.noContractors", "لا توجد مقاولات متاحة")}
+                emptyText="لا يوجد مقاولون باطن مسجلون. أضف مقاولاً واربطه بمورد موجود."
                 testId="subcontract-contractor-picker"
               />
+              {!contractors.length && <p className="mt-1 text-xs text-amber-700">قائمة المقاولين منفصلة عن الموردين. <Link href="/contracting/contractors" className="underline">إضافة مقاول باطن وربطه بمورد</Link></p>}
+              {editing.contractorId && !contractors.find(c => c.id === editing.contractorId)?.supplierId && <p className="mt-1 text-xs text-amber-700">هذا المقاول غير مرتبط بمورد؛ يلزم ربطه بمورد موجود قبل صرف سند متعدد. <Link href="/contracting/contractors" className="underline">إدارة المقاولين</Link></p>}
             </Field>
             <Field label={t("contracting.subContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.date", "تاريخ العقد")} required><DateField value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>

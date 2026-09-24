@@ -113,18 +113,19 @@ export default function ContractingTenderGuaranteeForm() {
     Promise.all([
       get(`/projects/${projectId}`),
       get(`/guarantees/options?${optionQuery}`),
-      get(`/tenders?projectId=${projectId}`),
-      get(`/projects/${projectId}/owner-contracts`),
-      get(`/projects/${projectId}/sub-contracts`),
+      isGuarantee ? get(`/tenders?projectId=${projectId}`) : Promise.resolve([]),
+      isGuarantee ? get(`/projects/${projectId}/owner-contracts`) : Promise.resolve([]),
+      isGuarantee ? get(`/projects/${projectId}/sub-contracts`) : Promise.resolve([]),
       editId ? get(`/${entity}/${editId}`) : Promise.resolve(null),
       !editId && isGuarantee && query.get("parent") ? get(`/guarantees/${query.get("parent")}`) : Promise.resolve(null),
     ]).then(([p, options, ts, os, ss, row, parent]) => {
       if (!active) return;
       if (row && Number(row.project_id) !== projectId) throw new Error("السجل لا يتبع هذا المشروع");
       if (parent && Number(parent.project_id) !== projectId) throw new Error("الضمان الأب لا يتبع هذا المشروع");
-      if (!Array.isArray(options?.banks) || !Array.isArray(options?.customers)
+      if (!p || typeof p !== "object" || Number(p.id) !== projectId
+        || !Array.isArray(options?.banks) || !Array.isArray(options?.customers)
         || !Array.isArray(ts) || !Array.isArray(os) || !Array.isArray(ss))
-        throw new Error("استجابة خيارات المناقصات والضمانات غير صالحة");
+        throw new Error("استجابة بيانات المشروع أو خيارات المناقصات والضمانات غير صالحة");
       setProject(p);
       setBanks(options.banks);
       setCustomers(options.customers);

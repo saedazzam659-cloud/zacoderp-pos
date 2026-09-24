@@ -73,7 +73,10 @@ router.get("/projects/:projectId/accounting/options", async (req, res) => {
   if (!cid) return;
   try {
     const projectId = Number(req.params.projectId);
-    const [project] = await db.select({ branchId: contractingProjectsTable.branchId })
+    const [project] = await db.select({
+      branchId: contractingProjectsTable.branchId,
+      customerId: contractingProjectsTable.customerId,
+    })
       .from(contractingProjectsTable).where(and(
         eq(contractingProjectsTable.id, projectId),
         eq(contractingProjectsTable.companyId, cid),
@@ -100,6 +103,7 @@ router.get("/projects/:projectId/accounting/options", async (req, res) => {
         id: contractingOwnerContractsTable.id,
         contractNumber: contractingOwnerContractsTable.contractNumber,
         clientName: contractingOwnerContractsTable.clientName,
+        customerId: contractingOwnerContractsTable.customerId,
       }).from(contractingOwnerContractsTable).where(and(
         eq(contractingOwnerContractsTable.companyId, cid),
         eq(contractingOwnerContractsTable.projectId, projectId),
@@ -112,7 +116,7 @@ router.get("/projects/:projectId/accounting/options", async (req, res) => {
         eq(contractingSubContractsTable.projectId, projectId),
       )),
     ]);
-    return res.json({ ...options, cashBoxes, banks, ownerContracts, subcontractorContracts });
+    return res.json({ ...options, cashBoxes, banks, projectCustomerId: project.customerId, ownerContracts, subcontractorContracts });
   } catch (error) {
     return fail(res, error);
   }

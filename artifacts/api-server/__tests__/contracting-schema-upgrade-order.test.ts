@@ -93,11 +93,12 @@ test("WBS actual-cost reads do not perform central DDL", () => {
   assert.match(readiness, /if \(getActiveExternalDb\(\)\) \{\s*await Promise\.all\(\[\s*ensureContractingCostAllocationTables\(\),\s*ensureContractingAccountingTables\(\)/);
 });
 
-test("contracting read middleware scopes additive DDL to external agents", () => {
+test("contracting read middleware also guards central tender/guarantee reads during background reconciliation", () => {
   const routes = readFileSync(new URL("../src/routes/contracting.ts", import.meta.url), "utf8");
-  const start = routes.indexOf("router.use(async (_req, res, next) => {");
-  const end = routes.indexOf("router.use(requirePermission(", start);
+  const start = routes.indexOf("router.use(async (req, res, next) => {");
+  const end = routes.indexOf("// The old router only checked", start);
   const readiness = routes.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.match(readiness, /if \(getActiveExternalDb\(\)\) \{\s*await ensureContractingBoqTables\(\);\s*await ensureContractingProjectIntegrity\(\);\s*await ensureContractingExecutionSchema\(\);\s*await ensureContractingGuaranteeTables\(\);/);
+  assert.match(readiness, /else if \(req\.path\.startsWith\("\/tenders"\) \|\| req\.path\.startsWith\("\/guarantees"\)/);
 });

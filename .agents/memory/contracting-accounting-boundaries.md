@@ -91,6 +91,8 @@ Release-managed application tables must be created in the shared active-database
 
 **Why:** External-agent upgrade and request-readiness paths can validate newly exported schema tables before central-only initialization ever reaches their database.
 
+Central startup can begin serving after its schema time budget expires, so an open port is not evidence that feature tables are ready. Read paths that require additive feature reconciliation must await the per-database readiness promise rather than assuming central startup completed it.
+
 **How to apply:** Cover startup, explicit upgrades and strict request readiness with the same additive table creation. Keep required tables required, and never share a successful initialization cache across tenant databases.
 
 Contracting bills use the existing model 14 renderer, with contracting-specific labels and amounts rather than a separate look-alike template.
