@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
 import { assertProjectBranchAccess, refreshBillPaymentState } from "./contracting-accounting-service.js";
 import { calculateSignedContractingBillNet, exactCents } from "./contracting-bill-adjustment-math.js";
+import { isPostableVoucherContractStatus } from "./contracting-voucher-eligibility.js";
 
 export type ContractingVoucherKind = "owner_advance" | "owner_bill" | "subcontract_advance" | "subcontract_bill";
 export type ContractingAllocation = {
@@ -57,7 +58,8 @@ export async function resolveContractingLine(tx: any, companyId: number, voucher
       WHERE c.id = ${allocation.contractId} AND c.project_id = ${allocation.projectId}
       AND c.company_id = ${companyId}`))[0];
   if (!contract || Number(contract.party_id) !== partyId) fail("العقد لا يرتبط بالطرف المختار في هذه الشركة والمشروع");
-  if (!["active", "completed"].includes(contract.status)) fail("العقد غير مفعّل");
+  if (!isPostableVoucherContractStatus(contract.status))
+    fail(`لا يمكن ترحيل سند المقاولات: حالة العقد «${contract.status}»؛ يجب اعتماد العقد أولاً`);
   if (allocation.billId) {
     const bill = rows(await tx.execute(sql`SELECT id, status, journal_entry_id FROM contracting_progress_bills
       WHERE id = ${allocation.billId} AND company_id = ${companyId} AND project_id = ${allocation.projectId}
@@ -88,16 +90,19 @@ export async function contractingVoucherOptions(companyId: number, voucher: "rec
       FROM contracting_owner_contracts c JOIN contracting_projects p ON p.id = c.project_id
       JOIN customers x ON x.id = COALESCE(c.customer_id, p.customer_id) AND x.company_id = c.company_id
       WHERE c.company_id = ${companyId} AND p.company_id = ${companyId}
-      AND (c.customer_id = ${partyId} OR (c.customer_id IS NULL AND p.customer_id = ${partyId}))
-      AND c.status IN ('active','completed')`))
+      AND (c.customer_id = ${partyId} OR (c.customer_id IS NULL AND p.customer_id = ${partyId}))`))
     : rows(await db.execute(sql`SELECT c.id, c.project_id AS "projectId", c.contract_number AS "contractNumber",
       c.advance_payment AS "advancePayment", c.status, p.branch_id AS "branchId",
       p.name_ar AS "projectName"
       FROM contracting_sub_contracts c JOIN contracting_projects p ON p.id = c.project_id
       JOIN contracting_contractors x ON x.id = c.contractor_id AND x.company_id = c.company_id
-      WHERE c.company_id = ${companyId} AND p.company_id = ${companyId} AND x.supplier_id = ${partyId}
-      AND c.status IN ('active','completed')`));
-  const allowed = contracts.filter((c) => { try { assertProjectBranchAccess(req, c.branchId); return true; } catch { return false; } });
+      WHERE c.company_id = ${companyId} AND p.company_id = ${companyId} AND x.supplier_id = ${partyId}`));
+  // Expose only status diagnostics for contracts already scoped to the same
+  // company, explicit party link, project and accessible branch.
+  const scoped = contracts.filter((c) => { try { assertProjectBranchAccess(req, c.branchId); return true; } catch { return false; } });
+  const allowed = scoped.filter((c) => isPostableVoucherContractStatus(c.status));
+  const unavailableContracts = scoped.filter((c) => !isPostableVoucherContractStatus(c.status))
+    .map((c) => ({ id: Number(c.id), projectId: Number(c.projectId), status: c.status }));
   const ids = allowed.map((c) => Number(c.id));
   const rawBills = ids.length
     ? rows(await db.execute(sql`SELECT id, project_id AS "projectId", ${owner ? sql`owner_contract_id` : sql`subcontractor_contract_id`} AS "contractId",
@@ -144,6 +149,7 @@ export async function contractingVoucherOptions(companyId: number, voucher: "rec
       const remaining = exactCents(c.advancePayment) - (used.get(Number(c.id)) ?? 0n);
       return { ...c, remainingAmount: Number(remaining > 0n ? remaining : 0n) / 100 };
     }),
+    unavailableContracts,
     bills,
   };
 }

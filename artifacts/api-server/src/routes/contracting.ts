@@ -2963,7 +2963,7 @@ router.get("/guarantees/options", async (req, res) => {
     `));
     const customers = canAccessModule(req.authUser, "customers", "view")
       ? resultRows(await db.execute(sql`
-          SELECT id, code, name_ar AS "nameAr", name_en AS "nameEn",
+          SELECT id, name_ar AS "nameAr", name_en AS "nameEn",
                  party_classification AS "partyClassification"
             FROM customers WHERE company_id = ${cid}
            ORDER BY name_ar

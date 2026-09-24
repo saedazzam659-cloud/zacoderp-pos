@@ -109,16 +109,18 @@ export default function ContractingTenderGuaranteeForm() {
       Authorization: `Bearer ${token}`,
       ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
     };
-    const get = (path: string) => fetch(`${API}/api/contracting${path}`, { headers: auth }).then(read);
+    const get = (path: string, label: string) =>
+      fetch(`${API}/api/contracting${path}`, { headers: auth }).then(read)
+        .catch((e: Error) => { throw new Error(`${label}: ${e?.message || "تعذر تحميل البيانات"}`); });
     const optionQuery = new URLSearchParams({ companyId: String(companyId) });
     Promise.all([
-      get(`/projects/${projectId}`),
-      get(`/guarantees/options?${optionQuery}`),
-      isGuarantee ? get(`/tenders?projectId=${projectId}`) : Promise.resolve([]),
-      isGuarantee ? get(`/projects/${projectId}/owner-contracts`) : Promise.resolve([]),
-      isGuarantee ? get(`/projects/${projectId}/sub-contracts`) : Promise.resolve([]),
-      editId ? get(`/${entity}/${editId}`) : Promise.resolve(null),
-      !editId && isGuarantee && query.get("parent") ? get(`/guarantees/${query.get("parent")}`) : Promise.resolve(null),
+      get(`/projects/${projectId}`, "المشروع"),
+      get(`/guarantees/options?${optionQuery}`, "خيارات الضمانات"),
+      isGuarantee ? get(`/tenders?projectId=${projectId}`, "المناقصات") : Promise.resolve([]),
+      isGuarantee ? get(`/projects/${projectId}/owner-contracts`, "عقود المالك") : Promise.resolve([]),
+      isGuarantee ? get(`/projects/${projectId}/sub-contracts`, "عقود الباطن") : Promise.resolve([]),
+      editId ? get(`/${entity}/${editId}`, "السجل") : Promise.resolve(null),
+      !editId && isGuarantee && query.get("parent") ? get(`/guarantees/${query.get("parent")}`, "الضمان الأب") : Promise.resolve(null),
     ]).then(([p, options, ts, os, ss, row, parent]) => {
       if (!active) return;
       if (row && Number(row.project_id) !== projectId) throw new Error("السجل لا يتبع هذا المشروع");

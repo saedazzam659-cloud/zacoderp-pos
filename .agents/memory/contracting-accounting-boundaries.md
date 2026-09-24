@@ -93,6 +93,12 @@ Release-managed application tables must be created in the shared active-database
 
 Central startup can begin serving after its schema time budget expires, so an open port is not evidence that feature tables are ready. Read paths that require additive feature reconciliation must await the per-database readiness promise rather than assuming central startup completed it.
 
+Do not diagnose the generic contracting schema-error banner as a missing migration without reproducing the failing SQL.
+
+**Why:** Adding readiness checks did not fix repeated tender/guarantee failures: a shared options query itself referenced a nonexistent column. Multiple pages failing together can indicate the same bad options request, not separate table-upgrade problems.
+
+**How to apply:** Check each required request, compare its selected fields with the real schema, and use read-only query validation before changing migrations. Keep local query verification distinct from verification of the published user flow.
+
 **How to apply:** Cover startup, explicit upgrades and strict request readiness with the same additive table creation. Keep required tables required, and never share a successful initialization cache across tenant databases.
 
 Contracting bills use the existing model 14 renderer, with contracting-specific labels and amounts rather than a separate look-alike template.

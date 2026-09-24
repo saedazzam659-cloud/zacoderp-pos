@@ -46,7 +46,8 @@ test("contracting panel opens an unsaved voucher separately from legacy direct s
 
 test("contractor selector uses linked contracting records and offers an explicit supplier link", () => {
   assert.match(project, /api\/contracting\/contractors/);
-  assert.match(project, /contractors\.map\(c => \(\{ value: String\(c\.id\)/);
+  assert.match(project, /eligibleContractors\(contractors, editing\.contractorId\)\.map\(c => \(\{ value: String\(c\.id\)/);
+  assert.match(project, /withHistoricalParty\(eligibleContractors/);
   assert.match(contractors, /api\/suppliers/);
   assert.match(contractors, /supplierId: value === "none" \? null : Number\(value\)/);
   assert.match(contractors, /سجل المورد وحده لا يظهر هنا/);

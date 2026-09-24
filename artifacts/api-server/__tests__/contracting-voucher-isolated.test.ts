@@ -9,7 +9,7 @@ import { sql } from "drizzle-orm";
 import { ensureContractingAccountingTables } from "../src/lib/contracting-accounting-storage.ts";
 import {
   parseContractingAllocation, resolveContractingLine, postVoucherSettlements,
-  assertVoucherCanUnpost,
+  assertVoucherCanUnpost, contractingVoucherOptions,
 } from "../src/lib/contracting-voucher-service.ts";
 import receiptRouter from "../src/routes/receipt-vouchers.ts";
 import paymentRouter from "../src/routes/payment-vouchers.ts";
@@ -36,14 +36,16 @@ test("contracting voucher allocations share the voucher JE, cap direct balances,
       const supplier = await add(`INSERT INTO suppliers(company_id, name_ar) VALUES ($1, $2) RETURNING id`, [company, tag]);
       const contractor = await add(`INSERT INTO contracting_contractors(company_id, name, supplier_id)
         VALUES ($1, $2, $3) RETURNING id`, [company, tag, supplier]);
-      const project = await add(`INSERT INTO contracting_projects(company_id, code, name_ar, customer_id)
-        VALUES ($1, $2, $2, $3) RETURNING id`, [company, tag, customer]);
+      const branch = await add(`INSERT INTO branches(company_id, code, name_ar)
+        VALUES ($1, $2, $2) RETURNING id`, [company, tag]);
+      const project = await add(`INSERT INTO contracting_projects(company_id, code, name_ar, customer_id, branch_id)
+        VALUES ($1, $2, $2, $3, $4) RETURNING id`, [company, tag, customer, branch]);
       const owner = await add(`INSERT INTO contracting_owner_contracts
         (company_id, project_id, customer_id, contract_number, contract_date, status, value, advance_payment)
-        VALUES ($1, $2, $3, $4, CURRENT_DATE, 'active', 1000, 100) RETURNING id`, [company, project, customer, tag]);
+        VALUES ($1, $2, $3, $4, CURRENT_DATE, 'approved', 1000, 100) RETURNING id`, [company, project, customer, tag]);
       const sub = await add(`INSERT INTO contracting_sub_contracts
         (company_id, project_id, contractor_id, contract_number, contract_date, status, value, advance_payment)
-        VALUES ($1, $2, $3, $4, CURRENT_DATE, 'active', 1000, 100) RETURNING id`, [company, project, contractor, tag]);
+        VALUES ($1, $2, $3, $4, CURRENT_DATE, 'approved', 1000, 100) RETURNING id`, [company, project, contractor, tag]);
       const cashAcct = await add(`INSERT INTO accounts(company_id, code, name_ar, account_type)
         VALUES ($1, $2, 'Cash', 'asset') RETURNING id`, [company, `cash${tag}`]);
       const cashBox = await add(`INSERT INTO cash_boxes(company_id, code, name_ar, account_id)
@@ -62,6 +64,43 @@ test("contracting voucher allocations share the voucher JE, cap direct balances,
         await pool.query(`INSERT INTO accounting_mappings(company_id, document_type, role_key, account_id)
           VALUES ($1, $2, $3, $4)`, [company, mapping, role, acct]);
       }
+      const ownerAllocation = parseContractingAllocation({ kind: "owner_advance", projectId: project, contractId: owner }, "receipt")!;
+      const subAllocation = parseContractingAllocation({ kind: "subcontract_advance", projectId: project, contractId: sub }, "payment")!;
+      const deniedBranch = { authUser: { role: "employee", viewAllBranches: false, branchIds: [] } };
+      assert.equal((await contractingVoucherOptions(company, "receipt", customer, deniedBranch)).contracts.length, 0);
+      assert.equal((await contractingVoucherOptions(company, "receipt", customer, deniedBranch)).unavailableContracts.length, 0,
+        "branch-inaccessible contracts must not leak through status diagnostics");
+      await assert.rejects(resolveContractingLine(db, company, "receipt", customer, ownerAllocation, deniedBranch), /الفرع/);
+      assert.equal((await contractingVoucherOptions(company, "receipt", customer,
+        { authUser: { ...deniedBranch.authUser, branchIds: [branch] } })).contracts[0].id, owner);
+      assert.equal((await contractingVoucherOptions(company, "receipt", customer, req)).contracts[0].id, owner);
+      assert.equal((await contractingVoucherOptions(company, "payment", supplier, req)).contracts[0].id, sub);
+      await pool.query(`UPDATE contracting_owner_contracts SET status = 'draft' WHERE id = $1`, [owner]);
+      await pool.query(`UPDATE contracting_sub_contracts SET status = 'draft' WHERE id = $1`, [sub]);
+      for (const [direction, party, allocation] of [
+        ["receipt", customer, ownerAllocation], ["payment", supplier, subAllocation],
+      ] as const) {
+        const opts = await contractingVoucherOptions(company, direction, party, req);
+        assert.equal(opts.contracts.length, 0);
+        assert.equal(opts.unavailableContracts[0].status, "draft");
+        await assert.rejects(resolveContractingLine(db, company, direction, party, allocation, req), /يجب اعتماد العقد/);
+      }
+      await pool.query(`UPDATE contracting_owner_contracts SET status = 'active' WHERE id = $1`, [owner]);
+      assert.equal((await contractingVoucherOptions(company, "receipt", customer, req)).contracts.length, 0,
+        "legacy active is not evidence of approval");
+      await assert.rejects(resolveContractingLine(db, company, "receipt", customer, ownerAllocation, req), /يجب اعتماد العقد/);
+      await pool.query(`UPDATE contracting_owner_contracts SET status = 'approved', customer_id = NULL WHERE id = $1`, [owner]);
+      await pool.query(`UPDATE contracting_sub_contracts SET status = 'approved' WHERE id = $1`, [sub]);
+      assert.equal((await contractingVoucherOptions(company, "receipt", customer, req)).contracts[0].id, owner,
+        "missing contract party inherits the explicit project customer ID");
+      assert.equal(await resolveContractingLine(db, company, "receipt", customer, ownerAllocation, req), accounts[0]);
+      const differentCustomer = await add(`INSERT INTO customers(company_id, name_ar) VALUES ($1, $2) RETURNING id`, [company, `different${tag}`]);
+      await pool.query(`UPDATE contracting_owner_contracts SET customer_id = $1 WHERE id = $2`, [differentCustomer, owner]);
+      assert.equal((await contractingVoucherOptions(company, "receipt", customer, req)).contracts.length, 0,
+        "explicit contract customer must not inherit the project party");
+      assert.equal((await contractingVoucherOptions(company, "receipt", differentCustomer, req)).contracts[0].id, owner);
+      await assert.rejects(resolveContractingLine(db, company, "receipt", customer, ownerAllocation, req), /الطرف/);
+      await pool.query(`UPDATE contracting_owner_contracts SET customer_id = $1 WHERE id = $2`, [customer, owner]);
       const approved = [];
       for (const [direction, contract] of [["outgoing", owner], ["incoming", sub]] as const) {
         const je = await add(`INSERT INTO journal_entries(company_id, entry_date, entry_type, status)

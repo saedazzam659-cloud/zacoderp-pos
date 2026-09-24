@@ -261,6 +261,17 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
     const contract = options.ownerContracts.find(row => row.id === contractId);
     return contract ? contract.customerId ?? options.projectCustomerId ?? null : null;
   }
+  function unavailableContractReason(data: any, contractId: number) {
+    const excluded = data.unavailableContracts?.find((row: any) =>
+      Number(row.id) === contractId && Number(row.projectId) === projectId);
+    if (excluded) {
+      const status = String(excluded.status);
+      return status === "draft" || status === "submitted"
+        ? "العقد مسودة ولم يُعتمد بعد؛ أضف بند تنفيذ واعتمد العقد قبل إنشاء سند المقاولات"
+        : `العقد حالته «${status}»؛ يلزم عقد معتمد لإنشاء سند المقاولات`;
+    }
+    return "العقد غير متاح للطرف المحدد في هذا الفرع؛ تحقق من ارتباط العميل/المورد وفرع المشروع";
+  }
   function selectBill(value: string) {
     amountSelectionRef.current++;
     setBillId(value);
@@ -289,7 +300,7 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
       const contract = data.contracts?.find((row: any) => String(row.id) === value && Number(row.projectId) === projectId);
-      if (!contract) throw new Error("العقد غير متاح لهذا الطرف في خيارات المقاولات");
+       if (!contract) throw new Error(unavailableContractReason(data, Number(value)));
       const remaining = Number(contract.remainingAmount);
       if (selection === amountSelectionRef.current && Number.isFinite(remaining) && remaining > 0) setAmount(remaining.toFixed(2));
     } catch (error: any) {
@@ -318,7 +329,7 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
       const contract = data.contracts?.find((row: any) => Number(row.id) === contractId && Number(row.projectId) === projectId);
-      if (!contract) throw new Error("العقد غير متاح لهذا الطرف في خيارات المقاولات");
+       if (!contract) throw new Error(unavailableContractReason(data, contractId));
       const eligible = isBill ? data.bills?.find((row: any) =>
         Number(row.id) === bill!.id && Number(row.projectId) === projectId && Number(row.contractId) === contractId) : contract;
       if (!eligible) throw new Error("المستخلص غير متاح لهذا الطرف أو العقد");
