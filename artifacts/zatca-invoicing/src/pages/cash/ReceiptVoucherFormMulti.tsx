@@ -16,8 +16,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { renameArchivedKey } from "@/lib/localArchive";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
-import { AccountCascadePicker } from "@/components/ui/account-cascade-picker";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ArrowDownCircle, ArrowRight, ChevronLeft, Search,
@@ -184,6 +184,13 @@ export default function ReceiptVoucherFormMulti() {
   const h = { Authorization: `Bearer ${token}` };
 
   const [form, setForm] = useState<FormState>(() => ({ ...EMPTY, lines: [newRvLine()] }));
+  const [contractingEnabled, setContractingEnabled] = useState(false);
+  function toggleContracting(checked: boolean) {
+    if (!checked && form.lines.some(l => l.contractingAllocation) &&
+        !window.confirm("سيتم حذف روابط المقاولات من بنود السند. يلزم اختيار حساب محاسبي لكل بند بعد ذلك. هل تريد المتابعة؟")) return;
+    if (!checked) setForm(p => ({ ...p, lines: p.lines.map(l => ({ ...l, contractingAllocation: null })) }));
+    setContractingEnabled(checked);
+  }
 
   // ── Field-level governance (شاشة «سياسات حقول الفواتير» → tab «سند قبض») ──
   // Mirrors the sales/JE forms: hide/lock/require header fields per the
@@ -352,6 +359,7 @@ export default function ReceiptVoucherFormMulti() {
       costCenter: headerCostCenter,
       lines,
     });
+    setContractingEnabled(lines.some(l => !!l.contractingAllocation));
   }, [existing]);
 
   // Apply the sales-invoice prefill exactly once, after customers resolve so
@@ -391,6 +399,7 @@ export default function ReceiptVoucherFormMulti() {
     contractingPrefillDone.current = true;
     setForm(p => ({ ...p, entityId: String(customer.id), entityName: customer.nameAr || customer.nameEn || "",
       lines: [newRvLine({ contractingAllocation: contractingPrefill.allocation, amount: contractingPrefill.amount })] }));
+    setContractingEnabled(true);
   }, [contractingPrefill, customers]);
 
   // ── Allocation-line helpers ────────────────────────────────────
@@ -459,6 +468,12 @@ export default function ReceiptVoucherFormMulti() {
       code: c.code ?? undefined,
       description: c.phone ?? c.email ?? undefined,
     })), [customers, isRtl]);
+  const postableAccounts: ComboboxItem[] = useMemo(() => {
+    const parents = new Set((accounts as any[]).map(a => a.parentId).filter(id => id != null).map(Number));
+    return (accounts as any[]).filter(a => !parents.has(Number(a.id)) && a.isActive !== false)
+      .map(a => ({ value: String(a.id), label: (isRtl ? a.nameAr || a.nameEn : a.nameEn || a.nameAr) || "", code: a.code }))
+      .sort((a, b) => String(a.code ?? "").localeCompare(String(b.code ?? "")));
+  }, [accounts, isRtl]);
 
   // Sales invoices the picked customer still has open / payable. We
   // include posted invoices (most common case — settle a credit invoice)
@@ -524,6 +539,7 @@ export default function ReceiptVoucherFormMulti() {
     mutationFn: async (mode: "draft" | "post") => {
       // Build the allocation payload — drop rows with no account AND zero amount.
       const cleanLines = form.lines.filter(l => l.accountId || l.contractingAllocation || (Number(l.amount) || 0) > 0);
+      if (!contractingEnabled && cleanLines.some(l => l.contractingAllocation)) throw new Error("أعد اختيار حساب لكل بند بعد تعطيل توزيع المقاولات");
       if (cleanLines.length === 0) throw new Error(t(`${NS}.noLines`, "أضف بنداً واحداً على الأقل"));
       for (const l of cleanLines) {
         if (!l.accountId && !l.contractingAllocation) throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب"));
@@ -564,10 +580,10 @@ export default function ReceiptVoucherFormMulti() {
         costCenter:     l.costCenter || form.costCenter || null,
         branchId:       form.branchId ? parseInt(form.branchId) : null,
         salesInvoiceId: l.contractingAllocation ? null : l.salesInvoiceId ? parseInt(l.salesInvoiceId) : null,
-        ...(l.contractingAllocation ? { contractingAllocation: l.contractingAllocation } : {}),
+         contractingAllocation: contractingEnabled ? l.contractingAllocation : null,
       }));
 
-      const { lines: _omitLines, ...formRest } = form;
+       const { lines: _omitLines, ...formRest } = form;
       const body = {
         ...formRest,
         amount: grandTotal.toFixed(2),
@@ -895,11 +911,10 @@ export default function ReceiptVoucherFormMulti() {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start">
           {/* ── Left column: TABBED form ──────────────────── */}
           <Tabs defaultValue="voucher" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
-            <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full h-auto gap-1 p-1">
+            <TabsList className="grid grid-cols-3 w-full h-auto gap-1 p-1">
               <TabsTrigger value="voucher" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_header`, "بيانات السند")}</TabsTrigger>
-              <TabsTrigger value="party" className="py-2.5 text-sm md:text-base">{t(`${NS}.tab_party`, "العميل والمبلغ")}</TabsTrigger>
+              <TabsTrigger value="party" className="py-2.5 text-sm md:text-base">{t(`${NS}.tab_party`, "العميل ووسيلة القبض")}</TabsTrigger>
               <TabsTrigger value="lines" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_lines`, "بنود القبض")}</TabsTrigger>
-              <TabsTrigger value="refs" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_refs`, "المراجع والبيان")}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="voucher" className="mt-0">
@@ -1003,6 +1018,10 @@ export default function ReceiptVoucherFormMulti() {
                     })()}
                   </div>
                   )}
+                  <label className="flex items-center gap-2 self-end h-9 text-sm font-medium cursor-pointer">
+                    <Checkbox checked={contractingEnabled} onCheckedChange={value => toggleContracting(value === true)} data-testid="rv-contracting-toggle" />
+                    توزيع مقاولات
+                  </label>
                 </div>
               </CardContent>
             </Card>
@@ -1109,7 +1128,12 @@ export default function ReceiptVoucherFormMulti() {
                       entityId: v,
                       entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
                       // Changing the customer invalidates any per-line invoice links.
-                      lines: p.lines.map(l => ({ ...l, salesInvoiceId: "", contractingAllocation: null })),
+                      lines: p.entityId === v ? p.lines : p.lines.map(l => ({
+                        ...l, salesInvoiceId: "",
+                        amount: l.contractingAllocation ? "" : l.amount,
+                        contractingAllocation: l.contractingAllocation
+                          ? { kind: l.contractingAllocation.kind, projectId: 0, contractId: 0 } : null,
+                      })),
                     }));
                   }}
                   placeholder={t(`${NS}.selectCustomer`, "— اختر العميل —")}
@@ -1134,28 +1158,46 @@ export default function ReceiptVoucherFormMulti() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-3">
-                <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">{t(`${NS}.generalDescription`, "البيان العام")}</Label>
+                  <Textarea value={form.description} onChange={e => {
+                    if (fp.isReadOnly("description")) return;
+                    const next = e.target.value;
+                    setForm(p => ({ ...p, description: next,
+                      lines: p.lines.map(l => !l.description || l.description === p.description ? { ...l, description: next } : l) }));
+                  }} readOnly={fp.isReadOnly("description")} rows={2} className="text-sm resize-none" />
+                </div>
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="grid grid-cols-[28px_2fr_1fr_1.5fr_1.2fr_28px] gap-2 px-3 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
+                    <span /><span>{t(`${NS}.colAccount`, "الحساب")}</span><span>{t(`${NS}.colAmount`, "المبلغ")}</span>
+                    <span>{t(`${NS}.colDescription`, "البيان")}</span><span>{t(`${NS}.colCostCenter`, "مركز التكلفة")}</span><span />
+                  </div>
+                  <div className="divide-y">
                   {form.lines.map((l, idx) => (
                     <div
                       key={l.key}
-                      className="rounded-xl border-2 border-green-100 bg-green-50/20 p-4 md:p-5 space-y-4"
+                      className="px-3 py-2.5 space-y-2 hover:bg-muted/5"
                       data-testid={`rv-line-${idx}`}
                     >
-                      {/* Row 1: line number + main account + remove */}
-                      <div className="flex items-start gap-3">
-                        <span className="mt-7 shrink-0 h-8 w-8 rounded-full bg-green-100 text-green-800 text-sm font-bold flex items-center justify-center tabular-nums">{idx + 1}</span>
-                        <div className="flex-1 space-y-1.5 min-w-0">
-                          <Label className="text-sm font-semibold">{t(`${NS}.colAccount`, "الحساب")} {!l.contractingAllocation && <span className="text-destructive">*</span>}</Label>
-                          {l.contractingAllocation ? <p className="py-2 text-xs text-muted-foreground">حساب المقاولات يحدده النظام تلقائياً</p> : <AccountCascadePicker
-                            accounts={accounts as any[]}
-                            value={l.accountId}
-                            isRtl={isRtl}
-                            onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
-                          />}
-                        </div>
+                      <div className="grid grid-cols-[28px_2fr_1fr_1.5fr_1.2fr_28px] gap-2 items-center">
+                        <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
+                        {l.contractingAllocation ? <span className="text-xs text-muted-foreground">حساب المقاولات يحدده النظام</span> :
+                          <SearchCombobox items={postableAccounts} value={l.accountId} onValueChange={aid => updateLine(l.key, { accountId: aid })}
+                            placeholder={t(`${NS}.selectAccountPh`, "— اختر الحساب —")} searchPlaceholder="ابحث بالاسم أو الكود..." />}
+                        <Input type="text" inputMode="decimal" placeholder="0.00" dir="ltr" value={l.amount}
+                          onChange={e => updateLine(l.key, { amount: e.target.value.replace(/[^0-9.]/g, "") })}
+                          className="h-8 text-sm text-left font-mono" data-testid={`rv-line-amount-${idx}`} />
+                        <Input value={l.description} onChange={e => updateLine(l.key, { description: e.target.value })}
+                          placeholder={t(`${NS}.colDescription`, "البيان")} className="h-8 text-sm" />
+                        <select value={l.costCenter} onChange={e => updateLine(l.key, { costCenter: e.target.value })}
+                          className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background">
+                          <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
+                          {(costCentersList as any[]).filter((c: any) => c.isActive !== false).map((c: any) =>
+                            <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>)}
+                        </select>
                         <Button
                           type="button" variant="ghost" size="icon"
-                          className="mt-7 h-10 w-10 text-muted-foreground hover:text-destructive shrink-0"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
                           onClick={() => removeLine(l.key)}
                           title={t(`${NS}.removeLine`, "حذف البند")}
                           data-testid={`rv-line-remove-${idx}`}
@@ -1163,51 +1205,9 @@ export default function ReceiptVoucherFormMulti() {
                           <Trash2 className="h-5 w-5" />
                         </Button>
                       </div>
-
-                      {/* Row 2: description */}
-                      <div className="space-y-1.5">
-                        <Label className="text-sm font-semibold">{t(`${NS}.colDescription`, "البيان")}</Label>
-                        <Input
-                          value={l.description}
-                          onChange={e => updateLine(l.key, { description: e.target.value })}
-                          placeholder={t(`${NS}.colDescription`, "البيان")}
-                          className="h-12 text-base"
-                        />
-                      </div>
-
-                      {/* Row 3: amount — enlarged */}
-                      <div className="space-y-1.5 rounded-lg bg-background/70 border border-green-100 p-3 md:p-4">
-                        <Label className="text-sm font-semibold">{t(`${NS}.colAmount`, "المبلغ")} <span className="text-destructive">*</span></Label>
-                        <Input
-                          type="text" inputMode="decimal" placeholder="0.00" dir="ltr"
-                          value={l.amount}
-                          onChange={e => updateLine(l.key, { amount: e.target.value.replace(/[^0-9.]/g, "") })}
-                          onWheel={e => (e.currentTarget as HTMLInputElement).blur()}
-                          className="h-14 text-lg text-left font-mono font-semibold"
-                          data-testid={`rv-line-amount-${idx}`}
-                        />
-                      </div>
-
-                      {/* Row 4: cost center + sales-invoice link */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="space-y-1.5">
-                          <Label className="text-sm font-semibold">{t(`${NS}.colCostCenter`, "مركز التكلفة")}</Label>
-                          <select
-                            value={l.costCenter}
-                            onChange={e => updateLine(l.key, { costCenter: e.target.value })}
-                            className="w-full h-12 border border-input rounded-md px-3 text-base bg-background"
-                          >
-                            <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
-                            {(costCentersList as any[])
-                              .filter((c: any) => c.isActive !== false)
-                              .map((c: any) => (
-                                <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>
-                              ))}
-                          </select>
-                        </div>
+                      <div className="flex flex-wrap items-center gap-2">
                         {fp.isVisible("settleSalesInvoice") && !l.contractingAllocation && (
-                        <div className="space-y-1.5">
-                          <Label className="text-sm font-semibold inline-flex items-center gap-1"><Link2 className="h-4 w-4" />{t(`${NS}.colSalesInvoice`, "ربط فاتورة مبيعات")}</Label>
+                        <div className="min-w-[220px] max-w-sm flex-1">
                           <SearchCombobox
                             items={invoiceItems}
                             value={l.salesInvoiceId}
@@ -1223,21 +1223,21 @@ export default function ReceiptVoucherFormMulti() {
                         </div>
                         )}
                       </div>
-                      <VoucherContractingAllocation direction="receipt" entityId={form.entityId}
+                      {contractingEnabled && <VoucherContractingAllocation direction="receipt" entityId={form.entityId}
                         value={l.contractingAllocation} lineAmount={l.amount}
+                        onAmountSuggested={amount => updateLine(l.key, { amount })}
                         otherAllocated={form.lines.filter(other => other.key !== l.key && other.contractingAllocation?.billId &&
                           other.contractingAllocation.billId === l.contractingAllocation?.billId).reduce((sum, other) => sum + (Number(other.amount) || 0), 0)}
                         disabled={isLockedSourceEntry}
-                        onChange={allocation => updateLine(l.key, { contractingAllocation: allocation, accountId: "",
-                          salesInvoiceId: "" })} />
+                        onChange={allocation => updateLine(l.key, { contractingAllocation: allocation,
+                          ...(allocation ? { accountId: "", salesInvoiceId: "" } : {}) })} />}
 
-                      {/* Line total — prominent, always visible */}
-                      <div className="flex items-center justify-between border-t border-green-200/60 pt-3">
-                        <span className="text-sm font-semibold text-muted-foreground">{t(`${NS}.colLineTotal`, "إجمالي البند")}</span>
-                        <span className="font-mono font-bold text-xl tabular-nums text-green-700" data-testid={`rv-line-total-${idx}`}>{fmt(Number(l.amount) || 0)}</span>
+                      <div className="flex justify-end text-xs text-muted-foreground">
+                        {t(`${NS}.colLineTotal`, "إجمالي البند")}: <span className="font-mono font-semibold text-green-700 mr-1" data-testid={`rv-line-total-${idx}`}>{fmt(Number(l.amount) || 0)}</span>
                       </div>
                     </div>
                   ))}
+                  </div>
                 </div>
 
                 <Button
@@ -1260,9 +1260,8 @@ export default function ReceiptVoucherFormMulti() {
                 </div>
               </CardContent>
             </Card>
-            </TabsContent>
-
-            <TabsContent value="refs" className="mt-0">
+            
+            <div className="mt-4">
             {/* Section: References & Notes */}
             <Card className="border-2 border-slate-100">
               <CardHeader className="py-3 px-4 border-b bg-slate-50/40">
@@ -1326,6 +1325,7 @@ export default function ReceiptVoucherFormMulti() {
                 )}
               </CardContent>
             </Card>
+            </div>
             </TabsContent>
           </Tabs>
 

@@ -14,6 +14,8 @@ type Bill = {
   netAmount: string | number; retentionAmount: string | number;
   ownerContractId?: number | null; subcontractorContractId?: number | null;
   journalEntryId?: number | null;
+  paidAmount?: string | number;
+  remainingAmount?: string | number;
 };
 type Settlement = {
   id: number; kind: string; direction: string; amount: string | number;
@@ -61,7 +63,7 @@ const labelKind: Record<string, string> = {
 };
 export default function ContractingAccountingPanel({ projectId }: Props) {
   const [, navigate] = useLocation();
-  const { token } = useAuth() as any;
+  const { token, user } = useAuth();
   const { toast } = useToast();
   const [bills, setBills] = useState<Bill[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
@@ -75,6 +77,7 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState("advance_receipt");
   const [amount, setAmount] = useState("");
+  const amountSelectionRef = useRef(0);
   const [billId, setBillId] = useState("");
   const [ownerContractId, setOwnerContractId] = useState("");
   const [subcontractorContractId, setSubcontractorContractId] = useState("");
@@ -251,6 +254,42 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
 
   const requiresBill = kind.startsWith("retention_") || kind.startsWith("bill_");
   const advances = settlements.filter((s) => s.kind === "advance_receipt" || s.kind === "advance_payment");
+  function selectBill(value: string) {
+    amountSelectionRef.current++;
+    setBillId(value);
+    const bill = bills.find(row => String(row.id) === value);
+    if (bill && kind.startsWith("bill_")) {
+      const remaining = Number(bill.remainingAmount ?? (Number(bill.netAmount) - Number(bill.paidAmount || 0)));
+      setAmount(Number.isFinite(remaining) && remaining > 0 ? remaining.toFixed(2) : "");
+    } else setAmount("");
+  }
+  async function selectAdvanceContract(value: string, direction: "receipt" | "payment") {
+    const selection = ++amountSelectionRef.current;
+    if (direction === "receipt") setOwnerContractId(value);
+    else setSubcontractorContractId(value);
+    setAmount("");
+    if (!value) return;
+    const partyId = direction === "receipt"
+      ? ownerLinks.find(row => String(row.id) === value)?.customerId
+      : contractors.find(row => row.id === subLinks.find(link => String(link.id) === value)?.contractorId)?.supplierId;
+    if (!partyId) {
+      toast({ title: "العقد غير مرتبط بعميل/مورد؛ تعذر تحديد المتبقي", variant: "destructive" });
+      return;
+    }
+    try {
+      const query = new URLSearchParams({ entityId: String(partyId), companyId: String(user?.companyId ?? "") });
+      const response = await fetch(`${API}/api/${direction}-vouchers/contracting-options?${query}`, { headers });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      const contract = data.contracts?.find((row: any) => String(row.id) === value && Number(row.projectId) === projectId);
+      if (!contract) throw new Error("العقد غير متاح لهذا الطرف في خيارات المقاولات");
+      const remaining = Number(contract.remainingAmount);
+      if (selection === amountSelectionRef.current && Number.isFinite(remaining) && remaining > 0) setAmount(remaining.toFixed(2));
+    } catch (error: any) {
+      if (selection === amountSelectionRef.current)
+        toast({ title: error?.message || "تعذر تحميل المبلغ المتبقي للعقد", variant: "destructive" });
+    }
+  }
   function openVoucher() {
     const receipt = kind === "advance_receipt" || kind === "bill_receipt";
     const isBill = kind === "bill_receipt" || kind === "bill_payment";
@@ -377,18 +416,25 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         <section className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
           <h3 className="mb-3 font-bold">السلف والمحتجزات — قيود القبض والصرف</h3>
           <div className="grid gap-2 sm:grid-cols-2">
-            <PickerField label="نوع العملية" value={kind} onValueChange={setKind} items={[
+             <PickerField label="نوع العملية" value={kind} onValueChange={value => {
+               amountSelectionRef.current++;
+               setKind(value);
+               setAmount("");
+               setBillId("");
+               setOwnerContractId("");
+               setSubcontractorContractId("");
+             }} items={[
               { value: "advance_receipt", label: "قبض سلفة من المالك" },
               { value: "advance_payment", label: "صرف سلفة للمقاول الباطن" },
               { value: "retention_receipt", label: "إفراج محتجزات من المالك" },
               { value: "retention_payment", label: "صرف محتجزات للمقاول الباطن" },
               { value: "bill_receipt", label: "تحصيل مستخلص من المالك" },
               { value: "bill_payment", label: "سداد مستخلص المقاول الباطن" },
-            ]} testId="accounting-settlement-kind" />
-            <label className="text-sm">المبلغ<Input type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
-            {requiresBill && <PickerField label="المستخلص المعتمد" value={billId} onValueChange={setBillId} placeholder="اختر مستخلصاً" items={approvedBills.map((bill) => ({ value: String(bill.id), label: `${bill.billNumber} — محتجز ${bill.retentionAmount}` }))} testId="accounting-bill-picker" />}
-            {!requiresBill && kind === "advance_receipt" && <PickerField label="عقد المالك" value={ownerContractId} onValueChange={setOwnerContractId} placeholder="اختر عقداً" items={options.ownerContracts.map((contract) => ({ value: String(contract.id), label: `${contract.contractNumber}${contract.clientName ? ` — ${contract.clientName}` : ""}` }))} testId="accounting-owner-contract-picker" />}
-            {!requiresBill && kind === "advance_payment" && <PickerField label="عقد المقاول الباطن" value={subcontractorContractId} onValueChange={setSubcontractorContractId} placeholder="اختر عقداً" items={options.subcontractorContracts.map((contract) => ({ value: String(contract.id), label: contract.contractNumber }))} testId="accounting-subcontractor-contract-picker" />}
+             ]} testId="accounting-settlement-kind" />
+             <label className="text-sm">المبلغ<Input type="number" min="0.01" step="0.01" value={amount} onChange={(e) => { amountSelectionRef.current++; setAmount(e.target.value); }} /></label>
+             {requiresBill && <PickerField label="المستخلص المعتمد" value={billId} onValueChange={selectBill} placeholder="اختر مستخلصاً" items={approvedBills.map((bill) => ({ value: String(bill.id), label: `${bill.billNumber} — محتجز ${bill.retentionAmount}` }))} testId="accounting-bill-picker" />}
+             {!requiresBill && kind === "advance_receipt" && <PickerField label="عقد المالك" value={ownerContractId} onValueChange={value => void selectAdvanceContract(value, "receipt")} placeholder="اختر عقداً" items={options.ownerContracts.map((contract) => ({ value: String(contract.id), label: `${contract.contractNumber}${contract.clientName ? ` — ${contract.clientName}` : ""}` }))} testId="accounting-owner-contract-picker" />}
+             {!requiresBill && kind === "advance_payment" && <PickerField label="عقد المقاول الباطن" value={subcontractorContractId} onValueChange={value => void selectAdvanceContract(value, "payment")} placeholder="اختر عقداً" items={options.subcontractorContracts.map((contract) => ({ value: String(contract.id), label: contract.contractNumber }))} testId="accounting-subcontractor-contract-picker" />}
             <label className="text-sm">التاريخ<Input type="date" value={settlementDate} onChange={(e) => setSettlementDate(e.target.value)} /></label>
             <PickerField label="طريقة السداد" value={paymentType} onValueChange={(value) => { setPaymentType(value as "cash" | "bank"); setTreasuryId(""); }} items={[
               { value: "cash", label: "نقدي — خزنة" },

@@ -406,7 +406,7 @@ router.get("/settlement-candidates", async (req, res) => {
     }).from(paymentVoucherLinesTable)
       .where(and(
         inArray(paymentVoucherLinesTable.voucherId, ids),
-        sql`${paymentVoucherLinesTable.purchaseInvoiceId} IS NOT NULL`,
+        sql`(${paymentVoucherLinesTable.purchaseInvoiceId} IS NOT NULL OR ${paymentVoucherLinesTable.contractingKind} IS NOT NULL)`,
       ))
       .groupBy(paymentVoucherLinesTable.voucherId);
     const linkRows = await db.select({
@@ -496,15 +496,15 @@ router.post("/:id/apply-settlement", async (req, res) => {
       if (v.purchaseInvoiceId != null) {
         throw Object.assign(new Error("هذا السند مرتبط بفاتورة من رأس السند بالفعل"), { httpStatus: 409 });
       }
-      // Allocation LINES linked to invoices consume part of the voucher —
-      // they no longer block; their amounts are subtracted from المتاح below.
+      // Invoice and contracting allocation lines both consume voucher capacity;
+      // ordinary unallocated lines remain eligible for invoice settlement.
       const invLineRows = await tx.select({
         amount: paymentVoucherLinesTable.amount,
         taxAmount: paymentVoucherLinesTable.taxAmount,
       }).from(paymentVoucherLinesTable)
         .where(and(
           eq(paymentVoucherLinesTable.voucherId, vid),
-          sql`${paymentVoucherLinesTable.purchaseInvoiceId} IS NOT NULL`,
+          sql`(${paymentVoucherLinesTable.purchaseInvoiceId} IS NOT NULL OR ${paymentVoucherLinesTable.contractingKind} IS NOT NULL)`,
         ));
       // Payment lines allocate net + VAT (header amount = net + tax).
       const lineConsumedDoc = invLineRows.reduce((s, r) =>
@@ -560,7 +560,7 @@ router.post("/:id/apply-settlement", async (req, res) => {
         throw Object.assign(new Error("مبلغ السند يجب أن يكون أكبر من صفر"), { httpStatus: 400 });
       }
 
-      // سداد جزئي: available = voucher amount − invoice-linked allocation
+      // سداد جزئي: available = voucher amount − invoice/contracting allocation
       // lines − partial links already consumed (any invoice). للسند بلا جهة:
       // الأساس سطور حساب المورد فقط، والمستهلَك من السطور سطور المورد المرتبطة.
       const linksConsumedDoc = await sumConsumedFromSource(cid, "payment_voucher", vid, tx);
@@ -1330,7 +1330,7 @@ router.put("/:id", async (req, res) => {
     if (linksConsumed > 0.005) {
       const newTotal = parseFloat(String(headerAmount ?? "0")) || 0;
       const newLineAlloc = (lines ?? [])
-        .filter((l) => l.purchaseInvoiceId)
+        .filter((l) => l.purchaseInvoiceId || l.contractingAllocation)
         .reduce((s, l) => s + l.amount + l.taxAmount, 0);
       if (newLineAlloc + linksConsumed > newTotal + 0.005) {
         res.status(400).json({ error: `لا يمكن تخفيض السند: ${linksConsumed.toFixed(2)} منه مستهلك كسداد جزئي لفواتير — فُكّ الارتباط أولاً` });

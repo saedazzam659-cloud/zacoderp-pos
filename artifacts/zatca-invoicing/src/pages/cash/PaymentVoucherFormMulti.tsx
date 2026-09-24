@@ -17,6 +17,7 @@ import { renameArchivedKey } from "@/lib/localArchive";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ArrowUpCircle, ArrowRight, ChevronLeft, Search,
@@ -269,6 +270,13 @@ export default function PaymentVoucherForm() {
   const h = { Authorization: `Bearer ${token}` };
 
   const [form, setForm] = useState<FormState>(() => ({ ...EMPTY, lines: [newPvLine()] }));
+  const [contractingEnabled, setContractingEnabled] = useState(false);
+  function toggleContracting(checked: boolean) {
+    if (!checked && form.lines.some(l => l.contractingAllocation) &&
+        !window.confirm("سيتم حذف روابط المقاولات من بنود السند. يلزم اختيار حساب محاسبي لكل بند بعد ذلك. هل تريد المتابعة؟")) return;
+    if (!checked) setForm(p => ({ ...p, lines: p.lines.map(l => ({ ...l, contractingAllocation: null })) }));
+    setContractingEnabled(checked);
+  }
 
   // ── Sequence preview for new vouchers ───────────────────────────
   const seqPeek = useNextSequenceNumber("payment_voucher", isNew, undefined, undefined, form.paymentType);
@@ -463,6 +471,7 @@ export default function PaymentVoucherForm() {
       costCenter: existing.costCenter ?? "",
       lines,
     });
+    setContractingEnabled(lines.some(l => !!l.contractingAllocation));
   }, [existing]);
   const contractingPrefillDone = useRef(false);
   useEffect(() => {
@@ -472,6 +481,7 @@ export default function PaymentVoucherForm() {
     contractingPrefillDone.current = true;
     setForm(p => ({ ...p, entityId: String(supplier.id), entityName: supplier.nameAr || supplier.nameEn || supplier.name || "",
       lines: [newPvLine({ contractingAllocation: contractingPrefill.allocation, amount: contractingPrefill.amount })] }));
+    setContractingEnabled(true);
   }, [contractingPrefill, suppliers]);
 
   // ── Default input-VAT account (optional per-line override prefill) ──
@@ -682,6 +692,7 @@ export default function PaymentVoucherForm() {
       // != 0. A negative direct line is an accounting credit (for example,
       // deducting an employee advance from the cash actually paid).
       const kept = form.lines.filter(l => l.accountId || l.contractingAllocation || (Number(l.amount) || 0) !== 0);
+      if (!contractingEnabled && kept.some(l => l.contractingAllocation)) throw new Error("أعد اختيار حساب لكل بند بعد تعطيل توزيع المقاولات");
       if (kept.length === 0)
         throw new Error(t(`${NS}.linesRequired`, "يجب إضافة بند واحد على الأقل"));
       for (const l of kept) {
@@ -729,7 +740,7 @@ export default function PaymentVoucherForm() {
         costCenter:        l.costCenter || null,
         branchId:          form.branchId ? parseInt(form.branchId) : null,
         purchaseInvoiceId: l.contractingAllocation ? null : l.purchaseInvoiceId ? parseInt(l.purchaseInvoiceId) : null,
-        ...(l.contractingAllocation ? { contractingAllocation: l.contractingAllocation } : {}),
+        contractingAllocation: contractingEnabled ? l.contractingAllocation : null,
         supplierName:          l.supplierName?.trim() || null,
         supplierVatNumber:     l.supplierVatNumber?.trim() || null,
         supplierInvoiceNumber: l.supplierInvoiceNumber?.trim() || null,
@@ -1187,6 +1198,10 @@ export default function PaymentVoucherForm() {
                       );
                     })()}
                   </div>
+                  <label className="flex items-center gap-2 self-end h-9 text-sm font-medium cursor-pointer">
+                    <Checkbox checked={contractingEnabled} onCheckedChange={value => toggleContracting(value === true)} data-testid="pv-contracting-toggle" />
+                    توزيع مقاولات
+                  </label>
                 </div>
               </CardContent>
             </Card>
@@ -1202,7 +1217,12 @@ export default function PaymentVoucherForm() {
                   onValueChange={v => {
                     const supplier = suppliers.find((s: any) => String(s.id) === v);
                     setForm(p => ({ ...p, entityId: v, entityName: supplier?.nameAr || supplier?.nameEn || supplier?.name || "",
-                      lines: p.entityId === v ? p.lines : p.lines.map(l => ({ ...l, contractingAllocation: null })) }));
+                      lines: p.entityId === v ? p.lines : p.lines.map(l => ({
+                        ...l, purchaseInvoiceId: "",
+                        amount: l.contractingAllocation ? "" : l.amount,
+                        contractingAllocation: l.contractingAllocation
+                          ? { kind: l.contractingAllocation.kind, projectId: 0, contractId: 0 } : null,
+                      })) }));
                   }}
                   placeholder="اختر المورد" searchPlaceholder="بحث عن مورد..." />
               </CardContent>
@@ -1741,13 +1761,14 @@ export default function PaymentVoucherForm() {
                                   <option value="employee_custody">{t(`${NS}.opEmployeeCustody`, "عهدة موظف")}</option>
                                 </select>
                               ) : null}
-                              <VoucherContractingAllocation direction="payment" entityId={form.entityId}
+                              {contractingEnabled && <VoucherContractingAllocation direction="payment" entityId={form.entityId}
                                 value={l.contractingAllocation} lineAmount={l.amount} disabled={isLockedSourceEntry}
+                                onAmountSuggested={amount => updateLine(l.key, { amount })}
                                 otherAllocated={form.lines.filter(other => other.key !== l.key && other.contractingAllocation?.billId &&
                                   other.contractingAllocation.billId === l.contractingAllocation?.billId).reduce((sum, other) => sum + (Number(other.amount) || 0), 0)}
-                                onChange={allocation => updateLine(l.key, { contractingAllocation: allocation, accountId: "",
-                                  purchaseInvoiceId: "", opType: "direct", taxRate: "0", taxAmount: "0.00", taxAccountId: "",
-                                  supplierName: "", supplierVatNumber: "", supplierInvoiceNumber: "", supplierInvoiceDate: "" })} />
+                                onChange={allocation => updateLine(l.key, { contractingAllocation: allocation,
+                                  ...(allocation ? { accountId: "", purchaseInvoiceId: "", opType: "direct" as const, taxRate: "0", taxAmount: "0.00", taxAccountId: "",
+                                    supplierName: "", supplierVatNumber: "", supplierInvoiceNumber: "", supplierInvoiceDate: "" } : {}) })} />}
 
                               {/* running line total */}
                               <div className="flex flex-wrap items-center gap-2">

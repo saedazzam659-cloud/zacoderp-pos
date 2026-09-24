@@ -45,9 +45,12 @@ export async function resolveContractingLine(tx: any, companyId: number, voucher
   if (req?.voucherBranchId != null && project.branch_id != null &&
     Number(req.voucherBranchId) !== Number(project.branch_id)) fail("فرع السند لا يطابق فرع المشروع");
   const contract = owner
-    ? rows(await tx.execute(sql`SELECT c.id, c.customer_id AS party_id, c.advance_payment, c.status
-      FROM contracting_owner_contracts c WHERE c.id = ${allocation.contractId}
-      AND c.project_id = ${allocation.projectId} AND c.company_id = ${companyId}`))[0]
+    ? rows(await tx.execute(sql`SELECT c.id, COALESCE(c.customer_id, p.customer_id) AS party_id, c.advance_payment, c.status
+       FROM contracting_owner_contracts c JOIN contracting_projects p
+         ON p.id = c.project_id AND p.company_id = c.company_id
+       JOIN customers x ON x.id = COALESCE(c.customer_id, p.customer_id) AND x.company_id = c.company_id
+       WHERE c.id = ${allocation.contractId}
+       AND c.project_id = ${allocation.projectId} AND c.company_id = ${companyId}`))[0]
     : rows(await tx.execute(sql`SELECT c.id, p.supplier_id AS party_id, c.advance_payment, c.status
       FROM contracting_sub_contracts c
       JOIN contracting_contractors p ON p.id = c.contractor_id AND p.company_id = c.company_id
@@ -73,12 +76,19 @@ export async function resolveContractingLine(tx: any, companyId: number, voucher
 export async function contractingVoucherOptions(companyId: number, voucher: "receipt" | "payment", partyId: number, req: any) {
   await ensureContractingAccountingTables();
   const owner = voucher === "receipt";
+  // Project ownership is an explicit ID link independently of any owner contract.
+  // Legacy name snapshots are deliberately never used to infer a customer.
+  const ownedProjects = owner ? rows(await db.execute(sql`SELECT p.id, p.name_ar AS "nameAr", p.branch_id AS "branchId"
+    FROM contracting_projects p JOIN customers x ON x.id = p.customer_id AND x.company_id = p.company_id
+    WHERE p.company_id = ${companyId} AND p.customer_id = ${partyId}`)) : [];
   const contracts = owner
     ? rows(await db.execute(sql`SELECT c.id, c.project_id AS "projectId", c.contract_number AS "contractNumber",
       c.advance_payment AS "advancePayment", c.status, p.branch_id AS "branchId",
       p.name_ar AS "projectName"
       FROM contracting_owner_contracts c JOIN contracting_projects p ON p.id = c.project_id
-      WHERE c.company_id = ${companyId} AND p.company_id = ${companyId} AND c.customer_id = ${partyId}
+      JOIN customers x ON x.id = COALESCE(c.customer_id, p.customer_id) AND x.company_id = c.company_id
+      WHERE c.company_id = ${companyId} AND p.company_id = ${companyId}
+      AND (c.customer_id = ${partyId} OR (c.customer_id IS NULL AND p.customer_id = ${partyId}))
       AND c.status IN ('active','completed')`))
     : rows(await db.execute(sql`SELECT c.id, c.project_id AS "projectId", c.contract_number AS "contractNumber",
       c.advance_payment AS "advancePayment", c.status, p.branch_id AS "branchId",
@@ -122,10 +132,18 @@ export async function contractingVoucherOptions(companyId: number, voucher: "rec
       AND ${owner ? sql`owner_contract_id` : sql`subcontractor_contract_id`} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
       AND kind = ${owner ? "advance_receipt" : "advance_payment"} AND status = 'posted'
     GROUP BY ${owner ? sql`owner_contract_id` : sql`subcontractor_contract_id`}`)) : [];
-  const used = new Map(advanceUsed.map((r) => [Number(r.id), Number(r.amount)]));
+  const used = new Map(advanceUsed.map((r) => [Number(r.id), exactCents(r.amount)]));
+  const projects = owner
+    ? ownedProjects.filter((p) => { try { assertProjectBranchAccess(req, p.branchId); return true; } catch { return false; } })
+      .map((p) => ({ id: Number(p.id), nameAr: p.nameAr }))
+    : [];
   return {
-    projects: [...new Map(allowed.map((c) => [Number(c.projectId), { id: Number(c.projectId), nameAr: c.projectName }])).values()],
-    contracts: allowed.map((c) => ({ ...c, remainingAmount: Math.max(0, Number(c.advancePayment) - (used.get(Number(c.id)) ?? 0)) })),
+    projects: [...new Map([...projects, ...allowed.map((c) => ({ id: Number(c.projectId), nameAr: c.projectName }))]
+      .map((p) => [p.id, p])).values()],
+    contracts: allowed.map((c) => {
+      const remaining = exactCents(c.advancePayment) - (used.get(Number(c.id)) ?? 0n);
+      return { ...c, remainingAmount: Number(remaining > 0n ? remaining : 0n) / 100 };
+    }),
     bills,
   };
 }

@@ -17,6 +17,12 @@ Contracting cash allocations are optional additions to the existing multiple rec
 
 **How to apply:** Reuse the voucher's single journal when linking posted allocations into contracting balances; never post another cash journal. Preserve direct historical settlements, enforce exact party/contract links, and keep bill approval distinct from cash payment. Guard unposting of advances already consumed by later certificates.
 
+Keep project visibility separate from contract eligibility for cash allocation.
+
+**Why:** A project can be explicitly linked to the selected customer while lacking an eligible contract. Hiding it makes the valid customer/project link appear broken.
+
+**How to apply:** Show explicitly linked projects in authorized scope, but require an eligible contract before posting. Only a missing contract customer may inherit the project's explicit customer; never override a different explicit contract customer or infer identity from names.
+
 **Why:** Selecting an inventory item or marking a resource allocated must not silently consume stock or create costs.
 
 **How to apply:** Use real item-owned conversion snapshots and warehouse scope. Unsupported lot/costing paths must fail clearly rather than silently substitute weighted-average costing.
