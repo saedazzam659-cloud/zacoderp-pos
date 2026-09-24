@@ -448,7 +448,7 @@ export async function serveAgentRequestAfterSchemaReady(
   if (!result.ok) {
     res.setHeader("Retry-After", "5");
     res.status(503).json({
-      error: "تعذّر تجهيز قاعدة بيانات الشركة بأمان — لم يُنفّذ الطلب",
+      error: "تعذّر تجهيز قاعدة بيانات الشركة بأمان — لم يُنفّذ الطلب. أعد المحاولة، وإن استمر التعذّر فتواصل مع مسؤول النظام لمراجعة تحديث قاعدة بيانات الوكيل (AGENT_SCHEMA_FAILED).",
       code: "AGENT_SCHEMA_FAILED",
       agentSchemaFailed: true,
       retryAfterSeconds: 5,

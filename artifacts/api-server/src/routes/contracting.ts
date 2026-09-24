@@ -6,7 +6,7 @@
 // the frontend formats with toLocaleString. Dates as YYYY-MM-DD.
 // End route overview
 import { Router } from "express";
-import { db } from "@workspace/db";
+import { db, getActiveExternalDb } from "@workspace/db";
 import {
   contractingProjectsTable,
   contractingContractorsTable,
@@ -32,6 +32,7 @@ import { branchScopeSpread, extractAuth, getAllowedBranchIds, resolveCompanyId }
 import { canAccessModule, requirePermission } from "../middleware/permissions.js";
 import {
   contractingBranchAllowed,
+  contractingLoadError,
   contractingMutationAction,
   contractingWarehouseError,
 } from "../lib/contracting-security.js";
@@ -102,16 +103,21 @@ router.use((req, res, next) => {
 });
 router.use(async (_req, res, next) => {
   try {
-    await ensureContractingBoqTables();
-    await ensureContractingProjectIntegrity();
-    // This runs against the ambient request database. Do not replace it with a
-    // central-only boot promise: external tenant databases require the same
-    // additive readiness before any execution query references new columns.
-    await ensureContractingExecutionSchema();
-    await ensureContractingGuaranteeTables();
+    // The central BOQ definition is managed by Publish; ensureSchema
+    // reconciles columns and project integrity/trigger at startup. Execution
+    // and guarantee tables are reconciled in that shared pass too. Avoid
+    // running DDL on every central read. Agents still use their own additive
+    // readiness against the active external database.
+    if (getActiveExternalDb()) {
+      await ensureContractingBoqTables();
+      await ensureContractingProjectIntegrity();
+      await ensureContractingExecutionSchema();
+      await ensureContractingGuaranteeTables();
+    }
     next();
   } catch (caught) {
-    next(caught);
+    console.error("[contracting] schema readiness failed", caught);
+    res.status(503).json({ error: contractingLoadError(caught, "تعذر تجهيز بيانات المقاولات") });
   }
 });
 router.use(requirePermission("contracting", "view"));
@@ -978,7 +984,8 @@ router.get("/projects", async (req, res) => {
       (r.location ?? "").toLowerCase().includes(search));
     res.json(rows);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "خطأ" });
+    console.error("[contracting] projects read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل المشاريع") });
   }
 });
 
@@ -1029,7 +1036,8 @@ router.get("/projects/options", async (req, res) => {
       integrityDiagnostics,
     });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "خطأ" });
+    console.error("[contracting] project options read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل خيارات المشاريع") });
   }
 });
 
@@ -1045,7 +1053,8 @@ router.get("/projects/:id", async (req, res) => {
     }
     res.json(row);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "خطأ" });
+    console.error("[contracting] project read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل المشروع") });
   }
 });
 
@@ -1357,7 +1366,10 @@ router.get("/projects/:projectId/work-items", async (req, res) => {
       res.status(projectErrorStatus(projectError)).json({ error: projectError }); return;
     }
     res.json(await listExecutionWorkItems(cid, projectId));
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    console.error("[contracting] work items read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل بنود التنفيذ") });
+  }
 });
 
 router.post("/projects/:projectId/work-items", async (req, res) => {
@@ -1596,7 +1608,8 @@ router.get("/resources/inventory-options", async (req, res) => {
       balances,
     });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "خطأ" });
+    console.error("[contracting] resource inventory options read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل خيارات مخزون الموارد") });
   }
 });
 
@@ -1661,7 +1674,10 @@ router.get("/resources", async (req, res) => {
       warehouseNameAr: row.warehouseNameAr,
       availableStockBase: row.availableStockBase ?? null,
     })));
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    console.error("[contracting] resources read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل موارد المشروع") });
+  }
 });
 
 router.post("/resources", async (req, res) => {
@@ -1925,7 +1941,10 @@ router.get("/projects/:projectId/owner-contracts", async (req, res) => {
       ))
       .orderBy(desc(contractingOwnerContractsTable.contractDate));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    console.error("[contracting] owner contracts read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل عقود المالك") });
+  }
 });
 
 router.post("/projects/:projectId/owner-contracts", async (req, res) => {
@@ -2360,7 +2379,10 @@ router.get("/projects/:projectId/sub-contracts", async (req, res) => {
       ))
       .orderBy(desc(contractingSubContractsTable.contractDate));
     res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    console.error("[contracting] subcontracts read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل عقود الباطن") });
+  }
 });
 
 router.post("/projects/:projectId/sub-contracts", async (req, res) => {
@@ -2915,7 +2937,8 @@ router.get("/guarantees/options", async (req, res) => {
       : [];
     res.json({ banks, customers });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "تعذر تحميل خيارات الضمانات" });
+    console.error("[contracting] guarantee options read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل خيارات الضمانات") });
   }
 });
 
@@ -2949,7 +2972,8 @@ router.get("/tenders", async (req, res) => {
     `));
     res.json(rows);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "تعذر تحميل المناقصات" });
+    console.error("[contracting] tenders read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل المناقصات") });
   }
 });
 
@@ -3230,7 +3254,8 @@ router.get("/guarantees", async (req, res) => {
     `));
     res.json(rows);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "تعذر تحميل خطابات الضمان" });
+    console.error("[contracting] guarantees read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل خطابات الضمان") });
   }
 });
 
@@ -3483,7 +3508,8 @@ router.get("/contracts/:kind/:id/guarantee-summary", async (req, res) => {
       rows,
     });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "تعذر تحميل ملخص ضمانات العقد" });
+    console.error("[contracting] contract guarantee summary read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل ملخص ضمانات العقد") });
   }
 });
 
@@ -3521,7 +3547,8 @@ router.get("/guarantees/report", async (req, res) => {
     `));
     res.json(rows);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "تعذر تحميل تقرير الضمانات" });
+    console.error("[contracting] guarantee report read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل تقرير الضمانات") });
   }
 });
 
@@ -3552,7 +3579,8 @@ router.get("/guarantees/:id", async (req, res) => {
     if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
     res.json(row);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "تعذر تحميل خطاب الضمان" });
+    console.error("[contracting] guarantee read failed", e);
+    res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل خطاب الضمان") });
   }
 });
 

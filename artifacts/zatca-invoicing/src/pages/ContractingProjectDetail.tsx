@@ -26,7 +26,7 @@ import ContractingCostAllocations from "@/components/ContractingCostAllocations"
 import ContractingGuaranteesPanel from "@/components/ContractingGuaranteesPanel";
 import ExecutionPlanningPanel from "@/components/ExecutionPlanningPanel";
 import ContractingBillDetailEditor from "@/components/ContractingBillDetailEditor";
-import ContractingContractBoqEditor from "@/components/ContractingContractBoqEditor";
+import ContractingContractBoqEditor, { type PendingContractBoqLine } from "@/components/ContractingContractBoqEditor";
 import { ContractingArchiveAction } from "@/components/ContractingArchiveAction";
 import ContractingProjectScope from "@/components/ContractingProjectScope";
 import ContractingAdvanceRecoveryFields, { type AdvanceRecoveryPolicy } from "@/components/ContractingAdvanceRecoveryFields";
@@ -1571,7 +1571,9 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
   const [rows, setRows] = useState<OwnerContract[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<OwnerContract> | null>(null);
+  const [pendingBoqLines, setPendingBoqLines] = useState<PendingContractBoqLine[] | null>(null);
   const createRequestId = useRef<string | null>(null);
+  const persistedContractId = useRef<number | null>(null);
   const saveInFlight = useRef(false);
   const [saving, setSaving] = useState(false);
 
@@ -1600,10 +1602,10 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
     saveInFlight.current = true;
     setSaving(true);
     try {
-      const isEdit = (editing as any).id != null;
+      const isEdit = editing.id != null || persistedContractId.current != null;
       if (!isEdit) createRequestId.current ??= crypto.randomUUID();
       const url = isEdit
-        ? `${API}/api/contracting/owner-contracts/${(editing as any).id}`
+        ? `${API}/api/contracting/owner-contracts/${editing.id ?? persistedContractId.current}`
         : `${API}/api/contracting/projects/${projectId}/owner-contracts`;
       const r = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
@@ -1611,9 +1613,68 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
         body: JSON.stringify(isEdit ? editing : { ...editing, clientRequestId: createRequestId.current }),
       });
       if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
+      const saved = await r.json() as OwnerContract;
+      const contractId = isEdit ? Number(editing.id ?? persistedContractId.current) : saved.id;
+      if (!Number.isInteger(contractId) || contractId <= 0) throw new Error("تعذر تحديد العقد المحفوظ");
+      persistedContractId.current = contractId;
       createRequestId.current = null;
-      setEditing(null); await load();
-    } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
+      if (!isEdit) setEditing({ ...editing, id: contractId });
+      // Persist each proposed line once. A failed line keeps the saved contract
+      // open and leaves only uncommitted drafts for a deliberate retry.
+      for (const line of pendingBoqLines ?? []) {
+        const lineBody = {
+            direction: "owner", ownerContractId: contractId,
+            workItemId: Number(line.workItemId), lineCode: line.lineCode,
+            description: line.description, unit: line.unit,
+            quantity: line.quantity, unitPrice: line.unitPrice,
+            baseLineId: ["change_order", "addendum"].includes(String(editing.contractType)) && line.baseLineId ? Number(line.baseLineId) : null,
+            quantityDelta: line.baseLineId ? line.quantityDelta : null,
+            unitPriceDelta: line.baseLineId ? line.unitPriceDelta : null,
+            unitPriceOverride: line.baseLineId && line.unitPriceOverride ? line.unitPriceOverride : null,
+        };
+        try {
+          const lineResponse = await fetch(`${API}/api/contracting/projects/${projectId}/boq-lines`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(lineBody),
+          });
+          if (!lineResponse.ok) throw new Error((await lineResponse.json().catch(() => ({}))).error || `HTTP ${lineResponse.status}`);
+        } catch (error) {
+          // BOQ POST has no idempotency key. On a lost response (or 409 after
+          // one), confirm the exact saved line before marking this draft done.
+          const existingResponse = await fetch(`${API}/api/contracting/projects/${projectId}/boq-lines?direction=owner&ownerContractId=${contractId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!existingResponse.ok) throw error;
+          const existing = await existingResponse.json() as Array<typeof lineBody>;
+          const matches = Array.isArray(existing) && existing.some(row =>
+            row.workItemId === lineBody.workItemId
+            && (row.lineCode ?? "") === lineBody.lineCode.trim()
+            && (row.description ?? "") === lineBody.description.trim()
+            && row.unit === lineBody.unit
+            && Number(row.quantity) === Number(lineBody.quantity)
+            && Number(row.unitPrice) === Number(lineBody.unitPrice)
+            && row.baseLineId === lineBody.baseLineId
+            && Number(row.quantityDelta ?? 0) === Number(lineBody.quantityDelta ?? 0)
+            && Number(row.unitPriceDelta ?? 0) === Number(lineBody.unitPriceDelta ?? 0)
+            && Number(row.unitPriceOverride ?? 0) === Number(lineBody.unitPriceOverride ?? 0),
+          );
+          if (!matches) throw error;
+        }
+        setPendingBoqLines(current => (current ?? []).slice(1));
+      }
+      persistedContractId.current = null;
+      setEditing(null);
+      void load();
+    } catch (e: any) {
+      toast({
+        title: persistedContractId.current
+          ? "حُفظ العقد، لكن تعذر حفظ بعض بنوده. بقيت البنود غير المحفوظة في النموذج لإعادة المحاولة."
+          : "تعذر حفظ عقد المالك",
+        description: e?.message,
+        variant: "destructive",
+      });
+    }
     finally { saveInFlight.current = false; setSaving(false); }
   }
   async function del(id: number) {
@@ -1625,6 +1686,8 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
   function openNew() {
     if (saveInFlight.current) return;
     createRequestId.current = null;
+    persistedContractId.current = null;
+    setPendingBoqLines(null);
     setEditing({
       contractNumber: "", contractDate: new Date().toISOString().slice(0,10),
       contractType: rows.length === 0 ? "main" : "change_order",
@@ -1693,7 +1756,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
                     companyName={user?.company?.nameAr || user?.company?.nameEn}
                     className="h-8 gap-1.5 text-xs"
                   />
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(c)}><Pencil className="h-4 w-4" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => { persistedContractId.current = null; setPendingBoqLines([]); setEditing(c); }}><Pencil className="h-4 w-4" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                 </TableCell>
               </TableRow>
@@ -1784,11 +1847,10 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
           </div>
           <ContractingAdvanceRecoveryFields value={editing} disabled={saving}
             onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
-          {editing.id != null ? (
-            <ContractingContractBoqEditor key={`${projectId}:owner:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="owner"
-              contractId={editing.id} contractType={editing.contractType}
-              parentContractId={editing.parentContractId ?? null} />
-          ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنوده وربطها ببنود تنفيذ المشروع بكميات وأسعار هذا العقد.</p>}
+          <ContractingContractBoqEditor key={`${projectId}:owner:${editing.id ?? "new"}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="owner"
+            contractId={editing.id ?? null} contractType={editing.contractType}
+            parentContractId={editing.parentContractId ?? null}
+            pendingLines={pendingBoqLines} onPendingLinesChange={setPendingBoqLines} />
           {editing.id != null && (
             <details className="rounded-lg border bg-background">
               <summary className="cursor-pointer px-4 py-3 font-medium">
@@ -1806,7 +1868,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
           )}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button disabled={saving} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
+            <Button disabled={saving || pendingBoqLines === null} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
           </div>
         </div>
       )}

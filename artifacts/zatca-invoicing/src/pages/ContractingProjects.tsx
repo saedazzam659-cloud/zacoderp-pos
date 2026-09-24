@@ -100,6 +100,9 @@ export default function ContractingProjects() {
     if (!token) return;
     setBranchesLoading(true);
     setBranchesError(null);
+    // Never expose a previous tenant's picker data while a new scope loads.
+    setBranches([]);
+    setProjectOptions([]);
     try {
       const response = await fetch(`${API}/api/contracting/projects/options`, {
         headers: requestHeaders(),
@@ -122,6 +125,8 @@ export default function ContractingProjects() {
   }, [requestHeaders, t, token]);
 
   useEffect(() => { void loadBranches(); }, [loadBranches]);
+  // A dialog opened later must see projects created in other sessions as well.
+  useEffect(() => { if (editingOpen) void loadBranches(); }, [editingOpen, loadBranches]);
 
   useEffect(() => {
     if (!editingOpen || !token || !companyId) {
@@ -215,7 +220,7 @@ export default function ContractingProjects() {
         ? t("contracting.projects.updated", "تم تحديث المشروع")
         : t("contracting.projects.created", "تم إنشاء المشروع") });
       setEditing(null);
-      await load();
+       await Promise.all([load(), loadBranches()]);
      } catch (e: any) {
        toast({
          title: e?.status === 409
@@ -237,7 +242,7 @@ export default function ContractingProjects() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       toast({ title: t("contracting.projects.deleted", "تم حذف المشروع") });
       setDeleting(null);
-      await load();
+       await Promise.all([load(), loadBranches()]);
     } catch (e: any) {
       toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });
     }
@@ -356,17 +361,25 @@ export default function ContractingProjects() {
         }
       }
     }
+    const selectable = projectOptions
+      .filter(project =>
+        project.id !== editingId
+        && !descendants.has(project.id)
+        && (editing?.branchId == null || project.branchId === editing.branchId))
+      .map(project => ({
+        value: String(project.id),
+        label: `${project.code} — ${project.nameAr}`,
+      }));
+    const currentParentId = editing?.parentId;
     return [
       { value: "__root__", label: t("contracting.projects.rootProject", "مشروع رئيسي (بدون مشروع أب)") },
-      ...projectOptions
-        .filter(project =>
-          project.id !== editingId
-          && !descendants.has(project.id)
-          && (editing?.branchId == null || project.branchId === editing.branchId))
-        .map(project => ({
-          value: String(project.id),
-          label: `${project.code} — ${project.nameAr}`,
-        })),
+      ...selectable,
+      ...(currentParentId != null && !selectable.some(item => item.value === String(currentParentId))
+        ? [{
+          value: String(currentParentId),
+          label: `#${currentParentId} (${t("contracting.projects.parentUnavailable", "المشروع الأب المرتبط غير متاح للاختيار")})`,
+          disabled: true,
+        }] : []),
     ];
   }, [editing, projectOptions, t]);
 
@@ -469,7 +482,15 @@ export default function ContractingProjects() {
                 emptyText={t("contracting.projects.noParentProjects", "لا توجد مشاريع متاحة")}
                 testId="project-parent-picker"
                 openOnFocus={false}
+                disabled={branchesLoading || Boolean(branchesError)}
               />
+              {branchesLoading && <p className="text-xs text-muted-foreground">{t("contracting.projects.loadingParents", "جارٍ تحميل المشاريع المتاحة...")}</p>}
+              {branchesError && (
+                <p className="text-xs text-destructive" role="alert">
+                  {t("contracting.projects.parentsLoadError", "تعذر تحميل المشاريع المتاحة")}: {branchesError}
+                  <Button type="button" size="sm" variant="link" onClick={() => void loadBranches()}>{t("common.retry", "إعادة المحاولة")}</Button>
+                </p>
+              )}
               <p className="text-[11px] text-muted-foreground">
                 {t("contracting.projects.parentHint", "المشروع الفرعي يحتفظ بعقوده ومستخلصاته وتكاليفه بشكل مستقل.")}
               </p>

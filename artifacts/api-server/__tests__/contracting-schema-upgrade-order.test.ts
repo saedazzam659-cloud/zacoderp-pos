@@ -23,6 +23,16 @@ test("contracting tables are created in the shared pass before strict validation
   assert.ok(shared.indexOf("await ensureContractingCostCenterCompatibility()") < create);
 });
 
+test("agent BOQ creation precedes bill/accounting dependencies and strict validation", () => {
+  const boq = shared.indexOf("if (getActiveExternalDb()) await ensureContractingBoqTables()");
+  const billDetails = shared.indexOf("await ensureContractingBillDetailsTables()");
+  const accounting = shared.indexOf("await ensureContractingAccountingTables()");
+  const validate = shared.indexOf("const r = await ensureColumns(");
+  assert.ok(boq > 0 && boq < billDetails && billDetails < accounting && accounting < validate);
+  const earlierPass = source.slice(source.indexOf("async function runHeal("), activeRunHealStart);
+  assert.match(earlierPass, /if \(getActiveExternalDb\(\)\) await ensureContractingBoqTables\(\)/);
+});
+
 test("contracting integrity prerequisites precede column heal and validation follows it", () => {
   const prerequisite = shared.indexOf("await ensureContractingProjectIntegrityPrerequisites()");
   const columnHeal = shared.indexOf("const r = await ensureColumns(");
@@ -72,4 +82,22 @@ test("guarantee runtime DDL creates all external-agent composite targets first",
   }
   assert.ok(storage.indexOf("ctg_tender_company_project_id_uq") < storage.indexOf("ctg_guarantee_tender_project_fk"));
   assert.ok(storage.indexOf("ctg_guarantee_company_project_id_uq") < storage.indexOf("ctg_guarantee_parent_project_fk"));
+});
+
+test("WBS actual-cost reads do not perform central DDL", () => {
+  const service = readFileSync(new URL("../src/lib/contracting-cost-allocation-service.ts", import.meta.url), "utf8");
+  const start = service.indexOf("async function contractingExecutionActualCosts(");
+  const end = service.indexOf("const eventsResult = await db.execute(", start);
+  const readiness = service.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(readiness, /if \(getActiveExternalDb\(\)\) \{\s*await Promise\.all\(\[\s*ensureContractingCostAllocationTables\(\),\s*ensureContractingAccountingTables\(\)/);
+});
+
+test("contracting read middleware scopes additive DDL to external agents", () => {
+  const routes = readFileSync(new URL("../src/routes/contracting.ts", import.meta.url), "utf8");
+  const start = routes.indexOf("router.use(async (_req, res, next) => {");
+  const end = routes.indexOf("router.use(requirePermission(", start);
+  const readiness = routes.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(readiness, /if \(getActiveExternalDb\(\)\) \{\s*await ensureContractingBoqTables\(\);\s*await ensureContractingProjectIntegrity\(\);\s*await ensureContractingExecutionSchema\(\);\s*await ensureContractingGuaranteeTables\(\);/);
 });

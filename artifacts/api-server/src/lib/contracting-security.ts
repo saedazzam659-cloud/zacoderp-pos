@@ -3,6 +3,28 @@ import { requirePermission, type PermAction } from "../middleware/permissions.js
 import type { Request, Response, NextFunction } from "express";
 
 /**
+ * Database driver/ORM errors may include SQL text, identifiers or credentials.
+ * Return a stable, actionable message to contracting screens without echoing
+ * implementation details. The caller should still log the original exception.
+ */
+export function contractingLoadError(error: unknown, fallback: string): string {
+  let cursor: any = error;
+  const seen = new Set<object>();
+  for (let depth = 0; cursor && depth < 5; depth++) {
+    if (typeof cursor !== "object" || seen.has(cursor)) break;
+    seen.add(cursor);
+    if (cursor.code === "42P01" || cursor.code === "42703") {
+      return "تعذر تحميل البيانات بسبب عدم توافق الاستعلام مع بنية قاعدة البيانات. تواصل مع مسؤول النظام للتحقق من إصدار النظام وقاعدة البيانات ثم أعد المحاولة.";
+    }
+    if (cursor.code === "42501") {
+      return "تعذر تحميل البيانات بسبب صلاحيات قاعدة البيانات. تواصل مع مسؤول النظام.";
+    }
+    cursor = cursor.cause;
+  }
+  return `${fallback}. حاول مجدداً، وإذا استمر الخطأ تواصل مع مسؤول النظام.`;
+}
+
+/**
  * Contracting is branch-owned data.  Unlike company-wide catalog rows, a
  * project without a branch is not a usable fallback for a branch-restricted
  * user.  Keep this predicate pure so route guards can be unit-tested without

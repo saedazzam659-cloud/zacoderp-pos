@@ -1,4 +1,4 @@
-import { db, pool } from "@workspace/db";
+import { db, getActiveExternalDb, pool } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import type { AuthUser } from "../middleware/auth.js";
 import { contractingBranchAllowed } from "./contracting-security.js";
@@ -819,10 +819,15 @@ async function contractingExecutionActualCosts(input: {
     });
   }
   if (!input.workItemIds.length) return result;
-  await Promise.all([
-    ensureContractingCostAllocationTables(),
-    ensureContractingAccountingTables(),
-  ]);
+  // The central release schema is reconciled at bootstrap. A WBS GET must
+  // not depend on DDL permissions just to read posted cost sources. External
+  // agent databases retain additive first-use readiness, scoped to their DB.
+  if (getActiveExternalDb()) {
+    await Promise.all([
+      ensureContractingCostAllocationTables(),
+      ensureContractingAccountingTables(),
+    ]);
+  }
   const eventsResult = await db.execute(sql`
     WITH requested AS (
       SELECT id

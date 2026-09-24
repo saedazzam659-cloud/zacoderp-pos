@@ -159,11 +159,13 @@ function WorkItemsSection({ projectId, onChange, renderArchive }: ExecutionPlann
   const [editing, setEditing] = useState<Partial<WorkItem> | null>(null);
   const [analysis, setAnalysis] = useState<Partial<ResourceAnalysis> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [itemsResponse, resourcesResponse] = await Promise.all([
         fetch(`${API}/api/contracting/projects/${projectId}/work-items`, { headers }),
@@ -176,6 +178,7 @@ function WorkItemsSection({ projectId, onChange, renderArchive }: ExecutionPlann
       setRows(items);
       setResources(projectResources);
     } catch (error: any) {
+      setLoadError(error?.message || "تعذر تحميل خطة التنفيذ");
       toast({ title: "تعذر تحميل خطة التنفيذ", description: error?.message, variant: "destructive" });
     } finally {
       setLoading(false);
@@ -275,6 +278,10 @@ function WorkItemsSection({ projectId, onChange, renderArchive }: ExecutionPlann
   }
 
   return <div className="space-y-4">
+    {loadError && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+      تعذر تحميل بنود التنفيذ أو مواردها: {loadError}
+      <Button size="sm" variant="outline" className="ms-2" onClick={() => void load()}>إعادة المحاولة</Button>
+    </div>}
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
         <h3 className="font-bold">خطة التنفيذ و WBS ({rows.length})</h3>
@@ -380,7 +387,7 @@ function WorkItemsSection({ projectId, onChange, renderArchive }: ExecutionPlann
       <Table><TableHeader><TableRow><TableHead>WBS / البند</TableHead><TableHead>الميزانية</TableHead><TableHead>EV</TableHead><TableHead>AC</TableHead><TableHead>CPI</TableHead><TableHead>الانحراف</TableHead><TableHead>الإنجاز</TableHead><TableHead /></TableRow></TableHeader>
         <TableBody>
           {loading && !rows.length && <TableRow><TableCell colSpan={8}><Skeleton className="h-16" /></TableCell></TableRow>}
-          {!loading && !rows.length && <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">لا توجد بنود تنفيذ.</TableCell></TableRow>}
+           {!loading && !loadError && !rows.length && <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">لا توجد بنود تنفيذ.</TableCell></TableRow>}
           {rows.map(row => <TableRow key={row.id}>
             <TableCell className="font-medium">{row.nameAr}<div className="text-xs text-muted-foreground">{row.code || ""}</div></TableCell>
             <TableCell>{money(row.estimatedBudget)} ر.س</TableCell><TableCell>{money(row.earnedValue)}</TableCell>
@@ -412,17 +419,24 @@ function ResourcesSection({ projectId, onChange }: Pick<ExecutionPlanningPanelPr
   const [inventory, setInventory] = useState<InventoryOptions>({ items: [], warehouses: [], balances: [] });
   const [editing, setEditing] = useState<Partial<Resource> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [resourceResponse, inventoryResponse] = await Promise.all([
         fetch(`${API}/api/contracting/resources?projectId=${projectId}`, { headers }),
         fetch(`${API}/api/contracting/resources/inventory-options?projectId=${projectId}`, { headers }),
       ]);
-      setRows(await responseJson<Resource[]>(resourceResponse));
-      setInventory(await responseJson<InventoryOptions>(inventoryResponse));
+       const [projectResources, inventoryOptions] = await Promise.all([
+         responseJson<Resource[]>(resourceResponse),
+         responseJson<InventoryOptions>(inventoryResponse),
+       ]);
+       setRows(projectResources);
+       setInventory(inventoryOptions);
     } catch (error: any) {
+      setLoadError(error?.message || "تعذر تحميل موارد المشروع");
       toast({ title: "تعذر تحميل موارد المشروع", description: error?.message, variant: "destructive" });
     } finally { setLoading(false); }
   }, [headers, projectId, toast]);
@@ -465,6 +479,10 @@ function ResourcesSection({ projectId, onChange }: Pick<ExecutionPlanningPanelPr
     balance.itemId === Number(editing?.itemId)
     && balance.warehouseId === Number(editing?.warehouseId));
   return <div className="space-y-4">
+    {loadError && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+      تعذر تحميل موارد المشروع أو خيارات المخزون: {loadError}
+      <Button size="sm" variant="outline" className="ms-2" onClick={() => void load()}>إعادة المحاولة</Button>
+    </div>}
     <div className="flex items-center justify-between"><div><h3 className="font-bold">موارد المشروع ({rows.length})</h3>
       <p className="text-xs text-muted-foreground">التخطيط لا يصرف المخزون ولا ينشئ تكلفة فعلية أو قيداً.</p></div>
       <Button size="sm" onClick={() => setEditing({ name: "", type: "material", unit: "", qty: "0", unitCost: "0", status: "planned" })}><Plus className="me-1 h-4 w-4" />إضافة مورد</Button>
@@ -512,7 +530,7 @@ function ResourcesSection({ projectId, onChange }: Pick<ExecutionPlanningPanelPr
     </div>}
     <div className="overflow-x-auto rounded-lg border bg-background"><Table><TableHeader><TableRow><TableHead>المورد</TableHead><TableHead>النوع</TableHead><TableHead>الكمية</TableHead><TableHead>التكلفة المخططة</TableHead><TableHead>الحالة</TableHead><TableHead /></TableRow></TableHeader>
       <TableBody>{loading && !rows.length && <TableRow><TableCell colSpan={6}><Skeleton className="h-16" /></TableCell></TableRow>}
-        {!loading && !rows.length && <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">لا توجد موارد.</TableCell></TableRow>}
+         {!loading && !loadError && !rows.length && <TableRow><TableCell colSpan={6} className="py-8 text-center text-muted-foreground">لا توجد موارد.</TableCell></TableRow>}
         {rows.map(row => <TableRow key={row.id}><TableCell className="font-medium">{row.name}<div className="text-xs text-muted-foreground">{row.warehouseNameAr || ""}</div></TableCell>
           <TableCell><Badge variant="outline">{labels[row.type] ?? row.type}</Badge></TableCell><TableCell>{Number(row.qty).toLocaleString("en-US")} {row.unitNameAr ?? row.unit}</TableCell>
           <TableCell>{money(row.totalCost)} ر.س</TableCell><TableCell>{labels[row.status] ?? row.status}</TableCell>

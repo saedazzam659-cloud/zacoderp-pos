@@ -23,6 +23,12 @@ Preserve legacy project customer names without automatic name matching, and exte
 
 Project-centered contracting must reuse the existing owner/subcontract split and BOQ, not introduce parallel generic contract, payment-application, or execution-item systems. A bill's mandatory contract means exactly the appropriate side's contract, belonging to its project and tenant.
 
+Do not infer an owner contract's sale price from the execution item's estimated unit cost when suggesting BOQ lines.
+
+**Why:** Cost and commercial price have different accounting meanings. Automatically copying a planning estimate into a contract would silently choose a sale price the user never approved.
+
+**How to apply:** Suggest execution identity, quantity, and unit, but leave an unknown commercial price for explicit entry and explain that distinction beside the field. Never overwrite existing agreed prices.
+
 **Why:** The user explicitly forbids duplicate screens/data while requesting strict project ownership and independent owner/subcontract prices.
 
 **How to apply:** Keep subprojects independent for execution and posting; make parent rollups an explicit report scope. Preserve optional owner-line mapping without copying owner prices into subcontract costs.

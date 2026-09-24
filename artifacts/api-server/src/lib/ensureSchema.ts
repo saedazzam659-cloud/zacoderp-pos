@@ -1,4 +1,4 @@
-import { centralDb, db, pool } from "@workspace/db";
+import { centralDb, db, getActiveExternalDb, pool } from "@workspace/db";
 import * as schema from "@workspace/db";
 import { sql, is } from "drizzle-orm";
 import { PgTable, PgEnumColumn } from "drizzle-orm/pg-core";
@@ -7,6 +7,7 @@ import { PgEnum } from "drizzle-orm/pg-core";
 import { logger } from "./logger";
 import { reconcilePostgresSequences } from "./postgresSequenceReconciliation.js";
 import { ensureContractingBillDetailsTables } from "./contracting-bill-details-service.js";
+import { ensureContractingBoqTables } from "./contracting-boq-service.js";
 import { ensureContractingSettingsTable } from "./contracting-settings.js";
 import { ensureContractCreateIdempotencySchema } from "./contracting-contract-create-idempotency.js";
 import { ensureBillCreateIdempotencySchema } from "./contracting-bill-create-idempotency.js";
@@ -4370,6 +4371,11 @@ async function runHeal(options: {
   await ensureContractingCostCenterCompatibility();
   await ensureContractingAdvanceRecoveryCompatibility();
   await ensureContractingSettingsTable();
+  // A newly upgraded external-agent database may not yet contain the BOQ
+  // table. Accounting/cost-allocation DDL references it, and strict column
+  // validation cannot create a missing release-managed table. Central BOQ
+  // remains Publish-managed; do not create it as a new central migration here.
+  if (getActiveExternalDb()) await ensureContractingBoqTables();
   // Required application tables must exist on the active database BEFORE
   // generic validation. Keep this in the shared pass: startup, manual agent
   // upgrades and strict request readiness all use it (without a central-only
@@ -4485,6 +4491,7 @@ async function runHeal(options: {
   await ensureContractingCostCenterCompatibility();
   await ensureContractingAdvanceRecoveryCompatibility();
   await ensureContractingSettingsTable();
+  if (getActiveExternalDb()) await ensureContractingBoqTables();
   // Required application tables must exist on the active database BEFORE
   // generic validation. Keep this in the shared pass: startup, manual agent
   // upgrades and strict request readiness all use it (without a central-only

@@ -154,6 +154,7 @@ export default function ContractingGuaranteesPanel({
     || user?.permissions?.contracting?.approve === true;
   const [tab, setTab] = useState("guarantees");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [guarantees, setGuarantees] = useState<Guarantee[]>([]);
   const [tenders, setTenders] = useState<Tender[]>([]);
@@ -179,6 +180,7 @@ export default function ContractingGuaranteesPanel({
   const load = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const query = new URLSearchParams({ projectId: String(projectId) });
       if (contractKind) query.set("contractKind", contractKind);
@@ -203,6 +205,10 @@ export default function ContractingGuaranteesPanel({
       setSubcontracts(Array.isArray(subs) ? subs : []);
       setSummary(contractSummary);
     } catch (error: any) {
+      setLoadError(error?.message || "تعذر تحميل المناقصات والضمانات");
+      setGuarantees([]);
+      setTenders([]);
+      setSummary(null);
       toast({ title: "تعذر تحميل المناقصات والضمانات", description: error?.message, variant: "destructive" });
     } finally {
       setLoading(false);
@@ -325,6 +331,10 @@ export default function ContractingGuaranteesPanel({
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw className="me-1 h-4 w-4" /> تحديث</Button>
       </div>
+      {loadError && <div role="alert" className="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+        تعذر تحميل المناقصات أو خطابات الضمان: {loadError}
+        <Button size="sm" variant="outline" className="ms-2" onClick={() => void load()}>إعادة المحاولة</Button>
+      </div>}
 
       {contractKind && contractId && summary && (
         <div className="mb-3 grid gap-3 sm:grid-cols-3">
@@ -369,7 +379,8 @@ export default function ContractingGuaranteesPanel({
                 <TableHead>الانتهاء</TableHead><TableHead>الحالة</TableHead><TableHead />
               </TableRow></TableHeader>
               <TableBody>
-                {!loading && guarantees.length === 0 && <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">لا توجد خطابات ضمان ضمن النطاق المحدد</TableCell></TableRow>}
+                 {loading && guarantees.length === 0 && <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">جارٍ تحميل خطابات الضمان...</TableCell></TableRow>}
+                 {!loading && !loadError && guarantees.length === 0 && <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">لا توجد خطابات ضمان ضمن النطاق المحدد</TableCell></TableRow>}
                 {guarantees.map(row => <TableRow key={row.id}>
                   <TableCell className="font-medium">{row.guarantee_number}</TableCell>
                   <TableCell>{TYPE_LABEL[row.guarantee_type] ?? row.guarantee_type}</TableCell>
@@ -397,7 +408,8 @@ export default function ContractingGuaranteesPanel({
             <Table>
               <TableHeader><TableRow><TableHead>الرقم</TableHead><TableHead>العنوان</TableHead><TableHead>التاريخ</TableHead><TableHead>القيمة</TableHead><TableHead>الحالة</TableHead><TableHead>العقد المرسي</TableHead><TableHead /></TableRow></TableHeader>
               <TableBody>
-                {!loading && tenders.length === 0 && <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">لا توجد مناقصات لهذا المشروع</TableCell></TableRow>}
+                 {loading && tenders.length === 0 && <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">جارٍ تحميل المناقصات...</TableCell></TableRow>}
+                 {!loading && !loadError && tenders.length === 0 && <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">لا توجد مناقصات لهذا المشروع</TableCell></TableRow>}
                 {tenders.map(row => <TableRow key={row.id}>
                   <TableCell className="font-medium">{row.tender_number}</TableCell><TableCell>{row.title}</TableCell>
                   <TableCell>{row.tender_date}</TableCell><TableCell>{Number(row.estimated_value).toLocaleString("en-US")}</TableCell>

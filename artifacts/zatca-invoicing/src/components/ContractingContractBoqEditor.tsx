@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,8 @@ type Draft = {
   unitPriceOverride: string;
 };
 
+export type PendingContractBoqLine = Draft;
+
 function emptyDraft(): Draft {
   return {
     workItemId: "",
@@ -86,15 +88,19 @@ export default function ContractingContractBoqEditor({
   contractType = "main",
   parentContractId = null,
   onChanged,
+  pendingLines = [],
+  onPendingLinesChange,
 }: {
   projectId: number;
   projectName: string;
   projectCode: string;
   direction: Direction;
-  contractId: number;
+  contractId: number | null;
   contractType?: string;
   parentContractId?: number | null;
   onChanged?: () => void;
+  pendingLines?: PendingContractBoqLine[] | null;
+  onPendingLinesChange?: Dispatch<SetStateAction<PendingContractBoqLine[] | null>>;
 }) {
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
@@ -104,7 +110,9 @@ export default function ContractingContractBoqEditor({
   const [baseLines, setBaseLines] = useState<BoqLine[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingPendingIndex, setEditingPendingIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const contractQuery = direction === "owner"
     ? `ownerContractId=${contractId}`
@@ -112,20 +120,34 @@ export default function ContractingContractBoqEditor({
   const path = `/api/contracting/projects/${projectId}/boq-lines?direction=${direction}&${contractQuery}`;
 
   const load = useCallback(async () => {
-    if (!token || !contractId) return;
+    if (!token) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const basePath = parentContractId
         ? `${API}/api/contracting/projects/${projectId}/boq-lines?direction=${direction}&${direction === "owner" ? `ownerContractId=${parentContractId}` : `subcontractorContractId=${parentContractId}`}`
         : null;
       const [linesResponse, workItemsResponse, baseResponse] = await Promise.all([
-        fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${token}` } }),
+        contractId ? fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${token}` } }) : Promise.resolve(null),
         fetch(`${API}/api/contracting/projects/${projectId}/work-items`, { headers: { Authorization: `Bearer ${token}` } }),
         basePath ? fetch(basePath, { headers: { Authorization: `Bearer ${token}` } }) : Promise.resolve(null),
       ]);
-      if (!linesResponse.ok) throw new Error((await linesResponse.json().catch(() => ({}))).error || `HTTP ${linesResponse.status}`);
-      setRows(await linesResponse.json());
-      if (workItemsResponse.ok) setWorkItems(await workItemsResponse.json());
+      if (linesResponse && !linesResponse.ok) throw new Error((await linesResponse.json().catch(() => ({}))).error || `HTTP ${linesResponse.status}`);
+      if (!workItemsResponse.ok) throw new Error((await workItemsResponse.json().catch(() => ({}))).error || `HTTP ${workItemsResponse.status}`);
+      const contractLines = linesResponse ? await linesResponse.json() : [];
+      const projectItems = await workItemsResponse.json();
+      if (!Array.isArray(contractLines) || !Array.isArray(projectItems)) {
+        throw new Error("استجابة بنود العقد أو التنفيذ غير صالحة");
+      }
+      setRows(contractLines);
+      setWorkItems(projectItems);
+      // Only the first main agreement proposes project-owned WBS lines.
+      // null is "not initialized"; [] is a deliberate empty/manual draft.
+      if (contractId == null && contractType === "main" && pendingLines === null) {
+        onPendingLinesChange?.(current => current ?? projectItems.map(contractWorkItemDefaults));
+      } else if (contractId == null && pendingLines === null) {
+        onPendingLinesChange?.(current => current ?? []);
+      }
       if (baseResponse?.ok) setBaseLines(await baseResponse.json());
       if (direction === "subcontract") {
         const ownerResponse = await fetch(`${API}/api/contracting/projects/${projectId}/boq-lines?direction=owner`, {
@@ -134,11 +156,12 @@ export default function ContractingContractBoqEditor({
         if (ownerResponse.ok) setOwnerLines(await ownerResponse.json());
       }
     } catch (caught: any) {
+      setLoadError(caught?.message || "تعذر تحميل بنود المشروع");
       toast({ title: caught?.message || "تعذر تحميل جدول الكميات", variant: "destructive" });
     } finally {
       setLoading(false);
     }
-  }, [contractId, direction, parentContractId, path, projectId, toast, token]);
+  }, [contractId, contractType, direction, parentContractId, path, projectId, toast, token]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -148,6 +171,12 @@ export default function ContractingContractBoqEditor({
       label: `${item.code ? `${item.code} — ` : ""}${item.nameAr} · #${item.id}`,
     })),
     [workItems],
+  );
+  const availableWorkItems = useMemo(
+    () => workItems.filter(item =>
+      !rows.some(row => row.workItemId === item.id)
+      && !(pendingLines ?? []).some(line => Number(line.workItemId) === item.id)),
+    [workItems, rows, pendingLines],
   );
   const ownerLineOptions = useMemo<ComboboxItem[]>(
     () => [
@@ -172,11 +201,13 @@ export default function ContractingContractBoqEditor({
 
   function beginAdd() {
     setEditingId(null);
+    setEditingPendingIndex(null);
     setDraft(emptyDraft());
   }
 
   function beginEdit(row: BoqLine) {
     setEditingId(row.id);
+    setEditingPendingIndex(null);
     setDraft({
       workItemId: String(row.workItemId),
       sourceOwnerLineId: row.sourceOwnerLineId == null ? "" : String(row.sourceOwnerLineId),
@@ -219,6 +250,15 @@ export default function ContractingContractBoqEditor({
     }
     if (Number(draft.quantity) < 0 || Number(draft.unitPrice) < 0) {
       toast({ title: "الكمية والسعر لا يمكن أن يكونا سالبين", variant: "destructive" });
+      return;
+    }
+    if (contractId == null || editingPendingIndex != null) {
+      const next = [...(pendingLines ?? [])];
+      if (editingPendingIndex == null) next.push(draft);
+      else next[editingPendingIndex] = draft;
+      onPendingLinesChange?.(next);
+      setDraft(null);
+      setEditingPendingIndex(null);
       return;
     }
     const body = {
@@ -285,8 +325,32 @@ export default function ContractingContractBoqEditor({
               : "الكميات والأسعار الخاصة بعقد الباطن — يمكن تقسيم سطر المالك بين عدة مقاولين"}
           </p>
         </div>
-        {!draft && <Button size="sm" variant="outline" onClick={beginAdd}><Plus className="mx-1 h-4 w-4" />إضافة سطر</Button>}
+        <div className="flex gap-2">
+          {loadError && <Button size="sm" variant="outline" onClick={() => void load()}>إعادة تحميل البنود</Button>}
+          {!draft && <Button size="sm" variant="outline" onClick={beginAdd}><Plus className="mx-1 h-4 w-4" />إضافة سطر</Button>}
+        </div>
       </div>
+      {loadError && <p role="alert" className="text-sm text-destructive">{loadError}</p>}
+      {contractId != null && direction === "owner" && contractType === "main" && !loadError && !loading && (
+        <div className="rounded border border-sky-200 bg-white p-3 text-xs leading-5 dark:bg-slate-900">
+          <p>بنود التنفيذ في المشروع ليست أسطر جدول كميات محفوظة في هذا العقد. البنود الموجودة مسبقًا في العقد تبقى بأسعارها وكمياتها.</p>
+          {availableWorkItems.length > 0 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span>{availableWorkItems.length} بند تنفيذ غير مرتبط بهذا العقد.</span>
+              <Button type="button" size="sm" variant="outline" data-testid="import-project-work-items"
+                onClick={() => onPendingLinesChange?.(current => [
+                  ...(current ?? []),
+                  ...availableWorkItems
+                    .filter(item => !(current ?? []).some(line => Number(line.workItemId) === item.id))
+                    .map(contractWorkItemDefaults),
+                ])}>
+                عرض البنود لإضافتها للعقد
+              </Button>
+              <span>ستظهر كمسودات قابلة للتعديل؛ احفظ العقد لتسجيلها. سعر البيع لا يُنسخ من التكلفة.</span>
+            </div>
+          ) : <p className="mt-1 text-muted-foreground">لا توجد بنود تنفيذ جديدة متاحة للإضافة.</p>}
+        </div>
+      )}
 
       {draft && (
         <div className="grid grid-cols-2 gap-2 rounded border bg-white p-3 dark:bg-slate-900 md:grid-cols-4" data-testid="contract-boq-line-editor">
@@ -350,7 +414,15 @@ export default function ContractingContractBoqEditor({
           <div><label className="text-[11px] text-slate-600">الكود</label><Input value={draft.lineCode} onChange={e => setDraft({ ...draft, lineCode: e.target.value })} /></div>
           <div><label className="text-[11px] text-slate-600">الوحدة</label><Input value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} placeholder="م² / م³ / ساعة" /></div>
           <div><label className="text-[11px] text-slate-600">الكمية</label><Input type="number" min="0" value={draft.quantity} onChange={e => setDraft({ ...draft, quantity: e.target.value })} /></div>
-          <div><label className="text-[11px] text-slate-600">سعر الوحدة</label><Input type="number" min="0" value={draft.unitPrice} onChange={e => setDraft({ ...draft, unitPrice: e.target.value })} /></div>
+           <div>
+             <label className="text-[11px] text-slate-600">سعر الوحدة</label>
+             <Input type="number" min="0" value={draft.unitPrice} onChange={e => setDraft({ ...draft, unitPrice: e.target.value })} />
+             <p className="mt-1 text-[11px] text-muted-foreground">
+               {direction === "owner"
+                 ? "هذا سعر البيع المتفق عليه مع المالك لهذا العقد؛ لا يوجد سعر بيع تلقائي في بند التنفيذ. تكلفة الوحدة التقديرية في خطة التنفيذ ليست سعر البيع. أدخل السعر هنا."
+                 : "هذا سعر التعاقد مع المقاول الباطن، مستقل عن تكلفة التخطيط وعن سعر عقد المالك. أدخل السعر المتفق عليه هنا."}
+             </p>
+           </div>
           <div><label className="text-[11px] text-slate-600">الإجمالي</label><div className="rounded border bg-slate-50 px-3 py-2 text-sm tabular-nums">{total(draft).toLocaleString("en-US", { maximumFractionDigits: 2 })} ر.س</div></div>
           <div className="col-span-2"><label className="text-[11px] text-slate-600">الوصف</label><Input value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} /></div>
           <div className="col-span-2 flex items-end justify-end gap-2">
@@ -368,7 +440,20 @@ export default function ContractingContractBoqEditor({
           </TableRow></TableHeader>
           <TableBody>
             {loading && rows.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-sm text-slate-500">جار التحميل…</TableCell></TableRow>}
-            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-sm text-slate-500">لا توجد أسطر — أضف أول سطر</TableCell></TableRow>}
+             {!loading && !loadError && rows.length === 0 && (pendingLines ?? []).length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-sm text-slate-500">لا توجد أسطر محفوظة لهذا العقد — أضف أول سطر من بنود المشروع</TableCell></TableRow>}
+             {(pendingLines ?? []).map((line, index) => (
+               <TableRow key={`pending-${index}`} data-testid="pending-contract-boq-line">
+                 <TableCell>{workItems.find(item => String(item.id) === line.workItemId)?.nameAr || line.description} <span className="text-xs text-amber-700">لم يحفظ بعد</span></TableCell>
+                 <TableCell>{line.unit}</TableCell>
+                 <TableCell>{line.quantity}</TableCell>
+                 <TableCell>{line.unitPrice}</TableCell>
+                 <TableCell>{total(line).toLocaleString("en-US")}</TableCell>
+                 <TableCell>
+                   <Button size="sm" variant="ghost" onClick={() => { setEditingId(null); setEditingPendingIndex(index); setDraft({ ...line }); }}><Pencil className="h-4 w-4" /></Button>
+                   <Button size="sm" variant="ghost" onClick={() => onPendingLinesChange?.((pendingLines ?? []).filter((_, i) => i !== index))}><Trash2 className="h-4 w-4" /></Button>
+                 </TableCell>
+               </TableRow>
+             ))}
             {rows.map(row => (
               <TableRow key={row.id}>
                 <TableCell className="font-medium">

@@ -14,7 +14,8 @@ export function contractWorkItemDefaults(item: ContractWorkItemSource) {
     description: item.nameAr,
     unit: item.unit,
     quantity: String(item.plannedQty ?? "0"),
-    // Planning cost and owner price are not the subcontract's agreed price.
+    // Project WBS carries only estimated unit cost, not a canonical owner
+    // sale price. Neither owner nor subcontract rates can come from that cost.
     unitPrice: "0",
     sourceOwnerLineId: "",
     baseLineId: "",
