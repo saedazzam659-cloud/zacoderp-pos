@@ -32,6 +32,7 @@ import {
 } from "@/components/SupplierTaxDetailsDialog";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { VoucherContractingAllocation, positiveId, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -59,6 +60,7 @@ interface PvLine {
   taxAccountId: string;      // optional input-VAT GL account override
   costCenter: string;        // inherits header default on add
   purchaseInvoiceId: string; // optional link to a purchase invoice
+  contractingAllocation: ContractingAllocation | null;
   // Per-line supplier tax metadata (entered via the ⋮ dialog). Used when no
   // header supplier is chosen so a consolidated voucher can attribute each tax
   // line to its own supplier. Flows into the VAT report + tax account statement.
@@ -144,6 +146,7 @@ function newPvLine(init: Partial<PvLine> = {}): PvLine {
     taxAccountId: "",
     costCenter: "",
     purchaseInvoiceId: "",
+    contractingAllocation: null,
     supplierName: "",
     supplierVatNumber: "",
     supplierInvoiceNumber: "",
@@ -247,6 +250,19 @@ export default function PaymentVoucherForm() {
     return q && /^\d+$/.test(q) ? Number(q) : null;
   }, [isNew]);
   const sourceId = editId ?? fromId;
+  const contractingPrefill = useMemo(() => {
+    if (!isNew || fromId) return null;
+    const q = new URLSearchParams(window.location.search);
+    const kind = q.get("contractingKind");
+    const entityId = positiveId(q.get("entityId"));
+    const projectId = positiveId(q.get("projectId"));
+    const contractId = positiveId(q.get("contractId"));
+    const billId = positiveId(q.get("billId"));
+    if (!entityId || !projectId || !contractId || (kind !== "subcontract_advance" && kind !== "subcontract_bill") || (kind === "subcontract_bill" && !billId)) return null;
+    const amount = q.get("amount");
+    return { entityId, allocation: { kind, projectId, contractId, ...(kind === "subcontract_bill" ? { billId: billId! } : {}) } as ContractingAllocation,
+      amount: amount && /^\d+(\.\d{1,2})?$/.test(amount) && Number(amount) > 0 ? amount : "" };
+  }, [isNew, fromId]);
 
   const NS = "paymentVouchers";
   const cid = user?.companyId;
@@ -395,6 +411,7 @@ export default function PaymentVoucherForm() {
         taxAccountId: l.taxAccountId != null ? String(l.taxAccountId) : "",
         costCenter: l.costCenter ?? "",
         purchaseInvoiceId: l.purchaseInvoiceId != null ? String(l.purchaseInvoiceId) : "",
+        contractingAllocation: l.contractingAllocation ?? null,
         supplierName: l.supplierName ?? "",
         supplierVatNumber: l.supplierVatNumber ?? "",
         supplierInvoiceNumber: l.supplierInvoiceNumber ?? "",
@@ -447,6 +464,15 @@ export default function PaymentVoucherForm() {
       lines,
     });
   }, [existing]);
+  const contractingPrefillDone = useRef(false);
+  useEffect(() => {
+    if (!contractingPrefill || contractingPrefillDone.current || !suppliers.length) return;
+    const supplier = suppliers.find((row: any) => Number(row.id) === contractingPrefill.entityId);
+    if (!supplier) return;
+    contractingPrefillDone.current = true;
+    setForm(p => ({ ...p, entityId: String(supplier.id), entityName: supplier.nameAr || supplier.nameEn || supplier.name || "",
+      lines: [newPvLine({ contractingAllocation: contractingPrefill.allocation, amount: contractingPrefill.amount })] }));
+  }, [contractingPrefill, suppliers]);
 
   // ── Default input-VAT account (optional per-line override prefill) ──
   // If a chart account with code "11071" exists we offer it as the default
@@ -598,14 +624,14 @@ export default function PaymentVoucherForm() {
     for (const l of form.lines) {
       const a = Number(l.amount) || 0;
       const tx = Number(l.taxAmount) || 0;
-      if (a > 0 || l.accountId) { net += a; tax += tx; }
+      if (a > 0 || l.accountId || l.contractingAllocation) { net += a; tax += tx; }
     }
     return { net, tax, grand: net + tax };
   }, [form.lines]);
 
   // ── Live Journal-Entry preview (mirrors backend posting logic) ──
   function jePreview() {
-    const valid = form.lines.filter(l => l.accountId && (Number(l.amount) || 0) !== 0);
+    const valid = form.lines.filter(l => (l.accountId || l.contractingAllocation) && (Number(l.amount) || 0) !== 0);
     if (valid.length === 0) return null;
     const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === form.cashBoxId);
     const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === form.bankAccountId);
@@ -620,7 +646,7 @@ export default function PaymentVoucherForm() {
       const net = Number(l.amount) || 0;
       const tax = Number(l.taxAmount) || 0;
       total += net + tax;
-      const label = accountName(l.accountId) || t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —");
+      const label = l.contractingAllocation ? "حساب المقاولات (يحدده النظام)" : accountName(l.accountId) || t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —");
       rows.push({ label, debit: net > 0 ? net : 0, credit: net < 0 ? Math.abs(net) : 0 });
       if (tax > 0) {
         const taxName = l.taxAccountId
@@ -655,12 +681,17 @@ export default function PaymentVoucherForm() {
       // amount), then validate each remaining row needs an account + amount
       // != 0. A negative direct line is an accounting credit (for example,
       // deducting an employee advance from the cash actually paid).
-      const kept = form.lines.filter(l => l.accountId || (Number(l.amount) || 0) !== 0);
+      const kept = form.lines.filter(l => l.accountId || l.contractingAllocation || (Number(l.amount) || 0) !== 0);
       if (kept.length === 0)
         throw new Error(t(`${NS}.linesRequired`, "يجب إضافة بند واحد على الأقل"));
       for (const l of kept) {
-        if (!l.accountId && !SERVER_ACCOUNT_OPS.includes(l.opType))
+        if (!l.accountId && !l.contractingAllocation && !SERVER_ACCOUNT_OPS.includes(l.opType))
           throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب محاسبي"));
+        if (l.contractingAllocation && (!form.entityId || !l.contractingAllocation.projectId || !l.contractingAllocation.contractId
+          || (l.contractingAllocation.kind === "subcontract_bill" && !l.contractingAllocation.billId)
+          || Number(l.amount) <= 0 || Number(l.taxAmount) !== 0 || l.purchaseInvoiceId || l.opType !== "direct"
+          || Number(form.exchangeRate) !== 1))
+          throw new Error("تحقق من المورد والمشروع والعقد والمستخلص؛ بند المقاولات لا يقبل ضريبة أو فاتورة مشتريات أو عملية خاصة أو سعر صرف مختلفاً عن 1");
         if ((Number(l.amount) || 0) === 0)
           throw new Error(t(`${NS}.lineAmountRequired`, "مبلغ البند يجب ألا يساوي صفراً"));
         if (Number(l.amount) < 0 && l.opType !== "direct")
@@ -689,7 +720,7 @@ export default function PaymentVoucherForm() {
           throw new Error(t(`${NS}.opEmployeeRequired`, "بند سلفة/عهدة: يجب اختيار الموظف"));
       }
       const linesPayload = kept.map(l => ({
-        accountId:         l.accountId ? parseInt(l.accountId) : null,
+        accountId:         l.contractingAllocation ? null : l.accountId ? parseInt(l.accountId) : null,
         description:       l.description || null,
         amount:            String(Number(l.amount) || 0),
         taxRate:           String(Number(l.taxRate) || 0),
@@ -697,7 +728,8 @@ export default function PaymentVoucherForm() {
         taxAccountId:      l.taxAccountId ? parseInt(l.taxAccountId) : null,
         costCenter:        l.costCenter || null,
         branchId:          form.branchId ? parseInt(form.branchId) : null,
-        purchaseInvoiceId: l.purchaseInvoiceId ? parseInt(l.purchaseInvoiceId) : null,
+        purchaseInvoiceId: l.contractingAllocation ? null : l.purchaseInvoiceId ? parseInt(l.purchaseInvoiceId) : null,
+        ...(l.contractingAllocation ? { contractingAllocation: l.contractingAllocation } : {}),
         supplierName:          l.supplierName?.trim() || null,
         supplierVatNumber:     l.supplierVatNumber?.trim() || null,
         supplierInvoiceNumber: l.supplierInvoiceNumber?.trim() || null,
@@ -757,7 +789,7 @@ export default function PaymentVoucherForm() {
         headers: { ...h, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) { const error = await res.json().catch(() => ({})); throw new Error(error.error || res.statusText); }
       const saved = await res.json();
 
       if (mode === "post" && saved?.id && (saved.status ?? "draft") === "draft") {
@@ -790,6 +822,7 @@ export default function PaymentVoucherForm() {
       // The purchase-invoices listing surfaces the linked payment, so
       // make sure it refetches after a save that touches a link.
       qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
+      qc.invalidateQueries({ queryKey: ["payment-contracting-options"] });
       if (data?._postError) {
         toast({
           variant: "destructive",
@@ -1162,6 +1195,18 @@ export default function PaymentVoucherForm() {
 
             <TabsContent value="party" className="mt-0 space-y-4">
             <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
+            <Card>
+              <CardContent className="pt-4 space-y-2">
+                <Label className="text-xs font-medium">المورد (اختياري؛ مطلوب لبنود المقاولات)</Label>
+                <SearchCombobox items={supplierItems} value={form.entityId}
+                  onValueChange={v => {
+                    const supplier = suppliers.find((s: any) => String(s.id) === v);
+                    setForm(p => ({ ...p, entityId: v, entityName: supplier?.nameAr || supplier?.nameEn || supplier?.name || "",
+                      lines: p.entityId === v ? p.lines : p.lines.map(l => ({ ...l, contractingAllocation: null })) }));
+                  }}
+                  placeholder="اختر المورد" searchPlaceholder="بحث عن مورد..." />
+              </CardContent>
+            </Card>
             {/* Section: Payment method + treasury (money source) */}
             <Card className="border-2 border-red-100">
               <CardHeader className="py-3 px-4 border-b bg-red-50/40">
@@ -1295,14 +1340,14 @@ export default function PaymentVoucherForm() {
                           {/* Main row */}
                           <div className="grid grid-cols-[28px_2fr_1fr_1.5fr_1.2fr_28px] gap-2 items-center">
                             <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
-                            <SearchCombobox
+                            {l.contractingAllocation ? <span className="text-xs text-muted-foreground">حساب المقاولات يحدده النظام</span> : <SearchCombobox
                               items={postableAccounts}
                               value={l.accountId}
                               onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
                               placeholder={t(`${NS}.selectAccountPh`, "— اختر الحساب —")}
                               searchPlaceholder={t(`${NS}.searchAccountPh`, "ابحث بالاسم أو الكود...")}
                               emptyText={t(`${NS}.noAccounts`, "لا توجد حسابات")}
-                            />
+                            />}
                             <Input
                               type="text" inputMode="decimal" placeholder="0.00" dir="ltr"
                               value={l.amount}
@@ -1344,7 +1389,7 @@ export default function PaymentVoucherForm() {
                           <div className="grid grid-cols-[28px_1fr] gap-2 items-start">
                             <span />
                             <div className="space-y-2">
-                              {Number(l.taxAmount) > 0 ? (
+                              {!l.contractingAllocation && Number(l.taxAmount) > 0 ? (
                                 <div className="flex flex-wrap items-center gap-2 rounded-md bg-primary/5 border border-primary/20 px-2 py-1.5">
                                   <span className="text-xs font-semibold text-primary shrink-0">
                                     {t(`${NS}.taxAdded`, "ضريبة القيمة المضافة")} ({l.taxRate || "15"}%)
@@ -1386,7 +1431,7 @@ export default function PaymentVoucherForm() {
                                     </span>
                                   )}
                                 </div>
-                              ) : (
+                              ) : !l.contractingAllocation ? (
                                 <Button
                                   type="button" variant="outline" size="sm"
                                   disabled={!(Number(l.amount) > 0)}
@@ -1397,10 +1442,10 @@ export default function PaymentVoucherForm() {
                                   <Plus className="h-3.5 w-3.5" />
                                   {t(`${NS}.addTax`, "إضافة ضريبة")} 15%
                                 </Button>
-                              )}
+                              ) : null}
 
                               {/* ── نوع العملية: مصروف مقدم (خطة استهلاك) ── */}
-                              {l.opType === "prepaid" ? (
+                              {!l.contractingAllocation && l.opType === "prepaid" ? (
                                 <div className="rounded-md bg-amber-500/5 border border-amber-500/30 px-2 py-2 space-y-2" data-testid={`pv-line-prepaid-${idx}`}>
                                   {/* ONE compact row — same rhythm as the main line above:
                                       [chip] [حساب المصروف] [الدورية] [بداية] [نهاية] [إلغاء] */}
@@ -1541,7 +1586,7 @@ export default function PaymentVoucherForm() {
                                     ))}
                                   </div>
                                 </div>
-                              ) : l.opType !== "direct" ? (
+                              ) : !l.contractingAllocation && l.opType !== "direct" ? (
                                 /* ── Phase-2 op-type panel (أصل/مورد/سلفة/عهدة) ── */
                                 <div className="rounded-md bg-sky-500/5 border border-sky-500/30 px-2 py-2 space-y-2" data-testid={`pv-line-op-${idx}`}>
                                   <div className="flex items-center gap-2">
@@ -1676,7 +1721,7 @@ export default function PaymentVoucherForm() {
                                     </>)}
                                   </div>
                                 </div>
-                              ) : (
+                              ) : !l.contractingAllocation ? (
                                 /* op-type selector — direct line by default */
                                 <select
                                   value="direct"
@@ -1695,7 +1740,14 @@ export default function PaymentVoucherForm() {
                                   <option value="employee_loan">{t(`${NS}.opEmployeeLoan`, "سلفة موظف")}</option>
                                   <option value="employee_custody">{t(`${NS}.opEmployeeCustody`, "عهدة موظف")}</option>
                                 </select>
-                              )}
+                              ) : null}
+                              <VoucherContractingAllocation direction="payment" entityId={form.entityId}
+                                value={l.contractingAllocation} lineAmount={l.amount} disabled={isLockedSourceEntry}
+                                otherAllocated={form.lines.filter(other => other.key !== l.key && other.contractingAllocation?.billId &&
+                                  other.contractingAllocation.billId === l.contractingAllocation?.billId).reduce((sum, other) => sum + (Number(other.amount) || 0), 0)}
+                                onChange={allocation => updateLine(l.key, { contractingAllocation: allocation, accountId: "",
+                                  purchaseInvoiceId: "", opType: "direct", taxRate: "0", taxAmount: "0.00", taxAccountId: "",
+                                  supplierName: "", supplierVatNumber: "", supplierInvoiceNumber: "", supplierInvoiceDate: "" })} />
 
                               {/* running line total */}
                               <div className="flex flex-wrap items-center gap-2">

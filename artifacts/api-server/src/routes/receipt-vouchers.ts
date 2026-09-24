@@ -24,11 +24,23 @@ import { settlementLinksTable } from "@workspace/db";
 import { isPrimaryKeyCollision, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
 import { logger } from "../lib/logger.js";
 import { firstJournalDescription } from "../lib/journalLineDescriptions.js";
+import { parseContractingAllocation, resolveContractingLine, contractingVoucherOptions, postVoucherSettlements, assertVoucherCanUnpost, lockVoucherContractScope, type ContractingAllocation } from "../lib/contracting-voucher-service.js";
+import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
+import { refreshBillPaymentState } from "../lib/contracting-accounting-service.js";
 
 const router = Router();
 router.use(extractAuth);
 router.use(requireModulePermission("receipt_vouchers"));
 router.use(moduleAudit("receipt_vouchers"));
+
+router.get("/contracting-options", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+    const entityId = Number(req.query.entityId);
+    if (!cid || !Number.isSafeInteger(entityId) || entityId < 1) { res.status(400).json({ error: "companyId و entityId مطلوبان" }); return; }
+    res.json(await contractingVoucherOptions(cid, "receipt", entityId, req));
+  } catch (e: any) { res.status(e.status ?? 400).json({ error: e.message }); }
+});
 
 // Build & insert a balanced journal entry for a receipt voucher.
 //
@@ -45,7 +57,7 @@ router.use(moduleAudit("receipt_vouchers"));
 // The legacy per-voucher `accountId` override is no longer exposed in the
 // UI; it remains in the table as a still-honored escape hatch for older
 // rows so existing data continues to post correctly.
-async function buildReceiptJournal(cid: number, v: any, req: any): Promise<number> {
+async function buildReceiptJournal(cid: number, v: any, req: any, outerTx?: any): Promise<number> {
   const amount = parseFloat(v.amount || "0");
   if (amount <= 0) throw new Error("المبلغ يجب أن يكون أكبر من صفر");
 
@@ -161,7 +173,7 @@ async function buildReceiptJournal(cid: number, v: any, req: any): Promise<numbe
   const jeStatus = await resolvePostingStatus(cid, "receipt");
   // Atomic: header + all lines commit together, so a mid-way failure never
   // strands an orphan (zero-balance) journal entry.
-  const entryId = await db.transaction(async (tx) => {
+  const insert = async (tx: any) => {
     // JE number: reuse the number reserved at unpost time (edit→repost keeps
     // the SAME journal-entry number), else draw the next continuous
     // "journal_entry" number. Falls back to the voucher code.
@@ -185,7 +197,8 @@ async function buildReceiptJournal(cid: number, v: any, req: any): Promise<numbe
       jeLines.map((jl) => ({ entryId: entry.id, ...jl })),
     );
     return entry.id;
-  });
+  };
+  const entryId = outerTx ? await insert(outerTx) : await db.transaction(insert);
   return entryId;
 }
 
@@ -564,7 +577,13 @@ router.get("/:id", async (req, res) => {
   const lines = await db.select().from(receiptVoucherLinesTable)
     .where(eq(receiptVoucherLinesTable.voucherId, row.id))
     .orderBy(asc(receiptVoucherLinesTable.sortOrder), asc(receiptVoucherLinesTable.id));
-  res.json({ ...row, lines });
+  res.json({ ...row, lines: lines.map((l) => ({
+    ...l,
+    contractingAllocation: l.contractingKind ? {
+      kind: l.contractingKind, projectId: l.contractingProjectId,
+      contractId: l.contractingContractId, billId: l.contractingBillId,
+    } : null,
+  })) });
 });
 
 // Normalize a raw request `lines[]` payload into typed allocation rows,
@@ -578,6 +597,7 @@ interface RawRvLine {
   costCenter: string | null;
   branchId: number | null;
   salesInvoiceId: number | null;
+  contractingAllocation: ContractingAllocation | null;
 }
 function normalizeReceiptLines(raw: any): RawRvLine[] | null {
   if (!Array.isArray(raw)) return null;
@@ -585,7 +605,7 @@ function normalizeReceiptLines(raw: any): RawRvLine[] | null {
   for (const l of raw) {
     const accountId = l?.accountId ? parseInt(l.accountId) : null;
     const amount = parseFloat(l?.amount ?? "0") || 0;
-    if (!accountId && amount === 0) continue; // skip blank row
+    if (!accountId && amount === 0 && l?.contractingAllocation == null) continue; // skip blank row
     out.push({
       accountId,
       description: l?.description ?? null,
@@ -593,6 +613,7 @@ function normalizeReceiptLines(raw: any): RawRvLine[] | null {
       costCenter: l?.costCenter ? String(l.costCenter).trim() || null : null,
       branchId: l?.branchId ? parseInt(l.branchId) : null,
       salesInvoiceId: l?.salesInvoiceId ? parseInt(l.salesInvoiceId) : null,
+      contractingAllocation: parseContractingAllocation(l?.contractingAllocation, "receipt"),
     });
   }
   return out;
@@ -601,10 +622,16 @@ function normalizeReceiptLines(raw: any): RawRvLine[] | null {
 // Validate normalized lines: every line needs an account + positive amount,
 // all account ids must belong to the tenant, and any per-line invoice link
 // must resolve to the same tenant/customer.
-async function validateReceiptLines(cid: number, lines: RawRvLine[], customerId: number | null): Promise<void> {
+async function validateReceiptLines(cid: number, lines: RawRvLine[], customerId: number | null, req?: any): Promise<void> {
   if (lines.length === 0) throw new Error("يجب إضافة بند واحد على الأقل");
   const acctIds = new Set<number>();
   for (const l of lines) {
+    if (l.contractingAllocation) {
+      if (l.salesInvoiceId) throw new Error("بند المقاولات لا يقبل فاتورة مبيعات");
+      const mapped = await resolveContractingLine(db, cid, "receipt", customerId, l.contractingAllocation, req);
+      if (l.accountId && l.accountId !== mapped) throw new Error("حساب بند المقاولات لا يطابق الربط المحاسبي");
+      l.accountId = mapped;
+    }
     if (!l.accountId) throw new Error("كل بند يجب أن يحتوي على حساب محاسبي");
     if (l.amount <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
     acctIds.add(l.accountId);
@@ -628,10 +655,10 @@ function receiptLinesTotal(lines: RawRvLine[]): number {
 }
 
 // Persist allocation lines for a voucher, replacing any existing rows.
-async function replaceReceiptLines(voucherId: number, lines: RawRvLine[]): Promise<void> {
-  await db.delete(receiptVoucherLinesTable).where(eq(receiptVoucherLinesTable.voucherId, voucherId));
+async function replaceReceiptLines(voucherId: number, lines: RawRvLine[], dx: any = db): Promise<void> {
+  await dx.delete(receiptVoucherLinesTable).where(eq(receiptVoucherLinesTable.voucherId, voucherId));
   if (lines.length === 0) return;
-  await db.insert(receiptVoucherLinesTable).values(lines.map((l, i) => ({
+  await dx.insert(receiptVoucherLinesTable).values(lines.map((l, i) => ({
     voucherId,
     accountId: l.accountId,
     description: l.description,
@@ -639,6 +666,10 @@ async function replaceReceiptLines(voucherId: number, lines: RawRvLine[]): Promi
     costCenter: l.costCenter,
     branchId: l.branchId,
     salesInvoiceId: l.salesInvoiceId,
+    contractingKind: l.contractingAllocation?.kind ?? null,
+    contractingProjectId: l.contractingAllocation?.projectId ?? null,
+    contractingContractId: l.contractingAllocation?.contractId ?? null,
+    contractingBillId: l.contractingAllocation?.billId ?? null,
     sortOrder: i,
   })));
 }
@@ -762,12 +793,20 @@ router.post("/", async (req, res) => {
   const entityId = d.entityId ? parseInt(d.entityId) : null;
   // Multi-allocation lines (optional). When present they drive the header
   // amount + invoice link; legacy single-`amount` callers send no `lines`.
-  const lines = normalizeReceiptLines(d.lines);
+  let lines: RawRvLine[] | null;
+  try { lines = normalizeReceiptLines(d.lines); }
+  catch (e: any) { res.status(400).json({ error: e.message }); return; }
   if (lines) {
-    try { await validateReceiptLines(cid, lines, entityId); }
+    try { await validateReceiptLines(cid, lines, entityId, req); }
     catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
   }
+  if (lines?.some((l) => l.contractingAllocation) && Number(d.exchangeRate ?? 1) !== 1) {
+    res.status(400).json({ error: "بنود المقاولات تتطلب سعر صرف 1" }); return;
+  }
   const headerSalesInvoiceId = d.salesInvoiceId ? parseInt(d.salesInvoiceId) : null;
+  if (headerSalesInvoiceId && lines?.some((l) => l.contractingAllocation)) {
+    res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مبيعات؛ اربط البنود العادية بالفاتورة على مستوى البند" }); return;
+  }
   // Prefer an explicit header link; else adopt the first line's invoice so
   // the list view keeps showing a linked-invoice badge.
   const salesInvoiceId = headerSalesInvoiceId
@@ -864,7 +903,7 @@ router.post("/", async (req, res) => {
         null,
       );
     }
-    return tx.insert(receiptVouchersTable).values({
+    const inserted = await tx.insert(receiptVouchersTable).values({
     companyId:     cid,
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
     code,
@@ -896,6 +935,14 @@ router.post("/", async (req, res) => {
     // resolved by extractAuth from the trusted x-session-id header.
     sessionId:     (req as any).manualSessionId ?? null,
     }).returning();
+    if (lines && inserted[0]) {
+      for (const l of lines.filter((l) => l.contractingAllocation)) {
+        const mapped = await resolveContractingLine(tx, cid, "receipt", entityId, l.contractingAllocation!, req);
+        if (mapped !== l.accountId) throw new Error("تغير ربط حساب المقاولات؛ أعد حفظ السند");
+      }
+      await replaceReceiptLines(inserted[0].id, lines, tx);
+    }
+    return inserted;
   });
   let row: typeof receiptVouchersTable.$inferSelect | null = null;
   try {
@@ -918,7 +965,6 @@ router.post("/", async (req, res) => {
     return;
   }
   if (!row) return;
-  if (lines) await replaceReceiptLines(row.id, lines);
   res.status(201).json(row);
 });
 
@@ -935,12 +981,30 @@ router.put("/:id", async (req, res) => {
   if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن تعديل سند مرحّل" }); return; }
 
   const entityId = d.entityId ? parseInt(d.entityId) : null;
-  const lines = normalizeReceiptLines(d.lines);
+  let lines: RawRvLine[] | null;
+  try { lines = normalizeReceiptLines(d.lines); }
+  catch (e: any) { res.status(400).json({ error: e.message }); return; }
+  if (lines == null) {
+    const [linked] = await db.select({ id: receiptVoucherLinesTable.id }).from(receiptVoucherLinesTable)
+      .where(and(eq(receiptVoucherLinesTable.voucherId, id), sql`${receiptVoucherLinesTable.contractingKind} IS NOT NULL`)).limit(1);
+    if (linked) { res.status(400).json({ error: "تعديل سند المقاولات يتطلب إرسال جميع بنود التوزيع" }); return; }
+  }
   if (lines) {
-    try { await validateReceiptLines(cid, lines, entityId); }
+    try { await validateReceiptLines(cid, lines, entityId, req); }
     catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
   }
+  if (lines?.some((l) => l.contractingAllocation) && Number(d.exchangeRate ?? 1) !== 1) {
+    res.status(400).json({ error: "بنود المقاولات تتطلب سعر صرف 1" }); return;
+  }
   const headerSalesInvoiceId = d.salesInvoiceId ? parseInt(d.salesInvoiceId) : null;
+  if (headerSalesInvoiceId && lines?.some((l) => l.contractingAllocation)) {
+    res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مبيعات؛ اربط البنود العادية بالفاتورة على مستوى البند" }); return;
+  }
+  if (headerSalesInvoiceId && !lines) {
+    const [contracting] = await db.select({ id: receiptVoucherLinesTable.id }).from(receiptVoucherLinesTable)
+      .where(and(eq(receiptVoucherLinesTable.voucherId, id), sql`${receiptVoucherLinesTable.contractingKind} IS NOT NULL`)).limit(1);
+    if (contracting) { res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مبيعات" }); return; }
+  }
   const salesInvoiceId = headerSalesInvoiceId
     ?? (lines?.find((l) => l.salesInvoiceId)?.salesInvoiceId ?? null);
   if (headerSalesInvoiceId) {
@@ -983,6 +1047,9 @@ router.put("/:id", async (req, res) => {
   // Settlement race guard — same advisory-lock re-check as on create,
   // excluding THIS voucher's own old amounts.
   const [row] = await db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(receiptVouchersTable)
+      .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).for("update");
+    if (!locked || locked.status !== "draft") throw new Error("السند غير موجود أو مرحّل");
     if (salesInvoiceId) {
       await acquireSettlementLock(tx, cid, "sales", salesInvoiceId);
       await assertNoSalesOvercollection(
@@ -994,7 +1061,7 @@ router.put("/:id", async (req, res) => {
         id,
       );
     }
-    return tx.update(receiptVouchersTable).set({
+    const updated = await tx.update(receiptVouchersTable).set({
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
     date:          d.date,
     paymentType:   d.paymentType,
@@ -1016,11 +1083,18 @@ router.put("/:id", async (req, res) => {
     notes:         d.notes         ?? null,
     costCenter:    d.costCenter ? String(d.costCenter).trim() || null : null,
     }).where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
+    if (lines) {
+      for (const l of lines.filter((l) => l.contractingAllocation)) {
+        const mapped = await resolveContractingLine(tx, cid, "receipt", entityId, l.contractingAllocation!, req);
+        if (mapped !== l.accountId) throw new Error("تغير ربط حساب المقاولات؛ أعد حفظ السند");
+      }
+      await replaceReceiptLines(id, lines, tx);
+    }
+    return updated;
   }).catch((e: any) => { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return [null as any]; });
   if (!row) return;
   // Replace lines only when the caller sent a `lines` array (undefined =
   // legacy update that shouldn't wipe existing allocations).
-  if (lines) await replaceReceiptLines(row.id, lines);
   res.json(row);
 });
 
@@ -1033,15 +1107,48 @@ router.post("/:id/post", requirePostRight("receipt"), async (req, res) => {
   const [existing] = await db.select().from(receiptVouchersTable)
     .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
-  if (existing.status === "posted") { res.status(400).json({ error: "مرحّل مسبقاً" }); return; }
+  if (existing.status === "posted") {
+    const [linked] = await db.select({ id: receiptVoucherLinesTable.id }).from(receiptVoucherLinesTable)
+      .where(and(eq(receiptVoucherLinesTable.voucherId, id), sql`${receiptVoucherLinesTable.contractingKind} IS NOT NULL`)).limit(1);
+    if (linked && existing.journalEntryId) { res.json({ ...existing, idempotentReplay: true }); return; }
+    res.status(400).json({ error: "مرحّل مسبقاً" }); return;
+  }
   if (!existing.amount || parseFloat(existing.amount) <= 0) {
     res.status(400).json({ error: "المبلغ يجب أن يكون أكبر من صفر" }); return;
   }
   try {
-    const journalId = await buildReceiptJournal(existing.companyId, existing, req);
-    const [row] = await db.update(receiptVouchersTable)
-      .set({ status: "posted", journalEntryId: journalId })
-      .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
+    const linked = await db.select().from(receiptVoucherLinesTable)
+      .where(and(eq(receiptVoucherLinesTable.voucherId, id), sql`${receiptVoucherLinesTable.contractingKind} IS NOT NULL`));
+    let row;
+    if (linked.length) {
+      await ensureContractingAccountingTables();
+      row = await db.transaction(async (tx) => {
+        await lockVoucherContractScope(tx, cid, linked);
+        const [locked] = await tx.select().from(receiptVouchersTable)
+          .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "draft"))).for("update");
+        if (!locked) throw new Error("مرحّل مسبقاً");
+        const current = await tx.select().from(receiptVoucherLinesTable)
+          .where(and(eq(receiptVoucherLinesTable.voucherId, id), sql`${receiptVoucherLinesTable.contractingKind} IS NOT NULL`));
+        if (current.length !== linked.length || current.some((l) =>
+          !linked.find((old) => old.id === l.id && old.amount === l.amount &&
+            old.accountId === l.accountId && old.contractingKind === l.contractingKind &&
+            old.contractingProjectId === l.contractingProjectId &&
+            old.contractingContractId === l.contractingContractId &&
+            old.contractingBillId === l.contractingBillId)))
+          throw new Error("تغيرت بنود السند أثناء الترحيل؛ أعد المحاولة");
+        const journalId = await buildReceiptJournal(cid, locked, req, tx);
+        await postVoucherSettlements(tx, cid, "receipt", locked, current, journalId, req);
+        const [posted] = await tx.update(receiptVouchersTable)
+          .set({ status: "posted", journalEntryId: journalId })
+          .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
+        return posted;
+      });
+    } else {
+      const journalId = await buildReceiptJournal(existing.companyId, existing, req);
+      [row] = await db.update(receiptVouchersTable)
+        .set({ status: "posted", journalEntryId: journalId })
+        .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
+    }
     res.json(row);
   } catch (e: any) {
     res.status(e?.status ?? 400).json({ error: e?.message || "تعذّر إنشاء القيد المحاسبي" });
@@ -1059,6 +1166,34 @@ router.post("/:id/unpost", requireUnpostRight("receipt"), async (req, res) => {
     .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status !== "posted") { res.status(400).json({ error: "السند ليس مرحّلاً" }); return; }
+  await ensureContractingAccountingTables();
+  const settlement = await db.execute(sql`SELECT id FROM contracting_accounting_settlements
+    WHERE company_id = ${cid} AND source_voucher_type = 'receipt' AND source_voucher_id = ${id}
+      AND status = 'posted' LIMIT 1`);
+  if ((Array.isArray(settlement) ? settlement : (settlement as any).rows ?? []).length) {
+    try {
+      const scopedLines = await db.select().from(receiptVoucherLinesTable)
+        .where(and(eq(receiptVoucherLinesTable.voucherId, id), sql`${receiptVoucherLinesTable.contractingKind} IS NOT NULL`));
+      const row = await db.transaction(async (tx) => {
+        await lockVoucherContractScope(tx, cid, scopedLines);
+        const [v] = await tx.select().from(receiptVouchersTable)
+          .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted"))).for("update");
+        if (!v) throw new Error("السند ليس مرحّلاً");
+        const links = await assertVoucherCanUnpost(tx, cid, "receipt", id);
+        await tx.execute(sql`UPDATE contracting_accounting_settlements SET status = 'reversed', updated_at = NOW()
+          WHERE company_id = ${cid} AND source_voucher_type = 'receipt' AND source_voucher_id = ${id} AND status = 'posted'`);
+        for (const billId of new Set(links.map((x: any) => x.bill_id).filter(Boolean)))
+          await refreshBillPaymentState(tx, cid, Number(billId), (req as any).authUser?.id ?? null);
+        if (v.journalEntryId) await tx.update(journalEntriesTable).set({ status: "draft" })
+          .where(and(eq(journalEntriesTable.id, v.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        const [draft] = await tx.update(receiptVouchersTable).set({ status: "draft", journalEntryId: null })
+          .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
+        return draft;
+      });
+      res.json(row);
+    } catch (e: any) { res.status(e.status ?? 409).json({ error: e.message }); }
+    return;
+  }
   if (existing.journalEntryId) {
     // Stash the JE number BEFORE deleting so the next post (after an edit)
     // reuses the SAME journal-entry number instead of burning a fresh one.
@@ -1085,6 +1220,12 @@ router.delete("/:id", async (req, res) => {
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (!(await requireMobilePerm(req, res, cid, "voucher_delete", "ليست لديك صلاحية حذف السندات من تطبيق الموبايل"))) return;
   if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن حذف سند مرحّل" }); return; }
+  await ensureContractingAccountingTables();
+  const evidence = await db.execute(sql`SELECT id FROM contracting_accounting_settlements
+    WHERE company_id = ${cid} AND source_voucher_type = 'receipt' AND source_voucher_id = ${id} LIMIT 1`);
+  if ((Array.isArray(evidence) ? evidence : (evidence as any).rows ?? []).length) {
+    res.status(409).json({ error: "لا يمكن حذف سند له تسويات مقاولات محفوظة في سجل المراجعة" }); return;
+  }
   await db.delete(receiptVouchersTable)
     .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
   res.status(204).send();

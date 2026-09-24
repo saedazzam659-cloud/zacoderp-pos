@@ -29,6 +29,7 @@ import { DateField } from "@/components/ui/date-field";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { VoucherContractingAllocation, positiveId, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -42,6 +43,7 @@ interface RvLine {
   amount: string;         // credited amount
   costCenter: string;     // inherits header default on add
   salesInvoiceId: string; // optional link to a sales invoice
+  contractingAllocation: ContractingAllocation | null;
 }
 
 let _rvLineSeq = 0;
@@ -53,6 +55,7 @@ function newRvLine(init: Partial<RvLine> = {}): RvLine {
     amount: "",
     costCenter: "",
     salesInvoiceId: "",
+    contractingAllocation: null,
     ...init,
   };
 }
@@ -162,6 +165,19 @@ export default function ReceiptVoucherFormMulti() {
       bankAccountId: q.get("bankAccountId") || "",
     };
   }, [isNew]);
+  const contractingPrefill = useMemo(() => {
+    if (!isNew || fromId || prefill) return null;
+    const q = new URLSearchParams(window.location.search);
+    const kind = q.get("contractingKind");
+    const entityId = positiveId(q.get("entityId"));
+    const projectId = positiveId(q.get("projectId"));
+    const contractId = positiveId(q.get("contractId"));
+    const billId = positiveId(q.get("billId"));
+    if (!entityId || !projectId || !contractId || (kind !== "owner_advance" && kind !== "owner_bill") || (kind === "owner_bill" && !billId)) return null;
+    const amount = q.get("amount");
+    return { entityId, allocation: { kind, projectId, contractId, ...(kind === "owner_bill" ? { billId: billId! } : {}) } as ContractingAllocation,
+      amount: amount && /^\d+(\.\d{1,2})?$/.test(amount) && Number(amount) > 0 ? amount : "" };
+  }, [isNew, fromId, prefill]);
 
   const NS = "receiptVouchers";
   const cid = user?.companyId;
@@ -308,6 +324,7 @@ export default function ReceiptVoucherFormMulti() {
         amount: ln.amount != null ? String(ln.amount) : "",
         costCenter: ln.costCenter ?? headerCostCenter,
         salesInvoiceId: ln.salesInvoiceId != null ? String(ln.salesInvoiceId) : "",
+        contractingAllocation: ln.contractingAllocation ?? null,
       }));
     } else {
       lines = [newRvLine({
@@ -366,6 +383,15 @@ export default function ReceiptVoucherFormMulti() {
       })],
     }));
   }, [prefill, customers]);
+  const contractingPrefillDone = useRef(false);
+  useEffect(() => {
+    if (!contractingPrefill || contractingPrefillDone.current || !customers.length) return;
+    const customer = customers.find((row: any) => Number(row.id) === contractingPrefill.entityId);
+    if (!customer) return;
+    contractingPrefillDone.current = true;
+    setForm(p => ({ ...p, entityId: String(customer.id), entityName: customer.nameAr || customer.nameEn || "",
+      lines: [newRvLine({ contractingAllocation: contractingPrefill.allocation, amount: contractingPrefill.amount })] }));
+  }, [contractingPrefill, customers]);
 
   // ── Allocation-line helpers ────────────────────────────────────
   function addLine() {
@@ -472,7 +498,7 @@ export default function ReceiptVoucherFormMulti() {
   // ── Live Journal-Entry preview (mirrors backend posting logic) ──
   // Single DR treasury = Σ(amount); one CR row per valid allocation line.
   function jePreview() {
-    const validLines = form.lines.filter(l => l.accountId && (Number(l.amount) || 0) > 0);
+    const validLines = form.lines.filter(l => (l.accountId || l.contractingAllocation) && (Number(l.amount) || 0) > 0);
     if (validLines.length === 0) return null;
     const total = validLines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
     if (!isFinite(total) || total <= 0) return null;
@@ -484,7 +510,7 @@ export default function ReceiptVoucherFormMulti() {
       ? (ba ? t(`${NS}.bankPrefix`, { name: baName }) : t(`${NS}.noBankSelected`))
       : (cb ? t(`${NS}.cashPrefix`, { name: cbName }) : t(`${NS}.noCashSelected`));
     const crRows = validLines.map(l => ({
-      label: accountName(l.accountId) || t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —"),
+      label: l.contractingAllocation ? "حساب المقاولات (يحدده النظام)" : accountName(l.accountId) || t(`${NS}.noAccountSelected`, "— لم يتم اختيار الحساب —"),
       amount: Number(l.amount) || 0,
     }));
     return { drLabel, crRows, total };
@@ -497,11 +523,14 @@ export default function ReceiptVoucherFormMulti() {
   const saveMut = useMutation({
     mutationFn: async (mode: "draft" | "post") => {
       // Build the allocation payload — drop rows with no account AND zero amount.
-      const cleanLines = form.lines.filter(l => l.accountId || (Number(l.amount) || 0) > 0);
+      const cleanLines = form.lines.filter(l => l.accountId || l.contractingAllocation || (Number(l.amount) || 0) > 0);
       if (cleanLines.length === 0) throw new Error(t(`${NS}.noLines`, "أضف بنداً واحداً على الأقل"));
       for (const l of cleanLines) {
-        if (!l.accountId) throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب"));
+        if (!l.accountId && !l.contractingAllocation) throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب"));
         if (!((Number(l.amount) || 0) > 0)) throw new Error(t(`${NS}.lineAmountRequired`, "كل بند يجب أن يحتوي على مبلغ أكبر من صفر"));
+        if (l.contractingAllocation && (!form.entityId || !l.contractingAllocation.projectId || !l.contractingAllocation.contractId
+          || (l.contractingAllocation.kind === "owner_bill" && !l.contractingAllocation.billId) || l.salesInvoiceId || Number(form.exchangeRate) !== 1))
+          throw new Error("تحقق من العميل والمشروع والعقد والمستخلص؛ بنود المقاولات لا تقبل فاتورة مبيعات أو سعر صرف مختلفاً عن 1");
       }
       const grandTotal = cleanLines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
       if (!isFinite(grandTotal) || grandTotal <= 0) throw new Error(t(`${NS}.invalidAmount`));
@@ -529,12 +558,13 @@ export default function ReceiptVoucherFormMulti() {
         throw new Error(reqMsg(t("cashCommon.notes")));
 
       const linesPayload = cleanLines.map(l => ({
-        accountId:      l.accountId ? parseInt(l.accountId) : null,
+        accountId:      l.contractingAllocation ? null : l.accountId ? parseInt(l.accountId) : null,
         description:    l.description || null,
         amount:         String(Number(l.amount) || 0),
         costCenter:     l.costCenter || form.costCenter || null,
         branchId:       form.branchId ? parseInt(form.branchId) : null,
-        salesInvoiceId: l.salesInvoiceId ? parseInt(l.salesInvoiceId) : null,
+        salesInvoiceId: l.contractingAllocation ? null : l.salesInvoiceId ? parseInt(l.salesInvoiceId) : null,
+        ...(l.contractingAllocation ? { contractingAllocation: l.contractingAllocation } : {}),
       }));
 
       const { lines: _omitLines, ...formRest } = form;
@@ -562,7 +592,7 @@ export default function ReceiptVoucherFormMulti() {
         headers: { ...h, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) { const error = await res.json().catch(() => ({})); throw new Error(error.error || res.statusText); }
       const saved = await res.json();
 
       if (mode === "post" && saved?.id && (saved.status ?? "draft") === "draft") {
@@ -595,6 +625,7 @@ export default function ReceiptVoucherFormMulti() {
       // The sales-invoices listing surfaces the linked payment, so make
       // sure it refetches after a save that touches a link.
       qc.invalidateQueries({ queryKey: ["sales-invoices"] });
+      qc.invalidateQueries({ queryKey: ["receipt-contracting-options"] });
       if (data?._postError) {
         toast({
           variant: "destructive",
@@ -1078,7 +1109,7 @@ export default function ReceiptVoucherFormMulti() {
                       entityId: v,
                       entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
                       // Changing the customer invalidates any per-line invoice links.
-                      lines: p.lines.map(l => ({ ...l, salesInvoiceId: "" })),
+                      lines: p.lines.map(l => ({ ...l, salesInvoiceId: "", contractingAllocation: null })),
                     }));
                   }}
                   placeholder={t(`${NS}.selectCustomer`, "— اختر العميل —")}
@@ -1114,13 +1145,13 @@ export default function ReceiptVoucherFormMulti() {
                       <div className="flex items-start gap-3">
                         <span className="mt-7 shrink-0 h-8 w-8 rounded-full bg-green-100 text-green-800 text-sm font-bold flex items-center justify-center tabular-nums">{idx + 1}</span>
                         <div className="flex-1 space-y-1.5 min-w-0">
-                          <Label className="text-sm font-semibold">{t(`${NS}.colAccount`, "الحساب")} <span className="text-destructive">*</span></Label>
-                          <AccountCascadePicker
+                          <Label className="text-sm font-semibold">{t(`${NS}.colAccount`, "الحساب")} {!l.contractingAllocation && <span className="text-destructive">*</span>}</Label>
+                          {l.contractingAllocation ? <p className="py-2 text-xs text-muted-foreground">حساب المقاولات يحدده النظام تلقائياً</p> : <AccountCascadePicker
                             accounts={accounts as any[]}
                             value={l.accountId}
                             isRtl={isRtl}
                             onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
-                          />
+                          />}
                         </div>
                         <Button
                           type="button" variant="ghost" size="icon"
@@ -1174,7 +1205,7 @@ export default function ReceiptVoucherFormMulti() {
                               ))}
                           </select>
                         </div>
-                        {fp.isVisible("settleSalesInvoice") && (
+                        {fp.isVisible("settleSalesInvoice") && !l.contractingAllocation && (
                         <div className="space-y-1.5">
                           <Label className="text-sm font-semibold inline-flex items-center gap-1"><Link2 className="h-4 w-4" />{t(`${NS}.colSalesInvoice`, "ربط فاتورة مبيعات")}</Label>
                           <SearchCombobox
@@ -1192,6 +1223,13 @@ export default function ReceiptVoucherFormMulti() {
                         </div>
                         )}
                       </div>
+                      <VoucherContractingAllocation direction="receipt" entityId={form.entityId}
+                        value={l.contractingAllocation} lineAmount={l.amount}
+                        otherAllocated={form.lines.filter(other => other.key !== l.key && other.contractingAllocation?.billId &&
+                          other.contractingAllocation.billId === l.contractingAllocation?.billId).reduce((sum, other) => sum + (Number(other.amount) || 0), 0)}
+                        disabled={isLockedSourceEntry}
+                        onChange={allocation => updateLine(l.key, { contractingAllocation: allocation, accountId: "",
+                          salesInvoiceId: "" })} />
 
                       {/* Line total — prominent, always visible */}
                       <div className="flex items-center justify-between border-t border-green-200/60 pt-3">

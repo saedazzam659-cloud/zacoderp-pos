@@ -62,6 +62,16 @@ export function ensureContractingAccountingTables(): Promise<void> {
         ADD COLUMN IF NOT EXISTS application_origin TEXT NOT NULL DEFAULT 'manual',
         ADD COLUMN IF NOT EXISTS reversal_journal_entry_id INTEGER REFERENCES journal_entries(id) ON DELETE RESTRICT
     `);
+    // Source line identity is immutable accounting evidence. Draft voucher
+    // edits may replace lines; posted settlements retain this reference.
+    await db.execute(sql`ALTER TABLE contracting_accounting_settlements
+      ADD COLUMN IF NOT EXISTS source_voucher_type TEXT,
+      ADD COLUMN IF NOT EXISTS source_voucher_id INTEGER,
+      ADD COLUMN IF NOT EXISTS source_voucher_line_id INTEGER,
+      ADD COLUMN IF NOT EXISTS source_line_snapshot JSONB`);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS contracting_settlement_voucher_line_uq
+      ON contracting_accounting_settlements(company_id, source_voucher_type, source_voucher_line_id)
+      WHERE source_voucher_line_id IS NOT NULL AND status = 'posted'`);
     // Recovery policy/snapshot columns are additive so an external agent can
     // heal an older tenant without a declarative schema publish first.
     await db.execute(sql`

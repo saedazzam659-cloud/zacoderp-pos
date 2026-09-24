@@ -216,7 +216,7 @@ async function refreshBillPaymentState(tx: Executor, companyId: number, billId: 
  * status/paidAmount projection synchronized in the same transaction as the
  * receipt or advance-application row, and never count reversed settlements.
  */
-async function refreshBillPaymentState(tx: Executor, companyId: number, billId: number, userId: number | null) {
+export async function refreshBillPaymentState(tx: Executor, companyId: number, billId: number, userId: number | null) {
   const [bill] = await tx.select().from(contractingProgressBillsTable).where(and(
     eq(contractingProgressBillsTable.id, billId),
     eq(contractingProgressBillsTable.companyId, companyId),
@@ -3099,6 +3099,9 @@ export async function reverseBillSettlement(input: {
     `);
     const settlement = resultRows(locked)[0];
     if (!settlement) throw failure("تسوية المقاولات غير موجودة", 404);
+    if (settlement.source_voucher_line_id != null) {
+      throw failure("تسوية السند تُعكس عبر فك ترحيل سند القبض/الصرف فقط", 409);
+    }
     if (!["bill_receipt", "bill_payment"].includes(String(settlement.kind))) {
       throw failure("عكس هذه التسوية غير مدعوم من مسار عكس دفعات المستخلص", 422);
     }

@@ -34,11 +34,23 @@ import { settlementLinksTable } from "@workspace/db";
 import { isPrimaryKeyCollision, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
 import { logger } from "../lib/logger.js";
 import { namedPartyDescription } from "../lib/journalLineDescriptions.js";
+import { parseContractingAllocation, resolveContractingLine, contractingVoucherOptions, postVoucherSettlements, assertVoucherCanUnpost, lockVoucherContractScope, type ContractingAllocation } from "../lib/contracting-voucher-service.js";
+import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
+import { refreshBillPaymentState } from "../lib/contracting-accounting-service.js";
 
 const router = Router();
 router.use(extractAuth);
 router.use(requireModulePermission("payment_vouchers"));
 router.use(moduleAudit("payment_vouchers"));
+
+router.get("/contracting-options", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+    const entityId = Number(req.query.entityId);
+    if (!cid || !Number.isSafeInteger(entityId) || entityId < 1) { res.status(400).json({ error: "companyId و entityId مطلوبان" }); return; }
+    res.json(await contractingVoucherOptions(cid, "payment", entityId, req));
+  } catch (e: any) { res.status(e.status ?? 400).json({ error: e.message }); }
+});
 
 // Build & insert a balanced journal entry for a payment voucher.
 //
@@ -56,7 +68,7 @@ router.use(moduleAudit("payment_vouchers"));
 // The legacy per-voucher `accountId` override is no longer exposed in
 // the UI; it remains in the table as a still-honored escape hatch for
 // older rows so existing data continues to post correctly.
-async function buildPaymentJournal(cid: number, v: any, req: any): Promise<number> {
+async function buildPaymentJournal(cid: number, v: any, req: any, outerTx?: any): Promise<number> {
   const amount = parseFloat(v.amount || "0");
   if (amount <= 0) throw new Error("المبلغ يجب أن يكون أكبر من صفر");
 
@@ -212,7 +224,7 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
   const jeStatus = await resolvePostingStatus(cid, "payment");
   // Atomic: header + all lines commit together, so a mid-way failure never
   // strands an orphan (zero-balance) journal entry.
-  const entryId = await db.transaction(async (tx) => {
+  const insert = async (tx: any) => {
     // JE number: reuse the number reserved at unpost time (edit→repost keeps
     // the SAME journal-entry number, e.g. 1727 stays 1727), else draw the next
     // continuous "journal_entry" number. Falls back to the voucher code.
@@ -236,7 +248,8 @@ async function buildPaymentJournal(cid: number, v: any, req: any): Promise<numbe
       jeLines.map((jl) => ({ entryId: entry.id, ...jl })),
     );
     return entry.id;
-  });
+  };
+  const entryId = outerTx ? await insert(outerTx) : await db.transaction(insert);
   return entryId;
 }
 
@@ -653,7 +666,13 @@ router.get("/:id", async (req, res) => {
   const lines = await db.select().from(paymentVoucherLinesTable)
     .where(eq(paymentVoucherLinesTable.voucherId, row.id))
     .orderBy(asc(paymentVoucherLinesTable.sortOrder), asc(paymentVoucherLinesTable.id));
-  res.json({ ...row, lines });
+  res.json({ ...row, lines: lines.map((l) => ({
+    ...l,
+    contractingAllocation: l.contractingKind ? {
+      kind: l.contractingKind, projectId: l.contractingProjectId,
+      contractId: l.contractingContractId, billId: l.contractingBillId,
+    } : null,
+  })) });
 });
 
 // Normalize a raw request `lines[]` payload into typed allocation rows,
@@ -669,6 +688,7 @@ interface RawPvLine {
   costCenter: string | null;
   branchId: number | null;
   purchaseInvoiceId: number | null;
+  contractingAllocation: ContractingAllocation | null;
   supplierName: string | null;
   supplierVatNumber: string | null;
   supplierInvoiceNumber: string | null;
@@ -710,7 +730,7 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
     const accountId = l?.accountId ? parseInt(l.accountId) : null;
     const amount = parseFloat(l?.amount ?? "0") || 0;
     const taxAmount = parseFloat(l?.taxAmount ?? "0") || 0;
-    if (!accountId && amount === 0 && taxAmount === 0) continue; // skip blank row
+    if (!accountId && amount === 0 && taxAmount === 0 && l?.contractingAllocation == null) continue; // skip blank row
     out.push({
       accountId,
       description: l?.description ?? null,
@@ -721,6 +741,7 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
       costCenter: l?.costCenter ? String(l.costCenter).trim() || null : null,
       branchId: l?.branchId ? parseInt(l.branchId) : null,
       purchaseInvoiceId: l?.purchaseInvoiceId ? parseInt(l.purchaseInvoiceId) : null,
+      contractingAllocation: parseContractingAllocation(l?.contractingAllocation, "payment"),
       supplierName: txtOrNull(l?.supplierName),
       supplierVatNumber: txtOrNull(l?.supplierVatNumber),
       supplierInvoiceNumber: txtOrNull(l?.supplierInvoiceNumber),
@@ -747,8 +768,18 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
 // Validate normalized lines: every line needs an account + positive amount,
 // all account/tax-account ids must belong to the tenant, and any per-line
 // invoice link must resolve to the same tenant/supplier.
-async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId: number | null): Promise<void> {
+async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId: number | null, req?: any): Promise<void> {
   if (lines.length === 0) throw new Error("يجب إضافة بند واحد على الأقل");
+  for (const l of lines) {
+    if (!l.contractingAllocation) continue;
+    if (l.purchaseInvoiceId || l.taxAmount || l.taxRate || l.taxAccountId || l.opType !== "direct" || l.opSupplierId || l.opEmployeeId) {
+      throw new Error("بند المقاولات لا يقبل فاتورة مشتريات أو ضريبة أو عملية خاصة");
+    }
+    if (l.amount <= 0) throw new Error("مبلغ بند المقاولات يجب أن يكون أكبر من صفر");
+    const mapped = await resolveContractingLine(db, cid, "payment", supplierId, l.contractingAllocation, req);
+    if (l.accountId && l.accountId !== mapped) throw new Error("حساب بند المقاولات لا يطابق الربط المحاسبي");
+    l.accountId = mapped;
+  }
   const voucherTotal = paymentVoucherAccountingTotal(lines);
   if (voucherTotal <= 0) throw new Error("يجب أن يكون صافي إجمالي سند الصرف أكبر من صفر");
   const acctIds = new Set<number>();
@@ -873,14 +904,14 @@ function paymentLinesTotal(lines: RawPvLine[]): number {
 }
 
 // Persist allocation lines for a voucher, replacing any existing rows.
-async function replacePaymentLines(voucherId: number, lines: RawPvLine[]): Promise<void> {
+async function replacePaymentLines(voucherId: number, lines: RawPvLine[], dx: any = db): Promise<void> {
   // Wholesale replace loses line ids — capture existing prepaid-adjustment
   // links BEFORE the delete and re-attach each to the first unclaimed new
   // prepaid line with the same (prepaid account, expense account) pair, so an
   // unpost→edit→repost cycle reuses the SAME adjustment instead of minting a
   // duplicate. Links with no matching new line stay detached; the repost
   // orphan guard cancels their adjustments.
-  const prev = await db.select({
+  const prev = await dx.select({
     adjId:   paymentVoucherLinesTable.deferredAdjustmentId,
     acct:    paymentVoucherLinesTable.accountId,
     expAcct: paymentVoucherLinesTable.deferredExpenseAccountId,
@@ -895,7 +926,7 @@ async function replacePaymentLines(voucherId: number, lines: RawPvLine[]): Promi
       sql`${paymentVoucherLinesTable.deferredAdjustmentId} IS NOT NULL`,
     ));
   const adjByLine = new Map<number, number>(); // line index → adjustment id
-  const pool = prev.filter((p): p is typeof p & { adjId: number } => typeof p.adjId === "number");
+  const pool = prev.filter((p: any) => typeof p.adjId === "number");
   for (const p of pool) {
     // Reuse a link ONLY when the COMPLETE plan is unchanged (accounts, net
     // amount, window, periodicity, CC split). Any edit → leave detached; the
@@ -911,9 +942,9 @@ async function replacePaymentLines(voucherId: number, lines: RawPvLine[]): Promi
       JSON.stringify(l.deferredCostCenters ?? null) === JSON.stringify(p.dCcs ?? null));
     if (idx >= 0) adjByLine.set(idx, p.adjId);
   }
-  await db.delete(paymentVoucherLinesTable).where(eq(paymentVoucherLinesTable.voucherId, voucherId));
+  await dx.delete(paymentVoucherLinesTable).where(eq(paymentVoucherLinesTable.voucherId, voucherId));
   if (lines.length === 0) return;
-  await db.insert(paymentVoucherLinesTable).values(lines.map((l, i) => ({
+  await dx.insert(paymentVoucherLinesTable).values(lines.map((l, i) => ({
     voucherId,
     accountId: l.accountId,
     description: l.description,
@@ -924,6 +955,10 @@ async function replacePaymentLines(voucherId: number, lines: RawPvLine[]): Promi
     costCenter: l.costCenter,
     branchId: l.branchId,
     purchaseInvoiceId: l.purchaseInvoiceId,
+    contractingKind: l.contractingAllocation?.kind ?? null,
+    contractingProjectId: l.contractingAllocation?.projectId ?? null,
+    contractingContractId: l.contractingAllocation?.contractId ?? null,
+    contractingBillId: l.contractingAllocation?.billId ?? null,
     supplierName: l.supplierName,
     supplierVatNumber: l.supplierVatNumber,
     supplierInvoiceNumber: l.supplierInvoiceNumber,
@@ -1069,12 +1104,20 @@ router.post("/", async (req, res) => {
   const entityId = d.entityId ? parseInt(d.entityId) : null;
   // Multi-allocation lines (optional). When present they drive the header
   // amount + invoice link; legacy single-`amount` callers send no `lines`.
-  const lines = normalizePaymentLines(d.lines);
+  let lines: RawPvLine[] | null;
+  try { lines = normalizePaymentLines(d.lines); }
+  catch (e: any) { res.status(400).json({ error: e.message }); return; }
   if (lines) {
-    try { await validatePaymentLines(cid, lines, entityId); }
+    try { await validatePaymentLines(cid, lines, entityId, req); }
     catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
   }
+  if (lines?.some((l) => l.contractingAllocation) && Number(d.exchangeRate ?? 1) !== 1) {
+    res.status(400).json({ error: "بنود المقاولات تتطلب سعر صرف 1" }); return;
+  }
   const headerPurchaseInvoiceId = d.purchaseInvoiceId ? parseInt(d.purchaseInvoiceId) : null;
+  if (headerPurchaseInvoiceId && lines?.some((l) => l.contractingAllocation)) {
+    res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مشتريات؛ اربط البنود العادية بالفاتورة على مستوى البند" }); return;
+  }
   // Prefer an explicit header link; else adopt the first line's invoice so
   // the list view keeps showing a linked-invoice badge.
   const purchaseInvoiceId = headerPurchaseInvoiceId
@@ -1158,7 +1201,7 @@ router.post("/", async (req, res) => {
         null,
       );
     }
-    return tx.insert(paymentVouchersTable).values({
+    const inserted = await tx.insert(paymentVouchersTable).values({
     companyId:     cid,
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
     code,
@@ -1188,6 +1231,14 @@ router.post("/", async (req, res) => {
     // resolved by extractAuth from the trusted x-session-id header.
     sessionId:     (req as any).manualSessionId ?? null,
     }).returning();
+    if (lines && inserted[0]) {
+      for (const l of lines.filter((l) => l.contractingAllocation)) {
+        const mapped = await resolveContractingLine(tx, cid, "payment", entityId, l.contractingAllocation!, req);
+        if (mapped !== l.accountId) throw new Error("تغير ربط حساب المقاولات؛ أعد حفظ السند");
+      }
+      await replacePaymentLines(inserted[0].id, lines, tx);
+    }
+    return inserted;
   });
   let row: typeof paymentVouchersTable.$inferSelect | null = null;
   try {
@@ -1210,7 +1261,6 @@ router.post("/", async (req, res) => {
     return;
   }
   if (!row) return;
-  if (lines) await replacePaymentLines(row.id, lines);
   res.status(201).json(row);
 });
 
@@ -1226,12 +1276,30 @@ router.put("/:id", async (req, res) => {
   if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن تعديل سند مرحّل" }); return; }
 
   const entityId = d.entityId ? parseInt(d.entityId) : null;
-  const lines = normalizePaymentLines(d.lines);
+  let lines: RawPvLine[] | null;
+  try { lines = normalizePaymentLines(d.lines); }
+  catch (e: any) { res.status(400).json({ error: e.message }); return; }
+  if (lines == null) {
+    const [linked] = await db.select({ id: paymentVoucherLinesTable.id }).from(paymentVoucherLinesTable)
+      .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.contractingKind} IS NOT NULL`)).limit(1);
+    if (linked) { res.status(400).json({ error: "تعديل سند المقاولات يتطلب إرسال جميع بنود التوزيع" }); return; }
+  }
   if (lines) {
-    try { await validatePaymentLines(cid, lines, entityId); }
+    try { await validatePaymentLines(cid, lines, entityId, req); }
     catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
   }
+  if (lines?.some((l) => l.contractingAllocation) && Number(d.exchangeRate ?? 1) !== 1) {
+    res.status(400).json({ error: "بنود المقاولات تتطلب سعر صرف 1" }); return;
+  }
   const headerPurchaseInvoiceId = d.purchaseInvoiceId ? parseInt(d.purchaseInvoiceId) : null;
+  if (headerPurchaseInvoiceId && lines?.some((l) => l.contractingAllocation)) {
+    res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مشتريات؛ اربط البنود العادية بالفاتورة على مستوى البند" }); return;
+  }
+  if (headerPurchaseInvoiceId && !lines) {
+    const [contracting] = await db.select({ id: paymentVoucherLinesTable.id }).from(paymentVoucherLinesTable)
+      .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.contractingKind} IS NOT NULL`)).limit(1);
+    if (contracting) { res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مشتريات" }); return; }
+  }
   const purchaseInvoiceId = headerPurchaseInvoiceId
     ?? (lines?.find((l) => l.purchaseInvoiceId)?.purchaseInvoiceId ?? null);
   if (headerPurchaseInvoiceId) {
@@ -1274,6 +1342,9 @@ router.put("/:id", async (req, res) => {
   // Settlement race guard — same advisory-lock re-check as on create,
   // excluding THIS voucher's own old amounts.
   const [row] = await db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(paymentVouchersTable)
+      .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).for("update");
+    if (!locked || locked.status !== "draft") throw new Error("السند غير موجود أو مرحّل");
     if (purchaseInvoiceId) {
       // Lock EVERY distinct linked invoice (sorted → deadlock-free).
       const lockIds = [...new Set([purchaseInvoiceId, ...(lines ?? []).map((l) => l.purchaseInvoiceId).filter((x): x is number => !!x)])].sort((a, b) => a - b);
@@ -1287,7 +1358,7 @@ router.put("/:id", async (req, res) => {
         id,
       );
     }
-    return tx.update(paymentVouchersTable).set({
+    const updated = await tx.update(paymentVouchersTable).set({
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
     date:          d.date,
     paymentType:   d.paymentType,
@@ -1309,11 +1380,18 @@ router.put("/:id", async (req, res) => {
     notes:         d.notes         ?? null,
     costCenter:    d.costCenter ? String(d.costCenter).trim() || null : null,
     }).where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+    if (lines) {
+      for (const l of lines.filter((l) => l.contractingAllocation)) {
+        const mapped = await resolveContractingLine(tx, cid, "payment", entityId, l.contractingAllocation!, req);
+        if (mapped !== l.accountId) throw new Error("تغير ربط حساب المقاولات؛ أعد حفظ السند");
+      }
+      await replacePaymentLines(id, lines, tx);
+    }
+    return updated;
   }).catch((e: any) => { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return [null as any]; });
   if (!row) return;
   // Replace lines only when the caller sent a `lines` array (undefined =
   // legacy update that shouldn't wipe existing allocations).
-  if (lines) await replacePaymentLines(row.id, lines);
   res.json(row);
 });
 
@@ -1325,7 +1403,12 @@ router.post("/:id/post", requirePostRight("payment"), async (req, res) => {
   const [existing] = await db.select().from(paymentVouchersTable)
     .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
-  if (existing.status === "posted") { res.status(400).json({ error: "مرحّل مسبقاً" }); return; }
+  if (existing.status === "posted") {
+    const [linked] = await db.select({ id: paymentVoucherLinesTable.id }).from(paymentVoucherLinesTable)
+      .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.contractingKind} IS NOT NULL`)).limit(1);
+    if (linked && existing.journalEntryId) { res.json({ ...existing, idempotentReplay: true }); return; }
+    res.status(400).json({ error: "مرحّل مسبقاً" }); return;
+  }
   if (!existing.amount || parseFloat(existing.amount) <= 0) {
     res.status(400).json({ error: "المبلغ يجب أن يكون أكبر من صفر" }); return;
   }
@@ -1339,6 +1422,37 @@ router.post("/:id/post", requirePostRight("payment"), async (req, res) => {
     .limit(1);
   if (anySpecialOp.length && Math.abs(pvRate - 1) > 1e-9) {
     res.status(400).json({ error: "بنود العمليات الخاصة (مصروف مقدم/أصل/سلفة/عهدة/مورد) متاحة فقط لسندات الصرف بالعملة الأساسية (سعر الصرف = 1)" });
+    return;
+  }
+  const contractingLines = await db.select().from(paymentVoucherLinesTable)
+    .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.contractingKind} IS NOT NULL`));
+  if (contractingLines.length) {
+    if (anySpecialOp.length) { res.status(400).json({ error: "لا يمكن جمع بنود المقاولات مع العمليات الخاصة في سند واحد" }); return; }
+    try {
+      await ensureContractingAccountingTables();
+      const row = await db.transaction(async (tx) => {
+        await lockVoucherContractScope(tx, cid, contractingLines);
+        const [locked] = await tx.select().from(paymentVouchersTable)
+          .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "draft"))).for("update");
+        if (!locked) throw new Error("مرحّل مسبقاً");
+        const current = await tx.select().from(paymentVoucherLinesTable)
+          .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.contractingKind} IS NOT NULL`));
+        if (current.length !== contractingLines.length || current.some((l) =>
+          !contractingLines.find((old) => old.id === l.id && old.amount === l.amount &&
+            old.accountId === l.accountId && old.contractingKind === l.contractingKind &&
+            old.contractingProjectId === l.contractingProjectId &&
+            old.contractingContractId === l.contractingContractId &&
+            old.contractingBillId === l.contractingBillId)))
+          throw new Error("تغيرت بنود السند أثناء الترحيل؛ أعد المحاولة");
+        const journalId = await buildPaymentJournal(cid, locked, req, tx);
+        await postVoucherSettlements(tx, cid, "payment", locked, current, journalId, req);
+        const [posted] = await tx.update(paymentVouchersTable)
+          .set({ status: "posted", journalEntryId: journalId })
+          .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+        return posted;
+      });
+      res.json(row);
+    } catch (e: any) { res.status(e.status ?? 400).json({ error: e.message }); }
     return;
   }
   // Atomically CLAIM the draft→posted transition so two concurrent /post
@@ -1592,6 +1706,34 @@ router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
     .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status !== "posted") { res.status(400).json({ error: "السند ليس مرحّلاً" }); return; }
+  await ensureContractingAccountingTables();
+  const settlement = await db.execute(sql`SELECT id FROM contracting_accounting_settlements
+    WHERE company_id = ${cid} AND source_voucher_type = 'payment' AND source_voucher_id = ${id}
+      AND status = 'posted' LIMIT 1`);
+  if ((Array.isArray(settlement) ? settlement : (settlement as any).rows ?? []).length) {
+    try {
+      const scopedLines = await db.select().from(paymentVoucherLinesTable)
+        .where(and(eq(paymentVoucherLinesTable.voucherId, id), sql`${paymentVoucherLinesTable.contractingKind} IS NOT NULL`));
+      const row = await db.transaction(async (tx) => {
+        await lockVoucherContractScope(tx, cid, scopedLines);
+        const [v] = await tx.select().from(paymentVouchersTable)
+          .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted"))).for("update");
+        if (!v) throw new Error("السند ليس مرحّلاً");
+        const links = await assertVoucherCanUnpost(tx, cid, "payment", id);
+        await tx.execute(sql`UPDATE contracting_accounting_settlements SET status = 'reversed', updated_at = NOW()
+          WHERE company_id = ${cid} AND source_voucher_type = 'payment' AND source_voucher_id = ${id} AND status = 'posted'`);
+        for (const billId of new Set(links.map((x: any) => x.bill_id).filter(Boolean)))
+          await refreshBillPaymentState(tx, cid, Number(billId), (req as any).authUser?.id ?? null);
+        if (v.journalEntryId) await tx.update(journalEntriesTable).set({ status: "draft" })
+          .where(and(eq(journalEntriesTable.id, v.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        const [draft] = await tx.update(paymentVouchersTable).set({ status: "draft", journalEntryId: null })
+          .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+        return draft;
+      });
+      res.json(row);
+    } catch (e: any) { res.status(e.status ?? 409).json({ error: e.message }); }
+    return;
+  }
   // ── Phase-2 op types: guard + rollback the linked records BEFORE touching
   // the JE. Any record that has downstream activity BLOCKS the unpost (the
   // user must undo that activity first); untouched records are deleted so a
@@ -1747,6 +1889,12 @@ router.delete("/:id", async (req, res) => {
     .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن حذف سند مرحّل" }); return; }
+  await ensureContractingAccountingTables();
+  const evidence = await db.execute(sql`SELECT id FROM contracting_accounting_settlements
+    WHERE company_id = ${cid} AND source_voucher_type = 'payment' AND source_voucher_id = ${id} LIMIT 1`);
+  if ((Array.isArray(evidence) ? evidence : (evidence as any).rows ?? []).length) {
+    res.status(409).json({ error: "لا يمكن حذف سند له تسويات مقاولات محفوظة في سجل المراجعة" }); return;
+  }
   await db.delete(paymentVouchersTable)
     .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)));
   res.status(204).send();

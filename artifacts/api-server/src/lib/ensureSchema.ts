@@ -221,6 +221,14 @@ const SUPPLIER_METADATA_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_invoice_date TEXT`,
   `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS supplier_name TEXT`,
+  `ALTER TABLE IF EXISTS receipt_voucher_lines ADD COLUMN IF NOT EXISTS contracting_kind TEXT`,
+  `ALTER TABLE IF EXISTS receipt_voucher_lines ADD COLUMN IF NOT EXISTS contracting_project_id INTEGER`,
+  `ALTER TABLE IF EXISTS receipt_voucher_lines ADD COLUMN IF NOT EXISTS contracting_contract_id INTEGER`,
+  `ALTER TABLE IF EXISTS receipt_voucher_lines ADD COLUMN IF NOT EXISTS contracting_bill_id INTEGER`,
+  `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS contracting_kind TEXT`,
+  `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS contracting_project_id INTEGER`,
+  `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS contracting_contract_id INTEGER`,
+  `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS contracting_bill_id INTEGER`,
   `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS supplier_tax_number TEXT`,
   `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS supplier_vat_number TEXT`,
   `ALTER TABLE IF EXISTS payment_voucher_lines ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT`,
@@ -1998,6 +2006,18 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       )` },
     { label: "payment_voucher_lines_voucher_idx",
       sql:   `CREATE INDEX IF NOT EXISTS payment_voucher_lines_voucher_idx ON payment_voucher_lines (voucher_id)` },
+    { label: "receipt contracting voucher allocation fields",
+      sql: `ALTER TABLE receipt_voucher_lines
+        ADD COLUMN IF NOT EXISTS contracting_kind TEXT,
+        ADD COLUMN IF NOT EXISTS contracting_project_id INTEGER,
+        ADD COLUMN IF NOT EXISTS contracting_contract_id INTEGER,
+        ADD COLUMN IF NOT EXISTS contracting_bill_id INTEGER` },
+    { label: "payment contracting voucher allocation fields",
+      sql: `ALTER TABLE payment_voucher_lines
+        ADD COLUMN IF NOT EXISTS contracting_kind TEXT,
+        ADD COLUMN IF NOT EXISTS contracting_project_id INTEGER,
+        ADD COLUMN IF NOT EXISTS contracting_contract_id INTEGER,
+        ADD COLUMN IF NOT EXISTS contracting_bill_id INTEGER` },
     // ─── je_number_reservations: reuse the SAME journal-entry number across an
     // unpost→edit→repost cycle (see schema/journalEntries.ts). Created here
     // because ensureColumns only ALTERs existing tables. Idempotent.

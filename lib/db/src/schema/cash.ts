@@ -145,6 +145,11 @@ export const receiptVoucherLinesTable = pgTable("receipt_voucher_lines", {
   branchId:       integer("branch_id").references(() => branchesTable.id),
   // Optional per-line link to the sales invoice this allocation settles.
   salesInvoiceId: integer("sales_invoice_id").references(() => salesInvoicesTable.id, { onDelete: "set null" }),
+  // Optional contracting allocation. Null means the ordinary receipt path.
+  contractingKind: text("contracting_kind"),
+  contractingProjectId: integer("contracting_project_id"),
+  contractingContractId: integer("contracting_contract_id"),
+  contractingBillId: integer("contracting_bill_id"),
   sortOrder:      integer("sort_order").notNull().default(0),
 });
 
@@ -168,6 +173,10 @@ export const paymentVoucherLinesTable = pgTable("payment_voucher_lines", {
   branchId:          integer("branch_id").references(() => branchesTable.id),
   // Optional per-line link to the purchase invoice this allocation settles.
   purchaseInvoiceId: integer("purchase_invoice_id").references(() => purchaseInvoicesTable.id, { onDelete: "set null" }),
+  contractingKind: text("contracting_kind"),
+  contractingProjectId: integer("contracting_project_id"),
+  contractingContractId: integer("contracting_contract_id"),
+  contractingBillId: integer("contracting_bill_id"),
   // Per-line supplier tax metadata (entered via the ⋮ dialog). Captured when
   // NO header supplier is chosen so a consolidated voucher can still attribute
   // each tax line to its own supplier. These flow into the VAT declaration

@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { useLocation } from "wouter";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -19,6 +20,8 @@ type Settlement = {
   applied_amount?: string | number; journal_entry_id?: number | null;
   reversal_journal_entry_id?: number | null;
   bill_id?: number | null; settlement_date: string; status: string;
+  voucher_code?: string | null;
+  source_voucher_type?: "receipt" | "payment" | null; source_voucher_id?: number | null;
 };
 type MaterialMovement = {
   id: number; direction: "issue" | "return"; qty_base: string | number;
@@ -57,13 +60,18 @@ const labelKind: Record<string, string> = {
   advance_application: "تطبيق سلفة",
 };
 export default function ContractingAccountingPanel({ projectId }: Props) {
+  const [, navigate] = useLocation();
   const { token } = useAuth() as any;
   const { toast } = useToast();
   const [bills, setBills] = useState<Bill[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [voucherCodes, setVoucherCodes] = useState<Record<string, string>>({});
   const [movements, setMovements] = useState<MaterialMovement[]>([]);
   const [audit, setAudit] = useState<any[]>([]);
   const [options, setOptions] = useState<Options>({ items: [], units: [], warehouses: [], cashBoxes: [], banks: [], balances: [], ownerContracts: [], subcontractorContracts: [] });
+  const [ownerLinks, setOwnerLinks] = useState<Array<{ id: number; customerId: number | null }>>([]);
+  const [subLinks, setSubLinks] = useState<Array<{ id: number; contractorId: number | null }>>([]);
+  const [contractors, setContractors] = useState<Array<{ id: number; supplierId: number | null }>>([]);
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState("advance_receipt");
   const [amount, setAmount] = useState("");
@@ -97,11 +105,14 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const reload = useCallback(async () => {
     if (!token || !projectId) return;
-    const [billResponse, accountingResponse, materialResponse, optionsResponse] = await Promise.all([
+    const [billResponse, accountingResponse, materialResponse, optionsResponse, ownerResponse, subResponse, contractorResponse] = await Promise.all([
       fetch(`${API}/api/contracting/projects/${projectId}/bills`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/settlements`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/material-movements`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/accounting/options`, { headers }),
+      fetch(`${API}/api/contracting/projects/${projectId}/owner-contracts`, { headers }),
+      fetch(`${API}/api/contracting/projects/${projectId}/sub-contracts`, { headers }),
+      fetch(`${API}/api/contracting/contractors`, { headers }),
     ]);
     if (billResponse.ok) setBills(await billResponse.json());
     if (accountingResponse.ok) {
@@ -111,8 +122,26 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
     }
     if (materialResponse.ok) setMovements(await materialResponse.json());
     if (optionsResponse.ok) setOptions(await optionsResponse.json());
+    if (ownerResponse.ok) setOwnerLinks(await ownerResponse.json());
+    if (subResponse.ok) setSubLinks(await subResponse.json());
+    if (contractorResponse.ok) setContractors(await contractorResponse.json());
   }, [headers, projectId, token]);
   useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    if (!token) return;
+    const linked = settlements.filter(row => row.source_voucher_id &&
+      (row.source_voucher_type === "receipt" || row.source_voucher_type === "payment"));
+    const abort = new AbortController();
+    void Promise.all(linked.map(async row => {
+      const key = `${row.source_voucher_type}:${row.source_voucher_id}`;
+      if (voucherCodes[key] || row.voucher_code) return;
+      const response = await fetch(`${API}/api/${row.source_voucher_type}-vouchers/${row.source_voucher_id}`, { headers, signal: abort.signal });
+      if (!response.ok) return;
+      const voucher = await response.json();
+      if (!abort.signal.aborted && voucher.code) setVoucherCodes(prev => ({ ...prev, [key]: voucher.code }));
+    })).catch(() => {});
+    return () => abort.abort();
+  }, [settlements, token, headers, voucherCodes]);
 
   const selectedItem = options.items.find((row) => row.id === Number(itemId));
   const selectedBatchMode = selectedItem?.batchTrackingMode === "fifo" || selectedItem?.batchTrackingMode === "fefo"
@@ -222,8 +251,31 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
 
   const requiresBill = kind.startsWith("retention_") || kind.startsWith("bill_");
   const advances = settlements.filter((s) => s.kind === "advance_receipt" || s.kind === "advance_payment");
+  function openVoucher() {
+    const receipt = kind === "advance_receipt" || kind === "bill_receipt";
+    const isBill = kind === "bill_receipt" || kind === "bill_payment";
+    if (!["advance_receipt", "bill_receipt", "advance_payment", "bill_payment"].includes(kind)) return;
+    const bill = isBill ? bills.find(row => row.id === Number(billId) && ["approved", "posted", "partially_paid"].includes(row.status)) : null;
+    const contractId = isBill ? Number(receipt ? bill?.ownerContractId : bill?.subcontractorContractId)
+      : Number(receipt ? ownerContractId : subcontractorContractId);
+    const partyId = receipt ? ownerLinks.find(row => row.id === contractId)?.customerId
+      : contractors.find(row => row.id === subLinks.find(link => link.id === contractId)?.contractorId)?.supplierId;
+    if (!contractId || !partyId || (isBill && !bill)) {
+      toast({ title: "يجب اختيار عقد مرتبط بعميل/مورد صريح ومستخلص معتمد عند التحصيل/السداد", variant: "destructive" });
+      return;
+    }
+    const query = new URLSearchParams({
+      contractingKind: receipt ? (isBill ? "owner_bill" : "owner_advance") : (isBill ? "subcontract_bill" : "subcontract_advance"),
+      projectId: String(projectId), contractId: String(contractId), entityId: String(partyId),
+    });
+    if (isBill) query.set("billId", String(bill!.id));
+    if (Number(amount) > 0 && Number.isFinite(Number(amount))) query.set("amount", amount);
+    navigate(`/cash/${receipt ? "receipt" : "payment"}-vouchers/multi/new?${query}`);
+  }
 
   async function saveSettlement() {
+    if (["advance_receipt", "bill_receipt", "advance_payment", "bill_payment"].includes(kind)
+      && !window.confirm("هذا ترحيل مباشر مستقل عن السند المتعدد. إذا أنشأت سنداً لهذه العملية بالفعل فستتكرر التسوية. هل تريد المتابعة بالمسار القديم؟")) return;
     const scope = `settlement:${kind}:${billId || (kind === "advance_receipt" ? ownerContractId : subcontractorContractId) || "contract"}:${amount}:${paymentType}:${treasuryId}:${settlementDate}`;
     const result = await post(`/api/contracting/projects/${projectId}/settlements`, {
       kind, amount: Number(amount), billId: requiresBill ? Number(billId) : null,
@@ -270,7 +322,7 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
     if (result) setQty("");
   }
 
-  const approvedBills = bills.filter((bill) => bill.status === "approved");
+  const approvedBills = bills.filter((bill) => ["approved", "posted", "partially_paid"].includes(bill.status));
   const selectedBalance = options.balances.find((row) => row.itemId === Number(itemId) && row.warehouseId === Number(warehouseId));
   const [materialContractDirection, materialContractIdText] = materialContract.split(":");
   const materialContractId = Number(materialContractIdText);
@@ -344,7 +396,11 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
             ]} testId="accounting-payment-type-picker" />
             <PickerField label={paymentType === "cash" ? "الخزنة" : "الحساب البنكي"} value={treasuryId} onValueChange={setTreasuryId} placeholder="اختر الحساب" items={(paymentType === "cash" ? options.cashBoxes : options.banks).map((row) => ({ value: String(row.id), label: `${row.code} — ${row.nameAr}` }))} testId="accounting-treasury-picker" />
           </div>
-          <Button className="mt-3" disabled={busy || !amount || !treasuryId || (requiresBill && !billId) || (!requiresBill && kind === "advance_receipt" && !ownerContractId) || (!requiresBill && kind === "advance_payment" && !subcontractorContractId)} onClick={() => void saveSettlement()}>ترحيل القيد</Button>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button variant="outline" disabled={busy || !["advance_receipt", "bill_receipt", "advance_payment", "bill_payment"].includes(kind) || (requiresBill && !billId) || (!requiresBill && kind === "advance_receipt" && !ownerContractId) || (!requiresBill && kind === "advance_payment" && !subcontractorContractId)} onClick={openVoucher}>فتح سند {kind.endsWith("receipt") ? "قبض" : "صرف"} متعدد (بدون ترحيل تلقائي)</Button>
+            <Button variant="outline" disabled={busy || !amount || !treasuryId || (requiresBill && !billId) || (!requiresBill && kind === "advance_receipt" && !ownerContractId) || (!requiresBill && kind === "advance_payment" && !subcontractorContractId)} onClick={() => void saveSettlement()}>ترحيل مباشر (النظام القديم)</Button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">اختر مساراً واحداً للعملية: السند المتعدد أو الترحيل المباشر. لا تستخدم الاثنين لنفس التحصيل أو السداد.</p>
         </section>
 
         <section className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
@@ -480,11 +536,18 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         <h3 className="mb-3 font-bold">سجل التسويات والتدقيق المحاسبي</h3>
         <div className="space-y-1 text-sm">
           {settlements.map((row) => {
-            const reversibleBillSettlement = ["bill_receipt", "bill_payment"].includes(row.kind) && row.status === "posted";
+            const reversibleBillSettlement = ["bill_receipt", "bill_payment"].includes(row.kind) && row.status === "posted" && !row.source_voucher_id;
             return (
               <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2">
                 <span>{labelKind[row.kind] || row.kind} #{row.id}{row.bill_id ? ` — مستخلص #${row.bill_id}` : ""}</span>
                 <span>{Number(row.amount).toLocaleString("en-US")} • قيد #{row.journal_entry_id ?? "—"}</span>
+                {row.source_voucher_id && (row.source_voucher_type === "receipt" || row.source_voucher_type === "payment") && (
+                  <a className="text-primary underline text-xs" href={`/cash/${row.source_voucher_type}-vouchers/multi/${row.source_voucher_id}`}
+                    onClick={event => { event.preventDefault(); navigate(event.currentTarget.getAttribute("href")!); }}>
+                    {row.voucher_code || voucherCodes[`${row.source_voucher_type}:${row.source_voucher_id}`] || `${row.source_voucher_type === "receipt" ? "سند قبض" : "سند صرف"} #${row.source_voucher_id}`}
+                  </a>
+                )}
+                {row.source_voucher_id && <span className="text-xs text-muted-foreground">يُفك الترحيل من السند المرتبط</span>}
                 {reversibleBillSettlement ? (
                   <Button
                     size="sm"

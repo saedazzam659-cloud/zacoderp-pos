@@ -11,6 +11,12 @@ Project and bill cost centers are optional. A new bill can default from its proj
 
 Resources are planning records, not stock issues. Actual material movements and settlements require explicit accounting actions; never infer them from planning status.
 
+Contracting cash allocations are optional additions to the existing multiple receipt/payment vouchers, not replacements for ordinary voucher behavior or conversions of historical settlements.
+
+**Why:** The user approved using the cash-and-banks vouchers for owner receipts and subcontract payments, expressly requiring existing multi-voucher functionality to remain intact.
+
+**How to apply:** Reuse the voucher's single journal when linking posted allocations into contracting balances; never post another cash journal. Preserve direct historical settlements, enforce exact party/contract links, and keep bill approval distinct from cash payment. Guard unposting of advances already consumed by later certificates.
+
 **Why:** Selecting an inventory item or marking a resource allocated must not silently consume stock or create costs.
 
 **How to apply:** Use real item-owned conversion snapshots and warehouse scope. Unsupported lot/costing paths must fail clearly rather than silently substitute weighted-average costing.
