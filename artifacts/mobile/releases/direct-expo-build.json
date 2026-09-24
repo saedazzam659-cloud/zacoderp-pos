@@ -1,0 +1,21 @@
+{
+  "buildId": "0345e808-9721-4e69-a703-2258cb728f2c",
+  "status": "FINISHED",
+  "versionCode": 14,
+  "archiveSha256": "15cd35653927869e096d2910a1ddd861c97a02339ae16faf9cf4405d7059f0b0",
+  "signingSha256": "c3245b640eb6afe24557fa5341bb86bed04aa8e6f072ad2f8cfc0a2dd22012d6",
+  "previousBuildId": "0559806f-46a8-4cea-8517-9053c70f0de4",
+  "previousError": {
+    "code": "UNKNOWN_ERROR",
+    "message": "Unknown error. See logs of the Build complete hook build phase for more information."
+  },
+  "dashboard": "https://expo.dev/accounts/karmazzams-team/projects/zacoderp/builds/0345e808-9721-4e69-a703-2258cb728f2c",
+  "file": "/home/runner/workspace/artifacts/mobile/releases/zacoderp-google-play-v14.aab",
+  "sha256": "6a653f12d85db48fbe8f15ed23b7f06333b0364beeb5a7a7c86f7aaa30c922b0",
+  "verification": {
+    "packageName": "com.zacoderp.mobile",
+    "manifestVersionCode": "14",
+    "certificateSha256": "c3245b640eb6afe24557fa5341bb86bed04aa8e6f072ad2f8cfc0a2dd22012d6",
+    "compiledBundleHasDomain": true
+  }
+}

@@ -122,6 +122,8 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "quotations_view",    labelKey: "users.mobQuotationsView", editKey: "quotation_edit", deleteKey: "quotation_delete" },
   { key: "quotation_create",   labelKey: "users.mobQuotationCreate" },
   { key: "reports_view",       labelKey: "users.mobReportsView", screenKey: "screen_reports" },
+  { key: "customer_statement_view", labelKey: "navExtra.customerStatement" },
+  { key: "customer_statement_detailed_view", labelKey: "navExtra.customerStatementDetailed" },
   { key: "hr_attendance_view", labelKey: "users.mobHrAttendanceView" },
   { key: "offline_controls", labelKey: "users.mobOfflineControls" },
   { key: "server_settings", labelKey: "users.mobServerSettings" },

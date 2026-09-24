@@ -12,3 +12,4 @@
 - [New company defaults](new-company-defaults-boundary.md) — creation-only settings; never reset existing tenants or split shared document-number namespaces.
 - [Party classification](party-classification-boundaries.md) — unset means ordinary customer/supplier; filter new choices only and preserve historical links.
 - [Mobile server sessions](mobile-server-session-boundary.md) — changing domains requires fresh authentication; preserve queued operations and central-only legacy sessions.
+- [Expo source archives](expo-source-archive-contract.md) — direct build uploads require a project/ wrapper; finalize changes before taking the build snapshot.

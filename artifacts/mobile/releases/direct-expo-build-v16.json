@@ -1,0 +1,24 @@
+{
+  "buildId": "ef00205d-650e-4f6a-b6e4-d2b6dc0d9554",
+  "status": "FINISHED",
+  "versionCode": 16,
+  "archiveSha256": "93a30a9d39860c6ef80fc1f5843b6dad4c7faadcb3e4966db58765f5694249d0",
+  "sourceAudit": {
+    "artifacts/mobile/app/customer-statement/[kind].tsx": "456014356c81778996374d4116dace87a0733676cc7096f7c08093be20690ef4",
+    "artifacts/mobile/lib/statementLedger.ts": "f0f2f7ffa1cd74b33edf77fd6cb1f18f23e7c43c451f52e28c425f62515ce058",
+    "artifacts/mobile/lib/statementHtml.ts": "9b0c35b77b3c61cd046a4e0d36f0636f53c8270a43103133ea712d51d856414c",
+    "artifacts/mobile/app/(tabs)/reports.tsx": "7749fa2aa47265d700c8570b40905968188a544a2f39048a3e9a572eca90b53a",
+    "artifacts/mobile/app/(tabs)/more.tsx": "d8fbb8246536a9ee89583929302b25b59645810b2678de6056d88fd41923bf2e"
+  },
+  "signingSha256": "c3245b640eb6afe24557fa5341bb86bed04aa8e6f072ad2f8cfc0a2dd22012d6",
+  "dashboard": "https://expo.dev/accounts/karmazzams-team/projects/zacoderp/builds/ef00205d-650e-4f6a-b6e4-d2b6dc0d9554",
+  "file": "/home/runner/workspace/artifacts/mobile/releases/zacoderp-google-play-v16.aab",
+  "sha256": "ba031e623a5fcc6f0a5c69069b225602140f695dfed110ecc126a81856ab3504",
+  "verification": {
+    "packageName": "com.zacoderp.mobile",
+    "manifestVersionCode": "16",
+    "certificateSha256": "c3245b640eb6afe24557fa5341bb86bed04aa8e6f072ad2f8cfc0a2dd22012d6",
+    "compiledBundleHasDomain": true,
+    "compiledBundleHasCustomerStatements": true
+  }
+}

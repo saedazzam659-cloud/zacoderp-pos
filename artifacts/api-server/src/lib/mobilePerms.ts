@@ -26,6 +26,8 @@
 //   voucher_delete    حذف سند قبض
 //   customer_edit     تعديل عميل
 //   customer_delete   حذف عميل
+//   customer_statement_view          عرض كشف حساب عميل
+//   customer_statement_detailed_view عرض كشف حساب عميل تفصيلي
 //   quotations_view   عرض عروض الأسعار
 //   quotation_create  إنشاء عرض سعر
 //   quotation_edit    تعديل عرض سعر (يشمل تغيير الحالة والتحويل لفاتورة)

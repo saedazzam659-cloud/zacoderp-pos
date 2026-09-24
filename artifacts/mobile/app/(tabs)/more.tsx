@@ -156,6 +156,18 @@ export default function More() {
               <View style={{ height: 1, backgroundColor: c.border }} />
             </>
           ) : null}
+          {mp('customer_statement_view') ? (
+            <>
+              <RowItem icon="file-text" title="كشف حساب عميل" onPress={() => router.push('/customer-statement/ordinary' as any)} testID="row-customer-statement" />
+              <View style={{ height: 1, backgroundColor: c.border }} />
+            </>
+          ) : null}
+          {mp('customer_statement_detailed_view') ? (
+            <>
+              <RowItem icon="file-text" title="كشف حساب عميل تفصيلي" onPress={() => router.push('/customer-statement/detailed' as any)} testID="row-customer-statement-detailed" />
+              <View style={{ height: 1, backgroundColor: c.border }} />
+            </>
+          ) : null}
           {mp('hr_attendance_view') ? (
             <>
               <RowItem icon="clock" title="تقرير حضوري (الحضور والانصراف)" onPress={() => router.push('/hr-attendance' as any)} testID="row-hr-attendance" />

@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { saveBlob, saveWorkbook } from "./saveFile";
+import * as statementTemplate from "../../../mobile/lib/statementHtml";
 
 export interface ExportColumn {
   header: string;
@@ -1811,6 +1812,16 @@ export interface ExportStatementPdfOpts {
 }
 
 export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
+  // The same browser-free template is used by the native PDF/share sheet.
+  if (opts.mode === "customer") {
+    const sharedHtml = (statementTemplate.renderStatementHtml ?? (statementTemplate as any).default.renderStatementHtml)(opts);
+    const sharedBlob = new Blob([sharedHtml], { type: "text/html;charset=utf-8" });
+    const sharedUrl = URL.createObjectURL(sharedBlob);
+    const sharedWindow = window.open(sharedUrl, "_blank");
+    if (sharedWindow) sharedWindow.addEventListener("afterprint", () => URL.revokeObjectURL(sharedUrl));
+    else URL.revokeObjectURL(sharedUrl);
+    return;
+  }
   const {
     mode, company, account, from, to,
     opening, lines, totals, closing,

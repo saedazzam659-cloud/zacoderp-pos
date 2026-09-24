@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import {
+  accountsTable,
   customersTable,
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable,  salesReturnLinesTable,
@@ -17,6 +18,7 @@ import {
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, lt, asc, desc, inArray, notInArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, pushRegionScope } from "../middleware/auth.js";
+import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -84,6 +86,28 @@ function getBid(req: any): number | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+// Statement header only: never expose an arbitrary chart-of-accounts row.
+// The linked account must belong to the same company AND to a customer
+// visible under the caller's branch scope. An absent account stays null.
+async function customerStatementAccount(req: any, cid: number, customerId: number) {
+  const [account] = await db.select({
+    code: accountsTable.code,
+    nameAr: accountsTable.nameAr,
+    nameEn: accountsTable.nameEn,
+    level: accountsTable.level,
+  }).from(customersTable)
+    .innerJoin(accountsTable, and(
+      eq(customersTable.accountId, accountsTable.id),
+      eq(accountsTable.companyId, cid),
+    ))
+    .where(and(
+      eq(customersTable.id, customerId),
+      eq(customersTable.companyId, cid),
+      ...branchScopeSpread(req, customersTable.branchId),
+    ));
+  return account ?? null;
 }
 
 // These sources are already represented by their own document rows in the
@@ -472,6 +496,7 @@ router.get("/by-period", async (req, res) => {
 router.get("/customer-statement", async (req, res) => {
   try {
     const cid = getCid(req);
+    if (cid && !(await requireMobilePerm(req, res, cid, "customer_statement_view", "ليست لديك صلاحية عرض كشف حساب العميل من تطبيق الموبايل"))) return;
     if (!cid) { res.json({ opening: 0, lines: [] }); return; }
     const bid = getBid(req);
     const { customerId, from, to } = req.query as Record<string, string>;
@@ -727,7 +752,7 @@ router.get("/customer-statement", async (req, res) => {
       })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || (a.id ?? 0) - (b.id ?? 0));
 
-    res.json({ opening, lines });
+    res.json({ opening, lines, account: await customerStatementAccount(req, cid, ccid) });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -742,6 +767,7 @@ router.get("/customer-statement", async (req, res) => {
 router.get("/customer-statement-detailed", async (req, res) => {
   try {
     const cid = getCid(req);
+    if (cid && !(await requireMobilePerm(req, res, cid, "customer_statement_detailed_view", "ليست لديك صلاحية عرض كشف حساب العميل التفصيلي من تطبيق الموبايل"))) return;
     if (!cid) { res.json({ opening: 0, lines: [] }); return; }
     const bid = getBid(req);
     const { customerId, from, to } = req.query as Record<string, string>;
@@ -1064,7 +1090,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
       })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type) || a.id - b.id);
 
-    res.json({ opening, lines });
+    res.json({ opening, lines, account: await customerStatementAccount(req, cid, ccid) });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

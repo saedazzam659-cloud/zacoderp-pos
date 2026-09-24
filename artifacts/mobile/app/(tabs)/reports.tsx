@@ -60,6 +60,10 @@ export default function Summary() {
       {!mp('reports_view') ? (
         <View style={{ padding: 20 }}>
           <Card><Text style={{ textAlign: 'right', color: c.mutedForeground }}>ليست لديك صلاحية عرض التقارير من التطبيق.</Text></Card>
+          {(mp('customer_statement_view') || mp('customer_statement_detailed_view')) && <Card style={{ marginTop: 12, gap: 12 }}>
+            {mp('customer_statement_view') && <Pressable onPress={() => router.push('/customer-statement/ordinary' as any)}><Text style={{ color: c.primary, textAlign: 'right' }}>كشف حساب عميل ←</Text></Pressable>}
+            {mp('customer_statement_detailed_view') && <Pressable onPress={() => router.push('/customer-statement/detailed' as any)}><Text style={{ color: c.primary, textAlign: 'right' }}>كشف حساب عميل تفصيلي ←</Text></Pressable>}
+          </Card>}
         </View>
       ) : q.isError ? (
         <ErrorBox text={(q.error as Error)?.message ?? 'فشل تحميل البيانات'} onRetry={() => q.refetch()} />
@@ -73,6 +77,13 @@ export default function Summary() {
             <Stat icon="file-text" label="إجمالي الفواتير" value={String(stats.total)} />
             <Stat icon="edit-3" label="مسودات" value={String(stats.draftCount)} />
           </View>
+          {(mp('customer_statement_view') || mp('customer_statement_detailed_view')) && (
+            <Card style={{ gap: 8 }}>
+              <Text style={{ color: c.foreground, textAlign: 'right', fontFamily: 'Inter_700Bold' }}>كشوف حساب العملاء</Text>
+              {mp('customer_statement_view') && <Pressable onPress={() => router.push('/customer-statement/ordinary' as any)} style={{ padding: 10 }}><Text style={{ color: c.primary, textAlign: 'right' }}>كشف حساب عميل ←</Text></Pressable>}
+              {mp('customer_statement_detailed_view') && <Pressable onPress={() => router.push('/customer-statement/detailed' as any)} style={{ padding: 10 }}><Text style={{ color: c.primary, textAlign: 'right' }}>كشف حساب عميل تفصيلي ←</Text></Pressable>}
+            </Card>
+          )}
           {can('accounting_reports', 'view') || can('vat_declaration', 'view') ? (
             <View style={{ gap: 10 }}>
               <Text style={{ fontSize: 15, fontFamily: 'Inter_700Bold', textAlign: 'right', color: c.foreground, marginTop: 4 }}>التقارير المالية</Text>

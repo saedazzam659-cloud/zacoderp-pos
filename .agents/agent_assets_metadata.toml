@@ -553,3 +553,17 @@ mtime_ms = 1789129282899
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/959932f5-c1bd-4072-bb65-ed2b35760f5f/ece8f38d-6c11-4151-a8f8-f69b0c7ed41c"
 storage_version_token = "1789129289491356"
 content_type = "image/png"
+
+[[outputs]]
+id = "1RSfLom0ARNLynDEGtFSE"
+uri = "file://artifacts/mobile/releases/zacoderp-google-play-v16.aab"
+type = "unspecified"
+title = "زاكود ERP — إصدار Google Play رقم 16"
+description = "ملف AAB موقّع بنفس شهادة الإصدارات السابقة، يتضمن إصلاح تبديل الخادم وكشفَي حساب العميل العادي والتفصيلي والطباعة ومشاركة PDF."
+logical_id = "c2d3d5d4-fe2b-49de-9581-8b9ee1bd5310"
+content_hash = "sha256:ba031e623a5fcc6f0a5c69069b225602140f695dfed110ecc126a81856ab3504"
+size = 77400336
+mtime_ms = 1790288028057
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/c2d3d5d4-fe2b-49de-9581-8b9ee1bd5310/37a73c92-bd9a-4d00-9acb-7cea90cc4de5"
+storage_version_token = "1790288052357972"
+content_type = "application/octet-stream"

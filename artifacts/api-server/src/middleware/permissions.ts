@@ -279,14 +279,33 @@ const MOBILE_UNPOST_KEYS: Record<string, string> = {
   receipt_vouchers: "voucher_unpost",
 };
 
+// Sales analytics hosts many reports. Only these exact customer-statement
+// routes have their own mobile keys; never use reports_view as a blanket
+// fallback for sales_reports (or grant access to unrelated analytics).
+const MOBILE_SALES_REPORT_KEYS: Record<string, string> = {
+  "/customer-statement": "customer_statement_view",
+  "/customer-statement-detailed": "customer_statement_detailed_view",
+};
+
+export function mobileFallbackKey(module: string, action: PermAction, path = ""): string | undefined {
+  if (module === "sales_reports" && action === "view") {
+    // req.path is relative to the mounted router; accept the full mount path
+    // as well when an outer router checks permission before dispatch.
+    const routePath = path.startsWith("/sales-analytics/") ? path.slice("/sales-analytics".length) : path;
+    return MOBILE_SALES_REPORT_KEYS[routePath];
+  }
+  return /\/(unpost|reverse)(\/|$)/i.test(path)
+    ? MOBILE_UNPOST_KEYS[module]
+    : MOBILE_MODULE_KEYS[module]?.[action];
+}
+
 async function mobileChannelAllowed(
   u: any,
   module: string,
   action: PermAction,
   path = "",
 ): Promise<boolean> {
-  const isUnpost = /\/(unpost|reverse)(\/|$)/i.test(path);
-  const key = isUnpost ? MOBILE_UNPOST_KEYS[module] : MOBILE_MODULE_KEYS[module]?.[action];
+  const key = mobileFallbackKey(module, action, path);
   if (!key) return false;
   try {
     const [row] = await db.select({
