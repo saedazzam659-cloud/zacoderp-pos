@@ -57,6 +57,8 @@ type DbOrTx = typeof db;
 
 const fix = (n: number) => n.toFixed(2);
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const missingMapping = (type: string, role: string) =>
+  new Error(`حساب ${type}.${role} غير مربوط؛ افتح ربط القيود المحاسبية (/settings/accounting-mappings) واختر حساب ترحيل نشطاً من نفس الشركة.`);
 
 interface BillAmounts {
   gross: number;
@@ -109,13 +111,13 @@ export async function buildOutgoingBillJournal(
   const revAcc       = map("contracting_outgoing_bill", "revenue");
   const vatOutAcc    = map("contracting_outgoing_bill", "vat_output");
 
-  if (!arAcc)     throw new Error("حساب العملاء (receivable) للمستخلصات غير مربوط في الربط المحاسبي");
-  if (!revAcc)    throw new Error("حساب إيرادات المقاولات (revenue) غير مربوط في الربط المحاسبي");
+  if (!arAcc)     throw missingMapping("contracting_outgoing_bill", "receivable");
+  if (!revAcc)    throw missingMapping("contracting_outgoing_bill", "revenue");
   if (a.retention > 0 && !retAcc) {
-    throw new Error("حساب المحتجزات لدى العملاء (retention_receivable) غير مربوط في الربط المحاسبي");
+    throw missingMapping("contracting_outgoing_bill", "retention_receivable");
   }
   if (a.vat > 0 && !vatOutAcc) {
-    throw new Error("حساب ضريبة المخرجات (vat_output) للمستخلصات غير مربوط في الربط المحاسبي");
+    throw missingMapping("contracting_outgoing_bill", "vat_output");
   }
 
   const outW = await assertWritableForDate(cid, b.billDate);
@@ -208,13 +210,13 @@ export async function buildIncomingBillJournal(
   const apAcc     = map("contracting_incoming_bill", "payable");
   const retAcc    = map("contracting_incoming_bill", "retention_payable");
 
-  if (!apAcc)  throw new Error("حساب الموردين (payable) لمستخلصات الباطن غير مربوط في الربط المحاسبي");
-  if (!wipAcc) throw new Error("حساب أعمال تحت التنفيذ (wip) غير مربوط في الربط المحاسبي");
+  if (!apAcc)  throw missingMapping("contracting_incoming_bill", "payable");
+  if (!wipAcc) throw missingMapping("contracting_incoming_bill", "wip");
   if (a.retention > 0 && !retAcc) {
-    throw new Error("حساب محتجزات الموردين (retention_payable) غير مربوط في الربط المحاسبي");
+    throw missingMapping("contracting_incoming_bill", "retention_payable");
   }
   if (a.vat > 0 && !vatInAcc) {
-    throw new Error("حساب ضريبة المدخلات (vat_input) لمستخلصات الباطن غير مربوط في الربط المحاسبي");
+    throw missingMapping("contracting_incoming_bill", "vat_input");
   }
 
   const inW = await assertWritableForDate(cid, b.billDate);

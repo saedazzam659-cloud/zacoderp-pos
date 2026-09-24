@@ -82,6 +82,8 @@ const n = (value: unknown): number => {
 };
 const money = (value: unknown): string => n(value).toFixed(2);
 const today = () => new Date().toISOString().slice(0, 10);
+const mappingGuidance = (documentType: string, roleKey: string): string =>
+  `حساب ${documentType}.${roleKey} غير مربوط. افتح ربط القيود المحاسبية (/settings/accounting-mappings) واختر حساب ترحيل نشطاً من نفس الشركة.`;
 const exact = (value: unknown): Rational => parseExactDecimal(String(value ?? "0"));
 const exactStorage = (value: Rational, places = 18): string =>
   roundQuantity(formatRational(value), places, "half_up");
@@ -804,9 +806,10 @@ function billLines(
     const ret = map.get("retention_receivable") ?? configuredRetentionAccount;
     const revenue = map.get("revenue");
     const vatOutput = map.get("vat_output");
-    if (!ar || (amount.retention > 0 && !ret) || (amount.period > 0 && !revenue) || (amount.vat > 0 && !vatOutput)) {
-      throw failure("أكمل ربط حسابات مستخلصات المالك (الذمم، المحتجزات، الإيراد، ضريبة المخرجات)");
-    }
+    if (!ar) throw failure(mappingGuidance("contracting_outgoing_bill", "receivable"));
+    if (amount.retention > 0 && !ret) throw failure(mappingGuidance("contracting_outgoing_bill", "retention_receivable"));
+    if (amount.period > 0 && !revenue) throw failure(mappingGuidance("contracting_outgoing_bill", "revenue"));
+    if (amount.vat > 0 && !vatOutput) throw failure(mappingGuidance("contracting_outgoing_bill", "vat_output"));
     return roleLines.map((line) => ({
       accountId: line.role === "receivable" ? ar
         : line.role === "retention_receivable" ? ret!
@@ -821,9 +824,10 @@ function billLines(
   const vatInput = map.get("vat_input");
   const payable = map.get("payable");
   const ret = map.get("retention_payable") ?? configuredRetentionAccount;
-  if (!wip || !payable || (amount.retention > 0 && !ret) || (amount.vat > 0 && !vatInput)) {
-    throw failure("أكمل ربط حسابات مستخلصات الباطن (الأعمال تحت التنفيذ، الضريبة، المورد، المحتجزات)");
-  }
+  if (!wip) throw failure(mappingGuidance("contracting_incoming_bill", "wip"));
+  if (!payable) throw failure(mappingGuidance("contracting_incoming_bill", "payable"));
+  if (amount.retention > 0 && !ret) throw failure(mappingGuidance("contracting_incoming_bill", "retention_payable"));
+  if (amount.vat > 0 && !vatInput) throw failure(mappingGuidance("contracting_incoming_bill", "vat_input"));
   return roleLines.map((line) => ({
     accountId: line.role === "wip" ? wip
       : line.role === "vat_input" ? vatInput!
@@ -1352,7 +1356,8 @@ async function applyAdvanceTx(input: {
   const credit = outgoing
     ? map.get("receivable")
     : configuredRecoveryAccount ?? map.get("advance_asset");
-  if (!debit || !credit) throw failure("أكمل ربط حسابات تطبيق السلف قبل الترحيل");
+  if (!debit) throw failure(mappingGuidance("contracting_advance_application", outgoing ? "advance_liability" : "payable"));
+  if (!credit) throw failure(mappingGuidance("contracting_advance_application", outgoing ? "receivable" : "advance_asset"));
   const applicationDate = today();
   const jeNumber = await nextJeNumber(
     input.companyId,
@@ -2692,7 +2697,7 @@ async function createSettlementRebaseAlternative(input: {
     }
     const map = await mappings(tx, input.companyId, details.mapping);
     const counterpart = map.get(details.creditRole === "treasury" ? details.debitRole : details.creditRole);
-    if (!counterpart) throw failure("حساب التسوية غير مربوط؛ راجع ربط القيود المحاسبية");
+    if (!counterpart) throw failure(mappingGuidance(details.mapping, details.creditRole === "treasury" ? details.debitRole : details.creditRole));
     const jeNumber = await nextJeNumber(input.companyId, "contracting_settlement", settlementDate, input.userId);
     const lines = details.debitRole === "treasury"
       ? [
@@ -2970,7 +2975,7 @@ export async function createSettlement(input: {
     }
     const map = await mappings(tx, input.companyId, details.mapping);
     const counterpart = map.get(details.creditRole === "treasury" ? details.debitRole : details.creditRole);
-    if (!counterpart) throw failure("حساب التسوية غير مربوط؛ راجع ربط القيود المحاسبية");
+    if (!counterpart) throw failure(mappingGuidance(details.mapping, details.creditRole === "treasury" ? details.debitRole : details.creditRole));
     const jeNumber = await nextJeNumber(input.companyId, "contracting_settlement", settlementDate, input.userId);
     const lines = details.debitRole === "treasury"
       ? [
@@ -3301,7 +3306,8 @@ export async function applyAdvance(input: {
     const credit = outgoing
       ? map.get("receivable")
       : configuredRecoveryAccount ?? map.get("advance_asset");
-    if (!debit || !credit) throw failure("أكمل ربط حسابات تطبيق السلف قبل الترحيل");
+    if (!debit) throw failure(mappingGuidance("contracting_advance_application", outgoing ? "advance_liability" : "payable"));
+    if (!credit) throw failure(mappingGuidance("contracting_advance_application", outgoing ? "receivable" : "advance_asset"));
     const applicationDate = today();
     const jeNumber = await nextJeNumber(input.companyId, "contracting_advance_application", applicationDate, input.userId);
     const project = await projectFor(tx, input.companyId, bill.projectId);
@@ -3947,7 +3953,8 @@ export async function issueOrReturnMaterial(input: {
     const map = await mappings(tx, input.companyId, "contracting_material_movement");
     const inventory = map.get("inventory");
     const wip = map.get("wip");
-    if (!inventory || !wip) throw failure("أكمل ربط حساب المخزون وأعمال تحت التنفيذ لحركة مواد المقاولات");
+    if (!inventory) throw failure(mappingGuidance("contracting_material_movement", "inventory"));
+    if (!wip) throw failure(mappingGuidance("contracting_material_movement", "wip"));
     let journalCostCenter: string | null;
     if (input.direction === "return") {
       const originalCenter = await tx.execute(sql`

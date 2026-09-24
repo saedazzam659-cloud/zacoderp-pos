@@ -118,7 +118,7 @@ export async function buildContractingBillAdjustmentResult(
     const accountId = mappings.get(mappingKey)
       ?? contractingAdjustmentAccountId(settings, mappingKey);
     if (!mappingKey || !accountId) {
-      throw failure(`مفتاح حساب الإضافة غير مربوط: ${mappingKey || "—"}`);
+      throw failure(`مفتاح حساب الإضافة غير مربوط: ${mappingKey || "—"}. اختر مفتاح addition واربطه في نوع مستند ${bill.direction === "outgoing" ? "contracting_outgoing_bill" : "contracting_incoming_bill"} من ربط القيود المحاسبية (/settings/accounting-mappings)، أو اربط المفتاح المخصص في إعدادات المقاولات.`);
     }
     return {
       amount: numberValue(row.amount),
@@ -154,7 +154,7 @@ export async function buildContractingBillAdjustmentResult(
           settings,
           row.kind === "materials" ? "material_deduction" : "other_deduction",
         );
-      if (!accountId) throw failure("حساب الاستقطاعات غير مربوط؛ لم يتم تجاهل المبلغ");
+      if (!accountId) throw failure(`حساب الاستقطاعات غير مربوط: ${bill.direction === "outgoing" ? "contracting_outgoing_bill" : "contracting_incoming_bill"}.deduction؛ افتح ربط القيود المحاسبية (/settings/accounting-mappings) أو اربط نوع الاستقطاع في إعدادات المقاولات.`);
       return {
         amount: numberValue(row.amount),
         accountId,
@@ -177,7 +177,7 @@ export async function buildContractingBillAdjustmentResult(
         ?? mappings.get("penalty")
         ?? mappings.get("penalties")
         ?? contractingAdjustmentAccountId(settings, "penalty");
-      if (!accountId) throw failure("حساب الغرامات غير مربوط؛ لم يتم تجاهل المبلغ");
+      if (!accountId) throw failure(`حساب الغرامات غير مربوط: ${bill.direction === "outgoing" ? "contracting_outgoing_bill" : "contracting_incoming_bill"}.penalty؛ افتح ربط القيود المحاسبية (/settings/accounting-mappings) أو اربط ${accountKey || "penalty"} في إعدادات المقاولات.`);
       return {
         amount: numberValue(row.amount),
         accountId,
