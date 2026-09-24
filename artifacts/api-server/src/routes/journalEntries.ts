@@ -1504,6 +1504,9 @@ async function ensureNotLocked(id: number, cid: number): Promise<{ ok: boolean; 
   const [existing] = await db.select().from(journalEntriesTable)
     .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
   if (!existing) return { ok: true };
+  // An unapproved legacy contracting bill leaves its numbered draft JE as
+  // cancelled evidence. Never allow a manual edit/delete to recycle it.
+  if (existing.status === "cancelled") return { ok: false, entryType: existing.entryType };
   if (existing.entryType && LOCKED_ENTRY_TYPES.includes(existing.entryType)) {
     return { ok: false, entryType: existing.entryType };
   }
@@ -1758,6 +1761,10 @@ router.post("/:id/post", requirePostRight("journalEntry"), async (req, res) => {
       if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
     }
     if (existing.status === "posted") { res.json({ ok: true, alreadyPosted: true }); return; }
+    if (existing.status !== "draft") {
+      res.status(409).json({ error: "هذا القيد ملغى أو ليس مسودة قابلة للترحيل" });
+      return;
+    }
 
     // fa_depreciation draft: distinguish two shapes.
     //   • LEGITIMATE (auto-post OFF): JE created as draft awaiting manual post
@@ -1811,9 +1818,17 @@ router.post("/:id/post", requirePostRight("journalEntry"), async (req, res) => {
       return;
     }
 
-    await db.update(journalEntriesTable)
+    const posted = await db.update(journalEntriesTable)
       .set({ status: "posted", updatedAt: new Date(), ...postedAuditFor(req) })
-      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+      .where(and(
+        eq(journalEntriesTable.id, id),
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "draft"),
+      )).returning({ id: journalEntriesTable.id });
+    if (!posted.length) {
+      res.status(409).json({ error: "تغيرت حالة القيد أثناء الترحيل؛ أعد تحميل الصفحة" });
+      return;
+    }
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
   finally {
@@ -2100,6 +2115,10 @@ router.post("/:id/convert-to-general", async (req, res) => {
     const [existing] = await db.select().from(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+    if (existing.status === "cancelled") {
+      res.status(409).json({ error: "القيد ملغى ومحفوظ للتدقيق؛ لا يمكن تحويله أو إعادة ترحيله" });
+      return;
+    }
 
     const et = existing.entryType ?? "";
     if (!LOCKED_ENTRY_TYPES.includes(et)) {

@@ -162,6 +162,29 @@ export const advanceRecoveryAmounts = calculateAdvanceRecoveryCents;
 export const calculateAdvanceRecovery = calculateAdvanceRecoveryCents;
 export const calculateAdvanceRecoveryPreview = calculateAdvanceRecoveryCents;
 
+/** Only unapproved bills may enter a new accounting approval cycle. */
+export function isNewContractingApprovalStatus(status: string): boolean {
+  return status === "draft" || status === "submitted" || status === "under_review" || status === "rejected";
+}
+
+/** Direct advances share the contractual ceiling enforced by voucher allocations. */
+export function isContractAdvanceWithinCap(
+  amount: number | string,
+  priorPosted: number | string,
+  contractAdvance: number | string,
+): boolean {
+  const requested = scaledCents(amount);
+  return requested > 0n
+    && requested + scaledCents(priorPosted) <= scaledCents(contractAdvance);
+}
+
+/** A draft source JE has never entered the ledger and must not be reversed. */
+export function contractingBillUnapprovalJournalAction(status: string): "cancel_draft" | "reverse_posted" | null {
+  if (status === "draft") return "cancel_draft";
+  if (status === "posted") return "reverse_posted";
+  return null;
+}
+
 export function autoRecoveryApplicationIdempotencyKey(
   billId: number | string,
   approvalCycleId: number | string,

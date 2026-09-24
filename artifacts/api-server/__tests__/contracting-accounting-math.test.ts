@@ -6,6 +6,9 @@ import {
   aggregateContractProgressAmounts,
   calculateAdvanceRecoveryCents,
   autoRecoveryApplicationIdempotencyKey,
+  isNewContractingApprovalStatus,
+  isContractAdvanceWithinCap,
+  contractingBillUnapprovalJournalAction,
   contractingCeilingAllocation,
   contractingBillRoleLines,
   idempotencyDecision,
@@ -126,6 +129,48 @@ test("advance recovery treats an explicit zero contractual cap differently from 
     calculateAdvanceRecoveryCents({ ...input, contractAdvanceAmount: "0" }).recoveryAmount,
     "0.00",
   );
+});
+
+test("reapproval cannot create another journal or recover an advance from settled bills", () => {
+  for (const status of ["draft", "submitted", "under_review", "rejected"]) {
+    assert.equal(isNewContractingApprovalStatus(status), true);
+  }
+  for (const status of ["approved", "posted", "partially_paid", "paid", "reversed"]) {
+    assert.equal(isNewContractingApprovalStatus(status), false);
+  }
+});
+
+test("direct advances cannot exceed the approved contract's advance ceiling", () => {
+  assert.equal(isContractAdvanceWithinCap("400000.00", "0", "400000"), true);
+  assert.equal(isContractAdvanceWithinCap("100000.00", "300000", "400000"), true);
+  assert.equal(isContractAdvanceWithinCap("100000.01", "300000", "400000"), false);
+  assert.equal(isContractAdvanceWithinCap("0.01", "0", "0"), false);
+});
+
+test("unapproval cancels never-posted source entries without a financial reversal", () => {
+  assert.equal(contractingBillUnapprovalJournalAction("draft"), "cancel_draft");
+  assert.equal(contractingBillUnapprovalJournalAction("posted"), "reverse_posted");
+  assert.equal(contractingBillUnapprovalJournalAction("cancelled"), null);
+  assert.equal(contractingBillUnapprovalJournalAction("missing"), null);
+});
+
+test("recovery uses period pre-VAT work, signed net cap, actual advance and contractual cap in both directions", () => {
+  for (const direction of ["outgoing", "incoming"]) {
+    const input = {
+      enabled: true, progressPercent: "40", startProgressPercent: "0",
+      advanceRecoveryPercent: "40", method: "percentage",
+      currentCertifiedWorkBeforeVat: "1000000", netDue: "1092500",
+      actualAdvanceRemaining: "400000", contractAdvanceAmount: "400000",
+      totalPreviouslyRecovered: "0",
+    };
+    assert.equal(calculateAdvanceRecoveryCents(input).recoveryAmount, "400000.00", direction);
+    assert.equal(calculateAdvanceRecoveryCents({ ...input, progressPercent: "39.99", startProgressPercent: "40" }).recoveryAmount, "0.00", direction);
+    assert.equal(calculateAdvanceRecoveryCents({ ...input, startProgressPercent: "40" }).recoveryAmount, "400000.00", direction);
+    assert.equal(calculateAdvanceRecoveryCents({ ...input, actualAdvanceRemaining: "0" }).recoveryAmount, "0.00", direction);
+    assert.equal(calculateAdvanceRecoveryCents({ ...input, totalPreviouslyRecovered: "350000" }).recoveryAmount, "50000.00", direction);
+    assert.equal(calculateAdvanceRecoveryCents({ ...input, netDue: "50000" }).recoveryAmount, "50000.00", direction);
+    assert.equal(calculateAdvanceRecoveryCents({ ...input, method: "fixed", fixedAmount: "60000" }).recoveryAmount, "60000.00", direction);
+  }
 });
 
 test("auto-recovery cycle idempotency changes after unapproval while retrying same cycle is stable", () => {

@@ -62,6 +62,9 @@ import {
   authoritativeCumulativeBillAmounts,
   calculateAdvanceRecoveryCents,
   autoRecoveryApplicationIdempotencyKey,
+  isNewContractingApprovalStatus,
+  isContractAdvanceWithinCap,
+  contractingBillUnapprovalJournalAction,
   reverseAccountingLines,
   validateSettlementCap,
 } from "./contracting-accounting-math.js";
@@ -1605,6 +1608,12 @@ export async function approveBill(input: {
       }
       throw failure("المستخلص معتمد لكن قيده المحاسبي مفقود؛ لا يمكن إنشاء قيد مكرر", 409);
     }
+    // A settled/posted bill is never a new approval cycle. In particular,
+    // partially_paid and paid previously fell through to a second approval
+    // journal and another automatic advance application.
+    if (!isNewContractingApprovalStatus(String(locked.status))) {
+      throw failure("لا يمكن إعادة اعتماد مستخلص مرحّل أو تمت تسويته؛ استخدم فك الاعتماد أو التصحيح بعد عكس التسويات", 409);
+    }
     if (locked.journalEntryId) {
       const audit = await tx.execute(sql`
         SELECT id FROM contracting_accounting_audit
@@ -1910,12 +1919,67 @@ export async function unapproveBill(input: {
     )) {
       throw failure("لا يمكن فك الاعتماد قبل عكس التسويات والمدفوعات التابعة للمستخلص", 409);
     }
-    const [original] = await tx.select().from(journalEntriesTable).where(and(
-      eq(journalEntriesTable.id, Number(bill.journalEntryId)),
-      eq(journalEntriesTable.companyId, input.companyId),
-    ));
-    if (!original || original.status !== "posted") {
-      throw failure("القيد الأصلي غير مرحّل أو غير موجود", 409);
+    const originalResult = await tx.execute(sql`
+      SELECT * FROM journal_entries
+       WHERE id = ${Number(bill.journalEntryId)}
+         AND company_id = ${input.companyId}
+       FOR UPDATE
+    `);
+    const original = resultRows(originalResult)[0];
+    const journalAction = contractingBillUnapprovalJournalAction(String(original?.status ?? ""));
+    if (!original || !journalAction) {
+      throw failure("القيد الأصلي غير موجود أو ليس مسودة/مرحّلاً", 409);
+    }
+    if (journalAction === "cancel_draft") {
+      // A legacy approval could create a draft source JE when auto-posting was
+      // disabled. It never affected the ledger, so no reversal is permissible.
+      // Preserve the numbered entry and its lines as cancelled audit evidence,
+      // rather than deleting it or leaving a postable orphan after unapproval.
+      if (input.correction) {
+        throw failure("قيد المستخلص مسودة؛ فك الاعتماد أولاً ثم عدّل المستخلص دون إنشاء تصحيح مرحّل", 409);
+      }
+      if (autoRows.length) {
+        throw failure("تعذر فك اعتماد مستخلص بقيد مسودة وله استرداد سلفة تلقائي مرحّل؛ راجع التسويات أولاً", 409);
+      }
+      const cancelled = await tx.update(journalEntriesTable).set({
+        status: "cancelled", updatedAt: new Date(),
+      }).where(and(
+        eq(journalEntriesTable.id, original.id),
+        eq(journalEntriesTable.companyId, input.companyId),
+        eq(journalEntriesTable.status, "draft"),
+      )).returning({ id: journalEntriesTable.id });
+      if (!cancelled.length) throw failure("تغيرت حالة قيد المستخلص أثناء فك الاعتماد؛ أعد المحاولة", 409);
+      const [updated] = await tx.update(contractingProgressBillsTable).set({
+        status: "submitted",
+        journalEntryId: null,
+        reversalJournalEntryId: null,
+        approvedAt: null,
+        approvedByUserId: null,
+        paidAmount: "0.00",
+        paidAt: null,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(contractingProgressBillsTable.id, input.billId),
+        eq(contractingProgressBillsTable.companyId, input.companyId),
+      )).returning();
+      await addAudit(tx, {
+        companyId: input.companyId, projectId: bill.projectId, billId: bill.id,
+        action: "bill_unapproved", originalJournalEntryId: Number(original.id),
+        amount: n(bill.netAmount), metadata: { originalStatus: "draft", cancelledWithoutReversal: true },
+        userId: input.userId,
+      });
+      await tx.insert(contractingBillWorkflowEventsTable).values({
+        companyId: input.companyId, projectId: bill.projectId, billId: bill.id,
+        state: "submitted", action: "accounting_unapprove",
+        note: "فك الاعتماد وإلغاء القيد المسودة دون قيد عكسي", userId: input.userId,
+      });
+      await tx.insert(contractingEventsTable).values({
+        companyId: input.companyId, projectId: bill.projectId, userId: input.userId,
+        eventType: "bill_unapproved", title: `فك اعتماد مستخلص ${bill.billNumber}`,
+        description: "أُلغي القيد المسودة دون قيد عكسي",
+        severity: "warn", meta: { originalJournalEntryId: original.id, cancelledWithoutReversal: true },
+      });
+      return { ...updated, reversalJournalEntryId: null, originalJournalEntryId: original.id };
     }
     for (const application of autoRows) {
       const [applicationJournal] = await tx.select().from(journalEntriesTable).where(and(
@@ -1995,7 +2059,7 @@ export async function unapproveBill(input: {
       docNumber: reversalNumber,
       date: reversalDate,
       branchId: project.branchId,
-      description: `عكس اعتماد مستخلص ${bill.billNumber} — القيد ${original.docNumber ?? original.id}`,
+      description: `عكس اعتماد مستخلص ${bill.billNumber} — القيد ${original.doc_number ?? original.id}`,
       entryType: "contracting_bill_reversal",
       lines: reverseAccountingLines(originalLines).map((reversed, index) => ({
         ...reversed,
@@ -2884,13 +2948,14 @@ export async function createSettlement(input: {
       ? "contracting_owner_contracts"
       : "contracting_sub_contracts";
     const contract = await tx.execute(sql`
-      SELECT id FROM ${sql.raw(contractTable)}
+      SELECT id, status, advance_payment FROM ${sql.raw(contractTable)}
        WHERE company_id = ${input.companyId}
          AND project_id = ${input.projectId}
          AND id = ${contractId}
        FOR UPDATE
     `);
-    if (!resultRows(contract).length) throw failure("العقد المرتبط بالتسوية غير موجود في نفس الشركة والمشروع");
+    const contractRow = resultRows(contract)[0];
+    if (!contractRow) throw failure("العقد المرتبط بالتسوية غير موجود في نفس الشركة والمشروع");
     // The preflight lookup above is only a fast replay path. Recheck after the
     // bill/contract locks so two identical concurrent requests cannot both
     // pass the cap calculation and race the unique settlement index.
@@ -2904,6 +2969,30 @@ export async function createSettlement(input: {
     if (replayRow) {
       assertIdempotentReplay(replayRow, payloadHash);
       return { ...replayRow, idempotentReplay: true };
+    }
+    if (["advance_receipt", "advance_payment"].includes(input.kind)) {
+      if (contractRow.status !== "approved") {
+        throw failure("يجب اعتماد العقد قبل قبض أو صرف السلفة", 409);
+      }
+      const priorAdvance = await tx.execute(sql`
+        SELECT COALESCE(SUM(amount), 0)::numeric AS total
+          FROM contracting_accounting_settlements
+         WHERE company_id = ${input.companyId}
+           AND project_id = ${input.projectId}
+           AND direction = ${details.direction}
+           AND kind = ${input.kind}
+           AND status = 'posted'
+           AND ${details.direction === "outgoing"
+             ? sql`owner_contract_id = ${contractId} AND subcontractor_contract_id IS NULL`
+             : sql`subcontractor_contract_id = ${contractId} AND owner_contract_id IS NULL`}
+      `);
+      if (!isContractAdvanceWithinCap(
+        money(input.amount),
+        String(resultRows(priorAdvance)[0]?.total ?? "0"),
+        String(contractRow.advance_payment ?? "0"),
+      )) {
+        throw failure("مبلغ السلفة يتجاوز المتبقي من قيمة سلفة العقد", 409);
+      }
     }
     if (input.kind.startsWith("retention_")) {
       const prior = await tx.execute(sql`

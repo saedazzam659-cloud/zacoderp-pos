@@ -523,10 +523,19 @@ function BillsTab({
   const routeSearch = useSearch();
   const [, navigate] = useLocation();
   const [direction, setDirection] = useState<BillDirection>(initialDirection);
+  const canViewContracting = usePermission("contracting", "view");
+  const contractingPermissions = user?.permissions?.contracting;
+  const canUnapprove = canViewContracting && (
+    user?.role === "admin" || user?.role === "superadmin"
+    || (contractingPermissions?.cancel === true
+      || (contractingPermissions?.cancel === undefined && contractingPermissions?.unpost === true))
+  ) && (user?.role === "admin" || user?.role === "superadmin"
+    || user?.postingPermissions?.[direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill"]?.unpost !== false);
   const [rows, setRows] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Bill> | null>(null);
   const [saving, setSaving] = useState(false);
+  const [unapproving, setUnapproving] = useState(false);
   const saveLock = useRef(false);
   const [draftExecution, setDraftExecution] = useState<DraftExecutionState>(emptyDraftExecution);
   const [recoveredExecution, setRecoveredExecution] = useState<{ billId: number; values: ExecutionInputs } | null>(null);
@@ -712,6 +721,36 @@ function BillsTab({
     if (!confirm(t("common.confirmDelete", "تأكيد الحذف؟"))) return;
     await fetch(`${API}/api/contracting/bills/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
     await load();
+  }
+
+  async function unapproveEditingBill() {
+    const bill = editing;
+    if (!bill?.id || !canUnapprove || unapproving
+      || !["approved", "posted", "partially_paid", "paid"].includes(String(bill.status))
+      || bill.reversalJournalEntryId) return;
+    setUnapproving(true);
+    try {
+      const authHeaders = { Authorization: `Bearer ${token}` };
+      if (!window.confirm(`فك اعتماد المستخلص ${bill.billNumber}؟ إذا كان القيد الأصلي مرحّلاً فسيُحفظ ويُنشأ له قيد عكسي مرحّل؛ وإذا كان مسودة فسيُلغى بأمان دون قيد عكسي. يجب عكس التسويات المرتبطة أولاً.`)) return;
+      const response = await fetch(`${API}/api/contracting/bills/${bill.id}/unapprove`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `تعذر فك الاعتماد (HTTP ${response.status})`);
+      toast({ title: "تم فك اعتماد المستخلص", description: result.reversalJournalEntryId
+        ? "أُنشئ قيد عكسي مرحّل، وأُعيد المستخلص إلى حالة المرسل."
+        : result.originalJournalEntryId
+          ? "أُلغي القيد الأصلي الذي كان مسودة، وأُعيد المستخلص إلى حالة المرسل دون قيد عكسي."
+          : "أُعيدت شهادة التنفيذ غير المالية إلى حالة المرسل دون قيد عكسي." });
+      setEditing(null);
+      await load();
+    } catch (error: any) {
+      toast({ title: error?.message || "تعذر فك الاعتماد", variant: "destructive" });
+    } finally {
+      setUnapproving(false);
+    }
   }
 
   // When opening the "add new" form, prefill retention from the most
@@ -1215,10 +1254,22 @@ function BillsTab({
 
           <div className="flex items-center justify-end gap-2 mt-4 pt-4 border-t bg-muted/20 p-4 rounded-xl">
             <Button variant="outline" disabled={saving} onClick={() => { createAttempt.current = null; setEditing(null); }}>{t("common.cancel", "إلغاء")}</Button>
+            {editingBillId && ["approved", "posted", "partially_paid", "paid"].includes(String(editing.status))
+              && !editing.reversalJournalEntryId && canUnapprove && (
+                <Button variant="outline" disabled={saving || unapproving}
+                  onClick={() => void unapproveEditingBill()} data-testid="button-unapprove-contracting-bill">
+                  {unapproving ? "جار فك الاعتماد…" : "فك اعتماد المستخلص"}
+                </Button>
+              )}
             <Button onClick={() => void save()} disabled={saving} data-testid="button-save-contracting-bill">
               {saving ? t("common.saving", "جار الحفظ…") : t("common.save", "حفظ البيانات الأساسية")}
             </Button>
           </div>
+          {editingBillId && ["approved", "posted", "partially_paid", "paid"].includes(String(editing.status)) && (
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              المستخلص المعتمد لا يُعدل مباشرةً. يفك النظام اعتماد القيد المرحّل بقيد عكسي، أو يلغي القيد المسودة دون قيد عكسي. يجب عكس التسويات المرتبطة، وقد تمنع اعتمادات الكميات اللاحقة الإجراء. يتحقق الخادم من جميع التبعيات عند التنفيذ.
+            </p>
+          )}
         </div>
       )}
     </div>

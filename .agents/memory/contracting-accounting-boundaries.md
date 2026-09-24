@@ -115,6 +115,12 @@ Contract ceilings require both the shared adjusted-contract ceiling and the sele
 
 Posted correction must reverse and create the linked replacement draft in one transaction, with document-level unpost authorization as well as the correction capability.
 
+Legacy bill approval can coexist with a draft journal; distinguish cancelling that unposted evidence from reversing a posted journal when unapproving.
+
+**Why:** Older approval paths respected auto-post settings, leaving approved bills with draft journals. Reversing those drafts would introduce a ledger movement that never had an original posting.
+
+**How to apply:** Preserve numbered draft evidence without creating a reversal or leaving an orphan that can later post. Keep all linked-settlement and later-certificate blockers in place; never repair historical financial records implicitly.
+
 **Why:** A separately committed reversal can leave no recoverable correction document if copying fails, and a correction permission must not bypass explicit unpost restrictions.
 
 **How to apply:** Copy all correction detail inside the reversal transaction and preserve source links; derive paid states from posted settlements rather than manual workflow choices.

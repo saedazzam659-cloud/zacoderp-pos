@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermission } from "@/hooks/usePermission";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +66,13 @@ const labelKind: Record<string, string> = {
 export default function ContractingAccountingPanel({ projectId }: Props) {
   const [, navigate] = useLocation();
   const { token, user } = useAuth();
+  const canViewContracting = usePermission("contracting", "view");
+  const permissions = (user as any)?.permissions?.contracting;
+  const canUnapprove = canViewContracting && (
+    user?.role === "admin" || user?.role === "superadmin"
+    || permissions?.cancel === true
+    || (permissions?.cancel === undefined && permissions?.unpost === true)
+  );
   const { toast } = useToast();
   const [bills, setBills] = useState<Bill[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
@@ -233,8 +241,13 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   }
 
   async function approve(id: number, unapprove = false) {
-    if (unapprove && !window.confirm("سيُنشأ قيد عكسي مرحّل مع الاحتفاظ بسجل التدقيق. هل تريد المتابعة؟")) return;
-    await post(`/api/contracting/bills/${id}/${unapprove ? "unapprove" : "approve"}`, {});
+    if (unapprove) {
+      const bill = bills.find(row => row.id === id);
+      if (!bill || !canUnapprove || !["approved", "posted", "partially_paid", "paid"].includes(bill.status)) return;
+      if (!window.confirm("إن كان القيد الأصلي مرحّلاً فسيُحفظ ويُنشأ قيد عكسي مرحّل؛ وإن كان مسودة فسيُلغى دون قيد عكسي. يجب عكس التسويات المرتبطة أولاً. هل تريد المتابعة؟")) return;
+    }
+    await post(`/api/contracting/bills/${id}/${unapprove ? "unapprove" : "approve"}`, {},
+      undefined, unapprove ? "تم فك اعتماد المستخلص" : "تم الاعتماد والترحيل المحاسبي");
   }
 
   async function correct(id: number) {
@@ -429,19 +442,22 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
                 <td className="p-2 font-medium">{bill.billNumber}</td>
                 <td className="p-2">{bill.direction === "incoming" ? "مقاول باطن" : "مالك"}</td>
                 <td className="p-2">{Number(bill.netAmount || 0).toLocaleString("en-US")}</td>
-                <td className="p-2">{bill.status === "approved" ? "معتمد ومرحل" : bill.status === "reversed" ? "معكوس" : bill.status}</td>
+                <td className="p-2">{bill.status === "approved" ? "معتمد" : bill.status === "reversed" ? "معكوس" : bill.status}</td>
                 <td className="p-2">
-                  {bill.status === "approved" ? (
+                  {["approved", "posted", "partially_paid", "paid"].includes(bill.status) ? (
                     <>
-                      <Button size="sm" variant="outline" disabled={busy} onClick={() => void approve(bill.id, true)}>فك الاعتماد بقيد عكسي</Button>
-                      <Button size="sm" variant="destructive" disabled={busy} onClick={() => void correct(bill.id)}>تصحيح مرحّل</Button>
+                      {canUnapprove && (user?.role === "admin" || user?.role === "superadmin"
+                        || (user as any)?.postingPermissions?.[bill.direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill"]?.unpost !== false) && (
+                        <Button size="sm" variant="outline" disabled={busy}
+                          onClick={() => void approve(bill.id, true)}>فك الاعتماد</Button>
+                      )}
+                      {["approved", "posted"].includes(bill.status) && (
+                        <Button size="sm" variant="destructive" disabled={busy} onClick={() => void correct(bill.id)}>تصحيح مرحّل</Button>
+                      )}
+                      <span className="text-xs text-slate-500">يُعكس القيد المرحّل أو يُلغى القيد المسودة؛ اعكس التسويات المرتبطة أولاً</span>
                     </>
-                  ) : bill.status === "posted" ? (
-                    <Button size="sm" variant="destructive" disabled={busy} onClick={() => void correct(bill.id)}>تصحيح مرحّل</Button>
                 ) : bill.status === "reversed" ? (
                     <span className="text-xs text-slate-500">معكوس — راجع مسودة التصحيح المرتبطة</span>
-                  ) : ["posted", "partially_paid", "paid"].includes(bill.status) ? (
-                    <span className="text-xs text-slate-500">مقيد محاسبياً — لا تعديل مباشر</span>
                   ) : (
                     <Button size="sm" disabled={busy} onClick={() => void approve(bill.id)}>اعتماد وترحيل ذري</Button>
                   )}
