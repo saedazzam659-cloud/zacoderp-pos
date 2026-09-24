@@ -41,6 +41,7 @@ import {
 import { createContractIdempotently } from "../src/lib/contracting-contract-create-idempotency.ts";
 import { ensureBillCreateIdempotencySchema } from "../src/lib/contracting-bill-create-idempotency.ts";
 import contractingRouter from "../src/routes/contracting.ts";
+import contractingBoqRouter from "../src/routes/contracting-boq.ts";
 
 const armed = process.env.CONTRACTING_ISOLATED_LIFECYCLE === "1";
 const localUrl = process.env.DATABASE_URL ?? "";
@@ -161,7 +162,7 @@ test("isolated PostgreSQL contracting lifecycle", { skip: !armed }, async (t) =>
       value: "1000", advancePayment: "300", advanceRecoveryEnabled: true,
       advanceRecoveryPercent: "50", advanceRecoveryStartProgressPercent: "0",
       retentionEnabled: true, retentionPercent: "10", retentionCapPercent: "5",
-      vatPercent: "15", status: "active",
+      vatPercent: "15", status: "approved",
     }).returning().then((rows: any[]) => rows[0]);
     const ownerOne = await createContractIdempotently({
       companyId, userId: user.id, operation: "owner_contract_create", idempotencyKey: `${tag}-oc`,
@@ -177,7 +178,7 @@ test("isolated PostgreSQL contracting lifecycle", { skip: !armed }, async (t) =>
     const subPayload = `${tag}-sub`;
     const subCreate = (tx: any) => tx.insert(contractingSubContractsTable).values({
       companyId, projectId: project.id, contractorId: contractor.id,
-      contractNumber: subPayload, contractDate: "2026-01-01", value: "700", status: "active",
+      contractNumber: subPayload, contractDate: "2026-01-01", value: "700", status: "approved",
     }).returning().then((rows: any[]) => rows[0]);
     const subOne = await createContractIdempotently({
       companyId, userId: user.id, operation: "subcontract_create", idempotencyKey: `${tag}-sc`,
@@ -200,6 +201,7 @@ test("isolated PostgreSQL contracting lifecycle", { skip: !armed }, async (t) =>
     // same persisted bill id without a duplicate draft.
     const http = express();
     http.use(express.json());
+    http.use("/contracting", contractingBoqRouter);
     http.use("/contracting", contractingRouter);
     testServer = http.listen(0, "127.0.0.1");
     await once(testServer, "listening");
@@ -220,7 +222,7 @@ test("isolated PostgreSQL contracting lifecycle", { skip: !armed }, async (t) =>
       body: JSON.stringify(draftPayload),
     });
     const firstResponse = await postBill();
-    assert.equal(firstResponse.status, 201);
+    assert.equal(firstResponse.status, 201, await firstResponse.clone().text());
     // Deliberately discard the successful response body: this models a client
     // whose request committed but whose network response was lost.
     await firstResponse.text();
@@ -285,6 +287,117 @@ test("isolated PostgreSQL contracting lifecycle", { skip: !armed }, async (t) =>
       unit: "m3", quantity: "100", unitPrice: "7", totalAmount: "700",
     }).returning();
     assert.notEqual(String(ownerBoq.unitPrice), String(subBoq.unitPrice), "BOQ commercial prices are contract-specific");
+
+    // A new agreement is staged as a draft. Only execution-linked BOQ rows
+    // belonging to this tenant, project and exact agreement can approve it.
+    const ownerHeaders = { authorization: `Bearer ${tag}`, "content-type": "application/json" };
+    const contractBase = `http://127.0.0.1:${port}/contracting`;
+    const createDraft = async (number: string) => {
+      const response = await fetch(`${contractBase}/projects/${project.id}/owner-contracts`, {
+        method: "POST", headers: ownerHeaders,
+        body: JSON.stringify({
+          clientRequestId: `${tag}-${number}`, contractNumber: number,
+          contractDate: "2026-01-01", contractType: "main", status: "draft", value: "600000",
+        }),
+      });
+      assert.equal(response.status, 201, await response.clone().text());
+      return await response.json() as { id: number };
+    };
+    const target = await createDraft(`${tag}-target`);
+    const unrelated = await createDraft(`${tag}-unrelated`);
+    const approveTarget = () => fetch(`${contractBase}/owner-contracts/${target.id}/approve`, {
+      method: "PUT", headers: ownerHeaders,
+    });
+    const zero = await approveTarget();
+    assert.equal(zero.status, 422, "zero BOQ rows cannot approve a contract");
+    const [excavation] = await db.insert(contractingWorkItemsTable).values({
+      companyId, projectId: project.id, nameAr: "حفر", unit: "m3", plannedQty: "1000",
+    }).returning();
+    const [concrete] = await db.insert(contractingWorkItemsTable).values({
+      companyId, projectId: project.id, nameAr: "خرسانة", unit: "m3", plannedQty: "2000",
+    }).returning();
+    await db.insert(contractingContractBoqLinesTable).values({
+      companyId, projectId: project.id, workItemId: excavation.id, direction: "owner",
+      ownerContractId: unrelated.id, unit: "m3", quantity: "1000", unitPrice: "200", totalAmount: "200000",
+    });
+    const otherContract = await approveTarget();
+    assert.equal(otherContract.status, 422, "another agreement's BOQ row does not count");
+    const [approvalScopeProject] = await db.insert(contractingProjectsTable).values({
+      companyId, code: `${tag}-approval-other`, nameAr: "مشروع آخر", contractValue: "600000",
+    }).returning();
+    const [otherWork] = await db.insert(contractingWorkItemsTable).values({
+      companyId, projectId: approvalScopeProject.id, nameAr: "حفر", unit: "m3", plannedQty: "1000",
+    }).returning();
+    const [approvalScopeOwner] = await db.insert(contractingOwnerContractsTable).values({
+      companyId, projectId: approvalScopeProject.id, contractNumber: `${tag}-approval-other`,
+      contractDate: "2026-01-01", value: "200000", status: "draft",
+    }).returning();
+    await db.insert(contractingContractBoqLinesTable).values({
+      companyId, projectId: approvalScopeProject.id, workItemId: otherWork.id, direction: "owner",
+      ownerContractId: approvalScopeOwner.id, unit: "m3", quantity: "1000", unitPrice: "200", totalAmount: "200000",
+    });
+    const otherProjectResult = await approveTarget();
+    assert.equal(otherProjectResult.status, 422, "a different project's BOQ row does not count");
+    const [approvalOtherTenant] = await db.insert(companiesTable).values({
+      nameAr: "شركة أخرى", nameEn: `${tag}-tenant`, vatNumber: "300000000000003",
+      crNumber: `${tag}-tenant`, city: "Riyadh", street: "Test",
+      buildingNumber: "1", postalCode: "12345",
+    }).returning();
+    const [tenantProject] = await db.insert(contractingProjectsTable).values({
+      companyId: approvalOtherTenant.id, code: `${tag}-tenant`, nameAr: "مشروع شركة أخرى",
+      contractValue: "200000",
+    }).returning();
+    const [tenantWork] = await db.insert(contractingWorkItemsTable).values({
+      companyId: approvalOtherTenant.id, projectId: tenantProject.id,
+      nameAr: "حفر", unit: "m3", plannedQty: "1000",
+    }).returning();
+    const [tenantOwner] = await db.insert(contractingOwnerContractsTable).values({
+      companyId: approvalOtherTenant.id, projectId: tenantProject.id,
+      contractNumber: `${tag}-tenant`, contractDate: "2026-01-01",
+      value: "200000", status: "draft",
+    }).returning();
+    await db.insert(contractingContractBoqLinesTable).values({
+      companyId: approvalOtherTenant.id, projectId: tenantProject.id,
+      workItemId: tenantWork.id, direction: "owner", ownerContractId: tenantOwner.id,
+      unit: "m3", quantity: "1000", unitPrice: "200", totalAmount: "200000",
+    });
+    const otherTenantResult = await approveTarget();
+    assert.equal(otherTenantResult.status, 422, "another tenant's BOQ row does not count");
+    for (const line of [
+      { workItemId: excavation.id, description: "حفر", quantity: "1000", unitPrice: "200" },
+      { workItemId: concrete.id, description: "خرسانة", quantity: "2000", unitPrice: "200" },
+    ]) {
+      const response = await fetch(`${contractBase}/projects/${project.id}/boq-lines`, {
+        method: "POST", headers: ownerHeaders,
+        body: JSON.stringify({
+          ...line, direction: "owner", ownerContractId: target.id, unit: "m3",
+        }),
+      });
+      assert.equal(response.status, 201, await response.clone().text());
+    }
+    // Reopen an existing draft with both BOQ rows already persisted: saving
+    // its other fields must not rely on the pending-line list to find them.
+    const directTransition = await fetch(`${contractBase}/owner-contracts/${target.id}`, {
+      method: "PUT", headers: ownerHeaders, body: JSON.stringify({ status: "approved" }),
+    });
+    assert.equal(directTransition.status, 422, "generic contract PUT cannot bypass the approval route");
+    const savedExistingDraft = await fetch(`${contractBase}/owner-contracts/${target.id}`, {
+      method: "PUT", headers: ownerHeaders,
+      body: JSON.stringify({ status: "draft", notes: "بنود حفر وخرسانة محفوظة" }),
+    });
+    assert.equal(savedExistingDraft.status, 200, await savedExistingDraft.clone().text());
+    assert.equal((await savedExistingDraft.json() as { status: string }).status, "draft");
+    const approvedTarget = await approveTarget();
+    assert.equal(approvedTarget.status, 200, await approvedTarget.clone().text());
+    assert.equal((await approvedTarget.json() as { status: string }).status, "approved");
+    const repeatedApproval = await approveTarget();
+    assert.equal(repeatedApproval.status, 200, await repeatedApproval.clone().text());
+    const approvedLines = await db.select().from(contractingContractBoqLinesTable).where(and(
+      eq(contractingContractBoqLinesTable.companyId, companyId),
+      eq(contractingContractBoqLinesTable.projectId, project.id),
+      eq(contractingContractBoqLinesTable.ownerContractId, target.id),
+    ));
+    assert.deepEqual(approvedLines.map(line => Number(line.totalAmount)).sort((a, b) => a - b), [200000, 400000]);
 
     const materialScopeInput = {
       companyId,

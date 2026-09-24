@@ -84,3 +84,22 @@ test("existing agreements offer an explicit editable import of only missing WBS 
   assert.match(editor, /ستظهر كمسودات قابلة للتعديل؛ احفظ العقد لتسجيلها/);
   assert.match(editor, /!loading && !loadError && rows\.length === 0/);
 });
+
+test("an approved owner contract stages its draft and both priced BOQ rows before approval", () => {
+  const save = detail.slice(detail.indexOf("  async function save() {", detail.indexOf("function OwnerContractTab(")),
+    detail.indexOf("  async function del(", detail.indexOf("function OwnerContractTab(")));
+  const draft = save.indexOf('status: "draft"');
+  const contractWrite = save.indexOf('const r = await fetch(url,');
+  const lineWrite = save.indexOf('await fetch(`${API}/api/contracting/projects/${projectId}/boq-lines`');
+  const approval = save.indexOf('await fetch(approvalUrl,');
+  assert.ok(draft >= 0 && draft < contractWrite && contractWrite < lineWrite && lineWrite < approval);
+  assert.match(save, /for \(const line of pendingBoqLines \?\? \[\]\)/);
+  assert.match(save, /ownerContractId: contractId/);
+  assert.match(save, /workItemId: Number\(line\.workItemId\)/);
+  assert.match(save, /quantity: line\.quantity, unitPrice: line\.unitPrice/);
+  assert.match(save, /persistedContractId\.current = contractId/);
+  assert.match(save, /existingStatus.*?persistedContractId\.current \? "draft" : undefined/s);
+  assert.match(save, /change-order-decision/);
+  assert.match(save, /owner-contracts\/\$\{contractId\}\/approve/);
+  assert.match(save, /if \(!approvalResponse\.ok\) throw new Error/);
+});

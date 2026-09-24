@@ -1601,8 +1601,19 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
     }
     saveInFlight.current = true;
     setSaving(true);
+    let savedContract = false;
     try {
       const isEdit = editing.id != null || persistedContractId.current != null;
+      const existingStatus = isEdit
+        ? rows.find(row => row.id === Number(editing.id ?? persistedContractId.current))?.status
+          ?? (persistedContractId.current ? "draft" : undefined)
+        : undefined;
+      const approvalRequested = ["active", "approved"].includes(String(editing.status))
+        && editing.status !== existingStatus
+        && existingStatus !== "approved";
+      // The contract endpoint deliberately rejects direct approval. Stage a
+      // draft first, attach its actual BOQ lines, then use the approval route.
+      const contractBody = approvalRequested ? { ...editing, status: "draft" } : editing;
       if (!isEdit) createRequestId.current ??= crypto.randomUUID();
       const url = isEdit
         ? `${API}/api/contracting/owner-contracts/${editing.id ?? persistedContractId.current}`
@@ -1610,13 +1621,14 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
       const r = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(isEdit ? editing : { ...editing, clientRequestId: createRequestId.current }),
+        body: JSON.stringify(isEdit ? contractBody : { ...contractBody, clientRequestId: createRequestId.current }),
       });
       if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
       const saved = await r.json() as OwnerContract;
       const contractId = isEdit ? Number(editing.id ?? persistedContractId.current) : saved.id;
       if (!Number.isInteger(contractId) || contractId <= 0) throw new Error("تعذر تحديد العقد المحفوظ");
       persistedContractId.current = contractId;
+      savedContract = true;
       createRequestId.current = null;
       if (!isEdit) setEditing({ ...editing, id: contractId });
       // Persist each proposed line once. A failed line keeps the saved contract
@@ -1663,13 +1675,24 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
         }
         setPendingBoqLines(current => (current ?? []).slice(1));
       }
+      if (approvalRequested) {
+        const approvalUrl = ["change_order", "addendum"].includes(String(editing.contractType))
+          ? `${API}/api/contracting/owner-contracts/${contractId}/change-order-decision`
+          : `${API}/api/contracting/owner-contracts/${contractId}/approve`;
+        const approvalResponse = await fetch(approvalUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ decision: "approved" }),
+        });
+        if (!approvalResponse.ok) throw new Error((await approvalResponse.json().catch(() => ({}))).error || `HTTP ${approvalResponse.status}`);
+      }
       persistedContractId.current = null;
       setEditing(null);
       void load();
     } catch (e: any) {
       toast({
-        title: persistedContractId.current
-          ? "حُفظ العقد، لكن تعذر حفظ بعض بنوده. بقيت البنود غير المحفوظة في النموذج لإعادة المحاولة."
+        title: savedContract
+          ? "حُفظ العقد كمسودة، لكن تعذر حفظ بعض البنود أو اعتماد العقد. بقيت البنود غير المحفوظة في النموذج لإعادة المحاولة."
           : "تعذر حفظ عقد المالك",
         description: e?.message,
         variant: "destructive",

@@ -568,14 +568,22 @@ async function contractBoqLineCount(
   await ensureContractingBoqTables();
   const result = await executor.execute(kind === "owner" ? sql`
     SELECT count(*)::int AS count
-      FROM contracting_contract_boq_lines
-     WHERE company_id = ${cid} AND project_id = ${projectId}
-       AND direction = 'owner' AND owner_contract_id = ${contractId}
+      FROM contracting_contract_boq_lines l
+      JOIN contracting_work_items w
+        ON w.id = l.work_item_id
+       AND w.company_id = l.company_id AND w.project_id = l.project_id
+     WHERE l.company_id = ${cid} AND l.project_id = ${projectId}
+       AND l.direction = 'owner' AND l.owner_contract_id = ${contractId}
+       AND l.subcontractor_contract_id IS NULL
   ` : sql`
     SELECT count(*)::int AS count
-      FROM contracting_contract_boq_lines
-     WHERE company_id = ${cid} AND project_id = ${projectId}
-       AND direction = 'subcontract' AND subcontractor_contract_id = ${contractId}
+      FROM contracting_contract_boq_lines l
+      JOIN contracting_work_items w
+        ON w.id = l.work_item_id
+       AND w.company_id = l.company_id AND w.project_id = l.project_id
+     WHERE l.company_id = ${cid} AND l.project_id = ${projectId}
+       AND l.direction = 'subcontract' AND l.subcontractor_contract_id = ${contractId}
+       AND l.owner_contract_id IS NULL
   `);
   const rows = Array.isArray(result) ? result : (result as any).rows ?? [];
   return Number(rows[0]?.count ?? 0);
