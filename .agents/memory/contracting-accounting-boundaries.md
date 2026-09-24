@@ -3,6 +3,12 @@ name: Contracting accounting boundaries
 description: Optional cost-center snapshots, legacy preservation, and planning versus posting boundaries.
 ---
 
+Use informational summaries and linked original recovery journals to clarify advance recovery in settlement screens and printouts; do not add the recovery again as a posting line in the cash receipt.
+
+**Why:** The user explicitly approved keeping the already-posted recovery separate while making gross entitlement, recovered advance, net cash and remaining advance visible together. The aim is accounting clarity, not a second financial effect.
+
+**How to apply:** Preserve existing journals and show the original recovery reference and debit/credit explanation as informational presentation, distinct from actual settlement journal lines.
+
 Project and bill cost centers are optional. A new bill can default from its project, but its effective choice is a persisted snapshot; clearing it explicitly means no center. Reversals preserve original journal-line centers.
 
 **Why:** The user requested optional links at both levels, without changing old postings when project settings change.
