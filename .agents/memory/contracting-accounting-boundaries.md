@@ -39,6 +39,12 @@ Do not assume “test-only data” means legacy relationships can be deleted or 
 
 **How to apply:** Never relink posted snapshots automatically. Keep schema reconciliation cached per active database, diagnostics read-only and tenant/branch scoped, and explicit validation separate from routine reads.
 
+Additive table reconciliation must precede indexes, triggers, and queries that reference newly introduced columns.
+
+**Why:** Existing agent tables survive `CREATE TABLE IF NOT EXISTS` unchanged; a later generic column pass cannot help if an earlier specialized setup fails on missing columns.
+
+**How to apply:** Test upgrades against a legacy schema with preserved rows, not only against a newly created database. Cover both standalone-agent startup and centrally routed external-database readiness.
+
 Avoid unvalidated CHECK constraints in the managed development schema intended for Publish.
 
 **Why:** Publish introspection has embedded the trailing `NOT VALID` inside generated CHECK expressions, producing invalid SQL. Validating clean constraints and explicitly marking unresolved legacy records avoids that parser failure without deleting or inventing financial relationships.

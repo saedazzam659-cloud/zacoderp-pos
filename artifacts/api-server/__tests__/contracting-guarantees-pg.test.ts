@@ -1,9 +1,78 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pool } from "@workspace/db";
+import { createExternalDb, pool, runWithExternalDb } from "@workspace/db";
 import { ensureContractingGuaranteeTables } from "../src/lib/contracting-guarantees-storage.ts";
 
 const armed = process.env.CONTRACTING_GUARANTEES_PG === "1";
+
+test("old guarantee columns heal before the listing query without losing existing rows", {
+  // Only the throwaway loopback cluster runner may arm this schema test.
+  skip: !armed || process.env.CONTRACTING_ISOLATED_GUARANTEES !== "1",
+}, async () => {
+  const url = new URL(process.env.DATABASE_URL!);
+  assert.equal(url.hostname, "127.0.0.1");
+  assert.equal(url.pathname, "/postgres");
+  const permission = await pool.query("SELECT current_setting('is_superuser') AS allowed");
+  assert.equal(permission.rows[0].allowed, "on", "isolated fixture needs schema-create permission");
+  // LIKE copies column types/defaults/checks but not foreign-key relationships.
+  // Work only in this dedicated schema; never ALTER/DROP public tables.
+  const fixture = "guarantee_upgrade_fixture";
+  await pool.query(`CREATE SCHEMA ${fixture}`);
+  let external: ReturnType<typeof createExternalDb> | undefined;
+  try {
+    for (const name of [
+      "companies", "users", "customers", "bank_accounts", "contracting_projects",
+      "contracting_owner_contracts", "contracting_sub_contracts",
+      "contracting_tenders", "contracting_guarantees",
+    ]) {
+      await pool.query(`CREATE TABLE ${fixture}.${name} (LIKE public.${name} INCLUDING ALL)`);
+    }
+    external = createExternalDb(`${url.toString()}&options=-c%20search_path%3D${fixture}`, { max: 2 });
+    await runWithExternalDb(external, async () => {
+      assert.equal((await pool.query("SHOW search_path")).rows[0].search_path, fixture);
+      // Explicit IDs keep cloned serial defaults from advancing public sequences.
+      await pool.query(`
+        INSERT INTO companies(id, name_ar, vat_number, cr_number, city, street, building_number, postal_code)
+        VALUES (11, 'Old Guarantee', 'fixture-vat', 'fixture-cr', 'Riyadh', 'Test', '1', '12345')
+      `);
+      await pool.query("INSERT INTO contracting_projects(id, company_id, code, name_ar) VALUES (21, 11, 'OLD-G', 'Old Guarantee Project')");
+      await pool.query("INSERT INTO bank_accounts(id, company_id, code, name_ar, is_active) VALUES (31, 11, 'OLD-G-BANK', 'Bank', true)");
+      await pool.query("INSERT INTO contracting_tenders(id, company_id, project_id, tender_number, title, tender_date) VALUES (41, 11, 21, 'OLD-T', 'Tender', CURRENT_DATE)");
+      await pool.query(`
+        INSERT INTO contracting_guarantees(
+          id, company_id, project_id, tender_id, bank_account_id, guarantee_number,
+          guarantee_type, amount, issue_date, expiry_date, purpose
+        ) VALUES (51, 11, 21, 41, 31, 'OLD-G', 'initial', 100, CURRENT_DATE, CURRENT_DATE + 30, 'original')
+      `);
+      await pool.query("ALTER TABLE contracting_guarantees DROP COLUMN purpose");
+      await pool.query("ALTER TABLE contracting_guarantees DROP COLUMN released_at");
+      await pool.query("ALTER TABLE contracting_tenders DROP COLUMN submission_date");
+      await assert.rejects(
+        pool.query("SELECT g.purpose FROM contracting_guarantees g WHERE g.id = 51"),
+        (error: any) => error.code === "42703",
+      );
+      await ensureContractingGuaranteeTables();
+      const listing = await pool.query(`
+        SELECT g.*, t.tender_number AS "tenderNumber", t.title AS "tenderTitle",
+               pg.guarantee_number AS "parentGuaranteeNumber"
+          FROM contracting_guarantees g
+          LEFT JOIN contracting_tenders t ON t.id = g.tender_id AND t.company_id = g.company_id
+          LEFT JOIN contracting_guarantees pg ON pg.id = g.parent_guarantee_id AND pg.company_id = g.company_id
+         WHERE g.company_id = 11 AND g.archived_at IS NULL
+           AND COALESCE(g.purpose, '') ILIKE '%'
+      `);
+      assert.equal(listing.rows.length, 1);
+      assert.equal(listing.rows[0].id, 51);
+      assert.equal(listing.rows[0].tenderNumber, "OLD-T");
+      assert.equal(listing.rows[0].guarantee_number, "OLD-G");
+      assert.equal(listing.rows[0].purpose, null);
+      await ensureContractingGuaranteeTables();
+    });
+  } finally {
+    await external?.pool.end();
+    await pool.query(`DROP SCHEMA ${fixture} CASCADE`);
+  }
+});
 
 test("PostgreSQL preserves tender → initial → awarded contract → new performance guarantee", {
   skip: !armed,

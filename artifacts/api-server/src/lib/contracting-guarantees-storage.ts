@@ -94,6 +94,50 @@ async function createTables(): Promise<void> {
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
+      -- CREATE TABLE IF NOT EXISTS does not upgrade an existing table. In
+      -- particular, the guarantee listing reads g.*, g.purpose, g.tender_id,
+      -- g.parent_guarantee_id and the joined tender fields. Reconcile the
+      -- columns before indexes, checks and the integrity trigger reference
+      -- them. The generic schema pass runs *after* this helper, so it cannot
+      -- repair an older agent table in time.
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS customer_id INTEGER;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS tender_number TEXT;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS title TEXT;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS tender_date DATE;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS submission_date DATE;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS estimated_value NUMERIC(14,2) DEFAULT 0;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft';
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS awarded_contract_kind TEXT;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS awarded_owner_contract_id INTEGER;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS awarded_subcontract_id INTEGER;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS awarded_at TIMESTAMP;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS notes TEXT;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS archived_by_user_id INTEGER;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER;
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
+      ALTER TABLE contracting_tenders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS tender_id INTEGER;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS contract_kind TEXT;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS owner_contract_id INTEGER;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS subcontract_id INTEGER;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS parent_guarantee_id INTEGER;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS bank_account_id INTEGER;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS beneficiary_customer_id INTEGER;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS guarantee_number TEXT;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS guarantee_type TEXT;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS amount NUMERIC(14,2);
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS issue_date DATE;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS expiry_date DATE;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft';
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS purpose TEXT;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS notes TEXT;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS released_at TIMESTAMP;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS archived_by_user_id INTEGER;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
       CREATE INDEX IF NOT EXISTS ctg_tender_company_project_idx ON contracting_tenders(company_id, project_id);
       CREATE INDEX IF NOT EXISTS ctg_tender_status_idx ON contracting_tenders(company_id, status);
       CREATE UNIQUE INDEX IF NOT EXISTS ctg_tender_company_project_id_uq ON contracting_tenders(company_id, project_id, id);
