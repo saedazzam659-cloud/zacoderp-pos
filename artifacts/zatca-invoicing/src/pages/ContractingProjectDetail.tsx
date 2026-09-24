@@ -203,6 +203,7 @@ export default function ContractingProjectDetail() {
   const [projectOptions, setProjectOptions] = useState<Project[]>([]);
   const [integrityDiagnostics, setIntegrityDiagnostics] = useState<IntegrityDiagnostics | null>(null);
   const [tab, setTab] = useState(routeQuery.tab);
+  const [accountingBill, setAccountingBill] = useState<{ id: number; direction: BillDirection } | null>(null);
 
   const loadProject = useCallback(async () => {
     if (!token || !projectId) return;
@@ -385,12 +386,16 @@ export default function ContractingProjectDetail() {
             projectId={projectId}
             project={project}
             projectCostCenterId={project?.costCenterId ?? null}
-            initialDirection={routeQuery.billDirection}
+            initialDirection={accountingBill?.direction ?? routeQuery.billDirection}
+            initialBillId={accountingBill?.id}
             autoOpen={routeQuery.createBill}
           />
         </TabsContent>
         <TabsContent value="accounting" className="mt-4 space-y-4">
-          <ContractingAccountingPanel projectId={projectId} />
+          <ContractingAccountingPanel projectId={projectId} onOpenBill={(id, direction) => {
+            setAccountingBill({ id, direction });
+            setTab("bills");
+          }} />
           <ContractingCostAllocations projectId={projectId} />
         </TabsContent>
         <TabsContent value="guarantees" className="mt-4">
@@ -508,12 +513,14 @@ function BillsTab({
   project,
   projectCostCenterId,
   initialDirection = "outgoing",
+  initialBillId,
   autoOpen = false,
 }: {
   projectId: number;
   project: Project;
   projectCostCenterId: number | null;
   initialDirection?: BillDirection;
+  initialBillId?: number;
   autoOpen?: boolean;
 }) {
   const { t } = useTranslation();
@@ -572,6 +579,11 @@ function BillsTab({
     finally { setLoading(false); }
   }, [token, projectId, direction, toast]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!initialBillId || loading) return;
+    const bill = rows.find(row => row.id === initialBillId);
+    if (bill) setEditing(bill);
+  }, [initialBillId, rows, loading]);
 
   const editingBillId = editing && (editing as any).id != null ? Number((editing as any).id) : null;
   useEffect(() => {

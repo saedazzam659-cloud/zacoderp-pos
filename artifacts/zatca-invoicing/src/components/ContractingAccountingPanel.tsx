@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { useLocation } from "wouter";
+import ContractingOperationsLedger, { type LedgerRow } from "@/components/ContractingOperationsLedger";
 
 const API = import.meta.env.VITE_API_URL || "";
 
-type Props = { projectId: number };
+type Props = { projectId: number; onOpenBill: (id: number, direction: "incoming" | "outgoing") => void };
 type Bill = {
-  id: number; billNumber: string; direction: string; status: string;
+  id: number; billNumber: string; billDate?: string; direction: string; status: string;
   netAmount: string | number; retentionAmount: string | number;
   ownerContractId?: number | null; subcontractorContractId?: number | null;
   journalEntryId?: number | null;
@@ -23,6 +24,8 @@ type Settlement = {
   applied_amount?: string | number; journal_entry_id?: number | null;
   reversal_journal_entry_id?: number | null;
   bill_id?: number | null; settlement_date: string; status: string;
+  source_settlement_id?: number | null; owner_contract_id?: number | null; subcontractor_contract_id?: number | null;
+  application_origin?: string | null; payment_type?: string | null; cash_box_id?: number | null; bank_account_id?: number | null;
   voucher_code?: string | null;
   source_voucher_type?: "receipt" | "payment" | null; source_voucher_id?: number | null;
 };
@@ -30,6 +33,7 @@ type MaterialMovement = {
   id: number; direction: "issue" | "return"; qty_base: string | number;
   total_cost: string | number; movement_date: string; journal_entry_id?: number | null;
   batch_number?: string | null; expiry_date?: string | null;
+  item_id?: number | null; unit_id?: number | null; warehouse_id?: number | null; source_movement_id?: number | null;
   ownerContractId?: number | null; subcontractorContractId?: number | null; boqLineId?: number | null;
   owner_contract_id?: number | null; subcontractor_contract_id?: number | null; boq_line_id?: number | null;
 };
@@ -63,7 +67,7 @@ const labelKind: Record<string, string> = {
   bill_payment: "سداد مستخلص المقاول الباطن",
   advance_application: "تطبيق سلفة",
 };
-export default function ContractingAccountingPanel({ projectId }: Props) {
+export default function ContractingAccountingPanel({ projectId, onOpenBill }: Props) {
   const [, navigate] = useLocation();
   const { token, user } = useAuth();
   const canViewContracting = usePermission("contracting", "view");
@@ -256,19 +260,68 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
   }
 
   async function reverseSettlement(settlement: Settlement) {
+    if (settlement.source_voucher_id || settlement.status !== "posted") return;
     if (!window.confirm(
-      `سيُنشأ قيد عكسي مرحّل لتسوية المستخلص #${settlement.id} بقيمة ${Number(settlement.amount).toLocaleString("en-US")} مع الاحتفاظ بالسجل الأصلي. هل تريد المتابعة؟`,
+      `سيُنشأ قيد عكسي مرحّل لعملية ${labelKind[settlement.kind] || settlement.kind} #${settlement.id} بقيمة ${Number(settlement.amount).toLocaleString("en-US")} مع الاحتفاظ بالسجل الأصلي. هل تريد المتابعة؟`,
     )) return;
     await post(
       `/api/contracting/settlements/${settlement.id}/reverse`,
       {},
       undefined,
-      "تم عكس تسوية المستخلص وإنشاء قيد عكسي",
+      "تم عكس العملية وإنشاء قيد عكسي",
     );
   }
 
+  async function correctSettlement(settlement: Settlement) {
+    if (settlement.source_voucher_id || settlement.status !== "posted") return;
+    if (!window.confirm("سيُعكس القيد الأصلي أولاً. بعد نجاح العكس ستُملأ الحقول للتعديل فقط؛ لن يُرحّل أي مبلغ تلقائياً. متابعة؟")) return;
+    const result = await post(`/api/contracting/settlements/${settlement.id}/reverse`, {}, undefined, "تم العكس؛ راجع بيانات التصحيح ثم رحّلها يدوياً");
+    if (!result) return;
+    if (settlement.kind === "advance_application") {
+      setApplySettlementId(String(settlement.source_settlement_id ?? ""));
+      setApplyBillId(String(settlement.bill_id ?? ""));
+      setApplyAmount(String(settlement.amount));
+    } else {
+      setKind(settlement.kind);
+      setAmount(String(settlement.amount));
+      setBillId(String(settlement.bill_id ?? ""));
+      setOwnerContractId(String(settlement.owner_contract_id ?? ""));
+      setSubcontractorContractId(String(settlement.subcontractor_contract_id ?? ""));
+      setSettlementDate(settlement.settlement_date?.slice(0, 10) || new Date().toISOString().slice(0, 10));
+      if (settlement.payment_type === "cash" || settlement.payment_type === "bank") {
+        setPaymentType(settlement.payment_type);
+        setTreasuryId(String(settlement.payment_type === "cash" ? settlement.cash_box_id ?? "" : settlement.bank_account_id ?? ""));
+      }
+    }
+  }
+
   const requiresBill = kind.startsWith("retention_") || kind.startsWith("bill_");
-  const advances = settlements.filter((s) => s.kind === "advance_receipt" || s.kind === "advance_payment");
+  const advances = settlements.filter((s) => s.status === "posted" && (s.kind === "advance_receipt" || s.kind === "advance_payment"));
+  const statusLabel = (status: string) => ({"posted": "مرحّل", "approved": "معتمد", "reversed": "معكوس", "draft": "مسودة", "partially_paid": "مسدد جزئياً", "paid": "مسدد"} as Record<string, string>)[status] || status;
+  const billLedger: LedgerRow[] = bills.map(row => ({
+    id: row.id, date: row.billDate || "", type: row.direction === "incoming" ? "مستخلص مقاول باطن" : "مستخلص مالك",
+    reference: `${row.billNumber} (#${row.id})`, amount: Number(row.netAmount).toLocaleString("en-US"),
+    status: statusLabel(row.status), source: row.direction === "incoming" ? `عقد باطن #${row.subcontractorContractId ?? "—"}` : `عقد مالك #${row.ownerContractId ?? "—"}`,
+    details: `الصافي ${row.netAmount} • المحتجز ${row.retentionAmount} • المسدد ${row.paidAmount ?? 0} • قيد #${row.journalEntryId ?? "—"}`,
+  }));
+  const settlementLedger = (rows: Settlement[]): LedgerRow[] => rows.map(row => ({
+    id: row.id, date: row.settlement_date || "", type: labelKind[row.kind] || row.kind,
+    reference: `#${row.id}`, amount: Number(row.amount).toLocaleString("en-US"),
+    status: statusLabel(row.status),
+    source: row.source_voucher_id
+      ? `${row.voucher_code || voucherCodes[`${row.source_voucher_type}:${row.source_voucher_id}`] || (row.source_voucher_type === "receipt" ? "سند قبض" : "سند صرف")} #${row.source_voucher_id}`
+      : row.source_settlement_id ? `سلفة #${row.source_settlement_id}`
+      : row.bill_id ? `مستخلص ${bills.find(b => b.id === row.bill_id)?.billNumber || `#${row.bill_id}`}`
+      : row.owner_contract_id ? `عقد مالك #${row.owner_contract_id}` : row.subcontractor_contract_id ? `عقد باطن #${row.subcontractor_contract_id}` : "ترحيل مباشر",
+    details: `عملية #${row.id} • مستخلص #${row.bill_id ?? "—"} • قيد #${row.journal_entry_id ?? "—"}${row.reversal_journal_entry_id ? ` • قيد عكسي #${row.reversal_journal_entry_id}` : ""}${row.application_origin ? ` • منشأ التطبيق: ${row.application_origin === "auto_recovery" ? "استرداد تلقائي" : "يدوي"}` : ""}`,
+  }));
+  const materialLedger: LedgerRow[] = movements.map(row => ({
+    id: row.id, date: row.movement_date || "", type: row.direction === "issue" ? "صرف مواد" : "إرجاع مواد",
+    reference: `#${row.id}`, amount: `${row.qty_base} • تكلفة ${Number(row.total_cost).toLocaleString("en-US")}`,
+    status: "مرحّل",
+    source: row.source_movement_id ? `صرف أصلي #${row.source_movement_id}` : `قيد #${row.journal_entry_id ?? "—"}`,
+    details: `الصنف ${options.items.find(i => i.id === row.item_id)?.nameAr || `#${row.item_id ?? "—"}`} • المخزن ${options.warehouses.find(w => w.id === row.warehouse_id)?.nameAr || `#${row.warehouse_id ?? "—"}`} • ${row.owner_contract_id ?? row.ownerContractId ? `عقد مالك #${row.owner_contract_id ?? row.ownerContractId}` : row.subcontractor_contract_id ?? row.subcontractorContractId ? `عقد باطن #${row.subcontractor_contract_id ?? row.subcontractorContractId}` : "المشروع"} • بند #${row.boq_line_id ?? row.boqLineId ?? "—"} • تشغيلة ${row.batch_number ?? "—"} • قيد #${row.journal_entry_id ?? "—"}`,
+  }));
   // An explicit contract customer wins; only a missing one inherits the project's explicit ID.
   function ownerPartyId(contractId: number) {
     const contract = options.ownerContracts.find(row => row.id === contractId);
@@ -426,47 +479,58 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
         ? line.direction === "subcontract" && line.subcontractorContractId === materialContractId
         : false,
   );
+  function settlementActions(id: number) {
+    const row = settlements.find(s => s.id === id);
+    if (!row) return null;
+    if (row.source_voucher_id) {
+      return row.source_voucher_type === "receipt" || row.source_voucher_type === "payment"
+        ? <Button size="sm" variant="outline" onClick={() => navigate(`/cash/${row.source_voucher_type}-vouchers/multi/${row.source_voucher_id}`)}>فتح السند / تعديل المصدر</Button>
+        : <span className="text-xs text-muted-foreground">التصحيح من السند المصدر #{row.source_voucher_id}</span>;
+    }
+    if (row.status === "posted" && row.application_origin !== "auto_recovery") return <>
+      <Button size="sm" variant="outline" disabled={busy} onClick={() => void correctSettlement(row)}>تصحيح بعد العكس</Button>
+      <Button size="sm" variant="destructive" disabled={busy} data-testid={`button-reverse-settlement-${row.id}`} onClick={() => void reverseSettlement(row)}>عكس</Button>
+    </>;
+    return row.application_origin === "auto_recovery"
+      ? <Button size="sm" variant="outline" onClick={() => {
+          const bill = bills.find(b => b.id === row.bill_id);
+          if (bill) onOpenBill(bill.id, bill.direction === "incoming" ? "incoming" : "outgoing");
+        }}>عرض المستخلص المصدر (استرداد تلقائي)</Button>
+      : null;
+  }
+  function prepareMaterialReturn(id: number) {
+    const row = movements.find(m => m.id === id);
+    if (!row || row.direction !== "issue") return;
+    setMovementDirection("return");
+    setSourceMovementId(String(row.id));
+    setItemId(String(row.item_id ?? ""));
+    setUnitId(String(row.unit_id ?? ""));
+    setWarehouseId(String(row.warehouse_id ?? ""));
+    setQty("");
+    setSettlementDate(new Date().toISOString().slice(0, 10));
+    toast({ title: `حركة الصرف #${row.id} جاهزة للإرجاع. أدخل الكمية وراجع البيانات قبل الترحيل.` });
+  }
 
   return (
     <div dir="rtl" className="space-y-5">
       <div className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
         <h3 className="mb-3 text-base font-bold">اعتماد المستخلصات والدفتر العام</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b text-right text-slate-500">
-              <th className="p-2">المستخلص</th><th className="p-2">الاتجاه</th><th className="p-2">الصافي</th>
-              <th className="p-2">الحالة</th><th className="p-2">الإجراء</th>
-            </tr></thead>
-            <tbody>{bills.map((bill) => (
-              <tr key={bill.id} className="border-b last:border-0">
-                <td className="p-2 font-medium">{bill.billNumber}</td>
-                <td className="p-2">{bill.direction === "incoming" ? "مقاول باطن" : "مالك"}</td>
-                <td className="p-2">{Number(bill.netAmount || 0).toLocaleString("en-US")}</td>
-                <td className="p-2">{bill.status === "approved" ? "معتمد" : bill.status === "reversed" ? "معكوس" : bill.status}</td>
-                <td className="p-2">
-                  {["approved", "posted", "partially_paid", "paid"].includes(bill.status) ? (
-                    <>
-                      {canUnapprove && (user?.role === "admin" || user?.role === "superadmin"
-                        || (user as any)?.postingPermissions?.[bill.direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill"]?.unpost !== false) && (
-                        <Button size="sm" variant="outline" disabled={busy}
-                          onClick={() => void approve(bill.id, true)}>فك الاعتماد</Button>
-                      )}
-                      {["approved", "posted"].includes(bill.status) && (
-                        <Button size="sm" variant="destructive" disabled={busy} onClick={() => void correct(bill.id)}>تصحيح مرحّل</Button>
-                      )}
-                      <span className="text-xs text-slate-500">يُعكس القيد المرحّل أو يُلغى القيد المسودة؛ اعكس التسويات المرتبطة أولاً</span>
-                    </>
-                ) : bill.status === "reversed" ? (
-                    <span className="text-xs text-slate-500">معكوس — راجع مسودة التصحيح المرتبطة</span>
-                  ) : (
-                    <Button size="sm" disabled={busy} onClick={() => void approve(bill.id)}>اعتماد وترحيل ذري</Button>
-                  )}
-                </td>
-              </tr>
-            ))}</tbody>
-          </table>
-          {!bills.length && <div className="py-5 text-center text-sm text-slate-500">لا توجد مستخلصات</div>}
-        </div>
+        <ContractingOperationsLedger title="سجل اعتماد المستخلصات" filename={`contracting-bills-${projectId}`}
+          rows={billLedger} action={id => {
+            const bill = bills.find(b => b.id === id);
+            if (!bill) return null;
+            return <>
+              <Button size="sm" variant="outline" onClick={() => onOpenBill(id, bill.direction === "incoming" ? "incoming" : "outgoing")}>عرض / تعديل المستخلص</Button>
+              {["approved", "posted", "partially_paid", "paid"].includes(bill.status) ? <>
+                {canUnapprove && (user?.role === "admin" || user?.role === "superadmin"
+                  || (user as any)?.postingPermissions?.[bill.direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill"]?.unpost !== false) &&
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => void approve(id, true)}>فك الاعتماد</Button>}
+                {["approved", "posted"].includes(bill.status) &&
+                  <Button size="sm" variant="destructive" disabled={busy} onClick={() => void correct(id)}>تصحيح مرحّل</Button>}
+              </> : bill.status !== "reversed" &&
+                <Button size="sm" disabled={busy} onClick={() => void approve(id)}>اعتماد وترحيل ذري</Button>}
+            </>;
+          }} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -504,6 +568,8 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
             <Button variant="outline" disabled={busy || !amount || !treasuryId || (requiresBill && !billId) || (!requiresBill && kind === "advance_receipt" && !ownerContractId) || (!requiresBill && kind === "advance_payment" && !subcontractorContractId)} onClick={() => void saveSettlement()}>ترحيل مباشر (النظام القديم)</Button>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">اختر مساراً واحداً للعملية: السند المتعدد أو الترحيل المباشر. لا تستخدم الاثنين لنفس التحصيل أو السداد.</p>
+          <ContractingOperationsLedger title="سجل السلف والمحتجزات والتسويات النقدية" filename={`contracting-settlements-${projectId}`}
+            rows={settlementLedger(settlements.filter(row => row.kind !== "advance_application"))} action={settlementActions} />
         </section>
 
         <section className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
@@ -514,6 +580,8 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
             <label className="text-sm">مبلغ التطبيق<Input type="number" min="0.01" step="0.01" value={applyAmount} onChange={(e) => setApplyAmount(e.target.value)} /></label>
           </div>
           <Button className="mt-3" variant="outline" disabled={busy || !applySettlementId || !applyBillId || !applyAmount} onClick={() => void applyAdvance()}>ترحيل تطبيق السلفة</Button>
+          <ContractingOperationsLedger title="سجل تطبيقات السلف" filename={`contracting-advance-applications-${projectId}`}
+            rows={settlementLedger(settlements.filter(row => row.kind === "advance_application"))} action={settlementActions} />
         </section>
       </div>
 
@@ -609,67 +677,15 @@ export default function ContractingAccountingPanel({ projectId }: Props) {
           <p className="mt-2 text-xs text-muted-foreground">الإرجاع يرث العقد وسطر جدول الكميات من حركة الصرف الأصلية ولا يستبدلهما.</p>
         )}
         <Button className="mt-3" disabled={busy || !itemId || !unitId || !warehouseId || !qty || (movementDirection === "return" && !sourceMovementId)} onClick={() => void saveMaterialMovement()}>ترحيل حركة المواد والقيد</Button>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-xs">
-             <thead><tr className="border-b text-right text-slate-500"><th className="p-2">الحركة</th><th className="p-2">التاريخ</th><th className="p-2">العقد / بند الكميات</th><th className="p-2">التشغيلة</th><th className="p-2">كمية الأساس</th><th className="p-2">التكلفة</th><th className="p-2">القيد</th></tr></thead>
-            <tbody>{movements.map((row) => (
-              <tr key={row.id} className="border-b last:border-0">
-                <td className="p-2">{row.direction === "issue" ? "صرف" : "إرجاع"} #{row.id}</td>
-                <td className="p-2">{row.movement_date}</td>
-                 <td className="p-2">
-                   {(row.ownerContractId ?? row.owner_contract_id) != null
-                     ? `مالك #${row.ownerContractId ?? row.owner_contract_id}`
-                     : (row.subcontractorContractId ?? row.subcontractor_contract_id) != null
-                       ? `باطن #${row.subcontractorContractId ?? row.subcontractor_contract_id}`
-                       : "المشروع"}
-                   {(row.boqLineId ?? row.boq_line_id) != null ? ` • بند #${row.boqLineId ?? row.boq_line_id}` : ""}
-                 </td>
-                 <td className="p-2">{row.batch_number ?? "—"}{row.expiry_date ? ` • ${row.expiry_date}` : ""}</td>
-                 <td className="p-2">{String(row.qty_base)}</td>
-                 <td className="p-2">{String(row.total_cost)}</td>
-                <td className="p-2">#{row.journal_entry_id ?? "—"}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-          {!movements.length && <div className="py-3 text-center text-xs text-slate-500">لا توجد حركات مواد مرحّلة</div>}
-        </div>
+        <ContractingOperationsLedger title="سجل صرف وإرجاع المواد" filename={`contracting-materials-${projectId}`}
+          rows={materialLedger} action={id => movements.find(m => m.id === id)?.direction === "issue"
+            ? <Button size="sm" variant="outline" disabled={busy} onClick={() => prepareMaterialReturn(id)}>إرجاع مرتبط بالمصدر</Button>
+            : null} />
       </section>
 
       <section className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
-        <h3 className="mb-3 font-bold">سجل التسويات والتدقيق المحاسبي</h3>
+        <h3 className="mb-3 font-bold">التدقيق المحاسبي</h3>
         <div className="space-y-1 text-sm">
-          {settlements.map((row) => {
-            const reversibleBillSettlement = ["bill_receipt", "bill_payment"].includes(row.kind) && row.status === "posted" && !row.source_voucher_id;
-            return (
-              <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2">
-                <span>{labelKind[row.kind] || row.kind} #{row.id}{row.bill_id ? ` — مستخلص #${row.bill_id}` : ""}</span>
-                <span>{Number(row.amount).toLocaleString("en-US")} • قيد #{row.journal_entry_id ?? "—"}</span>
-                {row.source_voucher_id && (row.source_voucher_type === "receipt" || row.source_voucher_type === "payment") && (
-                  <a className="text-primary underline text-xs" href={`/cash/${row.source_voucher_type}-vouchers/multi/${row.source_voucher_id}`}
-                    onClick={event => { event.preventDefault(); navigate(event.currentTarget.getAttribute("href")!); }}>
-                    {row.voucher_code || voucherCodes[`${row.source_voucher_type}:${row.source_voucher_id}`] || `${row.source_voucher_type === "receipt" ? "سند قبض" : "سند صرف"} #${row.source_voucher_id}`}
-                  </a>
-                )}
-                {row.source_voucher_id && <span className="text-xs text-muted-foreground">يُفك الترحيل من السند المرتبط</span>}
-                {reversibleBillSettlement ? (
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    disabled={busy}
-                    data-testid={`button-reverse-settlement-${row.id}`}
-                    onClick={() => void reverseSettlement(row)}
-                  >
-                    عكس تسوية المستخلص
-                  </Button>
-                ) : row.status === "reversed" ? (
-                  <span className="text-xs text-slate-500">معكوس{row.reversal_journal_entry_id ? ` بقيد #${row.reversal_journal_entry_id}` : ""}</span>
-                ) : (
-                  <span className="text-xs text-slate-500">{row.status === "posted" ? "مرحّل" : row.status}</span>
-                )}
-              </div>
-            );
-          })}
-          {!settlements.length && <div className="text-slate-500">لا توجد تسويات مرحّلة</div>}
           {audit.slice(0, 10).map((row) => <div key={`audit-${row.id}`} className="text-xs text-slate-500">#{row.id} — {row.action} — {new Date(row.created_at).toLocaleString("ar-SA")}</div>)}
         </div>
       </section>

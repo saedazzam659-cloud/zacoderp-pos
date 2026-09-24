@@ -3129,11 +3129,9 @@ export async function createSettlement(input: {
 }
 
 /**
- * Payment settlements are immutable accounting evidence.  A correction is a
- * separate reversing JE, never a delete or a negative rewrite of the source
- * payment.  This intentionally supports only bill receipts/payments: advances
- * and retention have their own application/release lifecycle and need their
- * own source-balance restoration rules.
+ * Settlements remain immutable accounting evidence. Corrections append a
+ * reversing JE; only a manual advance application also restores its source
+ * balance. Automatic recovery belongs to the bill unapproval transaction.
  */
 export async function reverseBillSettlement(input: {
   companyId: number;
@@ -3143,11 +3141,8 @@ export async function reverseBillSettlement(input: {
 }) {
   await ensureContractingAccountingTables();
   return db.transaction(async (tx) => {
-    // Establish the same lock order used by bill payment and approval:
-    // bill -> exact contract -> settlement.  The preliminary read only finds
-    // that order; the settlement is re-read FOR UPDATE before any decision.
-    // This prevents a payment/recovery writer from racing the paid-state
-    // projection and makes two simultaneous reversal requests serialize.
+    // Match posting's lock order: optional bill -> exact contract -> settlement.
+    // The preliminary read only discovers that order; verify it again under lock.
     const target = resultRows(await tx.execute(sql`
       SELECT bill_id, project_id, direction, owner_contract_id,
              subcontractor_contract_id, kind
@@ -3156,30 +3151,39 @@ export async function reverseBillSettlement(input: {
          AND id = ${input.settlementId}
     `))[0];
     if (!target) throw failure("تسوية المقاولات غير موجودة", 404);
-    if (!["bill_receipt", "bill_payment"].includes(String(target.kind)) || target.bill_id == null) {
-      throw failure("عكس هذه التسوية غير مدعوم من مسار عكس دفعات المستخلص", 422);
+    const kind = String(target.kind);
+    if ((["bill_receipt", "advance_receipt", "retention_receipt"].includes(kind) && target.direction !== "outgoing")
+      || (["bill_payment", "advance_payment", "retention_payment"].includes(kind) && target.direction !== "incoming")) {
+      throw failure("اتجاه التسوية لا يطابق نوعها", 409);
     }
-    const bill = await lockBill(tx, input.companyId, Number(target.bill_id));
-    if (!bill || bill.projectId !== Number(target.project_id) || bill.direction !== target.direction) {
+    const billKind = ["bill_receipt", "bill_payment", "retention_receipt", "retention_payment", "advance_application"].includes(kind);
+    const standaloneAdvance = ["advance_receipt", "advance_payment"].includes(kind) && target.bill_id == null;
+    if (!billKind && !standaloneAdvance) {
+      throw failure("عكس نوع هذه التسوية غير مدعوم من مسار التسويات", 422);
+    }
+    if (billKind && target.bill_id == null) throw failure("التسوية تفتقد المستخلص المرتبط بها", 409);
+    const bill = billKind ? await lockBill(tx, input.companyId, Number(target.bill_id)) : null;
+    if (billKind && (!bill || bill.projectId !== Number(target.project_id) || bill.direction !== target.direction)) {
       throw failure("المستخلص المرتبط بالتسوية غير صالح", 409);
     }
-    const project = await projectFor(tx, input.companyId, bill.projectId);
+    const project = await projectFor(tx, input.companyId, Number(target.project_id));
     if (!project) throw failure("المشروع غير موجود", 404);
     assertProjectBranchAccess(input.req, project.branchId);
-    const contractId = bill.direction === "outgoing"
-      ? Number(bill.ownerContractId ?? 0)
-      : Number(bill.subcontractorContractId ?? 0);
-    const contractTable = bill.direction === "outgoing"
+    if (!["outgoing", "incoming"].includes(String(target.direction))) throw failure("اتجاه التسوية غير صالح", 409);
+    const contractId = bill
+      ? Number(bill.direction === "outgoing" ? bill.ownerContractId ?? 0 : bill.subcontractorContractId ?? 0)
+      : Number(target.direction === "outgoing" ? target.owner_contract_id ?? 0 : target.subcontractor_contract_id ?? 0);
+    const contractTable = target.direction === "outgoing"
       ? "contracting_owner_contracts"
       : "contracting_sub_contracts";
-    if (!contractId || Number(target.owner_contract_id ?? 0) !== (bill.direction === "outgoing" ? contractId : 0)
-      || Number(target.subcontractor_contract_id ?? 0) !== (bill.direction === "incoming" ? contractId : 0)) {
-      throw failure("عقد التسوية لا يطابق عقد المستخلص", 409);
+    if (!contractId || Number(target.owner_contract_id ?? 0) !== (target.direction === "outgoing" ? contractId : 0)
+      || Number(target.subcontractor_contract_id ?? 0) !== (target.direction === "incoming" ? contractId : 0)) {
+      throw failure("عقد التسوية لا يطابق العقد المرتبط بها", 409);
     }
     const contract = await tx.execute(sql`
       SELECT id FROM ${sql.raw(contractTable)}
        WHERE company_id = ${input.companyId}
-         AND project_id = ${bill.projectId}
+         AND project_id = ${Number(target.project_id)}
          AND id = ${contractId}
        FOR UPDATE
     `);
@@ -3193,20 +3197,57 @@ export async function reverseBillSettlement(input: {
     `);
     const settlement = resultRows(locked)[0];
     if (!settlement) throw failure("تسوية المقاولات غير موجودة", 404);
-    if (settlement.source_voucher_line_id != null) {
+    if (settlement.source_voucher_line_id != null || settlement.source_voucher_id != null || settlement.source_voucher_type != null) {
       throw failure("تسوية السند تُعكس عبر فك ترحيل سند القبض/الصرف فقط", 409);
     }
-    if (!["bill_receipt", "bill_payment"].includes(String(settlement.kind))) {
-      throw failure("عكس هذه التسوية غير مدعوم من مسار عكس دفعات المستخلص", 422);
+    if (settlement.kind !== kind || Number(settlement.project_id) !== Number(target.project_id)
+      || settlement.direction !== target.direction
+      || Number(settlement.bill_id ?? 0) !== Number(target.bill_id ?? 0)
+      || Number(settlement.owner_contract_id ?? 0) !== Number(target.owner_contract_id ?? 0)
+      || Number(settlement.subcontractor_contract_id ?? 0) !== Number(target.subcontractor_contract_id ?? 0)) {
+      throw failure("تغير نطاق التسوية أثناء عكسها؛ أعد المحاولة", 409);
     }
-    if (settlement.status === "reversed") {
-      return { ...settlement, idempotentReplay: true };
+    if (kind === "advance_application" && settlement.application_origin === "auto_recovery") {
+      throw failure("استرداد السلفة التلقائي يُعكس بفك اعتماد المستخلص فقط", 409);
     }
+    if (settlement.status === "reversed") return { ...settlement, idempotentReplay: true };
     if (settlement.status !== "posted" || !settlement.journal_entry_id) {
       throw failure("لا يمكن عكس تسوية غير مرحّلة أو بلا قيد", 409);
     }
     if (!canUnpostDoc(input.req?.authUser, "ctgContractingSettlement")) {
       throw failure("ليس لديك صلاحية فك ترحيل هذه التسوية", 403);
+    }
+    if (kind === "advance_application") {
+      if (settlement.application_origin != null && settlement.application_origin !== "manual") {
+        throw failure("مصدر تطبيق السلفة غير معروف؛ تعذر عكسه", 409);
+      }
+      if (!settlement.source_settlement_id) throw failure("مصدر تطبيق السلفة غير موجود", 409);
+      const source = resultRows(await tx.execute(sql`
+        SELECT * FROM contracting_accounting_settlements
+         WHERE company_id = ${input.companyId}
+           AND id = ${Number(settlement.source_settlement_id)}
+         FOR UPDATE
+      `))[0];
+      if (!source || source.status !== "posted"
+        || !["advance_receipt", "advance_payment"].includes(String(source.kind))
+        || Number(source.project_id) !== Number(settlement.project_id)
+        || source.direction !== settlement.direction
+        || Number(source.owner_contract_id ?? 0) !== Number(settlement.owner_contract_id ?? 0)
+        || Number(source.subcontractor_contract_id ?? 0) !== Number(settlement.subcontractor_contract_id ?? 0)
+        || centsBig(source.applied_amount) < centsBig(settlement.amount)) {
+        throw failure("رصيد أو نطاق السلفة الأصلية غير صالح؛ تعذر عكس التطبيق", 409);
+      }
+    } else if (standaloneAdvance) {
+      const dependent = resultRows(await tx.execute(sql`
+        SELECT id FROM contracting_accounting_settlements
+         WHERE company_id = ${input.companyId}
+           AND source_settlement_id = ${input.settlementId}
+           AND status = 'posted'
+         LIMIT 1
+      `));
+      if (centsBig(settlement.applied_amount) !== 0n || dependent.length) {
+        throw failure("لا يمكن عكس سلفة مستهلكة أو لها تطبيقات قائمة؛ اعكس التطبيقات أولاً", 409);
+      }
     }
     const [original] = await tx.select().from(journalEntriesTable).where(and(
       eq(journalEntriesTable.id, Number(settlement.journal_entry_id)),
@@ -3238,6 +3279,19 @@ export async function reverseBillSettlement(input: {
       })),
       req: input.req,
     });
+    if (kind === "advance_application") {
+      const restored = await tx.execute(sql`
+        UPDATE contracting_accounting_settlements
+           SET applied_amount = applied_amount - ${money(settlement.amount)}::numeric,
+               updated_at = NOW()
+         WHERE company_id = ${input.companyId}
+           AND id = ${Number(settlement.source_settlement_id)}
+           AND status = 'posted'
+           AND applied_amount >= ${money(settlement.amount)}::numeric
+         RETURNING id
+      `);
+      if (!resultRows(restored).length) throw failure("تعذر استعادة رصيد السلفة الأصلية", 409);
+    }
     const reversed = await tx.execute(sql`
       UPDATE contracting_accounting_settlements
          SET status = 'reversed',
@@ -3256,11 +3310,13 @@ export async function reverseBillSettlement(input: {
       projectId: Number(settlement.project_id),
       billId: settlement.bill_id == null ? null : Number(settlement.bill_id),
       settlementId: Number(settlement.id),
-      action: "bill_settlement_reversed",
+      action: kind === "advance_application" ? "advance_application_reversed"
+        : kind.startsWith("bill_") ? "bill_settlement_reversed" : `${kind}_reversed`,
       originalJournalEntryId: Number(settlement.journal_entry_id),
       reversalJournalEntryId,
       amount: n(settlement.amount),
-      metadata: { kind: settlement.kind, reversalDate },
+      metadata: { kind: settlement.kind, reversalDate, ...(kind === "advance_application"
+        ? { sourceSettlementId: Number(settlement.source_settlement_id), applicationOrigin: "manual" } : {}) },
       userId: input.userId,
     });
     return { ...row, idempotentReplay: false };
