@@ -29,6 +29,7 @@ import { assertWritableForDate, assertWritableForPeriodId } from "../lib/periodG
 import { createdAuditFor, postedAuditFor, fullAuditFor } from "../lib/journalAudit.js";
 import { describeDevice } from "../lib/deviceFingerprint.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { contractingJournalRecoverySummaries } from "../lib/contractingJournalRecovery.js";
 import { journalListOptions } from "../lib/journalListOptions.js";
 import {
   assertJeSettlementAllowed, acquireSettlementLock, acquireSourceLock,
@@ -1173,7 +1174,13 @@ router.get("/:id", async (req, res) => {
       .where(eq(journalEntryLinesTable.entryId, id))
       .orderBy(journalEntryLinesTable.sortOrder);
 
-    res.json({ ...entry, lines });
+    const contractingRecoverySummaries = await contractingJournalRecoverySummaries(
+      entry.companyId, id, entry.entryType, req.authUser,
+    );
+    res.json({
+      ...entry, lines,
+      ...(contractingRecoverySummaries === null ? {} : { contractingRecoverySummaries }),
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

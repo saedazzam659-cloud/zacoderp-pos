@@ -22,6 +22,57 @@ export interface JournalPrintLine {
   costCenterLabel?: string | null;
 }
 
+/** Read-only context returned by GET /journal-entries/:id; never a journal line. */
+export interface ContractingRecoverySummary {
+  billId: number;
+  billNumber: string;
+  direction: "outgoing" | "incoming";
+  currentWorkAmount: string | null;
+  entitlementAmount: string;
+  recoveryAmount: string;
+  netAfterRecovery: string;
+  settlementAmount: string | null;
+  remainingAdvance: string | null;
+  recoveryPercent: string | null;
+  recoveryMethod: string | null;
+  recoveryJournals: Array<{
+    id: number;
+    number: string;
+    amount: string;
+    debitAccounts: string[];
+    creditAccounts: string[];
+  }>;
+}
+
+export function recoverySummaryFields(summary: ContractingRecoverySummary, isRtl: boolean) {
+  const amount = (value: string) => fmt2(Number(value));
+  const fields: Array<[string, string]> = [];
+  // Old certificates without an approval snapshot must not imply reconstructed historical work/rates.
+  if (summary.currentWorkAmount !== null) {
+    fields.push(
+      [isRtl ? "قيمة الأعمال عند الاعتماد" : "Work at approval", amount(summary.currentWorkAmount)],
+      [isRtl ? "الاستحقاق عند الاعتماد" : "Entitlement at approval", amount(summary.entitlementAmount)],
+      [isRtl ? "السلفة المستردة" : "Advance recovered", amount(summary.recoveryAmount)],
+    );
+    // A stored percentage is not the basis of a fixed-amount recovery.
+    if (summary.recoveryMethod === "percentage" && summary.recoveryPercent !== null) {
+      fields.push([isRtl ? "نسبة الاسترداد" : "Recovery rate", `${summary.recoveryPercent}%`]);
+    }
+    if (summary.recoveryMethod) {
+      const methodLabel = summary.recoveryMethod === "percentage"
+        ? (isRtl ? "نسبة مئوية" : "Percentage")
+        : summary.recoveryMethod === "fixed"
+          ? (isRtl ? "مبلغ ثابت" : "Fixed amount")
+          : (isRtl ? "غير محددة" : "Unspecified");
+      fields.push([isRtl ? "طريقة الاسترداد" : "Recovery method", methodLabel]);
+    }
+  }
+  fields.push([isRtl ? "الصافي بعد استرداد السلفة (ليس المسدد)" : "Net after recovery (not cash paid)", amount(summary.netAfterRecovery)]);
+  if (summary.settlementAmount !== null) fields.push([isRtl ? "التسوية النقدية الفعلية" : "Actual cash settlement", amount(summary.settlementAmount)]);
+  if (summary.remainingAdvance !== null) fields.push([isRtl ? "السلفة المتبقية عند الاعتماد" : "Advance remaining at approval", amount(summary.remainingAdvance)]);
+  return fields;
+}
+
 export interface JournalPrintEntry {
   docNo: string;
   entryDate: string;
@@ -29,6 +80,7 @@ export interface JournalPrintEntry {
   statusLabel: string;
   description?: string | null;
   lines: JournalPrintLine[];
+  contractingRecoverySummaries?: ContractingRecoverySummary[];
 }
 
 export interface JournalPrintLabels {
@@ -117,6 +169,23 @@ export function buildDetailedJournalPrintHtml(
     // already carries the same numbers.
     const perPageTotals = "";
 
+    const recoveryHtml = e.contractingRecoverySummaries?.length ? `
+  <div class="recovery-context">
+    <strong>${isRtl ? "بيان استرداد السلفة — للعرض فقط" : "Advance recovery — information only"}</strong>
+    <p>${isRtl ? "قيود الاسترداد الأصلية مرحّلة بشكل مستقل؛ لا تنشئ هذه البيانات قيداً أو ترحيلاً إضافياً." : "Original recovery journals were posted separately; this information does not create another posting."}</p>
+    ${e.contractingRecoverySummaries.map(s => `<div class="recovery-bill">
+      <b>${isRtl ? "مستخلص" : "Certificate"} ${escapeHtml(s.billNumber)} (${s.direction === "incoming" ? (isRtl ? "مقاول باطن / صرف" : "Subcontractor / payment") : (isRtl ? "مالك / قبض" : "Owner / receipt")})</b>
+      <div class="recovery-fields">${recoverySummaryFields(s, isRtl).map(([label, value]) => `<span><b>${escapeHtml(label)}:</b> ${escapeHtml(value)}</span>`).join("")}</div>
+      ${(s.recoveryJournals ?? []).map(j => `<div class="recovery-journal">
+        ${isRtl ? "قيد الاسترداد الأصلي" : "Original recovery journal"}:
+        <a href="/accounting/journals/${encodeURIComponent(String(j.id))}">${escapeHtml(j.number)}</a>
+        (${escapeHtml(fmt2(Number(j.amount)))}) —
+        ${isRtl ? "مدين" : "Debit"}: ${escapeHtml((j.debitAccounts ?? []).join("، ") || "—")} /
+        ${isRtl ? "دائن" : "Credit"}: ${escapeHtml((j.creditAccounts ?? []).join("، ") || "—")}
+      </div>`).join("")}
+    </div>`).join("")}
+  </div>` : "";
+
     const sigRow = `
   <div class="sig-row">
     <div class="sig"><div class="sig-role">${isRtl ? "إعداد" : "Prepared By"}</div><div class="sig-line">${isRtl ? "الاسم والتوقيع" : "Name & Signature"}</div></div>
@@ -157,6 +226,7 @@ export function buildDetailedJournalPrintHtml(
       </tr>
     </tfoot>
   </table>
+  ${recoveryHtml}
   ${perPageTotals}
   ${sigRow}
 </section>`;
@@ -198,6 +268,12 @@ table.lines tfoot td { padding:4px 6px; border:1px solid #cbd5e1; background:#f1
 table.lines tbody td.num, table.lines tfoot td.num { text-align:right; }
 .center { text-align:center; }
 .grand { margin-top:6px; padding:8px 12px; background:#1e3a8a; color:#fff; border-radius:6px; display:flex; justify-content:space-between; gap:18px; font-size:12px; }
+.recovery-context { margin-top:8px; border:1px solid #93c5fd; border-radius:5px; padding:7px; background:#eff6ff; font-size:10.5px; page-break-inside:avoid; }
+.recovery-context p { margin:3px 0 6px; color:#475569; }
+.recovery-bill { padding:5px 0; border-top:1px solid #bfdbfe; }
+.recovery-fields { display:flex; flex-wrap:wrap; gap:5px 16px; margin:4px 0; }
+.recovery-journal { margin:3px 0; }
+.recovery-journal a { color:#1e40af; }
 .page-head { text-align:center; margin: 0 0 6px; padding-bottom:4px; border-bottom:2px solid #1e3a8a; }
 .page-head .page-title { margin:4px 0 2px; font-size:14px; font-weight:600; color:#1e3a8a; }
 .page-totals { display:flex; gap:18px; justify-content:space-around; margin-top:6px; padding:6px 12px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:12px; }

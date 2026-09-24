@@ -772,6 +772,7 @@ ${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEnt
       typeLabel:   ENTRY_TYPES[e.entryType] ?? e.entryType ?? "",
       statusLabel: (STATUS_MAP[e.status] ?? STATUS_MAP.posted).label,
       description: e.description ?? null,
+      contractingRecoverySummaries: e.contractingRecoverySummaries,
       lines: (Array.isArray(e.lines) ? e.lines : []).map((ln: any) => {
         const acc = acctMap.get(Number(ln.accountId));
         return {

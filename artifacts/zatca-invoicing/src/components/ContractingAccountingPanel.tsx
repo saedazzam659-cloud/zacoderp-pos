@@ -521,6 +521,7 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
             if (!bill) return null;
             return <>
               <Button size="sm" variant="outline" onClick={() => onOpenBill(id, bill.direction === "incoming" ? "incoming" : "outgoing")}>عرض / تعديل المستخلص</Button>
+              {bill.journalEntryId != null && <Button size="sm" variant="outline" asChild><a href={`/accounting/journals/${bill.journalEntryId}`}>فتح القيد</a></Button>}
               {["approved", "posted", "partially_paid", "paid"].includes(bill.status) ? <>
                 {canUnapprove && (user?.role === "admin" || user?.role === "superadmin"
                   || (user as any)?.postingPermissions?.[bill.direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill"]?.unpost !== false) &&

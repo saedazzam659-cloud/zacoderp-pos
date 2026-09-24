@@ -3,6 +3,7 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
+import { JournalRecoverySummary } from "@/components/JournalRecoverySummary";
 import { branchesApi } from "@/lib/branchesApi";
 import {
   buildDetailedJournalPrintHtml,
@@ -1729,6 +1730,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
       typeLabel:   typeLabel,
       statusLabel,
       description: description || null,
+      contractingRecoverySummaries: isDraftPrint ? undefined : existing?.contractingRecoverySummaries,
       lines: printableLines.map((l) => {
         const a = acctMap.get(Number(l.accountId));
         return {
@@ -2032,6 +2034,8 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
           </div>
         </div>
       )}
+
+      <JournalRecoverySummary summaries={existing?.contractingRecoverySummaries} isRtl={isRtl} />
 
       {/* The accounting fields are locked for generated entries, but their
           source attachments must remain viewable. Native disabled fieldsets
