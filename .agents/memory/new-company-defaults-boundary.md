@@ -9,6 +9,12 @@ Apply the requested settings only when creating a genuinely new company: horizon
 
 **How to apply:** Keep this policy out of startup migrations, company updates, clone/restore/import paths, and approval of already-created pending companies. Deployed independent agents need an application update before their own future creations can use new defaults.
 
+Contracting and manufacturing accounting have a separately authorized exception: provision their module-specific chart accounts and mappings for fresh companies only when the module is enabled, and fill missing defaults during an explicit disabled-to-enabled module transition.
+
+**Why:** The user explicitly requested ready-to-use module accounting on central and agent installations, while accounting settings should show only the company's enabled modules.
+
+**How to apply:** Do not backfill every existing company at startup. Preserve existing mapped accounts and historical postings; disabling a module hides settings rather than deleting accounts. Fresh template defaults must not bypass module selection. Manufacturing defaults use the canonical manufacturing settings, not duplicate accounting-mapping records. This exception does not authorize resetting other company defaults.
+
 Independent numbering means separate document namespaces, not separate payment methods within the same document namespace.
 
 **Why:** Cash/credit/bank invoices and auto-generated journal subtypes can share uniqueness constraints; starting each subtype independently at `00001` would create collisions.

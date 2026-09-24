@@ -205,6 +205,14 @@ export function companyAllowsPermissionModule(
   if (!permKey) return true;
   const gateKey = COMPANY_MODULE_GATE[permKey];
   if (!gateKey) return true;
+  return companyAllowsMenuModuleKey(raw, gateKey);
+}
+
+/** Read a high-level module toggle with the same defaults as the sidebar gate. */
+export function companyAllowsMenuModuleKey(
+  raw: string | Record<string, boolean> | null | undefined,
+  gateKey: string,
+): boolean {
   const defaultOff = MODULE_GATE_DEFAULT_OFF.has(gateKey)
     || !LEGACY_DEFAULT_ON_GATE_KEYS.has(gateKey);
   if (raw == null) return !defaultOff;

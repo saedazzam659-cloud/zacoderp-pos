@@ -8613,9 +8613,8 @@ router.put("/manufacturing-settings", async (req, res) => {
     const cid = guard(req, res);
     if (!cid) return;
     const b = req.body ?? {};
-    const [currentSettings] = await db.select({
-      internalTransportEnabled: manufacturingSettingsTable.internalTransportEnabled,
-    }).from(manufacturingSettingsTable).where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
+    const [currentSettings] = await db.select().from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
     const internalTransportEnabled = b.internalTransportEnabled === undefined
       ? (currentSettings?.internalTransportEnabled ?? false)
       : b.internalTransportEnabled;
@@ -8624,21 +8623,28 @@ router.put("/manufacturing-settings", async (req, res) => {
     }
     const numOrNull = (v: any) =>
       v === null || v === undefined || v === "" ? null : Number(v);
+    // The shared accounting-mapping page edits only the seven GL fields.
+    // Preserve the independent production setup (warehouses, cost center,
+    // transport and approval) when those keys are omitted. Explicit null
+    // still clears an account when the accountant requests it.
+    const provided = (key: keyof typeof b, previous: unknown) =>
+      b[key] === undefined ? previous : b[key];
     const payload = {
       companyId: cid,
-      defaultRawWarehouseId: await validateWarehouse(cid, numOrNull(b.defaultRawWarehouseId)),
-      defaultFinishedWarehouseId: await validateWarehouse(cid, numOrNull(b.defaultFinishedWarehouseId)),
+      defaultRawWarehouseId: await validateWarehouse(cid, numOrNull(provided("defaultRawWarehouseId", currentSettings?.defaultRawWarehouseId))),
+      defaultFinishedWarehouseId: await validateWarehouse(cid, numOrNull(provided("defaultFinishedWarehouseId", currentSettings?.defaultFinishedWarehouseId))),
       defaultCostCenter:
-        typeof b.defaultCostCenter === "string" && b.defaultCostCenter.trim()
-          ? b.defaultCostCenter.trim()
+        typeof provided("defaultCostCenter", currentSettings?.defaultCostCenter) === "string" &&
+          String(provided("defaultCostCenter", currentSettings?.defaultCostCenter)).trim()
+          ? String(provided("defaultCostCenter", currentSettings?.defaultCostCenter)).trim()
           : null,
-      defaultWipAccountId: await validateAccount(cid, numOrNull(b.defaultWipAccountId)),
-      defaultRawInventoryAccountId: await validateAccount(cid, numOrNull(b.defaultRawInventoryAccountId)),
-      defaultFinishedGoodsAccountId: await validateAccount(cid, numOrNull(b.defaultFinishedGoodsAccountId)),
-      defaultLaborAccountId: await validateAccount(cid, numOrNull(b.defaultLaborAccountId)),
-      defaultOverheadAccountId: await validateAccount(cid, numOrNull(b.defaultOverheadAccountId)),
-      defaultVarianceAccountId: await validateAccount(cid, numOrNull(b.defaultVarianceAccountId)),
-      defaultWasteAccountId: await validateExpenseAccount(cid, numOrNull(b.defaultWasteAccountId)),
+      defaultWipAccountId: await validateAccount(cid, numOrNull(provided("defaultWipAccountId", currentSettings?.defaultWipAccountId))),
+      defaultRawInventoryAccountId: await validateAccount(cid, numOrNull(provided("defaultRawInventoryAccountId", currentSettings?.defaultRawInventoryAccountId))),
+      defaultFinishedGoodsAccountId: await validateAccount(cid, numOrNull(provided("defaultFinishedGoodsAccountId", currentSettings?.defaultFinishedGoodsAccountId))),
+      defaultLaborAccountId: await validateAccount(cid, numOrNull(provided("defaultLaborAccountId", currentSettings?.defaultLaborAccountId))),
+      defaultOverheadAccountId: await validateAccount(cid, numOrNull(provided("defaultOverheadAccountId", currentSettings?.defaultOverheadAccountId))),
+      defaultVarianceAccountId: await validateAccount(cid, numOrNull(provided("defaultVarianceAccountId", currentSettings?.defaultVarianceAccountId))),
+      defaultWasteAccountId: await validateExpenseAccount(cid, numOrNull(provided("defaultWasteAccountId", currentSettings?.defaultWasteAccountId))),
       internalTransportEnabled,
       updatedAt: new Date(),
     };

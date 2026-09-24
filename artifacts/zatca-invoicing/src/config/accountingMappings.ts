@@ -8,15 +8,30 @@ export type RoleDef = {
 
 export type DocumentTypeDef = {
   key: string;
+  /** Company menu-permissions module key (not a per-user role permission). */
+  moduleKey: "purchases_module" | "sales_module" | "cash_module" | "pos" | "inventory_reports" | "accounts" | "contracting";
   label: string;
   icon?: string;
   description: string;
   roles: RoleDef[];
 };
 
+// These live in manufacturing_settings, NOT accounting_mappings. Shared with
+// the production settings editor so both screens edit the same seven defaults.
+export const MANUFACTURING_ACCOUNT_FIELDS = [
+  { key: "defaultWipAccountId", label: "حساب الإنتاج تحت التشغيل (WIP)", hint: "يُدفع عند صرف الخامات، يُجير عند استلام التام", accountType: "asset" },
+  { key: "defaultRawInventoryAccountId", label: "حساب مخزون الخامات", hint: "يُجير عند صرف الخامات للإنتاج", accountType: "asset" },
+  { key: "defaultFinishedGoodsAccountId", label: "حساب البضاعة التامة (FG)", hint: "يُدفع عند استلام المنتج النهائي", accountType: "asset" },
+  { key: "defaultLaborAccountId", label: "حساب الأجور المباشرة", hint: "يُجير عند تحميل الأجور على WIP", accountType: "liability" },
+  { key: "defaultOverheadAccountId", label: "حساب التكاليف الصناعية غير المباشرة", hint: "يُجير عند تحميل OH على WIP", accountType: "liability" },
+  { key: "defaultVarianceAccountId", label: "حساب فروق التكلفة", hint: "يستوعب فروق التكلفة الفعلية vs المخطط", accountType: "expense" },
+  { key: "defaultWasteAccountId", label: "حساب الهالك / الفاقد", hint: "يُدفع بقيمة الهالك عند الإقفال", accountType: "expense" },
+] as const;
+
 export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   {
     key: "purchase_invoice",
+    moduleKey: "purchases_module",
     label: "فواتير المشتريات",
     description: "قيد شراء بضاعة من المورد: مدين المخزون/المصروف ومدين ضريبة المدخلات، دائن المورد (الذمم الدائنة).",
     roles: [
@@ -28,6 +43,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "purchase_return",
+    moduleKey: "purchases_module",
     label: "مرتجع المشتريات",
     description: "قيد مرتجع إلى المورد: مدين المورد، دائن المخزون وضريبة المدخلات. حساب الفروق يستوعب الفرق بين قيمة المرتجع المتفق عليها مع المورد وتكلفة البضاعة الفعلية في المخزون (التشغيلة الأصلية).",
     roles: [
@@ -40,6 +56,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "supplier_settlement",
+    moduleKey: "purchases_module",
     label: "تسوية الموردين (سندات الصرف)",
     description: "روابط الحسابات العامة لسندات الصرف — تُستخدم تلقائياً عند الترحيل: مدين المورد، دائن الخزينة/البنك. الخزن والبنوك تستخدم حساباتها المباشرة أولاً ثم تعود إلى هذه الحسابات احتياطياً.",
     roles: [
@@ -50,6 +67,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "sales_invoice",
+    moduleKey: "sales_module",
     label: "فواتير المبيعات",
     description: "قيد بيع بضاعة للعميل: مدين العميل/النقدية، دائن الإيراد وضريبة المخرجات، وقيد تكلفة البضاعة المباعة.",
     roles: [
@@ -63,6 +81,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "pos_invoice",
+    moduleKey: "pos",
     label: "فواتير نقاط البيع",
     description: "قيد بيع نقاط البيع: مدين الخزينة/البنك/العميل، دائن الإيراد وضريبة المخرجات، وقيد تكلفة البضاعة المباعة. روابط مستقلة عن فواتير المبيعات لتمييز قيود المتجر عن قيود البيع التقليدي.",
     roles: [
@@ -78,6 +97,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "sales_return",
+    moduleKey: "sales_module",
     label: "مرتجع المبيعات",
     description: "قيد استلام بضاعة مرتجعة من العميل: مدين مرتجعات المبيعات وضريبة المخرجات، دائن العميل، مع عكس قيد التكلفة.",
     roles: [
@@ -91,6 +111,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "customer_settlement",
+    moduleKey: "sales_module",
     label: "تسوية العملاء (سندات القبض)",
     description: "روابط الحسابات العامة لسندات القبض — تُستخدم تلقائياً عند الترحيل: مدين الخزينة/البنك، دائن العميل. الخزن والبنوك تستخدم حساباتها المباشرة أولاً ثم تعود إلى هذه الحسابات احتياطياً.",
     roles: [
@@ -101,6 +122,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "warehouse",
+    moduleKey: "inventory_reports",
     label: "المخازن (الافتتاحي)",
     description: "أرصدة افتتاحية للمخزون: مدين المخزون، دائن رأس المال الافتتاحي / حقوق الملكية.",
     roles: [
@@ -110,6 +132,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "warehouse_adjustment",
+    moduleKey: "inventory_reports",
     label: "تسوية المخازن",
     description: "جرد وتسويات المخزون: ربح أو خسارة جرد مقابل حساب المخزون.",
     roles: [
@@ -120,6 +143,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "warehouse_transfer",
+    moduleKey: "inventory_reports",
     label: "تحويلات المخازن",
     description: "تحويل بضاعة بين مخزنين: مدين مخزن الوصول، دائن مخزن الإرسال (يمكن أن يكون نفس الحساب مع فرع مختلف).",
     roles: [
@@ -136,6 +160,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   // على مستوى الشركة.
   {
     key: "entity_account_parents",
+    moduleKey: "accounts",
     label: "حسابات الكيانات (الآباء) — الإنشاء التلقائي",
     description: "اختر الحساب الأب لكل نوع كيان (خزن/بنوك/عملاء/موردين/مخازن). عند إنشاء كيان جديد بدون حساب محاسبي، يُنشئ النظام تلقائياً حساباً فرعياً تحت الحساب الأب المختار هنا، ويعطيه كوداً متسلسلاً (مثلاً 1102 → 11021، 11022، …). يمكنك بعد ذلك تعديل الحساب يدوياً من شجرة الحسابات.",
     roles: [
@@ -152,6 +177,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "contracting_advance_receipt",
+    moduleKey: "contracting",
     label: "قبض دفعة مقدمة من مالك المشروع",
     description: "سند قبض سلفة المالك: يُستخدم حساب التزام الدفعة المقدمة مقابل الخزنة أو البنك المختار في السند. اختر حساب الالتزام الفعلي من دليل حسابات شركتك.",
     roles: [
@@ -160,6 +186,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "contracting_advance_payment",
+    moduleKey: "contracting",
     label: "صرف دفعة مقدمة لمقاول الباطن",
     description: "سند صرف سلفة الباطن: يُستخدم حساب أصل الدفعة المقدمة مقابل الخزنة أو البنك المختار في السند. اختر الحساب الفعلي من دليل حسابات شركتك.",
     roles: [
@@ -168,6 +195,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "contracting_advance_application",
+    moduleKey: "contracting",
     label: "تطبيق السلف على المستخلصات",
     description: "قيد مستقل عند استرداد سلفة المالك أو تطبيق سلفة الباطن على مستخلص معتمد. اختر حسابات الذمم والسلف الفعلية؛ حساب استرداد السلفة في إعدادات المقاولات له أولوية على حساب السلفة هنا.",
     roles: [
@@ -179,6 +207,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "contracting_retention_receipt",
+    moduleKey: "contracting",
     label: "قبض محتجزات مستخلص المالك",
     description: "عند الإفراج عن محتجزات العميل: مدين الخزنة أو البنك المختار في التسوية، دائن محتجزات العملاء. هذا القيد مستقل عن اعتماد المستخلص.",
     roles: [
@@ -187,6 +216,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "contracting_retention_payment",
+    moduleKey: "contracting",
     label: "صرف محتجزات مقاول الباطن",
     description: "عند دفع محتجزات الباطن: مدين محتجزات الموردين، دائن الخزنة أو البنك المختار في التسوية.",
     roles: [
@@ -195,6 +225,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "contracting_material_movement",
+    moduleKey: "contracting",
     label: "حركات مواد المشاريع",
     description: "صرف مواد من المخزون إلى أعمال تحت التنفيذ أو عكس القيد عند إرجاعها. يلزم ربط الحسابين قبل ترحيل الحركة.",
     roles: [
@@ -204,6 +235,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "contracting_outgoing_bill",
+    moduleKey: "contracting",
     label: "مستخلصات العملاء (مقاولات IFRS 15)",
     description: "قيد اعتماد مستخلص للمالك بطريقة نسبة الإنجاز: مدين العملاء (الصافي) ومدين المحتجزات لدى العميل، دائن إيرادات المقاولات وضريبة المخرجات.",
     roles: [
@@ -220,6 +252,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "contracting_incoming_bill",
+    moduleKey: "contracting",
     label: "مستخلصات الباطن (مقاولات IFRS 15)",
     description: "قيد اعتماد مستخلص من مقاول الباطن: مدين أعمال تحت التنفيذ ومدين ضريبة المدخلات، دائن المورد (الصافي) ودائن محتجزات الموردين.",
     roles: [
@@ -236,6 +269,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "letter_of_credit",
+    moduleKey: "purchases_module",
     label: "الاعتمادات المستندية",
     description: "القيود الخاصة بفتح الاعتماد وسداد الهامش وتحميل المصاريف والعمولات البنكية وفروق العملة، قبل ترحيل التكلفة النهائية على المخزون.",
     roles: [

@@ -106,6 +106,7 @@ export async function seedNewCompanyAccountingDefaults(
     const corrections = pendingNewCompanyMappingCorrections(existingMappings);
     const correctedCodes = new Map(corrections.map((m) => [`${m.documentType}::${m.roleKey}`, m.accountCode]));
     const neededCodes = new Set(DEFAULT_MAPPINGS.filter((m) =>
+      !m.documentType.startsWith("contracting_") &&
       !roleToAccountId.has(`${m.documentType}::${m.roleKey}`),
     ).map((m) => correctedCodes.get(`${m.documentType}::${m.roleKey}`) ?? m.accountCode));
     for (const corrected of corrections) neededCodes.add(corrected.accountCode);
@@ -161,7 +162,7 @@ export async function seedNewCompanyAccountingDefaults(
       });
     }
   });
-  const mappings = await seedDefaultAccountingMappings(companyId);
+  const mappings = await seedDefaultAccountingMappings(companyId, { excludeContracting: true });
 
   const rows = await db.select({
     documentType: accountingMappingsTable.documentType,
@@ -174,7 +175,8 @@ export async function seedNewCompanyAccountingDefaults(
       .where(and(eq(accountsTable.companyId, companyId), inArray(accountsTable.id, ids)))
     : [];
   const unresolvedMappings = unresolvedNewCompanyMappingDefaults(
-    DEFAULT_MAPPINGS, rows, new Set(ownedAccounts.map((row) => row.id)),
+    DEFAULT_MAPPINGS.filter((m) => !m.documentType.startsWith("contracting_")),
+    rows, new Set(ownedAccounts.map((row) => row.id)),
   );
   const missingAccountCodes = [...new Set(
     unresolvedMappings.map((m) => m.accountCode).filter((code) => mappings.missingAccountCodes.includes(code)),

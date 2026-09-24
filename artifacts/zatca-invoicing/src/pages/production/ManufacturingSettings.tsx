@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Switch } from "@/components/ui/switch";
+import { MANUFACTURING_ACCOUNT_FIELDS as ACCOUNT_FIELDS } from "@/config/accountingMappings";
 import { Settings2, Save, Warehouse, Calculator, Sparkles, Truck as TruckIcon } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -43,16 +44,6 @@ const EMPTY: Settings = {
   defaultWasteAccountId: null,
   internalTransportEnabled: false,
 };
-
-const ACCOUNT_FIELDS: Array<{ key: keyof Settings; label: string; hint: string }> = [
-  { key: "defaultWipAccountId",            label: "حساب الإنتاج تحت التشغيل (WIP)", hint: "يُدفع عند صرف الخامات، يُجير عند استلام التام" },
-  { key: "defaultRawInventoryAccountId",   label: "حساب مخزون الخامات",              hint: "يُجير عند صرف الخامات للإنتاج" },
-  { key: "defaultFinishedGoodsAccountId",  label: "حساب البضاعة التامة (FG)",         hint: "يُدفع عند استلام المنتج النهائي" },
-  { key: "defaultLaborAccountId",          label: "حساب الأجور المباشرة",            hint: "يُجير عند تحميل الأجور على WIP" },
-  { key: "defaultOverheadAccountId",       label: "حساب التكاليف الصناعية غير المباشرة", hint: "يُجير عند تحميل OH على WIP" },
-  { key: "defaultVarianceAccountId",       label: "حساب فروق التكلفة",                hint: "يستوعب فروق التكلفة الفعلية vs المخطط" },
-  { key: "defaultWasteAccountId",          label: "حساب الهالك / الفاقد",             hint: "يُدفع بقيمة الهالك عند الإقفال" },
-];
 
 export default function ManufacturingSettings() {
   const { token } = useAuth() as any;

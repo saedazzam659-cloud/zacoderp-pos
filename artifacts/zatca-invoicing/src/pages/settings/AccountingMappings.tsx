@@ -9,7 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Lock, Unlock, Sparkles, Save, Info, Loader2, BookMarked, Wand2, FileStack, Download, Upload } from "lucide-react";
-import { DOCUMENT_TYPES, type DocumentTypeDef } from "@/config/accountingMappings";
+import { DOCUMENT_TYPES, MANUFACTURING_ACCOUNT_FIELDS, type DocumentTypeDef } from "@/config/accountingMappings";
+import { companyAllowsMenuModuleKey } from "@/lib/companyModuleGate";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
 import * as XLSX from "xlsx";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
@@ -24,6 +25,112 @@ type MappingRow = {
   isLocked: boolean;
 };
 
+type ManufacturingField = (typeof MANUFACTURING_ACCOUNT_FIELDS)[number]["key"];
+type ManufacturingDefaults = Record<ManufacturingField, number | null> & {
+  defaultRawWarehouseId?: number | null;
+  defaultFinishedWarehouseId?: number | null;
+  defaultCostCenter?: string | null;
+  internalTransportEnabled?: boolean;
+};
+
+// Both endpoints read/write the same manufacturing_settings row, not accounting_mappings.
+function ManufacturingMappingSection({
+  mode, cid, token,
+}: {
+  mode: "production" | "simple_manufacturing";
+  cid: number;
+  token: string;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const path = mode === "production"
+    ? "/api/production/manufacturing-settings"
+    : "/api/simple-manufacturing/setup/accounting";
+  const queryKey = ["manufacturing-settings", cid, mode];
+  const fields = MANUFACTURING_ACCOUNT_FIELDS;
+  const headers = { Authorization: `Bearer ${token}` };
+  const readSettings = async (): Promise<ManufacturingDefaults> => {
+    const response = await fetch(`${API}${path}`, { headers });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+    return (mode === "production" ? result : result?.settings) ?? {};
+  };
+  const { data, isPending, isError, error } = useQuery({
+    queryKey,
+    queryFn: readSettings,
+    retry: 1,
+  });
+  const [draft, setDraft] = useState<Partial<ManufacturingDefaults>>({});
+  useEffect(() => {
+    if (data) setDraft(Object.fromEntries(fields.map(f => [f.key, data[f.key] ?? null])));
+  }, [data]);
+  const changedFields = fields.filter(f =>
+    draft[f.key] !== undefined && draft[f.key] !== (data?.[f.key] ?? null));
+  const save = useMutation({
+    mutationFn: async () => {
+      // Both canonical endpoints preserve omitted keys. Send only changed GL
+      // defaults so concurrent changes to stock/transport or other accounts
+      // cannot be overwritten by an older copy of the settings row.
+      const accounts = Object.fromEntries(changedFields.map(f => [f.key, draft[f.key]]));
+      const response = await fetch(`${API}${path}`, {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(accounts),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+      return mode === "production" ? result : result?.settings ?? result;
+    },
+    onSuccess: result => {
+      qc.setQueryData(queryKey, result);
+      qc.invalidateQueries({ queryKey: ["manufacturing-settings", cid] });
+      toast({ title: "تم حفظ حسابات التصنيع" });
+    },
+    onError: (e: Error) => toast({ title: "تعذر حفظ حسابات التصنيع", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <h3 className="font-semibold text-base">الحسابات المحاسبية الافتراضية للتصنيع</h3>
+        <p className="text-xs text-muted-foreground">
+          {mode === "production"
+            ? "نفس الحسابات المستخدمة في إعدادات التصنيع المتقدم؛ لا تتغير أوامر الإنتاج القائمة."
+            : "نفس حسابات التصنيع المبسط الافتراضية؛ لا تتغير أوامر الإنتاج القائمة."}
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : isError ? (
+          <p className="text-sm text-destructive">{(error as Error)?.message || "تعذر تحميل حسابات التصنيع"}</p>
+        ) : (
+          <>
+            <div className="grid gap-4 md:grid-cols-2">
+              {fields.map(field => (
+                <div key={field.key} className="space-y-1.5">
+                  <Label>{field.label}</Label>
+                  <p className="text-xs text-muted-foreground">{field.hint}</p>
+                  <AccountCombobox
+                    value={draft[field.key] == null ? "" : String(draft[field.key])}
+                    onValueChange={value => setDraft(prev => ({ ...prev, [field.key]: value ? Number(value) : null }))}
+                    filterTypes={"accountType" in field ? [field.accountType] : undefined}
+                    disabled={save.isPending}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end border-t pt-3">
+              <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending || !data || changedFields.length === 0}>
+                {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                حفظ حسابات التصنيع
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AccountingMappings() {
     const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
@@ -33,6 +140,34 @@ export default function AccountingMappings() {
   const isAr = i18n.language?.startsWith("ar");
   const headers = { Authorization: `Bearer ${token}` };
   const cid = user?.companyId;
+  // Company entitlement is independent of the current user's role grants.
+  // Until /auth/me supplies the tenant's toggles, do not expose optional groups.
+  const visibleDocuments = useMemo(() => DOCUMENT_TYPES.filter(doc => {
+    const raw = user?.company?.menuPermissions;
+    if (raw == null) return doc.moduleKey === "accounts";
+    // An unavailable/invalid entitlement payload must not reveal optional
+    // module mappings while the tenant's actual settings are unknown.
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return doc.moduleKey === "accounts";
+      }
+    } catch {
+      return doc.moduleKey === "accounts";
+    }
+    return companyAllowsMenuModuleKey(raw, doc.moduleKey);
+  }), [user?.company?.menuPermissions]);
+  const visibleKeys = useMemo(() => new Set(visibleDocuments.map(doc => doc.key)), [visibleDocuments]);
+  const manufacturingMode = useMemo(() => {
+    const raw = user?.company?.menuPermissions;
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    } catch { return null; }
+    if (companyAllowsMenuModuleKey(raw, "production")) return "production";
+    if (companyAllowsMenuModuleKey(raw, "simple_manufacturing")) return "simple_manufacturing";
+    return null;
+  }, [user?.company?.menuPermissions]);
 
   const { data: serverMappings = [], isLoading: loadingMaps, isError: mapsError, error: mapsErrorObj } = useQuery<MappingRow[]>({
     queryKey: ["accounting-mappings", cid],
@@ -64,6 +199,7 @@ export default function AccountingMappings() {
   const [aiBusy, setAiBusy] = useState<Record<string, boolean>>({});
 
   const hydratedRef = useRef(false);
+  const hydratedCompanyRef = useRef(cid);
   function rowsToState(rows: MappingRow[]): Record<string, MappingRow> {
     const next: Record<string, MappingRow> = {};
     for (const dt of DOCUMENT_TYPES) {
@@ -81,12 +217,18 @@ export default function AccountingMappings() {
     return next;
   }
   useEffect(() => {
+    if (hydratedCompanyRef.current !== cid) {
+      hydratedCompanyRef.current = cid;
+      hydratedRef.current = false;
+      setState({});
+      return;
+    }
     if (hydratedRef.current) return;
     if (loadingMaps) return;
     if (mapsError) return;
     setState(rowsToState(serverMappings));
     hydratedRef.current = true;
-  }, [serverMappings, loadingMaps, mapsError]);
+  }, [cid, serverMappings, loadingMaps, mapsError]);
 
   const groupLocked = (docType: string) =>
     DOCUMENT_TYPES.find(d => d.key === docType)?.roles.every(r => state[`${docType}.${r.key}`]?.isLocked) ?? false;
@@ -115,7 +257,7 @@ export default function AccountingMappings() {
   const saveMut = useMutation({
     mutationFn: async (docType?: string) => {
       if (loadFailed) throw new Error(t("accountingMappings.cantSaveBeforeLoad"));
-      const items = Object.values(state).filter(r => !docType || r.documentType === docType);
+      const items = Object.values(state).filter(r => visibleKeys.has(r.documentType) && (!docType || r.documentType === docType));
       const res = await fetch(`${API}/api/accounting-mappings/bulk`, {
         method: "PUT",
         headers: { ...headers, "Content-Type": "application/json" },
@@ -288,7 +430,7 @@ export default function AccountingMappings() {
   });
 
   async function aiSuggestAll() {
-    for (const doc of DOCUMENT_TYPES) {
+    for (const doc of visibleDocuments) {
       for (const r of doc.roles) {
         const k = `${doc.key}.${r.key}`;
         if (state[k]?.isLocked || state[k]?.accountId) continue;
@@ -312,7 +454,7 @@ export default function AccountingMappings() {
   function buildExportRows(): Record<string, unknown>[] {
     const accountById = new Map<number, any>(accounts.map((a: any) => [a.id, a]));
     const rows: Record<string, unknown>[] = [];
-    for (const doc of DOCUMENT_TYPES) {
+    for (const doc of visibleDocuments) {
       for (const role of doc.roles) {
         const k = `${doc.key}.${role.key}`;
         const row = state[k];
@@ -394,7 +536,7 @@ export default function AccountingMappings() {
           .map((a: any) => [String(a.code).trim(), a]),
       );
 
-      const docTypeMap = new Map<string, DocumentTypeDef>(DOCUMENT_TYPES.map(d => [d.key, d]));
+      const docTypeMap = new Map<string, DocumentTypeDef>(visibleDocuments.map(d => [d.key, d]));
 
       const itemsByKey = new Map<string, MappingRow>(
         Object.values(state).map(r => [`${r.documentType}.${r.roleKey}`, { ...r }]),
@@ -534,10 +676,10 @@ export default function AccountingMappings() {
   }
 
   const completion = useMemo(() => {
-    const total = DOCUMENT_TYPES.reduce((n, d) => n + d.roles.length, 0);
-    const done = Object.values(state).filter(r => r.accountId).length;
+    const total = visibleDocuments.reduce((n, d) => n + d.roles.length, 0);
+    const done = Object.values(state).filter(r => r.accountId && visibleKeys.has(r.documentType)).length;
     return { total, done, pct: total ? Math.round((done / total) * 100) : 0 };
-  }, [state]);
+  }, [state, visibleDocuments, visibleKeys]);
 
   return (
     <div className="space-y-6 max-w-7xl" dir={isAr ? "rtl" : "ltr"}>
@@ -561,11 +703,11 @@ export default function AccountingMappings() {
             {seedDefaultsMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
             {t("accountingMappings.applyDefaults")}
           </Button>
-          <Button variant="outline" size="sm" className="gap-1 border-blue-300 text-blue-700 hover:bg-blue-50"
+          {visibleKeys.has("letter_of_credit") && <Button variant="outline" size="sm" className="gap-1 border-blue-300 text-blue-700 hover:bg-blue-50"
             onClick={() => seedLcMut.mutate()} disabled={anyBulkPending || !cid}>
             {seedLcMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileStack className="h-4 w-4" />}
             {t("accountingMappings.createLcAccounts")}
-          </Button>
+          </Button>}
           <Button variant="outline" size="sm" className="gap-1"
             onClick={exportAll} disabled={loadingMaps || !!loadFailed}>
             <Download className="h-4 w-4" />{t("accountingMappings.exportExcel")}
@@ -610,7 +752,7 @@ export default function AccountingMappings() {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {DOCUMENT_TYPES.map(doc => {
+          {visibleDocuments.map(doc => {
             const locked = groupLocked(doc.key);
             return (
               <Card key={doc.key} className={locked ? "border-amber-200 bg-amber-50/30" : ""}>
@@ -686,6 +828,14 @@ export default function AccountingMappings() {
             );
           })}
         </div>
+      )}
+      {manufacturingMode && cid && token && (
+        <ManufacturingMappingSection
+          key={`${cid}-${manufacturingMode}`}
+          cid={cid}
+          token={token}
+          mode={manufacturingMode}
+        />
       )}
     </div>
   );

@@ -273,6 +273,8 @@ router.post("/clients", requireResellerPermission("add_companies"), async (req, 
     await seedNewCompanyDefaults(company.id);
     const { seedNewCompanyAccountingDefaults } = await import("../lib/newCompanyAccountingDefaults.js");
     accountingDefaults = await seedNewCompanyAccountingDefaults(company.id);
+    const { accountingModulesFromMenu, seedOptionalAccountingForFreshCompany } = await import("../lib/optionalModuleAccounting.js");
+    await seedOptionalAccountingForFreshCompany(company, accountingModulesFromMenu(company.menuPermissions));
     if (!accountingDefaults.complete) {
       logger.error({ companyId: company.id, missingAccountCodes: accountingDefaults.missingAccountCodes, unresolvedMappings: accountingDefaults.unresolvedMappings.length }, "reseller add-client: accounting defaults incomplete");
       res.status(500).json({ error: "تعذّر إكمال الربط المحاسبي للشركة الجديدة", companyId: company.id, accountingDefaults });
@@ -280,7 +282,8 @@ router.post("/clients", requireResellerPermission("add_companies"), async (req, 
     }
   } catch (err) {
     logger.error({ err, companyId: company.id }, "reseller add-client: new company defaults failed");
-    res.status(500).json({ error: "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
+    res.status(500).json({ error: err instanceof Error && err.message.startsWith("Optional accounting failed")
+      ? err.message : "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
     return;
   }
 

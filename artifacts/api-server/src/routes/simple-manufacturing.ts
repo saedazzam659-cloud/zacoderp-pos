@@ -554,7 +554,9 @@ router.get("/setup/accounting", view, async (req, res) => {
       defaultWipAccountId: manufacturingSettingsTable.defaultWipAccountId,
       defaultRawInventoryAccountId: manufacturingSettingsTable.defaultRawInventoryAccountId,
       defaultFinishedGoodsAccountId: manufacturingSettingsTable.defaultFinishedGoodsAccountId,
+      defaultLaborAccountId: manufacturingSettingsTable.defaultLaborAccountId,
       defaultOverheadAccountId: manufacturingSettingsTable.defaultOverheadAccountId,
+      defaultVarianceAccountId: manufacturingSettingsTable.defaultVarianceAccountId,
       defaultWasteAccountId: manufacturingSettingsTable.defaultWasteAccountId,
       electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
       internalTransportEnabled: manufacturingSettingsTable.internalTransportEnabled,
@@ -573,14 +575,18 @@ router.put("/setup/accounting", edit, async (req, res) => {
     "defaultWipAccountId",
     "defaultRawInventoryAccountId",
     "defaultFinishedGoodsAccountId",
+    "defaultLaborAccountId",
     "defaultOverheadAccountId",
+    "defaultVarianceAccountId",
     "defaultWasteAccountId",
   ] as const;
   const values: Record<(typeof keys)[number], number | null> = {
     defaultWipAccountId: null,
     defaultRawInventoryAccountId: null,
     defaultFinishedGoodsAccountId: null,
+    defaultLaborAccountId: null,
     defaultOverheadAccountId: null,
+    defaultVarianceAccountId: null,
     defaultWasteAccountId: null,
   };
   try {
@@ -588,7 +594,9 @@ router.put("/setup/accounting", edit, async (req, res) => {
       defaultWipAccountId: manufacturingSettingsTable.defaultWipAccountId,
       defaultRawInventoryAccountId: manufacturingSettingsTable.defaultRawInventoryAccountId,
       defaultFinishedGoodsAccountId: manufacturingSettingsTable.defaultFinishedGoodsAccountId,
+      defaultLaborAccountId: manufacturingSettingsTable.defaultLaborAccountId,
       defaultOverheadAccountId: manufacturingSettingsTable.defaultOverheadAccountId,
+      defaultVarianceAccountId: manufacturingSettingsTable.defaultVarianceAccountId,
       defaultWasteAccountId: manufacturingSettingsTable.defaultWasteAccountId,
       electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
       internalTransportEnabled: manufacturingSettingsTable.internalTransportEnabled,
@@ -666,6 +674,14 @@ router.put("/setup/accounting", edit, async (req, res) => {
       if (values.defaultOverheadAccountId != null &&
           rows.find((row) => row.id === values.defaultOverheadAccountId)?.accountType !== "liability") {
         return void res.status(400).json({ error: "اختر حساب استحقاق/امتصاص صناعي التزاماً نشطاً وقابلاً للترحيل من دليل حسابات الشركة" });
+      }
+      if (values.defaultLaborAccountId != null &&
+          rows.find((row) => row.id === values.defaultLaborAccountId)?.accountType !== "liability") {
+        return void res.status(400).json({ error: "اختر حساب الأجور المستحقة التزاماً نشطاً وقابلاً للترحيل" });
+      }
+      if (values.defaultVarianceAccountId != null &&
+          rows.find((row) => row.id === values.defaultVarianceAccountId)?.accountType !== "expense") {
+        return void res.status(400).json({ error: "اختر حساب فروق التصنيع مصروفاً نشطاً وقابلاً للترحيل" });
       }
     }
     const [row] = await db.insert(manufacturingSettingsTable).values({

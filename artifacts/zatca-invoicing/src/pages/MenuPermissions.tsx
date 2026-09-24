@@ -79,7 +79,7 @@ function canon(perms: Record<string, boolean>): string {
 
 // ─── Page ──────────────────────────────────────────────────────────────
 export default function MenuPermissions() {
-  const { token } = useAuth();
+  const { token, user, setUser } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
@@ -139,8 +139,16 @@ export default function MenuPermissions() {
       if (!res.ok) throw new Error(json.error ?? "فشل الحفظ");
       return json;
     },
-    onSuccess: () => {
+    onSuccess: (_result, { companyId, perms, agent }) => {
       qc.invalidateQueries({ queryKey: ["companies-menu-perms"] });
+      // /auth/me is the canonical tenant entitlement source for the sidebar
+      // and mapping groups. Update this session immediately after editing its
+      // own company; other sessions receive the permissions_changed SSE refresh.
+      if (!agent && user?.companyId === companyId) {
+        setUser(current => current?.companyId === companyId
+          ? { ...current, company: { ...current.company!, menuPermissions: JSON.stringify(pruneForSave(perms)) } }
+          : current);
+      }
       toast({ title: "تم حفظ الصلاحيات بنجاح" });
     },
     onError: (e: any) => toast({ title: "فشل الحفظ: " + e.message, variant: "destructive" }),

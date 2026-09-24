@@ -227,12 +227,15 @@ export interface SeedDefaultsResult {
  */
 export async function seedDefaultAccountingMappings(
   companyId: number,
-  opts: { overwrite?: boolean } = {},
+  opts: { overwrite?: boolean; excludeContracting?: boolean } = {},
 ): Promise<SeedDefaultsResult> {
   const overwrite = !!opts.overwrite;
+  const defaults = opts.excludeContracting
+    ? DEFAULT_MAPPINGS.filter((m) => !m.documentType.startsWith("contracting_"))
+    : DEFAULT_MAPPINGS;
 
   // 1. Look up every account the template refers to, in one round-trip.
-  const wantedCodes = Array.from(new Set(DEFAULT_MAPPINGS.map((m) => m.accountCode)));
+  const wantedCodes = Array.from(new Set(defaults.map((m) => m.accountCode)));
   const accounts = await db.select({
     id:   accountsTable.id,
     code: accountsTable.code,
@@ -266,7 +269,7 @@ export async function seedDefaultAccountingMappings(
   //    unique index so a concurrent insert silently no-ops instead of
   //    blowing up the whole transaction.
   await db.transaction(async (tx) => {
-    for (const m of DEFAULT_MAPPINGS) {
+    for (const m of defaults) {
       const accountId = codeToId.get(m.accountCode);
       if (!accountId) { skippedMissingAccount++; continue; }
 

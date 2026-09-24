@@ -262,6 +262,10 @@ async function cloneChartOfAccounts(companyId: number, templateId: number): Prom
   if (tplAccounts.length === 0) return 0;
 
   const excluded = companyTemplateExcludedAccountIds(tplAccounts, directlyLinkedPartyIds);
+  // A template tenant may have these optional module accounts in its chart.
+  // Do not copy them into a new tenant that did not enable the modules;
+  // the module seeder provisions only the selected modules afterwards.
+  const { OPTIONAL_MODULE_ACCOUNT_CODES: optionalCodes } = await import("./optionalModuleAccounting.js");
 
   return db.transaction(async (tx) => {
     const existing = await tx.select({ id: accountsTable.id })
@@ -273,7 +277,7 @@ async function cloneChartOfAccounts(companyId: number, templateId: number): Prom
     const oldToNew = new Map<number, number>();
     let inserted = 0;
     for (const a of tplAccounts) {
-      if (excluded.has(a.id)) continue;
+      if (excluded.has(a.id) || optionalCodes.has(a.code)) continue;
       // Parent excluded (or unknown) ⇒ this whole branch is party-specific.
       if (a.parentId != null && !oldToNew.has(a.parentId)) continue;
       const [created] = await tx.insert(accountsTable).values({

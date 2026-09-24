@@ -143,6 +143,8 @@ router.post("/", async (req, res) => {
     await seedNewCompanyDefaults(company.id);
     const { seedNewCompanyAccountingDefaults } = await import("../lib/newCompanyAccountingDefaults.js");
     accountingDefaults = await seedNewCompanyAccountingDefaults(company.id);
+    const { accountingModulesFromMenu, seedOptionalAccountingForFreshCompany } = await import("../lib/optionalModuleAccounting.js");
+    await seedOptionalAccountingForFreshCompany(company, accountingModulesFromMenu(company.menuPermissions));
     if (!accountingDefaults.complete) {
       logger.error({ companyId: company.id, missingAccountCodes: accountingDefaults.missingAccountCodes, unresolvedMappings: accountingDefaults.unresolvedMappings.length }, "new company accounting defaults incomplete");
       res.status(500).json({ error: "تعذّر إكمال الربط المحاسبي للشركة الجديدة", companyId: company.id, accountingDefaults });
@@ -150,7 +152,8 @@ router.post("/", async (req, res) => {
     }
   } catch (err) {
     logger.error({ err, companyId: company.id }, "new company defaults failed");
-    res.status(500).json({ error: "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
+    res.status(500).json({ error: err instanceof Error && err.message.startsWith("Optional accounting failed")
+      ? err.message : "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
     return;
   }
   try {
@@ -1026,10 +1029,30 @@ router.patch("/:id/menu-permissions", async (req, res) => {
   // `?agent=<id>`: module grants for an AGENT-DB company (SuperAdmin only).
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
-    const [company] = await db.update(companiesTable).set({
-      menuPermissions: normalizedMenuPermissions,
-      updatedAt: new Date(),
-    }).where(eq(companiesTable.id, id)).returning();
+    let company;
+    try {
+      const { accountingModulesFromMenu, seedOptionalModuleAccountingTx } = await import("../lib/optionalModuleAccounting.js");
+      company = await db.transaction(async (tx) => {
+        const [before] = await tx.select().from(companiesTable).where(eq(companiesTable.id, id)).for("update");
+        if (!before) return null;
+        const previous = accountingModulesFromMenu(before.menuPermissions);
+        const next = accountingModulesFromMenu(normalizedMenuPermissions);
+        const enabled = {
+          contracting: next.contracting && !previous.contracting,
+          production: next.production && !previous.production,
+          simple_manufacturing: next.simple_manufacturing && !previous.simple_manufacturing,
+        };
+        await seedOptionalModuleAccountingTx(tx, id, enabled);
+        const [updated] = await tx.update(companiesTable).set({
+          menuPermissions: normalizedMenuPermissions, updatedAt: new Date(),
+        }).where(eq(companiesTable.id, id)).returning();
+        return updated;
+      });
+    } catch (err) {
+      logger.error({ err, companyId: id }, "company module accounting activation failed");
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
     if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
     const demoWorkspaceCompanyIds = await propagateDemoWorkspaceMenuPermissions(
       id,

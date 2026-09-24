@@ -1,6 +1,7 @@
 import { db, industriesTable, accountsTable, accountingMappingsTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { logger } from "./logger.js";
+import { isOptionalModuleTemplateMapping, OPTIONAL_MODULE_ACCOUNT_CODES } from "./optionalModuleAccounting.js";
 
 // ─────────────────────────────────────────────────────────────────────
 // applyIndustryTemplates
@@ -95,7 +96,7 @@ export async function applyIndustryTemplates(
     mergedCoaSourceIndustries.push(code);
     for (const raw of ind.coaTemplate as CoaTemplateRow[]) {
       const c = String(raw?.code ?? "").trim();
-      if (!c || coaByCode.has(c)) continue;
+      if (!c || OPTIONAL_MODULE_ACCOUNT_CODES.has(c) || coaByCode.has(c)) continue;
       coaByCode.set(c, raw);
     }
   }
@@ -111,10 +112,25 @@ export async function applyIndustryTemplates(
       const dt = String(raw?.documentType ?? "").trim();
       const rk = String(raw?.roleKey ?? "").trim();
       const ac = String(raw?.accountCode ?? "").trim();
-      if (!dt || !rk || !ac) continue;
+      if (!dt || !rk || !ac || isOptionalModuleTemplateMapping(dt)) continue;
       const key = `${dt}::${rk}`;
       if (mapByKey.has(key)) continue;
       mapByKey.set(key, { documentType: dt, roleKey: rk, accountCode: ac, isLocked: !!raw.isLocked });
+    }
+  }
+
+  // A child of a reserved optional account must not reappear as an orphan
+  // root merely because its parent was withheld from the fresh tenant.
+  let removedOptionalChild = true;
+  const excludedOptionalCodes = new Set(OPTIONAL_MODULE_ACCOUNT_CODES);
+  while (removedOptionalChild) {
+    removedOptionalChild = false;
+    for (const [code, row] of coaByCode) {
+      if (row.parentCode && excludedOptionalCodes.has(String(row.parentCode).trim())) {
+        coaByCode.delete(code);
+        excludedOptionalCodes.add(code);
+        removedOptionalChild = true;
+      }
     }
   }
 
