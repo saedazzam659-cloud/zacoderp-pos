@@ -43,6 +43,7 @@ const QUEUEABLE_POSTS = [
 ];
 
 let enabledCache: boolean | null = null;
+let downloadInFlight = 0;
 
 export async function isOfflineEnabled(): Promise<boolean> {
   if (enabledCache !== null) return enabledCache;
@@ -66,7 +67,8 @@ export async function clearAllOfflineData(): Promise<void> {
   enabledCache = false;
   const keys = await AsyncStorage.getAllKeys();
   await AsyncStorage.multiRemove(
-    keys.filter((k) => k === ENABLED_KEY || k.startsWith(CACHE_PREFIX) || k.startsWith(OUTBOX_PREFIX) || k.startsWith(LAST_SYNC_PREFIX)),
+    // Never delete financial operations as a side-effect of logout/server switch.
+    keys.filter((k) => k === ENABLED_KEY || k.startsWith(CACHE_PREFIX) || k.startsWith(LAST_SYNC_PREFIX)),
   );
 }
 
@@ -116,6 +118,8 @@ export async function downloadAll(
   companyId: number,
   fetcher: <T>(path: string) => Promise<T>,
 ): Promise<{ ok: number; failed: string[] }> {
+  downloadInFlight++;
+  try {
   const failed: string[] = [];
   let ok = 0;
   for (const base of CACHED_GETS) {
@@ -130,6 +134,7 @@ export async function downloadAll(
   }
   await AsyncStorage.setItem(LAST_SYNC_PREFIX + scope, new Date().toISOString());
   return { ok, failed };
+  } finally { downloadInFlight--; }
 }
 
 export async function lastDownloadAt(scope: string): Promise<string | null> {
@@ -157,7 +162,11 @@ export function isQueueablePost(path: string, method: string): boolean {
 async function readOutbox(scope: string): Promise<OutboxEntry[]> {
   const raw = await AsyncStorage.getItem(OUTBOX_PREFIX + scope);
   if (!raw) return [];
-  try { const v = JSON.parse(raw); return Array.isArray(v) ? v : []; } catch { return []; }
+  try {
+    const v = JSON.parse(raw);
+    if (Array.isArray(v)) return v;
+  } catch { /* report damaged outbox rather than deleting unsynced transactions */ }
+  throw new Error('صندوق الصادر المحلي تالف — لا تغيّر الخادم أو تحذف بيانات التطبيق قبل مراجعة العمليات.');
 }
 
 async function writeOutbox(scope: string, entries: OutboxEntry[]): Promise<void> {
@@ -165,6 +174,8 @@ async function writeOutbox(scope: string, entries: OutboxEntry[]): Promise<void>
 }
 
 export async function enqueue(scope: string, path: string, method: string, body: unknown): Promise<OutboxEntry> {
+  outboxWriteInFlight++;
+  try {
   const id = `ob-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
   // يُضاف معرف العملية للجسم — يفيد التتبع وأي إلغاء تكرار مستقبلي بالخادم
   const bodyWithOp = body && typeof body === 'object' ? { ...(body as object), offlineOpId: id } : body;
@@ -173,6 +184,7 @@ export async function enqueue(scope: string, path: string, method: string, body:
   list.push(entry);
   await writeOutbox(scope, list);
   return entry;
+  } finally { outboxWriteInFlight--; }
 }
 
 /**
@@ -194,6 +206,14 @@ export async function outboxCounts(scope: string): Promise<{ pending: number; fa
   return { pending: list.length - failed, failed };
 }
 
+export async function allOutboxCounts(): Promise<{ pending: number; failed: number }> {
+  const scopes = (await AsyncStorage.getAllKeys())
+    .filter((key) => key.startsWith(OUTBOX_PREFIX))
+    .map((key) => key.slice(OUTBOX_PREFIX.length));
+  const counts = await Promise.all(scopes.map(outboxCounts));
+  return counts.reduce((sum, c) => ({ pending: sum.pending + c.pending, failed: sum.failed + c.failed }), { pending: 0, failed: 0 });
+}
+
 /** حذف العمليات الفاشلة نهائياً (قرار يدوي من المستخدم فقط) */
 export async function discardFailed(scope: string): Promise<void> {
   const list = await readOutbox(scope);
@@ -201,6 +221,8 @@ export async function discardFailed(scope: string): Promise<void> {
 }
 
 let syncInFlight = false;
+let outboxWriteInFlight = 0;
+export function offlineOperationsBusy(): boolean { return syncInFlight || outboxWriteInFlight > 0 || downloadInFlight > 0; }
 
 /**
  * إرسال العمليات المعلقة بالترتيب (الأقدم أولاً). يتوقف عند أول فشل شبكة؛

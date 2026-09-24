@@ -10,7 +10,7 @@ Invariants (from architect review — keep on any change):
 - **Cached GETs are exact list paths only** (no /:id) — otherwise a list is returned where a document is expected.
 - **Never silently drop outbox entries.** Server-rejected ops get `tries`; after 5 they're marked `failed` and KEPT for manual review (UI shows count + explicit destructive discard). Network failure (status 0) stops the pass and keeps everything.
 - Outbox bodies carry `offlineOpId` for traceability/future server dedupe.
-- `clearAllOfflineData()` on logout — multi-user device safety (cache AND outbox).
+- Intentional logout/server switching must block while pending or failed financial operations remain; never silently discard them. Clear remaining offline cache only after that guard for multi-user safety.
 - `syncOutbox` is single-flight; queueable POSTs are whitelisted (sales-invoices, receipt-vouchers, customers) — a queued create returns `{ id: null, offline: true, ... }`, callers must tolerate null id.
 
 **Why:** offline financial ops are irrecoverable if dropped, and shared caches are a cross-tenant leak.

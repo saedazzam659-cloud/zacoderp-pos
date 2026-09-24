@@ -13,13 +13,14 @@ if (!__DEV__) {
 }
 import { checkForcedUpdate, currentAppVersion, type UpdateCheck } from '@/lib/appUpdate';
 import { AppState } from 'react-native';
-import { api, getDomain } from '@/lib/api';
+import { api, getDomain, getToken } from '@/lib/api';
 import { isOfflineEnabled, syncOutbox } from '@/lib/offline';
 
 // مزامنة صادر الأوف لاين إن كان الوضع مفعلاً (single-flight داخلي)
 const trySyncOffline = () => {
   isOfflineEnabled().then(async (on) => {
     if (!on) return;
+    if (!await getToken()) return;
     syncOutbox(await getDomain(), api).catch(() => {});
   }).catch(() => {});
 };

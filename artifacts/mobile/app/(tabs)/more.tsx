@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Modal, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import { api, getDomain, setDomain, defaultDomain } from '@/lib/api';
+import { api, getDomain } from '@/lib/api';
+import { ServerSettings } from '@/components/ServerSettings';
 import { discardFailed, downloadAll, isOfflineEnabled, lastDownloadAt, outboxCounts, setOfflineEnabled, syncOutbox } from '@/lib/offline';
 import { useAuth } from '@/contexts/AuthContext';
 import { THEME_OPTIONS, useTheme } from '@/contexts/ThemeContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
-import { Btn, Card, Field } from '@/components/ui';
+import { Card } from '@/components/ui';
 
 export default function More() {
   const { user, logout } = useAuth();
@@ -21,11 +22,6 @@ export default function More() {
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
 
   const [showServer, setShowServer] = useState(false);
-  const [domain, setDomainState] = useState('');
-
-  useEffect(() => {
-    getDomain().then(setDomainState);
-  }, [showServer]);
 
   // ─── وضع الأوف لاين ────────────────────────────────────────────────────
   const companyId = user?.companyId ?? user?.company?.id;
@@ -99,17 +95,18 @@ export default function More() {
   };
 
   const doLogout = () => {
-    const go = async () => { await logout(); router.replace('/login'); };
+    const go = async () => {
+      try { await logout(); router.replace('/login'); }
+      catch (e: any) {
+        const msg = e?.message ?? 'تعذّر تسجيل الخروج';
+        if (Platform.OS === 'web') window.alert(msg); else Alert.alert('تعذّر تسجيل الخروج', msg);
+      }
+    };
     if (Platform.OS === 'web') { go(); return; }
     Alert.alert('تسجيل الخروج', 'هل تريد تسجيل الخروج؟', [
       { text: 'إلغاء', style: 'cancel' },
       { text: 'خروج', style: 'destructive', onPress: go },
     ]);
-  };
-
-  const saveDomain = async () => {
-    await setDomain(domain);
-    setShowServer(false);
   };
 
   const RowItem = ({ icon, title, onPress, danger, testID }: { icon: keyof typeof Feather.glyphMap; title: string; onPress: () => void; danger?: boolean; testID?: string }) => (
@@ -228,21 +225,7 @@ export default function More() {
         </Text>
       </ScrollView>
 
-      <Modal visible={showServer} transparent animationType="slide" onRequestClose={() => setShowServer(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
-          <Card style={{ borderBottomLeftRadius: 0, borderBottomRightRadius: 0, gap: 14, paddingBottom: 34 }}>
-            <Text style={{ fontSize: 17, fontFamily: 'Inter_600SemiBold', textAlign: 'right', color: c.foreground }}>إعدادات الخادم</Text>
-            <Text style={{ fontSize: 13, color: c.mutedForeground, textAlign: 'right' }}>
-              اترك النطاق الافتراضي إن كنت تستخدم السحابة، أو أدخل نطاق شركتك/سيرفر الوكيل الخاص.
-            </Text>
-            <Field label="نطاق الخادم" value={domain} onChangeText={setDomainState} placeholder={defaultDomain()} ltr testID="input-server-domain" />
-            <View style={{ flexDirection: 'row-reverse', gap: 10 }}>
-              <View style={{ flex: 1 }}><Btn title="حفظ" onPress={saveDomain} testID="button-save-domain" /></View>
-              <View style={{ flex: 1 }}><Btn title="إلغاء" onPress={() => setShowServer(false)} kind="outline" /></View>
-            </View>
-          </Card>
-        </View>
-      </Modal>
+      <ServerSettings visible={showServer} onClose={() => setShowServer(false)} onChanged={() => router.replace('/login')} />
     </View>
   );
 }

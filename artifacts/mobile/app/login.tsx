@@ -8,6 +8,8 @@ import { Pressable } from 'react-native';
 import { useAuth, getRememberedLogin } from '@/contexts/AuthContext';
 import { useColors } from '@/hooks/useColors';
 import { Btn, Card, Field } from '@/components/ui';
+import { ServerSettings } from '@/components/ServerSettings';
+import { getDomain } from '@/lib/api';
 
 export default function Login() {
   const { login, user } = useAuth();
@@ -22,12 +24,15 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [server, setServer] = useState('');
+  const [showServer, setShowServer] = useState(false);
 
   useEffect(() => {
+    getDomain().then(setServer).catch((e) => setError(e.message));
     getRememberedLogin().then((r) => {
       if (r.companyCode) setCompanyCode(r.companyCode);
       if (r.username) setUsername(r.username);
-    });
+    }).catch((e) => setError(e.message));
   }, []);
 
   useEffect(() => {
@@ -83,6 +88,11 @@ export default function Login() {
           <Text style={{ fontSize: 17, fontFamily: 'Inter_600SemiBold', textAlign: 'right', color: c.foreground }}>
             تسجيل الدخول
           </Text>
+          <Pressable onPress={() => setShowServer(true)} testID="button-login-server-settings"
+            style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+            <Feather name="server" size={17} color={c.primary} />
+            <Text style={{ color: c.primary, fontSize: 13, flex: 1, textAlign: 'right' }}>الخادم: {server || 'جارٍ التحميل'} — تغيير الخادم</Text>
+          </Pressable>
 
           <Field
             label="رمز الشركة"
@@ -127,6 +137,13 @@ export default function Login() {
           يعمل التطبيق على نفس حساب النظام الرئيسي وبنفس الصلاحيات
         </Text>
       </ScrollView>
+      <ServerSettings visible={showServer} onClose={() => setShowServer(false)} onChanged={(next) => {
+        setServer(next);
+        setCompanyCode('');
+        setUsername('');
+        setPassword('');
+        setError('');
+      }} />
     </View>
   );
 }
