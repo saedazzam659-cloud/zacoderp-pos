@@ -17,6 +17,7 @@ import {
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@/components/ui/tabs";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { eligibleContractors, withHistoricalParty } from "@/lib/partyEligibility";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -121,6 +122,7 @@ type SubContract = AdvanceRecoveryPolicy & {
 };
 type Contractor = {
   id: number; name: string; specialty: string; phone: string | null; status: string; supplierId: number | null;
+  supplierPartyClassification?: string | null;
 };
 type Risk = {
   id: number; title: string; description: string | null; category: string;
@@ -996,7 +998,7 @@ function BillsTab({
             {direction === "incoming" && (
               <Field label={t("contracting.bills.contractor", "المقاول الباطن")} required>
                 <ContractingPicker
-                  items={contractors.map(c => ({ value: String(c.id), label: `${c.name}${c.specialty ? ` (${c.specialty})` : ""}` }))}
+                  items={withHistoricalParty(eligibleContractors(contractors, editing.contractorId).map(c => ({ value: String(c.id), label: `${c.name}${c.specialty ? ` (${c.specialty})` : ""}` })), editing.contractorId, `#${editing.contractorId} — المقاول المرتبط سابقاً`)}
                   value={editing.contractorId ? String(editing.contractorId) : ""}
                   onValueChange={value => onContractorChange(value ? Number(value) : null)}
                   placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")}
@@ -2048,7 +2050,7 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
            <div className="grid grid-cols-2 gap-3">
             <Field label={t("contracting.subContract.contractor", "المقاول الباطن")} required>
               <ContractingPicker
-                items={contractors.map(c => ({ value: String(c.id), label: `${c.name}${c.specialty ? ` (${c.specialty})` : ""}` }))}
+                items={withHistoricalParty(eligibleContractors(contractors, editing.contractorId).map(c => ({ value: String(c.id), label: `${c.name}${c.specialty ? ` (${c.specialty})` : ""}` })), editing.contractorId, `#${editing.contractorId} — المقاول المرتبط سابقاً`)}
                 value={editing.contractorId ? String(editing.contractorId) : ""}
                 onValueChange={value => setEditing({ ...editing, contractorId: value ? Number(value) : undefined })}
                 placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")}

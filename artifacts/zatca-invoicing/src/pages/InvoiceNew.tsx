@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { eligibleParties } from "@/lib/partyEligibility";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowRight, Save, Plus, Trash2, Info, AlertTriangle,
@@ -239,7 +240,7 @@ export default function InvoiceNew() {
     badgeClass: "bg-amber-100 text-amber-700 border-amber-200",
   }));
 
-  const customerItems: ComboboxItem[] = (customers ?? []).map(c => ({
+  const customerItems: ComboboxItem[] = eligibleParties(customers ?? [], "sales", selectedCustomerId).map(c => ({
     value: c.id.toString(), label: c.nameAr,
     badge: c.vatNumber ? "✓ ضريبي" : "بدون رقم",
     badgeClass: c.vatNumber

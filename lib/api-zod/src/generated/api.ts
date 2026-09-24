@@ -536,6 +536,14 @@ export const ListCustomersResponseItem = zod.object({
   id: zod.number(),
   companyId: zod.number(),
   nameAr: zod.string(),
+  partyClassification: zod
+    .union([
+      zod.literal("customer"),
+      zod.literal("project_owner"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
   nameEn: zod.string().optional(),
   vatNumber: zod.string().optional(),
   crNumber: zod.string().optional(),
@@ -562,6 +570,14 @@ export const ListCustomersResponse = zod.array(ListCustomersResponseItem);
 export const CreateCustomerBody = zod.object({
   companyId: zod.number(),
   nameAr: zod.string(),
+  partyClassification: zod
+    .union([
+      zod.literal("customer"),
+      zod.literal("project_owner"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
   nameEn: zod.string().optional(),
   vatNumber: zod.string().optional(),
   crNumber: zod.string().optional(),
@@ -593,6 +609,14 @@ export const GetCustomerResponse = zod.object({
   id: zod.number(),
   companyId: zod.number(),
   nameAr: zod.string(),
+  partyClassification: zod
+    .union([
+      zod.literal("customer"),
+      zod.literal("project_owner"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
   nameEn: zod.string().optional(),
   vatNumber: zod.string().optional(),
   crNumber: zod.string().optional(),
@@ -622,6 +646,14 @@ export const UpdateCustomerParams = zod.object({
 export const UpdateCustomerBody = zod.object({
   companyId: zod.number(),
   nameAr: zod.string(),
+  partyClassification: zod
+    .union([
+      zod.literal("customer"),
+      zod.literal("project_owner"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
   nameEn: zod.string().optional(),
   vatNumber: zod.string().optional(),
   crNumber: zod.string().optional(),
@@ -646,6 +678,14 @@ export const UpdateCustomerResponse = zod.object({
   id: zod.number(),
   companyId: zod.number(),
   nameAr: zod.string(),
+  partyClassification: zod
+    .union([
+      zod.literal("customer"),
+      zod.literal("project_owner"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
   nameEn: zod.string().optional(),
   vatNumber: zod.string().optional(),
   crNumber: zod.string().optional(),
@@ -666,10 +706,308 @@ export const UpdateCustomerResponse = zod.object({
 });
 
 /**
+ * @summary Partially update a customer; omitted classification is preserved
+ */
+export const PatchCustomerParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const PatchCustomerBody = zod.object({
+  nameAr: zod.string().optional(),
+  partyClassification: zod
+    .union([
+      zod.literal("customer"),
+      zod.literal("project_owner"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  nameEn: zod.string().optional(),
+  vatNumber: zod.string().optional(),
+  crNumber: zod.string().optional(),
+  email: zod.string().optional(),
+  phone: zod.string().optional(),
+  city: zod.string().optional(),
+  district: zod.string().optional(),
+  street: zod.string().optional(),
+  buildingNumber: zod.string().optional(),
+  postalCode: zod.string().optional(),
+  country: zod.string().optional(),
+});
+
+export const patchCustomerResponseCountryDefault = `SA`;
+
+export const PatchCustomerResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  nameAr: zod.string(),
+  partyClassification: zod
+    .union([
+      zod.literal("customer"),
+      zod.literal("project_owner"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  nameEn: zod.string().optional(),
+  vatNumber: zod.string().optional(),
+  crNumber: zod.string().optional(),
+  email: zod.string().optional(),
+  phone: zod.string().optional(),
+  city: zod.string().optional(),
+  district: zod.string().optional(),
+  street: zod.string().optional(),
+  buildingNumber: zod.string().optional(),
+  postalCode: zod.string().optional(),
+  country: zod.string().default(patchCustomerResponseCountryDefault),
+  nationalAddressShort: zod.string().nullish(),
+  locationLat: zod.string().nullish(),
+  locationLng: zod.string().nullish(),
+  locationLink: zod.string().nullish(),
+  accountId: zod.number().nullish(),
+  createdAt: zod.coerce.date().optional(),
+});
+
+/**
  * @summary Delete a customer
  */
 export const DeleteCustomerParams = zod.object({
   id: zod.coerce.number(),
+});
+
+/**
+ * @summary List suppliers (including legacy unclassified records)
+ */
+export const ListSuppliersQueryParams = zod.object({
+  companyId: zod.coerce.number().optional(),
+});
+
+export const ListSuppliersResponseItem = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  nameAr: zod.string(),
+  nameEn: zod.string().nullish(),
+  code: zod.string().nullish(),
+  partyClassification: zod
+    .union([
+      zod.literal("supplier"),
+      zod.literal("subcontractor"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  vatNumber: zod.string().nullish(),
+  crNumber: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+  accountId: zod.number().nullish(),
+  branchId: zod.number().nullish(),
+});
+export const ListSuppliersResponse = zod.array(ListSuppliersResponseItem);
+
+/**
+ * @summary Create supplier
+ */
+export const CreateSupplierBody = zod.object({
+  companyId: zod.number().optional(),
+  nameAr: zod.string(),
+  nameEn: zod.string().nullish(),
+  code: zod.string().nullish(),
+  partyClassification: zod
+    .union([
+      zod.literal("supplier"),
+      zod.literal("subcontractor"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  vatNumber: zod.string().nullish(),
+  crNumber: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+});
+
+/**
+ * @summary Get supplier
+ */
+export const GetSupplierParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetSupplierResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  nameAr: zod.string(),
+  nameEn: zod.string().nullish(),
+  code: zod.string().nullish(),
+  partyClassification: zod
+    .union([
+      zod.literal("supplier"),
+      zod.literal("subcontractor"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  vatNumber: zod.string().nullish(),
+  crNumber: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+  accountId: zod.number().nullish(),
+  branchId: zod.number().nullish(),
+});
+
+/**
+ * @summary Update supplier (omitted classification remains unchanged)
+ */
+export const UpdateSupplierParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateSupplierBody = zod.object({
+  nameAr: zod.string().optional(),
+  nameEn: zod.string().nullish(),
+  code: zod.string().nullish(),
+  partyClassification: zod
+    .union([
+      zod.literal("supplier"),
+      zod.literal("subcontractor"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  vatNumber: zod.string().nullish(),
+  crNumber: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+});
+
+export const UpdateSupplierResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  nameAr: zod.string(),
+  nameEn: zod.string().nullish(),
+  code: zod.string().nullish(),
+  partyClassification: zod
+    .union([
+      zod.literal("supplier"),
+      zod.literal("subcontractor"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  vatNumber: zod.string().nullish(),
+  crNumber: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+  accountId: zod.number().nullish(),
+  branchId: zod.number().nullish(),
+});
+
+/**
+ * @summary Partially update a supplier; omitted classification is preserved
+ */
+export const PatchSupplierParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const PatchSupplierBody = zod.object({
+  nameAr: zod.string().optional(),
+  nameEn: zod.string().nullish(),
+  code: zod.string().nullish(),
+  partyClassification: zod
+    .union([
+      zod.literal("supplier"),
+      zod.literal("subcontractor"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  vatNumber: zod.string().nullish(),
+  crNumber: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+});
+
+export const PatchSupplierResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  nameAr: zod.string(),
+  nameEn: zod.string().nullish(),
+  code: zod.string().nullish(),
+  partyClassification: zod
+    .union([
+      zod.literal("supplier"),
+      zod.literal("subcontractor"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  vatNumber: zod.string().nullish(),
+  crNumber: zod.string().nullish(),
+  email: zod.string().nullish(),
+  phone: zod.string().nullish(),
+  accountId: zod.number().nullish(),
+  branchId: zod.number().nullish(),
+});
+
+/**
+ * @summary Delete supplier
+ */
+export const DeleteSupplierParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary List all contractor records with linked supplier classification
+ */
+export const ListContractingContractorsResponseItem = zod.object({
+  id: zod.number(),
+  companyId: zod.number().optional(),
+  supplierId: zod.number().nullish(),
+  supplierPartyClassification: zod
+    .union([
+      zod.literal("supplier"),
+      zod.literal("subcontractor"),
+      zod.literal("both"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  name: zod.string(),
+  status: zod.string().optional(),
+});
+export const ListContractingContractorsResponse = zod.array(
+  ListContractingContractorsResponseItem,
+);
+
+/**
+ * @summary List bank and customer options for contracting guarantees
+ */
+export const GetContractingGuaranteeOptionsResponse = zod.object({
+  banks: zod.array(
+    zod.object({
+      id: zod.number().optional(),
+      code: zod.string().nullish(),
+      nameAr: zod.string().optional(),
+      nameEn: zod.string().nullish(),
+      bankName: zod.string().nullish(),
+    }),
+  ),
+  customers: zod.array(
+    zod.object({
+      id: zod.number(),
+      code: zod.string().nullish(),
+      nameAr: zod.string(),
+      nameEn: zod.string().nullish(),
+      partyClassification: zod
+        .union([
+          zod.literal("customer"),
+          zod.literal("project_owner"),
+          zod.literal("both"),
+          zod.literal(null),
+        ])
+        .nullish(),
+    }),
+  ),
 });
 
 /**
@@ -765,6 +1103,14 @@ export const ListInvoicesResponseItem = zod.object({
       id: zod.number(),
       companyId: zod.number(),
       nameAr: zod.string(),
+      partyClassification: zod
+        .union([
+          zod.literal("customer"),
+          zod.literal("project_owner"),
+          zod.literal("both"),
+          zod.literal(null),
+        ])
+        .nullish(),
       nameEn: zod.string().optional(),
       vatNumber: zod.string().optional(),
       crNumber: zod.string().optional(),
@@ -911,6 +1257,14 @@ export const GetInvoiceResponse = zod.object({
       id: zod.number(),
       companyId: zod.number(),
       nameAr: zod.string(),
+      partyClassification: zod
+        .union([
+          zod.literal("customer"),
+          zod.literal("project_owner"),
+          zod.literal("both"),
+          zod.literal(null),
+        ])
+        .nullish(),
       nameEn: zod.string().optional(),
       vatNumber: zod.string().optional(),
       crNumber: zod.string().optional(),
@@ -1053,6 +1407,14 @@ export const UpdateInvoiceResponse = zod.object({
       id: zod.number(),
       companyId: zod.number(),
       nameAr: zod.string(),
+      partyClassification: zod
+        .union([
+          zod.literal("customer"),
+          zod.literal("project_owner"),
+          zod.literal("both"),
+          zod.literal(null),
+        ])
+        .nullish(),
       nameEn: zod.string().optional(),
       vatNumber: zod.string().optional(),
       crNumber: zod.string().optional(),
@@ -1176,6 +1538,14 @@ export const IssueInvoiceResponse = zod.object({
       id: zod.number(),
       companyId: zod.number(),
       nameAr: zod.string(),
+      partyClassification: zod
+        .union([
+          zod.literal("customer"),
+          zod.literal("project_owner"),
+          zod.literal("both"),
+          zod.literal(null),
+        ])
+        .nullish(),
       nameEn: zod.string().optional(),
       vatNumber: zod.string().optional(),
       crNumber: zod.string().optional(),
@@ -1290,6 +1660,14 @@ export const CancelInvoiceResponse = zod.object({
       id: zod.number(),
       companyId: zod.number(),
       nameAr: zod.string(),
+      partyClassification: zod
+        .union([
+          zod.literal("customer"),
+          zod.literal("project_owner"),
+          zod.literal("both"),
+          zod.literal(null),
+        ])
+        .nullish(),
       nameEn: zod.string().optional(),
       vatNumber: zod.string().optional(),
       crNumber: zod.string().optional(),
@@ -1431,6 +1809,14 @@ export const GetRecentInvoicesResponseItem = zod.object({
       id: zod.number(),
       companyId: zod.number(),
       nameAr: zod.string(),
+      partyClassification: zod
+        .union([
+          zod.literal("customer"),
+          zod.literal("project_owner"),
+          zod.literal("both"),
+          zod.literal(null),
+        ])
+        .nullish(),
       nameEn: zod.string().optional(),
       vatNumber: zod.string().optional(),
       crNumber: zod.string().optional(),

@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const supplierSchema = z.object({
   code: z.string().optional(),
+  partyClassification: z.enum(["supplier", "subcontractor", "both"]),
   nameAr: z.string().min(2, "اسم المورد مطلوب"),
   nameEn: z.string().optional(),
   vatNumber: z.string().optional(),
@@ -42,7 +43,7 @@ export default function SupplierNew() {
 
   const form = useForm<FormValues>({
     resolver: zodResolver(supplierSchema),
-    defaultValues: { country: "SA", includeInStatements: true },
+    defaultValues: { country: "SA", includeInStatements: true, partyClassification: "supplier" },
   });
 
   const createSupplier = useMutation({
@@ -147,6 +148,27 @@ export default function SupplierNew() {
             </CardHeader>
             <CardContent className="pt-5">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <FormField control={form.control} name="partyClassification" render={({ field }) => (
+                  <FormItem className="md:col-span-2">
+                    <FormLabel>تصنيف الجهة</FormLabel>
+                    <div className="flex flex-wrap gap-4 rounded-md border p-3" role="radiogroup" aria-label="تصنيف الجهة">
+                      {([
+                        ["supplier", "مورد"],
+                        ["subcontractor", "مقاول باطن"],
+                        ["both", "مقاول ومورد"],
+                      ] as const).map(([value, label]) => (
+                        <label key={value} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input type="radio" name={field.name} value={value}
+                            checked={field.value === value}
+                            onChange={() => field.onChange(value)} onBlur={field.onBlur}
+                            className="accent-primary" />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )} />
                 <FormField control={form.control} name="code" render={({ field }) => (
                   <FormItem>
                     <FormLabel>رقم المورد</FormLabel>

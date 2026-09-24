@@ -8,6 +8,8 @@ export const customersTable = pgTable("customers", {
   id: serial("id").primaryKey(),
   companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
   nameAr: text("name_ar").notNull(),
+  /** Null denotes an unclassified legacy party; new choices treat it as an ordinary customer. */
+  partyClassification: text("party_classification"),
   nameEn: text("name_en"),
   vatNumber: text("vat_number"),
   crNumber: text("cr_number"),

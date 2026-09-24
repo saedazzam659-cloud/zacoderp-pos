@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -1767,7 +1768,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
   const customerComboItems = [
     { value: "", label: t("salesDocForm.noCustomer") },
-    ...customers.map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` })),
+    ...withHistoricalParty(
+      (isInvoice ? eligibleParties(customers, "sales", customerId) : customers).map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` })),
+      customerId, `#${customerId} — العميل المرتبط سابقاً`,
+    ),
   ];
   const salesRepComboItems = repLocked
     // When the user is locked to their own rep, hide every other entry so the

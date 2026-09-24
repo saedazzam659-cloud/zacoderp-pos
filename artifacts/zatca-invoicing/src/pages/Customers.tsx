@@ -37,6 +37,11 @@ import {
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.VITE_API_URL || "";
+const CUSTOMER_CLASS_LABELS: Record<string, string> = {
+  customer: "عميل",
+  project_owner: "مالك مشروع",
+  both: "مالك مشروع وعميل",
+};
 
 export default function Customers() {
     const gate = useDemoActionGate();
@@ -399,6 +404,9 @@ export default function Customers() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-sm text-slate-900 leading-tight truncate">{customer.nameAr || customer.nameEn || "—"}</div>
+                      <span className="inline-block mt-1 text-[10px] rounded bg-blue-50 text-blue-700 px-1.5 py-0.5">
+                        {CUSTOMER_CLASS_LABELS[customer.partyClassification ?? "customer"] ?? "عميل"}
+                      </span>
                       {customer.nameEn && customer.nameAr && (
                         <div className="text-[11px] text-muted-foreground truncate">{customer.nameEn}</div>
                       )}
@@ -619,6 +627,9 @@ export default function Customers() {
                                 </div>
                                 <div className="min-w-0">
                                   <p className="font-semibold text-foreground leading-tight truncate">{customer.nameAr}</p>
+                                  <span className="inline-block text-[10px] rounded bg-blue-50 text-blue-700 px-1.5 py-0.5">
+                                    {CUSTOMER_CLASS_LABELS[customer.partyClassification ?? "customer"] ?? "عميل"}
+                                  </span>
                                   {customer.nameEn && <p className="text-[10px] text-muted-foreground truncate">{customer.nameEn}</p>}
                                 </div>
                               </div>

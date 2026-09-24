@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
@@ -1043,7 +1044,10 @@ export default function PurchaseInvoiceForm() {
 
   const supplierItems = [
     { value: "", label: tr("noSupplierOpt") },
-    ...suppliers.map((s: any) => ({ value: String(s.id), label: supName(s) })),
+    ...withHistoricalParty(
+      eligibleParties(suppliers, "purchase", supplierId).map((s: any) => ({ value: String(s.id), label: supName(s) })),
+      supplierId, `#${supplierId} — المورد المرتبط سابقاً`,
+    ),
   ];
   // The dropdown label always shows the LC's GRAND TOTAL in the company's
   // base currency (LC amount + expenses, both already converted via IAS 21

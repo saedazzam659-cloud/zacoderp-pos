@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { FormPanel } from "@/components/FormPanel";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { eligibleParties } from "@/lib/partyEligibility";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCostCenters, type CostCenter } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
@@ -252,7 +253,7 @@ export default function ContractingProjects() {
     const currentId = editing?.customerId == null ? null : Number(editing.customerId);
     const seen = new Set<number>();
     const items: ComboboxItem[] = [];
-    for (const customer of customers) {
+    for (const customer of eligibleParties(customers, "projectOwner", currentId)) {
       const id = Number(customer?.id);
       if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
       seen.add(id);

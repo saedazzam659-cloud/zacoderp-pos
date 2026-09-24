@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { db } from "@workspace/db";
@@ -317,6 +317,7 @@ router.post("/", async (req, res) => {
   const [customer] = await db.insert(customersTable).values({
     companyId: effectiveCompanyId,
     nameAr: data.nameAr,
+    partyClassification: data.partyClassification === undefined ? "customer" : data.partyClassification,
     nameEn: data.nameEn,
     vatNumber: data.vatNumber,
     crNumber: data.crNumber,
@@ -410,8 +411,8 @@ router.get("/:id", async (req, res) => {
   res.json(customer);
 });
 
-router.put("/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+const updateCustomer = async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
   const [existing] = await db.select().from(customersTable).where(eq(customersTable.id, id));
   if (!existing) { res.status(404).json({ error: "Customer not found" }); return; }
   const companyId = resolveCompanyId(req, existing.companyId);
@@ -421,7 +422,7 @@ router.put("/:id", async (req, res) => {
   // Per-rep IDOR + salesRepId-tamper guards removed alongside the per-rep
   // customer isolation filter (see GET / for context).
 
-  const parsed = UpdateCustomerBody.safeParse(req.body);
+  const parsed = (req.method === "PATCH" ? UpdateCustomerBody.partial() : UpdateCustomerBody).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid input", details: parsed.error.issues }); return; }
   const d = parsed.data as any;
 
@@ -511,7 +512,9 @@ router.put("/:id", async (req, res) => {
   }
   const [customer] = await db.update(customersTable).set(setData).where(eq(customersTable.id, id)).returning();
   res.json(customer);
-});
+};
+router.put("/:id", updateCustomer);
+router.patch("/:id", updateCustomer);
 
 // Coerce raw body input → numeric(15,2)-safe string. Returns null for
 // invalid / non-numeric input so the caller can decide the fallback.

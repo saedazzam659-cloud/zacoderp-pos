@@ -329,6 +329,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Customer"
+    patch:
+      operationId: patchCustomer
+      tags: [customers]
+      summary: Partially update a customer; omitted classification is preserved
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerUpdate"
+      responses:
+        "200":
+          description: Updated customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
     delete:
       operationId: deleteCustomer
       tags: [customers]
@@ -342,6 +365,147 @@ paths:
       responses:
         "204":
           description: Deleted
+
+  /suppliers:
+    get:
+      operationId: listSuppliers
+      tags: [suppliers]
+      summary: List suppliers (including legacy unclassified records)
+      parameters:
+        - name: companyId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Suppliers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Supplier"
+    post:
+      operationId: createSupplier
+      tags: [suppliers]
+      summary: Create supplier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierInput"
+      responses:
+        "201":
+          description: Created supplier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+  /suppliers/{id}:
+    get:
+      operationId: getSupplier
+      tags: [suppliers]
+      summary: Get supplier
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Supplier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+    put:
+      operationId: updateSupplier
+      tags: [suppliers]
+      summary: Update supplier (omitted classification remains unchanged)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierUpdate"
+      responses:
+        "200":
+          description: Updated supplier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+    patch:
+      operationId: patchSupplier
+      tags: [suppliers]
+      summary: Partially update a supplier; omitted classification is preserved
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupplierUpdate"
+      responses:
+        "200":
+          description: Updated supplier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+    delete:
+      operationId: deleteSupplier
+      tags: [suppliers]
+      summary: Delete supplier
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /contracting/contractors:
+    get:
+      operationId: listContractingContractors
+      tags: [contracting]
+      summary: List all contractor records with linked supplier classification
+      responses:
+        "200":
+          description: Contractor records (not filtered by classification)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ContractingContractorOption"
+  /contracting/guarantees/options:
+    get:
+      operationId: getContractingGuaranteeOptions
+      tags: [contracting]
+      summary: List bank and customer options for contracting guarantees
+      responses:
+        "200":
+          description: Guarantee options (customer list unfiltered)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractingGuaranteeOptions"
 
   /invoices:
     get:
@@ -1169,6 +1333,9 @@ components:
           type: integer
         nameAr:
           type: string
+        partyClassification:
+          type: ["string", "null"]
+          enum: [customer, project_owner, both, null]
         nameEn:
           type: string
         vatNumber:
@@ -1222,6 +1389,9 @@ components:
           type: integer
         nameAr:
           type: string
+        partyClassification:
+          type: ["string", "null"]
+          enum: [customer, project_owner, both, null]
         nameEn:
           type: string
         vatNumber:
@@ -1262,6 +1432,112 @@ components:
       required:
         - companyId
         - nameAr
+
+    CustomerUpdate:
+      type: object
+      properties:
+        nameAr: { type: string }
+        partyClassification:
+          type: ["string", "null"]
+          enum: [customer, project_owner, both, null]
+        nameEn: { type: string }
+        vatNumber: { type: string }
+        crNumber: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        city: { type: string }
+        district: { type: string }
+        street: { type: string }
+        buildingNumber: { type: string }
+        postalCode: { type: string }
+        country: { type: string }
+    Supplier:
+      type: object
+      required: [id, companyId, nameAr]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        nameAr: { type: string }
+        nameEn: { type: ["string", "null"] }
+        code: { type: ["string", "null"] }
+        partyClassification:
+          type: ["string", "null"]
+          enum: [supplier, subcontractor, both, null]
+        vatNumber: { type: ["string", "null"] }
+        crNumber: { type: ["string", "null"] }
+        email: { type: ["string", "null"] }
+        phone: { type: ["string", "null"] }
+        accountId: { type: ["integer", "null"] }
+        branchId: { type: ["integer", "null"] }
+    SupplierInput:
+      type: object
+      required: [nameAr]
+      properties:
+        companyId: { type: integer }
+        nameAr: { type: string }
+        nameEn: { type: ["string", "null"] }
+        code: { type: ["string", "null"] }
+        partyClassification:
+          type: ["string", "null"]
+          enum: [supplier, subcontractor, both, null]
+        vatNumber: { type: ["string", "null"] }
+        crNumber: { type: ["string", "null"] }
+        email: { type: ["string", "null"] }
+        phone: { type: ["string", "null"] }
+    SupplierUpdate:
+      type: object
+      properties:
+        nameAr: { type: string }
+        nameEn: { type: ["string", "null"] }
+        code: { type: ["string", "null"] }
+        partyClassification:
+          type: ["string", "null"]
+          enum: [supplier, subcontractor, both, null]
+        vatNumber: { type: ["string", "null"] }
+        crNumber: { type: ["string", "null"] }
+        email: { type: ["string", "null"] }
+        phone: { type: ["string", "null"] }
+    ContractingContractorOption:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        supplierId: { type: ["integer", "null"] }
+        supplierPartyClassification:
+          type: ["string", "null"]
+          enum: [supplier, subcontractor, both, null]
+        name: { type: string }
+        status: { type: string }
+    ContractingGuaranteeOptions:
+      type: object
+      required: [banks, customers]
+      properties:
+        banks:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              code: { type: ["string", "null"] }
+              nameAr: { type: string }
+              nameEn: { type: ["string", "null"] }
+              bankName: { type: ["string", "null"] }
+        customers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContractingGuaranteeCustomerOption"
+    ContractingGuaranteeCustomerOption:
+      type: object
+      required: [id, nameAr]
+      properties:
+        id: { type: integer }
+        code: { type: ["string", "null"] }
+        nameAr: { type: string }
+        nameEn: { type: ["string", "null"] }
+        partyClassification:
+          type: ["string", "null"]
+          enum: [customer, project_owner, both, null]
 
     InvoiceLineItem:
       type: object

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { eligibleParties } from "@/lib/partyEligibility";
 import {
   AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle, AlertDialogCancel, AlertDialogAction,
@@ -48,7 +49,7 @@ export default function ContractingContractors() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<Contractor[]>([]);
-  const [suppliers, setSuppliers] = useState<Array<{ id: number; nameAr: string; code?: string | null }>>([]);
+  const [suppliers, setSuppliers] = useState<Array<{ id: number; nameAr: string; code?: string | null; partyClassification?: string | null }>>([]);
   const [supplierLoadError, setSupplierLoadError] = useState("");
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Contractor> | null>(null);
@@ -163,7 +164,7 @@ export default function ContractingContractors() {
                 <SearchCombobox
                   items={[
                     { value: "none", label: "بدون مورد مرتبط" },
-                    ...suppliers.map(s => ({ value: String(s.id), label: `${s.code ? `${s.code} — ` : ""}${s.nameAr}` })),
+                    ...eligibleParties(suppliers, "subcontractor", editing.supplierId).map(s => ({ value: String(s.id), label: `${s.code ? `${s.code} — ` : ""}${s.nameAr}` })),
                     ...(editing.supplierId && !suppliers.some(s => s.id === editing.supplierId)
                       ? [{ value: String(editing.supplierId), label: `مورد مرتبط #${editing.supplierId} (غير متاح في القائمة)` }] : []),
                   ]}

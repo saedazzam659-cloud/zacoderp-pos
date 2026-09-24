@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { db } from "@workspace/db";
 import { branchesTable } from "@workspace/db";
 import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
@@ -924,6 +924,8 @@ router.post("/bulk-assign-accounts", async (req, res): Promise<void> => {
 
 router.post("/", async (req, res) => {
   const data = req.body;
+  const classification = z.enum(["supplier", "subcontractor", "both"]).nullable().optional().safeParse(data?.partyClassification);
+  if (!classification.success) { res.status(400).json({ error: "تصنيف المورد غير صالح" }); return; }
   if (!data.nameAr) { res.status(400).json({ error: "اسم المورد مطلوب" }); return; }
   const companyId = resolveCompanyId(req, data.companyId ? parseInt(data.companyId) : undefined);
   if (!companyId) { res.status(400).json({ error: "معرّف الشركة مطلوب" }); return; }
@@ -998,6 +1000,7 @@ router.post("/", async (req, res) => {
       }
       const [created] = await tx.insert(suppliersTable).values({
         companyId,
+        partyClassification: classification.data === undefined ? "supplier" : classification.data,
         code: data.code ?? null,
         nameAr: data.nameAr,
         nameEn: data.nameEn ?? null,
@@ -1116,13 +1119,15 @@ router.get("/:id", async (req, res) => {
   res.json(supplier);
 });
 
-router.put("/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+const updateSupplier = async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
   const [existing] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, id));
   if (!existing) { res.status(404).json({ error: "المورد غير موجود" }); return; }
   const companyId = resolveCompanyId(req, existing.companyId);
   if (companyId && existing.companyId !== companyId) { res.status(403).json({ error: "غير مصرح" }); return; }
   const data = req.body;
+  const classification = z.enum(["supplier", "subcontractor", "both"]).nullable().optional().safeParse(data?.partyClassification);
+  if (!classification.success) { res.status(400).json({ error: "تصنيف المورد غير صالح" }); return; }
 
   const others = await db.select().from(suppliersTable).where(eq(suppliersTable.companyId, existing.companyId));
   if (data.nameAr && others.some(s => s.id !== id && s.nameAr?.trim().toLowerCase() === String(data.nameAr).trim().toLowerCase())) {
@@ -1184,6 +1189,7 @@ router.put("/:id", async (req, res) => {
       );
     }
     return tx.update(suppliersTable).set({
+      ...(classification.data !== undefined ? { partyClassification: classification.data } : {}),
       code: data.code ?? null,
       nameAr: data.nameAr,
       nameEn: data.nameEn ?? null,
@@ -1198,6 +1204,16 @@ router.put("/:id", async (req, res) => {
       postalCode: data.postalCode ?? null,
       country: data.country ?? "SA",
       accountId,
+      // The legacy PUT form sends a complete record; PATCH is sparse and must
+      // not erase unrelated fields when only classification is being changed.
+      ...(req.method === "PATCH"
+        ? Object.fromEntries(
+            ["code", "nameAr", "nameEn", "vatNumber", "crNumber", "email", "phone",
+              "city", "district", "street", "buildingNumber", "postalCode", "country"]
+              .filter(key => data[key] === undefined)
+              .map(key => [key, (existing as any)[key]]),
+          )
+        : {}),
       ...(data.branchId !== undefined
         ? { branchId: data.branchId === null || data.branchId === "" ? null : Number(data.branchId) }
         : {}),
@@ -1208,7 +1224,9 @@ router.put("/:id", async (req, res) => {
   });
   if (!supplier) { res.status(404).json({ error: "المورد غير موجود" }); return; }
   res.json(supplier);
-});
+};
+router.put("/:id", updateSupplier);
+router.patch("/:id", updateSupplier);
 
 router.delete("/:id", async (req, res) => {
   const id = parseInt(req.params.id);

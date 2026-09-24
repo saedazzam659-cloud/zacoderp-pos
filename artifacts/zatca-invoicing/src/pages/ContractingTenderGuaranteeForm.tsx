@@ -11,9 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/ui/date-field";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { eligibleParties } from "@/lib/partyEligibility";
 
 const API = import.meta.env.VITE_API_URL || "";
-type Option = { id: number; code?: string; nameAr?: string; bankName?: string };
+type Option = { id: number; code?: string; nameAr?: string; bankName?: string; partyClassification?: string | null };
 type Contract = { id: number; contractNumber: string };
 type Tender = { id: number; tender_number: string; title: string; awarded_contract_kind?: string | null; awarded_owner_contract_id?: number | null; awarded_subcontract_id?: number | null };
 type Values = {
@@ -275,7 +276,7 @@ export default function ContractingTenderGuaranteeForm() {
               <Field label="البنك *" hint={bankHint}>
                 {controlChoice("bankAccountId", withSelected(optionItems(banks), bankId, "بنك مرتبط سابقاً"), "اختر البنك", "لا توجد بنوك نشطة متاحة")}</Field>
               <Field label="المستفيد (عميل مسجل)" hint={customerHint || "اختياري، اتركه فارغاً إذا لم يكن المستفيد عميلاً مسجلاً."}>
-                {controlChoice("beneficiaryCustomerId", withSelected(optionItems(customers), beneficiaryId, "مستفيد مرتبط سابقاً"), "اختر المستفيد", canViewCustomers ? "لا يوجد عملاء مسجلون" : "لا تملك صلاحية عرض العملاء", true)}</Field>
+                {controlChoice("beneficiaryCustomerId", withSelected(optionItems(eligibleParties(customers, "projectOwner", beneficiaryId)), beneficiaryId, "مستفيد مرتبط سابقاً"), "اختر المستفيد", canViewCustomers ? "لا يوجد عملاء مسجلون" : "لا تملك صلاحية عرض العملاء", true)}</Field>
               <Field label="القيمة *">{controlInput("amount", "number", true)}</Field>
               <Field label="تاريخ الإصدار *">{controlDate("issueDate")}</Field>
               <Field label="تاريخ الانتهاء *">{controlDate("expiryDate")}</Field>
@@ -283,7 +284,7 @@ export default function ContractingTenderGuaranteeForm() {
               <Field label="رقم المناقصة *">{controlInput("tenderNumber", "text", true)}</Field>
               <Field label="العنوان *">{controlInput("title", "text", true)}</Field>
               <Field label="العميل / المالك" hint={customerHint || "يُحدد عميل المشروع المسجل تلقائياً فقط، ويمكن تغييره هنا."}>
-                {controlChoice("customerId", withSelected(optionItems(customers), customerId, "عميل المشروع المسجل"), "اختر العميل", canViewCustomers ? "لا يوجد عملاء مسجلون" : "لا تملك صلاحية عرض العملاء", true)}</Field>
+                {controlChoice("customerId", withSelected(optionItems(eligibleParties(customers, "projectOwner", customerId)), customerId, "عميل المشروع المسجل"), "اختر العميل", canViewCustomers ? "لا يوجد عملاء مسجلون" : "لا تملك صلاحية عرض العملاء", true)}</Field>
               <Field label="تاريخ المناقصة *">{controlDate("tenderDate")}</Field>
               <Field label="آخر موعد للتقديم">{controlDate("submissionDate")}</Field>
               <Field label="القيمة التقديرية">{controlInput("estimatedValue", "number")}</Field>

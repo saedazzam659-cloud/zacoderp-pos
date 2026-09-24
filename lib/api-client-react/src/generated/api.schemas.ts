@@ -282,10 +282,25 @@ export interface CreateCompanyBody {
   zatcaPcsid?: string;
 }
 
+/**
+ * @nullable
+ */
+export type CustomerPartyClassification =
+  | (typeof CustomerPartyClassification)[keyof typeof CustomerPartyClassification]
+  | null;
+
+export const CustomerPartyClassification = {
+  customer: "customer",
+  project_owner: "project_owner",
+  both: "both",
+} as const;
+
 export interface Customer {
   id: number;
   companyId: number;
   nameAr: string;
+  /** @nullable */
+  partyClassification?: CustomerPartyClassification;
   nameEn?: string;
   vatNumber?: string;
   crNumber?: string;
@@ -305,9 +320,24 @@ export interface Customer {
   createdAt?: string;
 }
 
+/**
+ * @nullable
+ */
+export type CreateCustomerBodyPartyClassification =
+  | (typeof CreateCustomerBodyPartyClassification)[keyof typeof CreateCustomerBodyPartyClassification]
+  | null;
+
+export const CreateCustomerBodyPartyClassification = {
+  customer: "customer",
+  project_owner: "project_owner",
+  both: "both",
+} as const;
+
 export interface CreateCustomerBody {
   companyId: number;
   nameAr: string;
+  /** @nullable */
+  partyClassification?: CreateCustomerBodyPartyClassification;
   nameEn?: string;
   vatNumber?: string;
   crNumber?: string;
@@ -324,6 +354,200 @@ export interface CreateCustomerBody {
   locationLng?: string | null;
   locationLink?: string | null;
   accountId?: number | null;
+}
+
+/**
+ * @nullable
+ */
+export type CustomerUpdatePartyClassification =
+  | (typeof CustomerUpdatePartyClassification)[keyof typeof CustomerUpdatePartyClassification]
+  | null;
+
+export const CustomerUpdatePartyClassification = {
+  customer: "customer",
+  project_owner: "project_owner",
+  both: "both",
+} as const;
+
+export interface CustomerUpdate {
+  nameAr?: string;
+  /** @nullable */
+  partyClassification?: CustomerUpdatePartyClassification;
+  nameEn?: string;
+  vatNumber?: string;
+  crNumber?: string;
+  email?: string;
+  phone?: string;
+  city?: string;
+  district?: string;
+  street?: string;
+  buildingNumber?: string;
+  postalCode?: string;
+  country?: string;
+}
+
+/**
+ * @nullable
+ */
+export type SupplierPartyClassification =
+  | (typeof SupplierPartyClassification)[keyof typeof SupplierPartyClassification]
+  | null;
+
+export const SupplierPartyClassification = {
+  supplier: "supplier",
+  subcontractor: "subcontractor",
+  both: "both",
+} as const;
+
+export interface Supplier {
+  id: number;
+  companyId: number;
+  nameAr: string;
+  /** @nullable */
+  nameEn?: string | null;
+  /** @nullable */
+  code?: string | null;
+  /** @nullable */
+  partyClassification?: SupplierPartyClassification;
+  /** @nullable */
+  vatNumber?: string | null;
+  /** @nullable */
+  crNumber?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  phone?: string | null;
+  /** @nullable */
+  accountId?: number | null;
+  /** @nullable */
+  branchId?: number | null;
+}
+
+/**
+ * @nullable
+ */
+export type SupplierInputPartyClassification =
+  | (typeof SupplierInputPartyClassification)[keyof typeof SupplierInputPartyClassification]
+  | null;
+
+export const SupplierInputPartyClassification = {
+  supplier: "supplier",
+  subcontractor: "subcontractor",
+  both: "both",
+} as const;
+
+export interface SupplierInput {
+  companyId?: number;
+  nameAr: string;
+  /** @nullable */
+  nameEn?: string | null;
+  /** @nullable */
+  code?: string | null;
+  /** @nullable */
+  partyClassification?: SupplierInputPartyClassification;
+  /** @nullable */
+  vatNumber?: string | null;
+  /** @nullable */
+  crNumber?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  phone?: string | null;
+}
+
+/**
+ * @nullable
+ */
+export type SupplierUpdatePartyClassification =
+  | (typeof SupplierUpdatePartyClassification)[keyof typeof SupplierUpdatePartyClassification]
+  | null;
+
+export const SupplierUpdatePartyClassification = {
+  supplier: "supplier",
+  subcontractor: "subcontractor",
+  both: "both",
+} as const;
+
+export interface SupplierUpdate {
+  nameAr?: string;
+  /** @nullable */
+  nameEn?: string | null;
+  /** @nullable */
+  code?: string | null;
+  /** @nullable */
+  partyClassification?: SupplierUpdatePartyClassification;
+  /** @nullable */
+  vatNumber?: string | null;
+  /** @nullable */
+  crNumber?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  phone?: string | null;
+}
+
+/**
+ * @nullable
+ */
+export type ContractingContractorOptionSupplierPartyClassification =
+  | (typeof ContractingContractorOptionSupplierPartyClassification)[keyof typeof ContractingContractorOptionSupplierPartyClassification]
+  | null;
+
+export const ContractingContractorOptionSupplierPartyClassification = {
+  supplier: "supplier",
+  subcontractor: "subcontractor",
+  both: "both",
+} as const;
+
+export interface ContractingContractorOption {
+  id: number;
+  companyId?: number;
+  /** @nullable */
+  supplierId?: number | null;
+  /** @nullable */
+  supplierPartyClassification?: ContractingContractorOptionSupplierPartyClassification;
+  name: string;
+  status?: string;
+}
+
+export type ContractingGuaranteeOptionsBanksItem = {
+  id?: number;
+  /** @nullable */
+  code?: string | null;
+  nameAr?: string;
+  /** @nullable */
+  nameEn?: string | null;
+  /** @nullable */
+  bankName?: string | null;
+};
+
+/**
+ * @nullable
+ */
+export type ContractingGuaranteeCustomerOptionPartyClassification =
+  | (typeof ContractingGuaranteeCustomerOptionPartyClassification)[keyof typeof ContractingGuaranteeCustomerOptionPartyClassification]
+  | null;
+
+export const ContractingGuaranteeCustomerOptionPartyClassification = {
+  customer: "customer",
+  project_owner: "project_owner",
+  both: "both",
+} as const;
+
+export interface ContractingGuaranteeCustomerOption {
+  id: number;
+  /** @nullable */
+  code?: string | null;
+  nameAr: string;
+  /** @nullable */
+  nameEn?: string | null;
+  /** @nullable */
+  partyClassification?: ContractingGuaranteeCustomerOptionPartyClassification;
+}
+
+export interface ContractingGuaranteeOptions {
+  banks: ContractingGuaranteeOptionsBanksItem[];
+  customers: ContractingGuaranteeCustomerOption[];
 }
 
 export interface InvoiceLineItem {
@@ -679,6 +903,10 @@ export interface SafetyKpis {
 }
 
 export type ListCustomersParams = {
+  companyId?: number;
+};
+
+export type ListSuppliersParams = {
   companyId?: number;
 };
 

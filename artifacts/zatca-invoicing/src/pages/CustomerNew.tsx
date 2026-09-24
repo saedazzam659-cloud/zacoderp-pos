@@ -35,6 +35,7 @@ const NATIONAL_ADDRESS_RX = /^[A-Z]{4}[0-9]{4}$/;
 const customerSchema = z.object({
   companyId:      z.coerce.number().min(1, "الشركة المسؤولة مطلوبة"),
   customerType:   z.enum(["b2b", "b2c"]).default("b2b"),
+  partyClassification: z.enum(["customer", "project_owner", "both"]),
   nameAr:         z.string().min(2, "اسم العميل مطلوب (حرفان على الأقل)"),
   nameEn:         z.string().optional(),
   vatNumber:      z.string().optional().refine(v => !v || v.length === 15, "يجب أن يكون 15 رقماً"),
@@ -175,6 +176,7 @@ export default function CustomerNew() {
     defaultValues: {
       companyId:    userCompanyId ?? undefined,
       customerType: "b2b",
+      partyClassification: "customer",
       nameAr: "", nameEn: "",
       vatNumber: "", crNumber: "",
       email: "", phone: "",
@@ -189,6 +191,24 @@ export default function CustomerNew() {
     },
   });
 
+  // The router can reuse this component when moving from edit back to new.
+  useEffect(() => {
+    if (isEditMode) return;
+    form.reset({
+      companyId: userCompanyId ?? undefined,
+      customerType: "b2b",
+      partyClassification: "customer",
+      nameAr: "", nameEn: "", vatNumber: "", crNumber: "", email: "", phone: "",
+      city: "", district: "", street: "", buildingNumber: "", postalCode: "",
+      country: "SA", nationalAddressShort: "", includeInStatements: true,
+      creditLimit: 0, enforceCreditLimit: false, paymentTermsDays: 0,
+    });
+    setCustAccountId("");
+    setBranchId("");
+    setCustomerGroupId("");
+    setLocation_({ lat: null, lng: null, link: null });
+  }, [isEditMode]);
+
   // Auto-set companyId for company users
   useEffect(() => {
     if (!isSuperAdmin && userCompanyId) form.setValue("companyId", userCompanyId);
@@ -201,6 +221,7 @@ export default function CustomerNew() {
     form.reset({
       companyId:      c.companyId ?? userCompanyId,
       customerType:   (c.customerType as any) ?? "b2b",
+      partyClassification: c.partyClassification ?? "customer",
       nameAr:         c.nameAr ?? "",
       nameEn:         c.nameEn ?? "",
       vatNumber:      c.vatNumber ?? "",
@@ -343,7 +364,7 @@ export default function CustomerNew() {
           type="button"
           className="gap-2 min-w-[140px]"
           data-enter-submit="true"
-          disabled={createCustomer.isPending || updateCustomer.isPending}
+          disabled={(isEditMode && !existingCustomer) || createCustomer.isPending || updateCustomer.isPending}
           onClick={form.handleSubmit(onSubmit, (errors) => {
             const firstTab =
               (errors.nameAr || errors.companyId) ? "basic" :
@@ -503,6 +524,29 @@ export default function CustomerNew() {
                         {isB2B ? "يتطلب رقم ضريبي وعنوان وطني كامل" : "بيانات اختيارية — للفواتير المبسطة"}
                       </p>
                     </div>
+
+                    {/* تصنيف الجهة — مستقل عن نوع الفاتورة B2B/B2C */}
+                    <FormField control={form.control} name="partyClassification" render={({ field }) => (
+                      <FormItem className="md:col-span-2">
+                        <FormLabel>تصنيف الجهة</FormLabel>
+                        <div className="flex flex-wrap gap-4 rounded-md border p-3" role="radiogroup" aria-label="تصنيف الجهة">
+                          {([
+                            ["customer", "عميل"],
+                            ["project_owner", "مالك مشروع"],
+                            ["both", "مالك مشروع وعميل"],
+                          ] as const).map(([value, label]) => (
+                            <label key={value} className="flex items-center gap-2 text-sm cursor-pointer">
+                              <input type="radio" name={field.name} value={value}
+                                checked={field.value === value}
+                                onChange={() => field.onChange(value)} onBlur={field.onBlur}
+                                className="accent-primary" />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
 
                     {/* اسم عربي */}
                     <FormField control={form.control} name="nameAr" render={({ field }) => (

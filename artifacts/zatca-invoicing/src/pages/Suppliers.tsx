@@ -58,6 +58,11 @@ import {
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+const SUPPLIER_CLASS_LABELS: Record<string, string> = {
+  supplier: "مورد",
+  subcontractor: "مقاول باطن",
+  both: "مقاول ومورد",
+};
 
 const buildSupplierExportCols = (t: (k: string) => string) => [
   { key: "nameAr",     header: t("pages.suppliers.nameArHeader"),    width: 28 },
@@ -78,6 +83,7 @@ const buildTypeTabs = (t: (k: string) => string) => [
 
 const EMPTY_FORM = {
   code: "",
+  partyClassification: "supplier" as "supplier" | "subcontractor" | "both",
   nameAr: "", nameEn: "", vatNumber: "", crNumber: "",
   email: "", phone: "", city: "", district: "",
   street: "", buildingNumber: "", postalCode: "", country: "SA",
@@ -468,6 +474,7 @@ export default function Suppliers() {
     setEditSup(sup);
     setEditForm({
       code:           sup.code           ?? "",
+      partyClassification: sup.partyClassification ?? "supplier",
       nameAr:         sup.nameAr         ?? "",
       nameEn:         sup.nameEn         ?? "",
       vatNumber:      sup.vatNumber      ?? "",
@@ -787,6 +794,24 @@ export default function Suppliers() {
 
             <TabsContent value="identity" className="mt-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                <fieldset className="md:col-span-2 space-y-2">
+                  <legend className="text-sm font-medium">تصنيف الجهة</legend>
+                  <div className="flex flex-wrap gap-4 rounded-md border p-3">
+                    {([
+                      ["supplier", "مورد"],
+                      ["subcontractor", "مقاول باطن"],
+                      ["both", "مقاول ومورد"],
+                    ] as const).map(([value, label]) => (
+                      <label key={value} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="radio" name="supplier-party-classification" value={value}
+                          checked={editForm.partyClassification === value}
+                          onChange={() => setEditForm(f => ({ ...f, partyClassification: value }))}
+                          className="accent-primary" />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
                 <Field label="رقم المورد" value={editForm.code} onChange={v => setEditForm(f => ({ ...f, code: v }))} placeholder="SUP-001" dir="ltr" />
                 <Field label={`${t("pages.suppliers.supplierNameAr")} *`} value={editForm.nameAr} onChange={v => setEditForm(f => ({ ...f, nameAr: v }))} placeholder={t("pages.suppliers.supplierNameArPlaceholder")} />
                 <div className="md:col-span-2"><Field label={t("pages.suppliers.nameEnLabel")} value={editForm.nameEn} onChange={v => setEditForm(f => ({ ...f, nameEn: v }))} placeholder={t("pages.suppliers.nameEnPlaceholder")} dir="ltr" /></div>
@@ -1143,6 +1168,9 @@ export default function Suppliers() {
                                 </div>
                                 <div className="min-w-0">
                                   <p className="font-medium text-foreground group-hover:text-primary transition-colors truncate">{supplier.nameAr}</p>
+                                  <span className="inline-block text-[10px] rounded bg-blue-50 text-blue-700 px-1.5 py-0.5">
+                                    {SUPPLIER_CLASS_LABELS[supplier.partyClassification ?? "supplier"] ?? "مورد"}
+                                  </span>
                                   {supplier.nameEn && <p className="text-[10px] text-muted-foreground truncate">{supplier.nameEn}</p>}
                                 </div>
                               </div>

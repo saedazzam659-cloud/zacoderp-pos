@@ -8,6 +8,8 @@ export const suppliersTable = pgTable("suppliers", {
   companyId:           integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
   code:                text("code"),
   nameAr:              text("name_ar").notNull(),
+  /** Null denotes an unclassified legacy party; new choices treat it as an ordinary supplier. */
+  partyClassification: text("party_classification"),
   nameEn:              text("name_en"),
   vatNumber:           text("vat_number"),
   crNumber:            text("cr_number"),

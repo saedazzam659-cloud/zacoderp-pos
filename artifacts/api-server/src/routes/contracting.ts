@@ -28,7 +28,7 @@ import {
   costCentersTable,
   contractingBillLinesTable,
 } from "@workspace/db";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 import { branchScopeSpread, extractAuth, getAllowedBranchIds, resolveCompanyId } from "../middleware/auth.js";
 import { canAccessModule, requirePermission } from "../middleware/permissions.js";
 import {
@@ -1879,7 +1879,17 @@ router.delete("/resources/:id", async (req, res) => {
 router.get("/contractors", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
-    const rows = await db.select().from(contractingContractorsTable)
+    // Return all contractor records, including those linked to ordinary
+    // suppliers. Selection filtering belongs to new UI choices, not reads of
+    // existing contracts. Contractor id remains distinct from supplier id.
+    const rows = await db.select({
+      ...getTableColumns(contractingContractorsTable),
+      supplierPartyClassification: suppliersTable.partyClassification,
+    }).from(contractingContractorsTable)
+      .leftJoin(suppliersTable, and(
+        eq(contractingContractorsTable.supplierId, suppliersTable.id),
+        eq(suppliersTable.companyId, cid),
+      ))
       .where(eq(contractingContractorsTable.companyId, cid))
       .orderBy(contractingContractorsTable.name);
     res.json(rows);
@@ -2953,7 +2963,8 @@ router.get("/guarantees/options", async (req, res) => {
     `));
     const customers = canAccessModule(req.authUser, "customers", "view")
       ? resultRows(await db.execute(sql`
-          SELECT id, code, name_ar AS "nameAr", name_en AS "nameEn"
+          SELECT id, code, name_ar AS "nameAr", name_en AS "nameEn",
+                 party_classification AS "partyClassification"
             FROM customers WHERE company_id = ${cid}
            ORDER BY name_ar
         `))

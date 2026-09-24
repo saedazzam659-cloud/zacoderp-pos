@@ -10,3 +10,4 @@
 - [OpenAPI generator compatibility](openapi-generator-compatibility.md) — external path-item references can fail bundling; use inline path items in the canonical spec.
 - [Browser readiness](browser-readiness.md) — authenticated realtime connections require control-based waits, not network idleness.
 - [New company defaults](new-company-defaults-boundary.md) — creation-only settings; never reset existing tenants or split shared document-number namespaces.
+- [Party classification](party-classification-boundaries.md) — unset means ordinary customer/supplier; filter new choices only and preserve historical links.
