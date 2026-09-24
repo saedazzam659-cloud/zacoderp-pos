@@ -46,6 +46,26 @@ function fetchBranding(): Promise<AgentBranding> {
  *    prompt («تثبيت …») shows the agent brand instead of زاكود.
  */
 function applyDocumentBranding(b: AgentBranding): void {
+  // The public host lookup is shared with the rest of the white-label UI.
+  // Preload before replacing the tab icon: a broken logo must leave the
+  // central icon intact rather than showing a missing-image tab.
+  if (b.isAgentDomain && b.brandLogoUrl) {
+    const logo = new Image();
+    logo.onload = () => {
+      const icons = document.querySelectorAll<HTMLLinkElement>('link[rel="icon"]');
+      const icon = icons[0] ?? document.createElement("link");
+      icon.rel = "icon";
+      icon.removeAttribute("type");
+      icon.removeAttribute("sizes");
+      icon.href = b.brandLogoUrl!;
+      if (!icon.isConnected) document.head.appendChild(icon);
+      // index.html provides PNG alternatives; browsers may select one of
+      // those instead of the agent logo unless they are removed.
+      icons.forEach(other => { if (other !== icon) other.remove(); });
+    };
+    logo.onerror = () => { /* Keep the shipped central favicon. */ };
+    logo.src = b.brandLogoUrl;
+  }
   if (!b.isAgentDomain || !b.brandName) return;
   const brand = b.brandName;
   const swap = (s: string) =>

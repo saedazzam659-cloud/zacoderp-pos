@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server, User, Package, Eye, EyeOff, Globe2, Briefcase } from "lucide-react";
+import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server, User, Package, Eye, EyeOff, Briefcase } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { COUNTRIES } from "@/lib/countries";
@@ -91,8 +91,8 @@ const companySchema = z.object({
   companyCode: z.string().trim().max(15, { message: "الحد الأقصى 15 خانة" })
     .regex(/^[A-Za-z0-9]*$/, { message: "أرقام أو حروف إنجليزية فقط — بدون مسافات أو رموز" })
     .optional(),
-  vatNumber: z.string().length(15, { message: "الرقم الضريبي يجب أن يكون 15 رقماً" }),
-  crNumber: z.string().min(5, { message: "رقم السجل التجاري مطلوب" }),
+  vatNumber: z.string().trim().min(1, { message: "الرقم الضريبي مطلوب" }),
+  crNumber: z.string().trim().min(1, { message: "رقم التسجيل التجاري مطلوب" }),
   // العنوان الوطني اختياري هنا — تُستكمل بياناته من داخل الشركة نفسها
   // (شاشة الإعدادات) بعد الإنشاء؛ قسمه مخفي في هذه الشاشة.
   city: z.string().optional(),
@@ -102,7 +102,7 @@ const companySchema = z.object({
   postalCode: z.string().optional(),
   additionalNumber: z.string().optional(),
   phone: z.string().optional(),
-  country: z.string().default("SA"),
+  country: z.string().refine(code => COUNTRIES.some(c => c.code === code), "اختر دولة مدعومة").default("SA"),
   industryName: z.string().optional(),
   invoiceType: z.enum(["standard", "simplified", "both"]).default("both"),
   isSandbox: z.boolean().default(true),
@@ -119,6 +119,13 @@ const companySchema = z.object({
   billingCycle: z.enum(["monthly", "annual"]).default("monthly"),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
+}).superRefine((values, ctx) => {
+  if (values.country === "SA" && !/^\d{15}$/.test(values.vatNumber)) {
+    ctx.addIssue({ code: "custom", path: ["vatNumber"], message: "الرقم الضريبي السعودي يجب أن يكون 15 رقماً" });
+  }
+  if (values.country === "SA" && values.crNumber.length < 5) {
+    ctx.addIssue({ code: "custom", path: ["crNumber"], message: "رقم السجل التجاري مطلوب (5 خانات على الأقل)" });
+  }
 });
 
 // إظهار/إخفاء قسمي «العنوان الوطني» و«إعدادات ZATCA والفواتير» في شاشة
@@ -304,6 +311,9 @@ export default function CompanyNew() {
       startDate: today, endDate: in30Days,
     },
   });
+  const selectedCountry = COUNTRIES.find(c => c.code === form.watch("country")) ?? COUNTRIES[0];
+  const selectedTaxRate = selectedCountry.code === "EG" ? "14" : selectedCountry.code === "SA" ? "15"
+    : ({ AE: "5", BH: "10", OM: "5", KW: "0", QA: "0", GLOBAL: "0" } as Record<string, string>)[selectedCountry.code];
 
   const scanDevice = async () => {
     setScanning(true);
@@ -406,7 +416,7 @@ export default function CompanyNew() {
         </Button>
         <div>
           <h1 className="text-2xl font-bold text-foreground">إضافة شركة جديدة</h1>
-          <p className="text-muted-foreground mt-1">سجّل بيانات منشأتك للبدء بإصدار الفواتير الإلكترونية المتوافقة مع هيئة الزكاة والدخل والجمارك</p>
+          <p className="text-muted-foreground mt-1">سجّل بيانات منشأتك وإعدادات الدولة والعملة والضريبة الافتراضية</p>
         </div>
       </div>
 
@@ -521,8 +531,23 @@ export default function CompanyNew() {
             <SectionHeader icon={Building2} title="البيانات الأساسية" description="المعلومات الرسمية للمنشأة كما هي مسجلة في السجل التجاري" />
             <CardContent className="pt-6 space-y-5">
               <InfoBox>
-                هذه البيانات ستظهر على رأس كل فاتورة وستُرسل إلى هيئة الزكاة. تأكد من مطابقتها تماماً لما هو مسجل رسمياً.
+                تأكد من مطابقة بيانات الشركة للمستندات الرسمية. تكامل ZATCA مخصص للشركات السعودية فقط.
               </InfoBox>
+              <FormField
+                control={form.control}
+                name="country"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>الدولة <span className="text-destructive">*</span></FormLabel>
+                    <FormControl>
+                      <SearchCombobox items={COUNTRY_OPTIONS} value={field.value} onValueChange={field.onChange}
+                        placeholder="اختر الدولة..." searchPlaceholder="ابحث بالاسم أو الكود..." data-testid="combobox-company-country" />
+                    </FormControl>
+                    <FormDescription>العملة الافتراضية: {selectedCountry.currency.nameAr} ({selectedCountry.currency.code}) · الضريبة الافتراضية: {selectedTaxRate}% — يمكن تعديل إعدادات الضرائب بعد الإنشاء.</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <FormField
@@ -600,21 +625,20 @@ export default function CompanyNew() {
                           placeholder="310000000000003"
                           dir="ltr"
                           className="text-left font-mono tracking-widest text-base"
-                          maxLength={15}
+                          maxLength={selectedCountry.code === "SA" ? 15 : undefined}
                           {...field}
                         />
                       </FormControl>
                       <FormDescription>
-                        15 رقماً — يبدأ بـ <strong>3</strong> وينتهي بـ <strong>3</strong>. تجده في شهادة تسجيل ضريبة القيمة المضافة.
-                        <br /><ExampleBadge text="310025263300003" />
+                        {selectedCountry.code === "SA" ? <>15 رقماً وفق بيانات التسجيل الضريبي السعودي.<br /><ExampleBadge text="310025263300003" /></> : "أدخل رقم التسجيل الضريبي كما يظهر في مستندات شركتك."}
                       </FormDescription>
                       <FormMessage />
-                      {field.value && field.value.length === 15 && (
+                      {selectedCountry.code === "SA" && field.value && field.value.length === 15 && (
                         <p className="flex items-center gap-1 text-xs text-green-600 mt-1">
                           <CheckCircle2 className="h-3.5 w-3.5" /> الرقم الضريبي صحيح (15 رقم)
                         </p>
                       )}
-                      {field.value && field.value.length > 0 && field.value.length < 15 && (
+                      {selectedCountry.code === "SA" && field.value && field.value.length > 0 && field.value.length < 15 && (
                         <p className="flex items-center gap-1 text-xs text-amber-600 mt-1">
                           <AlertCircle className="h-3.5 w-3.5" /> {15 - field.value.length} رقم ناقص
                         </p>
@@ -633,8 +657,7 @@ export default function CompanyNew() {
                         <Input placeholder="1010000001" dir="ltr" className="text-left font-mono" {...field} />
                       </FormControl>
                       <FormDescription>
-                        رقم السجل التجاري الصادر من وزارة التجارة — 10 أرقام.
-                        <br /><ExampleBadge text="1010000001" />
+                        {selectedCountry.code === "SA" ? <>رقم السجل التجاري الصادر من وزارة التجارة.<br /><ExampleBadge text="1010000001" /></> : "أدخل رقم التسجيل التجاري وفق مستندات الدولة المختارة."}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -789,38 +812,6 @@ export default function CompanyNew() {
               <InfoBox>
                 العنوان الوطني مطلوب قانونياً في الفواتير الإلكترونية. تجد بياناته على خريطة <strong>أبشر</strong> أو موقع <strong>البريد السعودي</strong>.
               </InfoBox>
-
-              {/* Country picker. Lives at the top of the address card so it
-                  scopes the rest of the address fields below it. The schema
-                  defaults to "SA" but the SuperAdmin can pick any country
-                  (matches the public registration form's country list). */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <FormField
-                  control={form.control}
-                  name="country"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="flex items-center gap-1.5">
-                        <Globe2 className="h-3.5 w-3.5 text-primary" />
-                        الدولة <span className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <SearchCombobox
-                          items={COUNTRY_OPTIONS}
-                          value={field.value}
-                          onValueChange={field.onChange}
-                          placeholder="اختر الدولة..."
-                          searchPlaceholder="ابحث بالاسم أو الكود..."
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        تحدد العملة الافتراضية للشركة بناءً على الدولة المختارة.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 <FormField

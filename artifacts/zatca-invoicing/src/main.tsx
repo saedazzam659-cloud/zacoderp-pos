@@ -4,6 +4,9 @@ import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
 import "./i18n";
+// Load public host branding on every entry route, including unauthenticated and
+// deep-linked pages that never mount the logged-in Layout.
+import "./lib/agentBranding";
 
 // A full-agent update swaps the built frontend while users may still have the
 // previous shell open. If that shell requests a lazy chunk after the swap,

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable, traineeRequestsTable, companyDomainsTable, demoDeviceWorkspacesTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable, traineeRequestsTable, companyDomainsTable, demoDeviceWorkspacesTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -8,6 +8,7 @@ import dnsPromises from "node:dns/promises";
 import { writeAudit } from "../middleware/permissions.js";
 import { normalizeHost } from "../middleware/domainResolver.js";
 import { isLocalAgentSuperadminDisabled } from "../lib/localAgentSuperadmin.js";
+import { registrationCountry, seedRegistrationCountryDefaults } from "../lib/registrationCountry.js";
 
 // «النطاق الموطن» — true when the request arrives on a REGISTERED main
 // multi-company domain the company is NOT homed to. Unregistered hosts
@@ -1135,11 +1136,8 @@ router.put("/me/ui-prefs", async (req, res) => {
   res.json({ ok: true, uiPreferences: merged });
 });
 
-// Country → default-currency catalog. Mirrors
-// artifacts/zatca-invoicing/src/lib/countries.ts; kept inline (rather than
-// imported across artifacts) so the API server has no front-end coupling.
-// `currencyOverride` lets the client send an explicit ISO 4217 code that
-// wins over the country mapping when the user wants something custom.
+// Legacy catalog retained for compatibility with older imports. Registration
+// validates against registrationCountry instead of trusting this mapping.
 const COUNTRY_CURRENCY: Record<string, { code: string; nameAr: string; nameEn: string; symbol: string }> = {
   SA: { code: "SAR", nameAr: "ريال سعودي",  nameEn: "Saudi Riyal",   symbol: "ر.س" },
   AE: { code: "AED", nameAr: "درهم إماراتي", nameEn: "UAE Dirham",    symbol: "د.إ" },
@@ -1186,12 +1184,7 @@ export const REGISTRATION_MODULE_PERMISSIONS: Record<string, string[]> = {
 };
 
 export function resolveDefaultCurrency(country: string, currencyOverride?: string | null) {
-  const fromCountry = COUNTRY_CURRENCY[country] ?? COUNTRY_CURRENCY.SA;
-  if (!currencyOverride || currencyOverride === fromCountry.code) return fromCountry;
-  // Honor an explicit override even if it's not in our catalog: fall back
-  // to a minimal record so the seed still succeeds with a meaningful code.
-  const known = Object.values(COUNTRY_CURRENCY).find(c => c.code === currencyOverride);
-  return known ?? { code: currencyOverride, nameAr: currencyOverride, nameEn: currencyOverride, symbol: currencyOverride };
+  return registrationCountry(country, currencyOverride).currency;
 }
 
 // POST /api/auth/register
@@ -1310,6 +1303,16 @@ router.post("/register", async (req, res) => {
 
   if (!nameAr || !vatNumber || !crNumber || !username || !password) {
     res.status(400).json({ error: "البيانات المطلوبة ناقصة" });
+    return;
+  }
+  let countryProfile: ReturnType<typeof registrationCountry>;
+  try {
+    countryProfile = registrationCountry(country, currency);
+    if (countryProfile.code === "SA" && !/^\d{15}$/.test(String(vatNumber))) {
+      throw new Error("الرقم الضريبي السعودي يجب أن يكون 15 رقماً");
+    }
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
     return;
   }
 
@@ -1673,7 +1676,7 @@ router.post("/register", async (req, res) => {
     buildingNumber: buildingNumber ?? "",
     postalCode: postalCode ?? "",
     phone: phone ?? null,
-    country: country ?? "SA",
+    country: countryProfile.code,
     industryName: resolvedIndustryName,
     invoiceType: invoiceType ?? "both",
     isSandbox: false,
@@ -1807,24 +1810,13 @@ router.post("/register", async (req, res) => {
     domainBindWarning = "الشركة على سيرفر وكيل — التوجيه يتم عبر دومين الوكيل نفسه، لا حاجة لربط مركزي";
   }
 
-  // Seed the default currency for the new company. The currency code is
-  // derived from the country (SA→SAR, AE→AED, …) unless the client sent an
-  // explicit `currency` override. Failures here are logged but do NOT roll
-  // back the company creation — admins can fix the currency manually from
-  // Settings → Currencies if anything weird happens.
+  // Tenant-scoped defaults; works in both central and agent database contexts.
   try {
-    const cur = resolveDefaultCurrency(country ?? "SA", currency);
-    await db.insert(currenciesTable).values({
-      companyId: company.id,
-      code:      cur.code,
-      nameAr:    cur.nameAr,
-      nameEn:    cur.nameEn,
-      symbol:    cur.symbol,
-      isDefault: true,
-      isActive:  true,
-    });
+    await seedRegistrationCountryDefaults(company.id, countryProfile);
   } catch (err) {
-    console.error("[register] failed to seed default currency for company", company.id, err);
+    req.log?.error?.({ err, companyId: company.id }, "register: country defaults seed failed");
+    res.status(500).json({ error: "تعذّر إعداد العملة والضريبة الافتراضية للشركة الجديدة", companyId: company.id });
+    return;
   }
 
   // Create subscription
@@ -1932,8 +1924,8 @@ router.post("/register", async (req, res) => {
   if (edition === "demo" && callerIsSuperAdmin) {
     try {
       const { seedDemoCompanyData } = await import("../lib/seedDemoCompanyData.js");
-      const cur = resolveDefaultCurrency(country ?? "SA", currency);
-      const r = await seedDemoCompanyData(company.id, { country: country ?? "SA", currencyCode: cur.code }, req.log as any);
+      const cur = countryProfile.currency;
+      const r = await seedDemoCompanyData(company.id, { country: countryProfile.code, currencyCode: cur.code }, req.log as any);
       req.log?.info?.({ companyId: company.id, seeded: r.seeded }, "demo edition seed complete");
     } catch (err) {
       req.log?.warn?.({ err, companyId: company.id }, "demo edition seed failed");

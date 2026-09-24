@@ -22,7 +22,8 @@ import {
 import { Link } from "wouter";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
 import { useAuth } from "@/contexts/AuthContext";
-import { useBaseCurrencySymbol } from "@/hooks/useCurrencySymbol";
+import { useBaseCurrencySymbol, useCompanyCurrencies } from "@/hooks/useCurrencySymbol";
+import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { DateField } from "@/components/ui/date-field";
 
 const PAYMENT_METHOD_ITEMS: ComboboxItem[] = [
@@ -81,6 +82,7 @@ const invoiceSchema = z.object({
   invoiceType:        z.enum(["standard", "simplified"]),
   paymentMethod:      z.string().default("10"),
   issueDate:          z.string().min(1, "تاريخ الإصدار مطلوب"),
+  currency:           z.string().default("SAR"),
   supplyDate:         z.string().optional(),
   notes:              z.string().optional(),
   // Buyer — ZATCA mandatory for B2B
@@ -125,6 +127,11 @@ export default function InvoiceNew() {
   const [activeTab, setActiveTab] = useState("basic");
   const { user } = useAuth();
   const baseSym = useBaseCurrencySymbol();
+  const { data: currencies = [], isLoading: currenciesLoading } = useCompanyCurrencies();
+  const currencyCode = (currencies.find(c => c.isDefault) ?? currencies[0])?.code;
+  const { defaultPercentTax, isLoading: taxesLoading } = useCompanyTaxes();
+  const initialVatRate = defaultPercentTax && Number.isFinite(Number(defaultPercentTax.rate))
+    ? Number(defaultPercentTax.rate) : 15;
 
   const isSuperAdmin = user?.role === "superadmin";
   const userCompanyId = user?.companyId;
@@ -147,10 +154,25 @@ export default function InvoiceNew() {
       invoiceType: "standard",
       paymentMethod: "10",
       issueDate: new Date().toISOString().split("T")[0],
+      currency: "SAR",
       buyerCountry: "SA",
       lineItems: [{ description: "", quantity: 1, unitCode: "PCE", unitPrice: 0, discountAmount: 0, taxCategory: "S", vatRate: 15 }],
     },
   });
+  // Prefill untouched rows; later user-edited VAT stays intact.
+  // The stored document-line VAT and ZATCA issuance flow remain unchanged.
+  useEffect(() => {
+    if (!defaultPercentTax) return;
+    form.getValues("lineItems").forEach((line, index) => {
+      const path = `lineItems.${index}.vatRate` as const;
+      if (!form.getFieldState(path).isDirty && Number(line.vatRate) === 15 && line.taxCategory === "S") {
+        form.setValue(path, initialVatRate);
+      }
+    });
+  }, [defaultPercentTax?.id, initialVatRate]);
+  useEffect(() => {
+    if (currencyCode) form.setValue("currency", currencyCode);
+  }, [currencyCode]);
 
   // Auto-set companyId for company users (non-superadmin)
   useEffect(() => {
@@ -209,7 +231,7 @@ export default function InvoiceNew() {
     { gross: 0, discountTotal: 0, subtotal: 0, vatTotal: 0, grandTotal: 0 }
   );
 
-  const fmt = (n: number) => new Intl.NumberFormat("ar-SA-u-nu-latn", { style: "currency", currency: "SAR" }).format(n);
+  const fmt = (n: number) => new Intl.NumberFormat("ar-SA-u-nu-latn", { style: "currency", currency: currencyCode ?? "SAR" }).format(n);
 
   const companyItems: ComboboxItem[] = (companies ?? []).map(c => ({
     value: c.id.toString(), label: c.nameAr, labelEn: c.nameEn ?? undefined,
@@ -242,7 +264,16 @@ export default function InvoiceNew() {
   const vatValid = !buyerVat || (buyerVat.length === 15 && /^3\d{14}$/.test(buyerVat));
 
   const onSubmit = (values: FormValues) => {
+    if (user?.company?.country && user.company.country !== "SA" && (taxesLoading || !defaultPercentTax)) {
+      toast({ title: "تعذّر تحديد الضريبة", description: "تحقق من إعدادات الضريبة الافتراضية للشركة ثم أعد المحاولة.", variant: "destructive" });
+      return;
+    }
+    if (!currencyCode && (currenciesLoading || (user?.company?.country && user.company.country !== "SA"))) {
+      toast({ title: "تعذّر تحديد العملة", description: "تحقق من إعدادات العملة الافتراضية للشركة ثم أعد المحاولة.", variant: "destructive" });
+      return;
+    }
     if (!isSuperAdmin && userCompanyId) values.companyId = userCompanyId;
+    values.currency = currencyCode ?? "SAR";
     createInvoice.mutate(
       { data: values as any },
       {
@@ -783,7 +814,7 @@ export default function InvoiceNew() {
 
                   <div className="p-4 border-b border-dashed">
                     <Button type="button" variant="outline" size="sm" className="gap-2"
-                      onClick={() => append({ description: "", quantity: 1, unitCode: "PCE", unitPrice: 0, discountAmount: 0, taxCategory: "S", vatRate: 15 })}>
+                      onClick={() => append({ description: "", quantity: 1, unitCode: "PCE", unitPrice: 0, discountAmount: 0, taxCategory: "S", vatRate: initialVatRate })}>
                       <Plus className="h-4 w-4" />إضافة صنف
                     </Button>
                   </div>
@@ -826,7 +857,7 @@ export default function InvoiceNew() {
 
                           {/* VAT */}
                           <div className="flex items-center justify-between px-4 py-2.5 text-sm">
-                            <span className="text-primary/80">ضريبة القيمة المضافة (VAT 15%):</span>
+                            <span className="text-primary/80">ضريبة القيمة المضافة (VAT):</span>
                             <span className="tabular-nums font-medium text-primary" dir="ltr">+ {fmt(totals.vatTotal)}</span>
                           </div>
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -91,6 +91,11 @@ export default function Login() {
     return () => { alive = false; };
   }, []);
   const isAgentDomain = !!agentBrand?.isAgentDomain;
+  const defaultLogo = `${import.meta.env.BASE_URL}favicon.svg`;
+  const loginLogo = isAgentDomain && agentBrand?.brandLogoUrl ? agentBrand.brandLogoUrl : defaultLogo;
+  const fallbackLogo = (event: SyntheticEvent<HTMLImageElement>) => {
+    if (event.currentTarget.getAttribute("src") !== defaultLogo) event.currentTarget.src = defaultLogo;
+  };
   // On agent domains, every marketing string that mentions the Zacode brand
   // is rewritten to the agent's own brand name — the reseller's page must
   // never advertise the upstream platform.
@@ -830,11 +835,12 @@ export default function Login() {
                 substitute the local compliance summary from countries.ts. */}
             <div className="text-center lg:text-start">
               <img
-                src={isAgentDomain && agentBrand?.brandLogoUrl ? agentBrand.brandLogoUrl : `${import.meta.env.BASE_URL}favicon.svg`}
+                src={loginLogo}
+                onError={fallbackLogo}
                 alt={isAgentDomain ? (agentBrand?.brandName ?? "") : "زاكود Zacode"}
-                width={56}
-                height={56}
-                className="inline-block h-14 w-14 rounded-2xl mb-3 shadow-lg object-contain bg-white"
+                className={isAgentDomain && agentBrand?.brandLogoUrl
+                  ? "inline-block w-full max-w-[240px] h-28 sm:h-36 rounded-2xl mb-3 shadow-lg object-contain bg-white p-2"
+                  : "inline-block h-14 w-14 rounded-2xl mb-3 shadow-lg object-contain bg-white"}
                 data-testid="login-brand-mark"
               />
               <h1 className="text-2xl lg:text-3xl font-bold text-foreground">
@@ -946,9 +952,10 @@ export default function Login() {
               <div className="absolute -top-16 -end-16 h-44 w-44 rounded-full bg-white/10 blur-2xl" />
               <div className="absolute -bottom-12 -start-10 h-36 w-36 rounded-full bg-white/10 blur-2xl" />
               <div className="relative flex items-center gap-3">
-                <div className="h-14 w-14 rounded-2xl bg-white/95 p-2 shadow-lg ring-1 ring-white/40 shrink-0">
+                <div className={`${isAgentDomain && agentBrand?.brandLogoUrl ? "h-20 w-20 sm:h-24 sm:w-24" : "h-14 w-14"} rounded-2xl bg-white/95 p-2 shadow-lg ring-1 ring-white/40 shrink-0`}>
                   <img
-                    src={isAgentDomain && agentBrand?.brandLogoUrl ? agentBrand.brandLogoUrl : `${import.meta.env.BASE_URL}favicon.svg`}
+                    src={loginLogo}
+                    onError={fallbackLogo}
                     alt={isAgentDomain ? (agentBrand?.brandName ?? "") : "زاكود"}
                     className="h-full w-full object-contain"
                   />

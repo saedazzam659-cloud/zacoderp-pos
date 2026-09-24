@@ -15,6 +15,7 @@ import { propagateDemoWorkspaceMenuPermissions } from "../lib/demoDeviceIsolatio
 import { emitSessionRefreshMany } from "../lib/sessionEvents.js";
 import { normalizeCompanyMenuPermissions } from "../lib/menuPermissionCatalog.js";
 import { seedNewCompanyDefaults } from "../lib/newCompanyDefaults.js";
+import { registrationCountry, seedRegistrationCountryDefaults } from "../lib/registrationCountry.js";
 
 const router = Router();
 
@@ -84,6 +85,16 @@ router.post("/", async (req, res) => {
     return;
   }
   const data = parsed.data;
+  let countryProfile: ReturnType<typeof registrationCountry>;
+  try {
+    countryProfile = registrationCountry(data.country, (req.body as any)?.currency);
+    if (countryProfile.code === "SA" && !/^\d{15}$/.test(data.vatNumber)) {
+      throw new Error("الرقم الضريبي السعودي يجب أن يكون 15 رقماً");
+    }
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
   const [company] = await db.insert(companiesTable).values({
     nameAr: data.nameAr,
     nameEn: data.nameEn,
@@ -96,7 +107,7 @@ router.post("/", async (req, res) => {
     postalCode: data.postalCode,
     additionalNumber: data.additionalNumber,
     phone: data.phone,
-    country: data.country ?? "SA",
+    country: countryProfile.code,
     industryName: data.industryName,
     invoiceType: data.invoiceType ?? "both",
     isSandbox: data.isSandbox ?? false,
@@ -140,6 +151,13 @@ router.post("/", async (req, res) => {
   } catch (err) {
     logger.error({ err, companyId: company.id }, "new company defaults failed");
     res.status(500).json({ error: "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
+    return;
+  }
+  try {
+    await seedRegistrationCountryDefaults(company.id, countryProfile);
+  } catch (err) {
+    logger.error({ err, companyId: company.id }, "new company country defaults failed");
+    res.status(500).json({ error: "تعذّر إكمال إعدادات العملة والضريبة للشركة الجديدة", companyId: company.id });
     return;
   }
   const [configured] = await db.select().from(companiesTable).where(eq(companiesTable.id, company.id));

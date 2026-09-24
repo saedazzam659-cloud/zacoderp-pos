@@ -14,3 +14,9 @@ Independent numbering means separate document namespaces, not separate payment m
 **Why:** Cash/credit/bank invoices and auto-generated journal subtypes can share uniqueness constraints; starting each subtype independently at `00001` would create collisions.
 
 **How to apply:** Preserve existing numbering allocation and uniqueness behavior. Group shared-namespace variants on one plain five-digit counter while keeping different document classes separate. Preserve explicit industry mappings; do not overwrite them to force a default.
+
+Country-based defaults are initial settings, not a promise of jurisdiction-specific e-invoicing compliance.
+
+**Why:** The user requested Egypt → EGP and 14% default VAT while explicitly keeping calculation/business logic unchanged. This does not authorize building ETA integration or assuming every Egyptian transaction is taxable at that rate.
+
+**How to apply:** Apply currency/tax defaults only to fresh companies, retain editable tax treatment, and explain compliance boundaries. Do not replace existing tenant tax settings when deploying this feature.
