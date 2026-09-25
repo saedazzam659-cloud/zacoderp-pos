@@ -73,6 +73,7 @@ export type ContractingGuaranteesPanelProps = {
   /** Called after any tender/guarantee mutation so a contract header can refresh its unified summary. */
   onSummaryChange?: () => void;
   className?: string;
+  active?: boolean;
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -116,6 +117,7 @@ export default function ContractingGuaranteesPanel({
   contractId,
   onSummaryChange,
   className,
+  active = true,
 }: ContractingGuaranteesPanelProps) {
   const [, navigate] = useLocation();
   const search = useSearch();
@@ -182,7 +184,7 @@ export default function ContractingGuaranteesPanel({
     }
   }, [token, projectId, contractKind, contractId, typeFilter, statusFilter, headers, toast]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (active) void load(); }, [active, load]);
 
   async function mutate(path: string, method: string, body?: unknown) {
     setSaving(true);

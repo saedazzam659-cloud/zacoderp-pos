@@ -5,7 +5,7 @@ import { assertProjectBranchAccess, refreshBillPaymentState } from "./contractin
 import { calculateSignedContractingBillNet, exactCents } from "./contracting-bill-adjustment-math.js";
 import { isPostableVoucherContractStatus } from "./contracting-voucher-eligibility.js";
 
-export type ContractingVoucherKind = "owner_advance" | "owner_bill" | "subcontract_advance" | "subcontract_bill";
+export type ContractingVoucherKind = "owner_advance" | "owner_bill" | "owner_retention_release" | "subcontract_advance" | "subcontract_bill" | "subcontract_retention_release";
 export type ContractingAllocation = {
   kind: ContractingVoucherKind;
   projectId: number;
@@ -15,18 +15,26 @@ export type ContractingAllocation = {
 const spec = {
   owner_advance: { voucher: "receipt", direction: "outgoing", mapping: "contracting_advance_receipt", role: "advance_liability", settlement: "advance_receipt" },
   owner_bill: { voucher: "receipt", direction: "outgoing", mapping: "contracting_outgoing_bill", role: "receivable", settlement: "bill_receipt" },
+  owner_retention_release: { voucher: "receipt", direction: "outgoing", mapping: "contracting_retention_receipt", role: "retention_receivable", settlement: "retention_receipt" },
   subcontract_advance: { voucher: "payment", direction: "incoming", mapping: "contracting_advance_payment", role: "advance_asset", settlement: "advance_payment" },
   subcontract_bill: { voucher: "payment", direction: "incoming", mapping: "contracting_incoming_bill", role: "payable", settlement: "bill_payment" },
+  subcontract_retention_release: { voucher: "payment", direction: "incoming", mapping: "contracting_retention_payment", role: "retention_payable", settlement: "retention_payment" },
 } as const;
 const rows = (r: any): any[] => Array.isArray(r) ? r : r?.rows ?? [];
 function fail(message: string): never { throw Object.assign(new Error(message), { status: 400 }); }
+const isRetention = (kind: string) => kind.endsWith("_retention_release");
+const needsBill = (kind: string) => kind.endsWith("_bill") || isRetention(kind);
+/** Retention is independent of the certificate's net payable and paid projection. */
+export function retentionRemainingCents(retention: string | number, released: string | number): bigint {
+  return exactCents(retention ?? "0") - exactCents(released ?? "0");
+}
 
 export function parseContractingAllocation(raw: any, voucher: "receipt" | "payment"): ContractingAllocation | null {
   if (raw == null) return null;
   if (!raw || typeof raw !== "object" || !Object.prototype.hasOwnProperty.call(spec, raw.kind)) fail("نوع توزيع المقاولات غير صالح");
   const kind = raw.kind as ContractingVoucherKind;
   if (spec[kind].voucher !== voucher) fail("نوع توزيع المقاولات لا يطابق نوع السند");
-  for (const key of ["projectId", "contractId", ...(kind.endsWith("_bill") ? ["billId"] : [])]) {
+  for (const key of ["projectId", "contractId", ...(needsBill(kind) ? ["billId"] : [])]) {
     if (!Number.isSafeInteger(Number(raw[key])) || Number(raw[key]) < 1) fail(`معرّف ${key} غير صالح`);
   }
   if (kind.endsWith("_advance") && raw.billId != null) fail("لا يرتبط بند السلفة بمستخلص");
@@ -61,10 +69,12 @@ export async function resolveContractingLine(tx: any, companyId: number, voucher
   if (!isPostableVoucherContractStatus(contract.status))
     fail(`لا يمكن ترحيل سند المقاولات: حالة العقد «${contract.status}»؛ يجب اعتماد العقد أولاً`);
   if (allocation.billId) {
-    const bill = rows(await tx.execute(sql`SELECT id, status, journal_entry_id FROM contracting_progress_bills
-      WHERE id = ${allocation.billId} AND company_id = ${companyId} AND project_id = ${allocation.projectId}
-      AND direction = ${s.direction} AND ${owner ? sql`owner_contract_id` : sql`subcontractor_contract_id`} = ${allocation.contractId}`))[0];
-    if (!bill || !bill.journal_entry_id || !["approved", "posted", "partially_paid", "paid"].includes(bill.status))
+    const bill = rows(await tx.execute(sql`SELECT b.id, b.status, b.journal_entry_id, j.status AS journal_status
+      FROM contracting_progress_bills b LEFT JOIN journal_entries j
+        ON j.id = b.journal_entry_id AND j.company_id = b.company_id
+      WHERE b.id = ${allocation.billId} AND b.company_id = ${companyId} AND b.project_id = ${allocation.projectId}
+      AND b.direction = ${s.direction} AND ${owner ? sql`b.owner_contract_id` : sql`b.subcontractor_contract_id`} = ${allocation.contractId}`))[0];
+    if (!bill || bill.journal_status !== "posted" || !["approved", "posted", "partially_paid", "paid"].includes(bill.status))
       fail("المستخلص غير معتمد أو لا يتبع العقد المحدد");
   }
   const mapped = rows(await tx.execute(sql`SELECT a.id FROM accounting_mappings m
@@ -110,8 +120,35 @@ export async function contractingVoucherOptions(companyId: number, voucher: "rec
       FROM contracting_progress_bills WHERE company_id = ${companyId}
       AND direction = ${owner ? "outgoing" : "incoming"}
       AND ${owner ? sql`owner_contract_id` : sql`subcontractor_contract_id`} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
-      AND journal_entry_id IS NOT NULL AND status IN ('approved','posted','partially_paid')`))
+      AND journal_entry_id IS NOT NULL AND status IN ('approved','posted','partially_paid')
+      AND EXISTS (SELECT 1 FROM journal_entries j
+        WHERE j.id = contracting_progress_bills.journal_entry_id AND j.company_id = ${companyId}
+          AND j.status = 'posted')`))
     : [];
+  const rawRetentionBills = ids.length
+    ? rows(await db.execute(sql`SELECT b.id, b.project_id AS "projectId",
+      ${owner ? sql`b.owner_contract_id` : sql`b.subcontractor_contract_id`} AS "contractId",
+      b.bill_number AS "billNumber", b.status, b.retention_amount AS "retentionAmount"
+      FROM contracting_progress_bills b JOIN journal_entries j
+        ON j.id = b.journal_entry_id AND j.company_id = b.company_id AND j.status = 'posted'
+      WHERE b.company_id = ${companyId} AND b.direction = ${owner ? "outgoing" : "incoming"}
+        AND ${owner ? sql`b.owner_contract_id` : sql`b.subcontractor_contract_id`} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+        AND b.status IN ('approved','posted','partially_paid','paid')`))
+    : [];
+  const retentionReleased = rawRetentionBills.length
+    ? rows(await db.execute(sql`SELECT bill_id AS "billId", COALESCE(SUM(amount), 0) AS amount
+      FROM contracting_accounting_settlements WHERE company_id = ${companyId}
+        AND bill_id IN (${sql.join(rawRetentionBills.map((bill: any) => sql`${bill.id}`), sql`, `)})
+        AND kind = ${owner ? "retention_receipt" : "retention_payment"} AND status = 'posted'
+      GROUP BY bill_id`))
+    : [];
+  const releasedByBill = new Map(retentionReleased.map((row: any) => [Number(row.billId), exactCents(row.amount)]));
+  const retentionBills = rawRetentionBills.map((bill: any) => {
+    const released = releasedByBill.get(Number(bill.id)) ?? 0n;
+    const remaining = exactCents(bill.retentionAmount ?? "0") - released;
+    return { ...bill, retentionReleasedAmount: Number(released) / 100,
+      retentionRemainingAmount: Number(remaining > 0n ? remaining : 0n) / 100 };
+  });
   const bills = await Promise.all(rawBills.map(async (bill: any) => {
     const [additions, deductions, penalties, paid] = await Promise.all([
       db.execute(sql`SELECT amount FROM contracting_bill_additions
@@ -151,6 +188,7 @@ export async function contractingVoucherOptions(companyId: number, voucher: "rec
     }),
     unavailableContracts,
     bills,
+    retentionBills,
   };
 }
 
@@ -222,17 +260,25 @@ export async function postVoucherSettlements(tx: any, companyId: number, voucher
       continue;
     }
     if (allocation.billId) {
-      const bill = rows(await tx.execute(sql`SELECT net_amount FROM contracting_progress_bills
+      const bill = rows(await tx.execute(sql`SELECT net_amount, retention_amount FROM contracting_progress_bills
         WHERE company_id = ${companyId} AND id = ${allocation.billId}`))[0];
-      const additions = rows(await tx.execute(sql`SELECT amount FROM contracting_bill_additions WHERE company_id = ${companyId} AND bill_id = ${allocation.billId}`));
-      const deductions = rows(await tx.execute(sql`SELECT amount, kind FROM contracting_bill_deductions WHERE company_id = ${companyId} AND bill_id = ${allocation.billId}`));
-      const penalties = rows(await tx.execute(sql`SELECT amount FROM contracting_bill_penalties WHERE company_id = ${companyId} AND bill_id = ${allocation.billId}`));
-      const net = exactCents(calculateSignedContractingBillNet({ rawNetAmount: bill.net_amount, additions, deductions, penalties }).adjustedNetAmount);
-      const used = rows(await tx.execute(sql`SELECT COALESCE(SUM(amount), 0) AS amount FROM contracting_accounting_settlements
-        WHERE company_id = ${companyId} AND bill_id = ${allocation.billId} AND status = 'posted'
-        AND kind IN ('bill_receipt','bill_payment','advance_application')`))[0];
-      if (exactCents(line.amount) > net - exactCents(used.amount)) fail("مبلغ التوزيع يتجاوز الرصيد المتبقي للمستخلص");
-      touchedBills.add(allocation.billId);
+      if (isRetention(allocation.kind)) {
+        const released = rows(await tx.execute(sql`SELECT COALESCE(SUM(amount), 0) AS amount
+          FROM contracting_accounting_settlements WHERE company_id = ${companyId}
+            AND bill_id = ${allocation.billId} AND kind = ${s.settlement} AND status = 'posted'`))[0];
+        if (exactCents(line.amount) > retentionRemainingCents(bill.retention_amount, released.amount))
+          fail("مبلغ الإفراج يتجاوز الرصيد المتبقي من احتجاز المستخلص");
+      } else {
+        const additions = rows(await tx.execute(sql`SELECT amount FROM contracting_bill_additions WHERE company_id = ${companyId} AND bill_id = ${allocation.billId}`));
+        const deductions = rows(await tx.execute(sql`SELECT amount, kind FROM contracting_bill_deductions WHERE company_id = ${companyId} AND bill_id = ${allocation.billId}`));
+        const penalties = rows(await tx.execute(sql`SELECT amount FROM contracting_bill_penalties WHERE company_id = ${companyId} AND bill_id = ${allocation.billId}`));
+        const net = exactCents(calculateSignedContractingBillNet({ rawNetAmount: bill.net_amount, additions, deductions, penalties }).adjustedNetAmount);
+        const used = rows(await tx.execute(sql`SELECT COALESCE(SUM(amount), 0) AS amount FROM contracting_accounting_settlements
+          WHERE company_id = ${companyId} AND bill_id = ${allocation.billId} AND status = 'posted'
+          AND kind IN ('bill_receipt','bill_payment','advance_application')`))[0];
+        if (exactCents(line.amount) > net - exactCents(used.amount)) fail("مبلغ التوزيع يتجاوز الرصيد المتبقي للمستخلص");
+      }
+      if (!isRetention(allocation.kind)) touchedBills.add(allocation.billId);
     } else {
       const table = voucher === "receipt" ? sql`contracting_owner_contracts` : sql`contracting_sub_contracts`;
       const contract = rows(await tx.execute(sql`SELECT advance_payment FROM ${table}

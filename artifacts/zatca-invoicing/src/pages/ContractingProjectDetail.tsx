@@ -1,5 +1,6 @@
 import { saveBlob } from "@/lib/saveFile";
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
@@ -41,6 +42,7 @@ import {
   ContractingProjectExportActions,
 } from "@/components/ContractingExportActions";
 import type { ContractingContractSnapshot } from "@/lib/contractingPrintExport";
+import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCostCenters, type CostCenter } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
@@ -76,11 +78,6 @@ type Project = {
   status: string; contractValue: string; plannedBudget: string; actualCost: string;
   plannedStartDate: string | null; plannedEndDate: string | null;
   progressPercent: string; description: string | null;
-};
-type ProjectBranch = { id: number; code: string; nameAr: string; nameEn: string | null };
-type IntegrityDiagnostics = {
-  deferredValidation: boolean;
-  offendingIds: Record<string, number[]>;
 };
 type Bill = AdvanceRecoveryPolicy & Partial<RecoveryOverride> & {
   id: number; billNumber: string; billType: string; billDate: string;
@@ -196,50 +193,53 @@ export default function ContractingProjectDetail() {
   const search = useSearch();
   const projectId = Number(params?.id);
   const { token, user, actingCompanyId } = useAuth() as any;
-  const { toast } = useToast();
   const routeQuery = parseProjectDetailQuery(search);
-  const [project, setProject] = useState<Project | null>(null);
-  const [projectBranches, setProjectBranches] = useState<ProjectBranch[]>([]);
-  const [projectOptions, setProjectOptions] = useState<Project[]>([]);
-  const [integrityDiagnostics, setIntegrityDiagnostics] = useState<IntegrityDiagnostics | null>(null);
   const [tab, setTab] = useState(routeQuery.tab);
+  // Keep form drafts mounted after the first visit; panels with financial
+  // snapshots still unmount so returning to them always reloads server data.
+  const [visitedForms, setVisitedForms] = useState<{ projectId: number; tabs: string[] }>({ projectId, tabs: [] });
+  const mountedForms = visitedForms.projectId === projectId ? visitedForms.tabs : [];
+  useEffect(() => {
+    if (["bills", "owner-contract", "sub-contracts", "work-items", "resources", "risks", "guarantees"].includes(tab)) {
+      setVisitedForms(previous => previous.projectId === projectId
+        ? previous.tabs.includes(tab) ? previous : { projectId, tabs: [...previous.tabs, tab] }
+        : { projectId, tabs: [tab] });
+    }
+  }, [projectId, tab]);
   const [accountingBill, setAccountingBill] = useState<{ id: number; direction: BillDirection } | null>(null);
 
-  const loadProject = useCallback(async () => {
-    if (!token || !projectId) return;
-    try {
+  const authScope = [user?.id, user?.companyId ?? user?.company?.id, actingCompanyId, token];
+  const { data: project, error: projectError, isFetching: projectFetching, refetch: refetchProject } = useQuery<Project>({
+    queryKey: ["contracting-project-detail", ...authScope, projectId],
+    enabled: !!token && Number.isInteger(projectId) && projectId > 0,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
       const r = await fetch(`${API}/api/contracting/projects/${projectId}`, {
-         headers: { Authorization: `Bearer ${token}`, ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}) },
+        headers: { Authorization: `Bearer ${token}`, ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}) },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setProject(await r.json());
-    } catch (e: any) {
-      toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });
-    }
-   }, [token, actingCompanyId, projectId, t, toast]);
-
-  useEffect(() => { void loadProject(); }, [loadProject]);
-  useEffect(() => {
-    if (!token) return;
-    void fetch(`${API}/api/contracting/projects/options`, {
-       headers: { Authorization: `Bearer ${token}`, ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}) },
-    }).then(async response => {
-      if (!response.ok) return;
-      const payload = await response.json();
-      if (Array.isArray(payload?.branches)) setProjectBranches(payload.branches);
-      if (Array.isArray(payload?.projects)) setProjectOptions(payload.projects);
-      setIntegrityDiagnostics(payload?.integrityDiagnostics?.deferredValidation
-        ? payload.integrityDiagnostics
-        : null);
-    }).catch(() => undefined);
-   }, [token, actingCompanyId]);
+      return r.json();
+    },
+  });
+  const loadProject = useCallback(async () => { await refetchProject(); }, [refetchProject]);
+  useEffect(() => { if (tab === "overview" && project) void refetchProject(); }, [tab, projectId, refetchProject]);
+  const { data: options, error: optionsError } = useQuery({
+    queryKey: contractingOptionsKey(user?.id, user?.companyId ?? user?.company?.id, actingCompanyId, token),
+    enabled: !!token,
+    staleTime: 30_000,
+    queryFn: () => fetchContractingProjectOptions(token, actingCompanyId),
+  });
+  const projectBranches = options?.branches ?? [];
+  const projectOptions = options?.projects ?? [];
+  const integrityDiagnostics = options?.integrityDiagnostics?.deferredValidation ? options.integrityDiagnostics : null;
   useEffect(() => { setTab(routeQuery.tab); }, [routeQuery.tab]);
 
   const fmt = (n: string | number) => Number(n || 0).toLocaleString("en-US");
 
-  if (!project) {
-    return <div className="p-6"><Skeleton className="h-32 w-full" /></div>;
-  }
+  if (projectError) return <div role="alert" className="p-6 text-destructive">{projectError.message}</div>;
+  if (!project) return <div className="p-6"><Skeleton className="h-32 w-full" /></div>;
 
   const overrunPct = Number(project.plannedBudget) > 0
     ? ((Number(project.actualCost) - Number(project.plannedBudget)) / Number(project.plannedBudget)) * 100
@@ -247,6 +247,7 @@ export default function ContractingProjectDetail() {
 
   return (
     <div className="space-y-4">
+      {optionsError && <div role="alert" className="text-sm text-destructive">{optionsError.message}</div>}
       <div className="flex items-center gap-3">
         <Link href="/contracting/projects">
           <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4" /></Button>
@@ -348,7 +349,7 @@ export default function ContractingProjectDetail() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Kpi icon={<Wallet />} label={t("contracting.projects.contractValue", "قيمة العقد")} value={fmt(project.contractValue) + " ر.س"} tone="violet" />
             <Kpi icon={<TrendingUp />} label={t("contracting.projects.plannedBudget", "الميزانية المخططة")} value={fmt(project.plannedBudget) + " ر.س"} tone="emerald" />
-            <Kpi icon={<Wallet />} label={t("contracting.projects.actualCost", "التكلفة الفعلية")} value={fmt(project.actualCost) + " ر.س"}
+            <Kpi icon={<Wallet />} label={t("contracting.projects.actualCost", "التكلفة الفعلية")} value={projectFetching ? "…" : fmt(project.actualCost) + " ر.س"}
                  tone={overrunPct > 0 ? "amber" : "indigo"} subtitle={overrunPct !== 0 ? `${overrunPct > 0 ? "+" : ""}${overrunPct.toFixed(1)}%` : ""} />
             <Kpi icon={<Activity />} label={t("contracting.projects.progress", "نسبة الإنجاز")} value={`${Number(project.progressPercent).toFixed(1)}%`} tone="indigo" />
           </div>
@@ -372,24 +373,28 @@ export default function ContractingProjectDetail() {
           <ContractingProjectReports projectId={projectId} mode="dashboard" />
         </TabsContent>
 
-        <TabsContent value="owner-contract" className="mt-4"><OwnerContractTab projectId={projectId} project={project} /></TabsContent>
-        <TabsContent value="sub-contracts"  className="mt-4"><SubContractsTab  projectId={projectId} project={project} /></TabsContent>
-        <TabsContent value="work-items" className="mt-4 space-y-3">
-          <ContractingProjectScope projectId={projectId} projectName={project.nameAr} projectCode={project.code} />
-          <ExecutionPlanningPanel key={`${projectId}:work-items`} projectId={projectId} section="work-items" onChange={loadProject} />
+        <TabsContent value="owner-contract" forceMount className="mt-4 data-[state=inactive]:hidden" hidden={tab !== "owner-contract"}>{mountedForms.includes("owner-contract") && <OwnerContractTab key={projectId} projectId={projectId} project={project} active={tab === "owner-contract"} />}</TabsContent>
+        <TabsContent value="sub-contracts" forceMount className="mt-4 data-[state=inactive]:hidden" hidden={tab !== "sub-contracts"}>{mountedForms.includes("sub-contracts") && <SubContractsTab key={projectId} projectId={projectId} project={project} active={tab === "sub-contracts"} />}</TabsContent>
+        <TabsContent value="work-items" forceMount className="mt-4 space-y-3 data-[state=inactive]:hidden" hidden={tab !== "work-items"}>
+          {mountedForms.includes("work-items") && <>
+            <ContractingProjectScope projectId={projectId} projectName={project.nameAr} projectCode={project.code} />
+            <ExecutionPlanningPanel key={`${projectId}:work-items`} projectId={projectId} section="work-items" active={tab === "work-items"} onChange={loadProject} />
+          </>}
         </TabsContent>
-        <TabsContent value="resources" className="mt-4">
-          <ExecutionPlanningPanel key={`${projectId}:resources`} projectId={projectId} section="resources" onChange={loadProject} />
+        <TabsContent value="resources" forceMount className="mt-4 data-[state=inactive]:hidden" hidden={tab !== "resources"}>
+          {mountedForms.includes("resources") && <ExecutionPlanningPanel key={`${projectId}:resources`} projectId={projectId} section="resources" active={tab === "resources"} onChange={loadProject} />}
         </TabsContent>
-        <TabsContent value="bills" className="mt-4">
-          <BillsTab
+        <TabsContent value="bills" forceMount className="mt-4 data-[state=inactive]:hidden" hidden={tab !== "bills"}>
+          {mountedForms.includes("bills") && <BillsTab
+            key={projectId}
             projectId={projectId}
             project={project}
             projectCostCenterId={project?.costCenterId ?? null}
             initialDirection={accountingBill?.direction ?? routeQuery.billDirection}
             initialBillId={accountingBill?.id}
             autoOpen={routeQuery.createBill}
-          />
+            active={tab === "bills"}
+          />}
         </TabsContent>
         <TabsContent value="accounting" className="mt-4 space-y-4">
           <ContractingAccountingPanel projectId={projectId} onOpenBill={(id, direction) => {
@@ -398,11 +403,11 @@ export default function ContractingProjectDetail() {
           }} />
           <ContractingCostAllocations projectId={projectId} />
         </TabsContent>
-        <TabsContent value="guarantees" className="mt-4">
-          <ContractingGuaranteesPanel projectId={projectId} />
+        <TabsContent value="guarantees" forceMount className="mt-4 data-[state=inactive]:hidden" hidden={tab !== "guarantees"}>
+          {mountedForms.includes("guarantees") && <ContractingGuaranteesPanel key={projectId} projectId={projectId} active={tab === "guarantees"} />}
         </TabsContent>
         <TabsContent value="reports" className="mt-4"><ContractingProjectReports projectId={projectId} mode="hub" /></TabsContent>
-        <TabsContent value="risks"      className="mt-4"><RisksTab     projectId={projectId} /></TabsContent>
+        <TabsContent value="risks" forceMount className="mt-4 data-[state=inactive]:hidden" hidden={tab !== "risks"}>{mountedForms.includes("risks") && <RisksTab key={projectId} projectId={projectId} active={tab === "risks"} />}</TabsContent>
         <TabsContent value="events"     className="mt-4"><EventsTab    projectId={projectId} /></TabsContent>
         <TabsContent value="ai"         className="mt-4"><AITab        projectId={projectId} /></TabsContent>
       </Tabs>
@@ -515,6 +520,7 @@ function BillsTab({
   initialDirection = "outgoing",
   initialBillId,
   autoOpen = false,
+  active,
 }: {
   projectId: number;
   project: Project;
@@ -522,10 +528,12 @@ function BillsTab({
   initialDirection?: BillDirection;
   initialBillId?: number;
   autoOpen?: boolean;
+  active: boolean;
 }) {
   const { t } = useTranslation();
   const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const canCreate = usePermission("contracting", "create");
   const routeSearch = useSearch();
   const [, navigate] = useLocation();
@@ -539,6 +547,7 @@ function BillsTab({
   ) && (user?.role === "admin" || user?.role === "superadmin"
     || user?.postingPermissions?.[direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill"]?.unpost !== false);
   const [rows, setRows] = useState<Bill[]>([]);
+  const [rowsCurrent, setRowsCurrent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Bill> | null>(null);
   const [saving, setSaving] = useState(false);
@@ -548,7 +557,10 @@ function BillsTab({
   const [recoveredExecution, setRecoveredExecution] = useState<{ billId: number; values: ExecutionInputs } | null>(null);
   const [detailsRevision, setDetailsRevision] = useState(0);
   const [billOptionsLoaded, setBillOptionsLoaded] = useState(false);
+  const billOptionsLoadedAt = useRef(0);
+  const [pendingNewBill, setPendingNewBill] = useState(false);
   const autoOpenAttempted = useRef(false);
+  const openedAccountingBill = useRef<number | null>(null);
   const createAttempt = useRef<RetryableCreateAttempt | null>(null);
   // Peek the next bill-number from the central sequence engine while a NEW
   // bill is being created (id is still nullish).
@@ -568,6 +580,7 @@ function BillsTab({
   });
 
   const load = useCallback(async () => {
+    setRowsCurrent(false);
     setLoading(true);
     try {
       const r = await fetch(`${API}/api/contracting/projects/${projectId}/bills?direction=${direction}`, {
@@ -575,51 +588,68 @@ function BillsTab({
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setRows(await r.json());
+      setRowsCurrent(true);
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
     finally { setLoading(false); }
   }, [token, projectId, direction, toast]);
-  useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (!initialBillId || loading) return;
+    if (active) void load();
+    else setRowsCurrent(false);
+  }, [active, load]);
+  useEffect(() => {
+    if (!active || !rowsCurrent || !initialBillId || loading || openedAccountingBill.current === initialBillId) return;
     const bill = rows.find(row => row.id === initialBillId);
-    if (bill) setEditing(bill);
-  }, [initialBillId, rows, loading]);
+    if (bill) {
+      openedAccountingBill.current = initialBillId;
+      setEditing(bill);
+    }
+  }, [active, initialBillId, rows, rowsCurrent, loading]);
 
   const editingBillId = editing && (editing as any).id != null ? Number((editing as any).id) : null;
   useEffect(() => {
     setDetailLineCount(null);
-    if (!editingBillId) return;
-    let active = true;
+    if (!active || !editingBillId) return;
+    let current = true;
     void fetch(`${API}/api/contracting/bills/${editingBillId}/details`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(async response => {
       if (!response.ok) return;
       const detail = await response.json();
-      if (active) setDetailLineCount(Array.isArray(detail?.lines) ? detail.lines.length : 0);
+      if (current) setDetailLineCount(Array.isArray(detail?.lines) ? detail.lines.length : 0);
     }).catch(() => {
       // Keep the percentage control disabled until the authoritative detail
       // endpoint has answered; never invent a line mode in the UI.
     });
-    return () => { active = false; };
-  }, [editingBillId, token]);
+    return () => { current = false; };
+  }, [active, editingBillId, token]);
 
-  // Auxiliary loads (contractors, contracts) — needed for the dialog form
-  // dropdowns. Pulled lazily once on mount (rarely changes).
+  // The list does not need three form lookups. Fetch them only for a form or
+  // the explicit create shortcut, never for a read-only bills visit.
   useEffect(() => {
-    if (!token) return;
+    if (!token || !active || (!editing && !autoOpen && !pendingNewBill)) return;
+    if (billOptionsLoaded && Date.now() - billOptionsLoadedAt.current < 30_000) return;
     setBillOptionsLoaded(false);
     void (async () => {
       try {
+        const readOptions = async (response: Response) => {
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+          if (!Array.isArray(body)) throw new Error("استجابة خيارات المستخلص غير صالحة");
+          return body;
+        };
         const [c, oc, sc] = await Promise.all([
-          fetch(`${API}/api/contracting/contractors`,                          { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
-          fetch(`${API}/api/contracting/projects/${projectId}/owner-contracts`,{ headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
-          fetch(`${API}/api/contracting/projects/${projectId}/sub-contracts`,  { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
+          fetch(`${API}/api/contracting/contractors`,                          { headers: { Authorization: `Bearer ${token}` } }).then(readOptions),
+          fetch(`${API}/api/contracting/projects/${projectId}/owner-contracts`,{ headers: { Authorization: `Bearer ${token}` } }).then(readOptions),
+          fetch(`${API}/api/contracting/projects/${projectId}/sub-contracts`,  { headers: { Authorization: `Bearer ${token}` } }).then(readOptions),
         ]);
         setContractors(c); setOwnerContracts(oc); setSubContracts(sc);
-      } catch { /* non-fatal — form still works without auto-fill */ }
-      finally { setBillOptionsLoaded(true); }
+        billOptionsLoadedAt.current = Date.now();
+        setBillOptionsLoaded(true);
+      } catch (error: any) {
+        toast({ title: "تعذر تحميل خيارات المستخلص", description: error?.message, variant: "destructive" });
+      }
     })();
-  }, [token, projectId]);
+  }, [token, projectId, active, !!editing, autoOpen, pendingNewBill, toast]);
 
   async function save() {
     if (saveLock.current) return;
@@ -712,6 +742,7 @@ function BillsTab({
       } else {
         setEditing(null);
       }
+      void queryClient.invalidateQueries({ queryKey: ["contracting-project-options"] });
       await load();
     } catch (e: any) {
       const responseMayBeLost = !isEdit && persistedId == null && (
@@ -800,7 +831,7 @@ function BillsTab({
   }
 
   useEffect(() => {
-    if (!autoOpen || autoOpenAttempted.current || !billOptionsLoaded) return;
+    if (!active || !autoOpen || autoOpenAttempted.current || !billOptionsLoaded) return;
     autoOpenAttempted.current = true;
     if (canCreate) openNew();
 
@@ -814,10 +845,17 @@ function BillsTab({
       `/contracting/projects/${projectId}${nextSearch ? `?${nextSearch}` : ""}`,
       { replace: true },
     );
-  }, [autoOpen, billOptionsLoaded, canCreate, navigate, projectId, routeSearch]);
+  }, [active, autoOpen, billOptionsLoaded, canCreate, navigate, projectId, routeSearch]);
+  useEffect(() => {
+    if (active && pendingNewBill && billOptionsLoaded) {
+      setPendingNewBill(false);
+      openNew();
+    }
+  }, [active, pendingNewBill, billOptionsLoaded]);
 
   // Quick totals for the header (helps SuperAdmins see exposure at a glance)
-  const totals = rows.reduce((acc, b) => {
+  const visibleRows = rowsCurrent ? rows : [];
+  const totals = visibleRows.reduce((acc, b) => {
     acc.gross += Number(b.grossAmount); acc.due += Number(b.dueAmount);
     acc.net   += Number(b.netAmount);   acc.paid += Number(b.paidAmount);
     return acc;
@@ -946,10 +984,10 @@ function BillsTab({
       </Tabs>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalGross", "إجمالي")}</div><div className="font-bold tabular-nums">{totals.gross.toLocaleString("en-US")} ر.س</div></div>
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalDue", "مستحق")}</div><div className="font-bold tabular-nums">{totals.due.toLocaleString("en-US")} ر.س</div></div>
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalNet", "صافي")}</div><div className="font-bold tabular-nums">{totals.net.toLocaleString("en-US")} ر.س</div></div>
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalPaid", "مدفوع")}</div><div className="font-bold tabular-nums text-emerald-600">{totals.paid.toLocaleString("en-US")} ر.س</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalGross", "إجمالي")}</div><div className="font-bold tabular-nums">{rowsCurrent ? totals.gross.toLocaleString("en-US") + " ر.س" : "…"}</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalDue", "مستحق")}</div><div className="font-bold tabular-nums">{rowsCurrent ? totals.due.toLocaleString("en-US") + " ر.س" : "…"}</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalNet", "صافي")}</div><div className="font-bold tabular-nums">{rowsCurrent ? totals.net.toLocaleString("en-US") + " ر.س" : "…"}</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalPaid", "مدفوع")}</div><div className="font-bold tabular-nums text-emerald-600">{rowsCurrent ? totals.paid.toLocaleString("en-US") + " ر.س" : "…"}</div></div>
       </div>
 
       <div className="flex justify-between items-center">
@@ -957,10 +995,16 @@ function BillsTab({
           {direction === "outgoing"
             ? t("contracting.bills.outgoingTitle", "مستخلصات صادرة للمالك")
             : t("contracting.bills.incomingTitle", "مستخلصات واردة من المقاولين الباطنين")}
-          <span className="text-slate-500 font-normal text-sm mx-2">({rows.length})</span>
+          <span className="text-slate-500 font-normal text-sm mx-2">({rowsCurrent ? rows.length : "…" })</span>
         </h3>
         {canCreate && (
-          <Button size="sm" onClick={openNew}>
+          <Button size="sm" onClick={() => {
+            if (billOptionsLoaded && Date.now() - billOptionsLoadedAt.current < 30_000) openNew();
+            else {
+              setBillOptionsLoaded(false);
+              setPendingNewBill(true);
+            }
+          }}>
             <Plus className="h-4 w-4 mx-1" /> {t("contracting.bills.add", "مستخلص جديد")}
           </Button>
         )}
@@ -982,9 +1026,9 @@ function BillsTab({
             <TableHead className="text-end">—</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {loading && rows.length === 0 && <TableRow><TableCell colSpan={11}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
-            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={11} className="text-center text-sm text-slate-500 py-4">{t("contracting.bills.empty", "لا توجد مستخلصات")}</TableCell></TableRow>}
-            {rows.map(b => {
+            {!rowsCurrent && <TableRow><TableCell colSpan={11}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
+            {rowsCurrent && rows.length === 0 && <TableRow><TableCell colSpan={11} className="text-center text-sm text-slate-500 py-4">{t("contracting.bills.empty", "لا توجد مستخلصات")}</TableCell></TableRow>}
+            {visibleRows.map(b => {
               const contractor = contractors.find(c => c.id === b.contractorId);
               return (
                 <TableRow key={b.id}>
@@ -1288,7 +1332,7 @@ function BillsTab({
   );
 }
 // ─────────────────── RISKS TAB ───────────────────
-function RisksTab({ projectId }: { projectId: number }) {
+function RisksTab({ projectId, active }: { projectId: number; active: boolean }) {
   const { t } = useTranslation();
   const { token } = useAuth() as any;
   const { toast } = useToast();
@@ -1307,7 +1351,7 @@ function RisksTab({ projectId }: { projectId: number }) {
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
     finally { setLoading(false); }
   }, [token, projectId, toast]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (active) void load(); }, [active, load]);
 
   async function save() {
     if (!editing?.title?.trim()) { toast({ title: t("common.required", "العنوان مطلوب"), variant: "destructive" }); return; }
@@ -1629,10 +1673,11 @@ function AITab({ projectId }: { projectId: number }) {
 }
 
 // ─────────────────── OWNER CONTRACT TAB ───────────────────
-function OwnerContractTab({ projectId, project }: { projectId: number; project: Project }) {
+function OwnerContractTab({ projectId, project, active }: { projectId: number; project: Project; active: boolean }) {
   const { t } = useTranslation();
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [rows, setRows] = useState<OwnerContract[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<OwnerContract> | null>(null);
@@ -1653,7 +1698,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
     finally { setLoading(false); }
   }, [token, projectId, toast]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (active) void load(); }, [active, load]);
 
   async function save() {
     if (saveInFlight.current) return;
@@ -1753,6 +1798,7 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
       }
       persistedContractId.current = null;
       setEditing(null);
+      void queryClient.invalidateQueries({ queryKey: ["contracting-project-options"] });
       void load();
     } catch (e: any) {
       toast({
@@ -1965,10 +2011,11 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
 }
 
 // ─────────────────── SUB CONTRACTS TAB ───────────────────
-function SubContractsTab({ projectId, project }: { projectId: number; project: Project }) {
+function SubContractsTab({ projectId, project, active }: { projectId: number; project: Project; active: boolean }) {
   const { t } = useTranslation();
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [rows, setRows] = useState<SubContract[]>([]);
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1993,7 +2040,7 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
     finally { setLoading(false); }
   }, [token, projectId, toast]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (active) void load(); }, [active, load]);
 
   async function save() {
     if (saveInFlight.current) return;
@@ -2022,7 +2069,9 @@ function SubContractsTab({ projectId, project }: { projectId: number; project: P
       });
       if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
       createRequestId.current = null;
-      setEditing(null); await load();
+      setEditing(null);
+      void queryClient.invalidateQueries({ queryKey: ["contracting-project-options"] });
+      await load();
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
     finally { saveInFlight.current = false; setSaving(false); }
   }

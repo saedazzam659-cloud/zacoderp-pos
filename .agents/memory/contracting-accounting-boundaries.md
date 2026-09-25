@@ -23,6 +23,12 @@ Contracting cash allocations are optional additions to the existing multiple rec
 
 **How to apply:** Reuse the voucher's single journal when linking posted allocations into contracting balances; never post another cash journal. Preserve direct historical settlements, enforce exact party/contract links, and keep bill approval distinct from cash payment. Guard unposting of advances already consumed by later certificates.
 
+Retention release eligibility is independent of a certificate's normal net-payment completion. A paid certificate can still have unreleased retention, but its original journal must be genuinely posted.
+
+**Why:** Paying the net entitlement does not discharge the retained receivable/payable. Excluding paid certificates hides legitimate releases; treating legacy approved-but-unposted evidence as posted would create unsupported cash settlement.
+
+**How to apply:** Keep ordinary payment and retention balances separate, cap all posted direct and voucher releases together, and represent multiple certificates as distinct lines in the existing multi-voucher with one cash journal.
+
 Keep project visibility separate from contract eligibility for cash allocation.
 
 **Why:** A project can be explicitly linked to the selected customer while lacking an eligible contract. Hiding it makes the valid customer/project link appear broken.

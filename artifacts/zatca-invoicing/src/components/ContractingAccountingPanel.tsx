@@ -468,7 +468,7 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
     if (result) setQty("");
   }
 
-  const approvedBills = bills.filter((bill) => ["approved", "posted", "partially_paid"].includes(bill.status));
+  const approvedBills = bills.filter((bill) => ["approved", "posted", "partially_paid", "paid"].includes(bill.status));
   const selectedBalance = options.balances.find((row) => row.itemId === Number(itemId) && row.warehouseId === Number(warehouseId));
   const [materialContractDirection, materialContractIdText] = materialContract.split(":");
   const materialContractId = Number(materialContractIdText);

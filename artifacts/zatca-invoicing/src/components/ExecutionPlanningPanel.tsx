@@ -104,6 +104,7 @@ export type ExecutionArchiveAdapterContext = {
 export type ExecutionPlanningPanelProps = {
   projectId: number;
   section: "work-items" | "resources";
+  active?: boolean;
   onChange?: () => void;
   /**
    * Generic host adapter for the existing archival component. This panel does
@@ -146,11 +147,11 @@ async function responseJson<T>(response: Response): Promise<T> {
 
 export default function ExecutionPlanningPanel(props: ExecutionPlanningPanelProps) {
   return props.section === "resources"
-    ? <ResourcesSection projectId={props.projectId} onChange={props.onChange} />
+    ? <ResourcesSection projectId={props.projectId} onChange={props.onChange} active={props.active} />
     : <WorkItemsSection {...props} />;
 }
 
-function WorkItemsSection({ projectId, onChange, renderArchive }: ExecutionPlanningPanelProps) {
+function WorkItemsSection({ projectId, onChange, renderArchive, active = true }: ExecutionPlanningPanelProps) {
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
   const { data: costCenters = [] } = useCostCenters();
@@ -184,7 +185,7 @@ function WorkItemsSection({ projectId, onChange, renderArchive }: ExecutionPlann
       setLoading(false);
     }
   }, [headers, projectId, toast]);
-  useEffect(() => { if (token) void load(); }, [load, token]);
+  useEffect(() => { if (token && active) void load(); }, [load, token, active]);
 
   const parentOptions = rows
     .filter(row => row.id !== editing?.id)
@@ -412,7 +413,7 @@ function WorkItemsSection({ projectId, onChange, renderArchive }: ExecutionPlann
   </div>;
 }
 
-function ResourcesSection({ projectId, onChange }: Pick<ExecutionPlanningPanelProps, "projectId" | "onChange">) {
+function ResourcesSection({ projectId, onChange, active = true }: Pick<ExecutionPlanningPanelProps, "projectId" | "onChange" | "active">) {
   const { token } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<Resource[]>([]);
@@ -440,7 +441,7 @@ function ResourcesSection({ projectId, onChange }: Pick<ExecutionPlanningPanelPr
       toast({ title: "تعذر تحميل موارد المشروع", description: error?.message, variant: "destructive" });
     } finally { setLoading(false); }
   }, [headers, projectId, toast]);
-  useEffect(() => { if (token) void load(); }, [load, token]);
+  useEffect(() => { if (token && active) void load(); }, [load, token, active]);
 
   async function save() {
     if (editing?.type !== "material" && !editing?.name?.trim()) {

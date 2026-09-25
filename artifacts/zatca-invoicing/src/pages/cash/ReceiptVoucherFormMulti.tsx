@@ -29,7 +29,7 @@ import { DateField } from "@/components/ui/date-field";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
-import { VoucherContractingAllocation, positiveId, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
+import { VoucherContractingAllocation, positiveId, validateRetentionReleaseLines, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -173,9 +173,9 @@ export default function ReceiptVoucherFormMulti() {
     const projectId = positiveId(q.get("projectId"));
     const contractId = positiveId(q.get("contractId"));
     const billId = positiveId(q.get("billId"));
-    if (!entityId || !projectId || !contractId || (kind !== "owner_advance" && kind !== "owner_bill") || (kind === "owner_bill" && !billId)) return null;
+    if (!entityId || !projectId || !contractId || (kind !== "owner_advance" && kind !== "owner_bill" && kind !== "owner_retention_release") || (kind !== "owner_advance" && !billId)) return null;
     const amount = q.get("amount");
-    return { entityId, allocation: { kind, projectId, contractId, ...(kind === "owner_bill" ? { billId: billId! } : {}) } as ContractingAllocation,
+    return { entityId, allocation: { kind, projectId, contractId, ...(kind !== "owner_advance" ? { billId: billId! } : {}) } as ContractingAllocation,
       amount: amount && /^\d+(\.\d{1,2})?$/.test(amount) && Number(amount) > 0 ? amount : "" };
   }, [isNew, fromId, prefill]);
 
@@ -545,9 +545,10 @@ export default function ReceiptVoucherFormMulti() {
         if (!l.accountId && !l.contractingAllocation) throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب"));
         if (!((Number(l.amount) || 0) > 0)) throw new Error(t(`${NS}.lineAmountRequired`, "كل بند يجب أن يحتوي على مبلغ أكبر من صفر"));
         if (l.contractingAllocation && (!form.entityId || !l.contractingAllocation.projectId || !l.contractingAllocation.contractId
-          || (l.contractingAllocation.kind === "owner_bill" && !l.contractingAllocation.billId) || l.salesInvoiceId || Number(form.exchangeRate) !== 1))
+          || (l.contractingAllocation.kind !== "owner_advance" && !l.contractingAllocation.billId) || l.salesInvoiceId || Number(form.exchangeRate) !== 1))
           throw new Error("تحقق من العميل والمشروع والعقد والمستخلص؛ بنود المقاولات لا تقبل فاتورة مبيعات أو سعر صرف مختلفاً عن 1");
       }
+      await validateRetentionReleaseLines("receipt", Number(cid), form.entityId, token!, cleanLines);
       const grandTotal = cleanLines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
       if (!isFinite(grandTotal) || grandTotal <= 0) throw new Error(t(`${NS}.invalidAmount`));
 
@@ -1238,7 +1239,20 @@ export default function ReceiptVoucherFormMulti() {
                       {contractingEnabled && <VoucherContractingAllocation direction="receipt" entityId={form.entityId}
                         value={l.contractingAllocation} lineAmount={l.amount}
                         onAmountSuggested={amount => updateLine(l.key, { amount })}
-                        otherAllocated={form.lines.filter(other => other.key !== l.key && other.contractingAllocation?.billId &&
+                        onAddRemainingBills={rows => setForm(p => {
+                          const existing = new Set(p.lines.filter(line => line.contractingAllocation?.kind === "owner_retention_release")
+                            .map(line => line.contractingAllocation?.billId));
+                          const fresh = rows.filter(row => !existing.has(row.allocation.billId));
+                          const useCurrent = !l.contractingAllocation?.billId && !p.lines.find(line => line.key === l.key)?.amount && fresh.length > 0;
+                          return { ...p, lines: [
+                            ...p.lines.map(line => useCurrent && line.key === l.key ? { ...line, contractingAllocation: fresh[0].allocation,
+                              amount: fresh[0].amount, description: `إفراج محتجزات المستخلص ${fresh[0].billNumber}` } : line),
+                            ...fresh.slice(useCurrent ? 1 : 0).map(row => newRvLine({
+                            contractingAllocation: row.allocation, amount: row.amount, costCenter: p.costCenter,
+                            description: `إفراج محتجزات المستخلص ${row.billNumber}`,
+                          }))] };
+                        })}
+                        otherAllocated={form.lines.filter(other => other.key !== l.key && other.contractingAllocation?.kind === l.contractingAllocation?.kind && other.contractingAllocation?.billId &&
                           other.contractingAllocation.billId === l.contractingAllocation?.billId).reduce((sum, other) => sum + (Number(other.amount) || 0), 0)}
                         disabled={isLockedSourceEntry}
                         onChange={allocation => updateLine(l.key, { contractingAllocation: allocation,

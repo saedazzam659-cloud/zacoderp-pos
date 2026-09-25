@@ -33,6 +33,28 @@ test("picker scopes options to company and party, cascades bill to contract, sho
   assert.match(picker, /paidAmount/);
 });
 
+test("retention release uses authoritative separate certificate balances on both existing multiline vouchers", () => {
+  assert.match(picker, /Array\.isArray\(json\.retentionBills\)/);
+  assert.match(picker, /isRetention \? data\?\.retentionBills/);
+  assert.match(picker, /retentionRemainingAmount/);
+  assert.match(picker, /retentionReleasedAmount/);
+  assert.match(picker, /approved", "posted", "partially_paid", "paid"/);
+  assert.match(picker, /onAmountSuggested\?\.\(""\)/);
+  assert.match(picker, /onAddRemainingBills\(bills/);
+  assert.match(picker, /cache: "no-store"/);
+  assert.match(picker, /cents > available/);
+  for (const [form, kind, direction] of [[receipt, "owner_retention_release", "receipt"], [payment, "subcontract_retention_release", "payment"]] as const) {
+    assert.match(form, new RegExp(kind));
+    assert.match(form, new RegExp(`validateRetentionReleaseLines\\("${direction}"`));
+    assert.match(form, /onAddRemainingBills=\{rows => setForm/);
+    assert.match(form, /new(?:Rv|Pv)Line\(\{/);
+    assert.match(form, /existing\.has\(row\.allocation\.billId\)/);
+    assert.match(form, /other\.contractingAllocation\?\.kind === l\.contractingAllocation\?\.kind/);
+    assert.match(form, /isLockedSourceEntry/);
+  }
+  assert.match(panel, /"approved", "posted", "partially_paid", "paid"\]\.includes\(bill\.status\)/);
+});
+
 test("contracting panel opens an unsaved voucher separately from legacy direct settlements", () => {
   assert.match(panel, /navigate\(`\/cash\/\$\{direction\}-vouchers\/multi\/new\?\$\{query\}`\)/);
   assert.match(panel, /contract\.customerId \?\? options\.projectCustomerId \?\? null/);

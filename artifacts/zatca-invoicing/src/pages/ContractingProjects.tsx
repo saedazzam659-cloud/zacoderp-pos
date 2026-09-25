@@ -20,6 +20,8 @@ import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combob
 import { eligibleParties } from "@/lib/partyEligibility";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCostCenters, type CostCenter } from "@/hooks/useCostCenters";
+import { useQueryClient } from "@tanstack/react-query";
+import { contractingOptionsKey, fetchContractingProjectOptions, type ContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { DateField } from "@/components/ui/date-field";
 import { PROJECT_STATUS_LABEL, PROJECT_TYPE_LABEL, labelEnum } from "@/lib/contractingLabels";
 import {
@@ -67,6 +69,7 @@ export default function ContractingProjects() {
   const { t } = useTranslation();
   const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [rows, setRows] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -87,7 +90,7 @@ export default function ContractingProjects() {
     includeInactive: true,
   });
   const [branches, setBranches] = useState<ProjectBranch[]>([]);
-  const [projectOptions, setProjectOptions] = useState<Project[]>([]);
+  const [projectOptions, setProjectOptions] = useState<ContractingProjectOptions["projects"]>([]);
   const [integrityDiagnostics, setIntegrityDiagnostics] = useState<IntegrityDiagnostics | null>(null);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [branchesError, setBranchesError] = useState<string | null>(null);
@@ -101,17 +104,18 @@ export default function ContractingProjects() {
     if (!token) return;
     setBranchesLoading(true);
     setBranchesError(null);
-    // Never expose a previous tenant's picker data while a new scope loads.
+    // Never show a previous authorization scope while this scope resolves.
     setBranches([]);
     setProjectOptions([]);
+    setIntegrityDiagnostics(null);
     try {
-      const response = await fetch(`${API}/api/contracting/projects/options`, {
-        headers: requestHeaders(),
+      const payload = await queryClient.fetchQuery({
+        queryKey: contractingOptionsKey(user?.id, user?.companyId ?? user?.company?.id, actingCompanyId, token),
+        queryFn: () => fetchContractingProjectOptions(token, actingCompanyId),
+        staleTime: 30_000,
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
-      setBranches(Array.isArray(payload?.branches) ? payload.branches : []);
-      setProjectOptions(Array.isArray(payload?.projects) ? payload.projects : []);
+      setBranches(payload.branches);
+      setProjectOptions(payload.projects);
       setIntegrityDiagnostics(payload?.integrityDiagnostics?.deferredValidation
         ? payload.integrityDiagnostics
         : null);
@@ -123,10 +127,11 @@ export default function ContractingProjects() {
     } finally {
       setBranchesLoading(false);
     }
-  }, [requestHeaders, t, token]);
+  }, [actingCompanyId, queryClient, t, token, user?.id, user?.companyId, user?.company?.id]);
 
+  // The options request is shared with project detail. Opening a form never
+  // launches a second simultaneous request for the same authorized scope.
   useEffect(() => { void loadBranches(); }, [loadBranches]);
-  // A dialog opened later must see projects created in other sessions as well.
   useEffect(() => { if (editingOpen) void loadBranches(); }, [editingOpen, loadBranches]);
 
   useEffect(() => {
@@ -221,6 +226,8 @@ export default function ContractingProjects() {
         ? t("contracting.projects.updated", "تم تحديث المشروع")
         : t("contracting.projects.created", "تم إنشاء المشروع") });
       setEditing(null);
+      await queryClient.invalidateQueries({ queryKey: ["contracting-project-options"] });
+      await queryClient.invalidateQueries({ queryKey: ["contracting-project-detail"] });
        await Promise.all([load(), loadBranches()]);
      } catch (e: any) {
        toast({
@@ -243,6 +250,8 @@ export default function ContractingProjects() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       toast({ title: t("contracting.projects.deleted", "تم حذف المشروع") });
       setDeleting(null);
+      await queryClient.invalidateQueries({ queryKey: ["contracting-project-options"] });
+      await queryClient.invalidateQueries({ queryKey: ["contracting-project-detail"] });
        await Promise.all([load(), loadBranches()]);
     } catch (e: any) {
       toast({ title: t("common.errorOccurred", "حدث خطأ"), description: e?.message, variant: "destructive" });

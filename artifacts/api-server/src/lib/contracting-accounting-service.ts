@@ -2895,7 +2895,12 @@ export async function createSettlement(input: {
         assertIdempotentReplay(billReplayRow, payloadHash);
         return { ...billReplayRow, idempotentReplay: true };
       }
-       if (!["approved", "posted", "partially_paid"].includes(String(bill.status)) || !bill.journalEntryId) {
+      const billJournal = bill.journalEntryId && resultRows(await tx.execute(sql`
+        SELECT status FROM journal_entries WHERE id = ${bill.journalEntryId}
+          AND company_id = ${input.companyId}
+      `))[0];
+      if (!["approved", "posted", "partially_paid", ...(input.kind.startsWith("retention_") ? ["paid"] : [])].includes(String(bill.status))
+        || billJournal?.status !== "posted") {
         throw failure("يجب اعتماد وترحيل المستخلص قبل تسوية المستخلص");
       }
       await assertBillContractScope(tx, input.companyId, bill, { requireSelection: true });

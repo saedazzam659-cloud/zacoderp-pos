@@ -33,7 +33,7 @@ import {
 } from "@/components/SupplierTaxDetailsDialog";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
-import { VoucherContractingAllocation, positiveId, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
+import { VoucherContractingAllocation, positiveId, validateRetentionReleaseLines, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -259,9 +259,9 @@ export default function PaymentVoucherForm() {
     const projectId = positiveId(q.get("projectId"));
     const contractId = positiveId(q.get("contractId"));
     const billId = positiveId(q.get("billId"));
-    if (!entityId || !projectId || !contractId || (kind !== "subcontract_advance" && kind !== "subcontract_bill") || (kind === "subcontract_bill" && !billId)) return null;
+    if (!entityId || !projectId || !contractId || (kind !== "subcontract_advance" && kind !== "subcontract_bill" && kind !== "subcontract_retention_release") || (kind !== "subcontract_advance" && !billId)) return null;
     const amount = q.get("amount");
-    return { entityId, allocation: { kind, projectId, contractId, ...(kind === "subcontract_bill" ? { billId: billId! } : {}) } as ContractingAllocation,
+    return { entityId, allocation: { kind, projectId, contractId, ...(kind !== "subcontract_advance" ? { billId: billId! } : {}) } as ContractingAllocation,
       amount: amount && /^\d+(\.\d{1,2})?$/.test(amount) && Number(amount) > 0 ? amount : "" };
   }, [isNew, fromId]);
 
@@ -699,7 +699,7 @@ export default function PaymentVoucherForm() {
         if (!l.accountId && !l.contractingAllocation && !SERVER_ACCOUNT_OPS.includes(l.opType))
           throw new Error(t(`${NS}.lineAccountRequired`, "كل بند يجب أن يحتوي على حساب محاسبي"));
         if (l.contractingAllocation && (!form.entityId || !l.contractingAllocation.projectId || !l.contractingAllocation.contractId
-          || (l.contractingAllocation.kind === "subcontract_bill" && !l.contractingAllocation.billId)
+          || (l.contractingAllocation.kind !== "subcontract_advance" && !l.contractingAllocation.billId)
           || Number(l.amount) <= 0 || Number(l.taxAmount) !== 0 || l.purchaseInvoiceId || l.opType !== "direct"
           || Number(form.exchangeRate) !== 1))
           throw new Error("تحقق من المورد والمشروع والعقد والمستخلص؛ بند المقاولات لا يقبل ضريبة أو فاتورة مشتريات أو عملية خاصة أو سعر صرف مختلفاً عن 1");
@@ -730,6 +730,7 @@ export default function PaymentVoucherForm() {
         if ((l.opType === "employee_loan" || l.opType === "employee_custody") && !l.opEmployeeId)
           throw new Error(t(`${NS}.opEmployeeRequired`, "بند سلفة/عهدة: يجب اختيار الموظف"));
       }
+      await validateRetentionReleaseLines("payment", Number(cid), form.entityId, token!, kept);
       const linesPayload = kept.map(l => ({
         accountId:         l.contractingAllocation ? null : l.accountId ? parseInt(l.accountId) : null,
         description:       l.description || null,
@@ -1776,7 +1777,20 @@ export default function PaymentVoucherForm() {
                               {contractingEnabled && <VoucherContractingAllocation direction="payment" entityId={form.entityId}
                                 value={l.contractingAllocation} lineAmount={l.amount} disabled={isLockedSourceEntry}
                                 onAmountSuggested={amount => updateLine(l.key, { amount })}
-                                otherAllocated={form.lines.filter(other => other.key !== l.key && other.contractingAllocation?.billId &&
+                                onAddRemainingBills={rows => setForm(p => {
+                                  const existing = new Set(p.lines.filter(line => line.contractingAllocation?.kind === "subcontract_retention_release")
+                                    .map(line => line.contractingAllocation?.billId));
+                                  const fresh = rows.filter(row => !existing.has(row.allocation.billId));
+                                  const useCurrent = !l.contractingAllocation?.billId && !p.lines.find(line => line.key === l.key)?.amount && fresh.length > 0;
+                                  return { ...p, lines: [
+                                    ...p.lines.map(line => useCurrent && line.key === l.key ? { ...line, contractingAllocation: fresh[0].allocation,
+                                      amount: fresh[0].amount, description: `صرف محتجزات المستخلص ${fresh[0].billNumber}` } : line),
+                                    ...fresh.slice(useCurrent ? 1 : 0).map(row => newPvLine({
+                                    contractingAllocation: row.allocation, amount: row.amount,
+                                    description: `صرف محتجزات المستخلص ${row.billNumber}`,
+                                  }))] };
+                                })}
+                                otherAllocated={form.lines.filter(other => other.key !== l.key && other.contractingAllocation?.kind === l.contractingAllocation?.kind && other.contractingAllocation?.billId &&
                                   other.contractingAllocation.billId === l.contractingAllocation?.billId).reduce((sum, other) => sum + (Number(other.amount) || 0), 0)}
                                 onChange={allocation => updateLine(l.key, { contractingAllocation: allocation,
                                   ...(allocation ? { accountId: "", purchaseInvoiceId: "", opType: "direct" as const, taxRate: "0", taxAmount: "0.00", taxAccountId: "",
