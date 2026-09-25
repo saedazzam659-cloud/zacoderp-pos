@@ -182,10 +182,76 @@ test("owner cumulative VAT taxes only newly certified work, not cumulative work 
     progressPercent: "50", priorGrossAmount: prior.grossAmount,
     priorRetentionAmount: prior.retentionAmount,
     retentionPercent: "10", retentionCapPercent: "4", vatPercent: "15",
-  }).vatAmount, "28500.00");
+  }).vatAmount, "30000.00");
 });
 
-test("owner draft, approval and recovery preview pass their direction to VAT math", () => {
+test("explicit incoming and outgoing tax period work before retention in manual and aggregate modes", () => {
+  for (const direction of ["outgoing", "incoming"] as const) {
+    for (const retentionPercent of ["10", "0"]) {
+      const manual = authoritativeCumulativeBillAmounts({
+        direction, grossAmount: "100000", retentionPercent, vatPercent: "15",
+        priorGrossAmount: "0", priorRetentionAmount: "0",
+      });
+      const aggregate = aggregateContractProgressAmounts({
+        direction, adjustedContractValue: "100000", progressPercent: "100",
+        priorGrossAmount: "0", priorRetentionAmount: "0",
+        retentionPercent, vatPercent: "15",
+      });
+      const retention = retentionPercent === "10" ? "10000.00" : "0.00";
+      const net = retentionPercent === "10" ? "105000.00" : "115000.00";
+      for (const amounts of [manual, aggregate]) {
+        assert.equal(amounts.retentionAmount, retention);
+        assert.equal(amounts.vatAmount, "15000.00");
+        assert.equal(amounts.netAmount, net);
+        assert.equal(Number(amounts.dueAmount) + Number(amounts.retentionAmount) + Number(amounts.vatAmount), 115000);
+      }
+      const lines = contractingBillRoleLines({ direction, ...manual });
+      assert.equal(totals(lines).debit, totals(lines).credit);
+    }
+  }
+});
+
+test("incoming subsequent cumulative certification taxes only the new period with retention cap and selected VAT rate", () => {
+  const first = authoritativeCumulativeBillAmounts({
+    direction: "incoming", grossAmount: "30000", adjustedContractValue: "100000",
+    retentionPercent: "10", retentionCapPercent: "4", vatPercent: "5",
+    priorGrossAmount: "0", priorRetentionAmount: "0",
+  });
+  const manual = authoritativeCumulativeBillAmounts({
+    direction: "incoming", grossAmount: "50000", adjustedContractValue: "100000",
+    retentionPercent: "10", retentionCapPercent: "4", vatPercent: "5",
+    priorGrossAmount: first.grossAmount, priorRetentionAmount: first.retentionAmount,
+  });
+  const aggregate = aggregateContractProgressAmounts({
+    direction: "incoming", adjustedContractValue: "100000", progressPercent: "50",
+    priorGrossAmount: first.grossAmount, priorRetentionAmount: first.retentionAmount,
+    retentionPercent: "10", retentionCapPercent: "4", vatPercent: "5",
+  });
+  for (const amounts of [manual, aggregate]) {
+    assert.equal(amounts.previousPaid, "30000.00");
+    assert.equal(amounts.retentionAmount, "1000.00");
+    assert.equal(amounts.dueAmount, "19000.00");
+    assert.equal(amounts.vatAmount, "1000.00");
+    assert.equal(amounts.netAmount, "20000.00");
+  }
+});
+
+test("zero VAT preserves retention and cash arithmetic for both directions", () => {
+  for (const direction of ["incoming", "outgoing"] as const) {
+    const amounts = authoritativeCumulativeBillAmounts({
+      direction, grossAmount: "100000", retentionPercent: "10", vatPercent: "0",
+      priorGrossAmount: "0", priorRetentionAmount: "0",
+    });
+    assert.equal(amounts.vatAmount, "0.00");
+    assert.equal(amounts.netAmount, "90000.00");
+    assert.equal(aggregateContractProgressAmounts({
+      direction, adjustedContractValue: "100000", progressPercent: "100",
+      priorGrossAmount: "0", retentionPercent: "10", vatPercent: "0",
+    }).netAmount, "90000.00");
+  }
+});
+
+test("both bill directions are wired to VAT math while historical snapshots stay immutable", () => {
   const service = readFileSync(new URL("../src/lib/contracting-accounting-service.ts", import.meta.url), "utf8");
   const route = readFileSync(new URL("../src/routes/contracting.ts", import.meta.url), "utf8");
   const details = readFileSync(new URL("../src/lib/contracting-bill-details-service.ts", import.meta.url), "utf8");
@@ -197,6 +263,17 @@ test("owner draft, approval and recovery preview pass their direction to VAT mat
   ]);
   assert.deepEqual(argumentsPassed(route, "aggregateContractProgressAmounts"), ["input.direction"]);
   assert.deepEqual(argumentsPassed(route, "authoritativeCumulativeBillAmounts"), ["direction", "direction"]);
+  assert.equal((route.match(/if \(!aggregateRequested\) \{/g) ?? []).length, 2);
+  assert.match(route, /if \(\["approved", "posted", "partially_paid", "paid", "reversed"\]\.includes\(String\(cur\.status\)\) \|\|\s*cur\.journalEntryId/);
+  assert.doesNotMatch(route, /dueAmount \* vatPct/);
+  const screen = readFileSync(new URL("../../zatca-invoicing/src/pages/ContractingProjectDetail.tsx", import.meta.url), "utf8");
+  assert.match(screen, /const previewVatBase = currentPeriodGross;/);
+  assert.doesNotMatch(screen, /const previewVatBase = direction === "outgoing"/);
+  // Omitted direction is reserved for unaudited legacy callers, not bill writes.
+  assert.equal(authoritativeCumulativeBillAmounts({
+    grossAmount: "100000", retentionPercent: "10", vatPercent: "15",
+    priorGrossAmount: "0", priorRetentionAmount: "0",
+  }).vatAmount, "13500.00");
   // Approval is the sole recertification boundary. An already-approved bill
   // (including a legacy approved bill whose journal is still draft) returns
   // or errors before the amount calculation; detail/report reads use snapshots.

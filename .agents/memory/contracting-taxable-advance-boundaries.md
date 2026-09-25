@@ -3,11 +3,11 @@ name: Contracting taxable advance boundaries
 description: Tax-point ownership, fiscal-only certificates, legacy safety, and partial advance settlement.
 ---
 
-Keep new owner-certificate VAT on current-period certified work before retention. Do not retrospectively recompute approved or posted snapshots; the requested owner correction does not authorize changing historical subcontract treatment.
+Keep new and editable owner and incoming subcontract-certificate VAT on current-period certified work before retention. Do not retrospectively recompute approved or posted snapshots, including approved legacy draft-journal evidence. The prior incoming legacy-preserve decision is superseded only for new/editable incoming certificates.
 
 **Why:** Retention defers collection rather than reducing taxable work. Recomputing historical documents would detach their values from existing journals and electronic evidence.
 
-**How to apply:** Use the same owner calculation for creation, preview, editing and approval. Inconsistent historical VAT requires explicit correction, not silent repricing during fiscal issuance.
+**How to apply:** Use the same direction-explicit calculation for owner and subcontract creation, preview, editing and approval. Inconsistent historical VAT requires explicit correction, not silent repricing during fiscal issuance.
 
 An explicitly taxable advance invoice owns the tax-point accrual; its receipt clears that invoice's receivable, rather than recognizing advance liability or VAT again. A certificate's electronic document references the existing certificate accounting and is not another sales posting.
 

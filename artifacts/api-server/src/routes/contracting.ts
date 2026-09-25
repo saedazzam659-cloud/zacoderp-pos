@@ -4088,16 +4088,15 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       ? requestedRetention
       : Math.min(requestedRetention, retentionCapAmount);
     let dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
-    // Legacy incoming drafts retain their arithmetic; outgoing drafts are
-    // replaced below by the cumulative certified-period helper.
-    let vatAmount = direction === "incoming" ? Math.round((dueAmount * vatPct / 100) * 100) / 100 : 0;
-    let netAmount = direction === "incoming" ? Math.round((dueAmount + vatAmount) * 100) / 100 : 0;
-    if (!aggregateRequested && direction === "outgoing") {
-      // Manual owner certificates use the same certified cumulative baseline
-      // as approval; neither a client-supplied previousPaid nor retention may
-      // reduce this period's VAT base.
+    let vatAmount = 0;
+    let netAmount = 0;
+    if (!aggregateRequested) {
+      // Manual certificates on either side use the approved cumulative
+      // baseline; retention never reduces taxable current-period work.
       const prior = await aggregatePriorAmounts(
-        cid, projectId, direction, Number(b.ownerContractId), null,
+        cid, projectId, direction,
+        b.ownerContractId ? Number(b.ownerContractId) : null,
+        b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
       );
       const amounts = authoritativeCumulativeBillAmounts({
         direction,
@@ -4458,11 +4457,14 @@ router.put("/bills/:id", async (req, res) => {
       ? requestedRetention
       : Math.min(requestedRetention, retentionCapAmount);
     let dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
-    let vatAmount = direction === "incoming" ? Math.round((dueAmount * vatPct / 100) * 100) / 100 : 0;
-    let netAmount = direction === "incoming" ? Math.round((dueAmount + vatAmount) * 100) / 100 : 0;
-    if (!aggregateRequested && direction === "outgoing") {
+    let vatAmount = 0;
+    let netAmount = 0;
+    if (!aggregateRequested) {
       const prior = await aggregatePriorAmounts(
-        cid, cur.projectId, direction, Number(finalOwnerContractId), null, id,
+        cid, cur.projectId, direction,
+        finalOwnerContractId ? Number(finalOwnerContractId) : null,
+        finalSubcontractorContractId ? Number(finalSubcontractorContractId) : null,
+        id,
       );
       const amounts = authoritativeCumulativeBillAmounts({
         direction,
