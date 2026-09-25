@@ -17,6 +17,8 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
+import { getDomain, sessionGeneration } from '@/lib/api';
+import { formScope, referenceList, positiveId, selectedBranch, branchWarehouses, selectedWarehouse, requiredReference } from '@/lib/formReferences';
 import { money, qty as fq, todayISO, showDate } from '@/lib/format';
 import { onScan, clearScan } from '@/lib/scanBus';
 import { printInvoice, shareInvoicePdf } from '@/lib/print';
@@ -50,6 +52,7 @@ interface CartLine {
   discount: number;
   discountAmount: number;
   unitId?: number;
+  warehouseId?: number;
   unitName?: string;
   conversionFactor: number;
 }
@@ -76,6 +79,13 @@ export default function InvoiceForm() {
   const router = useRouter();
   const qc = useQueryClient();
   const { companyId, user } = useAuth();
+  const generation = sessionGeneration();
+  const scopeQ = useQuery({
+    queryKey: ['invoice-form-scope', companyId, user?.id, generation],
+    queryFn: () => formScope(companyId!, user!.id, generation, getDomain, sessionGeneration),
+    enabled: !!companyId && !!user?.id,
+  });
+  const scope = scopeQ.data;
   const { mp } = useMobilePerms();
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -107,6 +117,8 @@ export default function InvoiceForm() {
   // fetched lists on first load (see effects below), user can override.
   const [branchSel, setBranchSel] = useState<number | null>(null);
   const [warehouseSel, setWarehouseSel] = useState<number | null>(null);
+  const [warehouseChanged, setWarehouseChanged] = useState(false);
+  const [branchChanged, setBranchChanged] = useState(false);
   const [currencySel, setCurrencySel] = useState<number | null>(null);
   // نوع الفاتورة: مبسطة تُحفظ بدون رقم ضريبي للعميل؛ ضريبية ترفض الحفظ بدونه.
   const [invoiceKind, setInvoiceKind] = useState<'simplified' | 'tax'>('simplified');
@@ -120,52 +132,52 @@ export default function InvoiceForm() {
 
   // reference data
   const customersQ = useQuery({
-    queryKey: ['customers', companyId],
-    queryFn: () => api<any[]>(`/api/customers?companyId=${companyId}`),
-    enabled: !!companyId,
+    queryKey: ['customers', scope],
+    queryFn: () => referenceList<any>(`/api/customers?companyId=${companyId}`, api),
+    enabled: !!scope,
   });
   const itemsQ = useQuery({
-    queryKey: ['items', companyId],
-    queryFn: () => api<Item[]>(`/api/inventory/items?companyId=${companyId}&includeHidden=1`),
-    enabled: !!companyId,
+    queryKey: ['items', scope],
+    queryFn: () => referenceList<Item>(`/api/inventory/items?companyId=${companyId}&includeHidden=1`, api),
+    enabled: !!scope,
   });
   const cashBoxesQ = useQuery({
-    queryKey: ['cash-boxes', companyId],
-     queryFn: () => api<any[]>(`/api/cash-boxes?companyId=${companyId}&onlyUserBranches=1`),
-    enabled: !!companyId,
+    queryKey: ['cash-boxes', scope],
+    queryFn: () => referenceList<any>(`/api/cash-boxes?companyId=${companyId}&onlyUserBranches=1`, api),
+    enabled: !!scope,
   });
   const banksQ = useQuery({
-    queryKey: ['bank-accounts', companyId],
-     queryFn: () => api<any[]>(`/api/bank-accounts?companyId=${companyId}&onlyUserBranches=1`),
-    enabled: !!companyId,
+    queryKey: ['bank-accounts', scope],
+    queryFn: () => referenceList<any>(`/api/bank-accounts?companyId=${companyId}&onlyUserBranches=1`, api),
+    enabled: !!scope,
   });
   const branchesQ = useQuery({
-    queryKey: ['branches', companyId],
-     queryFn: () => api<any[]>(`/api/org/branches?companyId=${companyId}&onlyUserBranches=1`),
-    enabled: !!companyId,
+    queryKey: ['branches', scope],
+    queryFn: () => referenceList<any>(`/api/org/branches?companyId=${companyId}&onlyUserBranches=1`, api),
+    enabled: !!scope,
     retry: false,
   });
   const warehousesQ = useQuery({
-    queryKey: ['warehouses', companyId],
-     queryFn: () => api<any[]>(`/api/inventory/warehouses?companyId=${companyId}&onlyUserBranches=1`),
-    enabled: !!companyId,
+    queryKey: ['warehouses', scope],
+    queryFn: () => referenceList<any>(`/api/inventory/warehouses?companyId=${companyId}&onlyUserBranches=1`, api),
+    enabled: !!scope,
     retry: false,
   });
   const currenciesQ = useQuery({
-    queryKey: ['currencies', companyId],
-    queryFn: () => api<any[]>(`/api/currencies?companyId=${companyId}`),
-    enabled: !!companyId,
+    queryKey: ['currencies', scope],
+    queryFn: () => referenceList<any>(`/api/currencies?companyId=${companyId}`, api),
+    enabled: !!scope,
     retry: false,
   });
   const docQ = useQuery({
-    queryKey: ['sales-invoice', invoiceId],
+    queryKey: ['sales-invoice', scope, invoiceId],
     queryFn: () => api<any>(`/api/sales/sales-invoices/${invoiceId}?companyId=${companyId}`),
-    enabled: !!companyId && !!invoiceId,
+    enabled: !!scope && !!invoiceId,
   });
   const vouchersQ = useQuery({
-    queryKey: ['invoice-vouchers', invoiceId],
-    queryFn: () => api<any[]>(`/api/receipt-vouchers?companyId=${companyId}&salesInvoiceId=${invoiceId}`),
-    enabled: !!companyId && !!invoiceId,
+    queryKey: ['invoice-vouchers', scope, invoiceId],
+    queryFn: () => referenceList<any>(`/api/receipt-vouchers?companyId=${companyId}&salesInvoiceId=${invoiceId}`, api),
+    enabled: !!scope && !!invoiceId,
   });
 
   // hydrate edit mode
@@ -180,9 +192,9 @@ export default function InvoiceForm() {
     setBankAccountId(d.bankAccountId ?? null);
     setPriceIncludesVat(!!d.priceIncludesVat);
     setNotes(d.notes ?? '');
-    if (d.branchId) setBranchSel(d.branchId);
+    if (positiveId(d.branchId)) setBranchSel(positiveId(d.branchId));
     const firstWh = (Array.isArray(d.lines) ? d.lines : []).find((l: any) => l.warehouseId)?.warehouseId;
-    if (firstWh) setWarehouseSel(firstWh);
+    if (positiveId(firstWh)) setWarehouseSel(positiveId(firstWh));
     const ls: CartLine[] = (Array.isArray(d.lines) ? d.lines : []).map((l: any) => ({
       itemId: l.itemId,
       name: l.itemName ?? l.item?.nameAr ?? `صنف ${l.itemId}`,
@@ -193,6 +205,7 @@ export default function InvoiceForm() {
       discount: parseFloat(l.discount ?? 0) || 0,
       discountAmount: parseFloat(l.discountAmount ?? 0) || 0,
       unitId: l.unitId ?? undefined,
+      warehouseId: positiveId(l.warehouseId) ?? undefined,
       unitName: l.unit ?? l.unitName ?? undefined,
       conversionFactor: parseFloat(l.conversionFactor ?? 1) || 1,
     }));
@@ -212,17 +225,13 @@ export default function InvoiceForm() {
   // `/api/org/branches` is already scoped server-side to the branches the
   // user may access, so the picker simply shows everything returned.
   const branches = Array.isArray(branchesQ.data) ? branchesQ.data : [];
-  const defaultBranchId =
-    loadedDoc?.branchId ??
-    (user?.branchIds?.length ? user.branchIds[0] : null) ??
-    (branches.find((b: any) => b.isDefault || b.is_default)?.id ?? branches[0]?.id ?? null);
-  const branchId = branchSel ?? defaultBranchId;
+  const branchId = selectedBranch(branches, branchSel, loadedDoc?.branchId);
 
   // default warehouse for stock lines
   const warehouses = Array.isArray(warehousesQ.data) ? warehousesQ.data : [];
-  const defaultWarehouseId =
-    (warehouses.find((w: any) => w.isDefault || w.is_default)?.id ?? warehouses[0]?.id ?? null);
-  const warehouseId = warehouseSel ?? defaultWarehouseId;
+  const availableWarehouses = branchWarehouses(warehouses, branchId);
+  const historicalWarehouse = !branchChanged && !warehouseChanged && !isNew && loadedDoc?.lines?.some((l: any) => positiveId(l.warehouseId) === warehouseSel);
+  const warehouseId = historicalWarehouse ? warehouseSel : selectedWarehouse(availableWarehouses, warehouseSel);
 
   // default currency: company default → SAR → first
   const currencies = Array.isArray(currenciesQ.data) ? currenciesQ.data : [];
@@ -230,15 +239,15 @@ export default function InvoiceForm() {
     currencies.find((x: any) => x.isDefault || x.is_default) ??
     currencies.find((x: any) => String(x.code ?? '').toUpperCase() === 'SAR') ??
     currencies[0] ?? null;
-  const currency = currencies.find((x: any) => x.id === currencySel) ?? defaultCurrency;
+  const currency = currencies.find((x: any) => positiveId(x.id) === currencySel) ?? (!loadedDoc?.currencyCode ? defaultCurrency : currencies.find((x: any) => String(x.code).toUpperCase() === String(loadedDoc.currencyCode).toUpperCase()));
 
   // default cash box on open (نقدي): default-flagged box → first
   useEffect(() => {
-    if (!cashBoxId && cashBoxes.length > 0 && !loadedDoc) {
+    if (!cashBoxId && cashBoxes.length > 0 && !loadedDoc && !invoiceId) {
       setCashBoxId((cashBoxes.find((b: any) => b.isDefault || b.is_default) ?? cashBoxes[0]).id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cashBoxes.length]);
+  }, [cashBoxes.length, invoiceId, loadedDoc, cashBoxId]);
 
   // نوع الفاتورة يتبع الرقم الضريبي للعميل تلقائياً ما لم يختَر المستخدم يدوياً
   // (يعتمد على vatNumber نفسه حتى لو وصلت بيانات العملاء بعد اختيار العميل)
@@ -251,7 +260,7 @@ export default function InvoiceForm() {
   useEffect(() => {
     if (!loadedDoc?.currencyCode || currencySel != null || !currencies.length) return;
     const m = currencies.find((x: any) => String(x.code ?? '').toUpperCase() === String(loadedDoc.currencyCode).toUpperCase());
-    if (m) setCurrencySel(m.id);
+    if (m) setCurrencySel(positiveId(m.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedDoc?.currencyCode, currencies.length]);
 
@@ -317,9 +326,9 @@ export default function InvoiceForm() {
   // فتظهر تعديلات الأسعار التي تمت من الويب فوراً دون إعادة تشغيل التطبيق.
   useFocusEffect(
     React.useCallback(() => {
-      if (companyId) itemsQ.refetch();
+      if (scope) itemsQ.refetch();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [companyId]),
+    }, [scope]),
   );
 
   // تعديل سعر البيع لسطر — متاح فقط لمن يملك صلاحية invoice_edit_price
@@ -383,7 +392,7 @@ export default function InvoiceForm() {
         discountAmount: l.discountAmount,
         // mirrors the web form: line total is the entered (gross) amount
         lineTotal: +gross.toFixed(2),
-        warehouseId: warehouseId ?? undefined,
+        warehouseId: (!branchChanged && !warehouseChanged && !isNew ? l.warehouseId : null) ?? warehouseId ?? undefined,
         unitId: l.unitId ?? it?.unit?.id ?? undefined,
         conversionFactor: l.conversionFactor,
       };
@@ -393,8 +402,8 @@ export default function InvoiceForm() {
       invoiceDate,
       customerId,
       branchId,
-      currencyCode: currency?.code ?? 'SAR',
-      exchangeRate: String(currency?.exchangeRate ?? currency?.rate ?? '1'),
+      currencyCode: currency?.code ?? loadedDoc?.currencyCode,
+      exchangeRate: String(currency?.exchangeRate ?? currency?.rate ?? loadedDoc?.exchangeRate ?? '1'),
       paymentType,
       cashBoxId: paymentType === 'cash' ? cashBoxId : null,
       bankAccountId: paymentType === 'bank' ? bankAccountId : null,
@@ -410,11 +419,30 @@ export default function InvoiceForm() {
   };
 
   const validate = (): string => {
+    if (!scope) return 'جارٍ تحديد الخادم والحساب — انتظر ثم أعد المحاولة';
+    for (const [label, q] of [['الفروع', branchesQ], ['المخازن', warehousesQ], ['العملات', currenciesQ]] as const) {
+      const err = requiredReference(label, q.isPending, q.error, q.data);
+      if (err) return err;
+    }
     if (!lines.length) return 'أضف صنفاً واحداً على الأقل';
     if (!customerId) return 'اختر العميل (للبيع النقدي اختر «عميل نقدي»)';
-    if (!branchId) return 'لا يوجد فرع معرّف لحسابك — تواصل مع مدير النظام';
-    if (paymentType === 'cash' && !cashBoxId && cashBoxes.length > 0) return 'اختر الخزنة';
-    if (paymentType === 'bank' && !bankAccountId) return 'اختر الحساب البنكي';
+    if (!branches.length) return 'لا توجد فروع مرتبطة بالمستخدم — اطلب من المدير تعيينها في فروع المستخدم';
+    if (!branches.some((b) => positiveId(b.id) === branchId)) return 'فرع المستند خارج الفروع المتاحة — اختر فرعاً مخولاً قبل الحفظ';
+    if (!currency || !currencies.some((x) => positiveId(x.id) === positiveId(currency.id))) return 'عملة المستند غير متاحة — اختر عملة متاحة قبل الحفظ';
+    if (paymentType !== 'credit') {
+      const q = paymentType === 'cash' ? cashBoxesQ : banksQ;
+      const err = requiredReference(paymentType === 'cash' ? 'الخزن' : 'الحسابات البنكية', q.isPending, q.error, q.data);
+      if (err) return err;
+      const list = paymentType === 'cash' ? cashBoxes : banks;
+      const id = paymentType === 'cash' ? cashBoxId : bankAccountId;
+      if (!list.some((x) => positiveId(x.id) === positiveId(id))) return `اختر ${paymentType === 'cash' ? 'خزنة' : 'حساباً بنكياً'} متاحاً — تحقق من ربطه بالفرع`;
+    }
+    if (!availableWarehouses.length && !(loadedDoc && !branchChanged && !warehouseChanged && lines.every((l) => positiveId(l.warehouseId)))) return 'لا توجد مخازن مرتبطة بهذا الفرع — اطلب من المدير ربط مخزن بالفرع';
+    if (lines.some((l) => {
+      const id = (!branchChanged && !warehouseChanged && !isNew ? l.warehouseId : null) ?? warehouseId;
+      return !availableWarehouses.some((w) => positiveId(w.id) === positiveId(id)) &&
+        !(loadedDoc && !branchChanged && !warehouseChanged && positiveId(l.warehouseId) === positiveId(id));
+    })) return 'مخزن السطر خارج مخازن الفرع المتاحة — اختر مخزناً مخولاً قبل الحفظ';
     // فاتورة ضريبية تتطلب رقم ضريبي للعميل — نرفض الحفظ بدونه (المبسطة تُحفظ بدونه)
     if (invoiceKind === 'tax' && !String(customer?.vatNumber ?? '').trim())
       return 'الفاتورة الضريبية تتطلب عميلاً له رقم ضريبي — أدخل الرقم الضريبي للعميل أو اختر فاتورة مبسطة';
@@ -588,6 +616,16 @@ export default function InvoiceForm() {
       </View>
     );
   }
+  if (scopeQ.isError) return <View style={{ flex: 1, justifyContent: 'center', padding: 20, gap: 12, backgroundColor: c.background }}>
+    <Text style={{ textAlign: 'right', color: c.destructive }}>{scopeQ.error?.message}</Text>
+    <Btn title="إعادة الاتصال بالخادم" onPress={() => scopeQ.refetch()} />
+  </View>;
+  if (invoiceId && scope && (docQ.isError || !docQ.data)) {
+    return <View style={{ flex: 1, justifyContent: 'center', padding: 20, gap: 12, backgroundColor: c.background }}>
+      <Text style={{ textAlign: 'right', color: c.destructive }}>تعذّر تحميل الفاتورة: {docQ.error instanceof Error ? docQ.error.message : 'لا توجد بيانات'} — أعد المحاولة</Text>
+      <Btn title="إعادة تحميل الفاتورة" onPress={() => docQ.refetch()} />
+    </View>;
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
@@ -631,13 +669,24 @@ export default function InvoiceForm() {
         {tab === 'basic' && (
           <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
             <Card style={{ gap: 12 }}>
+              {([
+                ['الفروع', branchesQ], ['المخازن', warehousesQ], ['العملات', currenciesQ],
+                ...(paymentType === 'cash' ? [['الخزن', cashBoxesQ]] : paymentType === 'bank' ? [['الحسابات البنكية', banksQ]] : []),
+              ] as [string, typeof branchesQ][]).map(([label, q]) => (
+                <View key={label}>
+                  <Text style={{ textAlign: 'right', color: q.isError ? c.destructive : c.mutedForeground }}>
+                    {requiredReference(label, q.isPending, q.error, q.data) || (q.data?.length === 0 ? `لا توجد ${label} متاحة — تحقق من ربط الفرع وصلاحيات المستخدم` : '')}
+                  </Text>
+                  {q.isError ? <Btn title={`إعادة تحميل ${label}`} onPress={() => q.refetch()} small kind="outline" /> : null}
+                </View>
+              ))}
               <Text style={{ fontSize: 13, color: c.mutedForeground, textAlign: 'right' }}>طريقة الدفع</Text>
               <Seg
                 options={[{ v: 'cash', l: 'نقدي' }, { v: 'bank', l: 'بنك/شبكة' }, { v: 'credit', l: 'آجل' }]}
                 value={paymentType}
                 onChange={setPaymentType}
               />
-              {paymentType === 'cash' && cashBoxes.length > 0 ? (
+              {paymentType === 'cash' ? (
                 <PickRow
                   label="الخزنة"
                   value={cashBoxes.find((b) => b.id === cashBoxId)?.nameAr ?? 'اختر'}
@@ -661,20 +710,20 @@ export default function InvoiceForm() {
               />
               <PickRow
                 label="الفرع"
-                value={branches.find((b: any) => b.id === branchId)?.nameAr ?? '—'}
-                onPress={() => { if (branches.length > 1) setPick('branch'); }}
+                value={branches.find((b: any) => positiveId(b.id) === branchId)?.nameAr ?? (branchId ? `فرع سابق #${branchId} (خارج النطاق)` : 'لا توجد فروع متاحة')}
+                onPress={() => { if (branches.length) setPick('branch'); }}
                 testID="pick-branch"
               />
               <PickRow
                 label="المخزن"
-                value={warehouses.find((w: any) => w.id === warehouseId)?.nameAr ?? '—'}
-                onPress={() => { if (warehouses.length > 1) setPick('warehouse'); }}
+                value={availableWarehouses.find((w: any) => positiveId(w.id) === warehouseId)?.nameAr ?? (warehouseId && historicalWarehouse ? `مخزن سابق #${warehouseId} (خارج النطاق)` : 'لا توجد مخازن لهذا الفرع')}
+                onPress={() => { if (availableWarehouses.length) setPick('warehouse'); }}
                 testID="pick-warehouse"
               />
               <PickRow
                 label="العملة"
-                value={currency ? `${currency.nameAr ?? currency.code}${(currency.isDefault || currency.is_default) ? ' (افتراضية)' : ''}` : 'ريال سعودي'}
-                onPress={() => { if (currencies.length > 1) setPick('currency'); }}
+                value={currency ? `${currency.nameAr ?? currency.code}${(currency.isDefault || currency.is_default) ? ' (افتراضية)' : ''}` : (loadedDoc?.currencyCode ? `${loadedDoc.currencyCode} (عملة سابقة خارج النطاق)` : 'لا توجد عملات متاحة')}
+                onPress={() => { if (currencies.length) setPick('currency'); }}
                 testID="pick-currency"
               />
               <Field label="تاريخ الفاتورة (YYYY-MM-DD)" value={invoiceDate} onChangeText={setInvoiceDate} ltr testID="input-invoice-date" />
@@ -843,6 +892,7 @@ export default function InvoiceForm() {
 
             {/* cart footer */}
             <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: c.card, borderTopWidth: 1, borderTopColor: c.border, padding: 12, gap: 8 }}>
+              {saveError ? <Text style={{ textAlign: 'right', color: c.destructive, fontSize: 12 }}>{saveError}</Text> : null}
               <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}>
                 <Text style={{ color: c.mutedForeground, fontSize: 13 }}>{lines.length} صنف · الإجمالي شامل الضريبة</Text>
                 <Text style={{ color: c.primary, fontSize: 17, fontFamily: 'Inter_700Bold' }}>{money(totals.total)}</Text>
@@ -1085,7 +1135,7 @@ export default function InvoiceForm() {
               {pick === 'cashbox' ? 'اختيار الخزنة' : pick === 'bank' ? 'اختيار الحساب البنكي' : pick === 'branch' ? 'اختيار الفرع' : pick === 'warehouse' ? 'اختيار المخزن' : 'اختيار العملة'}
             </Text>
             <FlatList
-              data={pick === 'cashbox' ? cashBoxes : pick === 'bank' ? banks : pick === 'branch' ? branches : pick === 'warehouse' ? warehouses : currencies}
+              data={pick === 'cashbox' ? cashBoxes : pick === 'bank' ? banks : pick === 'branch' ? branches : pick === 'warehouse' ? availableWarehouses : currencies}
               keyExtractor={(x: any) => String(x.id)}
               renderItem={({ item }: any) => {
                 const cur =
@@ -1098,11 +1148,18 @@ export default function InvoiceForm() {
                 return (
                   <Pressable
                     onPress={() => {
-                      if (pick === 'cashbox') setCashBoxId(item.id);
-                      else if (pick === 'bank') setBankAccountId(item.id);
-                      else if (pick === 'branch') setBranchSel(item.id);
-                      else if (pick === 'warehouse') setWarehouseSel(item.id);
-                      else setCurrencySel(item.id);
+                      if (pick === 'cashbox') setCashBoxId(positiveId(item.id));
+                      else if (pick === 'bank') setBankAccountId(positiveId(item.id));
+                      else if (pick === 'branch') {
+                        if (branchId !== positiveId(item.id)) {
+                          setBranchSel(positiveId(item.id));
+                          setWarehouseSel(null);
+                          setBranchChanged(true);
+                          setWarehouseChanged(true);
+                        }
+                      }
+                      else if (pick === 'warehouse') { setWarehouseSel(positiveId(item.id)); setWarehouseChanged(true); }
+                      else setCurrencySel(positiveId(item.id));
                       setPick(null);
                     }}
                     style={({ pressed }) => ({ paddingVertical: 13, borderBottomWidth: StyleShim, borderBottomColor: c.border, opacity: pressed ? 0.6 : 1, flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' })}

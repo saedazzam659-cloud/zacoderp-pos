@@ -567,3 +567,17 @@ mtime_ms = 1790288028057
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/c2d3d5d4-fe2b-49de-9581-8b9ee1bd5310/a8330dc0-a3dd-469e-a5b2-b4cf1ca3c271"
 storage_version_token = "1790288174012141"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "0RkH5Vc1HkAcNMJUASvtB"
+uri = "file://artifacts/mobile/releases/zacoderp-google-play-v17.aab"
+type = "unspecified"
+title = "تطبيق زاكود ERP — إصدار Android 17"
+description = "ملف AAB موقّع بنفس شهادة الإصدار السابق، جاهز للرفع إلى Google Play. يتضمن عرض رقم النسخة وحالة صلاحيات كشوف الحساب، وتحسين تحميل بيانات الفروع والمخازن ورسائل الأخطاء. لم يتم نشره على المتجر."
+logical_id = "3d43a6d0-1da3-42ce-8e12-37623082d9f2"
+content_hash = "sha256:63a04ebe4b7d713cb8b8a03e38345ccd6c78044908caa93f4aff048f5ae4299f"
+size = 77416185
+mtime_ms = 1790294646282
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/3d43a6d0-1da3-42ce-8e12-37623082d9f2/043cfa0c-a7b8-4def-9fda-04891afd45b9"
+storage_version_token = "1790294685770702"
+content_type = "application/octet-stream"

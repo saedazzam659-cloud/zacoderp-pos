@@ -5,6 +5,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
+import { getDomain, sessionGeneration } from '@/lib/api';
+import { formScope, referenceList, positiveId, requiredReference } from '@/lib/formReferences';
 import { todayISO } from '@/lib/format';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
@@ -17,7 +19,14 @@ export default function NewVoucher() {
   const qc = useQueryClient();
   const params = useLocalSearchParams<{ invoiceId?: string; customerId?: string; editId?: string }>();
   const editId = params.editId ? Number(params.editId) : null;
-  const { companyId } = useAuth();
+  const { companyId, user } = useAuth();
+  const generation = sessionGeneration();
+  const scopeQ = useQuery({
+    queryKey: ['voucher-form-scope', companyId, user?.id, generation],
+    queryFn: () => formScope(companyId!, user!.id, generation, getDomain, sessionGeneration),
+    enabled: !!companyId && !!user?.id,
+  });
+  const scope = scopeQ.data;
   const { mp } = useMobilePerms();
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -36,26 +45,26 @@ export default function NewVoucher() {
   const [search, setSearch] = useState('');
 
   const customersQ = useQuery({
-    queryKey: ['customers', companyId],
-    queryFn: () => api<any[]>(`/api/customers?companyId=${companyId}`),
-    enabled: !!companyId,
+    queryKey: ['customers', scope],
+    queryFn: () => referenceList<any>(`/api/customers?companyId=${companyId}`, api),
+    enabled: !!scope,
   });
   const cashBoxesQ = useQuery({
-    queryKey: ['cash-boxes', companyId],
-    queryFn: () => api<any[]>(`/api/cash-boxes?companyId=${companyId}`),
-    enabled: !!companyId,
+    queryKey: ['cash-boxes', scope],
+    queryFn: () => referenceList<any>(`/api/cash-boxes?companyId=${companyId}&onlyUserBranches=1`, api),
+    enabled: !!scope,
   });
   const banksQ = useQuery({
-    queryKey: ['bank-accounts', companyId],
-    queryFn: () => api<any[]>(`/api/bank-accounts?companyId=${companyId}`),
-    enabled: !!companyId,
+    queryKey: ['bank-accounts', scope],
+    queryFn: () => referenceList<any>(`/api/bank-accounts?companyId=${companyId}&onlyUserBranches=1`, api),
+    enabled: !!scope,
   });
 
   // وضع التعديل: تحميل سند المسودة الحالي
   const editQ = useQuery({
-    queryKey: ['receipt-voucher', editId],
+    queryKey: ['receipt-voucher', scope, editId],
     queryFn: () => api<any>(`/api/receipt-vouchers/${editId}?companyId=${companyId}`),
-    enabled: !!companyId && !!editId,
+    enabled: !!scope && !!editId,
   });
   const [editLoaded, setEditLoaded] = useState(false);
   useEffect(() => {
@@ -78,10 +87,17 @@ export default function NewVoucher() {
 
   const save = async (thenPost: boolean) => {
     const amt = parseFloat(amount);
+    if (!scope) { setError('جارٍ تحديد الخادم والحساب — انتظر ثم أعد المحاولة'); return; }
+    if (editId && !editLoaded) { setError('تعذّر تحميل السند — أعد المحاولة قبل الحفظ'); return; }
+    const q = paymentType === 'cash' ? cashBoxesQ : banksQ;
+    const label = paymentType === 'cash' ? 'الخزن' : 'الحسابات البنكية';
+    const refError = requiredReference(label, q.isPending, q.error, q.data);
+    if (refError) { setError(refError); return; }
     if (!customerId) { setError('اختر العميل'); return; }
     if (!amt || amt <= 0) { setError('أدخل مبلغاً صحيحاً'); return; }
-    if (paymentType === 'cash' && !cashBoxId && cashBoxes.length > 0) { setError('اختر الصندوق'); return; }
-    if (paymentType === 'bank' && !bankAccountId) { setError('اختر الحساب البنكي'); return; }
+    if (!(paymentType === 'cash' ? cashBoxes : banks).some((x) => positiveId(x.id) === positiveId(paymentType === 'cash' ? cashBoxId : bankAccountId))) {
+      setError(`اختر ${paymentType === 'cash' ? 'صندوقاً' : 'حساباً بنكياً'} متاحاً مرتبطاً بفرع المستخدم`); return;
+    }
     setBusy(true); setError('');
     try {
       const body = {
@@ -144,7 +160,29 @@ export default function NewVoucher() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
+        {!scope ? <View style={{ gap: 8 }}>
+          <Text style={{ textAlign: 'right', color: scopeQ.isError ? c.destructive : c.mutedForeground }}>
+            {scopeQ.isError ? scopeQ.error?.message : 'جارٍ تحديد الخادم والحساب'}
+          </Text>
+          {scopeQ.isError ? <Btn title="إعادة الاتصال بالخادم" onPress={() => scopeQ.refetch()} small kind="outline" /> : null}
+        </View> : null}
+        {editId && !editLoaded ? <View style={{ gap: 8 }}>
+          <Text style={{ textAlign: 'right', color: editQ.isError ? c.destructive : c.mutedForeground }}>
+            {editQ.isError ? `تعذّر تحميل السند: ${editQ.error instanceof Error ? editQ.error.message : 'خطأ غير معروف'}` : 'جارٍ تحميل السند — انتظر قبل الحفظ'}
+          </Text>
+          {editQ.isError ? <Btn title="إعادة تحميل السند" onPress={() => editQ.refetch()} small kind="outline" /> : null}
+        </View> : null}
         <Card style={{ gap: 12 }}>
+          {(() => {
+            const q = paymentType === 'cash' ? cashBoxesQ : banksQ;
+            const label = paymentType === 'cash' ? 'الخزن' : 'الحسابات البنكية';
+            return <View>
+              <Text style={{ textAlign: 'right', color: q.isError ? c.destructive : c.mutedForeground }}>
+                {requiredReference(label, q.isPending, q.error, q.data) || (q.data?.length === 0 ? `لا توجد ${label} مرتبطة بفروع المستخدم — تواصل مع المدير` : '')}
+              </Text>
+              {q.isError ? <Btn title={`إعادة تحميل ${label}`} onPress={() => q.refetch()} small kind="outline" /> : null}
+            </View>;
+          })()}
           <PickRow label="العميل *" value={customer?.nameAr ?? 'اختر عميلاً'} onPress={() => setShowPick(true)} testID="pick-voucher-customer" />
           <Field label="المبلغ *" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" ltr testID="input-voucher-amount" />
           <Field label="التاريخ (YYYY-MM-DD)" value={date} onChangeText={setDate} ltr />
@@ -158,14 +196,16 @@ export default function NewVoucher() {
               </Pressable>
             ))}
           </View>
-          {paymentType === 'cash' && cashBoxes.length > 0 ? (
-            <PickRow label="الصندوق" value={cashBoxes.find((b) => b.id === cashBoxId)?.nameAr ?? 'اختر'} onPress={() => {
+          {paymentType === 'cash' ? (
+            <PickRow label="الصندوق" value={cashBoxes.find((b) => b.id === cashBoxId)?.nameAr ?? (cashBoxId ? `صندوق سابق #${cashBoxId} (خارج النطاق)` : 'اختر صندوقاً')} onPress={() => {
+              if (!cashBoxes.length) return;
               const idx = cashBoxes.findIndex((b) => b.id === cashBoxId);
               setCashBoxId(cashBoxes[(idx + 1) % cashBoxes.length]?.id ?? null);
             }} />
           ) : null}
           {paymentType === 'bank' ? (
-            <PickRow label="الحساب البنكي" value={banks.find((b) => b.id === bankAccountId)?.nameAr ?? 'اختر'} onPress={() => {
+            <PickRow label="الحساب البنكي" value={banks.find((b) => b.id === bankAccountId)?.nameAr ?? (bankAccountId ? `حساب سابق #${bankAccountId} (خارج النطاق)` : 'اختر حساباً')} onPress={() => {
+              if (!banks.length) return;
               const idx = banks.findIndex((b) => b.id === bankAccountId);
               setBankAccountId(banks[(idx + 1) % banks.length]?.id ?? null);
             }} />

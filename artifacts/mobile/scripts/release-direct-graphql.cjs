@@ -111,9 +111,17 @@ function verifyAab(file, version) {
     || !bundle.includes('customer-statement-detailed'))) {
     throw new Error('Compiled v15 bundle lacks customer statement route or API');
   }
+  if (version >= 17 && (!bundle.includes('ExpoApplication')
+    || !bundle.includes('nativeApplicationVersion') || !bundle.includes('nativeBuildVersion')
+    || !bundle.includes('refresh-mobile-permissions') || !bundle.includes('referenceList')
+    || !bundle.includes('effectiveMobilePermission'))) {
+    throw new Error('Compiled v17 bundle lacks native version, permission, or reference helper markers');
+  }
   return { packageName: 'com.zacoderp.mobile', manifestVersionCode: actualVersion,
     certificateSha256: fingerprint, compiledBundleHasDomain: true,
-    ...(version >= 15 && { compiledBundleHasCustomerStatements: true }) };
+    ...(version >= 15 && { compiledBundleHasCustomerStatements: true }),
+    ...(version >= 17 && { compiledBundleHasExpoApplicationDiagnostics: true,
+      compiledBundleHasPermissionAndReferenceHelpers: true }) };
 }
 async function start() {
   const previous = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : null;
@@ -134,6 +142,14 @@ async function start() {
     'artifacts/mobile/lib/statementHtml.ts',
     'artifacts/mobile/app/(tabs)/reports.tsx',
     'artifacts/mobile/app/(tabs)/more.tsx',
+    'artifacts/mobile/hooks/useMobilePerms.ts',
+    'artifacts/mobile/hooks/mobilePermsPolicy.ts',
+    'artifacts/mobile/lib/formReferences.ts',
+    'artifacts/mobile/app/invoice/[id].tsx',
+    'artifacts/mobile/app/quotation/[id].tsx',
+    'artifacts/mobile/app/voucher/new.tsx',
+    'artifacts/mobile/package.json',
+    'pnpm-lock.yaml',
   ];
   const workspaceRoot = path.resolve(__dirname, '../../..');
   const sourceAudit = Object.fromEntries(auditedSources.map(p => [p,
@@ -183,7 +199,7 @@ async function poll() {
     id status artifacts{buildUrl} error{errorCode message} }}}`, { id: state.buildId });
   const build = data.builds.byId;
   state.status = build.status;
-  if (build.status === 'FINISHED') {
+  if (build.status === 'FINISHED' && !(state.file && state.verification && fs.existsSync(state.file))) {
     if (!build.artifacts?.buildUrl) throw new Error('Finished build has no artifact URL');
     const r = await fetch(build.artifacts.buildUrl);
     if (!r.ok) throw new Error(`AAB download HTTP ${r.status}`);

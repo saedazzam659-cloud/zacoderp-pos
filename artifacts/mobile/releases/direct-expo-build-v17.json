@@ -1,0 +1,34 @@
+{
+  "buildId": "327fbb72-9fc5-4bb2-8ff0-5e451451a543",
+  "status": "FINISHED",
+  "versionCode": 17,
+  "archiveSha256": "77027e3744e8d7de69bf98dcec694ff62ed922ff5dd2e458ba0ecdeb2adc3618",
+  "sourceAudit": {
+    "artifacts/mobile/app/customer-statement/[kind].tsx": "456014356c81778996374d4116dace87a0733676cc7096f7c08093be20690ef4",
+    "artifacts/mobile/lib/statementLedger.ts": "f0f2f7ffa1cd74b33edf77fd6cb1f18f23e7c43c451f52e28c425f62515ce058",
+    "artifacts/mobile/lib/statementHtml.ts": "9b0c35b77b3c61cd046a4e0d36f0636f53c8270a43103133ea712d51d856414c",
+    "artifacts/mobile/app/(tabs)/reports.tsx": "7749fa2aa47265d700c8570b40905968188a544a2f39048a3e9a572eca90b53a",
+    "artifacts/mobile/app/(tabs)/more.tsx": "3f85c8965b84b2f15b5a9d476e1effc3a6bd471a26bb8f6e274c13bdba9d32c0",
+    "artifacts/mobile/hooks/useMobilePerms.ts": "93420134ab5276b9b164798ef7f8a08ec4eac02c2480adc0add531d11e4ae835",
+    "artifacts/mobile/hooks/mobilePermsPolicy.ts": "78c38aa366d6f66a687a5a0768e1c6027b189efb8219e04002698d7a463b7dc4",
+    "artifacts/mobile/lib/formReferences.ts": "95921e9d35e1d60649b766b235f07ff493e60af02af521f85b9f8b50efc63fde",
+    "artifacts/mobile/app/invoice/[id].tsx": "a96cd664371fcf369e059227cee4442d36eb0ac1dbcfdcfdb529fde4359a719f",
+    "artifacts/mobile/app/quotation/[id].tsx": "c12631df607bd8fc2f04bd98a9a3438782cefe0b87be09b55c9ae5fa9c717579",
+    "artifacts/mobile/app/voucher/new.tsx": "6986b512be6e656dd04e036ec4c5f13a7a27100dd0a9260d1dadff54f4ec65a2",
+    "artifacts/mobile/package.json": "a4b9d8b5bbb21cb4bfc4aa412c7cccace83fad07effe171c40fb9cfaeaf21707",
+    "pnpm-lock.yaml": "f27c0b4b676a9fc958aafbac4fba2d83007c07b74620992c0ab50cdaba70de20"
+  },
+  "signingSha256": "c3245b640eb6afe24557fa5341bb86bed04aa8e6f072ad2f8cfc0a2dd22012d6",
+  "dashboard": "https://expo.dev/accounts/karmazzams-team/projects/zacoderp/builds/327fbb72-9fc5-4bb2-8ff0-5e451451a543",
+  "file": "/home/runner/workspace/artifacts/mobile/releases/zacoderp-google-play-v17.aab",
+  "sha256": "63a04ebe4b7d713cb8b8a03e38345ccd6c78044908caa93f4aff048f5ae4299f",
+  "verification": {
+    "packageName": "com.zacoderp.mobile",
+    "manifestVersionCode": "17",
+    "certificateSha256": "c3245b640eb6afe24557fa5341bb86bed04aa8e6f072ad2f8cfc0a2dd22012d6",
+    "compiledBundleHasDomain": true,
+    "compiledBundleHasCustomerStatements": true,
+    "compiledBundleHasExpoApplicationDiagnostics": true,
+    "compiledBundleHasPermissionAndReferenceHelpers": true
+  }
+}

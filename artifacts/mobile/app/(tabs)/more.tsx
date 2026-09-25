@@ -3,6 +3,7 @@ import { Alert, Platform, Pressable, ScrollView, Text, View } from 'react-native
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import * as Application from 'expo-application';
 import { api, getDomain } from '@/lib/api';
 import { ServerSettings } from '@/components/ServerSettings';
 import { discardFailed, downloadAll, isOfflineEnabled, lastDownloadAt, outboxCounts, setOfflineEnabled, syncOutbox } from '@/lib/offline';
@@ -14,7 +15,7 @@ import { Card } from '@/components/ui';
 
 export default function More() {
   const { user, logout } = useAuth();
-  const { mp } = useMobilePerms();
+  const { mp, refetch: refreshPerms, status: permsStatus, updatedAt, errorAt } = useMobilePerms();
   const { theme, setTheme } = useTheme();
   const c = useColors();
   const router = useRouter();
@@ -22,6 +23,13 @@ export default function More() {
   const topInset = Platform.OS === 'web' ? 67 : insets.top;
 
   const [showServer, setShowServer] = useState(false);
+  const [selectedServer, setSelectedServer] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getDomain().then((d) => { if (alive) setSelectedServer(d); })
+      .catch(() => { if (alive) setSelectedServer('تعذّر قراءة الخادم'); });
+    return () => { alive = false; };
+  }, [user]);
 
   // ─── وضع الأوف لاين ────────────────────────────────────────────────────
   const companyId = user?.companyId ?? user?.company?.id;
@@ -230,6 +238,24 @@ export default function More() {
             <RowItem icon="server" title="إعدادات الخادم" onPress={() => setShowServer(true)} testID="row-server-settings" />
             <View style={{ height: 1, backgroundColor: c.border }} />
           </> : null}
+          <View style={{ paddingVertical: 12, paddingHorizontal: 4, gap: 6 }}>
+            <Text style={{ textAlign: 'right', color: c.foreground, fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>معلومات التطبيق</Text>
+            <Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 12 }}>
+              الإصدار المثبّت: {Platform.OS === 'web' ? 'لا ينطبق' : Application.nativeApplicationVersion} · رقم البناء المثبّت: {Platform.OS === 'web' ? 'لا ينطبق' : Application.nativeBuildVersion}
+            </Text>
+            <Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 12 }}>الخادم المحدد: {selectedServer ?? 'جارٍ القراءة'}</Text>
+            <Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 12 }}>
+              كشف حساب عميل: {mp('customer_statement_view') ? 'مسموح' : 'ممنوع'} · كشف حساب تفصيلي: {mp('customer_statement_detailed_view') ? 'مسموح' : 'ممنوع'}
+            </Text>
+            <Text style={{ textAlign: 'right', color: c.mutedForeground, fontSize: 12 }}>
+              حالة الصلاحيات: {permsStatus} · آخر نجاح: {updatedAt ? new Date(updatedAt).toLocaleString('ar-SA') : 'لا يوجد'}
+              {errorAt ? ` · آخر فشل: ${new Date(errorAt).toLocaleString('ar-SA')}` : ''}
+            </Text>
+            <Pressable testID="refresh-mobile-permissions" onPress={() => { void refreshPerms(); }} style={{ alignSelf: 'flex-end', paddingVertical: 6 }}>
+              <Text style={{ color: c.primary, fontSize: 12 }}>تحديث الصلاحيات</Text>
+            </Pressable>
+          </View>
+          <View style={{ height: 1, backgroundColor: c.border }} />
           <RowItem icon="log-out" title="تسجيل الخروج" onPress={doLogout} danger testID="row-logout" />
         </Card>
         <Text style={{ textAlign: 'center', color: c.mutedForeground, fontSize: 12 }}>

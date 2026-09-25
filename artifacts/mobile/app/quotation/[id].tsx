@@ -16,6 +16,8 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { api } from '@/lib/api';
+import { getDomain, sessionGeneration } from '@/lib/api';
+import { formScope, referenceList, positiveId, selectedBranch, requiredReference } from '@/lib/formReferences';
 import { money, qty as fq, todayISO } from '@/lib/format';
 import { onScan, clearScan } from '@/lib/scanBus';
 import { useAuth } from '@/contexts/AuthContext';
@@ -82,6 +84,13 @@ export default function QuotationForm() {
   const router = useRouter();
   const qc = useQueryClient();
   const { companyId, user } = useAuth();
+  const generation = sessionGeneration();
+  const scopeQ = useQuery({
+    queryKey: ['quotation-form-scope', companyId, user?.id, generation],
+    queryFn: () => formScope(companyId!, user!.id, generation, getDomain, sessionGeneration),
+    enabled: !!companyId && !!user?.id,
+  });
+  const scope = scopeQ.data;
   const { mp } = useMobilePerms();
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -108,31 +117,31 @@ export default function QuotationForm() {
   const [itemUnits, setItemUnits] = useState<Record<number, any[]>>({});
 
   const customersQ = useQuery({
-    queryKey: ['customers', companyId],
-    queryFn: () => api<any[]>(`/api/customers?companyId=${companyId}`),
-    enabled: !!companyId,
+    queryKey: ['customers', scope],
+    queryFn: () => referenceList<any>(`/api/customers?companyId=${companyId}`, api),
+    enabled: !!scope,
   });
   const itemsQ = useQuery({
-    queryKey: ['items', companyId],
-    queryFn: () => api<Item[]>(`/api/inventory/items?companyId=${companyId}&includeHidden=1`),
-    enabled: !!companyId,
+    queryKey: ['items', scope],
+    queryFn: () => referenceList<Item>(`/api/inventory/items?companyId=${companyId}&includeHidden=1`, api),
+    enabled: !!scope,
   });
   const branchesQ = useQuery({
-    queryKey: ['branches', companyId],
-    queryFn: () => api<any[]>(`/api/org/branches?companyId=${companyId}`),
-    enabled: !!companyId,
+    queryKey: ['branches', scope],
+    queryFn: () => referenceList<any>(`/api/org/branches?companyId=${companyId}&onlyUserBranches=1`, api),
+    enabled: !!scope,
     retry: false,
   });
   const currenciesQ = useQuery({
-    queryKey: ['currencies', companyId],
-    queryFn: () => api<any[]>(`/api/currencies?companyId=${companyId}`),
-    enabled: !!companyId,
+    queryKey: ['currencies', scope],
+    queryFn: () => referenceList<any>(`/api/currencies?companyId=${companyId}`, api),
+    enabled: !!scope,
     retry: false,
   });
   const docQ = useQuery({
-    queryKey: ['sales-quotation', quotationId],
+    queryKey: ['sales-quotation', scope, quotationId],
     queryFn: () => api<any>(`/api/sales/sales-quotations/${quotationId}?companyId=${companyId}`),
-    enabled: !!companyId && !!quotationId,
+    enabled: !!scope && !!quotationId,
   });
 
   // hydrate edit mode
@@ -145,7 +154,7 @@ export default function QuotationForm() {
     setValidUntil(String(d.validUntil ?? '').slice(0, 10));
     setPriceIncludesVat(!!d.priceIncludesVat);
     setNotes(d.notes ?? '');
-    if (d.branchId) setBranchSel(d.branchId);
+    if (positiveId(d.branchId)) setBranchSel(positiveId(d.branchId));
     const ls: CartLine[] = (Array.isArray(d.lines) ? d.lines : []).map((l: any) => ({
       itemId: l.itemId,
       name: l.itemName ?? l.item?.nameAr ?? `صنف ${l.itemId}`,
@@ -171,23 +180,19 @@ export default function QuotationForm() {
   const customer = customers.find((x) => x.id === customerId) ?? null;
 
   const branches = Array.isArray(branchesQ.data) ? branchesQ.data : [];
-  const defaultBranchId =
-    loadedDoc?.branchId ??
-    (user?.branchIds?.length ? user.branchIds[0] : null) ??
-    (branches.find((b: any) => b.isDefault || b.is_default)?.id ?? branches[0]?.id ?? null);
-  const branchId = branchSel ?? defaultBranchId;
+  const branchId = selectedBranch(branches, branchSel, loadedDoc?.branchId);
 
   const currencies = Array.isArray(currenciesQ.data) ? currenciesQ.data : [];
   const defaultCurrency =
     currencies.find((x: any) => x.isDefault || x.is_default) ??
     currencies.find((x: any) => String(x.code ?? '').toUpperCase() === 'SAR') ??
     currencies[0] ?? null;
-  const currency = currencies.find((x: any) => x.id === currencySel) ?? defaultCurrency;
+  const currency = currencies.find((x: any) => positiveId(x.id) === currencySel) ?? (!loadedDoc?.currencyCode ? defaultCurrency : currencies.find((x: any) => String(x.code).toUpperCase() === String(loadedDoc.currencyCode).toUpperCase()));
 
   useEffect(() => {
     if (!loadedDoc?.currencyCode || currencySel != null || !currencies.length) return;
     const m = currencies.find((x: any) => String(x.code ?? '').toUpperCase() === String(loadedDoc.currencyCode).toUpperCase());
-    if (m) setCurrencySel(m.id);
+    if (m) setCurrencySel(positiveId(m.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedDoc?.currencyCode, currencies.length]);
 
@@ -288,9 +293,9 @@ export default function QuotationForm() {
 
   useFocusEffect(
     React.useCallback(() => {
-      if (companyId) itemsQ.refetch();
+      if (scope) itemsQ.refetch();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [companyId]),
+    }, [scope]),
   );
 
   const openScanner = () => {
@@ -327,8 +332,8 @@ export default function QuotationForm() {
       validUntil: validUntil || undefined,
       customerId,
       branchId,
-      currencyCode: currency?.code ?? 'SAR',
-      exchangeRate: String(currency?.exchangeRate ?? currency?.rate ?? '1'),
+      currencyCode: currency?.code ?? loadedDoc?.currencyCode,
+      exchangeRate: String(currency?.exchangeRate ?? currency?.rate ?? loadedDoc?.exchangeRate ?? '1'),
       priceIncludesVat,
       subtotal: +totals.subtotal.toFixed(2),
       vatAmount: +totals.vat.toFixed(2),
@@ -340,9 +345,16 @@ export default function QuotationForm() {
   };
 
   const validate = (): string => {
+    if (!scope) return 'جارٍ تحديد الخادم والحساب — انتظر ثم أعد المحاولة';
+    for (const [label, q] of [['الفروع', branchesQ], ['العملات', currenciesQ]] as const) {
+      const err = requiredReference(label, q.isPending, q.error, q.data);
+      if (err) return err;
+    }
     if (!lines.length) return 'أضف صنفاً واحداً على الأقل';
     if (!customerId) return 'اختر العميل';
-    if (!branchId) return 'لا يوجد فرع معرّف لحسابك — تواصل مع مدير النظام';
+    if (!branches.length) return 'لا توجد فروع مرتبطة بالمستخدم — اطلب من المدير تعيينها في فروع المستخدم';
+    if (!branches.some((b) => positiveId(b.id) === branchId)) return 'فرع المستند خارج الفروع المتاحة — اختر فرعاً مخولاً قبل الحفظ';
+    if (!currency || !currencies.some((x) => positiveId(x.id) === positiveId(currency.id))) return 'عملة المستند غير متاحة — اختر عملة متاحة قبل الحفظ';
     return '';
   };
 
@@ -484,6 +496,16 @@ export default function QuotationForm() {
       </View>
     );
   }
+  if (scopeQ.isError) return <View style={{ flex: 1, justifyContent: 'center', padding: 20, gap: 12, backgroundColor: c.background }}>
+    <Text style={{ textAlign: 'right', color: c.destructive }}>{scopeQ.error?.message}</Text>
+    <Btn title="إعادة الاتصال بالخادم" onPress={() => scopeQ.refetch()} />
+  </View>;
+  if (quotationId && scope && (docQ.isError || !docQ.data)) {
+    return <View style={{ flex: 1, justifyContent: 'center', padding: 20, gap: 12, backgroundColor: c.background }}>
+      <Text style={{ textAlign: 'right', color: c.destructive }}>تعذّر تحميل عرض السعر: {docQ.error instanceof Error ? docQ.error.message : 'لا توجد بيانات'} — أعد المحاولة</Text>
+      <Btn title="إعادة تحميل عرض السعر" onPress={() => docQ.refetch()} />
+    </View>;
+  }
 
   const canEditDoc = isNew ? mp('quotation_create') : mp('quotation_edit');
 
@@ -528,6 +550,14 @@ export default function QuotationForm() {
         {tab === 'basic' && (
           <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
             <Card style={{ gap: 12 }}>
+              {([['الفروع', branchesQ], ['العملات', currenciesQ]] as const).map(([label, q]) => (
+                <View key={label}>
+                  <Text style={{ textAlign: 'right', color: q.isError ? c.destructive : c.mutedForeground }}>
+                    {requiredReference(label, q.isPending, q.error, q.data) || (q.data?.length === 0 ? `لا توجد ${label} متاحة — تواصل مع مدير النظام` : '')}
+                  </Text>
+                  {q.isError ? <Btn title={`إعادة تحميل ${label}`} onPress={() => q.refetch()} small kind="outline" /> : null}
+                </View>
+              ))}
               <PickRow
                 label="العميل"
                 value={customer?.nameAr ?? 'اختر عميلاً *'}
@@ -536,14 +566,14 @@ export default function QuotationForm() {
               />
               <PickRow
                 label="الفرع"
-                value={branches.find((b: any) => b.id === branchId)?.nameAr ?? '—'}
-                onPress={() => { if (branches.length > 1) setPick('branch'); }}
+                value={branches.find((b: any) => positiveId(b.id) === branchId)?.nameAr ?? (branchId ? `فرع سابق #${branchId} (خارج النطاق)` : 'لا توجد فروع متاحة')}
+                onPress={() => { if (branches.length) setPick('branch'); }}
                 testID="pick-branch"
               />
               <PickRow
                 label="العملة"
-                value={currency ? `${currency.nameAr ?? currency.code}${(currency.isDefault || currency.is_default) ? ' (افتراضية)' : ''}` : 'ريال سعودي'}
-                onPress={() => { if (currencies.length > 1) setPick('currency'); }}
+                value={currency ? `${currency.nameAr ?? currency.code}${(currency.isDefault || currency.is_default) ? ' (افتراضية)' : ''}` : (loadedDoc?.currencyCode ? `${loadedDoc.currencyCode} (عملة سابقة خارج النطاق)` : 'لا توجد عملات متاحة')}
+                onPress={() => { if (currencies.length) setPick('currency'); }}
                 testID="pick-currency"
               />
               <Field label="تاريخ العرض (YYYY-MM-DD)" value={quotationDate} onChangeText={setQuotationDate} ltr testID="input-quotation-date" />
@@ -790,8 +820,8 @@ export default function QuotationForm() {
                 return (
                   <Pressable
                     onPress={() => {
-                      if (pick === 'branch') setBranchSel(item.id);
-                      else setCurrencySel(item.id);
+                      if (pick === 'branch') setBranchSel(positiveId(item.id));
+                      else setCurrencySel(positiveId(item.id));
                       setPick(null);
                     }}
                     style={({ pressed }) => ({ paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: c.border, opacity: pressed ? 0.6 : 1, flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' })}

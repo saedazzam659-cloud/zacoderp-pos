@@ -3,6 +3,22 @@ name: Mobile app permissions (صلاحيات تطبيقات الموبايل)
 description: Per-user mobile-channel permission map — key lockstep, session-bound channel, server price enforcement
 ---
 
+## Authoritative permission refresh
+
+Use the latest verified response for the current user, company, and server session as the authority, including an explicit null map. Do not revive a previous denied map through a null-coalescing fallback.
+
+**Why:** Null has intentional legacy-allowed semantics; replacing it with stale state changes the server's decision. Conversely, an initial failed lookup must not interpret missing login metadata as a verified grant.
+
+**How to apply:** Retain previously verified permissions across transient network failures only within the same session identity, so offline work remains usable. Clear that trust on logout, authentication expiry, or server switch.
+
+## User-confirmed strict branch setup
+
+The user confirmed on 2026-09-25 that assigning the mobile user to a branch made both the branch and warehouse pickers work on an agent domain.
+
+**Why:** This verified an account-setup cause, not a host-routing failure. Missing explicit user-branch links must not be repaired by granting all branches or falling back to central data.
+
+**How to apply:** Preserve strict picker isolation, explain missing branch assignments clearly, and diagnose statement-menu visibility separately.
+
 - `users.mobile_permissions` JSONB mirrors posting_permissions semantics: NULL/missing = allowed, explicit false = denied, admin/superadmin bypass.
 - Permission keys live in THREE lockstep places: api-server `lib/mobilePerms.ts` (doc comment), web `Users.tsx` `MOBILE_PERM_KEYS`, and the mobile app's `mp('<key>')` call sites. Adding a key means touching all three.
 - **Channel binding:** never trust `x-app-channel` per-request only. Login stores `users.session_channel` ('mobile'|'web') and enforcement fires when session_channel==='mobile' OR header says mobile — dropping/forging the header can't unbind a mobile session.
