@@ -15,14 +15,17 @@ import { eligibleParties } from "@/lib/partyEligibility";
 
 const API = import.meta.env.VITE_API_URL || "";
 type Option = { id: number; code?: string; nameAr?: string; bankName?: string; partyClassification?: string | null };
-type Contract = { id: number; contractNumber: string };
-type Tender = { id: number; tender_number: string; title: string; awarded_contract_kind?: string | null; awarded_owner_contract_id?: number | null; awarded_subcontract_id?: number | null };
+type Contract = { id: number; contractNumber: string; value: string };
+type Tender = { id: number; tender_number: string; title: string; estimated_value: string; status: string; awarded_contract_kind?: string | null; awarded_owner_contract_id?: number | null; awarded_subcontract_id?: number | null };
+type Advance = { id: number; amount: string; settlementDate: string; contractKind: string; contractId: number };
 type Values = {
   tenderNumber: string; title: string; customerId: string; tenderDate: string; submissionDate: string;
   estimatedValue: string; status: string; notes: string;
   guaranteeNumber: string; guaranteeType: string; tenderId: string; parentGuaranteeId: string;
   contractKind: string; contractId: string; bankAccountId: string; beneficiaryCustomerId: string;
   amount: string; issueDate: string; expiryDate: string; purpose: string;
+  calculationMode: string; sourceType: string; sourceId: string; guaranteePercent: string;
+   overrideReason: string; bankFee: string; beneficiaryName: string;
 };
 const today = new Date().toISOString().slice(0, 10);
 const defaults: Values = {
@@ -31,6 +34,8 @@ const defaults: Values = {
   guaranteeNumber: "", guaranteeType: "initial", tenderId: "", parentGuaranteeId: "",
   contractKind: "owner", contractId: "", bankAccountId: "", beneficiaryCustomerId: "",
   amount: "", issueDate: today, expiryDate: "", purpose: "",
+  calculationMode: "auto", sourceType: "tender", sourceId: "", guaranteePercent: "",
+   overrideReason: "", bankFee: "", beneficiaryName: "",
 };
 const typeItems = [
   { value: "initial", label: "ابتدائي" }, { value: "performance", label: "نهائي / حسن تنفيذ" },
@@ -73,6 +78,7 @@ export default function ContractingTenderGuaranteeForm() {
   const { toast } = useToast();
   const canSave = usePermission("contracting", editId ? "edit" : "create");
   const canViewCustomers = usePermission("customers", "view");
+  const canOverride = usePermission("contracting_guarantee_override", "edit");
   const companyId = actingCompanyId ?? user?.companyId ?? user?.company?.id;
   const form = useForm<Values>({ defaultValues: defaults });
   const { control, reset, watch, setValue, handleSubmit } = form;
@@ -84,6 +90,8 @@ export default function ContractingTenderGuaranteeForm() {
   const [tenders, setTenders] = useState<Tender[]>([]);
   const [owners, setOwners] = useState<Contract[]>([]);
   const [subs, setSubs] = useState<Contract[]>([]);
+  const [advances, setAdvances] = useState<Advance[]>([]);
+  const [persisted, setPersisted] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -115,7 +123,7 @@ export default function ContractingTenderGuaranteeForm() {
     const optionQuery = new URLSearchParams({ companyId: String(companyId) });
     Promise.all([
       get(`/projects/${projectId}`, "المشروع"),
-      get(`/guarantees/options?${optionQuery}`, "خيارات الضمانات"),
+       get(`/guarantees/options?${optionQuery}&projectId=${projectId}`, "خيارات الضمانات"),
       isGuarantee ? get(`/tenders?projectId=${projectId}`, "المناقصات") : Promise.resolve([]),
       isGuarantee ? get(`/projects/${projectId}/owner-contracts`, "عقود المالك") : Promise.resolve([]),
       isGuarantee ? get(`/projects/${projectId}/sub-contracts`, "عقود الباطن") : Promise.resolve([]),
@@ -135,6 +143,8 @@ export default function ContractingTenderGuaranteeForm() {
       setTenders(ts);
       setOwners(os);
       setSubs(ss);
+       setAdvances(options.advances || []);
+       setPersisted(isGuarantee ? row : null);
       if (row) {
         reset(isGuarantee ? {
           ...defaults, guaranteeNumber: row.guarantee_number, guaranteeType: row.guarantee_type,
@@ -144,6 +154,9 @@ export default function ContractingTenderGuaranteeForm() {
           bankAccountId: String(row.bank_account_id), beneficiaryCustomerId: row.beneficiary_customer_id ? String(row.beneficiary_customer_id) : "",
           amount: row.amount, issueDate: row.issue_date, expiryDate: row.expiry_date,
           purpose: row.purpose || "", notes: row.notes || "",
+           calculationMode: row.calculation_mode || "legacy", sourceType: row.source_type || (row.guarantee_type === "initial" ? "tender" : row.guarantee_type === "advance_payment" ? "advance" : "contract"),
+           sourceId: row.source_id ? String(row.source_id) : "", guaranteePercent: row.guarantee_percent || "",
+           overrideReason: row.override_reason || "", bankFee: row.bank_fee || "", beneficiaryName: row.beneficiary_name || "",
         } : {
           ...defaults, tenderNumber: row.tender_number, title: row.title,
           customerId: row.customer_id ? String(row.customer_id) : "", tenderDate: row.tender_date,
@@ -160,6 +173,8 @@ export default function ContractingTenderGuaranteeForm() {
           contractKind: parentTender?.awarded_contract_kind || query.get("contractKind") || "owner",
           contractId: String((parentTender?.awarded_contract_kind === "subcontract"
             ? parentTender.awarded_subcontract_id : parentTender?.awarded_owner_contract_id) || query.get("contractId") || ""),
+           sourceType: parent ? "award" : query.get("contractId") ? "contract" : "tender",
+           sourceId: parent ? String(parent.tender_id) : String(query.get("contractId") || ""),
         });
       } else {
         reset({ ...defaults, customerId: p.customerId ? String(p.customerId) : "" });
@@ -176,6 +191,26 @@ export default function ContractingTenderGuaranteeForm() {
   const bankId = watch("bankAccountId");
   const customerId = watch("customerId");
   const beneficiaryId = watch("beneficiaryCustomerId");
+  const calculationMode = watch("calculationMode");
+  const sourceType = watch("sourceType");
+  const tenderId = watch("tenderId");
+  const contractId = watch("contractId");
+  const sourceId = watch("sourceId");
+  const selectedTender = tenders.find(t => String(t.id) === tenderId);
+  const selectedContract = (contractKind === "owner" ? owners : subs).find(c => String(c.id) === contractId);
+  const matchingAdvances = advances.filter(a => a.contractKind === contractKind && String(a.contractId) === contractId);
+  const selectedAdvance = matchingAdvances.find(a => String(a.id) === sourceId);
+  const awardTender = tenders.find(t => t.status === "awarded" && t.awarded_contract_kind === contractKind
+    && String(contractKind === "owner" ? t.awarded_owner_contract_id : t.awarded_subcontract_id) === contractId
+    && (!watch("parentGuaranteeId") || t.id === Number(persisted?.tender_id || tenderId)));
+  const sourceOptions = guaranteeType === "initial" ? [{ value: "tender", label: "المناقصة" }]
+    : guaranteeType === "advance_payment" ? [{ value: "advance", label: "دفعة مقدمة مرحّلة" }]
+    : [{ value: "contract", label: "العقد" }, ...(awardTender ? [{ value: "award", label: "الترسية (قيمة العقد المرسي)" }] : []),
+      { value: "project", label: "المشروع (القيمة من العقد المرتبط)" }];
+  const effectiveSourceId = sourceType === "tender" ? tenderId : sourceType === "contract" ? contractId
+    : sourceType === "award" ? String(awardTender?.id || "") : sourceType === "project" ? String(projectId) : sourceId;
+  const basePreview = sourceType === "tender" ? selectedTender?.estimated_value
+    : sourceType === "advance" ? selectedAdvance?.amount : selectedContract?.value;
   // Keep a persisted/project-linked ID visible even when the options endpoint
   // hides it (inactive bank, branch restriction, or missing customers:view).
   const withSelected = (items: ComboboxItem[], id: string, name: string): ComboboxItem[] =>
@@ -196,9 +231,9 @@ export default function ContractingTenderGuaranteeForm() {
     <Controller control={control} name={name} render={({ field }) =>
       <Choice value={field.value} onChange={field.onChange} items={items} placeholder={placeholder}
         empty={empty} clearable={clearable} disabled={disabled} testId={`combobox-${name}`} />} />;
-  const controlInput = (name: keyof Values, type = "text", required = false) =>
+  const controlInput = (name: keyof Values, type = "text", required = false, disabled = false) =>
     <Controller control={control} name={name} rules={{ required: required ? "هذا الحقل مطلوب" : false }}
-      render={({ field, fieldState }) => <><Input {...field} type={type} min={type === "number" ? "0" : undefined}
+       render={({ field, fieldState }) => <><Input {...field} disabled={disabled} type={type} min={type === "number" ? "0" : undefined}
         step={type === "number" ? "0.01" : undefined} data-testid={`input-${name}`} />
         {fieldState.error && <p role="alert" className="text-xs text-destructive">{fieldState.error.message}</p>}</>} />;
   const controlDate = (name: keyof Values) =>
@@ -209,7 +244,11 @@ export default function ContractingTenderGuaranteeForm() {
     if (!canSave) return;
     setError("");
     if (isGuarantee && (!values.bankAccountId || !values.guaranteeNumber.trim() || !values.issueDate || !values.expiryDate
-      || Number(values.amount) <= 0 || (values.guaranteeType === "initial" ? !values.tenderId : !values.contractId))) {
+      || (values.calculationMode === "legacy" && Number(values.amount) <= 0)
+      || (values.calculationMode === "override" && (Number(values.amount) <= 0
+        || (canOverride && !values.overrideReason.trim())))
+      || (values.calculationMode !== "legacy" && (!effectiveSourceId || Number(values.guaranteePercent) <= 0))
+      || (values.guaranteeType === "initial" ? !values.tenderId : !values.contractId))) {
       setError("أكمل رقم الخطاب والبنك والقيمة والتواريخ ورابط المناقصة أو العقد."); return;
     }
     if (!isGuarantee && (!values.tenderNumber.trim() || !values.title.trim() || !values.tenderDate)) {
@@ -219,7 +258,16 @@ export default function ContractingTenderGuaranteeForm() {
       ? editId ? {
           guaranteeNumber: values.guaranteeNumber, bankAccountId: values.bankAccountId,
           ...(form.formState.dirtyFields.beneficiaryCustomerId ? { beneficiaryCustomerId: values.beneficiaryCustomerId || null } : {}),
-          amount: values.amount, issueDate: values.issueDate, expiryDate: values.expiryDate,
+           ...(values.calculationMode === "legacy" ? { amount: values.amount } : {
+             ...(!canOverride && values.calculationMode === "override" ? {} : {
+             calculationMode: values.calculationMode,
+             sourceType: values.sourceType, sourceId: effectiveSourceId,
+             guaranteePercent: values.guaranteePercent,
+             ...(values.calculationMode === "override" ? { amount: values.amount, overrideReason: values.overrideReason } : {}),
+             }),
+           }),
+           bankFee: values.bankFee || null, beneficiaryName: values.beneficiaryName,
+           issueDate: values.issueDate, expiryDate: values.expiryDate,
           purpose: values.purpose, notes: values.notes,
         } : {
           projectId, guaranteeNumber: values.guaranteeNumber, guaranteeType: values.guaranteeType,
@@ -227,7 +275,13 @@ export default function ContractingTenderGuaranteeForm() {
           contractKind: values.guaranteeType === "initial" ? null : values.contractKind,
           contractId: values.guaranteeType === "initial" ? null : values.contractId || null,
           bankAccountId: values.bankAccountId, beneficiaryCustomerId: values.beneficiaryCustomerId || null,
-          amount: values.amount, issueDate: values.issueDate, expiryDate: values.expiryDate,
+           ...(values.calculationMode === "legacy" ? { amount: values.amount } : {
+             calculationMode: values.calculationMode, sourceType: values.sourceType,
+             sourceId: effectiveSourceId, guaranteePercent: values.guaranteePercent,
+             ...(values.calculationMode === "override" ? { amount: values.amount, overrideReason: values.overrideReason } : {}),
+           }),
+           bankFee: values.bankFee || null, beneficiaryName: values.beneficiaryName,
+           issueDate: values.issueDate, expiryDate: values.expiryDate,
           status: "draft", purpose: values.purpose, notes: values.notes,
         }
       : {
@@ -272,14 +326,17 @@ export default function ContractingTenderGuaranteeForm() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {isGuarantee ? <>
               <Field label="رقم الخطاب *">{controlInput("guaranteeNumber", "text", true)}</Field>
-              <Field label="نوع الضمان"><Controller control={control} name="guaranteeType" render={({ field }) =>
-                <Choice value={field.value} onChange={value => { field.onChange(value); setValue("contractId", ""); setValue("tenderId", ""); }}
+               <Field label="نوع الضمان"><Controller control={control} name="guaranteeType" render={({ field }) =>
+                 <Choice value={field.value} onChange={value => { field.onChange(value); setValue("contractId", ""); setValue("tenderId", ""); setValue("sourceId", ""); setValue("sourceType", value === "initial" ? "tender" : value === "advance_payment" ? "advance" : "contract"); }}
                   items={typeItems} placeholder="اختر النوع" disabled={!!editId || !!watch("parentGuaranteeId")} testId="combobox-guaranteeType" />} /></Field>
               <Field label="البنك *" hint={bankHint}>
                 {controlChoice("bankAccountId", withSelected(optionItems(banks), bankId, "بنك مرتبط سابقاً"), "اختر البنك", "لا توجد بنوك نشطة متاحة")}</Field>
               <Field label="المستفيد (عميل مسجل)" hint={customerHint || "اختياري، اتركه فارغاً إذا لم يكن المستفيد عميلاً مسجلاً."}>
                 {controlChoice("beneficiaryCustomerId", withSelected(optionItems(eligibleParties(customers, "projectOwner", beneficiaryId)), beneficiaryId, "مستفيد مرتبط سابقاً"), "اختر المستفيد", canViewCustomers ? "لا يوجد عملاء مسجلون" : "لا تملك صلاحية عرض العملاء", true)}</Field>
-              <Field label="القيمة *">{controlInput("amount", "number", true)}</Field>
+               <Field label="اسم المستفيد (إذا لم يكن عميلاً مسجلاً)">{controlInput("beneficiaryName")}</Field>
+               <Field label={calculationMode === "auto" ? "قيمة الخطاب (تحسب عند الحفظ)" : "قيمة الخطاب *"}
+                 hint={calculationMode === "auto" ? "الخادم يحسب القيمة من المصدر والنسبة بالدقة النقدية. القيمة الحالية لا تُعدل هنا." : undefined}>
+                 {controlInput("amount", "number", calculationMode !== "auto", calculationMode === "auto")}</Field>
               <Field label="تاريخ الإصدار *">{controlDate("issueDate")}</Field>
               <Field label="تاريخ الانتهاء *">{controlDate("expiryDate")}</Field>
             </> : <>
@@ -309,6 +366,33 @@ export default function ContractingTenderGuaranteeForm() {
               {watch("parentGuaranteeId") && <p className="text-xs text-muted-foreground sm:col-span-2">ضمان نهائي ناتج عن ضمان ابتدائي #{watch("parentGuaranteeId")}؛ العقد محدد حسب ترسية المناقصة.</p>}
             </>}
           </div>
+           <div className="mt-4 grid gap-4 border-t pt-4 sm:grid-cols-2">
+             <Field label="طريقة القيمة" hint={persisted?.calculation_mode == null ? "السجلات القديمة تبقى يدوية حتى اختيار الحساب التلقائي صراحةً." : undefined}>
+               {controlChoice("calculationMode", [
+                 ...(persisted?.calculation_mode == null && editId ? [{ value: "legacy", label: "القيمة القديمة (يدوية)" }] : []),
+                 { value: "auto", label: "حساب تلقائي من المصدر" },
+                 ...(canOverride || persisted?.calculation_mode === "override" ? [{ value: "override", label: "تعديل خاص مع سبب وتدقيق" }] : []),
+               ], "اختر طريقة القيمة", undefined, false, !canOverride && persisted?.calculation_mode === "override")}</Field>
+             {calculationMode !== "legacy" && <>
+               <Field label="مصدر الضمان">
+                 <Controller control={control} name="sourceType" render={({ field }) =>
+                   <Choice value={field.value} onChange={value => { field.onChange(value); setValue("sourceId", ""); }}
+                     items={sourceOptions} placeholder="اختر المصدر" disabled={!!persisted?.calculation_mode && calculationMode !== "override" || calculationMode === "override" && !canOverride} testId="combobox-sourceType" />} /></Field>
+               {sourceType === "advance" && <Field label="الدفعة المقدمة المرحّلة *"
+                 hint={!matchingAdvances.length ? "لا توجد دفعة مقدمة مرحّلة على هذا العقد؛ لا تُستخدم نسبة السلفة المخططة بديلاً." : undefined}>
+                 {controlChoice("sourceId", matchingAdvances.map(a => ({
+                   value: String(a.id), label: `#${a.id} — ${a.settlementDate} — ${a.amount}`,
+                 })), "اختر الدفعة الفعلية", "لا توجد دفعات مرحّلة", false, !!persisted?.calculation_mode && calculationMode !== "override" || calculationMode === "override" && !canOverride)}</Field>}
+               <Field label="القيمة الأساسية (من المصدر)" hint="للعقد أو الترسية أو المشروع: قيمة العقد المرتبط؛ للمناقصة: القيمة التقديرية؛ للدفعة: قيمة التسوية المرحّلة.">
+                 <Input value={basePreview || persisted?.base_amount || ""} readOnly aria-label="القيمة الأساسية من المصدر" /></Field>
+               <Field label="نسبة الضمان % *">{controlInput("guaranteePercent", "number", true, !!persisted?.calculation_mode && calculationMode !== "override" || calculationMode === "override" && !canOverride)}</Field>
+               {calculationMode === "override" && <Field label="سبب التعديل اليدوي *">{controlInput("overrideReason", "text", canOverride, !canOverride)}</Field>}
+             </>}
+             <Field label="الرسوم البنكية (معلومة فقط)">{controlInput("bankFee", "number")}</Field>
+             {persisted?.extension_date && <Field label="تاريخ التمديد"><Input value={persisted.extension_date} readOnly /></Field>}
+             {persisted?.released_at && <Field label="تاريخ الإفراج الفعلي"><Input value={String(persisted.released_at).slice(0, 10)} readOnly /></Field>}
+             {persisted?.closure_reason && <Field label="سبب الإفراج / الإلغاء"><Input value={persisted.closure_reason} readOnly /></Field>}
+           </div>
         </section>}
         <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
           <h2 className="mb-4 text-sm font-bold">تفاصيل إضافية</h2>

@@ -27,6 +27,7 @@ import {
   stockBalanceTable,
   costCentersTable,
   contractingBillLinesTable,
+  auditLogTable,
 } from "@workspace/db";
 import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 import { branchScopeSpread, extractAuth, getAllowedBranchIds, resolveCompanyId } from "../middleware/auth.js";
@@ -2952,9 +2953,98 @@ async function guaranteeRelationship(
   return { tenderId, contractKind, ownerContractId, subcontractId, parentGuaranteeId };
 }
 
+// Amounts are calculated in integer hundredths; percent is stored to four decimal places.
+function guaranteeDecimal(value: unknown, scale: number): bigint | null {
+  const match = String(value ?? "").match(new RegExp(`^(\\d+)(?:\\.(\\d{1,${scale}}))?$`));
+  if (!match || match[1].length > 13) return null;
+  return BigInt(match[1]) * 10n ** BigInt(scale)
+    + BigInt((match[2] ?? "").padEnd(scale, "0"));
+}
+
+async function guaranteeCalculation(tx: any, cid: number, projectId: number, type: string,
+  links: { tenderId: number | null; contractKind: string | null; ownerContractId: number | null; subcontractId: number | null },
+  sourceType: string, sourceId: number | null, percent: unknown) {
+  const pct = guaranteeDecimal(percent, 4);
+  if (pct === null || pct <= 0n || pct > 1000000n)
+    throw Object.assign(new Error("نسبة الضمان يجب أن تكون أكبر من صفر وأقل من أو تساوي 100 وبحد أقصى 4 خانات عشرية"), { status: 422 });
+  let base: unknown;
+  if (type === "initial" && sourceType === "tender" && sourceId === links.tenderId) {
+    const tender = resultRows(await tx.execute(sql`
+      SELECT estimated_value FROM contracting_tenders WHERE id = ${sourceId}
+        AND company_id = ${cid} AND project_id = ${projectId} AND archived_at IS NULL FOR SHARE
+    `))[0];
+    base = tender?.estimated_value;
+  } else if (["performance", "maintenance", "other"].includes(type)
+    && ["contract", "award", "project"].includes(sourceType)
+    && (sourceType !== "project" || sourceId === projectId)) {
+    const contractId = links.contractKind === "owner" ? links.ownerContractId : links.subcontractId;
+    if (!contractId || (sourceType === "contract" && sourceId !== contractId)) {
+      throw Object.assign(new Error("مصدر العقد لا يطابق العقد المرتبط"), { status: 422 });
+    }
+    if (sourceType === "award") {
+      if (!sourceId || (links.tenderId && sourceId !== links.tenderId))
+        throw Object.assign(new Error("الترسية لا تطابق المناقصة المرتبطة"), { status: 422 });
+      const award = resultRows(await tx.execute(sql`
+        SELECT id FROM contracting_tenders WHERE id = ${sourceId} AND company_id = ${cid}
+          AND project_id = ${projectId} AND status = 'awarded' AND archived_at IS NULL
+          AND awarded_contract_kind = ${links.contractKind}
+          AND ${links.contractKind === "owner" ? sql`awarded_owner_contract_id` : sql`awarded_subcontract_id`} = ${contractId}
+        FOR SHARE
+      `))[0];
+      if (!award) throw Object.assign(new Error("العقد لا يطابق ترسية المناقصة"), { status: 422 });
+    }
+    const contract = resultRows(await tx.execute(links.contractKind === "owner" ? sql`
+      SELECT value FROM contracting_owner_contracts WHERE id = ${contractId}
+        AND company_id = ${cid} AND project_id = ${projectId} FOR SHARE
+    ` : sql`
+      SELECT value FROM contracting_sub_contracts WHERE id = ${contractId}
+        AND company_id = ${cid} AND project_id = ${projectId} FOR SHARE
+    `))[0];
+    base = contract?.value;
+  } else if (type === "advance_payment" && sourceType === "advance" && sourceId) {
+    const advance = resultRows(await tx.execute(sql`
+      SELECT amount FROM contracting_accounting_settlements
+       WHERE id = ${sourceId} AND company_id = ${cid} AND project_id = ${projectId}
+         AND status = 'posted' AND kind = ${links.contractKind === "owner" ? "advance_receipt" : "advance_payment"}
+         AND ${links.contractKind === "owner" ? sql`owner_contract_id` : sql`subcontractor_contract_id`}
+             = ${links.contractKind === "owner" ? links.ownerContractId : links.subcontractId}
+       FOR SHARE
+    `))[0];
+    base = advance?.amount;
+  } else {
+    throw Object.assign(new Error("مصدر الضمان غير متوافق مع نوعه وروابطه"), { status: 422 });
+  }
+  const cents = guaranteeDecimal(base, 2);
+  if (cents === null || cents <= 0n || cents > 99999999999999n)
+    throw Object.assign(new Error("القيمة الأساسية غير موجودة أو غير موجبة للمصدر المحدد"), { status: 422 });
+  const amount = (cents * pct + 500000n) / 1000000n;
+  if (amount <= 0n || amount > 99999999999999n)
+    throw Object.assign(new Error("قيمة الضمان المحسوبة خارج النطاق المسموح"), { status: 422 });
+  const money = (v: bigint) => `${v / 100n}.${String(v % 100n).padStart(2, "0")}`;
+  return { baseAmount: money(cents), guaranteePercent: `${pct / 10000n}.${String(pct % 10000n).padStart(4, "0")}`, amount: money(amount) };
+}
+
+async function guaranteeValueAudit(tx: any, req: any, cid: number, id: number, before: any, after: any, reason?: string) {
+  await tx.insert(auditLogTable).values({
+    userId: req.authUser?.id ?? null, username: req.authUser?.username ?? null,
+    role: req.authUser?.role ?? null, companyId: cid, module: "contracting",
+    action: "edit", method: req.method, path: req.originalUrl,
+    entityType: "contracting_guarantee", entityId: String(id), statusCode: 200,
+    metadata: { event: "guarantee_value", before, after, reason: reason || null },
+  });
+}
+
 router.get("/guarantees/options", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
+    const projectId = positiveId(req.query.projectId);
+    if (req.query.projectId !== undefined && !projectId) {
+      res.status(400).json({ error: "المشروع غير صالح" }); return;
+    }
+    if (projectId) {
+      const projectError = await ensureProject(cid, projectId, req);
+      if (projectError) { res.status(projectErrorStatus(projectError)).json({ error: projectError }); return; }
+    }
     const allowed = getAllowedBranchIds(req);
     const bankScope = allowed === null
       ? sql`true`
@@ -2976,7 +3066,19 @@ router.get("/guarantees/options", async (req, res) => {
            ORDER BY name_ar
         `))
       : [];
-    res.json({ banks, customers });
+    const advances = projectId ? resultRows(await db.execute(sql`
+      SELECT s.id, s.amount, s.settlement_date AS "settlementDate", s.kind,
+             CASE WHEN s.kind = 'advance_receipt' THEN 'owner' ELSE 'subcontract' END AS "contractKind",
+             COALESCE(s.owner_contract_id, s.subcontractor_contract_id) AS "contractId"
+        FROM contracting_accounting_settlements s
+       WHERE s.company_id = ${cid} AND s.project_id = ${projectId}
+         AND s.status = 'posted' AND (
+           (s.kind = 'advance_receipt' AND s.owner_contract_id IS NOT NULL AND s.subcontractor_contract_id IS NULL)
+           OR (s.kind = 'advance_payment' AND s.subcontractor_contract_id IS NOT NULL AND s.owner_contract_id IS NULL)
+         )
+       ORDER BY s.settlement_date DESC, s.id DESC
+    `)) : [];
+    res.json({ banks, customers, advances });
   } catch (e: any) {
     console.error("[contracting] guarantee options read failed", e);
     res.status(500).json({ error: contractingLoadError(e, "تعذر تحميل خيارات الضمانات") });
@@ -3323,9 +3425,27 @@ router.post("/guarantees", async (req, res) => {
       const customerError = await ensureGuaranteeCustomer(cid, beneficiaryCustomerId);
       if (customerError) { res.status(400).json({ error: customerError }); return; }
     }
-    const amountError = validateNonNegative(b.amount, "قيمة خطاب الضمان");
-    if (amountError || Number(b.amount) <= 0) {
-      res.status(400).json({ error: amountError || "قيمة خطاب الضمان يجب أن تكون أكبر من صفر" }); return;
+    const mode = b.calculationMode == null ? null : String(b.calculationMode);
+    if (b.baseAmount !== undefined || !["auto", "override"].includes(mode ?? "")) {
+      res.status(422).json({ error: "الضمان الجديد يتطلب حساباً تلقائياً من المصدر؛ القيمة الأساسية تحدد على الخادم فقط" }); return;
+    }
+    if (mode === "auto" && b.amount !== undefined) {
+      res.status(422).json({ error: "لا ترسل قيمة يدوية للضمان التلقائي" }); return;
+    }
+    if (mode === "override" && !canAccessModule(req.authUser, "contracting_guarantee_override", "edit")) {
+      res.status(403).json({ error: "تعديل القيمة التلقائية يتطلب صلاحية خاصة" }); return;
+    }
+    const reason = String(b.overrideReason ?? "").trim();
+    if (mode === "override" && (!reason || guaranteeDecimal(b.amount, 2) === null
+      || Number(b.amount) <= 0 || Number(b.amount) > 999999999999.99)) {
+      res.status(422).json({ error: "التعديل اليدوي يتطلب قيمة موجبة وسبباً واضحاً" }); return;
+    }
+    const fee = b.bankFee == null || b.bankFee === "" ? null : guaranteeDecimal(b.bankFee, 2);
+    if (fee !== null && (fee < 0n || fee > 99999999999999n)) {
+      res.status(422).json({ error: "الرسوم البنكية غير صالحة" }); return;
+    }
+    if (b.bankFee != null && b.bankFee !== "" && fee === null) {
+      res.status(422).json({ error: "الرسوم البنكية غير صالحة" }); return;
     }
     if (String(b.expiryDate) < String(b.issueDate)) {
       res.status(400).json({ error: "تاريخ الانتهاء يجب ألا يسبق تاريخ الإصدار" }); return;
@@ -3336,21 +3456,35 @@ router.post("/guarantees", async (req, res) => {
     if (!["draft", "issued"].includes(status)) {
       res.status(400).json({ error: "يبدأ خطاب الضمان كمسودة أو مُصدر" }); return;
     }
-    const row = resultRows(await db.execute(sql`
+    const row = await db.transaction(async tx => {
+    const sourceType = mode ? String(b.sourceType ?? "") : null;
+    const sourceId = mode ? positiveId(b.sourceId) : null;
+    const calculated = mode ? await guaranteeCalculation(tx, cid, projectId, guaranteeType, relationship, sourceType!, sourceId, b.guaranteePercent) : null;
+    const created = resultRows(await tx.execute(sql`
       INSERT INTO contracting_guarantees (
         company_id, project_id, tender_id, contract_kind, owner_contract_id,
         subcontract_id, parent_guarantee_id, bank_account_id, beneficiary_customer_id,
         guarantee_number, guarantee_type, amount, issue_date, expiry_date,
-        status, purpose, notes, created_by_user_id
+        status, purpose, notes, created_by_user_id,
+        calculation_mode, source_type, source_id, base_amount, guarantee_percent,
+        override_reason, bank_fee, beneficiary_name
       ) VALUES (
         ${cid}, ${projectId}, ${relationship.tenderId}, ${relationship.contractKind},
         ${relationship.ownerContractId}, ${relationship.subcontractId},
         ${relationship.parentGuaranteeId}, ${bankAccountId}, ${beneficiaryCustomerId},
-        ${String(b.guaranteeNumber).trim()}, ${guaranteeType}, ${String(b.amount)},
+        ${String(b.guaranteeNumber).trim()}, ${guaranteeType}, ${mode ? mode === "override" ? String(b.amount) : calculated!.amount : String(b.amount)},
         ${String(b.issueDate)}, ${String(b.expiryDate)}, ${status},
-        ${b.purpose || null}, ${b.notes || null}, ${req.authUser?.id ?? null}
+        ${b.purpose || null}, ${b.notes || null}, ${req.authUser?.id ?? null},
+        ${mode}, ${sourceType}, ${sourceId}, ${calculated?.baseAmount ?? null},
+        ${calculated?.guaranteePercent ?? null}, ${mode === "override" ? reason : null},
+        ${fee === null ? null : `${fee / 100n}.${String(fee % 100n).padStart(2, "0")}`},
+        ${String(b.beneficiaryName ?? "").trim() || null}
       ) RETURNING *
     `))[0];
+    if (mode) await guaranteeValueAudit(tx, req, cid, created.id, null,
+      { mode, sourceType, sourceId, baseAmount: calculated!.baseAmount, percent: calculated!.guaranteePercent, computedAmount: calculated!.amount, amount: created.amount }, mode === "override" ? reason : undefined);
+    return created;
+    });
     res.status(201).json(row);
   } catch (e: any) {
     res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر إنشاء خطاب الضمان" });
@@ -3421,24 +3555,97 @@ router.put("/guarantees/:id", async (req, res) => {
       const customerError = await ensureGuaranteeCustomer(cid, beneficiaryCustomerId);
       if (customerError) { res.status(400).json({ error: customerError }); return; }
     }
+    if (b.baseAmount !== undefined) {
+      res.status(422).json({ error: "القيمة الأساسية لا تقبل الإدخال اليدوي" }); return;
+    }
+    const requestedMode = b.calculationMode == null ? null : String(b.calculationMode);
+    if (requestedMode && !["auto", "override"].includes(requestedMode)) {
+      res.status(422).json({ error: "نمط حساب الضمان غير صالح" }); return;
+    }
+    if (current.calculation_mode == null && !requestedMode
+      && ["sourceType", "sourceId", "guaranteePercent", "overrideReason"].some(k => b[k] !== undefined)) {
+      res.status(422).json({ error: "حدد نمط الحساب التلقائي أولاً" }); return;
+    }
+    const newMode = requestedMode || current.calculation_mode;
+    if (newMode && b.amount !== undefined && requestedMode !== "override") {
+      res.status(422).json({ error: "لا ترسل قيمة يدوية للضمان المحسوب؛ استخدم صلاحية التعديل الخاص" }); return;
+    }
+    if (requestedMode === "override" && !canAccessModule(req.authUser, "contracting_guarantee_override", "edit")) {
+      res.status(403).json({ error: "تعديل القيمة التلقائية يتطلب صلاحية خاصة" }); return;
+    }
+    const reason = String(b.overrideReason ?? "").trim();
+    if (requestedMode === "override" && (!reason || guaranteeDecimal(b.amount, 2) === null
+      || Number(b.amount) <= 0 || Number(b.amount) > 999999999999.99)) {
+      res.status(422).json({ error: "التعديل اليدوي يتطلب قيمة موجبة وسبباً واضحاً" }); return;
+    }
     const amount = b.amount === undefined ? current.amount : b.amount;
-    const amountError = validateNonNegative(amount, "قيمة خطاب الضمان");
-    if (amountError || Number(amount) <= 0) {
-      res.status(400).json({ error: amountError || "قيمة خطاب الضمان يجب أن تكون أكبر من صفر" }); return;
+    if (!newMode) {
+      const amountError = validateNonNegative(amount, "قيمة خطاب الضمان");
+      if (amountError || Number(amount) <= 0) {
+        res.status(400).json({ error: amountError || "قيمة خطاب الضمان يجب أن تكون أكبر من صفر" }); return;
+      }
+    }
+    const feeValue = b.bankFee === undefined ? current.bank_fee : b.bankFee;
+    const fee = feeValue == null || feeValue === "" ? null : guaranteeDecimal(feeValue, 2);
+    if ((feeValue != null && feeValue !== "" && fee === null) || (fee !== null && fee > 99999999999999n)) {
+      res.status(422).json({ error: "الرسوم البنكية غير صالحة" }); return;
     }
     const issueDate = String(b.issueDate ?? current.issue_date);
     const expiryDate = String(b.expiryDate ?? current.expiry_date);
     if (expiryDate < issueDate) { res.status(400).json({ error: "تاريخ الانتهاء يجب ألا يسبق تاريخ الإصدار" }); return; }
-    const row = resultRows(await db.execute(sql`
+    const row = await db.transaction(async tx => {
+      const locked = resultRows(await tx.execute(sql`
+        SELECT * FROM contracting_guarantees WHERE id = ${id} AND company_id = ${cid} AND archived_at IS NULL FOR UPDATE
+      `))[0];
+      if (!locked) throw Object.assign(new Error("خطاب الضمان غير موجود"), { status: 404 });
+      const mode = requestedMode || locked.calculation_mode;
+      const sourceType = mode ? String(b.sourceType ?? locked.source_type ?? "") : null;
+      const sourceId = mode ? positiveId(b.sourceId ?? locked.source_id) : null;
+      if (locked.calculation_mode && (
+        sourceType !== locked.source_type || sourceId !== Number(locked.source_id)
+        || (b.guaranteePercent !== undefined
+          && guaranteeDecimal(b.guaranteePercent, 4) !== guaranteeDecimal(locked.guarantee_percent, 4))
+      ) && requestedMode !== "override") {
+        throw Object.assign(new Error("تعديل مصدر أو نسبة ضمان محسوب يتطلب صلاحية التعديل الخاص وسبباً"), { status: 403 });
+      }
+      const calculated = mode ? await guaranteeCalculation(tx, cid, Number(locked.project_id), String(locked.guarantee_type), {
+        tenderId: locked.tender_id == null ? null : Number(locked.tender_id),
+        contractKind: locked.contract_kind,
+        ownerContractId: locked.owner_contract_id == null ? null : Number(locked.owner_contract_id),
+        subcontractId: locked.subcontract_id == null ? null : Number(locked.subcontract_id),
+      }, sourceType!, sourceId, b.guaranteePercent ?? locked.guarantee_percent) : null;
+      const finalAmount = mode === "override" && requestedMode !== "auto" ? (requestedMode === "override" ? String(b.amount) : locked.amount)
+        : calculated?.amount ?? String(amount);
+      const finalReason = mode === "override" && requestedMode !== "auto"
+        ? requestedMode === "override" ? reason : locked.override_reason : null;
+      const previousValue = { mode: locked.calculation_mode, sourceType: locked.source_type, sourceId: locked.source_id,
+        baseAmount: locked.base_amount, percent: locked.guarantee_percent, amount: locked.amount, reason: locked.override_reason };
+      const nextValue = { mode, sourceType, sourceId, baseAmount: calculated?.baseAmount ?? null,
+        percent: calculated?.guaranteePercent ?? null, amount: finalAmount, computedAmount: calculated?.amount ?? null, reason: finalReason };
+    const saved = resultRows(await tx.execute(sql`
       UPDATE contracting_guarantees SET
         bank_account_id = ${bankAccountId}, beneficiary_customer_id = ${beneficiaryCustomerId},
         guarantee_number = ${String(b.guaranteeNumber ?? current.guarantee_number).trim()},
-        amount = ${String(amount)}, issue_date = ${issueDate}, expiry_date = ${expiryDate},
+        amount = ${finalAmount}, issue_date = ${issueDate}, expiry_date = ${expiryDate},
         purpose = ${b.purpose === undefined ? current.purpose : b.purpose || null},
-        notes = ${b.notes === undefined ? current.notes : b.notes || null}, updated_at = NOW()
+        notes = ${b.notes === undefined ? current.notes : b.notes || null},
+        calculation_mode = ${mode}, source_type = ${sourceType}, source_id = ${sourceId},
+        base_amount = ${calculated?.baseAmount ?? null}, guarantee_percent = ${calculated?.guaranteePercent ?? null},
+        override_reason = ${finalReason},
+        bank_fee = ${fee === null ? null : `${fee / 100n}.${String(fee % 100n).padStart(2, "0")}`},
+        beneficiary_name = ${b.beneficiaryName === undefined ? current.beneficiary_name : String(b.beneficiaryName ?? "").trim() || null},
+        updated_at = NOW()
        WHERE id = ${id} AND company_id = ${cid}
        RETURNING *
     `))[0];
+    if (mode && (JSON.stringify(previousValue) !== JSON.stringify({
+      mode, sourceType, sourceId, baseAmount: saved.base_amount, percent: saved.guarantee_percent,
+      amount: saved.amount, reason: finalReason
+    }) || requestedMode === "override")) {
+      await guaranteeValueAudit(tx, req, cid, id, previousValue, nextValue, requestedMode === "override" ? reason : undefined);
+    }
+    return saved;
+    });
     res.json(row);
   } catch (e: any) {
     res.status(Number(e?.status) || 500).json({ error: e?.message ?? "تعذر تعديل خطاب الضمان" });
@@ -3472,10 +3679,30 @@ router.put("/guarantees/:id/lifecycle", requirePermission("contracting", "approv
       if (nextStatus === "extended" && (!extendedExpiry || extendedExpiry <= String(current.expiry_date))) {
         throw Object.assign(new Error("تمديد خطاب الضمان يتطلب تاريخ انتهاء جديداً لاحقاً للتاريخ الحالي"), { status: 422 });
       }
+      const closureReason = String(req.body?.closureReason ?? "").trim();
+      if (["released", "cancelled"].includes(nextStatus) && !closureReason && current.calculation_mode) {
+        throw Object.assign(new Error("سبب الإفراج أو الإلغاء مطلوب"), { status: 422 });
+      }
+      const releasedAt = req.body?.releasedAt
+        ? new Date(String(req.body.releasedAt))
+        : new Date();
+      if (nextStatus === "released" && (!Number.isFinite(releasedAt.getTime()) || releasedAt.getTime() > Date.now()
+        || (req.body?.releasedAt && (!/^\d{4}-\d{2}-\d{2}$/.test(String(req.body.releasedAt))
+          || releasedAt.toISOString().slice(0, 10) !== req.body.releasedAt)))) {
+        throw Object.assign(new Error("تاريخ الإفراج الفعلي غير صالح"), { status: 422 });
+      }
+      const extensionDate = String(req.body?.extensionDate ?? new Date().toISOString().slice(0, 10));
+      if (nextStatus === "extended" && (!/^\d{4}-\d{2}-\d{2}$/.test(extensionDate)
+        || !Number.isFinite(new Date(extensionDate).getTime())
+        || new Date(extensionDate).toISOString().slice(0, 10) !== extensionDate)) {
+        throw Object.assign(new Error("تاريخ التمديد غير صالح"), { status: 422 });
+      }
       return resultRows(await tx.execute(sql`
         UPDATE contracting_guarantees SET status = ${nextStatus},
           expiry_date = ${extendedExpiry},
-          released_at = ${nextStatus === "released" ? new Date() : current.released_at},
+          extension_date = ${nextStatus === "extended" ? extensionDate : current.extension_date},
+          closure_reason = ${["released", "cancelled"].includes(nextStatus) ? closureReason || null : current.closure_reason},
+          released_at = ${nextStatus === "released" ? releasedAt : current.released_at},
           updated_at = NOW()
          WHERE id = ${id} AND company_id = ${cid}
          RETURNING *

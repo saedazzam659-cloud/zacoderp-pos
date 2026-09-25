@@ -72,6 +72,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   zatca_report: "zatca",
   // Operations modules
   contracting: "contracting",
+  contracting_guarantee_override: "contracting",
   production: "production",
   // Compact manufacturing facade. It is not an alias for `production`.
   simple_manufacturing: "simple_manufacturing",

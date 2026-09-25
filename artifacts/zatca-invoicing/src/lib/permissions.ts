@@ -147,6 +147,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // Contracting Management — backend key is "contracting"; covers projects,
   // contractors, bills, and the contracting dashboard behind a single permission.
   { key: "contracting",          label: "perms.modules.contracting",          group: G.contracting, actions: CONTRACTING_ACTIONS },
+  { key: "contracting_guarantee_override", label: "تعديل قيمة الضمان التلقائية", group: G.contracting, actions: ["edit"] },
 
   // Maintenance ERP — backend key is "maintenance"; covers assets, technicians,
   // work orders, and spare-parts consumption behind a single permission.

@@ -133,6 +133,16 @@ async function createTables(): Promise<void> {
       ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS purpose TEXT;
       ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS notes TEXT;
       ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS released_at TIMESTAMP;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS calculation_mode TEXT;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS source_type TEXT;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS source_id INTEGER;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS base_amount NUMERIC(14,2);
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS guarantee_percent NUMERIC(9,4);
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS override_reason TEXT;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS extension_date DATE;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS bank_fee NUMERIC(14,2);
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS beneficiary_name TEXT;
+      ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS closure_reason TEXT;
       ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP;
       ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS archived_by_user_id INTEGER;
       ALTER TABLE contracting_guarantees ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER;

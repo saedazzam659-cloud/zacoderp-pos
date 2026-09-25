@@ -3,6 +3,12 @@ name: Contracting accounting boundaries
 description: Optional cost-center snapshots, legacy preservation, and planning versus posting boundaries.
 ---
 
+Guarantee automation must remain an additive tender/guarantee enhancement, not a project redesign or an accounting posting. Preserve legacy manually valued letters until explicit conversion; calculated letters retain source evidence rather than changing merely when viewed.
+
+**Why:** The user authorized easier guarantee calculation only with existing projects, workflows and historical records preserved. Bank fees are informational, not an authorization to post expenses.
+
+**How to apply:** Use tender estimates, linked awarded-contract values, or actual posted advances—not planned advance percentages. Require explicit override permission and audited reasons for manual changes to calculated values.
+
 Optional project selection in manual journals requires explicit company activation of contracting, even for administrators. Do not inherit legacy default-on permissions for this field or alter the global module-access convention. Hiding it must preserve existing saved links.
 
 **Why:** The user explicitly required the journal screen to remain unchanged until contracting is activated, without affecting existing journal behavior or data.

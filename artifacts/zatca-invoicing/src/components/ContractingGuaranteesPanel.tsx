@@ -34,6 +34,15 @@ type Guarantee = {
   status: string;
   purpose: string | null;
   notes: string | null;
+  calculation_mode?: string | null;
+  source_type?: string | null;
+  base_amount?: string | null;
+  guarantee_percent?: string | null;
+  bank_fee?: string | null;
+  beneficiary_name?: string | null;
+  extension_date?: string | null;
+  closure_reason?: string | null;
+  released_at?: string | null;
   projectName?: string;
   tenderNumber?: string;
   contractNumber?: string;
@@ -218,12 +227,24 @@ export default function ContractingGuaranteesPanel({
   const selectedContracts = award.contractKind === "owner" ? ownerContracts : subcontracts;
 
   function updateLifecycle(row: Guarantee, status: string) {
+    if (status === "released" || status === "cancelled") {
+      const closureReason = window.prompt(status === "released" ? "سبب / شرط الإفراج" : "سبب الإلغاء", row.closure_reason || "");
+      if (closureReason === null || (row.calculation_mode && !closureReason.trim())) return;
+      const releasedAt = status === "released" ? window.prompt("تاريخ الإفراج الفعلي YYYY-MM-DD", new Date().toISOString().slice(0, 10)) : null;
+      if (status === "released" && (!releasedAt || !/^\d{4}-\d{2}-\d{2}$/.test(releasedAt))) return;
+      void mutate(`/guarantees/${row.id}/lifecycle`, "PUT", { status, closureReason: closureReason.trim(), ...(releasedAt ? { releasedAt } : {}) });
+      return;
+    }
     if (status !== "extended") {
       void mutate(`/guarantees/${row.id}/lifecycle`, "PUT", { status });
       return;
     }
     const expiryDate = window.prompt("أدخل تاريخ الانتهاء الجديد بصيغة YYYY-MM-DD", row.expiry_date);
-    if (expiryDate) void mutate(`/guarantees/${row.id}/lifecycle`, "PUT", { status, expiryDate });
+    if (expiryDate) {
+      const extensionDate = window.prompt("تاريخ التمديد YYYY-MM-DD", new Date().toISOString().slice(0, 10));
+      if (extensionDate && /^\d{4}-\d{2}-\d{2}$/.test(extensionDate))
+        void mutate(`/guarantees/${row.id}/lifecycle`, "PUT", { status, expiryDate, extensionDate });
+    }
   }
 
   return (
@@ -288,10 +309,19 @@ export default function ContractingGuaranteesPanel({
                   <TableCell>{TYPE_LABEL[row.guarantee_type] ?? row.guarantee_type}</TableCell>
                   <TableCell>{row.contractNumber || row.tenderNumber || "—"}{row.parentGuaranteeNumber && <div className="text-xs text-muted-foreground">الأصل: {row.parentGuaranteeNumber}</div>}</TableCell>
                   <TableCell>{row.bankName || `#${row.bank_account_id}`}</TableCell>
-                  <TableCell>{row.beneficiaryName || "الشركة"}</TableCell>
-                  <TableCell>{Number(row.amount).toLocaleString("en-US")}</TableCell>
+                   <TableCell>{row.beneficiaryName || row.beneficiary_name || "الشركة"}</TableCell>
+                   <TableCell>{Number(row.amount).toLocaleString("en-US")}
+                     {row.calculation_mode && <div className="text-xs text-muted-foreground">
+                       {row.calculation_mode === "override" ? "تعديل خاص" : "محسوب تلقائياً"} · {row.base_amount} × {row.guarantee_percent}% ({row.source_type})
+                     </div>}
+                     {row.bank_fee && <div className="text-xs text-muted-foreground">رسوم البنك: {row.bank_fee}</div>}
+                   </TableCell>
                   <TableCell>{row.expiry_date}</TableCell>
-                  <TableCell><Badge variant="outline">{STATUS_LABEL[row.status] ?? row.status}</Badge></TableCell>
+                   <TableCell><Badge variant="outline">{STATUS_LABEL[row.status] ?? row.status}</Badge>
+                     {row.extension_date && <div className="text-xs text-muted-foreground">تمديد: {row.extension_date}</div>}
+                     {row.released_at && <div className="text-xs text-muted-foreground">إفراج: {String(row.released_at).slice(0, 10)}</div>}
+                     {row.closure_reason && <div className="text-xs text-muted-foreground">{row.closure_reason}</div>}
+                   </TableCell>
                   <TableCell><div className="flex flex-wrap gap-1">
                     {canEdit && <Button variant="ghost" size="icon" onClick={() => openEditor("guarantees", row.id)}><Pencil className="h-4 w-4" /></Button>}
                     {canApprove && NEXT_STATUS[row.status]?.map(status => <Button key={status} variant="outline" size="sm" disabled={saving} onClick={() => updateLifecycle(row, status)}>{STATUS_LABEL[status]}</Button>)}

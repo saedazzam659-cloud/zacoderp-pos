@@ -90,6 +90,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   zatca_report: "zatca",
   // Operations
   contracting: "contracting",
+  contracting_guarantee_override: "contracting",
   production: "production",
   // Compact manufacturing facade. This is intentionally its own tenant gate:
   // simple users must never inherit access to the advanced production router.
