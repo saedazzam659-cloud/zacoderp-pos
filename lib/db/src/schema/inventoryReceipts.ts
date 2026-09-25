@@ -13,6 +13,7 @@ export const goodsReceiptStatusEnum = pgEnum("goods_receipt_status", [
 export const goodsReceiptsTable = pgTable("goods_receipts", {
   id:                          serial("id").primaryKey(),
   companyId:                   integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  projectId:                   integer("project_id"),
   branchId:                    integer("branch_id"),
   docNumber:                   text("doc_number"),
   supplierInvoiceNumber:       text("supplier_invoice_number"),

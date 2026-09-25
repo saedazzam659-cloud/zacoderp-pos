@@ -44,6 +44,7 @@ import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js"
 import { AsyncLocalStorage } from "node:async_hooks";
 import { normalizePeriodicity, parseCcSplit, installmentsBetween, runDueAdjustmentsForCompany } from "../lib/adjustmentPosting.js";
 import { logger } from "../lib/logger.js";
+import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
 import { isPrimaryKeyCollision, postgresErrorField, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
 import { itemNamesWithSupplierDescription, purchaseSupplierDescription } from "../lib/journalLineDescriptions.js";
 import {
@@ -611,6 +612,10 @@ const router = Router();
   }
   
 router.use(extractAuth);
+router.use(async (_req, res, next) => {
+  try { await ensureProjectFinancialLinks(); next(); }
+  catch (error) { logger.error({ error }, "project link readiness failed"); res.status(503).json({ error: "تعذر تجهيز ربط المشاريع" }); }
+});
 router.use(pathRbac([
   ["/purchase-invoices",      "purchase_invoices"],
   ["/purchase-orders",        "purchase_invoices"],
@@ -1665,6 +1670,7 @@ router.post("/purchase-invoices", async (req, res) => {
     };
     const invoiceValues = {
       companyId: cid, branchId: branchId ? Number(branchId) : null,
+      projectId: await resolveProjectLink(cid, req.body.projectId, branchId, req.authUser),
       docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null,
       supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
@@ -1759,7 +1765,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     const id = Number(req.params.id);
     // POSTED-DOC LOCK — same rule as sales: a posted purchase invoice is
     // immutable until an admin explicitly unposts it.
-    const [existing] = await db.select({ status: purchaseInvoicesTable.status })
+    const [existing] = await db.select({ status: purchaseInvoicesTable.status, sourceGrnId: purchaseInvoicesTable.sourceGrnId, projectId: purchaseInvoicesTable.projectId })
       .from(purchaseInvoicesTable)
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
@@ -1795,6 +1801,22 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     // docNumber is intentionally omitted — once assigned, it is immutable.
     const [inv] = await db.update(purchaseInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
+      projectId: await (async () => {
+        const selected = await resolveProjectLink(cid, req.body.projectId === undefined ? existing.projectId : req.body.projectId, branchId, req.authUser);
+        if (selected !== existing.projectId) {
+          const [run] = await db.select({ id: accountingAdjustmentRunsTable.id })
+            .from(accountingAdjustmentRunsTable)
+            .innerJoin(purchaseInvoiceLinesTable, eq(accountingAdjustmentRunsTable.adjustmentId, purchaseInvoiceLinesTable.deferredAdjustmentId))
+            .where(and(eq(accountingAdjustmentRunsTable.companyId, cid), eq(purchaseInvoiceLinesTable.invoiceId, id)))
+            .limit(1);
+          if (run) throw Object.assign(new Error("لا يمكن تغيير مشروع فاتورة شراء بعد بدء استحقاق مصروف مقدم"), { status: 409 });
+        }
+        const [origin] = existing.sourceGrnId ? await db.select({ projectId: goodsReceiptsTable.projectId })
+          .from(goodsReceiptsTable).where(and(eq(goodsReceiptsTable.id, existing.sourceGrnId), eq(goodsReceiptsTable.companyId, cid))) : [];
+        if (origin && origin.projectId !== selected)
+          throw Object.assign(new Error("مشروع الفاتورة المحولة يجب أن يطابق مشروع إذن الاستلام"), { status: 422 });
+        return selected;
+      })(),
       supplierInvoiceNumber: supplierInvoiceNumber || null,
       supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
@@ -3512,6 +3534,14 @@ router.post("/purchase-returns", async (req, res) => {
     };
     const ret = await insertPurchaseReturnWithSerialRepair({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
+      projectId: await (async () => {
+        const [origin] = invoiceId ? await db.select({ projectId: purchaseInvoicesTable.projectId })
+          .from(purchaseInvoicesTable).where(and(eq(purchaseInvoicesTable.id, Number(invoiceId)), eq(purchaseInvoicesTable.companyId, cid))) : [];
+        const selected = await resolveProjectLink(cid, req.body.projectId === undefined ? origin?.projectId : req.body.projectId, branchId, req.authUser);
+        if (origin && origin.projectId !== selected)
+          throw Object.assign(new Error("مشروع المرتجع المرتبط يجب أن يطابق الفاتورة الأصلية"), { status: 422 });
+        return selected;
+      })(),
       docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
       supplierId: supplierId ? Number(supplierId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,
@@ -3600,6 +3630,14 @@ router.put("/purchase-returns/:id", async (req, res) => {
     // docNumber is intentionally omitted — once assigned, it is immutable.
     const [ret] = await db.update(purchaseReturnsTable).set({
       branchId: branchId ? Number(branchId) : null,
+      projectId: await (async () => {
+        const selected = await resolveProjectLink(cid, req.body.projectId === undefined ? existing.projectId : req.body.projectId, branchId, req.authUser);
+        const [origin] = invoiceId ? await db.select({ projectId: purchaseInvoicesTable.projectId })
+          .from(purchaseInvoicesTable).where(and(eq(purchaseInvoicesTable.id, Number(invoiceId)), eq(purchaseInvoicesTable.companyId, cid))) : [];
+        if (origin && origin.projectId !== selected)
+          throw Object.assign(new Error("مشروع المرتجع المرتبط يجب أن يطابق الفاتورة الأصلية"), { status: 422 });
+        return selected;
+      })(),
       supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
       supplierId: supplierId ? Number(supplierId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,

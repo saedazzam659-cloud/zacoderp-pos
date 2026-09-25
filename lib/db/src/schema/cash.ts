@@ -162,6 +162,7 @@ export const receiptVoucherLinesTable = pgTable("receipt_voucher_lines", {
 export const paymentVoucherLinesTable = pgTable("payment_voucher_lines", {
   id:                serial("id").primaryKey(),
   voucherId:         integer("voucher_id").notNull().references(() => paymentVouchersTable.id, { onDelete: "cascade" }),
+  projectId:         integer("project_id"),
   accountId:         integer("account_id").references(() => accountsTable.id),
   description:       text("description"),
   amount:            numeric("amount", { precision: 15, scale: 2 }).notNull().default("0"),

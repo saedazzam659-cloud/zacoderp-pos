@@ -79,9 +79,15 @@ const REPORT_OPTIONS: Array<{ value: ContractingProjectReportKey; label: string 
   { value: "variations", label: "مقارنة العقد الأصلي والمعدل" },
   { value: "pricingProfitability", label: "هامش التسعير المتوقع (المالك مقابل الباطن المرتبط)" },
   { value: "profitability", label: "ربحية المشروع" },
+  { value: "financialSources", label: "المصادر المالية المرحّلة (الفواتير والمصروفات وحركات المخزون الإرشادية)" },
 ];
 
 const LABELS: Record<string, string> = {
+  sourceType: "نوع المصدر",
+  sourceId: "معرّف المصدر",
+  sourceDate: "تاريخ المصدر",
+  documentNumber: "رقم المستند",
+  category: "تصنيف المصدر",
   direction: "الاتجاه",
   lineCode: "كود البند",
   description: "الوصف",
@@ -115,7 +121,7 @@ const LABELS: Record<string, string> = {
   settlementStatus: "حالة التسوية",
   settlementDate: "تاريخ التسوية",
   kind: "النوع",
-  amount: "المبلغ",
+  amount: "المبلغ دون الضريبة",
   appliedAmount: "المطبق",
   statusLabel: "حالة التسوية",
   notes: "ملاحظات",
@@ -164,6 +170,7 @@ function status(value: unknown): string {
 
 function displayValue(key: string, value: unknown): ReactNode {
   if (value == null || value === "") return "—";
+  if (key === "sourceId") return String(value);
   if (key === "direction") return direction(value);
   if (key.toLowerCase().includes("status") || key === "state" || key === "kind" || key === "source") {
     return status(value);
@@ -178,7 +185,7 @@ function ReportTable({ rows }: { rows: Record<string, unknown>[] }) {
     const keys: string[] = [];
     for (const row of rows) {
       for (const key of Object.keys(row)) {
-        if (!keys.includes(key) && key !== "id" && !key.endsWith("Id")) keys.push(key);
+        if (!keys.includes(key) && key !== "id" && (key === "sourceId" || !key.endsWith("Id"))) keys.push(key);
       }
     }
     // BOQ rows include the mapped owner/subcontract pricing margin after the

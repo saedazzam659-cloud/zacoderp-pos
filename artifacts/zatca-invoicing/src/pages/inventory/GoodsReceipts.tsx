@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
@@ -90,7 +91,7 @@ function newLine(): ReceiptLine {
 
 const EMPTY = {
   docNumber: "", supplierInvoiceNumber: "", receiptDate: today(),
-  supplierId: "", branchId: "",
+  supplierId: "", branchId: "", projectId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
   discountAmount: "0",
   priceIncludesVat: false,
@@ -115,6 +116,11 @@ export default function GoodsReceipts() {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const { data: projectOptions } = useQuery({
+    queryKey: contractingOptionsKey(user?.id, cid, undefined, token),
+    queryFn: () => fetchContractingProjectOptions(token),
+    enabled: !!token,
+  });
   const usageModes = useScreenItemModes("stock_in");
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -395,6 +401,7 @@ export default function GoodsReceipts() {
         receiptDate:  full.receiptDate ?? today(),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
+        projectId: full.projectId == null ? "" : String(full.projectId),
         currencyCode: full.currencyCode ?? "",
         exchangeRate: full.exchangeRate ? String(full.exchangeRate) : "1",
         notes:        full.notes ?? "",
@@ -446,6 +453,7 @@ export default function GoodsReceipts() {
         receiptDate:  today(),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
+        projectId: full.projectId == null ? "" : String(full.projectId),
         currencyCode: full.currencyCode ?? "",
         exchangeRate: full.exchangeRate ? String(full.exchangeRate) : "1",
         notes:        full.notes ?? "",
@@ -1183,6 +1191,15 @@ ${sections}
                         ))}
                       </SelectContent>
                     </Select>
+                  </Field>
+                  <Field label="المشروع (اختياري)">
+                    <select aria-label="مشروع إذن الاستلام" value={form.projectId ?? ""}
+                      onChange={e => setForm((p: any) => ({ ...p, projectId: e.target.value }))}
+                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
+                      <option value="">— بدون مشروع —</option>
+                      {(projectOptions?.projects ?? []).filter(p => !form.branchId || p.branchId == null || String(p.branchId) === form.branchId)
+                        .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+                    </select>
                   </Field>
                   <Field label={tg("warehouse")}>
                     <SearchCombobox

@@ -37,11 +37,16 @@ import { namedPartyDescription } from "../lib/journalLineDescriptions.js";
 import { parseContractingAllocation, resolveContractingLine, contractingVoucherOptions, postVoucherSettlements, assertVoucherCanUnpost, lockVoucherContractScope, type ContractingAllocation } from "../lib/contracting-voucher-service.js";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 import { refreshBillPaymentState } from "../lib/contracting-accounting-service.js";
+import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
 
 const router = Router();
 router.use(extractAuth);
 router.use(requireModulePermission("payment_vouchers"));
 router.use(moduleAudit("payment_vouchers"));
+router.use(async (_req, res, next) => {
+  try { await ensureProjectFinancialLinks(); next(); }
+  catch (error) { logger.error({ error }, "project link readiness failed"); res.status(503).json({ error: "تعذر تجهيز ربط المشاريع" }); }
+});
 
 router.get("/contracting-options", async (req, res) => {
   try {
@@ -679,6 +684,7 @@ router.get("/:id", async (req, res) => {
 // dropping fully-empty rows. Returns null when the caller didn't send a
 // `lines` array at all (legacy single-`amount` callers keep working).
 interface RawPvLine {
+  projectId: number | null;
   accountId: number | null;
   description: string | null;
   amount: number;
@@ -732,6 +738,7 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
     const taxAmount = parseFloat(l?.taxAmount ?? "0") || 0;
     if (!accountId && amount === 0 && taxAmount === 0 && l?.contractingAllocation == null) continue; // skip blank row
     out.push({
+      projectId: l?.projectId == null || l.projectId === "" ? null : Number(l.projectId),
       accountId,
       description: l?.description ?? null,
       amount,
@@ -771,6 +778,11 @@ function normalizePaymentLines(raw: any): RawPvLine[] | null {
 async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId: number | null, req?: any): Promise<void> {
   if (lines.length === 0) throw new Error("يجب إضافة بند واحد على الأقل");
   for (const l of lines) {
+    l.projectId = await resolveProjectLink(cid, l.projectId, l.branchId ?? req?.body?.branchId, req?.authUser);
+    if (l.projectId && (l.contractingAllocation || l.purchaseInvoiceId ||
+      !["direct", "prepaid"].includes(l.opType))) {
+      throw Object.assign(new Error("ربط المشروع متاح فقط للمصروف المباشر أو المقدم، دون تسوية فاتورة أو مقاولات"), { status: 422 });
+    }
     if (!l.contractingAllocation) continue;
     if (l.purchaseInvoiceId || l.taxAmount || l.taxRate || l.taxAccountId || l.opType !== "direct" || l.opSupplierId || l.opEmployeeId) {
       throw new Error("بند المقاولات لا يقبل فاتورة مشتريات أو ضريبة أو عملية خاصة");
@@ -886,11 +898,19 @@ async function validatePaymentLines(cid: number, lines: RawPvLine[], supplierId:
     }
   }
   if (acctIds.size) {
-    const found = await db.select({ id: accountsTable.id }).from(accountsTable)
+    const found = await db.select({ id: accountsTable.id, accountType: accountsTable.accountType }).from(accountsTable)
       .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, [...acctIds])));
     const fs = new Set(found.map((a) => a.id));
     for (const id of acctIds) {
       if (!fs.has(id)) throw new Error("أحد الحسابات المحددة في البنود غير موجود في هذه الشركة");
+    }
+    const types = new Map(found.map(a => [a.id, a.accountType]));
+    for (const l of lines) {
+      if (!l.projectId) continue;
+      if (l.opType === "direct" && types.get(l.accountId!) !== "expense")
+        throw Object.assign(new Error("ربط المشروع بالمصروف المباشر يتطلب حساب مصروف"), { status: 422 });
+      if (l.opType === "prepaid" && types.get(l.deferredExpenseAccountId!) !== "expense")
+        throw Object.assign(new Error("المصروف المقدم المرتبط بالمشروع يتطلب حساب استحقاق مصروف"), { status: 422 });
     }
   }
   for (const l of lines) {
@@ -913,6 +933,7 @@ async function replacePaymentLines(voucherId: number, lines: RawPvLine[], dx: an
   // orphan guard cancels their adjustments.
   const prev = await dx.select({
     adjId:   paymentVoucherLinesTable.deferredAdjustmentId,
+    projectId: paymentVoucherLinesTable.projectId,
     acct:    paymentVoucherLinesTable.accountId,
     expAcct: paymentVoucherLinesTable.deferredExpenseAccountId,
     amount:  paymentVoucherLinesTable.amount,
@@ -935,6 +956,7 @@ async function replacePaymentLines(voucherId: number, lines: RawPvLine[], dx: an
     // amortize the OLD schedule against the NEW payment JE.
     const idx = lines.findIndex((l, i) =>
       l.opType === "prepaid" && !adjByLine.has(i) &&
+      l.projectId === p.projectId &&
       l.accountId === p.acct && l.deferredExpenseAccountId === p.expAcct &&
       Math.abs(l.amount - (parseFloat(String(p.amount)) || 0)) < 0.005 &&
       l.deferredStartDate === p.dStart && l.deferredEndDate === p.dEnd &&
@@ -946,6 +968,7 @@ async function replacePaymentLines(voucherId: number, lines: RawPvLine[], dx: an
   if (lines.length === 0) return;
   await dx.insert(paymentVoucherLinesTable).values(lines.map((l, i) => ({
     voucherId,
+    projectId: l.projectId,
     accountId: l.accountId,
     description: l.description,
     amount: l.amount.toFixed(2),
@@ -1115,6 +1138,9 @@ router.post("/", async (req, res) => {
     res.status(400).json({ error: "بنود المقاولات تتطلب سعر صرف 1" }); return;
   }
   const headerPurchaseInvoiceId = d.purchaseInvoiceId ? parseInt(d.purchaseInvoiceId) : null;
+  if (headerPurchaseInvoiceId && lines?.some(l => l.projectId)) {
+    res.status(400).json({ error: "لا يمكن ربط بند مصروف بمشروع في سند مرتبط بفاتورة مشتريات على مستوى الرأس" }); return;
+  }
   if (headerPurchaseInvoiceId && lines?.some((l) => l.contractingAllocation)) {
     res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مشتريات؛ اربط البنود العادية بالفاتورة على مستوى البند" }); return;
   }
@@ -1287,11 +1313,33 @@ router.put("/:id", async (req, res) => {
   if (lines) {
     try { await validatePaymentLines(cid, lines, entityId, req); }
     catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
+    const oldPrepaid = await db.select({
+      projectId: paymentVoucherLinesTable.projectId,
+      adjustmentId: paymentVoucherLinesTable.deferredAdjustmentId,
+    }).from(paymentVoucherLinesTable)
+      .where(and(eq(paymentVoucherLinesTable.voucherId, id), eq(paymentVoucherLinesTable.opType, "prepaid")))
+      .orderBy(asc(paymentVoucherLinesTable.sortOrder), asc(paymentVoucherLinesTable.id));
+    const adjustmentIds = oldPrepaid.map(p => p.adjustmentId).filter((value): value is number => value != null);
+    if (adjustmentIds.length) {
+      const runs = await db.select({ id: accountingAdjustmentRunsTable.id })
+        .from(accountingAdjustmentRunsTable)
+        .where(and(eq(accountingAdjustmentRunsTable.companyId, cid), inArray(accountingAdjustmentRunsTable.adjustmentId, adjustmentIds)))
+        .limit(1);
+      const nextPrepaid = lines.filter(l => l.opType === "prepaid");
+      if (runs.length && (oldPrepaid.length !== nextPrepaid.length
+        || oldPrepaid.some((old, index) => old.projectId !== nextPrepaid[index]?.projectId))) {
+        res.status(409).json({ error: "لا يمكن تغيير مشروع مصروف مقدم بعد بدء استحقاقه؛ سيؤدي ذلك إلى تغيير مصروفات تاريخية" });
+        return;
+      }
+    }
   }
   if (lines?.some((l) => l.contractingAllocation) && Number(d.exchangeRate ?? 1) !== 1) {
     res.status(400).json({ error: "بنود المقاولات تتطلب سعر صرف 1" }); return;
   }
   const headerPurchaseInvoiceId = d.purchaseInvoiceId ? parseInt(d.purchaseInvoiceId) : null;
+  if (headerPurchaseInvoiceId && lines?.some(l => l.projectId)) {
+    res.status(400).json({ error: "لا يمكن ربط بند مصروف بمشروع في سند مرتبط بفاتورة مشتريات على مستوى الرأس" }); return;
+  }
   if (headerPurchaseInvoiceId && lines?.some((l) => l.contractingAllocation)) {
     res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مشتريات؛ اربط البنود العادية بالفاتورة على مستوى البند" }); return;
   }

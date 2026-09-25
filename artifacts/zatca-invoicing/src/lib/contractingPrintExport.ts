@@ -850,6 +850,7 @@ export type ContractingProjectReportKey =
   | "deductions"
   | "variations"
   | "pricingProfitability"
+  | "financialSources"
   | "profitability";
 
 export interface ContractingProjectReportsSnapshot {
@@ -961,13 +962,21 @@ const PROJECT_REPORT_COLUMNS: Record<ContractingProjectReportKey, ExportColumn[]
     { key: "expectedMarginPercent", header: "الهامش المتوقع %", width: 18, numFmt: "0.00" },
   ],
   profitability: [
-    { key: "revenue", header: "إيراد المالك المنفذ", width: 21, numFmt: "#,##0.00" },
+    { key: "revenue", header: "الإيراد الفعلي (دون ضريبة)", width: 25, numFmt: "#,##0.00" },
     { key: "actualCost", header: "التكلفة الفعلية", width: 18, numFmt: "#,##0.00" },
     { key: "estimatedCost", header: "التكلفة التقديرية", width: 18, numFmt: "#,##0.00" },
     { key: "profit", header: "الربح", width: 16, numFmt: "#,##0.00" },
     { key: "marginPercent", header: "الهامش %", width: 14, numFmt: "0.00" },
     { key: "costSource", header: "مصدر التكلفة", width: 28 },
     { key: "note", header: "حدود التقرير", width: 46 },
+  ],
+  financialSources: [
+    { key: "sourceType", header: "نوع المصدر", width: 25 },
+    { key: "sourceId", header: "معرّف المصدر", width: 17 },
+    { key: "sourceDate", header: "التاريخ", width: 17 },
+    { key: "documentNumber", header: "رقم المستند", width: 19 },
+    { key: "category", header: "النوع المالي", width: 22 },
+    { key: "amount", header: "القيمة (دون الضريبة)", width: 22, numFmt: "#,##0.00" },
   ],
 };
 PROJECT_REPORT_COLUMNS.executedQuantities = PROJECT_REPORT_COLUMNS.boqStatement;
@@ -982,6 +991,7 @@ const PROJECT_REPORT_TITLES: Record<ContractingProjectReportKey, string> = {
   deductions: "كشف الاستقطاعات والغرامات والتسويات",
   variations: "مقارنة العقد الأصلي والمعدل",
   pricingProfitability: "هامش التسعير المتوقع من ربط أسطر المالك بالباطن",
+  financialSources: "مصادر الإيراد والتكلفة الفعلية المرتبطة بالمشروع",
   profitability: "ربحية المشروع من التكلفة الفعلية المتاحة",
 };
 

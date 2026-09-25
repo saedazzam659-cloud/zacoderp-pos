@@ -34,6 +34,7 @@ import {
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import { VoucherContractingAllocation, positiveId, validateRetentionReleaseLines, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
+import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -53,6 +54,7 @@ function sanitizeSignedDecimal(raw: string): string {
 // strings for controlled inputs; the backend parses both strings & numbers.
 interface PvLine {
   key: string;               // local React key only (never sent)
+  projectId: string;
   accountId: string;         // DR GL account (required)
   description: string;
   amount: string;            // NET (pre-VAT)
@@ -146,6 +148,7 @@ function newPvLine(init: Partial<PvLine> = {}): PvLine {
     taxAmount: "",
     taxAccountId: "",
     costCenter: "",
+    projectId: "",
     purchaseInvoiceId: "",
     contractingAllocation: null,
     supplierName: "",
@@ -267,6 +270,11 @@ export default function PaymentVoucherForm() {
 
   const NS = "paymentVouchers";
   const cid = user?.companyId;
+  const { data: projectOptions } = useQuery({
+    queryKey: contractingOptionsKey(user?.id, cid, undefined, token ?? undefined),
+    queryFn: () => fetchContractingProjectOptions(token!),
+    enabled: !!token && !!cid,
+  });
   const h = { Authorization: `Bearer ${token}` };
 
   const [form, setForm] = useState<FormState>(() => ({ ...EMPTY, lines: [newPvLine()] }));
@@ -418,6 +426,7 @@ export default function PaymentVoucherForm() {
         taxAmount: l.taxAmount != null ? String(l.taxAmount) : "",
         taxAccountId: l.taxAccountId != null ? String(l.taxAccountId) : "",
         costCenter: l.costCenter ?? "",
+        projectId: l.projectId != null ? String(l.projectId) : "",
         purchaseInvoiceId: l.purchaseInvoiceId != null ? String(l.purchaseInvoiceId) : "",
         contractingAllocation: l.contractingAllocation ?? null,
         supplierName: l.supplierName ?? "",
@@ -739,6 +748,7 @@ export default function PaymentVoucherForm() {
         taxAmount:         String(Number(l.taxAmount) || 0),
         taxAccountId:      l.taxAccountId ? parseInt(l.taxAccountId) : null,
         costCenter:        l.costCenter || null,
+        projectId:         l.projectId ? Number(l.projectId) : null,
         branchId:          form.branchId ? parseInt(form.branchId) : null,
         purchaseInvoiceId: l.contractingAllocation ? null : l.purchaseInvoiceId ? parseInt(l.purchaseInvoiceId) : null,
         contractingAllocation: contractingEnabled ? l.contractingAllocation : null,
@@ -1407,6 +1417,19 @@ export default function PaymentVoucherForm() {
                                   <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>
                                 ))}
                             </select>
+                            {(l.opType === "direct" || l.opType === "prepaid") && !l.contractingAllocation && !l.purchaseInvoiceId && (
+                              <select
+                                value={l.projectId}
+                                onChange={e => updateLine(l.key, { projectId: e.target.value })}
+                                aria-label="المشروع للبند"
+                                className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background"
+                              >
+                                <option value="">— بدون مشروع —</option>
+                                {(projectOptions?.projects ?? [])
+                                  .filter(p => !form.branchId || p.branchId == null || String(p.branchId) === form.branchId)
+                                  .map(p => <option key={p.id} value={String(p.id)}>{p.code} — {p.nameAr}</option>)}
+                              </select>
+                            )}
                             <Button
                               type="button" variant="ghost" size="icon"
                               className="h-7 w-7 text-muted-foreground hover:text-destructive"

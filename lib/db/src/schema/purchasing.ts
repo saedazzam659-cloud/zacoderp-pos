@@ -75,6 +75,7 @@ export const purchaseInvoiceStatusEnum = pgEnum("purchase_invoice_status", [
 export const purchaseInvoicesTable = pgTable("purchase_invoices", {
   id:                   serial("id").primaryKey(),
   companyId:            integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  projectId:            integer("project_id"),
   branchId:             integer("branch_id"),
   docNumber:            text("doc_number"),
   supplierInvoiceNumber: text("supplier_invoice_number"),
@@ -238,6 +239,7 @@ export const purchaseOrderLinesTable = pgTable("purchase_order_lines", {
 export const purchaseReturnsTable = pgTable("purchase_returns", {
   id:            serial("id").primaryKey(),
   companyId:     integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  projectId:     integer("project_id"),
   branchId:      integer("branch_id"),
   docNumber:     text("doc_number"),
   supplierInvoiceNumber: text("supplier_invoice_number"),

@@ -17,6 +17,7 @@ import {
 } from "./contracting-integrity.js";
 import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
 import { ensureContractingCostAllocationTables } from "./contracting-cost-allocation-service.js";
+import { ensureProjectFinancialLinks } from "./project-financial-link.js";
 import { ensureContractingExecutionSchema } from "./contracting-execution-storage.js";
 import { ensureContractingGuaranteeTables } from "./contracting-guarantees-storage.js";
 
@@ -4434,6 +4435,7 @@ async function runHeal(options: {
   await ensureContractingAccountingTables();
   await ensureContractingExecutionSchema();
   await ensureContractingCostAllocationTables();
+  await ensureProjectFinancialLinks();
   await ensureContractingGuaranteeTables();
   await ensureContractingProjectIntegrityPrerequisites();
 
@@ -4547,6 +4549,7 @@ async function runHeal(options: {
   await ensureContractingAccountingTables();
   await ensureContractingExecutionSchema();
   await ensureContractingCostAllocationTables();
+  await ensureProjectFinancialLinks();
   await ensureContractingGuaranteeTables();
   await ensureContractingProjectIntegrityPrerequisites();
 

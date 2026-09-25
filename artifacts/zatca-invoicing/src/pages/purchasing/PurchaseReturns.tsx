@@ -8,6 +8,7 @@ import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
@@ -99,7 +100,7 @@ function newLine(): ReturnLine {
 }
 
 const EMPTY = {
-  docNumber: "", supplierInvoiceNumber: "", returnDate: today(), supplierId: "", branchId: "", invoiceId: "",
+  docNumber: "", supplierInvoiceNumber: "", returnDate: today(), supplierId: "", branchId: "", invoiceId: "", projectId: "",
   paymentType: "credit", cashBoxId: "", bankAccountId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
   discountAmount: "0",
@@ -125,6 +126,11 @@ export default function PurchaseReturns() {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const { data: projectOptions } = useQuery({
+    queryKey: contractingOptionsKey(user?.id, cid, undefined, token),
+    queryFn: () => fetchContractingProjectOptions(token),
+    enabled: !!token,
+  });
   const usageModes = useScreenItemModes("purchase_returns");
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -451,6 +457,7 @@ export default function PurchaseReturns() {
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
         invoiceId:    full.invoiceId  ? String(full.invoiceId)  : "",
+        projectId: full.projectId == null ? "" : String(full.projectId),
         paymentType:  full.paymentType ?? "credit",
         cashBoxId:    full.cashBoxId  ? String(full.cashBoxId)  : "",
         bankAccountId: full.bankAccountId ? String(full.bankAccountId) : "",
@@ -557,6 +564,7 @@ export default function PurchaseReturns() {
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
         invoiceId:    full.invoiceId  ? String(full.invoiceId)  : "",
+        projectId: full.projectId == null ? "" : String(full.projectId),
         paymentType:  full.paymentType ?? "credit",
         cashBoxId:    full.cashBoxId  ? String(full.cashBoxId)  : "",
         bankAccountId: full.bankAccountId ? String(full.bankAccountId) : "",
@@ -664,6 +672,7 @@ export default function PurchaseReturns() {
         supplierId: inv.supplierId ? String(inv.supplierId) : "",
         branchId:   inv.branchId   ? String(inv.branchId)   : "",
         invoiceId:  String(inv.id),
+        projectId: inv.projectId == null ? "" : String(inv.projectId),
         paymentType: inv.paymentType ?? prev.paymentType ?? "credit",
         cashBoxId:   inv.cashBoxId ? String(inv.cashBoxId) : "",
         bankAccountId: inv.bankAccountId ? String(inv.bankAccountId) : "",
@@ -1708,6 +1717,15 @@ ${sections}
                     ))}
                   </SelectContent>
                 </Select>
+              </Field>
+              <Field label="المشروع (اختياري)">
+                <select aria-label="مشروع مرتجع الشراء" value={form.projectId ?? ""}
+                  onChange={e => setForm((p: any) => ({ ...p, projectId: e.target.value }))}
+                  className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
+                  <option value="">— بدون مشروع —</option>
+                  {(projectOptions?.projects ?? []).filter(p => !form.branchId || p.branchId == null || String(p.branchId) === form.branchId)
+                    .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+                </select>
               </Field>
               <Field label="المستودع">
                 <SearchCombobox

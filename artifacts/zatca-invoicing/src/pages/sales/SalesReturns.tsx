@@ -11,6 +11,7 @@ import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
@@ -133,7 +134,7 @@ function newLine(): ReturnLine {
 }
 
 const EMPTY = {
-  docNumber: "", returnDate: today(), customerId: "", branchId: "", invoiceId: "",
+  docNumber: "", returnDate: today(), customerId: "", branchId: "", invoiceId: "", projectId: "",
   paymentType: "credit", cashBoxId: "", bankAccountId: "",
   currencyCode: "", exchangeRate: "1", notes: "", salesRepId: "",
   priceIncludesVat: false,
@@ -149,6 +150,11 @@ const STATUS_CLS: Record<string, string> = {
 export default function SalesReturns() {
     const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
+  const { data: projectOptions } = useQuery({
+    queryKey: contractingOptionsKey(user?.id, user?.company?.id, undefined, token),
+    queryFn: () => fetchContractingProjectOptions(token),
+    enabled: !!token,
+  });
   const { toast } = useToast();
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -570,6 +576,7 @@ export default function SalesReturns() {
         returnDate: r.returnDate ?? today(),
         customerId: r.customerId ? String(r.customerId) : "",
         invoiceId: r.invoiceId ? String(r.invoiceId) : "",
+        projectId: r.projectId == null ? "" : String(r.projectId),
         branchId: r.branchId ? String(r.branchId) : "",
         currencyCode: r.currencyCode ?? "SAR",
         exchangeRate: String(r.exchangeRate ?? "1"),
@@ -680,6 +687,7 @@ export default function SalesReturns() {
         returnDate: today(),
         customerId: r.customerId ? String(r.customerId) : "",
         invoiceId: r.invoiceId ? String(r.invoiceId) : "",
+        projectId: r.projectId == null ? "" : String(r.projectId),
         branchId: r.branchId ? String(r.branchId) : "",
         currencyCode: r.currencyCode ?? "SAR",
         exchangeRate: String(r.exchangeRate ?? "1"),
@@ -736,6 +744,7 @@ export default function SalesReturns() {
         customerId: inv.customerId ? String(inv.customerId) : "",
         branchId:   inv.branchId   ? String(inv.branchId)   : "",
         invoiceId:  String(inv.id),
+        projectId: inv.projectId == null ? "" : String(inv.projectId),
         currencyCode: inv.currencyCode ?? prev.currencyCode ?? defaultCurrency?.code ?? "",
         exchangeRate: inv.exchangeRate ? String(inv.exchangeRate) : "1",
         notes: t("salesReturns.fromInvoiceNote", { number: inv.docNumber ?? `SI-${inv.id}` }),
@@ -2212,6 +2221,15 @@ ${sections}
                     ))}
                   </SelectContent>
                 </Select>
+              </Field>
+              <Field label="المشروع (اختياري)">
+                <select aria-label="مشروع مرتجع المبيعات" value={form.projectId ?? ""}
+                  onChange={e => setForm((p: any) => ({ ...p, projectId: e.target.value }))}
+                  className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
+                  <option value="">— بدون مشروع —</option>
+                  {(projectOptions?.projects ?? []).filter(p => !form.branchId || p.branchId == null || String(p.branchId) === form.branchId)
+                    .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+                </select>
               </Field>
               <Field label="المستودع">
                 <SearchCombobox

@@ -1,3 +1,4 @@
+import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
@@ -141,6 +142,11 @@ export default function PurchaseInvoiceForm() {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const { data: projectOptions } = useQuery({
+    queryKey: contractingOptionsKey(user?.id, cid, undefined, token),
+    queryFn: () => fetchContractingProjectOptions(token),
+    enabled: !!token,
+  });
   const usageModes = useScreenItemModes("purchase_invoices");
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -200,6 +206,7 @@ export default function PurchaseInvoiceForm() {
   const [distMethod,   setDistMethod]   = useState("value");
   const [notes,        setNotes]        = useState("");
   const [costCenter,   setCostCenter]   = useState("");
+  const [projectId, setProjectId] = useState("");
   const [docDiscount,  setDocDiscount]  = useState("0");
   // Sticky toggle — see SalesDocumentForm for behavior contract.
   const stickyPriceIncl = useStickyPriceIncludesVat();
@@ -503,6 +510,7 @@ export default function PurchaseInvoiceForm() {
     setDistMethod(existing.distributionMethod ?? "value");
     setNotes(existing.notes ?? "");
     setCostCenter(existing.costCenter ?? "");
+    setProjectId(existing.projectId == null ? "" : String(existing.projectId));
     setDocDiscount(String(existing.discountAmount ?? "0"));
     setPriceIncludesVat(!!existing.priceIncludesVat);
     setInventoryAccountId(existing.inventoryAccountId ? String(existing.inventoryAccountId) : "");
@@ -994,6 +1002,7 @@ export default function PurchaseInvoiceForm() {
       // Header-level cost center — when set, the /post handler tags every
       // generated JE line with this code so cost-center reports pick it up.
       costCenter: costCenter || null,
+      projectId: projectId ? Number(projectId) : null,
       lines: lines.filter(l => l.itemName).map(l => ({
         ...serializeDocumentLine(l),
         // خطة توزيع المصروف — تُرسل فقط لو السطر مؤجّل ومكتمل التواريخ
@@ -1486,6 +1495,16 @@ export default function PurchaseInvoiceForm() {
                       ))}
                   </select>
                   <p className="text-[10px] text-muted-foreground">يُسند تلقائياً إلى كل سطور القيد عند الترحيل.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">المشروع (اختياري)</Label>
+                  <select aria-label="مشروع فاتورة الشراء" value={projectId} onChange={e => setProjectId(e.target.value)}
+                    className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
+                    <option value="">— بدون مشروع —</option>
+                    {(projectOptions?.projects ?? []).filter(p => !branchId || p.branchId == null || String(p.branchId) === branchId)
+                      .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+                  </select>
+                  <p className="text-[10px] text-muted-foreground">مشتريات المستودع لا تُحتسب مصروفاً فورياً للمشروع.</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">المستودع</Label>

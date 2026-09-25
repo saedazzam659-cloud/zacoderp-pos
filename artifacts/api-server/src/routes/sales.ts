@@ -53,6 +53,7 @@ import { salesInvoiceRowToZatcaData, salesReturnRowToZatcaData } from "../lib/za
 import { getZatcaBaseUrl, resolveZatcaEnv, GENESIS_HASH, csidEnvMismatchMessage } from "../lib/zatca-env.js";
 import { boundedOffsetPage } from "../lib/boundedPagination.js";
 import { logger } from "../lib/logger.js";
+import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
 import { getAgentDbPoolStats } from "../lib/agentDb.js";
 import { ensureCustomerLedger } from "../lib/entityAccounts.js";
 import { assertZatcaSubmissionAllowed, resolveZatcaChain, withZatcaChainLock } from "../lib/zatcaRegistrationTransfer.js";
@@ -1032,6 +1033,10 @@ export async function reverseSalesInvoiceStockForUnpost(input: {
 
 const router = Router();
 router.use(extractAuth);
+router.use(async (_req, res, next) => {
+  try { await ensureProjectFinancialLinks(); next(); }
+  catch (error) { logger.error({ error }, "project link readiness failed"); res.status(503).json({ error: "تعذر تجهيز ربط المشاريع" }); }
+});
 router.use(pathRbac([
   ["/sales-invoices",        "sales_invoices"],
   ["/sales-returns",         "sales_returns"],
@@ -2637,6 +2642,7 @@ router.post("/sales-invoices", async (req, res) => {
     };
     const invoiceValues: any = {
       companyId: cid, branchId: branchId ? Number(branchId) : null,
+      projectId: await resolveProjectLink(cid, req.body.projectId, branchId, req.authUser),
       docNumber: resolvedDocNumber, invoiceDate,
       customerId: customerId ? Number(customerId) : null,
       paymentType: pType,
@@ -2979,7 +2985,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
       ? await readCaptured(fastReads.lineTaxRate)
       : await loadLineTaxRate();
       const inv = await db.transaction(async (tx) => {
-      const [locked] = await tx.select({ status: salesInvoicesTable.status })
+      const [locked] = await tx.select({ status: salesInvoicesTable.status, sourceGdnId: salesInvoicesTable.sourceGdnId, projectId: salesInvoicesTable.projectId })
         .from(salesInvoicesTable)
         .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)))
         .for("update");
@@ -2999,6 +3005,14 @@ router.put("/sales-invoices/:id", async (req, res) => {
         // a saved draft.  It is posted or restored before this request ends.
         status: issueInline ? "cancelled" : "draft",
         branchId: branchId ? Number(branchId) : null,
+        projectId: await (async () => {
+          const selected = await resolveProjectLink(cid, req.body.projectId === undefined ? locked.projectId : req.body.projectId, branchId, req.authUser);
+          const [origin] = locked.sourceGdnId ? await tx.select({ projectId: goodsDeliveriesTable.projectId })
+            .from(goodsDeliveriesTable).where(and(eq(goodsDeliveriesTable.id, locked.sourceGdnId), eq(goodsDeliveriesTable.companyId, cid))) : [];
+          if (origin && origin.projectId !== selected)
+            throw Object.assign(new Error("مشروع الفاتورة المحولة يجب أن يطابق مشروع إذن التسليم"), { status: 422 });
+          return selected;
+        })(),
         invoiceDate,
         customerId: customerId ? Number(customerId) : null,
         paymentType: pType,
@@ -4517,6 +4531,14 @@ router.post("/sales-returns", async (req, res) => {
     };
     const returnValues: any = {
       companyId: cid, branchId: resolvedBranchId,
+      projectId: await (async () => {
+        const [origin] = invoiceId ? await db.select({ projectId: salesInvoicesTable.projectId })
+          .from(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, Number(invoiceId)), eq(salesInvoicesTable.companyId, cid))) : [];
+        const selected = await resolveProjectLink(cid, req.body.projectId === undefined ? origin?.projectId : req.body.projectId, resolvedBranchId, req.authUser);
+        if (origin && origin.projectId !== selected)
+          throw Object.assign(new Error("مشروع المرتجع المرتبط يجب أن يطابق الفاتورة الأصلية"), { status: 422 });
+        return selected;
+      })(),
       docNumber: resolvedDocNumber, returnDate,
       customerId: resolvedCustomerId,
       invoiceId: invoiceId ? Number(invoiceId) : null,
@@ -4646,6 +4668,14 @@ router.put("/sales-returns/:id", async (req, res) => {
     // docNumber is intentionally omitted — once assigned, it is immutable.
     const [ret] = await db.update(salesReturnsTable).set({
       branchId: branchId ? Number(branchId) : null,
+      projectId: await (async () => {
+        const selected = await resolveProjectLink(cid, req.body.projectId === undefined ? existing.projectId : req.body.projectId, branchId, req.authUser);
+        const [origin] = invoiceId ? await db.select({ projectId: salesInvoicesTable.projectId })
+          .from(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, Number(invoiceId)), eq(salesInvoicesTable.companyId, cid))) : [];
+        if (origin && origin.projectId !== selected)
+          throw Object.assign(new Error("مشروع المرتجع المرتبط يجب أن يطابق الفاتورة الأصلية"), { status: 422 });
+        return selected;
+      })(),
       returnDate,
       customerId: customerId ? Number(customerId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,

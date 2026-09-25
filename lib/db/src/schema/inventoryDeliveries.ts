@@ -13,6 +13,7 @@ export const goodsDeliveryStatusEnum = pgEnum("goods_delivery_status", [
 export const goodsDeliveriesTable = pgTable("goods_deliveries", {
   id:                          serial("id").primaryKey(),
   companyId:                   integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  projectId:                   integer("project_id"),
   branchId:                    integer("branch_id"),
   docNumber:                   text("doc_number"),
   customerOrderNumber:         text("customer_order_number"),

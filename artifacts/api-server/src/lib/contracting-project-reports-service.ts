@@ -24,6 +24,7 @@ import { sumExactCents } from "./contracting-bill-adjustment-math.js";
 import { contractingCostReportBreakdown } from "./contracting-cost-allocation-service.js";
 import { categoryCoverage } from "./contracting-cost-allocation-helper.js";
 import { contractingQuotedNet } from "./contracting-accounting-math.js";
+import { projectFinancialSources } from "./project-financial-sources.js";
 
 type BranchUser = Pick<AuthUser, "id" | "role" | "viewAllBranches" | "branchIds">;
 
@@ -190,7 +191,7 @@ function aggregateSide(rows: any[]) {
 export function aggregateProjectReportRollup(entries: Array<{ projectId: number; report: any }>) {
   const owner = aggregateSide(entries.map(entry => entry.report.dashboard.ownerRevenue));
   const subcontract = aggregateSide(entries.map(entry => entry.report.dashboard.subcontractCost));
-  const detailNames = ["boqStatement", "executedQuantities", "bills", "cumulative", "advance", "retention", "deductions", "variations", "pricingProfitability", "costSources"];
+  const detailNames = ["boqStatement", "executedQuantities", "bills", "cumulative", "advance", "retention", "deductions", "variations", "pricingProfitability", "costSources", "financialSources"];
   const reports: Record<string, any> = {};
   for (const name of detailNames) {
     reports[name] = entries.flatMap(entry =>
@@ -298,6 +299,7 @@ async function getLocalContractingProjectReports(
     ensureContractingBillDetailsTables(),
     ensureContractingAccountingTables(),
   ]);
+  const financialSources = await projectFinancialSources(companyId, projectId);
 
   const [ownerContracts, subContracts, contractors, boqLines, billLineRows, deductionRows, penaltyRows, additionRows, workItemCostRows, materialResult] =
     await Promise.all([
@@ -701,9 +703,19 @@ async function getLocalContractingProjectReports(
   // have a first-class contracting source table. Add each source family once:
   // materials from posted movements, all other categories from allocations.
   const allocatedNonMaterialCost = analyticalCosts.sources
-    .filter(row => row.category !== "material")
+    .filter(row => row.category !== "material" ||
+      ["purchase_invoice_line", "journal_expense_line"].includes(row.sourceType))
     .reduce((sum, row) => sum + numberValue(row.amount), 0);
   const analyticalCostAvailable = analyticalCosts.sources.length > 0;
+  const unmappedFinancialSources = financialSources.filter(row => row.category === "unmapped_cost");
+  const linkedCost = rounded(financialSources.filter(row => !["revenue", "inventory_receipt", "inventory_delivery", "unmapped_cost"].includes(row.category))
+    .reduce((sum, row) => sum + row.amount, 0));
+  const linkedRevenue = rounded(financialSources.filter(row => row.category === "revenue")
+    .reduce((sum, row) => sum + row.amount, 0));
+  // A billed owner's execution and its sales invoice can represent the same
+  // delivery. Posted source invoices take ownership when available.
+  const revenue = financialSources.some(row => row.sourceType === "sales_invoice")
+    ? linkedRevenue : rounded(owner.executedValue + linkedRevenue);
   // Once explicit analytical references exist they are the authoritative
   // execution breakdown. project.actualCost is retained as a legacy fallback:
   // material posting already increments it, so adding allocations to that
@@ -711,11 +723,11 @@ async function getLocalContractingProjectReports(
   const fallbackActualCost = projectActualCost > 0
     ? projectActualCost
     : workItemActualCost > 0 ? workItemActualCost : materialActualCost;
-  const actualCost = analyticalCostAvailable
-    ? Math.max(0, materialActualCost + allocatedNonMaterialCost)
-    : Math.max(0, fallbackActualCost);
+  const actualCost = analyticalCostAvailable || linkedCost !== 0
+    ? materialActualCost + allocatedNonMaterialCost + linkedCost
+    : fallbackActualCost;
   const actualCostAvailable = projectActualCost > 0
-    || analyticalCostAvailable || workItemActualCost > 0 || materialActualCost > 0;
+    || analyticalCostAvailable || workItemActualCost > 0 || materialActualCost > 0 || linkedCost !== 0;
   const costSource = analyticalCostAvailable
     ? "posted_material_movements + analytical_posted_source_allocations"
     : projectActualCost > 0
@@ -732,34 +744,41 @@ async function getLocalContractingProjectReports(
       reversalCount: materialRows.filter(row => String(row.direction) === "return").length,
       ownership: "inventory",
     }] : []),
-    ...analyticalCosts.sources.map(row => ({ ...row, ownership: "analytical_reference" })),
+    ...analyticalCosts.sources
+      .filter(row => row.category !== "material" ||
+        ["purchase_invoice_line", "journal_expense_line"].includes(row.sourceType))
+      .map(row => ({ ...row, ownership: "analytical_reference" })),
+    ...financialSources.filter(row => !["revenue", "inventory_receipt", "inventory_delivery", "unmapped_cost"].includes(row.category)).map(row => ({
+      category: row.category, sourceType: row.sourceType, sourceId: row.sourceId,
+      sourceDate: row.sourceDate, amount: row.amount, ownership: "posted_source",
+    })),
   ];
   const effectiveCostCoverage = categoryCoverage(costSources.map(row => row.category));
   const costReconciliation = {
     authoritativeActualCost: actualCostAvailable ? rounded(actualCost) : null,
-    sourceBreakdownTotal: rounded(materialActualCost + allocatedNonMaterialCost),
+    sourceBreakdownTotal: rounded(materialActualCost + allocatedNonMaterialCost + linkedCost),
     consolidatedProjectActualCost: projectActualCost > 0 ? rounded(projectActualCost) : null,
     variance: projectActualCost > 0
-      ? rounded(projectActualCost - materialActualCost - allocatedNonMaterialCost)
+      ? rounded(projectActualCost - materialActualCost - allocatedNonMaterialCost - linkedCost)
       : analyticalCostAvailable ? 0 : null,
-    coverageComplete: effectiveCostCoverage.complete,
+    coverageComplete: effectiveCostCoverage.complete && unmappedFinancialSources.length === 0,
     missingCategories: effectiveCostCoverage.missingCategories,
     note: effectiveCostCoverage.complete
       ? "التفصيل التحليلي مكتمل حسب الفئات المعرفة."
       : "الفئات المفقودة غير مكتملة وليست صفراً. تكلفة المواد مأخوذة من حركات المخزون مرة واحدة، وتكلفة الباطن التحليلية لا تُجمع مع لوحة المستخلصات.",
   };
   const profitability = {
-    revenue: owner.executedValue,
+    revenue,
     actualCost: actualCostAvailable ? rounded(actualCost) : null,
     estimatedCost: null,
-    profit: actualCostAvailable ? rounded(owner.executedValue - actualCost) : null,
-    marginPercent: actualCostAvailable && owner.executedValue > 0
-      ? rounded((owner.executedValue - actualCost) / owner.executedValue * 100) : null,
+    profit: actualCostAvailable ? rounded(revenue - actualCost) : null,
+    marginPercent: actualCostAvailable && revenue > 0
+      ? rounded((revenue - actualCost) / revenue * 100) : null,
     costAvailable: actualCostAvailable,
-    costSource,
-    costCoverageComplete: effectiveCostCoverage.complete,
+    costSource: linkedCost !== 0 ? "posted_source_documents + existing_analytical_ownership" : costSource,
+    costCoverageComplete: effectiveCostCoverage.complete && unmappedFinancialSources.length === 0,
     missingCostCategories: effectiveCostCoverage.missingCategories,
-    note: "الربحية تستخدم التكلفة الفعلية المتاحة فقط؛ المواد من حركة المخزون، وبقية المصادر من مراجع التوزيع التحليلي، دون تكرار تكلفة الباطن أو القيود.",
+    note: "الإيراد من فواتير المبيعات المرحّلة إن وُجدت وإلا من تنفيذ مستخلصات المالك. المصروفات من قيود المصادر المرحّلة أو الاستحقاق، والمخزون لا يعد مصروفاً عند الاستلام أو التسليم.",
   };
 
   const limitations = [
@@ -771,6 +790,9 @@ async function getLocalContractingProjectReports(
       : []),
     ...(!effectiveCostCoverage.complete
       ? [`تغطية فئات التكلفة التحليلية غير مكتملة: ${effectiveCostCoverage.missingCategories.join("، ")}؛ لا تُعرض الفئات المفقودة كصفر.`]
+      : []),
+    ...(unmappedFinancialSources.length
+      ? [`تغطية التكلفة غير مكتملة: تعذر مطابقة ${unmappedFinancialSources.length} مصدر مصروف مرحّل مع سطر قيد مصروف؛ تحقق من قيود المصدر قبل اعتماد الربحية.`]
       : []),
   ];
 
@@ -786,6 +808,7 @@ async function getLocalContractingProjectReports(
     profitability,
     pricingProfitability,
     costSources,
+    financialSources,
     costReconciliation,
   };
 

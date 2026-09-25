@@ -3,6 +3,12 @@ name: Contracting accounting boundaries
 description: Optional cost-center snapshots, legacy preservation, and planning versus posting boundaries.
 ---
 
+Optional project attribution on ordinary invoices, vouchers and warehouse documents is analytical, not a second posting cycle. Preserve existing manual allocations and attribute only the remaining posted expense capacity automatically; a partial allocation must not suppress an entire document or unrelated voucher lines.
+
+**Why:** The requested project profitability view must include actual costs without duplicating existing HR, equipment or expense distributions. Whole-document exclusion loses unallocated costs, while counting the full linked source duplicates the distributed portion.
+
+**How to apply:** Net allocation reversals at the original source granularity, recognize prepaid expense at posted recognition rather than payment, and keep warehouse receipt/delivery links informational unless an existing authoritative costing movement supplies the financial effect. Show incomplete coverage for unverifiable source matches rather than silently fabricating totals.
+
 Inclusive contracting prices describe the quotation, not an additional tax charge. Preserve the entered quotation while comparing certification, retention, recovery and contract ceilings on a net basis. Extract VAT from the extended quoted line, not a rounded net unit price multiplied by quantity. Cumulative execution must reconcile to prior frozen amounts, and change-order components retain their own quoted tax basis. Changing a later bill's mode never rewrites earlier approved evidence.
 
 **Why:** The user explicitly approved invoice-like "السعر شامل الضريبة" on contracts, both certificate forms and taxable owner advance input, without repricing historical evidence or changing settlement methods.

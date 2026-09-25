@@ -26,9 +26,14 @@ import {
   roundQuantity,
 } from "../lib/unitConversion.js";
 import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
+import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
 
 const router = Router();
 router.use(extractAuth);
+router.use(async (_req, res, next) => {
+  try { await ensureProjectFinancialLinks(); next(); }
+  catch { res.status(503).json({ error: "تعذر تجهيز ربط المشاريع" }); }
+});
 router.use(pathRbac([
   ["/", "warehouses"],
 ]));
@@ -352,6 +357,7 @@ router.post("/", async (req, res) => {
 
     const [gd] = await db.insert(goodsDeliveriesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
+      projectId: await resolveProjectLink(cid, req.body.projectId, branchId, req.authUser),
       docNumber: resolvedDocNumber,
       customerOrderNumber: customerOrderNumber || null,
       deliveryDate,
@@ -422,6 +428,7 @@ router.put("/:id", async (req, res) => {
 
     const [gd] = await db.update(goodsDeliveriesTable).set({
       branchId: branchId ? Number(branchId) : null,
+      projectId: await resolveProjectLink(cid, req.body.projectId === undefined ? existing.projectId : req.body.projectId, branchId, req.authUser),
       customerOrderNumber: customerOrderNumber || null,
       deliveryDate,
       customerId: customerId ? Number(customerId) : null,
@@ -909,6 +916,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
       const [created] = await tx.insert(salesInvoicesTable).values({
         companyId: cid,
         branchId: gd.branchId,
+        projectId: gd.projectId,
         docNumber: resolvedDocNumber,
         invoiceDate: gd.deliveryDate,
         customerId: finalCustomerId,

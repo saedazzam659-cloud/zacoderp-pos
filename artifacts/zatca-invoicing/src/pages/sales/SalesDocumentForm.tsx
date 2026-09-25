@@ -9,6 +9,7 @@ import { useRoute, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { usePermission } from "@/hooks/usePermission";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { renameArchivedKey } from "@/lib/localArchive";
@@ -257,6 +258,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const { data: projectOptions } = useQuery({
+    queryKey: contractingOptionsKey(user?.id, cid, undefined, token),
+    queryFn: () => fetchContractingProjectOptions(token),
+    enabled: isInvoice && !!token,
+  });
   const usageModes = useScreenItemModes(usageScreenKey);
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -341,6 +347,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
   const [costCenter, setCostCenter]     = useState("");
+  const [projectId, setProjectId] = useState("");
   const [salesRepId, setSalesRepId]     = useState("");
   // The "السعر شامل الضريبة" toggle is sticky: it remembers the user's last
   // choice in localStorage so a new invoice opens with the same setting.
@@ -861,6 +868,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setNotes(existing.notes ?? "");
     setCostCenter(existing.costCenter ?? "");
+    if (isInvoice) setProjectId(existing.projectId == null ? "" : String(existing.projectId));
     if (usesOps) setSalesRepId(existing.salesRepId ? String(existing.salesRepId) : "");
     setPriceIncludesVat(!!existing.priceIncludesVat);
     if (isInvoice) setAllowNegativeStock(!!existing.allowNegativeStock);
@@ -1702,6 +1710,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // Header-level cost center — when set, the /post handler tags every
       // generated JE line with this code so cost-center reports pick it up.
       costCenter: isInvoice ? (costCenter || null) : undefined,
+      ...(isInvoice ? { projectId: projectId ? Number(projectId) : null } : {}),
       // Strip the local-only `_id` and `appliedOfferName` (display-only) but
       // keep `appliedOfferId` so the server persists the audit-trail FK.
       lines: lines.filter(l => l.itemName).map(l => ({
@@ -3540,6 +3549,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         ))}
                     </select>
                     <p className="text-[10px] text-muted-foreground">يُسند تلقائياً إلى كل سطور القيد عند الترحيل.</p>
+                  </div>
+                )}
+                {isInvoice && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">المشروع (اختياري)</Label>
+                    <select aria-label="مشروع فاتورة المبيعات" value={projectId} onChange={e => setProjectId(e.target.value)}
+                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
+                      <option value="">— بدون مشروع —</option>
+                      {(projectOptions?.projects ?? []).filter(p => !branchId || p.branchId == null || String(p.branchId) === branchId)
+                        .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+                    </select>
                   </div>
                 )}
                 <div className="space-y-1.5">
