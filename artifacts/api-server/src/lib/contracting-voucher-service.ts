@@ -1,6 +1,7 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
+import { taxableAdvanceReceiptSlice } from "./contracting-taxable-advance.js";
 import { assertProjectBranchAccess, refreshBillPaymentState } from "./contracting-accounting-service.js";
 import { calculateSignedContractingBillNet, exactCents } from "./contracting-bill-adjustment-math.js";
 import { isPostableVoucherContractStatus } from "./contracting-voucher-eligibility.js";
@@ -11,6 +12,7 @@ export type ContractingAllocation = {
   projectId: number;
   contractId: number;
   billId?: number | null;
+  taxableAdvanceInvoiceId?: number | null;
 };
 const spec = {
   owner_advance: { voucher: "receipt", direction: "outgoing", mapping: "contracting_advance_receipt", role: "advance_liability", settlement: "advance_receipt" },
@@ -38,7 +40,10 @@ export function parseContractingAllocation(raw: any, voucher: "receipt" | "payme
     if (!Number.isSafeInteger(Number(raw[key])) || Number(raw[key]) < 1) fail(`معرّف ${key} غير صالح`);
   }
   if (kind.endsWith("_advance") && raw.billId != null) fail("لا يرتبط بند السلفة بمستخلص");
-  return { kind, projectId: Number(raw.projectId), contractId: Number(raw.contractId), billId: raw.billId == null ? null : Number(raw.billId) };
+  const taxableAdvanceInvoiceId = raw.taxableAdvanceInvoiceId == null ? null : Number(raw.taxableAdvanceInvoiceId);
+  if (taxableAdvanceInvoiceId != null && (!Number.isSafeInteger(taxableAdvanceInvoiceId) || taxableAdvanceInvoiceId < 1 || kind !== "owner_advance"))
+    fail("فاتورة الدفعة المقدمة الضريبية لا ترتبط إلا بسلفة مالك");
+  return { kind, projectId: Number(raw.projectId), contractId: Number(raw.contractId), billId: raw.billId == null ? null : Number(raw.billId), taxableAdvanceInvoiceId };
 }
 
 /** Validate exact linked party, company, project, branch, contract and role. Never guess via account/name. */
@@ -77,11 +82,30 @@ export async function resolveContractingLine(tx: any, companyId: number, voucher
     if (!bill || bill.journal_status !== "posted" || !["approved", "posted", "partially_paid", "paid"].includes(bill.status))
       fail("المستخلص غير معتمد أو لا يتبع العقد المحدد");
   }
+  if (allocation.taxableAdvanceInvoiceId != null) {
+    const invoice = rows(await tx.execute(sql`SELECT id,journal_entry_id,gross_amount FROM contracting_fiscal_invoices
+      WHERE company_id=${companyId} AND id=${allocation.taxableAdvanceInvoiceId}
+        AND project_id=${allocation.projectId} AND owner_contract_id=${allocation.contractId}
+        AND customer_id=${partyId} AND kind='advance'
+        AND status IN ('cleared','reported') AND journal_entry_id IS NOT NULL`))[0];
+    if (!invoice) fail("فاتورة سلفة مالك ضريبية غير مقبولة أو قيد إصدارها غير مرحّل");
+  }
+  const mappingType = allocation.taxableAdvanceInvoiceId != null ? "contracting_taxable_advance_invoice" : s.mapping;
+  const roleKey = allocation.taxableAdvanceInvoiceId != null ? "advance_receivable" : s.role;
   const mapped = rows(await tx.execute(sql`SELECT a.id FROM accounting_mappings m
     JOIN accounts a ON a.id = m.account_id AND a.company_id = m.company_id
-    WHERE m.company_id = ${companyId} AND m.document_type = ${s.mapping}
-      AND m.role_key = ${s.role} LIMIT 1`))[0];
-  if (!mapped) fail(`ربط محاسبي مفقود: المستند ${s.mapping}، الدور ${s.role}. افتح «ربط القيود المحاسبية» واربط حساب ترحيل مناسباً لهذا الدور قبل حفظ سند المقاولات.`);
+    WHERE m.company_id = ${companyId} AND m.document_type = ${mappingType}
+      AND m.role_key = ${roleKey} LIMIT 1`))[0];
+  if (!mapped) fail(`ربط محاسبي مفقود: المستند ${mappingType}، الدور ${roleKey}. افتح «ربط القيود المحاسبية» واربط حساب ترحيل مناسباً لهذا الدور قبل حفظ سند المقاولات.`);
+  if (allocation.taxableAdvanceInvoiceId != null) {
+    const posted=rows(await tx.execute(sql`SELECT 1 FROM contracting_fiscal_invoices f
+      JOIN journal_entry_lines l ON l.entry_id=f.journal_entry_id
+      JOIN journal_entries j ON j.id=f.journal_entry_id AND j.company_id=f.company_id
+      WHERE f.company_id=${companyId} AND f.id=${allocation.taxableAdvanceInvoiceId}
+        AND l.account_id=${mapped.id} AND l.debit=f.gross_amount
+        AND j.status='posted' LIMIT 1`));
+    if (!posted.length) fail("حساب ذمة الفاتورة الضريبية تغيّر بعد الإصدار؛ يجب إبقاء ربطه مطابقاً للقيد الأصلي");
+  }
   return Number(mapped.id);
 }
 
@@ -157,7 +181,7 @@ export async function contractingVoucherOptions(companyId: number, voucher: "rec
         WHERE company_id = ${companyId} AND bill_id = ${bill.id}`),
       db.execute(sql`SELECT amount FROM contracting_bill_penalties
         WHERE company_id = ${companyId} AND bill_id = ${bill.id}`),
-      db.execute(sql`SELECT COALESCE(SUM(amount),0) AS amount FROM contracting_accounting_settlements
+      db.execute(sql`SELECT COALESCE(SUM(amount + CASE WHEN kind='advance_application' THEN COALESCE(taxable_vat_amount,0) ELSE 0 END),0) AS amount FROM contracting_accounting_settlements
         WHERE company_id = ${companyId} AND bill_id = ${bill.id} AND status = 'posted'
         AND kind IN ('bill_receipt','bill_payment','advance_application')`),
     ]);
@@ -196,6 +220,7 @@ type SourceLine = {
   id: number; contractingKind: string | null; contractingProjectId: number | null;
   contractingContractId: number | null; contractingBillId: number | null;
   accountId: number | null; amount: string;
+  taxableAdvanceInvoiceId?: number | null;
 };
 
 /** Lock order shared with direct contracting settlement: bill then contract. */
@@ -236,6 +261,7 @@ export async function postVoucherSettlements(tx: any, companyId: number, voucher
     const allocation = parseContractingAllocation({
       kind: line.contractingKind, projectId: line.contractingProjectId,
       contractId: line.contractingContractId, billId: line.contractingBillId,
+      taxableAdvanceInvoiceId: line.taxableAdvanceInvoiceId,
     }, voucher)!;
     const correctAccount = await resolveContractingLine(tx, companyId, voucher, Number(v.entityId), allocation,
       { ...req, voucherBranchId: v.branchId });
@@ -244,15 +270,45 @@ export async function postVoucherSettlements(tx: any, companyId: number, voucher
     if (treasury.branch_id != null && projectBranch != null && Number(treasury.branch_id) !== Number(projectBranch))
       fail("فرع الخزنة/البنك لا يطابق فرع المشروع");
     if (correctAccount !== line.accountId) fail("تغير ربط حساب المقاولات؛ عدّل البند ثم أعد الترحيل");
-    const amount = Number(line.amount);
+      const amount = Number(line.amount);
     if (!Number.isFinite(amount) || amount <= 0 || !/^\d+(?:\.\d{1,2})?$/.test(String(line.amount))) fail("مبلغ توزيع المقاولات غير صالح");
     const s = spec[allocation.kind];
-    const replay = rows(await tx.execute(sql`SELECT journal_entry_id, amount, kind, project_id, bill_id,
-      owner_contract_id, subcontractor_contract_id FROM contracting_accounting_settlements
+      // The voucher line is gross captured cash; settlement.amount remains the
+      // advance's VAT-exclusive liability base, preserving contract recovery caps.
+      const fiscal = line.taxableAdvanceInvoiceId == null ? null : rows(await tx.execute(sql`
+        SELECT * FROM contracting_fiscal_invoices WHERE id = ${line.taxableAdvanceInvoiceId}
+          AND company_id = ${companyId} AND project_id = ${allocation.projectId}
+          AND owner_contract_id = ${allocation.contractId} AND kind = 'advance'
+          AND status IN ('cleared','reported') AND journal_entry_id IS NOT NULL FOR UPDATE`))[0];
+      if (line.taxableAdvanceInvoiceId != null && (!fiscal || allocation.kind !== "owner_advance"))
+        fail("فاتورة السلفة الضريبية غير مقبولة أو لا تتبع عقد المالك");
+      if (fiscal && String(v.date).slice(0,10)<String(fiscal.invoice_date).slice(0,10))
+        fail("تاريخ قبض السلفة الضريبية لا يجوز أن يسبق تاريخ إصدار فاتورتها");
+      const priorFiscal=fiscal ? rows(await tx.execute(sql`SELECT COALESCE(SUM(amount),0) AS base,
+        COALESCE(SUM(taxable_vat_amount),0) AS vat
+        FROM contracting_accounting_settlements WHERE company_id=${companyId}
+          AND taxable_advance_invoice_id=${fiscal.id} AND kind='advance_receipt'
+          AND status='posted'`))[0] : null;
+      let baseCents=exactCents(line.amount);
+      let vatCents=0n;
+      if (fiscal) {
+        try {
+          const slice=taxableAdvanceReceiptSlice({
+            invoiceBase:exactCents(fiscal.taxable_amount),invoiceVat:exactCents(fiscal.vat_amount),
+            previousBase:exactCents(priorFiscal.base),previousVat:exactCents(priorFiscal.vat),
+            gross:exactCents(line.amount),
+          });
+          baseCents=slice.base;vatCents=slice.vat;
+        } catch(e:any){fail(e.message);}
+      }
+      const replay = rows(await tx.execute(sql`SELECT journal_entry_id, amount, kind, project_id, bill_id,
+        owner_contract_id, subcontractor_contract_id, taxable_advance_invoice_id, source_line_snapshot FROM contracting_accounting_settlements
       WHERE company_id = ${companyId} AND source_voucher_type = ${voucher}
         AND source_voucher_line_id = ${line.id} AND status = 'posted' LIMIT 1`))[0];
-    if (replay) {
-      if (Number(replay.journal_entry_id) !== journalId || Number(replay.amount) !== amount ||
+      if (replay) {
+        if (Number(replay.journal_entry_id) !== journalId ||
+          exactCents(replay.source_line_snapshot?.amount ?? replay.amount) !== exactCents(line.amount) ||
+          Number(replay.taxable_advance_invoice_id ?? 0) !== Number(line.taxableAdvanceInvoiceId ?? 0) ||
         replay.kind !== s.settlement || Number(replay.project_id) !== allocation.projectId ||
         Number(replay.bill_id ?? 0) !== Number(allocation.billId ?? 0) ||
         Number((voucher === "receipt" ? replay.owner_contract_id : replay.subcontractor_contract_id) ?? 0) !== allocation.contractId)
@@ -273,7 +329,7 @@ export async function postVoucherSettlements(tx: any, companyId: number, voucher
         const deductions = rows(await tx.execute(sql`SELECT amount, kind FROM contracting_bill_deductions WHERE company_id = ${companyId} AND bill_id = ${allocation.billId}`));
         const penalties = rows(await tx.execute(sql`SELECT amount FROM contracting_bill_penalties WHERE company_id = ${companyId} AND bill_id = ${allocation.billId}`));
         const net = exactCents(calculateSignedContractingBillNet({ rawNetAmount: bill.net_amount, additions, deductions, penalties }).adjustedNetAmount);
-        const used = rows(await tx.execute(sql`SELECT COALESCE(SUM(amount), 0) AS amount FROM contracting_accounting_settlements
+        const used = rows(await tx.execute(sql`SELECT COALESCE(SUM(amount + CASE WHEN kind='advance_application' THEN COALESCE(taxable_vat_amount,0) ELSE 0 END), 0) AS amount FROM contracting_accounting_settlements
           WHERE company_id = ${companyId} AND bill_id = ${allocation.billId} AND status = 'posted'
           AND kind IN ('bill_receipt','bill_payment','advance_application')`))[0];
         if (exactCents(line.amount) > net - exactCents(used.amount)) fail("مبلغ التوزيع يتجاوز الرصيد المتبقي للمستخلص");
@@ -287,19 +343,22 @@ export async function postVoucherSettlements(tx: any, companyId: number, voucher
         WHERE company_id = ${companyId} AND project_id = ${allocation.projectId}
           AND ${voucher === "receipt" ? sql`owner_contract_id` : sql`subcontractor_contract_id`} = ${allocation.contractId}
           AND kind = ${s.settlement} AND status = 'posted'`))[0];
-      if (exactCents(line.amount) > exactCents(contract.advance_payment) - exactCents(used.amount))
+      if (baseCents > exactCents(contract.advance_payment) - exactCents(used.amount))
         fail("مبلغ السلفة يتجاوز المتبقي من قيمة سلفة العقد");
     }
     await tx.execute(sql`INSERT INTO contracting_accounting_settlements
       (company_id, project_id, bill_id, owner_contract_id, subcontractor_contract_id,
        kind, direction, amount, settlement_date, payment_type, cash_box_id, bank_account_id,
-       journal_entry_id, source_voucher_type, source_voucher_id, source_voucher_line_id, source_line_snapshot, created_by)
+        journal_entry_id, source_voucher_type, source_voucher_id, source_voucher_line_id, source_line_snapshot,
+        taxable_advance_invoice_id, taxable_base_amount, taxable_vat_amount, created_by)
       VALUES (${companyId}, ${allocation.projectId}, ${allocation.billId ?? null},
        ${voucher === "receipt" ? allocation.contractId : null}, ${voucher === "payment" ? allocation.contractId : null},
-       ${s.settlement}, ${s.direction}, ${amount.toFixed(2)}, ${v.date}, ${v.paymentType},
+        ${s.settlement}, ${s.direction}, ${`${baseCents/100n}.${String(baseCents%100n).padStart(2,"0")}`}, ${v.date}, ${v.paymentType},
        ${v.cashBoxId ?? null}, ${v.bankAccountId ?? null}, ${journalId},
        ${voucher}, ${v.id}, ${line.id},
-       ${JSON.stringify({ accountId: line.accountId, amount: line.amount, ...allocation })}::jsonb,
+        ${JSON.stringify({ accountId: line.accountId, amount: line.amount, ...allocation })}::jsonb,
+        ${fiscal?.id ?? null}, ${fiscal ? `${baseCents/100n}.${String(baseCents%100n).padStart(2,"0")}` : null},
+        ${fiscal ? `${vatCents/100n}.${String(vatCents%100n).padStart(2,"0")}` : null},
        ${req.authUser?.id ?? null})`);
   }
   for (const billId of touchedBills) await refreshBillPaymentState(tx, companyId, billId, req.authUser?.id ?? null);
@@ -311,6 +370,10 @@ export async function assertVoucherCanUnpost(tx: any, companyId: number, voucher
     WHERE company_id = ${companyId} AND source_voucher_type = ${voucher}
       AND source_voucher_id = ${voucherId} AND status = 'posted' FOR UPDATE`));
   for (const link of links) {
+    const taxable = rows(await tx.execute(sql`SELECT taxable_advance_invoice_id FROM contracting_accounting_settlements
+      WHERE company_id=${companyId} AND id=${link.id}`))[0];
+    if (taxable?.taxable_advance_invoice_id != null && link.kind === "advance_receipt")
+      fail("لا يمكن فك ترحيل سند قبض فاتورة سلفة ضريبية مقبولة دون إشعار دائن ضريبي");
     if (Number(link.applied_amount) > 0) fail("لا يمكن فك ترحيل سلفة مطبقة على مستخلص؛ اعكس تطبيق السلفة أولاً");
     const dependent = rows(await tx.execute(sql`SELECT id FROM contracting_accounting_settlements
       WHERE company_id = ${companyId} AND source_settlement_id = ${link.id} AND status = 'posted' LIMIT 1`));

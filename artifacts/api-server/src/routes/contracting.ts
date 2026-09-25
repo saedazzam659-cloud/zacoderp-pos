@@ -57,6 +57,7 @@ import { ensureContractingBillDetailsTables } from "../lib/contracting-bill-deta
 import { ensureContractingBoqTables } from "../lib/contracting-boq-service.js";
 import { ensureContractingGuaranteeTables } from "../lib/contracting-guarantees-storage.js";
 import {
+  authoritativeCumulativeBillAmounts,
   aggregateContractProgressAmounts,
   priorCertifiedContractGross,
   calculateAdvanceRecoveryCents,
@@ -3797,6 +3798,7 @@ async function recomputeAggregateProgress(input: {
     input.excludeBillId,
   );
   const amounts = aggregateContractProgressAmounts({
+    direction: input.direction,
     adjustedContractValue,
     progressPercent: progress,
     priorGrossAmount: prior.grossAmount,
@@ -4086,8 +4088,34 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       ? requestedRetention
       : Math.min(requestedRetention, retentionCapAmount);
     let dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
-    let vatAmount = Math.round((dueAmount * vatPct / 100) * 100) / 100;
-    let netAmount = Math.round((dueAmount + vatAmount) * 100) / 100;
+    // Legacy incoming drafts retain their arithmetic; outgoing drafts are
+    // replaced below by the cumulative certified-period helper.
+    let vatAmount = direction === "incoming" ? Math.round((dueAmount * vatPct / 100) * 100) / 100 : 0;
+    let netAmount = direction === "incoming" ? Math.round((dueAmount + vatAmount) * 100) / 100 : 0;
+    if (!aggregateRequested && direction === "outgoing") {
+      // Manual owner certificates use the same certified cumulative baseline
+      // as approval; neither a client-supplied previousPaid nor retention may
+      // reduce this period's VAT base.
+      const prior = await aggregatePriorAmounts(
+        cid, projectId, direction, Number(b.ownerContractId), null,
+      );
+      const amounts = authoritativeCumulativeBillAmounts({
+        direction,
+        grossAmount: gross,
+        adjustedContractValue: retentionCapBase,
+        retentionEnabled: retEnabled,
+        retentionPercent: retPct,
+        retentionCapPercent: retCapPct,
+        vatPercent: vatPct,
+        priorGrossAmount: prior.grossAmount,
+        priorRetentionAmount: prior.retentionAmount,
+      });
+      prevPaid = Number(amounts.previousPaid);
+      retAmount = Number(amounts.retentionAmount);
+      dueAmount = Number(amounts.dueAmount);
+      vatAmount = Number(amounts.vatAmount);
+      netAmount = Number(amounts.netAmount);
+    }
     if (aggregateRequested) {
       const aggregate = await recomputeAggregateProgress({
         companyId: cid,
@@ -4430,8 +4458,29 @@ router.put("/bills/:id", async (req, res) => {
       ? requestedRetention
       : Math.min(requestedRetention, retentionCapAmount);
     let dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
-    let vatAmount = Math.round((dueAmount * vatPct / 100) * 100) / 100;
-    let netAmount = Math.round((dueAmount + vatAmount) * 100) / 100;
+    let vatAmount = direction === "incoming" ? Math.round((dueAmount * vatPct / 100) * 100) / 100 : 0;
+    let netAmount = direction === "incoming" ? Math.round((dueAmount + vatAmount) * 100) / 100 : 0;
+    if (!aggregateRequested && direction === "outgoing") {
+      const prior = await aggregatePriorAmounts(
+        cid, cur.projectId, direction, Number(finalOwnerContractId), null, id,
+      );
+      const amounts = authoritativeCumulativeBillAmounts({
+        direction,
+        grossAmount: gross,
+        adjustedContractValue: retentionCapBase,
+        retentionEnabled: retEnabled,
+        retentionPercent: retPct,
+        retentionCapPercent: retCapPct,
+        vatPercent: vatPct,
+        priorGrossAmount: prior.grossAmount,
+        priorRetentionAmount: prior.retentionAmount,
+      });
+      prevPaid = Number(amounts.previousPaid);
+      retAmount = Number(amounts.retentionAmount);
+      dueAmount = Number(amounts.dueAmount);
+      vatAmount = Number(amounts.vatAmount);
+      netAmount = Number(amounts.netAmount);
+    }
     if (aggregateRequested) {
       const aggregate = await recomputeAggregateProgress({
         companyId: cid,

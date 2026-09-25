@@ -2525,7 +2525,7 @@ export async function transitionBillWorkflow(companyId: number, billId: number, 
       throw error("لا يمكن تسجيل السداد قبل ترحيل قيد المستخلص", 409);
     }
     const paidResult = await db.execute(sql`
-      SELECT COALESCE(SUM(amount) FILTER (
+      SELECT COALESCE(SUM((amount + CASE WHEN kind='advance_application' THEN COALESCE(taxable_vat_amount,0) ELSE 0 END)) FILTER (
         WHERE kind IN ('bill_receipt','bill_payment','advance_application')
       ), 0)::numeric AS paid
         FROM contracting_accounting_settlements
@@ -2592,7 +2592,7 @@ async function settlementTotals(companyId: number) {
   try {
     const result = await db.execute(sql`
       SELECT bill_id,
-             COALESCE(SUM(amount) FILTER (
+             COALESCE(SUM(amount + CASE WHEN kind='advance_application' THEN COALESCE(taxable_vat_amount,0) ELSE 0 END) FILTER (
                WHERE status = 'posted'
                  AND kind IN ('bill_receipt','bill_payment','advance_application')
              ), 0)::numeric AS paid

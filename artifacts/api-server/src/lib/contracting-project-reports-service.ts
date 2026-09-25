@@ -370,7 +370,8 @@ async function getLocalContractingProjectReports(
     contractingBillsReport(companyId, { projectId }, user),
     db.execute(sql`
       SELECT id, bill_id, owner_contract_id, subcontractor_contract_id, kind,
-             direction, amount, applied_amount, settlement_date, status, notes, idempotency_key
+             direction, amount, applied_amount, taxable_advance_invoice_id,
+             taxable_base_amount, taxable_vat_amount, settlement_date, status, notes, idempotency_key
         FROM contracting_accounting_settlements
        WHERE company_id = ${companyId}
          AND project_id = ${projectId}
@@ -427,7 +428,8 @@ async function getLocalContractingProjectReports(
     return posted
       .filter(settlement => settlement.kind === settlementKindForDirection(String(row.direction))
         || settlement.kind === "advance_application")
-      .reduce((sum, settlement) => sum + numberValue(settlement.amount), 0);
+      .reduce((sum, settlement) => sum + numberValue(settlement.amount)
+        + (settlement.kind === "advance_application" ? numberValue(settlement.taxable_vat_amount) : 0), 0);
   }
 
   function dueForBill(row: any): number {
@@ -609,6 +611,10 @@ async function getLocalContractingProjectReports(
       direction: settlement.direction,
       kind: settlement.kind,
       amount: numberValue(settlement.amount),
+      taxableAdvanceInvoiceId: settlement.taxable_advance_invoice_id == null ? null : Number(settlement.taxable_advance_invoice_id),
+      prepaidVatAmount: numberValue(settlement.taxable_vat_amount),
+      grossAppliedAmount: numberValue(settlement.amount) +
+        (settlement.kind === "advance_application" ? numberValue(settlement.taxable_vat_amount) : 0),
       appliedAmount: numberValue(settlement.applied_amount),
       settlementDate: settlement.settlement_date,
       status: settlement.status,

@@ -26,6 +26,8 @@ import { logger } from "../lib/logger.js";
 import { firstJournalDescription } from "../lib/journalLineDescriptions.js";
 import { parseContractingAllocation, resolveContractingLine, contractingVoucherOptions, postVoucherSettlements, assertVoucherCanUnpost, lockVoucherContractScope, type ContractingAllocation } from "../lib/contracting-voucher-service.js";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
+import { exactCents } from "../lib/contracting-bill-adjustment-math.js";
+import { taxableAdvanceReceiptSlice } from "../lib/contracting-taxable-advance.js";
 import { refreshBillPaymentState } from "../lib/contracting-accounting-service.js";
 
 const router = Router();
@@ -113,7 +115,35 @@ async function buildReceiptJournal(cid: number, v: any, req: any, outerTx?: any)
       if (net <= 0) throw new Error("مبلغ البند يجب أن يكون أكبر من صفر");
       const lineCc = (l.costCenter ? String(l.costCenter).trim() || null : null) ?? cc;
       acctIds.add(lineAcct);
-      jeLines.push({ accountId: lineAcct, debit: "0.00", credit: net.toFixed(2), description: firstJournalDescription(v.description, l.description, desc), sortOrder: so++, costCenter: lineCc });
+      if (l.taxableAdvanceInvoiceId != null) {
+        if (l.contractingKind !== "owner_advance") throw new Error("الفاتورة الضريبية لا ترتبط إلا بسلفة المالك");
+        const executor = outerTx ?? db;
+        const result = await executor.execute(sql`SELECT taxable_amount,vat_amount,gross_amount,invoice_date,journal_entry_id
+          FROM contracting_fiscal_invoices WHERE id=${l.taxableAdvanceInvoiceId}
+            AND company_id=${cid} AND project_id=${l.contractingProjectId}
+            AND owner_contract_id=${l.contractingContractId} AND kind='advance'
+            AND status IN ('cleared','reported') FOR UPDATE`);
+        const source = ((result as any).rows ?? result as any)[0];
+        if (!source || !source.journal_entry_id)
+          throw new Error("فاتورة السلفة الضريبية غير مقبولة أو قيد إصدارها غير مرحّل");
+        if (String(v.date).slice(0,10)<String(source.invoice_date).slice(0,10))
+          throw new Error("تاريخ قبض السلفة الضريبية لا يجوز أن يسبق تاريخ إصدار فاتورتها");
+        const previous = await executor.execute(sql`SELECT COALESCE(SUM(amount),0) AS base,
+          COALESCE(SUM(taxable_vat_amount),0) AS vat FROM contracting_accounting_settlements
+          WHERE company_id=${cid} AND taxable_advance_invoice_id=${l.taxableAdvanceInvoiceId}
+            AND kind='advance_receipt' AND status='posted'`);
+        const prior=((previous as any).rows ?? previous as any)[0];
+        taxableAdvanceReceiptSlice({invoiceBase:exactCents(source.taxable_amount),
+          invoiceVat:exactCents(source.vat_amount),previousBase:exactCents(prior.base),
+          previousVat:exactCents(prior.vat),gross:exactCents(l.amount)});
+        const mapped=await executor.execute(sql`SELECT m.account_id FROM accounting_mappings m
+          JOIN accounts a ON a.id=m.account_id AND a.company_id=m.company_id
+          WHERE m.company_id=${cid} AND m.document_type='contracting_taxable_advance_invoice'
+            AND m.role_key='advance_receivable' LIMIT 1`);
+        if (Number(((mapped as any).rows ?? mapped as any)[0]?.account_id) !== Number(lineAcct))
+          throw new Error("ربط ذمة فاتورة الدفعة المقدمة تغيّر؛ أعد حفظ السند");
+        jeLines.push({ accountId: lineAcct, debit: "0.00", credit: net.toFixed(2), description: firstJournalDescription(v.description, l.description, desc), sortOrder: so++, costCenter: lineCc });
+      } else jeLines.push({ accountId: lineAcct, debit: "0.00", credit: net.toFixed(2), description: firstJournalDescription(v.description, l.description, desc), sortOrder: so++, costCenter: lineCc });
       total += net;
     }
     if (total <= 0) throw new Error("إجمالي السند يجب أن يكون أكبر من صفر");
@@ -670,6 +700,7 @@ async function replaceReceiptLines(voucherId: number, lines: RawRvLine[], dx: an
     contractingProjectId: l.contractingAllocation?.projectId ?? null,
     contractingContractId: l.contractingAllocation?.contractId ?? null,
     contractingBillId: l.contractingAllocation?.billId ?? null,
+    taxableAdvanceInvoiceId: l.contractingAllocation?.taxableAdvanceInvoiceId ?? null,
     sortOrder: i,
   })));
 }
@@ -1134,7 +1165,8 @@ router.post("/:id/post", requirePostRight("receipt"), async (req, res) => {
             old.accountId === l.accountId && old.contractingKind === l.contractingKind &&
             old.contractingProjectId === l.contractingProjectId &&
             old.contractingContractId === l.contractingContractId &&
-            old.contractingBillId === l.contractingBillId)))
+            old.contractingBillId === l.contractingBillId &&
+            old.taxableAdvanceInvoiceId === l.taxableAdvanceInvoiceId)))
           throw new Error("تغيرت بنود السند أثناء الترحيل؛ أعد المحاولة");
         const journalId = await buildReceiptJournal(cid, locked, req, tx);
         await postVoucherSettlements(tx, cid, "receipt", locked, current, journalId, req);

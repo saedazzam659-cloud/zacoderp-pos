@@ -926,7 +926,10 @@ function BillsTab({
     ? Infinity : Number(aggregateMoney(adjustedContractValue * Number(selectedContract.retentionCapPercent) / 100));
   const previewRetention = Math.max(0, Math.min(retentionRequested, retentionCeiling) - priorRetained);
   const previewDue = Math.max(0, currentPeriodGross - previewRetention);
-  const previewVat = Number(aggregateMoney(previewDue * Number(selectedContract?.vatPercent ?? 0) / 100));
+  // Owner certificate VAT is on current certified work before retention.
+  // Incoming subcontract previews retain their existing due-based calculation.
+  const previewVatBase = direction === "outgoing" ? currentPeriodGross : previewDue;
+  const previewVat = Number(aggregateMoney(previewVatBase * Number(selectedContract?.vatPercent ?? 0) / 100));
   const financiallyLocked = Boolean(
     editing && (
       ["approved", "posted", "partially_paid", "paid", "reversed"].includes(String(editing.status))
@@ -1297,7 +1300,7 @@ function BillsTab({
                 <Field label="المستحق قبل الضريبة">
                   <Input type="number" value={aggregateMoney(previewDue)} readOnly disabled />
                 </Field>
-                <Field label="الضريبة">
+                <Field label={direction === "outgoing" ? "الضريبة على أعمال الفترة قبل المحتجز" : "الضريبة"}>
                   <Input type="number" value={aggregateMoney(previewVat)} readOnly disabled />
                 </Field>
                 <Field label="الصافي قبل التسويات الإضافية">

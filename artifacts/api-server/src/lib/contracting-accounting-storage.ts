@@ -68,7 +68,33 @@ export function ensureContractingAccountingTables(): Promise<void> {
       ADD COLUMN IF NOT EXISTS source_voucher_type TEXT,
       ADD COLUMN IF NOT EXISTS source_voucher_id INTEGER,
       ADD COLUMN IF NOT EXISTS source_voucher_line_id INTEGER,
-      ADD COLUMN IF NOT EXISTS source_line_snapshot JSONB`);
+      ADD COLUMN IF NOT EXISTS source_line_snapshot JSONB,
+      ADD COLUMN IF NOT EXISTS taxable_advance_invoice_id INTEGER,
+      ADD COLUMN IF NOT EXISTS taxable_base_amount NUMERIC(18,2),
+      ADD COLUMN IF NOT EXISTS taxable_vat_amount NUMERIC(18,2),
+      ADD COLUMN IF NOT EXISTS applied_vat_amount NUMERIC(18,2) NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE receipt_voucher_lines
+      ADD COLUMN IF NOT EXISTS taxable_advance_invoice_id INTEGER`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS contracting_fiscal_invoices (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL, project_id INTEGER NOT NULL, owner_contract_id INTEGER NOT NULL,
+      bill_id INTEGER, intent_key VARCHAR(128), kind TEXT NOT NULL,
+      invoice_number TEXT NOT NULL, invoice_date DATE NOT NULL, invoice_time TEXT NOT NULL,
+      customer_id INTEGER NOT NULL, taxable_amount NUMERIC(18,2) NOT NULL,
+      vat_amount NUMERIC(18,2) NOT NULL, gross_amount NUMERIC(18,2) NOT NULL,
+      prepayment_adjustments JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'issued', journal_entry_id INTEGER,
+      zatca_uuid TEXT, zatca_icv INTEGER,
+      invoice_hash TEXT, zatca_pih TEXT, xml_content TEXT, zatca_response JSONB,
+      created_by INTEGER, created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT ctg_fiscal_company_intent_uq UNIQUE (company_id, intent_key),
+      CONSTRAINT ctg_fiscal_company_bill_uq UNIQUE (company_id, bill_id),
+      CONSTRAINT ctg_fiscal_company_number_uq UNIQUE (company_id, invoice_number)
+    )`);
+    await db.execute(sql`ALTER TABLE contracting_fiscal_invoices
+      ADD COLUMN IF NOT EXISTS journal_entry_id INTEGER`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ctg_fiscal_contract_idx
+      ON contracting_fiscal_invoices(company_id,owner_contract_id)`);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS contracting_settlement_voucher_line_uq
       ON contracting_accounting_settlements(company_id, source_voucher_type, source_voucher_line_id)
       WHERE source_voucher_line_id IS NOT NULL AND status = 'posted'`);

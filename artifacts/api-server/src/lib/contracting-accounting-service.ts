@@ -48,6 +48,7 @@ import {
   type Rational,
 } from "./unitConversion.js";
 import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
+import { taxableAdvanceReceiptSlice, taxableAdvanceRecoverySlice } from "./contracting-taxable-advance.js";
 import { ensureContractingBillDetailsTables } from "./contracting-bill-details-service.js";
 import { assertBillContractScope } from "./contracting-bill-contracts.js";
 import {
@@ -228,7 +229,7 @@ export async function refreshBillPaymentState(tx: Executor, companyId: number, b
   ));
   if (!bill) return;
   const settledResult = await tx.execute(sql`
-    SELECT COALESCE(SUM(amount), 0) AS paid
+    SELECT COALESCE(SUM(amount + CASE WHEN kind='advance_application' THEN COALESCE(taxable_vat_amount,0) ELSE 0 END), 0) AS paid
       FROM contracting_accounting_settlements
      WHERE company_id = ${companyId}
        AND bill_id = ${billId}
@@ -627,6 +628,7 @@ export async function certifyBillAmounts(tx: Executor, companyId: number, bill: 
     ? money(n(prior.prior_gross) + n(detail.current_value))
     : bill.grossAmount;
   const amounts = authoritativeCumulativeBillAmounts({
+    direction: bill.direction,
     grossAmount,
     adjustedContractValue,
     retentionEnabled: bill.retentionEnabled,
@@ -1249,6 +1251,7 @@ export async function getAdvanceRecoveryPreview(input: {
     ?? (bill ? Math.max(0, n(bill.grossAmount) - n(bill.previousPaid)) : "0");
   const cumulativeGross = (n(previewBase.priorGross) + n(currentWork)).toFixed(2);
   const rawAmounts = authoritativeCumulativeBillAmounts({
+    direction: input.direction,
     grossAmount: cumulativeGross,
     adjustedContractValue: previewBase.adjustedContractValue,
     retentionEnabled: input.retentionEnabled ?? bill?.retentionEnabled ?? policy.retentionEnabled,
@@ -1326,15 +1329,46 @@ async function applyAdvanceTx(input: {
   userId: number | null;
   req: RequestLike;
   applicationOrigin: "manual" | "auto_recovery";
+  idempotencyKey?: string;
+  idempotencyPayloadHash?: string;
 }) {
   const amountCents = centsBig(input.amount);
+  const taxable = input.bill.direction === "outgoing" && input.source.taxable_advance_invoice_id != null;
+  let originalTaxJournalId: number | null = null;
+  if (taxable) {
+    if (resultRows(await input.tx.execute(sql`SELECT id FROM contracting_fiscal_invoices
+      WHERE company_id=${input.companyId} AND bill_id=${input.bill.id} LIMIT 1`)).length)
+      throw failure("صدرت فاتورة ضريبية للمستخلص؛ لا يجوز تعديل تسويات الدفعة المقدمة المجمدة فيها",409);
+    const invoice = resultRows(await input.tx.execute(sql`SELECT id,invoice_date,
+      taxable_amount,vat_amount,status,journal_entry_id FROM contracting_fiscal_invoices
+      WHERE company_id=${input.companyId} AND id=${Number(input.source.taxable_advance_invoice_id)}
+        AND project_id=${input.bill.projectId}
+        AND owner_contract_id=${Number(input.bill.ownerContractId)} FOR UPDATE`))[0];
+    if (!invoice || !["cleared","reported"].includes(invoice.status) || !invoice.journal_entry_id
+        || String(invoice.invoice_date).slice(0,10) > String(input.bill.billDate).slice(0,10)
+        || centsBig(invoice.taxable_amount) !== centsBig(input.source.taxable_base_amount)
+        || centsBig(invoice.vat_amount) !== centsBig(input.source.taxable_vat_amount))
+      throw failure("فاتورة السلفة الأصلية غير مقبولة بتاريخ المستخلص أو تغيرت مبالغها المرجعية",409);
+    originalTaxJournalId = Number(invoice.journal_entry_id);
+  }
+  // Compute from cumulative source consumption; the final application absorbs
+  // the remainder. A slice that cannot be expressed at 15% is rejected.
+  let vatCents=0n;
+  if (taxable) {
+    try {vatCents=taxableAdvanceRecoverySlice({
+      sourceBase:centsBig(input.source.amount),sourceVat:centsBig(input.source.taxable_vat_amount),
+      previousBase:centsBig(input.source.applied_amount),
+      previousVat:centsBig(input.source.applied_vat_amount ?? "0"),base:amountCents,
+    });} catch(e:any){throw failure(e.message,409);}
+  }
+  const grossCents = amountCents + vatCents;
   if (amountCents <= 0n) throw failure("مبلغ تطبيق السلفة يجب أن يكون أكبر من صفر");
   const sourceAvailable = centsBig(input.source.amount) - centsBig(input.source.applied_amount);
   if (amountCents > sourceAvailable) {
     throw failure("مبلغ تطبيق السلفة يتجاوز الرصيد الفعلي للسلفة بعد الترحيل", 409);
   }
   const settled = await input.tx.execute(sql`
-    SELECT COALESCE(SUM(amount), 0)::numeric AS total
+    SELECT COALESCE(SUM(amount + CASE WHEN kind='advance_application' THEN COALESCE(taxable_vat_amount,0) ELSE 0 END), 0)::numeric AS total
       FROM contracting_accounting_settlements
      WHERE company_id = ${input.companyId}
        AND bill_id = ${input.bill.id}
@@ -1343,7 +1377,7 @@ async function applyAdvanceTx(input: {
   `);
   const billPaidCents = centsBig(resultRows(settled)[0]?.total ?? "0");
   const netCents = centsBig(input.netAmountOverride ?? input.bill.netAmount);
-  if (billPaidCents + amountCents > netCents) {
+  if (billPaidCents + grossCents > netCents) {
     throw failure("تطبيق استرداد السلفة يتجاوز صافي المستخلص المتبقي بعد التسويات والمدفوعات", 409);
   }
   const map = await mappings(input.tx, input.companyId, "contracting_advance_application");
@@ -1353,15 +1387,30 @@ async function applyAdvanceTx(input: {
     throw failure("استرداد الدفعة المقدمة معطل من إعدادات المقاولات");
   }
   const configuredRecoveryAccount = contractingAdjustmentAccountId(settings, "advance_recovery");
+  const liability = taxable ? (await mappings(input.tx, input.companyId, "contracting_advance_receipt")).get("advance_liability") : null;
+  const billAccounts = taxable ? await mappings(input.tx, input.companyId, "contracting_outgoing_bill") : null;
+  if (taxable && (!liability || map.get("advance_liability") !== liability
+      || map.get("receivable") !== billAccounts?.get("receivable")))
+    throw failure("حساب التزام السلفة أو ذمم المستخلص لا يتطابق بين قيد الفاتورة وقيد الاسترداد؛ صحح الربط المحاسبي قبل التطبيق",409);
   const debit = outgoing
-    ? configuredRecoveryAccount ?? map.get("advance_liability")
+    ? taxable ? liability : configuredRecoveryAccount ?? map.get("advance_liability")
     : map.get("payable");
   const credit = outgoing
     ? map.get("receivable")
     : configuredRecoveryAccount ?? map.get("advance_asset");
   if (!debit) throw failure(mappingGuidance("contracting_advance_application", outgoing ? "advance_liability" : "payable"));
   if (!credit) throw failure(mappingGuidance("contracting_advance_application", outgoing ? "receivable" : "advance_asset"));
-  const applicationDate = today();
+  const outputVat = taxable ? (await mappings(input.tx, input.companyId, "contracting_outgoing_bill")).get("vat_output") : null;
+  if (taxable && !outputVat) throw failure(mappingGuidance("contracting_outgoing_bill", "vat_output"));
+  if (taxable && !resultRows(await input.tx.execute(sql`SELECT 1 FROM journal_entries j
+    JOIN journal_entry_lines liability_line ON liability_line.entry_id=j.id
+      AND liability_line.account_id=${liability} AND liability_line.credit=${input.source.taxable_base_amount}
+    JOIN journal_entry_lines vat_line ON vat_line.entry_id=j.id
+      AND vat_line.account_id=${outputVat} AND vat_line.credit=${input.source.taxable_vat_amount}
+    WHERE j.id=${originalTaxJournalId} AND j.company_id=${input.companyId}
+      AND j.status='posted' LIMIT 1`)).length)
+    throw failure("تغير ربط حساب التزام السلفة أو ضريبة المخرجات بعد إصدار فاتورتها الأصلية",409);
+  const applicationDate = taxable ? String(input.bill.billDate).slice(0,10) : today();
   const jeNumber = await nextJeNumber(
     input.companyId,
     "contracting_advance_application",
@@ -1386,10 +1435,13 @@ async function applyAdvanceTx(input: {
       {
         accountId: credit,
         debit: "0.00",
-        credit: money(input.amount),
+        credit: centsText(grossCents),
         description: "تخفيض ذمم المستخلص",
         costCenter: `contracting-project:${input.bill.projectId}`,
       },
+      ...(taxable ? [{ accountId: outputVat!, debit: centsText(vatCents), credit: "0.00",
+        description: "تسوية ضريبة الدفعة المقدمة المسددة سابقاً",
+        costCenter: `contracting-project:${input.bill.projectId}` }] : []),
     ],
     req: input.req,
   });
@@ -1398,23 +1450,26 @@ async function applyAdvanceTx(input: {
       (company_id, project_id, bill_id, owner_contract_id, subcontractor_contract_id,
        kind, direction, amount, applied_amount,
        settlement_date, journal_entry_id, source_settlement_id,
-       idempotency_key, idempotency_payload_hash, application_origin, notes, created_by)
+       idempotency_key, idempotency_payload_hash, application_origin, notes,
+       taxable_advance_invoice_id, taxable_base_amount, taxable_vat_amount, created_by)
     VALUES (
       ${input.companyId}, ${input.bill.projectId}, ${input.bill.id},
       ${outgoing ? Number(input.bill.ownerContractId) : null},
       ${outgoing ? null : Number(input.bill.subcontractorContractId)},
       'advance_application', ${input.bill.direction}, ${money(input.amount)},
       ${money(input.amount)}, ${applicationDate}, ${jeId}, ${Number(input.source.id)},
-       ${input.applicationOrigin === "auto_recovery"
+       ${input.idempotencyKey ?? (input.applicationOrigin === "auto_recovery"
          ? autoRecoveryApplicationIdempotencyKey(input.bill.id, jeId, input.source.id, input.amount)
-         : null},
-      ${idempotencyFingerprint({
+         : null)},
+      ${input.idempotencyPayloadHash ?? idempotencyFingerprint({
         billId: input.bill.id,
         sourceSettlementId: Number(input.source.id),
         amount: input.amount,
         origin: input.applicationOrigin,
       })},
       ${input.applicationOrigin}, ${input.applicationOrigin === "auto_recovery" ? "استرداد سلفة تلقائي" : "تطبيق سلفة على المستخلص"},
+      ${taxable ? Number(input.source.taxable_advance_invoice_id) : null},
+      ${taxable ? money(input.amount) : null}, ${taxable ? centsText(vatCents) : null},
       ${input.userId}
     )
     RETURNING *
@@ -1422,6 +1477,7 @@ async function applyAdvanceTx(input: {
   await input.tx.execute(sql`
     UPDATE contracting_accounting_settlements
        SET applied_amount = applied_amount + ${money(input.amount)},
+           applied_vat_amount = applied_vat_amount + ${centsText(vatCents)},
            updated_at = NOW()
      WHERE company_id = ${input.companyId}
        AND id = ${Number(input.source.id)}
@@ -1862,6 +1918,9 @@ export async function unapproveBill(input: {
     if (!["approved", "posted", "partially_paid", "paid"].includes(String(bill.status))) {
       throw failure("المستخلص ليس معتمداً أو مرحّلاً", 409);
     }
+    if (resultRows(await tx.execute(sql`SELECT id FROM contracting_fiscal_invoices
+       WHERE company_id=${input.companyId} AND bill_id=${input.billId} LIMIT 1`)).length)
+      throw failure("لا يمكن فك اعتماد أو تصحيح مستخلص صدرت له فاتورة ضريبية؛ يلزم مسار إشعار دائن وتصحيح ضريبي منفصل",409);
     if (!bill.journalEntryId) {
       if (!await isNonfinancialBoqCertificate(tx, input.companyId, bill)) {
         throw failure("لا يمكن فك اعتماد مستخلص مالي بلا قيد", 409);
@@ -2022,6 +2081,7 @@ export async function unapproveBill(input: {
       const restoredSource = await tx.execute(sql`
         UPDATE contracting_accounting_settlements
            SET applied_amount = GREATEST(0, applied_amount - ${money(application.amount)}::numeric),
+               applied_vat_amount = GREATEST(0, applied_vat_amount - ${String(application.taxable_vat_amount ?? "0")}::numeric),
                updated_at = NOW()
          WHERE company_id = ${input.companyId}
            AND id = ${sourceId}
@@ -2314,6 +2374,9 @@ export async function createPostedCorrection(input: {
     eq(contractingProgressBillsTable.companyId, input.companyId),
   ));
   if (!source) throw failure("المستخلص غير موجود", 404);
+  if (resultRows(await db.execute(sql`SELECT id FROM contracting_fiscal_invoices
+      WHERE company_id=${input.companyId} AND bill_id=${input.billId} LIMIT 1`)).length)
+    throw failure("لا يمكن تصحيح مستخلص صدرت له فاتورة 388 دون مسار إشعار دائن وتصحيح ضريبي منفصل",409);
   if (source.reversalJournalEntryId || source.status === "reversed") {
     throw failure("تم إنشاء تصحيح لهذا المستخلص من قبل", 409);
   }
@@ -2514,6 +2577,9 @@ export async function billMutationGuard(companyId: number, billId: number, actio
     eq(contractingProgressBillsTable.companyId, companyId),
   ));
   if (!bill) throw failure("المستخلص غير موجود", 404);
+  if (resultRows(await db.execute(sql`SELECT id FROM contracting_fiscal_invoices
+    WHERE company_id=${companyId} AND bill_id=${billId} LIMIT 1`)).length)
+    throw failure("لا يمكن تعديل أو حذف مستخلص ترتبط به فاتورة 388؛ يلزم مسار تصحيح ضريبي منفصل",409);
   if (["approved", "posted", "partially_paid", "paid", "reversed"].includes(String(bill.status))) {
     throw failure(`لا يمكن ${action === "delete" ? "حذف" : "تعديل"} مستخلص معتمد وله أثر في دفتر الأستاذ؛ استخدم فك الاعتماد`, 409);
   }
@@ -2733,7 +2799,7 @@ async function createSettlementRebaseAlternative(input: {
         penalties,
       });
       const postedBillLedger = await tx.execute(sql`
-        SELECT COALESCE(SUM(amount), 0) AS total
+        SELECT COALESCE(SUM(amount + CASE WHEN kind='advance_application' THEN COALESCE(taxable_vat_amount,0) ELSE 0 END), 0) AS total
           FROM contracting_accounting_settlements
          WHERE company_id = ${input.companyId}
            AND bill_id = ${input.billId}
@@ -2839,6 +2905,7 @@ export async function createSettlement(input: {
   bankAccountId?: number | null;
   idempotencyKey: string;
   notes?: string | null;
+  taxableAdvanceInvoiceId?: number | null;
   userId: number | null;
   req: RequestLike;
 }) {
@@ -2858,6 +2925,7 @@ export async function createSettlement(input: {
     cashBoxId: input.cashBoxId ?? null,
     bankAccountId: input.bankAccountId ?? null,
     notes: input.notes ?? null,
+    taxableAdvanceInvoiceId: input.taxableAdvanceInvoiceId ?? null,
   });
   const existing = await db.execute(sql`
     SELECT * FROM contracting_accounting_settlements
@@ -2975,6 +3043,34 @@ export async function createSettlement(input: {
       assertIdempotentReplay(replayRow, payloadHash);
       return { ...replayRow, idempotentReplay: true };
     }
+    if (input.taxableAdvanceInvoiceId != null && (input.kind !== "advance_receipt" || input.billId != null))
+      throw failure("ربط فاتورة الدفعة المقدمة الضريبية متاح لقبض سلفة المالك فقط", 422);
+    const fiscal = input.taxableAdvanceInvoiceId == null ? null : resultRows(await tx.execute(sql`
+      SELECT * FROM contracting_fiscal_invoices WHERE company_id=${input.companyId}
+        AND id=${input.taxableAdvanceInvoiceId} AND project_id=${input.projectId}
+        AND owner_contract_id=${contractId} AND kind='advance'
+        AND customer_id=(SELECT COALESCE(c.customer_id,p.customer_id)
+          FROM contracting_owner_contracts c JOIN contracting_projects p
+            ON p.id=c.project_id AND p.company_id=c.company_id
+          WHERE c.id=${contractId} AND c.company_id=${input.companyId})
+        AND status IN ('cleared','reported') AND journal_entry_id IS NOT NULL FOR UPDATE`))[0];
+    if (input.taxableAdvanceInvoiceId != null && !fiscal)
+      throw failure("فاتورة السلفة الضريبية غير مقبولة أو قيد إصدارها غير مرحّل",409);
+    if (fiscal && settlementDate<String(fiscal.invoice_date).slice(0,10))
+      throw failure("تاريخ قبض السلفة الضريبية لا يجوز أن يسبق تاريخ إصدار فاتورتها",409);
+    const priorFiscal = fiscal ? resultRows(await tx.execute(sql`SELECT COALESCE(SUM(amount),0) AS base,
+      COALESCE(SUM(taxable_vat_amount),0) AS vat FROM contracting_accounting_settlements
+      WHERE company_id=${input.companyId} AND taxable_advance_invoice_id=${fiscal.id}
+        AND kind='advance_receipt' AND status='posted'`))[0] : null;
+    let receiptSlice:{base:bigint;vat:bigint}|null=null;
+    if (fiscal) {
+      try {receiptSlice=taxableAdvanceReceiptSlice({
+        invoiceBase:centsBig(fiscal.taxable_amount),invoiceVat:centsBig(fiscal.vat_amount),
+        previousBase:centsBig(priorFiscal.base),previousVat:centsBig(priorFiscal.vat),
+        gross:centsBig(input.amount),
+      });} catch(e:any){throw failure(e.message,409);}
+    }
+    const advanceBase = receiptSlice ? centsText(receiptSlice.base) : money(input.amount);
     if (["advance_receipt", "advance_payment"].includes(input.kind)) {
       if (contractRow.status !== "approved") {
         throw failure("يجب اعتماد العقد قبل قبض أو صرف السلفة", 409);
@@ -2992,7 +3088,7 @@ export async function createSettlement(input: {
              : sql`subcontractor_contract_id = ${contractId} AND owner_contract_id IS NULL`}
       `);
       if (!isContractAdvanceWithinCap(
-        money(input.amount),
+        advanceBase,
         String(resultRows(priorAdvance)[0]?.total ?? "0"),
         String(contractRow.advance_payment ?? "0"),
       )) {
@@ -3041,7 +3137,7 @@ export async function createSettlement(input: {
         penalties,
       });
       const postedBillLedger = await tx.execute(sql`
-        SELECT COALESCE(SUM(amount), 0) AS total
+        SELECT COALESCE(SUM(amount + CASE WHEN kind='advance_application' THEN COALESCE(taxable_vat_amount,0) ELSE 0 END), 0) AS total
           FROM contracting_accounting_settlements
          WHERE company_id = ${input.companyId}
            AND bill_id = ${input.billId}
@@ -3068,8 +3164,17 @@ export async function createSettlement(input: {
       throw failure("الخزنة أو البنك لا يتبع فرع المشروع");
     }
     const map = await mappings(tx, input.companyId, details.mapping);
-    const counterpart = map.get(details.creditRole === "treasury" ? details.debitRole : details.creditRole);
-    if (!counterpart) throw failure(mappingGuidance(details.mapping, details.creditRole === "treasury" ? details.debitRole : details.creditRole));
+    const counterpart = fiscal
+      ? (await mappings(tx, input.companyId, "contracting_taxable_advance_invoice")).get("advance_receivable")
+      : map.get(details.creditRole === "treasury" ? details.debitRole : details.creditRole);
+    if (!counterpart) throw failure(mappingGuidance(
+      fiscal ? "contracting_taxable_advance_invoice" : details.mapping,
+      fiscal ? "advance_receivable" : details.creditRole === "treasury" ? details.debitRole : details.creditRole));
+    if (fiscal && !resultRows(await tx.execute(sql`SELECT 1 FROM journal_entry_lines l
+      JOIN journal_entries j ON j.id=l.entry_id AND j.company_id=${input.companyId}
+      WHERE l.entry_id=${fiscal.journal_entry_id} AND l.account_id=${counterpart}
+        AND l.debit=${fiscal.gross_amount} AND j.status='posted' LIMIT 1`)).length)
+      throw failure("حساب ذمة فاتورة السلفة لا يتطابق مع قيدها الأصلي؛ صحح الربط المحاسبي",409);
     const jeNumber = await nextJeNumber(input.companyId, "contracting_settlement", settlementDate, input.userId);
     const lines = details.debitRole === "treasury"
       ? [
@@ -3094,14 +3199,16 @@ export async function createSettlement(input: {
         (company_id, project_id, bill_id, owner_contract_id, subcontractor_contract_id,
          kind, direction, amount,
          settlement_date, payment_type, cash_box_id, bank_account_id,
-         journal_entry_id, idempotency_key, idempotency_payload_hash, notes, created_by)
+         journal_entry_id, idempotency_key, idempotency_payload_hash, notes,
+         taxable_advance_invoice_id, taxable_base_amount, taxable_vat_amount, created_by)
       VALUES (
         ${input.companyId}, ${input.projectId}, ${input.billId ?? null},
         ${ownerContractId}, ${subcontractorContractId},
-        ${input.kind}, ${details.direction}, ${money(input.amount)},
+        ${input.kind}, ${details.direction}, ${advanceBase},
         ${settlementDate}, ${input.paymentType}, ${input.cashBoxId ?? null},
         ${input.bankAccountId ?? null}, ${jeId}, ${input.idempotencyKey}, ${payloadHash},
-        ${input.notes ?? null}, ${input.userId}
+        ${input.notes ?? null}, ${fiscal?.id ?? null},
+        ${fiscal ? advanceBase : null}, ${receiptSlice ? centsText(receiptSlice.vat) : null}, ${input.userId}
       )
       RETURNING *
     `);
@@ -3219,6 +3326,12 @@ export async function reverseBillSettlement(input: {
     if (settlement.status !== "posted" || !settlement.journal_entry_id) {
       throw failure("لا يمكن عكس تسوية غير مرحّلة أو بلا قيد", 409);
     }
+    if (settlement.taxable_advance_invoice_id != null && kind === "advance_receipt")
+      throw failure("لا يمكن عكس قبض فاتورة سلفة ضريبية مقبولة دون إشعار دائن ضريبي", 409);
+    if (kind === "advance_application" && resultRows(await tx.execute(sql`SELECT id
+      FROM contracting_fiscal_invoices WHERE company_id=${input.companyId}
+        AND bill_id=${Number(settlement.bill_id)} LIMIT 1`)).length)
+      throw failure("لا يمكن عكس استرداد سلفة ضمن فاتورة مستخلص ضريبية صادرة", 409);
     if (!canUnpostDoc(input.req?.authUser, "ctgContractingSettlement")) {
       throw failure("ليس لديك صلاحية فك ترحيل هذه التسوية", 403);
     }
@@ -3288,6 +3401,7 @@ export async function reverseBillSettlement(input: {
       const restored = await tx.execute(sql`
         UPDATE contracting_accounting_settlements
            SET applied_amount = applied_amount - ${money(settlement.amount)}::numeric,
+               applied_vat_amount = applied_vat_amount - ${String(settlement.taxable_vat_amount ?? "0")}::numeric,
                updated_at = NOW()
          WHERE company_id = ${input.companyId}
            AND id = ${Number(settlement.source_settlement_id)}
@@ -3359,6 +3473,9 @@ export async function applyAdvance(input: {
     if (!bill || !["approved", "posted", "partially_paid"].includes(String(bill.status)) || !bill.journalEntryId) {
       throw failure("يجب تطبيق السلفة على مستخلص معتمد وله قيد");
     }
+    if (resultRows(await tx.execute(sql`SELECT id FROM contracting_fiscal_invoices
+      WHERE company_id=${input.companyId} AND bill_id=${input.billId} LIMIT 1`)).length)
+      throw failure("لا يجوز تعديل تسويات مستخلص صدرت له فاتورة إلكترونية؛ يلزم مسار تصحيح ضريبي",409);
     await assertBillContractScope(tx, input.companyId, bill, { requireSelection: true });
     const billContractId = bill.direction === "outgoing"
       ? Number(bill.ownerContractId ?? 0)
@@ -3411,7 +3528,7 @@ export async function applyAdvance(input: {
     });
     if (!cap.ok) throw failure(cap.reason);
     const postedBillLedger = await tx.execute(sql`
-      SELECT COALESCE(SUM(amount), 0) AS total
+      SELECT COALESCE(SUM(amount + CASE WHEN kind='advance_application' THEN COALESCE(taxable_vat_amount,0) ELSE 0 END), 0) AS total
         FROM contracting_accounting_settlements
        WHERE company_id = ${input.companyId}
          AND bill_id = ${input.billId}
@@ -3438,6 +3555,16 @@ export async function applyAdvance(input: {
       deductions,
       penalties,
     });
+    if (source.taxable_advance_invoice_id != null) {
+      const applied = await applyAdvanceTx({
+        tx, companyId: input.companyId, source, bill, amount: money(input.amount),
+        netAmountOverride: signedNet.adjustedNetAmount,
+        userId: input.userId, req: input.req, applicationOrigin: "manual",
+        idempotencyKey: input.idempotencyKey, idempotencyPayloadHash: payloadHash,
+      });
+      await refreshBillPaymentState(tx, input.companyId, input.billId, input.userId);
+      return { ...applied, idempotentReplay: false };
+    }
     const billCap = validateSettlementCap({
       kind: "bill_payment",
       requested: input.amount,

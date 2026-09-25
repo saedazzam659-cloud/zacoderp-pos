@@ -25,6 +25,7 @@ const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   letter_of_credit:      ["lc_margin", "lc_liability", "lc_commission", "lc_expenses", "lc_fx_diff", "inventory", "bank"],
   entity_account_parents: ["cash_account_parent", "bank_account_parent", "customer_account_parent", "warehouse_account_parent", "supplier_account_parent"],
   contracting_advance_receipt: ["advance_liability"],
+  contracting_taxable_advance_invoice: ["advance_receivable"],
   contracting_advance_payment: ["advance_asset"],
   contracting_advance_application: ["advance_liability", "receivable", "payable", "advance_asset"],
   contracting_retention_receipt: ["retention_receivable"],

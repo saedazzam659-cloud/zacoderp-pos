@@ -657,6 +657,8 @@ async function targetChain(ctx: any, companyId: number): Promise<{ maxIcv: numbe
   const q = await ctx.db.execute(sql`SELECT zatca_icv AS icv, invoice_hash AS hash FROM (
     SELECT zatca_icv, invoice_hash, id, 1 AS source_rank FROM sales_invoices WHERE company_id=${companyId} AND zatca_status IN ('cleared','reported')
     UNION ALL SELECT zatca_icv, invoice_hash, id, 0 AS source_rank FROM sales_returns WHERE company_id=${companyId} AND zatca_status IN ('cleared','reported')
+    UNION ALL SELECT zatca_icv, invoice_hash, id, 2 AS source_rank FROM contracting_fiscal_invoices
+      WHERE company_id=${companyId} AND status IN ('cleared','reported','accepted_unposted')
   ) c WHERE zatca_icv IS NOT NULL ORDER BY zatca_icv DESC, id DESC, source_rank DESC LIMIT 1`);
   const row = ((q as any).rows ?? q as any)[0];
   return chooseZatcaChain(seed[0] ?? {}, row);

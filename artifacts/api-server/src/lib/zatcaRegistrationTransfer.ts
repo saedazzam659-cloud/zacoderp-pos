@@ -8,6 +8,7 @@ import { db, pool } from "@workspace/db";
 import { companiesTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { GENESIS_HASH } from "./zatca-env.js";
+import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
 
 export type ZatcaTransferEnvelope = {
   version: 1; sourceCompanyId: number; vatNumber: string; environment: string;
@@ -120,11 +121,14 @@ export async function assertZatcaSubmissionAllowed(companyId: number): Promise<v
 }
 /** Shared invoices+returns resolver; seeds are for a receiving company. */
 export async function resolveZatcaChain(companyId: number): Promise<{ maxIcv: number; previousInvoiceHash: string }> {
+  await ensureContractingAccountingTables();
   const seed = await db.select({ icv: companiesTable.zatcaChainSeedIcv, pih: companiesTable.zatcaChainSeedPih })
     .from(companiesTable).where(eq(companiesTable.id, companyId));
   const r = await db.execute(sql`SELECT zatca_icv AS icv, invoice_hash AS hash FROM (
     SELECT zatca_icv, invoice_hash, id, 1 AS source_rank FROM sales_invoices WHERE company_id=${companyId} AND zatca_status IN ('cleared','reported')
     UNION ALL SELECT zatca_icv, invoice_hash, id, 0 AS source_rank FROM sales_returns WHERE company_id=${companyId} AND zatca_status IN ('cleared','reported')
+    UNION ALL SELECT zatca_icv, invoice_hash, id, 2 AS source_rank FROM contracting_fiscal_invoices
+      WHERE company_id=${companyId} AND status IN ('cleared','reported','accepted_unposted')
   ) c WHERE zatca_icv IS NOT NULL ORDER BY zatca_icv DESC, id DESC, source_rank DESC LIMIT 1`);
   const row = ((r as any).rows ?? r as any)[0] as { icv?: number; hash?: string } | undefined;
   // A seed represents a historical accepted chain.  It must not be overwritten

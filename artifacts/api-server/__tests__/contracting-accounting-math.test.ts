@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   authoritativeCumulativeBillAmounts,
@@ -112,6 +113,96 @@ test("cumulative certification uses prior certified totals, never paid amount", 
     priorGrossAmount: "950",
     priorRetentionAmount: "47.50",
   }), /أقل من آخر مستخلص/);
+});
+
+test("owner outgoing VAT taxes period gross before retention and balances its journal", () => {
+  const amounts = authoritativeCumulativeBillAmounts({
+    direction: "outgoing",
+    grossAmount: "500000.00",
+    retentionPercent: "10",
+    vatPercent: "15",
+    priorGrossAmount: "0",
+    priorRetentionAmount: "0",
+  });
+  assert.deepEqual(amounts, {
+    grossAmount: "500000.00",
+    previousPaid: "0.00",
+    retentionAmount: "50000.00",
+    dueAmount: "450000.00",
+    vatAmount: "75000.00",
+    netAmount: "525000.00",
+  });
+  const lines = contractingBillRoleLines({ direction: "outgoing", ...amounts });
+  assert.deepEqual(lines.map(({ role, debit, credit }) => [role, debit, credit]), [
+    ["receivable", "525000.00", "0.00"],
+    ["retention_receivable", "50000.00", "0.00"],
+    ["revenue", "0.00", "500000.00"],
+    ["vat_output", "0.00", "75000.00"],
+  ]);
+  assert.deepEqual(totals(lines), { debit: 575000, credit: 575000 });
+  // Omission deliberately retains the incoming/legacy due-after-retention mode.
+  assert.equal(authoritativeCumulativeBillAmounts({
+    grossAmount: "500000", retentionPercent: "10", vatPercent: "15",
+    priorGrossAmount: "0", priorRetentionAmount: "0",
+  }).vatAmount, "67500.00");
+});
+
+test("owner cumulative VAT taxes only newly certified work, not cumulative work or retention release", () => {
+  const prior = priorCertifiedContractGross({
+    projectId: 7, direction: "outgoing", ownerContractId: 12,
+    bills: [
+      { projectId: 7, direction: "outgoing", ownerContractId: 12, grossAmount: "200000", retentionAmount: "20000", status: "approved" },
+      { projectId: 7, direction: "outgoing", ownerContractId: 12, grossAmount: "300000", retentionAmount: "10000", status: "paid" },
+    ],
+  });
+  assert.deepEqual(prior, { grossAmount: "300000.00", retentionAmount: "30000.00" });
+  const input = {
+    direction: "outgoing" as const,
+    grossAmount: "500000", adjustedContractValue: "1000000",
+    retentionPercent: "10", retentionCapPercent: "4",
+    vatPercent: "15", priorGrossAmount: prior.grossAmount, priorRetentionAmount: prior.retentionAmount,
+  };
+  const manual = authoritativeCumulativeBillAmounts(input);
+  assert.equal(manual.previousPaid, "300000.00");
+  assert.equal(manual.retentionAmount, "10000.00");
+  assert.equal(manual.dueAmount, "190000.00");
+  assert.equal(manual.vatAmount, "30000.00");
+  assert.equal(manual.netAmount, "220000.00");
+  const aggregate = aggregateContractProgressAmounts({
+    direction: "outgoing", adjustedContractValue: "1000000",
+    progressPercent: "50", priorGrossAmount: prior.grossAmount,
+    priorRetentionAmount: prior.retentionAmount,
+    retentionPercent: "10", retentionCapPercent: "4", vatPercent: "15",
+  });
+  assert.equal(aggregate.currentPeriodGrossAmount, "200000.00");
+  assert.equal(aggregate.vatAmount, manual.vatAmount);
+  assert.equal(aggregate.netAmount, manual.netAmount);
+  assert.equal(aggregateContractProgressAmounts({
+    direction: "incoming", adjustedContractValue: "1000000",
+    progressPercent: "50", priorGrossAmount: prior.grossAmount,
+    priorRetentionAmount: prior.retentionAmount,
+    retentionPercent: "10", retentionCapPercent: "4", vatPercent: "15",
+  }).vatAmount, "28500.00");
+});
+
+test("owner draft, approval and recovery preview pass their direction to VAT math", () => {
+  const service = readFileSync(new URL("../src/lib/contracting-accounting-service.ts", import.meta.url), "utf8");
+  const route = readFileSync(new URL("../src/routes/contracting.ts", import.meta.url), "utf8");
+  const details = readFileSync(new URL("../src/lib/contracting-bill-details-service.ts", import.meta.url), "utf8");
+  const argumentsPassed = (source: string, helper: string) =>
+    Array.from(source.matchAll(new RegExp(`${helper}\\(\\{\\s*direction(?:: ([\\w.]+))?,`, "g")), match => match[1] ?? "direction");
+  assert.deepEqual(argumentsPassed(service, "authoritativeCumulativeBillAmounts"), [
+    "bill.direction", // approval, including detailed certificates
+    "input.direction", // draft recovery preview
+  ]);
+  assert.deepEqual(argumentsPassed(route, "aggregateContractProgressAmounts"), ["input.direction"]);
+  assert.deepEqual(argumentsPassed(route, "authoritativeCumulativeBillAmounts"), ["direction", "direction"]);
+  // Approval is the sole recertification boundary. An already-approved bill
+  // (including a legacy approved bill whose journal is still draft) returns
+  // or errors before the amount calculation; detail/report reads use snapshots.
+  assert.ok(service.indexOf('if (locked.status === "approved" && locked.journalEntryId)') <
+    service.indexOf("Object.assign(locked, await certifyBillAmounts("));
+  assert.match(details, /vatAmount: Number\(bill\.vatAmount\)/);
 });
 
 test("advance recovery treats an explicit zero contractual cap differently from legacy omission", () => {

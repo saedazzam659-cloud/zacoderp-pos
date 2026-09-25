@@ -15,7 +15,11 @@ import {
   journalEntriesTable, journalEntryLinesTable,
   receiptVoucherLinesTable,
   settlementLinksTable,
+  contractingAccountingSettlementsTable,
+  contractingFiscalInvoicesTable,
+  contractingProjectsTable,
 } from "@workspace/db";
+import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 import { and, eq, sql, gte, lte, lt, asc, desc, inArray, notInArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, pushRegionScope } from "../middleware/auth.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
@@ -113,8 +117,64 @@ async function customerStatementAccount(req: any, cid: number, customerId: numbe
 // These sources are already represented by their own document rows in the
 // customer statement. Excluding their generated JEs prevents double counting.
 const CUSTOMER_DOC_ENTRY_TYPES = [
-  "sales_invoice", "sales_return", "receipt", "customer_settlement",
+  "sales_invoice", "sales_return", "receipt", "customer_settlement", "contracting_taxable_advance_invoice",
 ] as const;
+
+/** 386 creates a real customer-specific receivable, unlike the fiscal-only
+ * 388 whose already-posted bill JE owns A/R. Direct cash is not a voucher.
+ * These rows supplement the sales statement without recasting historic
+ * contracting advances as taxable invoices. */
+async function taxableAdvancePartyMovements(
+  cid:number, req:any, bid:number|undefined, customerId?:number,
+  from?:string, to?:string,
+) {
+  await ensureContractingAccountingTables();
+  const branch=branchScopeSpread(req, contractingProjectsTable.branchId, bid);
+  const invoices=await db.select({
+    id:contractingFiscalInvoicesTable.id,date:contractingFiscalInvoicesTable.invoiceDate,
+    docNumber:contractingFiscalInvoicesTable.invoiceNumber,
+    customerId:contractingFiscalInvoicesTable.customerId,
+    total:contractingFiscalInvoicesTable.grossAmount,
+    vat:contractingFiscalInvoicesTable.vatAmount,
+    journalEntryId:contractingFiscalInvoicesTable.journalEntryId,
+    journalEntryNumber:journalEntriesTable.docNumber,
+  }).from(contractingFiscalInvoicesTable)
+    .innerJoin(contractingProjectsTable,and(eq(contractingProjectsTable.id,contractingFiscalInvoicesTable.projectId),
+      eq(contractingProjectsTable.companyId,contractingFiscalInvoicesTable.companyId)))
+    .innerJoin(journalEntriesTable,and(eq(journalEntriesTable.id,contractingFiscalInvoicesTable.journalEntryId),
+      eq(journalEntriesTable.companyId,contractingFiscalInvoicesTable.companyId)))
+    .where(and(eq(contractingFiscalInvoicesTable.companyId,cid),eq(contractingFiscalInvoicesTable.kind,"advance"),
+      inArray(contractingFiscalInvoicesTable.status,["cleared","reported"]),
+      eq(journalEntriesTable.status,"posted"),
+      ...(customerId==null?[]:[eq(contractingFiscalInvoicesTable.customerId,customerId)]),
+      ...(from?[gte(contractingFiscalInvoicesTable.invoiceDate,from)]:[]),
+      ...(to?[lte(contractingFiscalInvoicesTable.invoiceDate,to)]:[]),...branch));
+  const directReceipts=await db.select({
+    id:contractingAccountingSettlementsTable.id,
+    date:contractingAccountingSettlementsTable.settlementDate,
+    customerId:contractingFiscalInvoicesTable.customerId,
+    total:sql<string>`${contractingAccountingSettlementsTable.amount} + ${contractingAccountingSettlementsTable.taxableVatAmount}`,
+    docNumber:contractingFiscalInvoicesTable.invoiceNumber,
+    journalEntryId:contractingAccountingSettlementsTable.journalEntryId,
+    journalEntryNumber:journalEntriesTable.docNumber,
+  }).from(contractingAccountingSettlementsTable)
+    .innerJoin(contractingFiscalInvoicesTable,and(
+      eq(contractingFiscalInvoicesTable.id,contractingAccountingSettlementsTable.taxableAdvanceInvoiceId),
+      eq(contractingFiscalInvoicesTable.companyId,contractingAccountingSettlementsTable.companyId)))
+    .innerJoin(contractingProjectsTable,and(
+      eq(contractingProjectsTable.id,contractingAccountingSettlementsTable.projectId),
+      eq(contractingProjectsTable.companyId,contractingAccountingSettlementsTable.companyId)))
+    .innerJoin(journalEntriesTable,and(eq(journalEntriesTable.id,contractingAccountingSettlementsTable.journalEntryId),
+      eq(journalEntriesTable.companyId,contractingAccountingSettlementsTable.companyId)))
+    .where(and(eq(contractingAccountingSettlementsTable.companyId,cid),
+      eq(contractingAccountingSettlementsTable.kind,"advance_receipt"),
+      eq(contractingAccountingSettlementsTable.status,"posted"),eq(journalEntriesTable.status,"posted"),
+      isNull(contractingAccountingSettlementsTable.sourceVoucherId),
+      ...(customerId==null?[]:[eq(contractingFiscalInvoicesTable.customerId,customerId)]),
+      ...(from?[gte(contractingAccountingSettlementsTable.settlementDate,from)]:[]),
+      ...(to?[lte(contractingAccountingSettlementsTable.settlementDate,to)]:[]),...branch));
+  return {invoices,directReceipts};
+}
 
 async function customerAccountShared(cid: number, accountId: number): Promise<boolean> {
   const [row] = await db.select({ n: sql<number>`count(*)::int` })
@@ -573,7 +633,11 @@ router.get("/customer-statement", async (req, res) => {
         - (supplementalRec.get(ccid) ?? 0) + jeNet;
     }
 
-    const opening = await sumPriorTo(from);
+    const taxableOpening = from ? await taxableAdvancePartyMovements(cid,req,bid,ccid,undefined,
+      new Date(new Date(`${from}T00:00:00Z`).getTime()-86400000).toISOString().slice(0,10)) : null;
+    const opening = await sumPriorTo(from)
+      + (taxableOpening?.invoices.reduce((sum,r)=>sum+Number(r.total),0)??0)
+      - (taxableOpening?.directReceipts.reduce((sum,r)=>sum+Number(r.total),0)??0);
 
     const invConds: any[] = [
       eq(salesInvoicesTable.companyId, cid),
@@ -674,6 +738,7 @@ router.get("/customer-statement", async (req, res) => {
       ...(from ? [gte(receiptVouchersTable.date, from)] : []),
       ...(to ? [lte(receiptVouchersTable.date, to)] : []),
     ])).filter(r => r.customerId === ccid);
+    const taxableMoves=await taxableAdvancePartyMovements(cid,req,bid,ccid,from,to);
     const jeLines = await fetchCustomerDirectJeLines(
       cid, custMeta?.accountId, from, to,
       branchScopeSpread(req, journalEntriesTable.branchId, bid),
@@ -743,6 +808,12 @@ router.get("/customer-statement", async (req, res) => {
         return [returnLine];
       }),
       ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: voucherDesc(r.description, r.notes), channel: voucherChannel(r.cashBoxId, r.bankAccountId) })),
+      ...taxableMoves.invoices.map(r=>({id:r.id,date:r.date,type:"contracting_advance_invoice",
+        docNumber:r.docNumber,journalEntryId:r.journalEntryId,journalEntryNumber:r.journalEntryNumber,
+        debit:Number(r.total),credit:0,description:"فاتورة دفعة مقدمة لعقد المالك",paymentType:"credit"})),
+      ...taxableMoves.directReceipts.map(r=>({id:r.id,date:r.date,type:"contracting_advance_receipt",
+        docNumber:r.docNumber,journalEntryId:r.journalEntryId,journalEntryNumber:r.journalEntryNumber,
+        debit:0,credit:Number(r.total),description:"تحصيل فاتورة دفعة مقدمة لعقد المالك"})),
       ...supplementalRecs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: r.allocatedAmount, description: voucherDesc(r.description, r.notes), channel: voucherChannel(r.cashBoxId, r.bankAccountId) })),
       ...jeLines.map(j => ({
         id: null, date: j.date, type: "journal", docNumber: null,
@@ -845,7 +916,11 @@ router.get("/customer-statement-detailed", async (req, res) => {
       return Number(inv.s) - Number(ret.s) - Number(rec.s)
         - (supplementalRec.get(ccid) ?? 0) + jeNet;
     }
-    const opening = await sumPriorTo(from);
+    const taxableOpening = from ? await taxableAdvancePartyMovements(cid,req,bid,ccid,undefined,
+      new Date(new Date(`${from}T00:00:00Z`).getTime()-86400000).toISOString().slice(0,10)) : null;
+    const opening = await sumPriorTo(from)
+      + (taxableOpening?.invoices.reduce((sum,r)=>sum+Number(r.total),0)??0)
+      - (taxableOpening?.directReceipts.reduce((sum,r)=>sum+Number(r.total),0)??0);
 
     // Header rows in date range. Unlike the simple /customer-statement (A/R-only),
     // the DETAILED report shows EVERY posted invoice/return — cash, bank and credit —
@@ -912,6 +987,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
       ...(to ? [lte(receiptVouchersTable.date, to)] : []),
     ])).filter(r => r.customerId === ccid);
 
+    const taxableMoves=await taxableAdvancePartyMovements(cid,req,bid,ccid,from,to);
     // Batch-load child rows for invoices and returns.
     const invIds = invs.map(i => i.id);
     const retIds = rets.map(r => r.id);
@@ -1064,6 +1140,17 @@ router.get("/customer-statement-detailed", async (req, res) => {
           description: r.description,
         },
       })),
+      ...taxableMoves.invoices.map(r=>({
+        id:r.id,date:r.date,type:"contracting_advance_invoice",docNumber:r.docNumber,
+        journalEntryId:r.journalEntryId,journalEntryNumber:r.journalEntryNumber,
+        debit:Number(r.total),credit:0,vatAmount:Number(r.vat),
+        description:"فاتورة دفعة مقدمة لعقد المالك",paymentType:"credit",
+      })),
+      ...taxableMoves.directReceipts.map(r=>({
+        id:r.id,date:r.date,type:"contracting_advance_receipt",docNumber:r.docNumber,
+        journalEntryId:r.journalEntryId,journalEntryNumber:r.journalEntryNumber,
+        debit:0,credit:Number(r.total),description:"تحصيل فاتورة دفعة مقدمة لعقد المالك",
+      })),
       ...supplementalRecs.map(r => ({
         id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber,
         journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber,
@@ -1160,11 +1247,14 @@ router.get("/aging", async (req, res) => {
       ))
       .groupBy(receiptVouchersTable.entityId);
     const supplementalRecBy = await customerInvoiceLinkedVoucherTotals(cid, req, bid, [lte(receiptVouchersTable.date, asOf)]);
+    const taxableMoves=await taxableAdvancePartyMovements(cid,req,bid,undefined,undefined,asOf);
 
     const creditByCustomer: Record<number, number> = {};
     for (const r of retAgg) if (r.customerId) creditByCustomer[r.customerId] = (creditByCustomer[r.customerId] ?? 0) + Number(r.total);
     for (const r of recAgg) if (r.customerId) creditByCustomer[r.customerId] = (creditByCustomer[r.customerId] ?? 0) + Number(r.total);
     for (const [customerId, total] of supplementalRecBy) creditByCustomer[customerId] = (creditByCustomer[customerId] ?? 0) + total;
+    for (const r of taxableMoves.directReceipts)
+      creditByCustomer[r.customerId]=(creditByCustomer[r.customerId]??0)+Number(r.total);
 
     // Group invoices by customer
     const invByCustomer: Record<number, { date: string; total: number }[]> = {};
@@ -1172,6 +1262,9 @@ router.get("/aging", async (req, res) => {
       if (!i.customerId) continue;
       (invByCustomer[i.customerId] ??= []).push({ date: i.date, total: Number(i.total) });
     }
+    for (const i of taxableMoves.invoices)
+      (invByCustomer[i.customerId] ??= []).push({date:i.date,total:Number(i.total)});
+    for (const list of Object.values(invByCustomer)) list.sort((a,b)=>a.date.localeCompare(b.date));
 
     const today = new Date(asOf);
     const dayDiff = (d: string) => Math.floor((today.getTime() - new Date(d).getTime()) / 86400000);
@@ -2686,6 +2779,12 @@ router.get("/customer-balances", async (req, res) => {
         .groupBy(receiptVouchersTable.entityId),
     ]);
     const supplementalRecBy = await customerInvoiceLinkedVoucherTotals(cid, req, bid, dr(receiptVouchersTable.date));
+    const taxableMoves=await taxableAdvancePartyMovements(cid,req,bid,undefined,from,to);
+    const taxableByCustomer=new Map<number,number>();
+    for (const row of taxableMoves.invoices)
+      taxableByCustomer.set(row.customerId,(taxableByCustomer.get(row.customerId)??0)+Number(row.total));
+    for (const row of taxableMoves.directReceipts)
+      taxableByCustomer.set(row.customerId,(taxableByCustomer.get(row.customerId)??0)-Number(row.total));
 
     const accountCounts = new Map<number, number>();
     for (const customer of custs) {
@@ -2727,6 +2826,7 @@ router.get("/customer-balances", async (req, res) => {
         customerId: c.id, nameAr: c.nameAr, nameEn: c.nameEn, phone: c.phone,
         balance: (invBy.get(c.id) ?? 0) - (retBy.get(c.id) ?? 0)
           - (recBy.get(c.id) ?? 0) - (supplementalRecBy.get(c.id) ?? 0)
+          + (taxableByCustomer.get(c.id) ?? 0)
           + (c.accountId ? (jeByAccount.get(c.accountId) ?? 0) : 0),
       }));
     res.json(out);

@@ -241,8 +241,13 @@ function multiplyCentsByPercent(cents: bigint, percent: bigint): bigint {
  * locked contract, not paid amounts and not client-supplied `previousPaid`.
  * A non-null retention snapshot caps cumulative retention against the adjusted
  * contract value; a null cap is the compatibility path for legacy bills.
+ * `direction` is optional for existing callers: omission retains the legacy
+ * due-after-retention VAT calculation (incoming subcontract certificates).
+ * New OWNER outgoing callers must pass "outgoing" to tax current-period gross
+ * before retention. Never use this helper to recalculate posted snapshots.
  */
 export function authoritativeCumulativeBillAmounts(input: {
+  direction?: "outgoing" | "incoming";
   grossAmount: number | string;
   adjustedContractValue?: number | string | null;
   retentionEnabled?: boolean | null;
@@ -279,7 +284,8 @@ export function authoritativeCumulativeBillAmounts(input: {
   const periodGross = gross - priorGross;
   const retentionDelta = currentRetention - priorRetention;
   const due = periodGross > retentionDelta ? periodGross - retentionDelta : 0n;
-  const vat = multiplyCentsByPercent(due, percentCents(input.vatPercent));
+  const vatBase = input.direction === "outgoing" ? periodGross : due;
+  const vat = multiplyCentsByPercent(vatBase, percentCents(input.vatPercent));
   return {
     grossAmount: centsString(gross),
     previousPaid: centsString(priorGross),
@@ -377,8 +383,11 @@ export function priorCertifiedContractGross(input: {
  * financial values follow the existing cumulative certification convention.
  * In particular, `previousPaid` is the previous certified cumulative gross;
  * it is not a second payment deduction.
+ * Omitted direction keeps the legacy incoming VAT base (due after retention);
+ * OWNER outgoing callers must explicitly pass "outgoing".
  */
 export function aggregateContractProgressAmounts(input: {
+  direction?: "outgoing" | "incoming";
   adjustedContractValue: number | string;
   progressPercent: number | string;
   priorGrossAmount: number | string;
@@ -419,7 +428,8 @@ export function aggregateContractProgressAmounts(input: {
   const currentGross = gross - priorGross;
   const retention = cumulativeRetention - priorRetention;
   const due = currentGross > retention ? currentGross - retention : 0n;
-  const vat = multiplyCentsByPercent(due, percentCents(input.vatPercent));
+  const vatBase = input.direction === "outgoing" ? currentGross : due;
+  const vat = multiplyCentsByPercent(vatBase, percentCents(input.vatPercent));
   return {
     grossAmount: centsString(gross),
     cumulativeGrossAmount: centsString(gross),

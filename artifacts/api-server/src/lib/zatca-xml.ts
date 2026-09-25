@@ -45,6 +45,19 @@ interface Customer {
   country?: string | null;
 }
 
+export interface PrepaymentAdjustment {
+  /** BT-1 of the already-issued 386 prepayment invoice (KSA-26). */
+  invoiceNumber: string;
+  invoiceIssueDate: string;
+  invoiceIssueTime: string;
+  /** KSA-31 and KSA-32, in the final invoice's currency. */
+  taxableAmount: string;
+  taxAmount: string;
+  /** KSA-33 and KSA-34; historic 5% standard-rated advances are supported. */
+  taxCategory: "S" | "Z" | "E" | "O";
+  taxPercent: string;
+}
+
 export interface InvoiceData {
   invoiceNumber: string;
   invoiceType: string;
@@ -56,6 +69,10 @@ export interface InvoiceData {
   // Defaults to "invoice"; credit/debit notes additionally require a
   // billingReferenceId (the corrected invoice) + an instructionNote (reason).
   documentType?: "invoice" | "credit" | "debit";
+  /** Issue a 386 advance invoice rather than a 388 tax invoice. Not for credit/debit notes. */
+  prepaymentInvoice?: boolean;
+  /** Advances already invoiced as 386, adjusted against this ordinary 388 invoice. */
+  prepaymentAdjustments?: PrepaymentAdjustment[];
   billingReferenceId?: string | null;
   instructionNote?: string | null;
   issueDate: string;
@@ -89,9 +106,10 @@ function xmlEscape(str: string | null | undefined): string {
 function getInvoiceTypeCode(
   type: string,
   documentType: "invoice" | "credit" | "debit" = "invoice",
+  prepaymentInvoice = false,
 ): { typeCode: string; subTypeCode: string } {
-  // ZATCA InvoiceTypeCode: 388 tax invoice, 381 credit note, 383 debit note.
-  const typeCode = documentType === "credit" ? "381" : documentType === "debit" ? "383" : "388";
+  // ZATCA InvoiceTypeCode: 388 tax invoice, 386 advance, 381 credit, 383 debit.
+  const typeCode = documentType === "credit" ? "381" : documentType === "debit" ? "383" : prepaymentInvoice ? "386" : "388";
   const subTypeCode = type === "simplified" ? "0200000" : "0100000";
   return { typeCode, subTypeCode };
 }
@@ -120,9 +138,145 @@ function getTaxCategory(category?: string, vatRate?: string): {
   }
 }
 
+// Validate advance-specific money as integer cents; do not silently round source
+// amounts or accept NaN/Infinity/extra fractional digits in a signed document.
+function prepaymentCents(value: string, field: string): number {
+  if (typeof value !== "string" || !/^\d+(?:\.\d{1,2})?$/.test(value)) {
+    throw new Error(`Invalid prepayment ${field}: expected a non-negative amount with at most two decimals`);
+  }
+  const [whole, fraction = ""] = value.split(".");
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  if (!Number.isSafeInteger(cents)) throw new Error(`Invalid prepayment ${field}: amount out of range`);
+  return cents;
+}
+
+function prepaymentReference(value: string, field: string): string {
+  if (typeof value !== "string" || !value.trim() || /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(value)) {
+    throw new Error(`Invalid prepayment ${field}: reference is required and must be XML-safe`);
+  }
+  return value;
+}
+
+function prepaymentDate(value: string): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error("Invalid prepayment invoiceIssueDate");
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) {
+    throw new Error("Invalid prepayment invoiceIssueDate");
+  }
+  return value;
+}
+
+function prepaymentTime(value: string): string {
+  if (typeof value !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?$/.test(value)) {
+    throw new Error("Invalid prepayment invoiceIssueTime");
+  }
+  return value;
+}
+
+function prepaymentPercent(value: string, category: string): number {
+  if (typeof value !== "string" || !/^\d+(?:\.\d{1,2})?$/.test(value)) {
+    throw new Error("Invalid prepayment taxPercent");
+  }
+  const rate = Number(value);
+  if (category === "S" ? rate !== 5 && rate !== 15 : rate !== 0) {
+    throw new Error(`Invalid prepayment taxPercent for category ${category}`);
+  }
+  return rate;
+}
+
+function buildPrepaymentAdjustments(data: InvoiceData): { prepaidCents: number; linesXml: string } {
+  const adjustments = data.prepaymentAdjustments;
+  if (adjustments === undefined) return { prepaidCents: 0, linesXml: "" };
+  if (!Array.isArray(adjustments)) throw new Error("Invalid prepaymentAdjustments: expected an array");
+  if (adjustments.length && (data.documentType ?? "invoice") !== "invoice") {
+    throw new Error("Prepayment adjustments are only supported on ordinary invoices");
+  }
+  if (adjustments.length && data.prepaymentInvoice) {
+    throw new Error("A 386 prepayment invoice cannot adjust earlier prepayments");
+  }
+  if (adjustments.length && !["standard", "simplified"].includes(data.invoiceType)) {
+    throw new Error("Prepayment adjustments require a standard or simplified invoice");
+  }
+  if (!adjustments.length) return { prepaidCents: 0, linesXml: "" };
+  if (!/^[A-Z]{3}$/.test(data.currency)) throw new Error("Invalid prepayment invoice currency");
+
+  let prepaidCents = 0;
+  const linesXml = adjustments.map((adjustment, index) => {
+    if (!adjustment || typeof adjustment !== "object") throw new Error("Invalid prepayment adjustment");
+    const invoiceNumber = prepaymentReference(adjustment.invoiceNumber, "invoiceNumber");
+    const issueDate = prepaymentDate(adjustment.invoiceIssueDate);
+    const issueTime = prepaymentTime(adjustment.invoiceIssueTime);
+    const category = adjustment.taxCategory;
+    if (!["S", "Z", "E", "O"].includes(category)) {
+      throw new Error(`Invalid prepayment taxCategory: ${String(category)}`);
+    }
+    const rate = prepaymentPercent(adjustment.taxPercent, category);
+    const taxable = prepaymentCents(adjustment.taxableAmount, "taxableAmount");
+    const tax = prepaymentCents(adjustment.taxAmount, "taxAmount");
+    if (taxable === 0) throw new Error("Invalid prepayment taxableAmount: must be positive");
+    if (tax !== Math.round(taxable * rate / 100)) {
+      throw new Error("Invalid prepayment taxAmount: does not match rounded taxableAmount × taxPercent");
+    }
+    prepaidCents += taxable + tax;
+    if (!Number.isSafeInteger(prepaidCents)) throw new Error("Invalid prepayment amount: out of range");
+    const currency = xmlEscape(data.currency);
+    const amount = (cents: number) => (cents / 100).toFixed(2);
+    const percent = rate.toFixed(2);
+    return `
+     <cac:InvoiceLine>
+       <cbc:ID>${data.lineItems.length + index + 1}</cbc:ID>
+       <cbc:InvoicedQuantity unitCode="PCE">0.00</cbc:InvoicedQuantity>
+       <cbc:LineExtensionAmount currencyID="${currency}">0.00</cbc:LineExtensionAmount>
+       <cac:DocumentReference>
+         <cbc:ID>${xmlEscape(invoiceNumber)}</cbc:ID>
+         <cbc:IssueDate>${issueDate}</cbc:IssueDate>
+         <cbc:IssueTime>${issueTime}</cbc:IssueTime>
+         <cbc:DocumentTypeCode>386</cbc:DocumentTypeCode>
+       </cac:DocumentReference>
+       <cac:TaxTotal>
+         <cbc:TaxAmount currencyID="${currency}">0.00</cbc:TaxAmount>
+         <cbc:RoundingAmount currencyID="${currency}">0.00</cbc:RoundingAmount>
+         <cac:TaxSubtotal>
+           <cbc:TaxableAmount currencyID="${currency}">${amount(taxable)}</cbc:TaxableAmount>
+           <cbc:TaxAmount currencyID="${currency}">${amount(tax)}</cbc:TaxAmount>
+           <cac:TaxCategory>
+             <cbc:ID>${category}</cbc:ID>
+             <cbc:Percent>${percent}</cbc:Percent>
+             <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+           </cac:TaxCategory>
+         </cac:TaxSubtotal>
+       </cac:TaxTotal>
+       <cac:Item>
+         <cbc:Name>Prepayment adjustment</cbc:Name>
+         <cac:ClassifiedTaxCategory>
+           <cbc:ID>${category}</cbc:ID>
+           <cbc:Percent>${percent}</cbc:Percent>
+           <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+         </cac:ClassifiedTaxCategory>
+       </cac:Item>
+       <cac:Price>
+         <cbc:PriceAmount currencyID="${currency}">0.00</cbc:PriceAmount>
+       </cac:Price>
+     </cac:InvoiceLine>`;
+  }).join("");
+  return { prepaidCents, linesXml };
+}
+
 export function generateZatcaXml(data: InvoiceData): string {
   const documentType = data.documentType ?? "invoice";
-  const { typeCode, subTypeCode } = getInvoiceTypeCode(data.invoiceType, documentType);
+  if (data.prepaymentInvoice !== undefined && typeof data.prepaymentInvoice !== "boolean") {
+    throw new Error("Invalid prepaymentInvoice: expected a boolean");
+  }
+  if (data.prepaymentInvoice && (documentType !== "invoice" || !["standard", "simplified"].includes(data.invoiceType))) {
+    throw new Error("A 386 prepayment invoice must be an ordinary standard or simplified invoice");
+  }
+  const { prepaidCents, linesXml: prepaymentLinesXml } = buildPrepaymentAdjustments(data);
+  const invoiceGrossCents = prepaidCents ? prepaymentCents(data.grandTotal, "grandTotal") : 0;
+  if (prepaidCents > invoiceGrossCents) throw new Error("Prepayment amount exceeds invoice gross total");
+  const { typeCode, subTypeCode } = getInvoiceTypeCode(data.invoiceType, documentType, data.prepaymentInvoice);
   const issueTime = data.issueTime ?? new Date().toISOString().split("T")[1]?.split(".")[0] ?? "00:00:00";
   const paymentMeansCode = data.paymentMethod ?? "10";
   const documentUuid = data.uuid ?? data.invoiceNumber;
@@ -346,10 +500,10 @@ ${billingReferenceXml}
     <cbc:TaxExclusiveAmount currencyID="${data.currency}">${(Number(data.subtotal) - Number(data.discountTotal)).toFixed(2)}</cbc:TaxExclusiveAmount>
     <cbc:TaxInclusiveAmount currencyID="${data.currency}">${Number(data.grandTotal).toFixed(2)}</cbc:TaxInclusiveAmount>
     <cbc:AllowanceTotalAmount currencyID="${data.currency}">${Number(data.discountTotal).toFixed(2)}</cbc:AllowanceTotalAmount>
-    <cbc:PrepaidAmount currencyID="${data.currency}">0.00</cbc:PrepaidAmount>
-    <cbc:PayableAmount currencyID="${data.currency}">${Number(data.grandTotal).toFixed(2)}</cbc:PayableAmount>
+    <cbc:PrepaidAmount currencyID="${data.currency}">${prepaidCents ? (prepaidCents / 100).toFixed(2) : "0.00"}</cbc:PrepaidAmount>
+    <cbc:PayableAmount currencyID="${data.currency}">${prepaidCents ? ((invoiceGrossCents - prepaidCents) / 100).toFixed(2) : Number(data.grandTotal).toFixed(2)}</cbc:PayableAmount>
   </cac:LegalMonetaryTotal>
-  ${lineItemsXml}
+  ${lineItemsXml}${prepaymentLinesXml}
 </Invoice>`;
 }
 

@@ -1,5 +1,6 @@
 # Durable memory indexes
 - [Contracting accounting boundaries](contracting-accounting-boundaries.md) — optional cost-center snapshots, planning versus posting, and preservation of existing customer/bill data.
+- [Taxable contracting advances](contracting-taxable-advance-boundaries.md) — tax-point ownership, fiscal-only certificates, legacy safety, and exact partial settlements.
 
 - [POS Desktop index](pos-desktop-index.md) — POS Desktop shell, local data, fiscal, inventory, printing, licensing, and offline/ZATCA implementation notes.
 - [Accounting and ZATCA index](accounting-zatca-index.md) — accounting, numbering, settlement, reports, documents, imports, and ZATCA implementation notes.

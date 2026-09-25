@@ -29,7 +29,7 @@ import { DateField } from "@/components/ui/date-field";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
-import { VoucherContractingAllocation, positiveId, validateRetentionReleaseLines, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
+import { VoucherContractingAllocation, positiveId, validateRetentionReleaseLines, validateTaxableAdvanceLines, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -175,7 +175,9 @@ export default function ReceiptVoucherFormMulti() {
     const billId = positiveId(q.get("billId"));
     if (!entityId || !projectId || !contractId || (kind !== "owner_advance" && kind !== "owner_bill" && kind !== "owner_retention_release") || (kind !== "owner_advance" && !billId)) return null;
     const amount = q.get("amount");
-    return { entityId, allocation: { kind, projectId, contractId, ...(kind !== "owner_advance" ? { billId: billId! } : {}) } as ContractingAllocation,
+    const taxableAdvanceInvoiceId = kind === "owner_advance" ? positiveId(q.get("taxableAdvanceInvoiceId")) : null;
+    return { entityId, allocation: { kind, projectId, contractId, ...(kind !== "owner_advance" ? { billId: billId! } : {}),
+      ...(taxableAdvanceInvoiceId ? { taxableAdvanceInvoiceId } : {}) } as ContractingAllocation,
       amount: amount && /^\d+(\.\d{1,2})?$/.test(amount) && Number(amount) > 0 ? amount : "" };
   }, [isNew, fromId, prefill]);
 
@@ -549,6 +551,7 @@ export default function ReceiptVoucherFormMulti() {
           throw new Error("تحقق من العميل والمشروع والعقد والمستخلص؛ بنود المقاولات لا تقبل فاتورة مبيعات أو سعر صرف مختلفاً عن 1");
       }
       await validateRetentionReleaseLines("receipt", Number(cid), form.entityId, token!, cleanLines);
+      await validateTaxableAdvanceLines(cleanLines, token!);
       const grandTotal = cleanLines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
       if (!isFinite(grandTotal) || grandTotal <= 0) throw new Error(t(`${NS}.invalidAmount`));
 

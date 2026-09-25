@@ -150,6 +150,7 @@ export const receiptVoucherLinesTable = pgTable("receipt_voucher_lines", {
   contractingProjectId: integer("contracting_project_id"),
   contractingContractId: integer("contracting_contract_id"),
   contractingBillId: integer("contracting_bill_id"),
+  taxableAdvanceInvoiceId: integer("taxable_advance_invoice_id"),
   sortOrder:      integer("sort_order").notNull().default(0),
 });
 

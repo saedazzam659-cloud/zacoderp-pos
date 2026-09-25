@@ -20,6 +20,7 @@ import { requirePermission, requirePermissionAny } from "../middleware/permissio
 import { customersTable } from "@workspace/db";
 import { suppliersTable } from "@workspace/db";
 import { sendEmail } from "../lib/email.js";
+import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 
 // Entry types created automatically by source documents (sales/purchase
 // invoices, vouchers, payroll, stock moves). Their VAT impact is ALREADY
@@ -32,6 +33,7 @@ const AUTO_GENERATED_ENTRY_TYPES = [
   "receipt_voucher", "payment_voucher", "receipt", "payment",
   "stock_transfer", "stock_adjustment",
   "supplier_settlement", "customer_settlement",
+  "contracting_taxable_advance_invoice",
   "payroll_run", "employee_loan", "eos_payment",
 ];
 
@@ -141,6 +143,30 @@ router.get("/vat-declaration", requirePermissionAny(["vat_declaration", "account
   }
 
   const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
+  await ensureContractingAccountingTables();
+  const missingFiscalJournal=await db.execute(dsql`SELECT id FROM contracting_fiscal_invoices
+    WHERE company_id=${companyId} AND kind='advance' AND status='accepted_unposted'
+    LIMIT 1`);
+  if (((missingFiscalJournal as any).rows ?? missingFiscalJournal as any[]).length) {
+    res.status(409).json({error:"فاتورة دفعة مقدمة مقبولة من ZATCA تنتظر ترحيل قيدها؛ أعد إكمال إصدارها قبل إعداد الإقرار"});
+    return;
+  }
+  const fiscalOutput = await db.execute(dsql`
+    SELECT f.id, f.project_id, f.owner_contract_id, f.bill_id, f.invoice_number,
+      f.invoice_date::text AS invoice_date,
+      c.name_ar AS customer_name,
+      GREATEST(0,f.taxable_amount-COALESCE((
+        SELECT SUM((a.value->>'taxableAmount')::numeric)
+        FROM jsonb_array_elements(f.prepayment_adjustments) a(value)),0)) AS base,
+      GREATEST(0,f.vat_amount-COALESCE((
+        SELECT SUM((a.value->>'taxAmount')::numeric)
+        FROM jsonb_array_elements(f.prepayment_adjustments) a(value)),0)) AS vat
+    FROM contracting_fiscal_invoices f
+    JOIN customers c ON c.id=f.customer_id AND c.company_id=f.company_id
+    WHERE f.company_id=${companyId} AND f.status IN ('cleared','reported')
+      AND f.invoice_date >= ${from} AND f.invoice_date <= ${to}
+  `);
+  const fiscalRows = ((fiscalOutput as any).rows ?? fiscalOutput as any[]) as any[];
 
   // ─── Pull posted documents from all sources in parallel ────────────────
   // NOTE: branchId exists on the new tables but the report intentionally
@@ -218,6 +244,13 @@ router.get("/vat-declaration", requirePermissionAny(["vat_declaration", "account
 
   // Combine sales invoices + legacy ZATCA invoices on the output side.
   const outputSales      = classify([...salesInvRows, ...legacyRows]);
+  // Contracting invoices carry the fiscal category S even if cent-level
+  // rounding makes VAT 0.00; never misclassify those as zero-rated.
+  for (const row of fiscalRows) {
+    for (const bucket of [outputSales.standardRated,outputSales.total]) {
+      bucket.base+=Number(row.base);bucket.vat+=Number(row.vat);bucket.count++;
+    }
+  }
   const outputReturnsCls = classify(salesRetRows);
   const inputPurch       = classify(purchInvRows);
   const inputReturnsCls  = classify(purchRetRows);
@@ -428,6 +461,17 @@ router.get("/vat-declaration", requirePermissionAny(["vat_declaration", "account
         gte(journalEntriesTable.entryDate, from),
         lte(journalEntriesTable.entryDate, to),
         notInArray(journalEntriesTable.entryType, AUTO_GENERATED_ENTRY_TYPES),
+        dsql`NOT EXISTS (SELECT 1 FROM contracting_accounting_settlements s
+          WHERE s.company_id=${companyId} AND s.journal_entry_id=${journalEntriesTable.id}
+            AND s.taxable_advance_invoice_id IS NOT NULL AND s.status='posted'
+            AND (s.kind='advance_receipt' OR (s.kind='advance_application'
+              AND EXISTS (SELECT 1 FROM contracting_fiscal_invoices f
+                WHERE f.company_id=s.company_id AND f.bill_id=s.bill_id
+                  AND f.status IN ('cleared','reported')))))`,
+        dsql`NOT EXISTS (SELECT 1 FROM contracting_fiscal_invoices f
+          JOIN contracting_progress_bills b ON b.id=f.bill_id AND b.company_id=f.company_id
+          WHERE f.company_id=${companyId} AND b.journal_entry_id=${journalEntriesTable.id}
+            AND f.status IN ('cleared','reported'))`,
         inArray(journalEntryLinesTable.accountId, targetAccountIds),
       ));
 
@@ -511,7 +555,7 @@ router.get("/vat-declaration", requirePermissionAny(["vat_declaration", "account
   const invoiceBreakdown = {
     standardTypeCount,
     simplifiedTypeCount,
-    totalCount: salesInv.length + legacyInv.length,
+    totalCount: salesInv.length + legacyInv.length + fiscalRows.length,
   };
 
   res.json({
@@ -571,6 +615,13 @@ router.get("/vat-declaration/details", requirePermissionAny(["vat_declaration", 
   if (!validIsoDate(from) || !validIsoDate(to)) { res.status(400).json({ error: "صيغة التاريخ غير صحيحة" }); return; }
   const companyId = resolveCompanyId(req, undefined);
   if (!companyId) { res.status(400).json({ error: "الشركة غير محددة" }); return; }
+  await ensureContractingAccountingTables();
+  const pendingFiscal = await db.execute(dsql`SELECT id FROM contracting_fiscal_invoices
+    WHERE company_id=${companyId} AND kind='advance' AND status='accepted_unposted' LIMIT 1`);
+  if (((pendingFiscal as any).rows ?? pendingFiscal as any[]).length) {
+    res.status(409).json({error:"فاتورة دفعة مقدمة مقبولة تنتظر ترحيل قيدها؛ أعد إكمال إصدارها قبل عرض التفاصيل"});
+    return;
+  }
 
   type DocRow = {
     id: number; source: string; docNumber: string | null; date: string;
@@ -649,6 +700,24 @@ router.get("/vat-declaration/details", requirePermissionAny(["vat_declaration", 
         base, vat, total: base + vat,
         link: `/invoices/${r.id}`,
       });
+    }
+    const fiscal = await db.execute(dsql`SELECT f.id,f.project_id,f.invoice_number,
+      f.invoice_date::text AS invoice_date,c.name_ar AS customer_name,
+      GREATEST(0,f.taxable_amount-COALESCE((SELECT SUM((a.value->>'taxableAmount')::numeric)
+        FROM jsonb_array_elements(f.prepayment_adjustments) a(value)),0)) AS base,
+      GREATEST(0,f.vat_amount-COALESCE((SELECT SUM((a.value->>'taxAmount')::numeric)
+        FROM jsonb_array_elements(f.prepayment_adjustments) a(value)),0)) AS vat
+      FROM contracting_fiscal_invoices f JOIN customers c
+        ON c.id=f.customer_id AND c.company_id=f.company_id
+      WHERE f.company_id=${companyId} AND f.status IN ('cleared','reported')
+        AND f.invoice_date>=${from} AND f.invoice_date<=${to}`);
+    for (const r of ((fiscal as any).rows ?? fiscal as any[])) {
+      const base=Number(r.base), vat=Number(r.vat);
+      if (target!=="standard") continue;
+      out.push({id:Number(r.id),source:"contracting_fiscal_invoice",
+        docNumber:r.invoice_number,date:r.invoice_date,partyName:r.customer_name,
+        supplierVatNumber:null,supplierInvoiceNumber:null,supplierInvoiceDate:null,
+        base,vat,total:base+vat,link:`/contracting/projects/${r.project_id}`});
     }
     // Sales returns are folded INTO the matching bucket (standard / zero /
     // exempt) as NEGATIVE rows (per user request — no separate deduction

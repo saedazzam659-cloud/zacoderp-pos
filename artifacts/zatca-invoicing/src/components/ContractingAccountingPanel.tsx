@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { useLocation } from "wouter";
 import ContractingOperationsLedger, { type LedgerRow } from "@/components/ContractingOperationsLedger";
+import { advanceGrossRemaining, fetchTaxableAdvances, type TaxableAdvanceInvoice } from "@/components/VoucherContractingAllocation";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -25,6 +26,7 @@ type Settlement = {
   reversal_journal_entry_id?: number | null;
   bill_id?: number | null; settlement_date: string; status: string;
   source_settlement_id?: number | null; owner_contract_id?: number | null; subcontractor_contract_id?: number | null;
+  taxable_advance_invoice_id?: number | null; taxable_vat_amount?: string | number | null;
   application_origin?: string | null; payment_type?: string | null; cash_box_id?: number | null; bank_account_id?: number | null;
   voucher_code?: string | null;
   source_voucher_type?: "receipt" | "payment" | null; source_voucher_id?: number | null;
@@ -84,6 +86,14 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   const [movements, setMovements] = useState<MaterialMovement[]>([]);
   const [audit, setAudit] = useState<any[]>([]);
   const [options, setOptions] = useState<Options>({ items: [], units: [], warehouses: [], cashBoxes: [], banks: [], balances: [], ownerContracts: [], subcontractorContracts: [] });
+  const [ownerContracts, setOwnerContracts] = useState<Array<{ id: number; vatPercent: string | number; status: string }>>([]);
+  const [fiscalInvoices, setFiscalInvoices] = useState<TaxableAdvanceInvoice[]>([]);
+  const [fiscalReady, setFiscalReady] = useState(false);
+  const [fiscalError, setFiscalError] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [taxableAmount, setTaxableAmount] = useState("");
+  const [invoiceIntent, setInvoiceIntent] = useState(() => crypto.randomUUID());
+  const [taxableAdvanceInvoiceId, setTaxableAdvanceInvoiceId] = useState("");
   const [subLinks, setSubLinks] = useState<Array<{ id: number; contractorId: number | null }>>([]);
   const [contractors, setContractors] = useState<Array<{ id: number; supplierId: number | null }>>([]);
   const [busy, setBusy] = useState(false);
@@ -120,13 +130,14 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const reload = useCallback(async () => {
     if (!token || !projectId) return;
-    const [billResponse, accountingResponse, materialResponse, optionsResponse, subResponse, contractorResponse] = await Promise.all([
+    const [billResponse, accountingResponse, materialResponse, optionsResponse, subResponse, contractorResponse, ownerResponse] = await Promise.all([
       fetch(`${API}/api/contracting/projects/${projectId}/bills`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/settlements`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/material-movements`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/accounting/options`, { headers }),
       fetch(`${API}/api/contracting/projects/${projectId}/sub-contracts`, { headers }),
       fetch(`${API}/api/contracting/contractors`, { headers }),
+      fetch(`${API}/api/contracting/projects/${projectId}/owner-contracts`, { headers }),
     ]);
     if (billResponse.ok) setBills(await billResponse.json());
     if (accountingResponse.ok) {
@@ -142,8 +153,19 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
     }
     if (subResponse.ok) setSubLinks(await subResponse.json());
     if (contractorResponse.ok) setContractors(await contractorResponse.json());
+    if (ownerResponse.ok) setOwnerContracts(await ownerResponse.json());
+    else setFiscalError((await ownerResponse.json().catch(() => ({}))).error || `تعذر تحميل عقود المالك (HTTP ${ownerResponse.status})`);
   }, [headers, projectId, token, toast]);
   useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    setFiscalReady(false);
+    if (!token || !projectId || !ownerContracts.length) { setFiscalInvoices([]); return; }
+    let active = true;
+    Promise.all(ownerContracts.map(c => fetchTaxableAdvances(projectId, c.id, token)))
+      .then(groups => { if (active) { setFiscalInvoices(groups.flat()); setFiscalReady(true); setFiscalError(""); } })
+      .catch((error: Error) => { if (active) { setFiscalReady(false); setFiscalError(error.message); } });
+    return () => { active = false; };
+  }, [projectId, token, ownerContracts]);
   useEffect(() => {
     if (!token) return;
     const linked = settlements.filter(row => row.source_voucher_id &&
@@ -232,13 +254,47 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      if (url.includes("taxable-advances") || url.includes("tax-invoice") || url.includes("fiscal-invoices")) setFiscalError("");
       if (operationScope) operationKeys.current.delete(operationScope);
       toast({ title: successMessage });
       await reload();
       return data;
     } catch (error: any) {
+      if (url.includes("taxable-advances") || url.includes("tax-invoice") || url.includes("fiscal-invoices")) setFiscalError(error?.message || "تعذر تنفيذ العملية الضريبية");
       toast({ title: error?.message || "تعذر تنفيذ العملية", variant: "destructive" });
       return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function downloadFiscalXml(invoice: TaxableAdvanceInvoice) {
+    if (!invoice.xmlDownloadUrl) {
+      setFiscalError("ملف XML الموقّع غير متاح قبل قبول الفاتورة من ZATCA وترحيل قيدها");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch(`${API}${invoice.xmlDownloadUrl}`, { headers });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `تعذر تنزيل XML (HTTP ${response.status})`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      try {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `contracting-fiscal-${invoice.id}.xml`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      } finally {
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      setFiscalError("");
+    } catch (error: any) {
+      setFiscalError(error?.message || "تعذر تنزيل ملف XML الموقّع");
+      toast({ title: error?.message || "تعذر تنزيل ملف XML الموقّع", variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -296,6 +352,11 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   }
 
   const requiresBill = kind.startsWith("retention_") || kind.startsWith("bill_");
+  const selectedAdvance = fiscalInvoices.find(row => row.id === Number(taxableAdvanceInvoiceId) && row.kind === "advance" && row.ownerContractId === Number(ownerContractId));
+  const selectedOwnerContract = ownerContracts.find(row => row.id === Number(ownerContractId));
+  const vatRate = Number(selectedOwnerContract?.vatPercent);
+  const previewVat = Number.isFinite(vatRate) && /^\d+(?:\.\d{1,2})?$/.test(taxableAmount) ?
+    (Math.round(Math.round(Number(taxableAmount) * 100) * vatRate / 100) / 100).toFixed(2) : null;
   const advances = settlements.filter((s) => s.status === "posted" && (s.kind === "advance_receipt" || s.kind === "advance_payment"));
   const statusLabel = (status: string) => ({"posted": "مرحّل", "approved": "معتمد", "reversed": "معكوس", "draft": "مسودة", "partially_paid": "مسدد جزئياً", "paid": "مسدد"} as Record<string, string>)[status] || status;
   const billLedger: LedgerRow[] = bills.map(row => ({
@@ -313,7 +374,7 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
       : row.source_settlement_id ? `سلفة #${row.source_settlement_id}`
       : row.bill_id ? `مستخلص ${bills.find(b => b.id === row.bill_id)?.billNumber || `#${row.bill_id}`}`
       : row.owner_contract_id ? `عقد مالك #${row.owner_contract_id}` : row.subcontractor_contract_id ? `عقد باطن #${row.subcontractor_contract_id}` : "ترحيل مباشر",
-    details: `عملية #${row.id} • مستخلص #${row.bill_id ?? "—"} • قيد #${row.journal_entry_id ?? "—"}${row.reversal_journal_entry_id ? ` • قيد عكسي #${row.reversal_journal_entry_id}` : ""}${row.application_origin ? ` • منشأ التطبيق: ${row.application_origin === "auto_recovery" ? "استرداد تلقائي" : "يدوي"}` : ""}`,
+    details: `عملية #${row.id} • مستخلص #${row.bill_id ?? "—"} • قيد #${row.journal_entry_id ?? "—"}${row.taxable_advance_invoice_id ? ` • فاتورة سلفة ضريبية #${row.taxable_advance_invoice_id} • ضريبة استرداد ${row.taxable_vat_amount ?? "—"}` : ""}${row.reversal_journal_entry_id ? ` • قيد عكسي #${row.reversal_journal_entry_id}` : ""}${row.application_origin ? ` • منشأ التطبيق: ${row.application_origin === "auto_recovery" ? "استرداد تلقائي" : "يدوي"}` : ""}`,
   }));
   const materialLedger: LedgerRow[] = movements.map(row => ({
     id: row.id, date: row.movement_date || "", type: row.direction === "issue" ? "صرف مواد" : "إرجاع مواد",
@@ -349,7 +410,7 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   }
   async function selectAdvanceContract(value: string, direction: "receipt" | "payment") {
     const selection = ++amountSelectionRef.current;
-    if (direction === "receipt") setOwnerContractId(value);
+    if (direction === "receipt") { setOwnerContractId(value); setTaxableAdvanceInvoiceId(""); }
     else setSubcontractorContractId(value);
     setAmount("");
     if (!value) return;
@@ -375,6 +436,9 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
     }
   }
   async function openVoucher() {
+    if (kind === "advance_receipt" && taxableAdvanceInvoiceId && !selectedAdvance) {
+      setFiscalError("فاتورة السلفة المحددة لم تعد متاحة لهذا العقد؛ حدّث الاختيار قبل فتح السند"); return;
+    }
     const receipt = kind === "advance_receipt" || kind === "bill_receipt";
     const isBill = kind === "bill_receipt" || kind === "bill_payment";
     if (!["advance_receipt", "bill_receipt", "advance_payment", "bill_payment"].includes(kind)) return;
@@ -401,16 +465,19 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
       if (!eligible) throw new Error("المستخلص غير متاح لهذا الطرف أو العقد");
       const remaining = Number(eligible.remainingAmount);
       if (!Number.isFinite(remaining) || remaining <= 0) throw new Error("لا يوجد مبلغ متبقٍ لهذا العقد/المستخلص");
-      const requested = amount.trim() ? Number(amount) : remaining;
+      const taxableInvoice = !isBill && receipt ? selectedAdvance : undefined;
+      const requested = amount.trim() ? Number(amount) : taxableInvoice ? advanceGrossRemaining(taxableInvoice) : remaining;
       if ((amount.trim() && !/^\d+(?:\.\d{1,2})?$/.test(amount.trim())) ||
-        !Number.isFinite(requested) || requested <= 0 || requested > remaining)
-        throw new Error("المبلغ يجب أن يكون أكبر من صفر ولا يتجاوز المتبقي");
+        !Number.isFinite(requested) || requested <= 0 ||
+        (taxableInvoice ? requested > advanceGrossRemaining(taxableInvoice) : requested > remaining))
+        throw new Error(taxableInvoice ? "مبلغ القبض الإجمالي يجب أن يكون أكبر من صفر ولا يتجاوز المتبقي على الفاتورة" : "المبلغ يجب أن يكون أكبر من صفر ولا يتجاوز المتبقي");
       const query = new URLSearchParams({
         contractingKind: receipt ? (isBill ? "owner_bill" : "owner_advance") : (isBill ? "subcontract_bill" : "subcontract_advance"),
         projectId: String(projectId), contractId: String(contractId), entityId: String(partyId),
         amount: requested.toFixed(2),
       });
       if (isBill) query.set("billId", String(bill!.id));
+      if (!isBill && receipt && selectedAdvance) query.set("taxableAdvanceInvoiceId", String(selectedAdvance.id));
       navigate(`/cash/${direction}-vouchers/multi/new?${query}`);
     } catch (error: any) {
       toast({ title: error?.message || "تعذر فتح السند", variant: "destructive" });
@@ -420,12 +487,19 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   }
 
   async function saveSettlement() {
+    if (kind === "advance_receipt" && taxableAdvanceInvoiceId) {
+      if (!selectedAdvance || !/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 ||
+        Number(amount) > advanceGrossRemaining(selectedAdvance)) {
+        setFiscalError("مبلغ قبض السلفة الضريبية يجب أن يكون موجباً ولا يتجاوز المتبقي الإجمالي للفاتورة المتاحة"); return;
+      }
+    }
     if (["advance_receipt", "bill_receipt", "advance_payment", "bill_payment"].includes(kind)
       && !window.confirm("هذا ترحيل مباشر مستقل عن السند المتعدد. إذا أنشأت سنداً لهذه العملية بالفعل فستتكرر التسوية. هل تريد المتابعة بالمسار القديم؟")) return;
-    const scope = `settlement:${kind}:${billId || (kind === "advance_receipt" ? ownerContractId : subcontractorContractId) || "contract"}:${amount}:${paymentType}:${treasuryId}:${settlementDate}`;
+    const scope = `settlement:${kind}:${billId || (kind === "advance_receipt" ? ownerContractId : subcontractorContractId) || "contract"}:${amount}:${paymentType}:${treasuryId}:${settlementDate}:${kind === "advance_receipt" ? taxableAdvanceInvoiceId : ""}`;
     const result = await post(`/api/contracting/projects/${projectId}/settlements`, {
       kind, amount: Number(amount), billId: requiresBill ? Number(billId) : null,
       ownerContractId: !requiresBill && kind === "advance_receipt" ? Number(ownerContractId) : null,
+      taxableAdvanceInvoiceId: kind === "advance_receipt" && selectedAdvance ? selectedAdvance.id : null,
       subcontractorContractId: !requiresBill && kind === "advance_payment" ? Number(subcontractorContractId) : null,
       settlementDate, paymentType,
       cashBoxId: paymentType === "cash" ? Number(treasuryId) : null,
@@ -469,6 +543,18 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   }
 
   const approvedBills = bills.filter((bill) => ["approved", "posted", "partially_paid", "paid"].includes(bill.status));
+  async function issueAdvance() {
+    if (!selectedOwnerContract || !invoiceDate || !/^\d+(?:\.\d{1,2})?$/.test(taxableAmount) || Number(taxableAmount) <= 0) {
+      setFiscalError("اختر عقد مالك معتمداً وأدخل تاريخ الفاتورة ومبلغاً صافياً موجباً."); return;
+    }
+    const result = await post(`/api/contracting/projects/${projectId}/owner-contracts/${selectedOwnerContract.id}/taxable-advances`,
+      { intentKey: invoiceIntent, taxableAmount, invoiceDate }, undefined, "تم إعداد سجل فاتورة السلفة؛ لم تُقبل من ZATCA أو تُرحّل بعد");
+    if (result) { setInvoiceIntent(crypto.randomUUID()); setTaxableAmount(""); setFiscalError(""); }
+  }
+  async function issueBillInvoice(bill: Bill) {
+    if (!fiscalReady) { setFiscalError("تعذر التأكد من وجود فاتورة سابقة؛ حدّث بيانات الفواتير أولاً"); return; }
+    await post(`/api/contracting/projects/${projectId}/bills/${bill.id}/issue-tax-invoice`, {}, undefined, "تم إعداد سجل فاتورة المستخلص؛ لم تُقبل من ZATCA بعد");
+  }
   const selectedBalance = options.balances.find((row) => row.itemId === Number(itemId) && row.warehouseId === Number(warehouseId));
   const [materialContractDirection, materialContractIdText] = materialContract.split(":");
   const materialContractId = Number(materialContractIdText);
@@ -515,6 +601,7 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
     <div dir="rtl" className="space-y-5">
       <div className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
         <h3 className="mb-3 text-base font-bold">اعتماد المستخلصات والدفتر العام</h3>
+        {fiscalError && <p role="alert" className="mb-2 text-sm text-destructive">{fiscalError}</p>}
         <ContractingOperationsLedger title="سجل اعتماد المستخلصات" filename={`contracting-bills-${projectId}`}
           rows={billLedger} action={id => {
             const bill = bills.find(b => b.id === id);
@@ -522,6 +609,19 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
             return <>
               <Button size="sm" variant="outline" onClick={() => onOpenBill(id, bill.direction === "incoming" ? "incoming" : "outgoing")}>عرض / تعديل المستخلص</Button>
               {bill.journalEntryId != null && <Button size="sm" variant="outline" asChild><a href={`/accounting/journals/${bill.journalEntryId}`}>فتح القيد</a></Button>}
+              {bill.direction === "outgoing" && (() => {
+                const invoice = fiscalInvoices.find(f => f.kind === "bill" && f.billId === bill.id);
+                const recoveries = settlements.filter(s => s.bill_id === bill.id && s.kind === "advance_application" && s.status === "posted" && s.taxable_advance_invoice_id);
+                return <>
+                  {invoice ? <span className="text-xs">فاتورة 388: {invoice.invoiceNumber} • {invoice.zatcaStatus === "issued" ? "معدة — بانتظار ZATCA" : invoice.zatcaStatus}{invoice.prepaymentAdjustments?.length ? ` • تسوية ${invoice.prepaymentAdjustments.map(a => `${a.invoiceNumber} (${a.taxableAmount} + ${a.taxAmount} ضريبة)`).join("، ")}` : ""}</span>
+                    : fiscalReady && bill.journalEntryId && ["approved", "posted", "partially_paid", "paid"].includes(bill.status) &&
+                      <Button size="sm" disabled={busy} onClick={() => void issueBillInvoice(bill)}>إعداد فاتورة المستخلص 388 لإرسالها</Button>}
+                  {invoice && !["cleared", "reported"].includes(invoice.zatcaStatus) &&
+                    <Button size="sm" disabled={busy} onClick={() => void post(`/api/contracting/fiscal-invoices/${invoice.id}/zatca-submit`, {}, undefined, "تم تحديث حالة تقديم ZATCA")}>إرسال الفاتورة إلى ZATCA</Button>}
+                  {invoice?.xmlDownloadUrl && <Button size="sm" variant="outline" disabled={busy} onClick={() => void downloadFiscalXml(invoice)}>تنزيل XML الموقّع</Button>}
+                  {recoveries.map(s => <span key={s.id} className="text-xs">استرداد #{s.id}: فاتورة 386 {fiscalInvoices.find(f => f.id === s.taxable_advance_invoice_id)?.invoiceNumber ?? `#${s.taxable_advance_invoice_id}`} • أساس {s.amount} • ضريبة مسددة سابقاً {s.taxable_vat_amount}</span>)}
+                </>;
+              })()}
               {["approved", "posted", "partially_paid", "paid"].includes(bill.status) ? <>
                 {canUnapprove && (user?.role === "admin" || user?.role === "superadmin"
                   || (user as any)?.postingPermissions?.[bill.direction === "incoming" ? "ctgIncomingBill" : "ctgOutgoingBill"]?.unpost !== false) &&
@@ -544,6 +644,7 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
                setAmount("");
                setBillId("");
                setOwnerContractId("");
+                setTaxableAdvanceInvoiceId("");
                setSubcontractorContractId("");
              }} items={[
               { value: "advance_receipt", label: "قبض سلفة من المالك" },
@@ -556,6 +657,15 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
              <label className="text-sm">المبلغ<Input type="number" min="0.01" step="0.01" value={amount} onChange={(e) => { amountSelectionRef.current++; setAmount(e.target.value); }} /></label>
              {requiresBill && <PickerField label="المستخلص المعتمد" value={billId} onValueChange={selectBill} placeholder="اختر مستخلصاً" items={approvedBills.map((bill) => ({ value: String(bill.id), label: `${bill.billNumber} — محتجز ${bill.retentionAmount}` }))} testId="accounting-bill-picker" />}
              {!requiresBill && kind === "advance_receipt" && <PickerField label="عقد المالك" value={ownerContractId} onValueChange={value => void selectAdvanceContract(value, "receipt")} placeholder="اختر عقداً" items={options.ownerContracts.map((contract) => ({ value: String(contract.id), label: `${contract.contractNumber}${contract.clientName ? ` — ${contract.clientName}` : ""}` }))} testId="accounting-owner-contract-picker" />}
+              {!requiresBill && kind === "advance_receipt" && ownerContractId && <PickerField label="ربط فاتورة سلفة ضريبية مقبولة (اختياري)" value={taxableAdvanceInvoiceId || "none"} onValueChange={value => {
+                setTaxableAdvanceInvoiceId(value === "none" ? "" : value);
+                const invoice = fiscalInvoices.find(row => String(row.id) === value);
+                if (invoice) setAmount(advanceGrossRemaining(invoice).toFixed(2));
+                else setAmount("");
+              }} items={[{ value: "none", label: "سلفة قديمة بدون ربط فاتورة" },
+                ...fiscalInvoices.filter(row => row.kind === "advance" && row.ownerContractId === Number(ownerContractId) &&
+                  (["cleared", "reported"].includes(row.zatcaStatus) && advanceGrossRemaining(row) > 0 || String(row.id) === taxableAdvanceInvoiceId))
+                  .map(row => ({ value: String(row.id), label: `${row.invoiceNumber} — المتبقي الإجمالي ${row.outstandingGross}` }))]} testId="accounting-taxable-advance-picker" />}
              {!requiresBill && kind === "advance_payment" && <PickerField label="عقد المقاول الباطن" value={subcontractorContractId} onValueChange={value => void selectAdvanceContract(value, "payment")} placeholder="اختر عقداً" items={options.subcontractorContracts.map((contract) => ({ value: String(contract.id), label: contract.contractNumber }))} testId="accounting-subcontractor-contract-picker" />}
             <label className="text-sm">التاريخ<Input type="date" value={settlementDate} onChange={(e) => setSettlementDate(e.target.value)} /></label>
             <PickerField label="طريقة السداد" value={paymentType} onValueChange={(value) => { setPaymentType(value as "cash" | "bank"); setTreasuryId(""); }} items={[
@@ -569,6 +679,34 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
             <Button variant="outline" disabled={busy || !amount || !treasuryId || (requiresBill && !billId) || (!requiresBill && kind === "advance_receipt" && !ownerContractId) || (!requiresBill && kind === "advance_payment" && !subcontractorContractId)} onClick={() => void saveSettlement()}>ترحيل مباشر (النظام القديم)</Button>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">اختر مساراً واحداً للعملية: السند المتعدد أو الترحيل المباشر. لا تستخدم الاثنين لنفس التحصيل أو السداد.</p>
+          {kind === "advance_receipt" && ownerContractId && <div className="mt-4 rounded-md border p-3 space-y-2">
+            <h4 className="font-semibold">فاتورة سلفة المالك الضريبية (386)</h4>
+            <p className="text-xs">إعداد السجل لا يسجل قبضاً أو قبولاً من ZATCA. عند قبول فاتورة 386 يُرحّل قيد الاستحقاق، وعند القبض يُنشأ قيد النقد المستقل. اربط حساب ذمة فاتورة السلفة المستقل عن حساب العميل، والتزام السلفة وضريبة المخرجات صراحةً؛ لا تُنشأ حسابات تلقائياً.</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="text-sm">تاريخ الفاتورة<Input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} /></label>
+              <label className="text-sm">المبلغ الصافي الخاضع للضريبة<Input type="number" min="0.01" step="0.01" value={taxableAmount} onChange={e => setTaxableAmount(e.target.value)} /></label>
+            </div>
+            {selectedOwnerContract && <p className="text-sm">ضريبة العقد: {selectedOwnerContract.vatPercent}% • VAT المتوقع: {previewVat ?? "—"} • الإجمالي المتوقع: {previewVat === null ? "—" : (Number(taxableAmount) + Number(previewVat)).toFixed(2)} (يعتمد المبلغ النهائي على الخادم)</p>}
+            <div className="flex gap-2">
+              <Button disabled={busy || selectedOwnerContract?.status !== "approved" || !taxableAmount || !invoiceDate} onClick={() => void issueAdvance()}>إعداد فاتورة سلفة جديدة / إعادة المحاولة بنفس النية</Button>
+              <Button variant="outline" disabled={busy} onClick={() => { setInvoiceIntent(crypto.randomUUID()); setFiscalError(""); }}>بدء سلفة جديدة بنية مستقلة</Button>
+            </div>
+            {fiscalError && <p role="alert" className="text-sm text-destructive">{fiscalError}</p>}
+            {fiscalError.includes("الربط المحاسبي") && <a className="text-sm underline" href="/settings/accounting-mappings">إعداد ربط القيود المحاسبية</a>}
+            <div className="space-y-2">{fiscalInvoices.filter(row => row.ownerContractId === Number(ownerContractId) && row.kind === "advance").map(row =>
+              <div key={row.id} className="rounded border p-2 text-sm">
+                <b>{row.invoiceNumber}</b> • {row.invoiceIssueDate} • {row.zatcaStatus === "issued" ? "معدة — بانتظار ZATCA" : row.zatcaStatus === "accepted_unposted" ? "مقبولة — قيد الاستحقاق لم يُرحّل" : row.zatcaStatus} • صافي {row.taxableAmount} • VAT {row.vatAmount} • إجمالي {row.grossAmount}
+                <div className="text-xs">مقبوض إجمالي {row.capturedGross} • متبقي قبض إجمالي {row.outstandingGross} • مقبوض أساس {row.capturedBase} • مسترد أساس {row.recoveredBase} • متبقي استرداد أساس {(Number(row.capturedBase) - Number(row.recoveredBase)).toFixed(2)}</div>
+                {settlements.filter(s => s.taxable_advance_invoice_id === row.id && s.kind === "advance_receipt" && s.status === "posted").map(s =>
+                  <div key={s.id} className="text-xs">قبض مرتبط #{s.id} • أساس {s.amount} • سند {s.source_voucher_id ?? "ترحيل مباشر"}
+                    {s.source_voucher_type === "receipt" && s.source_voucher_id &&
+                      <Button size="sm" variant="link" onClick={() => navigate(`/cash/receipt-vouchers/multi/${s.source_voucher_id}`)}>فتح سند القبض</Button>}
+                  </div>)}
+                {!["cleared", "reported"].includes(row.zatcaStatus) && <Button size="sm" variant="outline" disabled={busy} onClick={() => void post(`/api/contracting/fiscal-invoices/${row.id}/zatca-submit`, {}, undefined, "تم تحديث حالة تقديم ZATCA")}>إرسال إلى ZATCA</Button>}
+                {row.xmlDownloadUrl && <Button size="sm" variant="outline" disabled={busy} onClick={() => void downloadFiscalXml(row)}>تنزيل XML الموقّع</Button>}
+                {["cleared", "reported"].includes(row.zatcaStatus) && advanceGrossRemaining(row) > 0 && <Button size="sm" variant="outline" onClick={() => { setTaxableAdvanceInvoiceId(String(row.id)); setAmount(advanceGrossRemaining(row).toFixed(2)); }}>اختيار للتحصيل</Button>}
+              </div>)}</div>
+          </div>}
           <ContractingOperationsLedger title="سجل السلف والمحتجزات والتسويات النقدية" filename={`contracting-settlements-${projectId}`}
             rows={settlementLedger(settlements.filter(row => row.kind !== "advance_application"))} action={settlementActions} />
         </section>

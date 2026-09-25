@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   db,
   bankAccountsTable,
@@ -30,6 +30,7 @@ import {
   reverseBillSettlement,
 } from "../lib/contracting-accounting-service.js";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
+import { createTaxableAdvance, listFiscalInvoices, issueOwnerBillInvoice, submitContractingFiscalInvoice } from "../lib/contracting-fiscal-service.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -64,9 +65,64 @@ function userId(req: any): number | null {
 }
 
 function fail(res: any, error: any) {
-  const status = Number(error?.status) || 400;
+  const status = Number(error?.status ?? error?.httpStatus) || 400;
   res.status(status).json({ error: error?.message ?? "تعذر تنفيذ العملية المحاسبية" });
 }
+
+router.get("/projects/:projectId/owner-contracts/:contractId/taxable-advances", async (req,res) => {
+  const cid=await companyId(req,res); if (!cid) return;
+  try { return res.json(await listFiscalInvoices({companyId:cid,projectId:Number(req.params.projectId),
+    contractId:Number(req.params.contractId),req})); }
+  catch(e){return fail(res,e);}
+});
+router.post("/projects/:projectId/owner-contracts/:contractId/taxable-advances",
+  requireContractingCapability("pay","post"), requirePostRight("ctgContractingSettlement"), async(req,res)=>{
+    const cid=await companyId(req,res); if (!cid) return;
+    try { return res.status(201).json(await createTaxableAdvance({companyId:cid,
+      projectId:Number(req.params.projectId),contractId:Number(req.params.contractId),
+      intentKey:String(req.body?.intentKey ?? ""), taxableAmount:String(req.body?.taxableAmount ?? ""),
+      invoiceDate:String(req.body?.invoiceDate ?? ""),userId:userId(req),req})); }
+    catch(e){return fail(res,e);}
+  });
+router.post("/projects/:projectId/bills/:billId/issue-tax-invoice",
+  requireContractingCapability("approve","post"), requirePostRight("ctgOutgoingBill"), async(req,res)=>{
+    const cid=await companyId(req,res); if (!cid) return;
+    try { return res.status(201).json(await issueOwnerBillInvoice({companyId:cid,
+      projectId:Number(req.params.projectId),billId:Number(req.params.billId),userId:userId(req),req})); }
+    catch(e){return fail(res,e);}
+  });
+router.post("/fiscal-invoices/:id/zatca-submit",
+  requireContractingCapability("pay","post"), requirePostRight("ctgContractingSettlement"), async(req,res)=>{
+    const cid=await companyId(req,res); if (!cid) return;
+    try {
+      if (!Number.isSafeInteger(Number(req.params.id)) || Number(req.params.id)<1)
+        return res.status(422).json({error:"معرّف الفاتورة غير صالح"});
+      const row=await db.execute(sql`SELECT project_id,owner_contract_id
+        FROM contracting_fiscal_invoices WHERE company_id=${cid} AND id=${Number(req.params.id)}`);
+      const source=((row as any).rows ?? row as any)[0];
+      if (!source) return res.status(404).json({error:"الفاتورة الضريبية غير موجودة"});
+      await listFiscalInvoices({companyId:cid,projectId:Number(source.project_id),contractId:Number(source.owner_contract_id),req});
+      return res.json(await submitContractingFiscalInvoice(cid,Number(req.params.id),req));
+    } catch(e){return fail(res,e);}
+  });
+router.get("/fiscal-invoices/:id/xml", async(req,res)=>{
+  const cid=await companyId(req,res);if(!cid)return;
+  try {
+    const id=Number(req.params.id);
+    if(!Number.isSafeInteger(id)||id<1) return res.status(422).json({error:"معرّف الفاتورة غير صالح"});
+    const result=await db.execute(sql`SELECT project_id,owner_contract_id,invoice_number,
+      xml_content,status,invoice_hash FROM contracting_fiscal_invoices
+      WHERE company_id=${cid} AND id=${id}`);
+    const f=((result as any).rows ?? result as any)[0];
+    if(!f)return res.status(404).json({error:"الفاتورة الضريبية غير موجودة"});
+    await listFiscalInvoices({companyId:cid,projectId:Number(f.project_id),contractId:Number(f.owner_contract_id),req});
+    if(!["cleared","reported"].includes(f.status)||!f.xml_content||!f.invoice_hash)
+      return res.status(409).json({error:"ملف الفاتورة الإلكترونية الموقّع غير متاح قبل قبولها وترحيل قيدها"});
+    res.setHeader("Content-Type","application/xml; charset=utf-8");
+    res.setHeader("Content-Disposition",`attachment; filename="contracting-fiscal-${id}.xml"`);
+    return res.send(f.xml_content);
+  }catch(e){return fail(res,e);}
+});
 
 router.get("/projects/:projectId/accounting/options", async (req, res) => {
   const cid = await companyId(req, res);
@@ -228,6 +284,7 @@ router.post(
         bankAccountId: body.bankAccountId == null || body.bankAccountId === "" ? null : Number(body.bankAccountId),
         idempotencyKey,
         notes: body.notes == null ? null : String(body.notes),
+        taxableAdvanceInvoiceId: body.taxableAdvanceInvoiceId == null ? null : Number(body.taxableAdvanceInvoiceId),
         userId: userId(req),
         req,
       });

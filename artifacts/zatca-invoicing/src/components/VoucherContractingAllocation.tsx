@@ -4,11 +4,62 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 
+export type TaxableAdvanceInvoice = {
+  id: number; kind: string; ownerContractId: number; invoiceNumber: string; invoiceIssueDate: string;
+  taxableAmount: string; vatAmount: string; grossAmount: string;
+  capturedBase: string; capturedGross: string; outstandingGross: string | null; recoveredBase: string; zatcaStatus: string;
+  xmlDownloadUrl: string | null;
+  prepaymentAdjustments?: Array<{ invoiceNumber: string; taxableAmount: string; taxAmount: string }> | null;
+  billId?: number | null;
+};
+export function advanceGrossRemaining(invoice: TaxableAdvanceInvoice): number {
+  const remaining = Number(invoice.outstandingGross);
+  return invoice.kind === "advance" && invoice.outstandingGross != null && Number.isFinite(remaining) && remaining >= 0 ? remaining : 0;
+}
+export async function fetchTaxableAdvances(projectId: number, contractId: number, token: string): Promise<TaxableAdvanceInvoice[]> {
+  const response = await fetch(`${API}/api/contracting/projects/${projectId}/owner-contracts/${contractId}/taxable-advances`, {
+    headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `تعذر تحميل فواتير السلفة (HTTP ${response.status})`);
+  if (!Array.isArray(data)) throw new Error("استجابة فواتير السلفة غير صالحة");
+  if (data.some(row => row.kind === "advance" && (row.outstandingGross == null || row.capturedGross == null ||
+    !Number.isFinite(Number(row.outstandingGross)) || !Number.isFinite(Number(row.capturedGross)))))
+    throw new Error("استجابة أرصدة قبض فواتير السلفة غير مكتملة؛ أعد تحميلها من الخادم");
+  return data;
+}
+export async function validateTaxableAdvanceLines(
+  lines: Array<{ contractingAllocation: ContractingAllocation | null; amount: string }>, token: string,
+) {
+  const linked = lines.filter(line => line.contractingAllocation?.kind === "owner_advance" &&
+    line.contractingAllocation.taxableAdvanceInvoiceId);
+  const scopes = [...new Map(linked.map(line => {
+    const a = line.contractingAllocation!;
+    return [`${a.projectId}:${a.contractId}`, a] as const;
+  })).values()];
+  const groups = await Promise.all(scopes.map(async a => ({
+    a, invoices: await fetchTaxableAdvances(a.projectId, a.contractId, token),
+  })));
+  for (const line of linked) {
+    const a = line.contractingAllocation!;
+    const invoice = groups.find(group => group.a.projectId === a.projectId && group.a.contractId === a.contractId)
+      ?.invoices.find(row => row.id === a.taxableAdvanceInvoiceId && row.kind === "advance");
+    if (!invoice || !["cleared", "reported"].includes(invoice.zatcaStatus))
+      throw new Error("فاتورة السلفة الضريبية غير مقبولة أو غير متاحة للعقد؛ أعد اختيارها");
+    const allocatedCents = linked.filter(other => other.contractingAllocation?.taxableAdvanceInvoiceId === a.taxableAdvanceInvoiceId)
+      .reduce((sum, other) => sum + Math.round(Number(other.amount) * 100), 0);
+    if (!Number.isSafeInteger(allocatedCents) || allocatedCents <= 0 ||
+      allocatedCents > Math.round(advanceGrossRemaining(invoice) * 100))
+      throw new Error(`إجمالي بنود قبض الفاتورة ${invoice.invoiceNumber} يتجاوز المتبقي الإجمالي ${invoice.outstandingGross}`);
+  }
+}
+
 export type ContractingAllocation = {
   kind: "owner_advance" | "owner_bill" | "owner_retention_release" | "subcontract_advance" | "subcontract_bill" | "subcontract_retention_release";
   projectId: number;
   contractId: number;
   billId?: number;
+  taxableAdvanceInvoiceId?: number;
 };
 
 type Option = {
@@ -101,6 +152,11 @@ export function VoucherContractingAllocation({
          throw new Error("استجابة خيارات المقاولات غير صالحة");
       return json;
     },
+  });
+  const { data: advanceInvoices = [], error: advancesError, isLoading: advancesLoading } = useQuery<TaxableAdvanceInvoice[]>({
+    queryKey: ["contracting-taxable-advances", user?.companyId, value?.projectId, value?.contractId],
+    enabled: !!token && !!user?.companyId && direction === "receipt" && value?.kind === "owner_advance" && !!value.projectId && !!value.contractId,
+    queryFn: () => fetchTaxableAdvances(value!.projectId, value!.contractId, token!),
   });
   const isRetention = isRetentionRelease(value?.kind);
   const isBill = value?.kind.endsWith("_bill") || isRetention;
@@ -211,6 +267,35 @@ export function VoucherContractingAllocation({
                }}
                disabled={disabled || !contractId || !bills.length} placeholder="اختر المستخلص" searchPlaceholder="بحث عن مستخلص..." />
           </label>}
+          {direction === "receipt" && value.kind === "owner_advance" && projectId > 0 && contractId > 0 &&
+            <label className="text-xs">فاتورة السلفة الضريبية (اختياري — الربط صريح فقط)
+              <SearchCombobox
+                items={[
+                  { value: "none", label: "سلفة قديمة بدون فاتورة ضريبية" },
+                  ...advanceInvoices.filter(row => row.kind === "advance" &&
+                    ((row.zatcaStatus === "cleared" || row.zatcaStatus === "reported") && advanceGrossRemaining(row) > 0 ||
+                      row.id === value.taxableAdvanceInvoiceId)).map(row => ({
+                    value: String(row.id),
+                    label: `${row.invoiceNumber} — متبقي إجمالي ${row.outstandingGross}`,
+                    description: `${row.invoiceIssueDate} • ${row.zatcaStatus}`,
+                  })),
+                ]}
+                value={value.taxableAdvanceInvoiceId ? String(value.taxableAdvanceInvoiceId) : "none"}
+                onValueChange={v => {
+                  const invoice = advanceInvoices.find(row => String(row.id) === v);
+                  onChange({ ...value, taxableAdvanceInvoiceId: invoice?.id });
+                  if (invoice) onAmountSuggested?.(advanceGrossRemaining(invoice).toFixed(2));
+                  else onAmountSuggested?.("");
+                }}
+                disabled={disabled || advancesLoading}
+                placeholder="اختر الفاتورة" searchPlaceholder="بحث عن فاتورة السلفة..."
+              />
+              {value.taxableAdvanceInvoiceId && advanceInvoices.find(row => row.id === value.taxableAdvanceInvoiceId) &&
+                <span className="block text-muted-foreground">يمكن قبض جزء من المتبقي الإجمالي ({advanceInvoices.find(row => row.id === value.taxableAdvanceInvoiceId)?.outstandingGross})؛ المبلغ المختار هو النقد الإجمالي شامل الضريبة.</span>}
+              {advancesError && <span role="alert" className="block text-destructive">{(advancesError as Error).message}</span>}
+              {value.taxableAdvanceInvoiceId && !advanceInvoices.some(row => row.id === value.taxableAdvanceInvoiceId) &&
+                !advancesLoading && !advancesError && <span role="alert" className="block text-destructive">الفاتورة المرتبطة غير متاحة لهذا العقد.</span>}
+            </label>}
         </div>
         {isRetention && contractId > 0 && bills.length > 0 && onAddRemainingBills && !disabled && (
           <Button type="button" size="sm" variant="outline" onClick={() => onAddRemainingBills(bills

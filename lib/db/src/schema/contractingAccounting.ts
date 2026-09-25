@@ -64,6 +64,10 @@ export const contractingAccountingSettlementsTable = pgTable(
     sourceVoucherId: integer("source_voucher_id"),
     sourceVoucherLineId: integer("source_voucher_line_id"),
     sourceLineSnapshot: jsonb("source_line_snapshot"),
+    taxableAdvanceInvoiceId: integer("taxable_advance_invoice_id"),
+    taxableBaseAmount: numeric("taxable_base_amount", { precision: 18, scale: 2 }),
+    taxableVatAmount: numeric("taxable_vat_amount", { precision: 18, scale: 2 }),
+    appliedVatAmount: numeric("applied_vat_amount", { precision: 18, scale: 2 }).notNull().default("0"),
     idempotencyKey: text("idempotency_key"),
     idempotencyPayloadHash: text("idempotency_payload_hash"),
     applicationOrigin: text("application_origin").notNull().default("manual"),
@@ -175,6 +179,42 @@ export const contractingAccountingSettlementsTable = pgTable(
       .where(sql`kind = 'advance_application'`),
   ],
 );
+
+/** Fiscal source documents never post sales invoices or duplicate a cash/bill JE.
+ * Accepted 386 invoices own their distinct tax-point receivable/liability/VAT JE;
+ * the later contracting receipt clears that receivable with one cash JE. */
+export const contractingFiscalInvoicesTable = pgTable("contracting_fiscal_invoices", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull(),
+  projectId: integer("project_id").notNull(),
+  ownerContractId: integer("owner_contract_id").notNull(),
+  billId: integer("bill_id"),
+  intentKey: varchar("intent_key", { length: 128 }),
+  kind: text("kind").notNull(),
+  invoiceNumber: text("invoice_number").notNull(),
+  invoiceDate: date("invoice_date").notNull(),
+  invoiceTime: text("invoice_time").notNull(),
+  customerId: integer("customer_id").notNull(),
+  taxableAmount: numeric("taxable_amount", { precision: 18, scale: 2 }).notNull(),
+  vatAmount: numeric("vat_amount", { precision: 18, scale: 2 }).notNull(),
+  grossAmount: numeric("gross_amount", { precision: 18, scale: 2 }).notNull(),
+  prepaymentAdjustments: jsonb("prepayment_adjustments").notNull().default([]),
+  status: text("status").notNull().default("issued"),
+  journalEntryId: integer("journal_entry_id"),
+  zatcaUuid: text("zatca_uuid"),
+  zatcaIcv: integer("zatca_icv"),
+  invoiceHash: text("invoice_hash"),
+  zatcaPih: text("zatca_pih"),
+  xmlContent: text("xml_content"),
+  zatcaResponse: jsonb("zatca_response"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [
+  unique("ctg_fiscal_company_intent_uq").on(t.companyId, t.intentKey),
+  unique("ctg_fiscal_company_bill_uq").on(t.companyId, t.billId),
+  unique("ctg_fiscal_company_number_uq").on(t.companyId, t.invoiceNumber),
+  index("ctg_fiscal_contract_idx").on(t.companyId, t.ownerContractId),
+]);
 
 export const contractingMaterialMovementsTable = pgTable(
   "contracting_material_movements",

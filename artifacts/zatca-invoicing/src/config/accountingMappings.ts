@@ -176,6 +176,15 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
     ],
   },
   {
+    key: "contracting_taxable_advance_invoice",
+    moduleKey: "contracting",
+    label: "ذمة فاتورة السلفة الضريبية للمالك",
+    description: "عند قبول فاتورة السلفة من ZATCA: ذمة الفاتورة مدين، التزام السلفة وضريبة المخرجات دائنان. عند القبض تُقفل الذمة مقابل الخزنة/البنك. اربط الحساب صراحةً؛ لا يُنشأ تلقائياً.",
+    roles: [
+      { key: "advance_receivable", label: "ذمة فاتورة السلفة الضريبية (مدين عند الإصدار، دائن عند القبض)", description: "حساب مستقل عن التزام السلفة وضريبة المخرجات.", accountType: "asset" },
+    ],
+  },
+  {
     key: "contracting_advance_receipt",
     moduleKey: "contracting",
     label: "قبض دفعة مقدمة من مالك المشروع",
