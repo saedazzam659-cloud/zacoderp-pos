@@ -11,6 +11,7 @@ import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermission } from "@/hooks/usePermission";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
@@ -160,6 +161,7 @@ export default function SalesReturns() {
   const { fmt, isRtl } = useFormatters();
   const qc = useQueryClient();
   const [, navigate] = useLocation();
+  const canCreateReturn = usePermission("sales_returns", "create");
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -552,6 +554,7 @@ export default function SalesReturns() {
     setShowForm(false);
     setEditingId(null);
     setViewMode(false);
+    setPicker(null);
     setActiveTab("basic");
     // إلغاء أي «مسودة فاتورة جديدة» معلّقة — الخروج من النموذج (حفظ/إلغاء)
     // يجب ألا يترك توجيهًا قديمًا يعمل في حفظ لاحق غير مرتبط.
@@ -2093,13 +2096,20 @@ ${sections}
         </div>
         <div className="flex items-center gap-2 print:hidden">
           {/* Solid green "New Return" button (visual far-left in RTL) */}
-          <Button
-            onClick={() => { reset(); setShowForm(true); }}
+          {canCreateReturn && <Button
+            onClick={() => {
+              const current = (returns_ as any[]).find((r: any) => Number(r.id) === editingId);
+              if (showForm && !viewMode && current?.status !== "posted"
+                && !window.confirm("قد تكون لديك تغييرات غير محفوظة. هل تريد فتح مرتجع مبيعات جديد؟")) return;
+              reset();
+              setShowForm(true);
+            }}
             className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+            disabled={saveMut.isPending}
           >
             <Plus className="h-4 w-4" />
-            {t("salesReturns.newReturn")}
-          </Button>
+            مرتجع مبيعات جديد
+          </Button>}
           {/* Grouped export pill: PDF | Excel | Print */}
           <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
             <Button
@@ -2139,8 +2149,26 @@ ${sections}
         };
         return (
         <>
-          {editingId && (returns_ as any[]).length > 0 && (
-            <div className="flex justify-end">
+          {editingId && (
+            <div className="flex justify-end items-center gap-2 flex-wrap">
+              {canCreateReturn && (
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="button-new-sales-return"
+                  className="gap-1.5 shadow-sm whitespace-nowrap"
+                  disabled={saveMut.isPending}
+                  onClick={() => {
+                    if (!viewMode && currentRet?.status !== "posted" && !window.confirm("قد تكون لديك تغييرات غير محفوظة. هل تريد فتح مرتجع مبيعات جديد؟")) return;
+                    reset();
+                    setShowForm(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4" />
+                  مرتجع مبيعات جديد
+                </Button>
+              )}
+              {(returns_ as any[]).length > 0 && (
               <DocNavigator
                 items={(returns_ as any[]).map((d: any) => ({
                   id: d.id,
@@ -2154,6 +2182,7 @@ ${sections}
                 onSelect={(id) => editReturn(Number(id))}
                 fallbackPrefix="SR-"
               />
+              )}
             </div>
           )}
         <FormPanel

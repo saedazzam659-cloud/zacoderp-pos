@@ -8,6 +8,7 @@ import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermission } from "@/hooks/usePermission";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { renameArchivedKey } from "@/lib/localArchive";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
@@ -126,7 +127,7 @@ function calcLine(l: InvoiceLine, priceIncludesVat = false, taxMode: TaxMode = "
   return { lineTotal: gross + vat, subtotal: gross };
 }
 
-export default function PurchaseInvoiceForm() {
+function PurchaseInvoiceFormContent() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -154,6 +155,7 @@ export default function PurchaseInvoiceForm() {
   const [matchNew]  = useRoute("/purchasing/invoices/new");
   const [matchEdit, params] = useRoute("/purchasing/invoices/:id");
   const isNew  = !!matchNew;
+  const canCreateInvoice = usePermission("purchase_invoices", "create");
   const newArchiveKeyRef = useRef(`PI-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   // /new matches the /:id route too (id="new") → Number("new")=NaN, and JSX
   // renders `{NaN && <Tab/>}` as a literal "NaN" chip. Only accept numeric ids.
@@ -1318,6 +1320,22 @@ export default function PurchaseInvoiceForm() {
         {!isNew && (existing as any) && (
           <DocStatusBadge status={(existing as any).status} />
         )}
+        {!!editId && canCreateInvoice && (
+          <Button
+            type="button"
+            size="sm"
+            data-testid="button-new-purchase-invoice"
+            className="gap-1.5 shadow-sm whitespace-nowrap"
+            disabled={saveMut.isPending || saveInFlightRef.current}
+            onClick={() => {
+              if (!isPosted && !viewMode && !window.confirm("قد تكون لديك تغييرات غير محفوظة. هل تريد فتح فاتورة مشتريات جديدة؟")) return;
+              navigate("/purchasing/invoices/new");
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            فاتورة مشتريات جديدة
+          </Button>
+        )}
         {/* Smart prev/next + search navigator across every purchase invoice
             of the current company. Lets the user step through docs or jump
             to one by typing a recognizable fragment. */}
@@ -2382,6 +2400,13 @@ export default function PurchaseInvoiceForm() {
       )}
     </div>
   );
+}
+
+export default function PurchaseInvoiceForm() {
+  const [path] = useLocation();
+  // Remount on /:id -> /new so previous invoice fields and request identity
+  // never leak into a genuinely new invoice.
+  return <PurchaseInvoiceFormContent key={path} />;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

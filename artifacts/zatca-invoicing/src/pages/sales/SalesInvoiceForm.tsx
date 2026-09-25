@@ -1,2 +1,9 @@
 import SalesDocumentForm from "./SalesDocumentForm";
-export default function SalesInvoiceForm() { return <SalesDocumentForm mode="invoice" />; }
+import { useLocation } from "wouter";
+
+export default function SalesInvoiceForm() {
+  const [path] = useLocation();
+  // A new intent needs a fresh form, archive key and idempotency key even
+  // when the router keeps the same component instance mounted.
+  return <SalesDocumentForm key={path} mode="invoice" />;
+}

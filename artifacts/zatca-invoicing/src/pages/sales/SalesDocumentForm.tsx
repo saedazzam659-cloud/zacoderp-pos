@@ -270,6 +270,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [matchNew]            = useRoute(`${basePath}/new`);
   const [matchEdit, params]   = useRoute(`${basePath}/:id`);
   const isNew  = !!matchNew;
+  const canCreateInvoice = usePermission("sales_invoices", "create");
   const newArchiveKeyRef = useRef(`SI-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   // /new matches the /:id route too (id="new") → Number("new")=NaN, and JSX
   // renders `{NaN && <Tab/>}` as a literal "NaN" chip. Only accept numeric ids.
@@ -3105,6 +3106,22 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             Status enum varies per mode; <DocStatusBadge> handles them all. */}
         {editId && (existing as any) && (
           <DocStatusBadge status={(existing as any).status} />
+        )}
+        {isInvoice && !!editId && canCreateInvoice && (
+          <Button
+            type="button"
+            size="sm"
+            data-testid="button-new-sales-invoice"
+            className="gap-1.5 shadow-sm whitespace-nowrap"
+            disabled={saveMut.isPending || saveInFlightRef.current}
+            onClick={() => {
+              if (!editLock && !window.confirm("قد تكون لديك تغييرات غير محفوظة. هل تريد فتح فاتورة مبيعات جديدة؟")) return;
+              navigate(`${basePath}/new`);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            فاتورة مبيعات جديدة
+          </Button>
         )}
         {/* Smart prev/next + search navigator — shown for every mode.
             Visible on /new as well so the user can jump to any existing
