@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, BarChart3, FileText, Wallet } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -80,12 +80,21 @@ const REPORT_OPTIONS: Array<{ value: ContractingProjectReportKey; label: string 
   { value: "pricingProfitability", label: "هامش التسعير المتوقع (المالك مقابل الباطن المرتبط)" },
   { value: "profitability", label: "ربحية المشروع" },
   { value: "financialSources", label: "المصادر المالية المرحّلة (الفواتير والمصروفات وحركات المخزون الإرشادية)" },
+  { value: "consolidatedMovements", label: "تقرير العمليات الموحد (الإيرادات، التكاليف، النقد)" },
 ];
 
 const LABELS: Record<string, string> = {
   sourceType: "نوع المصدر",
   sourceId: "معرّف المصدر",
   sourceDate: "تاريخ المصدر",
+  revenueAmount: "الإيراد",
+  costAmount: "التكلفة",
+  cashAmount: "النقد (معلوماتي)",
+  journalEntryId: "القيد",
+  sourceDocumentId: "معرّف المستند الأصلي",
+  allocationSourceType: "مصدر التوزيع",
+  allocationSourceId: "معرّف المصدر الموزع",
+  projectId: "المشروع",
   documentNumber: "رقم المستند",
   category: "تصنيف المصدر",
   direction: "الاتجاه",
@@ -180,12 +189,28 @@ function displayValue(key: string, value: unknown): ReactNode {
   return String(value);
 }
 
-function ReportTable({ rows }: { rows: Record<string, unknown>[] }) {
+function ReportTable({ rows, consolidated = false }: { rows: Record<string, unknown>[]; consolidated?: boolean }) {
+  const sourceLink = (row: Record<string, unknown>) => {
+    const type = String(row.sourceType);
+    if (type === "sales_invoice") return `/sales/invoices/${row.sourceId}`;
+    if (type === "purchase_invoice_expense") return `/purchasing/invoices/${row.sourceId}`;
+    if (type === "sales_return") return `/sales/returns?edit=${row.sourceId}&view=1`;
+    if (type === "purchase_return_expense" && row.sourceDocumentId)
+      return `/purchasing/returns?edit=${row.sourceDocumentId}&view=1`;
+    if (type === "receipt_voucher") return `/cash/receipt-vouchers/${row.sourceId}`;
+    if (type === "payment_voucher") return `/cash/payment-vouchers/${row.sourceId}`;
+    if (type === "goods_receipt") return `/inventory/goods-receipts?q=${encodeURIComponent(String(row.documentNumber || `GRN-${row.sourceId}`))}`;
+    if (type === "goods_delivery" || type === "goods_delivery_cogs")
+      return `/inventory/goods-deliveries?q=${encodeURIComponent(`GDN-${row.sourceId}`)}`;
+    if (type === "contracting_progress_bill" && row.projectId)
+      return `/contracting/projects/${row.projectId}?tab=bills`;
+    return null;
+  };
   const columns = useMemo(() => {
     const keys: string[] = [];
     for (const row of rows) {
       for (const key of Object.keys(row)) {
-        if (!keys.includes(key) && key !== "id" && (key === "sourceId" || !key.endsWith("Id"))) keys.push(key);
+        if (!keys.includes(key) && key !== "id" && (key === "sourceId" || (consolidated && ["projectId", "journalEntryId", "sourceDocumentId", "allocationSourceId"].includes(key)) || !key.endsWith("Id"))) keys.push(key);
       }
     }
     // BOQ rows include the mapped owner/subcontract pricing margin after the
@@ -205,7 +230,13 @@ function ReportTable({ rows }: { rows: Record<string, unknown>[] }) {
         <TableBody>
           {rows.map((row, index) => (
             <TableRow key={String(row.id ?? `${index}`)}>
-              {columns.map(key => <TableCell key={key} className="whitespace-nowrap tabular-nums">{displayValue(key, row[key])}</TableCell>)}
+               {columns.map(key => <TableCell key={key} className="whitespace-nowrap tabular-nums">
+                 {consolidated && key === "journalEntryId" && row[key]
+                   ? <a className="text-indigo-700 underline" title="فتح القيد المحاسبي (وليس المستند الأصلي)" href={`/accounting/journals/${row[key]}`}>{row[key] as number}</a>
+                   : consolidated && key === "sourceId" && sourceLink(row)
+                     ? <a className="text-indigo-700 underline" title={row.sourceType === "contracting_progress_bill" ? "عرض مستخلصات المشروع" : "فتح المستند الأصلي"} href={sourceLink(row)!}>{String(row[key])}</a>
+                   : displayValue(key, row[key])}
+               </TableCell>)}
             </TableRow>
           ))}
         </TableBody>
@@ -279,9 +310,17 @@ export function ContractingProjectReports({
   const { token, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
   const [payload, setPayload] = useState<ProjectReportsPayload | null>(null);
+  const [payloadKey, setPayloadKey] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<ContractingProjectReportKey>("boqStatement");
   const [includeDescendants, setIncludeDescendants] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [operationType, setOperationType] = useState("all");
+  const requestId = useRef(0);
+  const filterKey = JSON.stringify([projectId, includeDescendants, selected === "consolidatedMovements"
+    ? [dateFrom, dateTo, operationType] : null, token, actingCompanyId]);
 
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token ?? ""}`,
@@ -290,24 +329,44 @@ export function ContractingProjectReports({
 
   const load = useCallback(async () => {
     if (!token || !projectId) return;
+    const currentRequest = ++requestId.current;
     setLoading(true);
+    setPayload(null);
+    setPayloadKey("");
+    setLoadError("");
     try {
-      const query = includeDescendants ? "?includeDescendants=true" : "";
+       const params = new URLSearchParams();
+       if (includeDescendants) params.set("includeDescendants", "true");
+       if (selected === "consolidatedMovements") {
+         if (dateFrom) params.set("dateFrom", dateFrom);
+         if (dateTo) params.set("dateTo", dateTo);
+         params.set("operationType", operationType);
+       }
+       const query = params.size ? `?${params}` : "";
       const response = await fetch(`${API}/api/contracting/projects/${projectId}/reports${query}`, { headers });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
-      setPayload(body);
+       if (currentRequest === requestId.current) {
+         setPayload(body);
+         setPayloadKey(filterKey);
+       }
     } catch (error: any) {
-      toast({ title: t("common.errorOccurred", "حدث خطأ"), description: error?.message, variant: "destructive" });
+       if (currentRequest === requestId.current) {
+         setLoadError(error?.message ?? "تعذر تحميل التقرير");
+         toast({ title: t("common.errorOccurred", "حدث خطأ"), description: error?.message, variant: "destructive" });
+       }
     } finally {
-      setLoading(false);
+       if (currentRequest === requestId.current) setLoading(false);
     }
-  }, [headers, includeDescendants, projectId, t, toast, token]);
+  }, [headers, includeDescendants, selected, dateFrom, dateTo, operationType, projectId, t, toast, token, filterKey]);
 
   useEffect(() => { void load(); }, [load]);
 
-  if (loading && !payload) return <Skeleton className="h-48 w-full" />;
-  if (!payload) return null;
+  if (!payload || payloadKey !== filterKey) return loadError && !loading && payloadKey === ""
+    ? <div role="alert" className="rounded border border-red-300 p-4 text-red-800">
+        {loadError} <Button variant="outline" onClick={() => void load()}>إعادة المحاولة</Button>
+      </div>
+    : <Skeleton className="h-48 w-full" />;
 
   const snapshot = payload as ContractingProjectReportsSnapshot;
   const hierarchy = payload.hierarchy;
@@ -409,7 +468,15 @@ export function ContractingProjectReports({
           >
             {REPORT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
-          <ContractingProjectReportExportActions snapshot={snapshot} report={selected} />
+          {selected === "consolidatedMovements" && <>
+            <label className="text-xs">من <input aria-label="من تاريخ" type="date" value={dateFrom} max={dateTo || undefined} onChange={e => setDateFrom(e.target.value)} className="rounded border p-1" /></label>
+            <label className="text-xs">إلى <input aria-label="إلى تاريخ" type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} className="rounded border p-1" /></label>
+            <select aria-label="نوع العملية" value={operationType} onChange={e => setOperationType(e.target.value)} className="h-9 rounded-md border bg-white px-2 text-sm">
+              <option value="all">جميع العمليات</option><option value="revenue">إيراد</option><option value="cost">تكلفة</option>
+              <option value="cash">نقد</option><option value="inventory">مخزون معلوماتي</option><option value="unmapped">غير مطابق</option>
+            </select>
+          </>}
+           {!loading && <ContractingProjectReportExportActions snapshot={snapshot} report={selected} />}
           <Button size="sm" variant="ghost" onClick={() => void load()} disabled={loading}>تحديث</Button>
         </div>
       </div>
@@ -424,12 +491,24 @@ export function ContractingProjectReports({
           <p className="text-xs text-muted-foreground">صفوف التقرير أدناه مقدمة من نطاق الخادم المختار ولا يتم دمجها مع الصفوف المحلية في الواجهة.</p>
         </div>
       )}
-      <div className="rounded-lg border bg-indigo-50/60 p-3 text-sm flex flex-wrap items-center gap-x-5 gap-y-1">
+       {selected === "consolidatedMovements" && !loading && <div className="rounded-lg border bg-emerald-50 p-3 text-sm flex flex-wrap gap-5" data-testid="consolidated-summary">
+         <span>الإيراد{(payload.reports as any).consolidatedSummary?.provisional ? " — قبل مراجعة التداخل المحتمل" : ""}: <b>{money((payload.reports as any).consolidatedSummary?.revenue)}</b></span>
+         <span>التكلفة: <b>{money((payload.reports as any).consolidatedSummary?.cost)}</b></span>
+         <span>الربح{(payload.reports as any).consolidatedSummary?.provisional ? " — قبل مراجعة التداخل المحتمل" : ""}: <b>{money((payload.reports as any).consolidatedSummary?.profit)}</b></span>
+         <span>النقد (معلوماتي): <b>{money((payload.reports as any).consolidatedSummary?.cash)}</b></span>
+         <span className="text-xs">مبالغ الفترة المختارة؛ فحص اكتمال الفئات أدناه على مستوى المشروع كله، لا الفترة.</span>
+         {!(payload.reports as any).consolidatedSummary?.coverageComplete && <span className="text-amber-900">
+           تغطية غير مكتملة: {((payload.reports as any).consolidatedSummary?.missingCategories ?? [])
+             .map((category: string) => category === "owner_bill_invoice_overlap_unverified"
+               ? "قد يتكرر إيراد مستخلص المالك وفاتورة المبيعات؛ تحقق من المستندين" : category).join("، ")}
+         </span>}
+       </div>}
+       {selected !== "consolidatedMovements" && <div className="rounded-lg border bg-indigo-50/60 p-3 text-sm flex flex-wrap items-center gap-x-5 gap-y-1">
         <span>المنفذ للمالك: <b>{money(payload.dashboard.ownerRevenue.executedValue)}</b></span>
         <span>تكلفة الباطن: <b>{money(payload.dashboard.subcontractCost.executedValue)}</b></span>
         <span>المستخلصات المعتمدة: <b>{payload.completeness.certifiedBillCount}</b></span>
-      </div>
-      <ReportTable rows={reportRows} />
+       </div>}
+       {loading ? <Skeleton className="h-40 w-full" /> : <ReportTable rows={reportRows} consolidated={selected === "consolidatedMovements"} />}
       <Limitations payload={payload} />
     </div>
   );

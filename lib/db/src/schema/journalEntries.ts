@@ -98,6 +98,7 @@ export const journalEntryLinesTable = pgTable("journal_entry_lines", {
   entryId:      integer("entry_id").references(() => journalEntriesTable.id, { onDelete: "cascade" }).notNull(),
   accountId:    integer("account_id").references(() => accountsTable.id),
   costCenter:   text("cost_center"),
+  projectId:    integer("project_id"),
   debit:        numeric("debit", { precision: 18, scale: 2 }).notNull().default("0"),
   credit:       numeric("credit", { precision: 18, scale: 2 }).notNull().default("0"),
   description:  text("description"),

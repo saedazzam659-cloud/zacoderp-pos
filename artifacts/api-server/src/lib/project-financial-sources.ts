@@ -12,6 +12,283 @@ export type ProjectFinancialSource = {
   amount: number;
 };
 
+export type ConsolidatedMovement = {
+  sourceType: string;
+  sourceId: number;
+  sourceDate: string;
+  documentNumber: string | null;
+  category: string;
+  revenueAmount: number;
+  costAmount: number;
+  cashAmount: number;
+  projectId?: number;
+  note?: string;
+  journalEntryId?: number;
+  sourceDocumentId?: number;
+  allocationSourceType?: string;
+  allocationSourceId?: number;
+};
+
+export const consolidatedOperationTypes = ["all", "revenue", "cost", "cash", "inventory", "unmapped"] as const;
+export type ConsolidatedFilters = { dateFrom?: string; dateTo?: string; operationType?: typeof consolidatedOperationTypes[number] };
+
+export function filterConsolidatedMovements(rows: ConsolidatedMovement[], filters: ConsolidatedFilters) {
+  return rows.filter(row => (!filters.dateFrom || row.sourceDate.slice(0, 10) >= filters.dateFrom)
+    && (!filters.dateTo || row.sourceDate.slice(0, 10) <= filters.dateTo)
+    && (!filters.operationType || filters.operationType === "all"
+      || (filters.operationType === "revenue" && row.revenueAmount !== 0)
+      || (filters.operationType === "cost" && row.costAmount !== 0)
+      || (filters.operationType === "cash" && row.category === "cash")
+      || (filters.operationType === "inventory" && row.category.startsWith("inventory_"))
+      || (filters.operationType === "unmapped" && row.category === "unmapped_cost")));
+}
+
+export function summarizeConsolidatedMovements(rows: ConsolidatedMovement[]) {
+  const round = (value: number) => Number(value.toFixed(2));
+  const revenue = round(rows.reduce((sum, row) => sum + row.revenueAmount, 0));
+  const cost = round(rows.reduce((sum, row) => sum + row.costAmount, 0));
+  return { revenue, cost, profit: round(revenue - cost),
+    cash: round(rows.reduce((sum, row) => sum + row.cashAmount, 0)) };
+}
+
+/** Net all-project allocations before attributing the remaining certificate cost. */
+export function certificateCostResidual(currentWork: number, allocatedGlobally: number): number {
+  return Number(Math.max(0, currentWork - allocatedGlobally).toFixed(2));
+}
+
+/** Source-owned movements only; never convert cash, stock receipts or planning into P&L. */
+export async function consolidatedProjectMovements(companyId: number, projectId: number, existing: ProjectFinancialSource[]) {
+  const movements: ConsolidatedMovement[] = existing.map(row => ({
+    ...row,
+    revenueAmount: row.category === "revenue" ? row.amount : 0,
+    costAmount: ["direct_expense", "cogs", "prepaid_recognition"].includes(row.category) ? row.amount : 0,
+    cashAmount: 0,
+    note: row.category === "unmapped_cost" ? "تعذرت مطابقة سطر القيد؛ لا يدخل الإجمالي" : undefined,
+  }));
+  const result = await db.execute(sql`
+    WITH allocation_net AS (
+      SELECT source_type, source_record_id, SUM(allocated_amount)::numeric amount
+      FROM contracting_cost_allocations WHERE company_id=${companyId}
+      GROUP BY source_type, source_record_id
+    )
+    SELECT 'contracting_material_movement' source_type, m.id source_id, m.movement_date::text source_date,
+           je.doc_number document_number, 'material' category,
+           CASE WHEN m.direction='return' THEN -m.total_cost::numeric ELSE m.total_cost::numeric END amount,
+           m.journal_entry_id journal_entry_id
+      FROM contracting_material_movements m
+      JOIN journal_entries je ON je.id=m.journal_entry_id AND je.company_id=${companyId} AND je.status='posted'
+     WHERE m.company_id=${companyId} AND m.project_id=${projectId} AND m.status='posted'
+    UNION ALL
+    SELECT 'contracting_cost_allocation', a.id, a.source_date::text,
+           COALESCE(bill.bill_number, pi.doc_number), a.category,
+           a.allocated_amount::numeric,
+           COALESCE(pr.posted_journal_id, dep.journal_entry_id, bill.journal_entry_id,
+             pi.journal_entry_id, jl.entry_id)
+      FROM contracting_cost_allocations a
+      LEFT JOIN payroll_allocation_snapshots ps ON a.source_type='payroll_snapshot'
+        AND ps.id=a.source_record_id AND ps.company_id=${companyId}
+      LEFT JOIN payroll_runs pr ON pr.id=ps.payroll_run_id AND pr.company_id=${companyId}
+      LEFT JOIN fa_depreciation_runs dep ON a.source_type='fixed_asset_depreciation'
+        AND dep.id=a.source_record_id AND dep.company_id=${companyId}
+      LEFT JOIN contracting_progress_bills bill ON a.source_type='subcontract_bill'
+        AND bill.id=a.source_record_id AND bill.company_id=${companyId}
+      LEFT JOIN purchase_invoice_lines pil ON a.source_type='purchase_invoice_line'
+        AND pil.id=a.source_record_id AND pil.company_id=${companyId}
+      LEFT JOIN purchase_invoices pi ON pi.id=pil.invoice_id AND pi.company_id=${companyId}
+      LEFT JOIN journal_entry_lines jl ON a.source_type='journal_expense_line' AND jl.id=a.source_record_id
+     WHERE a.company_id=${companyId} AND a.project_id=${projectId}
+       AND (a.category <> 'material' OR a.source_type IN ('purchase_invoice_line','journal_expense_line'))
+       AND (a.source_type <> 'payroll_snapshot' OR
+         (pr.status='posted' AND EXISTS (SELECT 1 FROM journal_entries j
+           WHERE j.id=pr.posted_journal_id AND j.company_id=${companyId} AND j.status='posted')))
+       AND (a.source_type <> 'fixed_asset_depreciation' OR
+         (dep.status='posted' AND EXISTS (SELECT 1 FROM journal_entries j
+           WHERE j.id=dep.journal_entry_id AND j.company_id=${companyId} AND j.status='posted')))
+       AND (a.source_type <> 'subcontract_bill' OR EXISTS (
+         SELECT 1 FROM contracting_progress_bills b JOIN journal_entries j
+           ON j.id=b.journal_entry_id AND j.company_id=${companyId} AND j.status='posted'
+          WHERE b.id=a.source_record_id AND b.company_id=${companyId}
+            AND b.reversal_journal_entry_id IS NULL))
+       AND (a.source_type <> 'journal_expense_line' OR EXISTS (
+         SELECT 1 FROM journal_entry_lines l JOIN journal_entries j
+           ON j.id=l.entry_id AND j.company_id=${companyId} AND j.status='posted'
+          WHERE l.id=a.source_record_id))
+       AND (a.source_type <> 'purchase_invoice_line' OR EXISTS (
+         SELECT 1 FROM purchase_invoice_lines l JOIN purchase_invoices i ON i.id=l.invoice_id
+           JOIN journal_entries j ON j.id=i.journal_entry_id AND j.company_id=${companyId} AND j.status='posted'
+          WHERE l.id=a.source_record_id AND i.company_id=${companyId} AND i.status='posted'))
+    UNION ALL
+    SELECT 'journal_entry_line', l.id, je.entry_date::text, je.doc_number,
+           CASE WHEN ac.account_type='revenue' THEN 'revenue' ELSE 'manual_expense' END,
+           CASE WHEN ac.account_type='revenue' THEN (l.credit::numeric-l.debit::numeric)*COALESCE(je.exchange_rate::numeric,1)
+                ELSE CASE WHEN l.debit::numeric-l.credit::numeric > 0
+                  THEN GREATEST((l.debit::numeric-l.credit::numeric)*COALESCE(je.exchange_rate::numeric,1)
+                    - COALESCE(an.amount,0),0)
+                  ELSE (l.debit::numeric-l.credit::numeric)*COALESCE(je.exchange_rate::numeric,1) END END, je.id
+      FROM journal_entry_lines l
+      JOIN journal_entries je ON je.id=l.entry_id AND je.company_id=${companyId} AND je.status='posted'
+      JOIN accounts ac ON ac.id=l.account_id AND ac.company_id=${companyId}
+      LEFT JOIN allocation_net an ON an.source_type='journal_expense_line' AND an.source_record_id=l.id
+     WHERE l.project_id=${projectId} AND ac.account_type IN ('revenue','expense')
+       AND je.entry_type IN ('general','opening','closing','adjustment','depreciation')
+       AND NOT EXISTS (SELECT 1 FROM purchase_invoices x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM purchase_returns x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM sales_invoices x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM sales_returns x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM goods_receipts x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM goods_deliveries x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM payment_vouchers x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM receipt_vouchers x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM accounting_adjustment_runs x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM payroll_runs x WHERE x.company_id=${companyId} AND x.posted_journal_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM fa_depreciation_runs x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM contracting_progress_bills x WHERE x.company_id=${companyId} AND (x.journal_entry_id=je.id OR x.reversal_journal_entry_id=je.id))
+       AND NOT EXISTS (SELECT 1 FROM contracting_material_movements x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM contracting_accounting_settlements x WHERE x.company_id=${companyId} AND (x.journal_entry_id=je.id OR x.reversal_journal_entry_id=je.id))
+       AND NOT EXISTS (SELECT 1 FROM contracting_fiscal_invoices x WHERE x.company_id=${companyId} AND x.journal_entry_id=je.id)
+       AND NOT EXISTS (SELECT 1 FROM production_cost_allocations x WHERE x.company_id=${companyId} AND (x.reclassification_journal_entry_id=je.id OR x.reversal_journal_entry_id=je.id))
+    UNION ALL
+    SELECT 'contracting_settlement', s.id, s.settlement_date::text, je.doc_number, 'cash',
+           CASE WHEN s.direction='outgoing' AND s.kind IN ('bill_receipt','advance_receipt','retention_receipt') THEN s.amount::numeric
+                WHEN s.direction='incoming' AND s.kind IN ('bill_payment','advance_payment','retention_payment') THEN -s.amount::numeric
+                ELSE 0::numeric END, je.id
+      FROM contracting_accounting_settlements s
+      JOIN journal_entries je ON je.id=s.journal_entry_id AND je.company_id=${companyId} AND je.status='posted'
+     WHERE s.company_id=${companyId} AND s.project_id=${projectId} AND s.status='posted'
+       AND s.kind <> 'advance_application'
+    UNION ALL
+    SELECT 'receipt_voucher_line', l.id, v.date, v.code, 'cash',
+           l.amount::numeric * COALESCE(v.exchange_rate::numeric,1), je.id
+      FROM receipt_voucher_lines l
+      JOIN receipt_vouchers v ON v.id=l.voucher_id AND v.company_id=${companyId} AND v.status='posted'
+      JOIN journal_entries je ON je.id=v.journal_entry_id AND je.company_id=${companyId} AND je.status='posted'
+      JOIN sales_invoices i ON i.id=l.sales_invoice_id AND i.company_id=${companyId} AND i.project_id=${projectId}
+     WHERE l.contracting_kind IS NULL
+    UNION ALL
+    SELECT 'payment_voucher_cash_line', l.id, v.date, v.code, 'cash',
+           -l.amount::numeric * COALESCE(v.exchange_rate::numeric,1), je.id
+      FROM payment_voucher_lines l
+      JOIN payment_vouchers v ON v.id=l.voucher_id AND v.company_id=${companyId} AND v.status='posted'
+      JOIN journal_entries je ON je.id=v.journal_entry_id AND je.company_id=${companyId} AND je.status='posted'
+      LEFT JOIN purchase_invoices i ON i.id=l.purchase_invoice_id AND i.company_id=${companyId}
+     WHERE (l.project_id=${projectId} OR (l.project_id IS NULL AND i.project_id=${projectId}))
+       AND l.contracting_kind IS NULL
+    UNION ALL
+    -- Legacy single-voucher header: never infer a share from a multi-line voucher.
+    SELECT 'receipt_voucher', v.id, v.date, v.code, 'cash',
+           v.amount::numeric * COALESCE(v.exchange_rate::numeric,1), je.id
+      FROM receipt_vouchers v
+      JOIN sales_invoices i ON i.id=v.sales_invoice_id AND i.company_id=${companyId} AND i.project_id=${projectId}
+      JOIN journal_entries je ON je.id=v.journal_entry_id AND je.company_id=${companyId} AND je.status='posted'
+     WHERE v.company_id=${companyId} AND v.status='posted'
+       AND NOT EXISTS (SELECT 1 FROM receipt_voucher_lines l WHERE l.voucher_id=v.id)
+       AND NOT EXISTS (SELECT 1 FROM settlement_links sl WHERE sl.company_id=${companyId}
+         AND sl.source_type='receipt_voucher' AND sl.source_id=v.id)
+    UNION ALL
+    SELECT 'payment_voucher', v.id, v.date, v.code, 'cash',
+           -v.amount::numeric * COALESCE(v.exchange_rate::numeric,1), je.id
+      FROM payment_vouchers v
+      JOIN purchase_invoices i ON i.id=v.purchase_invoice_id AND i.company_id=${companyId} AND i.project_id=${projectId}
+      JOIN journal_entries je ON je.id=v.journal_entry_id AND je.company_id=${companyId} AND je.status='posted'
+     WHERE v.company_id=${companyId} AND v.status='posted'
+       AND NOT EXISTS (SELECT 1 FROM payment_voucher_lines l WHERE l.voucher_id=v.id)
+       AND NOT EXISTS (SELECT 1 FROM settlement_links sl WHERE sl.company_id=${companyId}
+         AND sl.source_type='payment_voucher' AND sl.source_id=v.id)
+    UNION ALL
+    SELECT 'receipt_settlement_link', sl.id, v.date, v.code, 'cash',
+           sl.amount::numeric * COALESCE(v.exchange_rate::numeric,1), je.id
+      FROM settlement_links sl
+      JOIN sales_invoices i ON i.id=sl.sales_invoice_id AND i.company_id=${companyId} AND i.project_id=${projectId}
+      JOIN receipt_vouchers v ON v.id=sl.source_id AND v.company_id=${companyId} AND v.status='posted'
+      JOIN journal_entries je ON je.id=v.journal_entry_id AND je.company_id=${companyId} AND je.status='posted'
+     WHERE sl.company_id=${companyId} AND sl.source_type='receipt_voucher'
+       AND NOT EXISTS (SELECT 1 FROM receipt_voucher_lines l WHERE l.voucher_id=v.id AND l.sales_invoice_id=i.id)
+    UNION ALL
+    SELECT 'payment_settlement_link', sl.id, v.date, v.code, 'cash',
+           -sl.amount::numeric * COALESCE(v.exchange_rate::numeric,1), je.id
+      FROM settlement_links sl
+      JOIN purchase_invoices i ON i.id=sl.purchase_invoice_id AND i.company_id=${companyId} AND i.project_id=${projectId}
+      JOIN payment_vouchers v ON v.id=sl.source_id AND v.company_id=${companyId} AND v.status='posted'
+      JOIN journal_entries je ON je.id=v.journal_entry_id AND je.company_id=${companyId} AND je.status='posted'
+     WHERE sl.company_id=${companyId} AND sl.source_type='payment_voucher'
+       AND NOT EXISTS (SELECT 1 FROM payment_voucher_lines l WHERE l.voucher_id=v.id
+         AND (l.purchase_invoice_id=i.id OR l.project_id=${projectId}))
+  `);
+  const rows = Array.isArray(result) ? result : (result as any).rows ?? [];
+  const allocationIds = (rows as any[]).filter(row => row.source_type === "contracting_cost_allocation")
+    .map(row => Number(row.source_id));
+  const allocationDetails = new Map<number, { sourceType: string; sourceId: number }>();
+  if (allocationIds.length) {
+    const details = await db.execute(sql`SELECT id, source_type, source_record_id
+      FROM contracting_cost_allocations WHERE company_id=${companyId}
+        AND id IN (${sql.join(allocationIds.map(id => sql`${id}`), sql`, `)})`);
+    for (const row of (Array.isArray(details) ? details : (details as any).rows ?? []) as any[]) {
+      allocationDetails.set(Number(row.id), { sourceType: String(row.source_type), sourceId: Number(row.source_record_id) });
+    }
+  }
+  for (const row of rows as any[]) {
+    const category = String(row.category);
+    const amount = Number(Number(row.amount).toFixed(2));
+    movements.push({
+      sourceType: String(row.source_type), sourceId: Number(row.source_id),
+      sourceDate: String(row.source_date), documentNumber: row.document_number ?? null,
+      category, revenueAmount: category === "revenue" ? amount : 0,
+      costAmount: category === "cash" || category === "revenue" ? 0 : amount,
+      cashAmount: category === "cash" ? amount : 0,
+      journalEntryId: row.journal_entry_id == null ? undefined : Number(row.journal_entry_id),
+      ...(allocationDetails.has(Number(row.source_id)) && row.source_type === "contracting_cost_allocation"
+        ? { allocationSourceType: allocationDetails.get(Number(row.source_id))!.sourceType,
+          allocationSourceId: allocationDetails.get(Number(row.source_id))!.sourceId } : {}),
+      note: category === "cash" ? "تدفق نقدي فقط؛ ليس إيراداً أو تكلفة إضافية" : undefined,
+    });
+  }
+  const existingIds = movements.filter(row => row.journalEntryId == null
+    || ["purchase_return_expense", "payment_voucher_line", "receipt_voucher_line",
+      "payment_voucher_cash_line", "receipt_settlement_link", "payment_settlement_link"].includes(row.sourceType));
+  if (existingIds.length) {
+    // Exact source IDs, never a document-number or amount match.
+    const refs = sql.join(existingIds.map(row => sql`(${row.sourceType}, ${row.sourceId})`), sql`, `);
+    const result = await db.execute(sql`
+      WITH refs(source_type, source_id) AS (VALUES ${refs})
+      SELECT refs.source_type, refs.source_id,
+        COALESCE(si.journal_entry_id, sr.journal_entry_id, pi.journal_entry_id,
+          pr.journal_entry_id, prepi.journal_entry_id, prepay.journal_entry_id,
+          pv.journal_entry_id, rv.journal_entry_id, gr.journal_entry_id, gd.journal_entry_id) journal_entry_id,
+        COALESCE(si.id, sr.id, pi.id, pr.id, pv.id, rv.id, gr.id, gd.id) source_document_id
+      FROM refs
+      LEFT JOIN sales_invoices si ON refs.source_type='sales_invoice'
+        AND si.id=refs.source_id AND si.company_id=${companyId}
+      LEFT JOIN sales_returns sr ON refs.source_type='sales_return'
+        AND sr.id=refs.source_id AND sr.company_id=${companyId}
+      LEFT JOIN purchase_invoices pi ON refs.source_type='purchase_invoice_expense'
+        AND pi.id=refs.source_id AND pi.company_id=${companyId}
+      LEFT JOIN journal_entry_lines pl ON refs.source_type='purchase_return_expense' AND pl.id=refs.source_id
+      LEFT JOIN purchase_returns pr ON pr.journal_entry_id=pl.entry_id AND pr.company_id=${companyId}
+      LEFT JOIN accounting_adjustment_runs prepi ON refs.source_type IN ('prepaid_adjustment_run','purchase_prepaid_adjustment_run')
+        AND prepi.id=refs.source_id AND prepi.company_id=${companyId}
+      LEFT JOIN payment_voucher_lines pvl ON refs.source_type IN ('payment_voucher_line','payment_voucher_cash_line')
+        AND pvl.id=refs.source_id
+      LEFT JOIN payment_vouchers pv ON pv.id=pvl.voucher_id AND pv.company_id=${companyId}
+      LEFT JOIN receipt_voucher_lines rvl ON refs.source_type='receipt_voucher_line'
+        AND rvl.id=refs.source_id
+      LEFT JOIN receipt_vouchers rv ON rv.id=rvl.voucher_id AND rv.company_id=${companyId}
+      LEFT JOIN goods_receipts gr ON refs.source_type='goods_receipt'
+        AND gr.id=refs.source_id AND gr.company_id=${companyId}
+      LEFT JOIN goods_deliveries gd ON refs.source_type IN ('goods_delivery','goods_delivery_cogs')
+        AND gd.id=refs.source_id AND gd.company_id=${companyId}
+      LEFT JOIN journal_entries prepay ON prepay.id=prepi.journal_entry_id AND prepay.company_id=${companyId}
+    `);
+    const byKey = new Map((Array.isArray(result) ? result : (result as any).rows ?? []).map((row: any) =>
+      [`${row.source_type}:${row.source_id}`, row]));
+    for (const movement of existingIds) {
+      const ref = byKey.get(`${movement.sourceType}:${movement.sourceId}`);
+      if (ref?.journal_entry_id != null) movement.journalEntryId = Number(ref.journal_entry_id);
+      if (ref?.source_document_id != null) movement.sourceDocumentId = Number(ref.source_document_id);
+    }
+  }
+  return movements.sort((a, b) => a.sourceDate.localeCompare(b.sourceDate) || a.sourceId - b.sourceId);
+}
+
 /** Signed amounts: revenue positive; expense/COGS positive; returns negative. */
 export async function projectFinancialSources(companyId: number, projectId: number): Promise<ProjectFinancialSource[]> {
   await ensureProjectFinancialLinks();

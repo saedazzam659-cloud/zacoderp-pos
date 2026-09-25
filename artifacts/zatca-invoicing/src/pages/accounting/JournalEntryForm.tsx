@@ -3,6 +3,8 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
+import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
+import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 import { JournalRecoverySummary } from "@/components/JournalRecoverySummary";
 import { branchesApi } from "@/lib/branchesApi";
 import {
@@ -111,8 +113,10 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface JournalLine {
   id:          string;
+  sourceLineId?: number;
   accountId:   string;
   costCenter:  string;
+  projectId:   string;
   debit:       string;
   credit:      string;
   description: string;
@@ -131,7 +135,7 @@ interface JournalLine {
 
 function newLine(): JournalLine {
   return {
-    id: crypto.randomUUID(), accountId: "", costCenter: "", debit: "", credit: "", description: "",
+    id: crypto.randomUUID(), accountId: "", costCenter: "", projectId: "", debit: "", credit: "", description: "",
     supplierName: "", supplierVatNumber: "", supplierInvoiceNumber: "", supplierInvoiceDate: "",
   };
 }
@@ -142,8 +146,24 @@ function today() {
 
 export default function JournalEntryForm() {
     const gate = useDemoActionGate();
-  const { user } = useAuth() as any;
+  const { user, token, actingCompanyId } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  // Company toggle, NOT usePermission: superadmins also see no selector when
+  // this tenant has explicitly disabled the contracting module.
+  const { data: actingCompany } = useQuery<{ menuPermissions: string | null }>({
+    queryKey: ["journal-acting-company-modules", actingCompanyId, token],
+    enabled: user?.role === "superadmin" && !!actingCompanyId && !!token,
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/companies/${actingCompanyId}`, {
+        headers: { Authorization: `Bearer ${token}`, "x-acting-company-id": String(actingCompanyId) },
+      });
+      if (!response.ok) throw new Error(`تعذر تحميل وحدات الشركة: HTTP ${response.status}`);
+      return response.json();
+    },
+  });
+  const contractingModuleEnabled = user?.role === "superadmin"
+    ? !!actingCompany && companyExplicitlyEnablesModule({ company: actingCompany }, "contracting")
+    : !!user && companyExplicitlyEnablesModule(user, "contracting");
   // Company-wide "smart model" journal form. When ON, adding a line
   // auto-fills the opposite side with the remaining imbalance so the
   // entry stays balanced, and a "موازنة تلقائية" helper is exposed.
@@ -228,7 +248,6 @@ export default function JournalEntryForm() {
     }
   }, [lines, focusLineId]);
 
-  const { token } = useAuth() as any;
   const authHeaders = { Authorization: `Bearer ${token}` };
 
   const { data: branches = [] } = useQuery<any[]>({
@@ -427,6 +446,11 @@ export default function JournalEntryForm() {
     },
     enabled: !!user,
   });
+  const { data: projectOptions } = useQuery({
+    queryKey: contractingOptionsKey(user?.id, cid, actingCompanyId, token),
+    queryFn: () => fetchContractingProjectOptions(token, actingCompanyId),
+    enabled: !!token && contractingModuleEnabled,
+  });
   // Open credit invoices with remaining due — for the "ربط بفاتورة" picker.
   const { data: openInvoices = [], isLoading: loadingOpenInvoices } = useQuery<any[]>({
     queryKey: ["je-open-invoices", cid, linkKind],
@@ -581,8 +605,10 @@ export default function JournalEntryForm() {
       existing.lines?.length
         ? existing.lines.map((l: any) => ({
             id:          crypto.randomUUID(),
+            sourceLineId: l.id,
             accountId:   l.accountId ? String(l.accountId) : "",
             costCenter:  l.costCenter ?? "",
+            projectId:   l.projectId == null ? "" : String(l.projectId),
             debit:       l.debit  ? String(Number(l.debit))  : "",
             credit:      l.credit ? String(Number(l.credit)) : "",
             description: l.description ?? "",
@@ -626,6 +652,10 @@ export default function JournalEntryForm() {
   // to actually go. The server enforces the same rule with HTTP 403.
   const lockInfo = existing?.entryType ? LOCKED_ENTRY_TYPES[existing.entryType] : undefined;
   const isLockedSourceEntry = !isNew && !!lockInfo;
+  const isAutomaticProjectEntry = !isNew && (
+    (existing?.entryType === "general" && String(existing.docNumber ?? "").startsWith("LC-")) ||
+    (existing?.entryType === "opening" && /\[ob:(customers|suppliers)\]/.test(existing.description ?? ""))
+  );
 
   function updateLine(id: string, field: keyof JournalLine, value: string) {
     setLines(prev => prev.map(l => {
@@ -952,6 +982,7 @@ export default function JournalEntryForm() {
       // Tax lines never carry a cost centre — the dimension belongs to the
       // expense/revenue source line only (matches auto-JE VAT behaviour).
       costCenter: "",
+      projectId: "",
       taxOfLineId: sourceLine.id,
       debit:  direction === "input"  ? vatAmount.toFixed(2) : "",
       credit: direction === "output" ? vatAmount.toFixed(2) : "",
@@ -1084,6 +1115,7 @@ export default function JournalEntryForm() {
       accountId: vatAccountId,
       // Tax lines never carry a cost centre (see applyTaxEntry).
       costCenter: "",
+      projectId: "",
       taxOfLineId: sourceLine.id,
       debit:  direction === "input"  ? "0.00" : "",
       credit: direction === "output" ? "0.00" : "",
@@ -1566,8 +1598,10 @@ export default function JournalEntryForm() {
       entryType,
       branchId:     branchId ? Number(branchId) : null,
       lines:        validLines.map(l => ({
+        sourceLineId: l.sourceLineId,
         accountId:   l.accountId ? Number(l.accountId) : null,
         costCenter:  l.costCenter || null,
+        ...(contractingModuleEnabled ? { projectId: l.projectId ? Number(l.projectId) : null } : {}),
         debit:       l.debit  || "0",
         credit:      l.credit || "0",
         description: l.description || null,
@@ -2540,13 +2574,19 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
               />
 
               {/* Column headers — same grid template as line rows */}
-              <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px_32px] gap-2 px-4 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
+              <div className={cn(
+                "grid gap-2 px-4 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground",
+                contractingModuleEnabled
+                  ? "grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_1.2fr_32px_32px_32px]"
+                  : "grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px_32px]",
+              )}>
                 <span />
                 <span>الحساب</span>
                 <span>مدين</span>
                 <span>دائن</span>
                 <span>البيان</span>
                 <span>مركز التكلفة</span>
+                {contractingModuleEnabled && <span>المشروع (اختياري)</span>}
                 <span />
                 <span />
                 <span />
@@ -2557,7 +2597,12 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                 {lines.map((line, idx) => (
                   <div
                     key={line.id}
-                    className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px_32px] gap-2 px-4 py-2.5 items-center hover:bg-muted/10"
+                    className={cn(
+                      "grid gap-2 px-4 py-2.5 items-center hover:bg-muted/10",
+                      contractingModuleEnabled
+                        ? "grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_1.2fr_32px_32px_32px]"
+                        : "grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px_32px]",
+                    )}
                   >
                     <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
 
@@ -2796,6 +2841,22 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                       );
                     })()}
 
+                    {contractingModuleEnabled && <select
+                      aria-label={`مشروع سطر القيد ${idx + 1}`}
+                      className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                      value={line.projectId}
+                      onChange={e => updateLine(line.id, "projectId", e.target.value)}
+                      disabled={isLockedSourceEntry || isAutomaticProjectEntry || existing?.status === "posted"}
+                    >
+                      <option value="">— بدون مشروع —</option>
+                      {line.projectId && !(projectOptions?.projects ?? []).some(p => String(p.id) === line.projectId) && (
+                        <option value={line.projectId}>#{line.projectId}</option>
+                      )}
+                      {(projectOptions?.projects ?? [])
+                        .filter(p => !branchId || p.branchId == null || String(p.branchId) === branchId)
+                        .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+                    </select>}
+
                     {/* Per-line tax button — generates a VAT (or zero-rated)
                         line DIRECTLY BELOW THIS row, computed on THIS row's
                         amount and honoring the per-action "شامل الضريبة" toggle.
@@ -2962,7 +3023,12 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
 
               {/* Totals footer */}
               <div className="border-t bg-muted/20 px-4 py-3">
-                <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px_32px] gap-2 items-center">
+                <div className={cn(
+                  "grid gap-2 items-center",
+                  contractingModuleEnabled
+                    ? "grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_1.2fr_32px_32px_32px]"
+                    : "grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px_32px_32px]",
+                )}>
                   <span />
                   <span className="text-xs font-semibold text-muted-foreground">الإجماليات</span>
                   <span className={cn(
@@ -2988,6 +3054,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                   <span />
                   <span />
                   <span />
+                  {contractingModuleEnabled && <span />}
                 </div>
               </div>
             </CardContent>

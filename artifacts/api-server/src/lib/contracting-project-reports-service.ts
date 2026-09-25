@@ -24,7 +24,8 @@ import { sumExactCents } from "./contracting-bill-adjustment-math.js";
 import { contractingCostReportBreakdown } from "./contracting-cost-allocation-service.js";
 import { categoryCoverage } from "./contracting-cost-allocation-helper.js";
 import { contractingQuotedNet } from "./contracting-accounting-math.js";
-import { projectFinancialSources } from "./project-financial-sources.js";
+import { projectFinancialSources, consolidatedProjectMovements, filterConsolidatedMovements, summarizeConsolidatedMovements, certificateCostResidual } from "./project-financial-sources.js";
+import type { ConsolidatedFilters, ConsolidatedMovement } from "./project-financial-sources.js";
 
 type BranchUser = Pick<AuthUser, "id" | "role" | "viewAllBranches" | "branchIds">;
 
@@ -191,7 +192,7 @@ function aggregateSide(rows: any[]) {
 export function aggregateProjectReportRollup(entries: Array<{ projectId: number; report: any }>) {
   const owner = aggregateSide(entries.map(entry => entry.report.dashboard.ownerRevenue));
   const subcontract = aggregateSide(entries.map(entry => entry.report.dashboard.subcontractCost));
-  const detailNames = ["boqStatement", "executedQuantities", "bills", "cumulative", "advance", "retention", "deductions", "variations", "pricingProfitability", "costSources", "financialSources"];
+  const detailNames = ["boqStatement", "executedQuantities", "bills", "cumulative", "advance", "retention", "deductions", "variations", "pricingProfitability", "costSources", "financialSources", "consolidatedMovements"];
   const reports: Record<string, any> = {};
   for (const name of detailNames) {
     reports[name] = entries.flatMap(entry =>
@@ -229,6 +230,15 @@ export function aggregateProjectReportRollup(entries: Array<{ projectId: number;
     projectCount: entries.length,
     costSource: "project report actual-cost sources",
     note: "هامش التجميع مشتق من إجمالي الإيراد والتكلفة المتاحة، ولا يجمع نسب المشاريع أو متوسطاتها.",
+  };
+  reports.consolidatedSummary = {
+    ...summarizeConsolidatedMovements(reports.consolidatedMovements),
+    coverageScope: "whole_project",
+    overlapUnreconciled: entries.some(entry => entry.report.reports.consolidatedSummary?.overlapUnreconciled),
+    provisional: entries.some(entry => entry.report.reports.consolidatedSummary?.provisional),
+    coverageComplete: entries.every(entry => entry.report.reports.consolidatedSummary?.coverageComplete),
+    missingCategories: Array.from(new Set(entries.flatMap(entry =>
+      entry.report.reports.consolidatedSummary?.missingCategories ?? []))),
   };
 
   return {
@@ -287,6 +297,7 @@ async function getLocalContractingProjectReports(
   companyId: number,
   projectId: number,
   user?: BranchUser | null,
+  filters: ConsolidatedFilters = {},
 ) {
   if (!user) throw error("غير مصرح", 401);
   const project = await readableProject(companyId, projectId, user);
@@ -589,6 +600,47 @@ async function getLocalContractingProjectReports(
     state: row.status,
   }));
 
+  const consolidated: ConsolidatedMovement[] = await consolidatedProjectMovements(companyId, projectId, financialSources);
+  for (const movement of consolidated) movement.projectId = projectId;
+  // Only journal-backed, unreversed certificates are financial evidence.
+  // Invoice and certificate can describe the same work; invoice takes ownership
+  // of revenue. Expose the ambiguity rather than add both.
+  const postedBills = rowsOf(await db.execute(sql`
+    SELECT b.id, b.bill_date::text source_date, b.bill_number, b.direction,
+           GREATEST(b.gross_amount::numeric - b.previous_paid::numeric, 0) amount, b.journal_entry_id
+      FROM contracting_progress_bills b
+      JOIN journal_entries je ON je.id=b.journal_entry_id AND je.company_id=${companyId} AND je.status='posted'
+     WHERE b.company_id=${companyId} AND b.project_id=${projectId}
+       AND b.status IN ('approved','posted','partially_paid','paid')
+       AND b.reversal_journal_entry_id IS NULL
+  `));
+  const allocatedSubcontractBills = new Map(rowsOf(await db.execute(sql`
+    SELECT source_record_id, SUM(allocated_amount)::numeric allocated FROM contracting_cost_allocations
+     WHERE company_id=${companyId} AND source_type='subcontract_bill'
+     GROUP BY source_record_id
+  `)).map(row => [Number(row.source_record_id), numberValue(row.allocated)] as const));
+  for (const bill of postedBills) {
+    const ownerBill = bill.direction === "outgoing";
+    const amount = ownerBill ? rounded(numberValue(bill.amount))
+      : certificateCostResidual(numberValue(bill.amount), allocatedSubcontractBills.get(Number(bill.id)) ?? 0);
+    if (!ownerBill && amount === 0) continue;
+    consolidated.push({
+      sourceType: "contracting_progress_bill", sourceId: Number(bill.id),
+      sourceDate: String(bill.source_date), documentNumber: bill.bill_number,
+      projectId,
+      category: ownerBill ? "revenue" : "subcontract",
+      revenueAmount: ownerBill ? amount : 0, costAmount: ownerBill ? 0 : amount, cashAmount: 0,
+      journalEntryId: Number(bill.journal_entry_id),
+      note: ownerBill
+        ? "قيمة المستخلص المرحّل؛ قد تتداخل مع فاتورة مبيعات المشروع ولا يوجد ربط مثبت بينهما"
+        : "قيمة المستخلص المرحّل؛ لا تشمل التسوية النقدية",
+    });
+  }
+  const consolidatedMovements = filterConsolidatedMovements(consolidated, filters);
+  const consolidatedSummary = summarizeConsolidatedMovements(consolidatedMovements);
+  const overlapUnreconciled = postedBills.some(bill => bill.direction === "outgoing")
+    && financialSources.some(source => source.sourceType === "sales_invoice");
+
   const cumulative = certifiedRows.map((row: any) => ({
     id: row.id,
     billNumber: row.billNumber,
@@ -785,6 +837,7 @@ async function getLocalContractingProjectReports(
     "التنفيذ التراكمي يعتمد على آخر مستخلص معتمد لكل عقد/بند، ولا يجمع القيم التراكمية المتكررة.",
     "استرداد الدفعة المقدمة والدفعات الفعلية يعتمدان على التسويات المحاسبية بحالة posted فقط.",
     "الربحية لا تقدّر تكلفة مستقبلية؛ تستخدم project.actualCost أو مصادر التنفيذ الفعلية القديمة كبديل واضح، ولا تجمع تكلفة المقاول الباطن أو المخزون مرتين.",
+    "تقرير العمليات الموحد منفصل عن الربحية القديمة: لا تُعد التسويات والدفعات والاستلام المخزني إيراداً أو مصروفاً. لا يوجد ربط مثبت بين فواتير المبيعات ومستخلصات المالك في المصادر الحالية؛ تُعرض المستخلصات المرحّلة والفواتير دون إسقاط تخميني، ويراجع المحاسب الحالات التي تمثل نفس العمل.",
     ...(unmappedCertifiedLineCount > 0
       ? [`يوجد ${unmappedCertifiedLineCount} سطر مستخلص معتمد قديم غير مربوط بسطر BOQ؛ لم يُخمّن ربطه.`]
       : []),
@@ -809,6 +862,20 @@ async function getLocalContractingProjectReports(
     pricingProfitability,
     costSources,
     financialSources,
+    consolidatedMovements,
+    consolidatedSummary: {
+      ...consolidatedSummary,
+      coverageScope: "whole_project",
+      overlapUnreconciled,
+      provisional: overlapUnreconciled,
+      coverageComplete: effectiveCostCoverage.complete && unmappedFinancialSources.length === 0
+        && !overlapUnreconciled,
+      missingCategories: [
+        ...effectiveCostCoverage.missingCategories,
+        ...(unmappedFinancialSources.length ? ["unmapped_cost"] : []),
+        ...(overlapUnreconciled ? ["owner_bill_invoice_overlap_unverified"] : []),
+      ],
+    },
     costReconciliation,
   };
 
@@ -835,11 +902,11 @@ export async function getContractingProjectReports(
   companyId: number,
   projectId: number,
   user?: BranchUser | null,
-  options: { includeDescendants?: boolean } = {},
+  options: { includeDescendants?: boolean } & ConsolidatedFilters = {},
 ) {
   if (!user) throw error("غير مصرح", 401);
   await ensureContractingProjectHierarchy();
-  const local = await getLocalContractingProjectReports(companyId, projectId, user);
+  const local = await getLocalContractingProjectReports(companyId, projectId, user, options);
   if (!options.includeDescendants) return local;
 
   const hierarchyRows = await descendantProjects(companyId, projectId, user);
@@ -849,7 +916,7 @@ export async function getContractingProjectReports(
     if (project.id === projectId) continue;
     entries.push({
       projectId: project.id,
-      report: await getLocalContractingProjectReports(companyId, project.id, user),
+      report: await getLocalContractingProjectReports(companyId, project.id, user, options),
     });
   }
   const rollup = aggregateProjectReportRollup(entries);

@@ -19,7 +19,8 @@ import { unpostDepreciationRun } from "../lib/depreciationPosting.js";
 import { unpostAdjustmentRunJe, syncAdjustmentRunAmountForJe } from "../lib/adjustmentPosting.js";
 import { eq, and, or, desc, asc, sql, inArray, notInArray, gte, lte, ilike } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest, branchScopeSpread } from "../middleware/auth.js";
-import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { canAccessModule, moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 import {
   ensureJournalNumberClaimsTable,
@@ -123,6 +124,49 @@ const router = Router();
 router.use(extractAuth);
 router.use(requireModulePermission("journal_entries"));
 router.use(moduleAudit("journal_entries"));
+// The agent tenant and the central DB must both have the new line column
+// before any select() projection of journal_entry_lines.
+router.use(async (_req, res, next) => {
+  try { await ensureProjectFinancialLinks(); next(); }
+  catch (error: any) { res.status(500).json({ error: error?.message ?? "تعذر تجهيز روابط المشاريع" }); }
+});
+
+const MANUAL_PROJECT_ENTRY_TYPES = new Set(["general", "opening", "closing", "adjustment", "depreciation"]);
+async function contractingEnabledForCompany(companyId: number, user: any): Promise<boolean> {
+  // Optional attribution is opt-in even for legacy companies whose general
+  // contracting menu gate defaults on when no explicit key is saved.
+  if (user?.role !== "superadmin") return user?.companyMenuPermissions?.contracting === true;
+  // A SuperAdmin's auth identity has no tenant companyMenuPermissions. Resolve
+  // the actual acting company's switch instead of applying the admin bypass.
+  const [company] = await db.select({ menuPermissions: companiesTable.menuPermissions })
+    .from(companiesTable).where(eq(companiesTable.id, companyId));
+  if (!company) return false;
+  try {
+    const menuPermissions = typeof company.menuPermissions === "string"
+      ? JSON.parse(company.menuPermissions) : company.menuPermissions;
+    return menuPermissions?.contracting === true;
+  } catch { return false; }
+}
+
+async function resolveManualLineProjects(
+  lines: any, entryType: string, companyId: number, branchId: number | null, user: any,
+  action: "create" | "edit",
+): Promise<(number | null)[] | null> {
+  if (!Array.isArray(lines)) return null;
+  if (!lines.some((line: any) => line?.projectId != null && line.projectId !== "")) {
+    return lines.map(() => null);
+  }
+  if (!MANUAL_PROJECT_ENTRY_TYPES.has(entryType))
+    throw Object.assign(new Error("ربط المشروع متاح فقط للقيود اليدوية"), { status: 403 });
+  // Do not use canAccessModule alone here: its superadmin bypass ignores a
+  // disabled company contracting toggle.
+  if (!(await contractingEnabledForCompany(companyId, user)))
+    throw Object.assign(new Error("موديل المقاولات غير مفعّل لهذه الشركة"), { status: 403 });
+  if (!canAccessModule(user, "journal_entries", action))
+    throw Object.assign(new Error("لا تملك صلاحية تعديل قيد يدوي مرتبط بمشروع"), { status: 403 });
+  return Promise.all(lines.map((line: any) =>
+    resolveProjectLink(companyId, line?.projectId, branchId, user)));
+}
 
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
@@ -1240,6 +1284,12 @@ router.post("/", async (req, res) => {
     // number, so a 403/400 doesn't waste a journal-entry sequence value.
     const resolvedBranchId = await resolveBranchForWrite(req, res, cid, branchId);
     if (resolvedBranchId === "DENY") return;
+    let lineProjects: (number | null)[] | null;
+    try {
+      lineProjects = await resolveManualLineProjects(lines, entryType || "general", cid, resolvedBranchId, req.authUser, "create");
+    } catch (error: any) {
+      res.status(error?.status ?? 422).json({ error: error.message }); return;
+    }
 
     // Period guard runs BEFORE sequence allocation: writing into a closed
     // period is a 423 reject, and burning a sequence number on a request we
@@ -1460,6 +1510,7 @@ router.post("/", async (req, res) => {
           entryId:     entry.id,
           accountId:   l.accountId ? Number(l.accountId) : null,
           costCenter:  l.costCenter || null,
+          projectId:   lineProjects?.[i] ?? null,
           debit:       l.debit  ?? "0",
           credit:      l.credit ?? "0",
           description: l.description || null,
@@ -1562,6 +1613,8 @@ router.put("/:id", async (req, res) => {
     let [statusRow] = await db.select({
       status:    journalEntriesTable.status,
       entryType: journalEntriesTable.entryType,
+      docNumber: journalEntriesTable.docNumber,
+      description: journalEntriesTable.description,
     })
       .from(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
@@ -1573,6 +1626,8 @@ router.put("/:id", async (req, res) => {
       [statusRow] = await db.select({
         status:    journalEntriesTable.status,
         entryType: journalEntriesTable.entryType,
+        docNumber: journalEntriesTable.docNumber,
+        description: journalEntriesTable.description,
       })
         .from(journalEntriesTable)
         .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
@@ -1641,6 +1696,44 @@ router.put("/:id", async (req, res) => {
     // company). NULL is preserved for users who explicitly clear it.
     const resolvedBranchId = await resolveBranchForWrite(req, res, cid, branchId);
     if (resolvedBranchId === "DENY") return;
+    let lineProjects: (number | null)[] | null;
+    try {
+      const targetType = (isAdjustmentJe || isOpeningJe) ? statusRow!.entryType : (entryType || "general");
+      // Both the persisted source identity and the new type must be manual;
+      // changing a type in the same request must not smuggle an attribution
+      // onto a source-generated entry.
+      const contractingEnabled = await contractingEnabledForCompany(cid, req.authUser);
+      if (contractingEnabled && Array.isArray(lines) && lines.some((line: any) => line?.projectId != null && line.projectId !== "") &&
+          (!MANUAL_PROJECT_ENTRY_TYPES.has(targetType) ||
+           (statusRow?.entryType === "general" && statusRow.docNumber?.startsWith("LC-")) ||
+           (statusRow?.entryType === "opening" && /\[ob:(customers|suppliers)\]/.test(statusRow.description ?? "")))) {
+        res.status(403).json({ error: "ربط المشروع متاح فقط للقيود اليدوية" }); return;
+      }
+      if (!contractingEnabled && Array.isArray(lines)) {
+        // An existing draft can still be edited after the company disables
+        // contracting. Preserve its saved project per original line ID (not
+        // array position); newly added lines get NULL, and clients cannot
+        // introduce/change a project while the feature is switched off.
+        const savedLines = await db.select({
+          id: journalEntryLinesTable.id, projectId: journalEntryLinesTable.projectId,
+        }).from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, id));
+        const savedProjects = new Map(savedLines.map(line => [line.id, line.projectId]));
+        const used = new Set<number>();
+        lineProjects = lines.map((line: any) => {
+          const sourceId = Number(line?.sourceLineId);
+          const saved = Number.isSafeInteger(sourceId) && savedProjects.has(sourceId) && !used.has(sourceId)
+            ? savedProjects.get(sourceId) ?? null : null;
+          if (savedProjects.has(sourceId)) used.add(sourceId);
+          if (line?.projectId != null && line.projectId !== "" && Number(line.projectId) !== saved)
+            throw Object.assign(new Error("موديل المقاولات غير مفعّل لهذه الشركة"), { status: 403 });
+          return saved;
+        });
+      } else {
+        lineProjects = await resolveManualLineProjects(lines, statusRow?.entryType ?? "general", cid, resolvedBranchId, req.authUser, "edit");
+      }
+    } catch (error: any) {
+      res.status(error?.status ?? 422).json({ error: error.message }); return;
+    }
 
     // Period guard — verify both the existing entry's period AND the new
     // target date's period are open. This protects against editing into or
@@ -1705,6 +1798,7 @@ router.put("/:id", async (req, res) => {
             entryId:     id,
             accountId:   l.accountId ? Number(l.accountId) : null,
             costCenter:  l.costCenter || null,
+            projectId:   lineProjects?.[i] ?? null,
             debit:       l.debit  ?? "0",
             credit:      l.credit ?? "0",
             description: l.description || null,

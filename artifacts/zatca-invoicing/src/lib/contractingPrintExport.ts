@@ -851,6 +851,7 @@ export type ContractingProjectReportKey =
   | "variations"
   | "pricingProfitability"
   | "financialSources"
+  | "consolidatedMovements"
   | "profitability";
 
 export interface ContractingProjectReportsSnapshot {
@@ -978,6 +979,22 @@ const PROJECT_REPORT_COLUMNS: Record<ContractingProjectReportKey, ExportColumn[]
     { key: "category", header: "النوع المالي", width: 22 },
     { key: "amount", header: "القيمة (دون الضريبة)", width: 22, numFmt: "#,##0.00" },
   ],
+  consolidatedMovements: [
+    { key: "projectId", header: "المشروع", width: 14 },
+    { key: "sourceDate", header: "التاريخ", width: 16 },
+    { key: "sourceType", header: "مصدر العملية", width: 25 },
+    { key: "documentNumber", header: "رقم المستند", width: 20 },
+    { key: "sourceId", header: "معرّف المصدر", width: 16 },
+    { key: "sourceDocumentId", header: "معرّف المستند الأصلي", width: 19 },
+    { key: "allocationSourceType", header: "مصدر التوزيع", width: 22 },
+    { key: "allocationSourceId", header: "معرّف المصدر الموزع", width: 17 },
+    { key: "journalEntryId", header: "معرّف القيد الأصلي", width: 17 },
+    { key: "category", header: "التصنيف", width: 22 },
+    { key: "revenueAmount", header: "الإيراد", width: 18, numFmt: "#,##0.00" },
+    { key: "costAmount", header: "التكلفة", width: 18, numFmt: "#,##0.00" },
+    { key: "cashAmount", header: "النقد (معلوماتي)", width: 20, numFmt: "#,##0.00" },
+    { key: "note", header: "ملاحظات التغطية", width: 50 },
+  ],
 };
 PROJECT_REPORT_COLUMNS.executedQuantities = PROJECT_REPORT_COLUMNS.boqStatement;
 
@@ -992,6 +1009,7 @@ const PROJECT_REPORT_TITLES: Record<ContractingProjectReportKey, string> = {
   variations: "مقارنة العقد الأصلي والمعدل",
   pricingProfitability: "هامش التسعير المتوقع من ربط أسطر المالك بالباطن",
   financialSources: "مصادر الإيراد والتكلفة الفعلية المرتبطة بالمشروع",
+  consolidatedMovements: "تقرير العمليات الموحد للمشروع",
   profitability: "ربحية المشروع من التكلفة الفعلية المتاحة",
 };
 
@@ -1000,6 +1018,16 @@ function reportRows(
   key: ContractingProjectReportKey,
 ): Record<string, unknown>[] {
   const value = snapshot.reports?.[key];
+  if (key === "consolidatedMovements") {
+    const summary = (snapshot.reports as any)?.consolidatedSummary;
+    return [...(Array.isArray(value) ? value : []), ...(summary ? [{
+      sourceType: summary.provisional
+        ? "الإجمالي للفترة المختارة — قبل مراجعة التداخل المحتمل" : "الإجمالي للفترة المختارة",
+      revenueAmount: summary.revenue,
+      costAmount: summary.cost, cashAmount: summary.cash,
+      note: `${summary.provisional ? "الربح قبل مراجعة التداخل المحتمل" : "الربح"}: ${summary.profit}`,
+    }] : [])];
+  }
   if (key === "profitability") return value && !Array.isArray(value) ? [value as Record<string, unknown>] : [];
   return Array.isArray(value) ? value as Record<string, unknown>[] : [];
 }
@@ -1011,6 +1039,12 @@ export function buildContractingProjectReportRows(
   return reportRows(snapshot, key);
 }
 
+function projectReportTitle(snapshot: ContractingProjectReportsSnapshot, key: ContractingProjectReportKey) {
+  return key === "consolidatedMovements" && (snapshot.reports as any)?.consolidatedSummary?.provisional
+    ? `${PROJECT_REPORT_TITLES[key]} — الإيراد والربح قبل مراجعة التداخل المحتمل`
+    : PROJECT_REPORT_TITLES[key];
+}
+
 export async function exportContractingProjectReportWorkbook(
   snapshot: ContractingProjectReportsSnapshot,
   key: ContractingProjectReportKey,
@@ -1020,7 +1054,7 @@ export async function exportContractingProjectReportWorkbook(
   await exportToExcelBranded(reportRows(snapshot, key), PROJECT_REPORT_COLUMNS[key], filename, {
     sheetName: "تقرير المشروع",
     company,
-    title: PROJECT_REPORT_TITLES[key],
+    title: projectReportTitle(snapshot, key),
     subtitle: snapshot.project?.nameAr || snapshot.project?.code || "",
   });
 }
@@ -1035,7 +1069,7 @@ export async function exportContractingProjectReportPdf(
     reportRows(snapshot, key),
     PROJECT_REPORT_COLUMNS[key],
     filename,
-    PROJECT_REPORT_TITLES[key],
+    projectReportTitle(snapshot, key),
     snapshot.project?.nameAr || snapshot.project?.code || "بيانات المشروع",
     false,
     null,
@@ -1057,7 +1091,7 @@ export async function printContractingProjectReport(
     reportRows(snapshot, key),
     PROJECT_REPORT_COLUMNS[key],
     filename,
-    PROJECT_REPORT_TITLES[key],
+    projectReportTitle(snapshot, key),
     snapshot.project?.nameAr || snapshot.project?.code || "بيانات المشروع",
     true,
     null,

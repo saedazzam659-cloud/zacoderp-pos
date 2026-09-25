@@ -11,7 +11,7 @@ export async function ensureProjectFinancialLinks(): Promise<void> {
   const cached = active ? readiness.get(active) : centralReadiness;
   if (cached) return cached;
   const pending = (async () => {
-    for (const table of ["purchase_invoices", "purchase_returns", "sales_invoices", "sales_returns", "payment_voucher_lines", "goods_receipts", "goods_deliveries"]) {
+    for (const table of ["purchase_invoices", "purchase_returns", "sales_invoices", "sales_returns", "payment_voucher_lines", "goods_receipts", "goods_deliveries", "journal_entry_lines"]) {
       await db.execute(sql.raw(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS project_id INTEGER`));
       await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS ${table}_project_link_idx ON ${table}(project_id) WHERE project_id IS NOT NULL`));
     }

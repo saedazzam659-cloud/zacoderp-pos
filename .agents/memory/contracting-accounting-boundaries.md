@@ -3,6 +3,18 @@ name: Contracting accounting boundaries
 description: Optional cost-center snapshots, legacy preservation, and planning versus posting boundaries.
 ---
 
+Optional project selection in manual journals requires explicit company activation of contracting, even for administrators. Do not inherit legacy default-on permissions for this field or alter the global module-access convention. Hiding it must preserve existing saved links.
+
+**Why:** The user explicitly required the journal screen to remain unchanged until contracting is activated, without affecting existing journal behavior or data.
+
+**How to apply:** Treat missing, invalid and disabled module settings as hidden for this optional control; distinguish company activation from user permissions.
+
+Do not infer invoice-to-certificate overlap merely from sharing a project. Without authoritative document linkage, retain source evidence and mark combined revenue/profit provisional rather than silently suppressing independent revenue or claiming a reconciled total.
+
+**Why:** Ordinary sales invoices do not provide enough evidence to determine whether they bill the same work as an owner certificate.
+
+**How to apply:** Carry the reconciliation limitation into displayed summaries, descendant rollups and exports.
+
 Optional project attribution on ordinary invoices, vouchers and warehouse documents is analytical, not a second posting cycle. Preserve existing manual allocations and attribute only the remaining posted expense capacity automatically; a partial allocation must not suppress an entire document or unrelated voucher lines.
 
 **Why:** The requested project profitability view must include actual costs without duplicating existing HR, equipment or expense distributions. Whole-document exclusion loses unallocated costs, while counting the full linked source duplicates the distributed portion.
