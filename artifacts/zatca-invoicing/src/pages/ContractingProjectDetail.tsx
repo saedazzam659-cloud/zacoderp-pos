@@ -87,6 +87,8 @@ type Bill = AdvanceRecoveryPolicy & Partial<RecoveryOverride> & {
   subcontractorContractId: number | null;
   fromDate: string | null; toDate: string | null; progressPercent: string;
   grossAmount: string; retentionPercent: string; retentionAmount: string;
+  priceIncludesVat?: boolean;
+  vatPercent?: string;
   previousPaid: string; dueAmount: string; vatAmount: string; netAmount: string;
   paidAmount: string;
   costCenterId: number | null;
@@ -101,6 +103,7 @@ type OwnerContract = AdvanceRecoveryPolicy & {
   contractType: string; parentContractId: number | null;
   value: string; advancePayment: string; advancePercent: string;
   retentionPercent: string; vatPercent: string;
+  priceIncludesVat?: boolean;
   retentionEnabled?: boolean; retentionCapPercent?: string | null;
   durationDays: number; startDate: string | null; endDate: string | null;
   paymentTerms: string | null; scopeOfWork: string | null; penaltiesClause: string | null;
@@ -112,6 +115,7 @@ type SubContract = AdvanceRecoveryPolicy & {
   scopeOfWork: string | null;
   value: string; advancePayment: string; advancePercent: string;
   retentionPercent: string; vatPercent: string;
+  priceIncludesVat?: boolean;
   retentionEnabled?: boolean; retentionCapPercent?: string | null;
   durationDays: number; startDate: string | null; endDate: string | null;
   paymentTerms: string | null; penaltiesClause: string | null;
@@ -480,21 +484,28 @@ function selectedAggregateContractValue(
   subContracts: SubContract[],
 ): number {
   if (!bill) return 0;
+  const netValue = (contract?: OwnerContract | SubContract) => {
+    if (!contract) return 0;
+    const value = Number(contract.value || 0);
+    return contract.priceIncludesVat
+      ? Math.round(value / (1 + Number(contract.vatPercent || 0) / 100) * 100) / 100
+      : value;
+  };
   if (direction === "incoming") {
-    return Number(subContracts.find(c => c.id === Number(bill.subcontractorContractId))?.value ?? 0);
+    return netValue(subContracts.find(c => c.id === Number(bill.subcontractorContractId)));
   }
   const selected = ownerContracts.find(c => c.id === Number(bill.ownerContractId));
   if (!selected) return 0;
   const base = ["change_order", "addendum"].includes(selected.contractType)
     ? ownerContracts.find(c => c.id === selected.parentContractId) ?? selected
     : selected;
-  return Number(base.value || 0) + ownerContracts
+  return netValue(base) + ownerContracts
     .filter(c =>
       ["change_order", "addendum"].includes(c.contractType)
       && c.status === "approved"
       && c.parentContractId === base.id,
     )
-    .reduce((sum, c) => sum + Number(c.value || 0), 0);
+    .reduce((sum, c) => sum + netValue(c), 0);
 }
 
 function selectedPriorCertifiedGross(rows: Bill[], direction: BillDirection, bill: Partial<Bill> | null): number {
@@ -824,6 +835,10 @@ function BillsTab({
       progressPercent: "0", grossAmount: "0", retentionPercent: retention,
       previousPaid: "0", paidAmount: "0", status: "draft",
       ownerContractId, subcontractorContractId,
+      priceIncludesVat: ownerContractId
+        ? ownerContracts.find(c => c.id === ownerContractId)?.priceIncludesVat === true
+        : false,
+      vatPercent: ownerContractId ? ownerContracts.find(c => c.id === ownerContractId)?.vatPercent : undefined,
       contractorId: null,
       costCenterId: projectCostCenterId,
       aggregateProgress: false,
@@ -881,6 +896,8 @@ function BillsTab({
       contractorId: cid,
       retentionPercent: retention,
       subcontractorContractId: scId,
+      priceIncludesVat: scId ? subContracts.find(c => c.id === scId)?.priceIncludesVat === true : false,
+      vatPercent: scId ? subContracts.find(c => c.id === scId)?.vatPercent : undefined,
       advanceRecoveryOverrideAmount: undefined,
       advanceRecoveryOverrideReason: undefined,
     };
@@ -928,7 +945,7 @@ function BillsTab({
   const previewDue = Math.max(0, currentPeriodGross - previewRetention);
   // Both certificate directions tax current certified work before retention.
   const previewVatBase = currentPeriodGross;
-  const previewVat = Number(aggregateMoney(previewVatBase * Number(selectedContract?.vatPercent ?? 0) / 100));
+  const previewVat = Number(aggregateMoney(previewVatBase * Number(editing?.vatPercent ?? selectedContract?.vatPercent ?? 0) / 100));
   const financiallyLocked = Boolean(
     editing && (
       ["approved", "posted", "partially_paid", "paid", "reversed"].includes(String(editing.status))
@@ -956,9 +973,18 @@ function BillsTab({
     if (!editing) return;
     const nextValue = selectedAggregateContractValue(direction, { ...editing, ...next }, ownerContracts, subContracts);
     const percent = Number(editing.progressPercent ?? 0);
+    const selectionChanged = direction === "incoming"
+      ? next.subcontractorContractId !== undefined && next.subcontractorContractId !== editing.subcontractorContractId
+      : next.ownerContractId !== undefined && next.ownerContractId !== editing.ownerContractId;
     setEditing({
       ...editing,
       ...next,
+      priceIncludesVat: !selectionChanged ? editing.priceIncludesVat : direction === "incoming"
+        ? subContracts.find(c => c.id === Number(next.subcontractorContractId))?.priceIncludesVat === true
+        : ownerContracts.find(c => c.id === Number(next.ownerContractId))?.priceIncludesVat === true,
+      vatPercent: !selectionChanged ? editing.vatPercent : direction === "incoming"
+        ? subContracts.find(c => c.id === Number(next.subcontractorContractId))?.vatPercent
+        : ownerContracts.find(c => c.id === Number(next.ownerContractId))?.vatPercent,
       advanceRecoveryOverrideAmount: undefined,
       advanceRecoveryOverrideReason: undefined,
       grossAmount: nextValue > 0
@@ -1161,6 +1187,13 @@ function BillsTab({
               />
             </Field>
             <Field label={t("contracting.bills.date", "التاريخ")} required><DateField value={editing.billDate ?? ""} onChange={e => setEditing({ ...editing, billDate: e.target.value })} /></Field>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={editing.priceIncludesVat === true}
+                disabled={financiallyLocked || detailMode}
+                onChange={e => setEditing({ ...editing, priceIncludesVat: e.target.checked })} />
+              السعر شامل الضريبة
+            </label>
+            <p className="col-span-2 text-xs text-muted-foreground">قيمة العقد وأسعار جدول الكميات تبقى كما أُدخلت في العقد؛ الحسابات أدناه تعرض أساس الأعمال قبل الضريبة. تغيير خيار المستخلص لا يعيد تسعير العقد أو المستخلصات المعتمدة.</p>
             <Field label={t("contracting.bills.type", "النوع")}>
               <ContractingPicker
                 items={["interim","final","advance","retention_release"].map(x => ({ value: x, label: labelEnum(BILL_TYPE_LABEL, x) }))}
@@ -1831,6 +1864,7 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
       value: project.contractValue ?? "0",
       advancePayment: "0", advancePercent: "0",
       retentionPercent: "5", vatPercent: "15",
+      priceIncludesVat: false,
       durationDays: 0, status: "draft",
     });
   }
@@ -1946,6 +1980,9 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
             <Field label={t("contracting.ownerContract.advancePercent", "% دفعة مقدمة")}><Input type="number" min="0" max="100" step="0.01" value={editing.advancePercent ?? "0"} onChange={e => setEditing(current => current ? { ...current, advancePercent: e.target.value, advancePayment: calculateAdvancePayment(current.value, e.target.value) } : current)} /></Field>
             <Field label={t("contracting.ownerContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "5"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editing.priceIncludesVat === true}
+              onChange={e => setEditing({ ...editing, priceIncludesVat: e.target.checked })} />السعر شامل الضريبة</label>
+            <p className="col-span-2 text-xs text-muted-foreground">قيمة العقد وأسعار جدول الكميات أسعار مُدخلة {editing.priceIncludesVat ? "شاملة" : "غير شاملة"} للضريبة؛ أساس المستخلص وسقف الاعتماد يحسبان قبل الضريبة.</p>
             <Field label={t("contracting.ownerContract.duration", "المدة (يوم)")}><Input type="number" value={editing.durationDays ?? 0} onChange={e => setEditing({ ...editing, durationDays: Number(e.target.value) })} /></Field>
             <Field label={t("contracting.ownerContract.startDate", "تاريخ البدء")}><DateField value={editing.startDate ?? ""} onChange={e => setEditing({ ...editing, startDate: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.endDate", "تاريخ الانتهاء")}><DateField value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>
@@ -2099,7 +2136,7 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
               contractorName: contractors.find(item => item.id === contract.contractorId)?.name || null,
             })) as ContractingContractSnapshot[]}
           />
-          <Button size="sm" disabled={saving} onClick={() => { createRequestId.current = null; setEditing({ contractNumber: "", contractDate: new Date().toISOString().slice(0,10), value: "0", advancePayment: "0", advancePercent: "0", retentionPercent: "10", vatPercent: "15", durationDays: 0, status: "draft" }); }}>
+          <Button size="sm" disabled={saving} onClick={() => { createRequestId.current = null; setEditing({ contractNumber: "", contractDate: new Date().toISOString().slice(0,10), value: "0", advancePayment: "0", advancePercent: "0", retentionPercent: "10", vatPercent: "15", priceIncludesVat: false, durationDays: 0, status: "draft" }); }}>
             <Plus className="h-4 w-4 mx-1" /> {t("contracting.subContract.add", "عقد باطن جديد")}
           </Button>
         </div>
@@ -2183,6 +2220,9 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
             <Field label={t("contracting.subContract.advancePercent", "% دفعة مقدمة")}><Input type="number" min="0" max="100" step="0.01" value={editing.advancePercent ?? "0"} onChange={e => setEditing(current => current ? { ...current, advancePercent: e.target.value, advancePayment: calculateAdvancePayment(current.value, e.target.value) } : current)} /></Field>
             <Field label={t("contracting.subContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "10"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={editing.priceIncludesVat === true}
+              onChange={e => setEditing({ ...editing, priceIncludesVat: e.target.checked })} />السعر شامل الضريبة</label>
+            <p className="col-span-2 text-xs text-muted-foreground">قيمة العقد وأسعار جدول الكميات أسعار مُدخلة {editing.priceIncludesVat ? "شاملة" : "غير شاملة"} للضريبة؛ أساس المستخلص وسقف الاعتماد يحسبان قبل الضريبة.</p>
             <Field label={t("contracting.subContract.duration", "المدة (يوم)")}><Input type="number" value={editing.durationDays ?? 0} onChange={e => setEditing({ ...editing, durationDays: Number(e.target.value) })} /></Field>
             <Field label={t("contracting.subContract.startDate", "تاريخ البدء")}><DateField value={editing.startDate ?? ""} onChange={e => setEditing({ ...editing, startDate: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.endDate", "تاريخ الانتهاء")}><DateField value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>

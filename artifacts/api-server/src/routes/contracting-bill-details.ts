@@ -30,6 +30,7 @@ import {
   transitionBillWorkflow,
   contractingBillsReport,
 } from "../lib/contracting-bill-details-service.js";
+import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 
 const router = Router();
 router.use((req, _res, next) => {
@@ -53,6 +54,7 @@ router.get("/projects/:projectId/certification-preview", async (req, res) => {
   const cid = await companyId(req, res);
   if (!cid) return;
   try {
+    await ensureContractingAccountingTables();
     res.json(await certificationPreview(
       cid,
       Number(req.params.projectId),
@@ -71,6 +73,7 @@ router.get("/projects/:projectId/certification-preview", async (req, res) => {
 
 router.use(async (_req, _res, next) => {
   try {
+    await ensureContractingAccountingTables();
     await ensureContractingBillDetailsTables();
     next();
   } catch (caught) {

@@ -59,6 +59,7 @@ import { ensureContractingGuaranteeTables } from "../lib/contracting-guarantees-
 import {
   authoritativeCumulativeBillAmounts,
   aggregateContractProgressAmounts,
+  contractingQuotedNet,
   priorCertifiedContractGross,
   calculateAdvanceRecoveryCents,
   type CertifiedContractProgressBill,
@@ -106,6 +107,7 @@ router.use((req, res, next) => {
 router.use(requirePermission("contracting", "view"));
 router.use(async (req, res, next) => {
   try {
+    await ensureContractingAccountingTables();
     // The central BOQ definition is managed by Publish; ensureSchema
     // reconciles columns and project integrity/trigger at startup. Execution
     // and guarantee tables are reconciled in that shared pass too. The server
@@ -2074,6 +2076,7 @@ router.post("/projects/:projectId/owner-contracts", async (req, res) => {
       retentionPercent: String(retentionPct),
       retentionCapPercent: String(retentionCapPct),
       vatPercent:       String(b.vatPercent ?? 15),
+      priceIncludesVat: b.priceIncludesVat === true,
       durationDays: Number(b.durationDays ?? 0),
       startDate: b.startDate ?? null,
       endDate:   b.endDate   ?? null,
@@ -2272,6 +2275,7 @@ router.put("/owner-contracts/:id", async (req, res) => {
     if (retentionPercentChanged) upd.retentionPercent = String(retentionPct);
     if (retentionCapChanged) upd.retentionCapPercent = String(retentionCapPct);
     if (b.vatPercent !== undefined) upd.vatPercent = String(b.vatPercent);
+    if (b.priceIncludesVat !== undefined) upd.priceIncludesVat = b.priceIncludesVat === true;
     const row = await db.transaction(async (tx) => {
       const [locked] = await tx.select({ id: contractingOwnerContractsTable.id })
         .from(contractingOwnerContractsTable)
@@ -2512,6 +2516,7 @@ router.post("/projects/:projectId/sub-contracts", async (req, res) => {
       retentionPercent: String(retentionPct),
       retentionCapPercent: String(retentionCapPct),
       vatPercent:       String(b.vatPercent ?? 15),
+      priceIncludesVat: b.priceIncludesVat === true,
       durationDays: Number(b.durationDays ?? 0),
       startDate: b.startDate ?? null,
       endDate:   b.endDate   ?? null,
@@ -2676,6 +2681,7 @@ router.put("/sub-contracts/:id", async (req, res) => {
     if (retentionPercentChanged) upd.retentionPercent = String(retentionPct);
     if (retentionCapChanged) upd.retentionCapPercent = String(retentionCapPct);
     if (b.vatPercent !== undefined) upd.vatPercent = String(b.vatPercent);
+    if (b.priceIncludesVat !== undefined) upd.priceIncludesVat = b.priceIncludesVat === true;
     const recoveryEnabledChanged = b.advanceRecoveryEnabled !== undefined;
     const recoveryPercentChanged = b.advanceRecoveryPercent !== undefined;
     const recoveryStartChanged = b.advanceRecoveryStartProgressPercent !== undefined || b.startProgressPercent !== undefined;
@@ -3647,6 +3653,30 @@ function aggregateProgressRequestedOnCreate(body: any): boolean {
  * bill-line allocation.  A contract's value is VAT-exclusive; approved
  * change orders are additive to the selected base contract only.
  */
+async function contractPriceSettings(
+  companyId: number, projectId: number, direction: BillDirection,
+  ownerContractId: number | null, subcontractorContractId: number | null,
+): Promise<{ priceIncludesVat: boolean; vatPercent: string }> {
+  if (direction === "incoming") {
+    const [row] = await db.select({ mode: contractingSubContractsTable.priceIncludesVat, vatPercent: contractingSubContractsTable.vatPercent })
+      .from(contractingSubContractsTable).where(and(
+        eq(contractingSubContractsTable.companyId, companyId),
+        eq(contractingSubContractsTable.projectId, projectId),
+        eq(contractingSubContractsTable.id, Number(subcontractorContractId)),
+      ));
+    if (!row) throw Object.assign(new Error("عقد الباطن غير صالح"), { status: 422 });
+    return { priceIncludesVat: row.mode, vatPercent: row.vatPercent };
+  }
+  const [row] = await db.select({ mode: contractingOwnerContractsTable.priceIncludesVat, vatPercent: contractingOwnerContractsTable.vatPercent })
+    .from(contractingOwnerContractsTable).where(and(
+      eq(contractingOwnerContractsTable.companyId, companyId),
+      eq(contractingOwnerContractsTable.projectId, projectId),
+      eq(contractingOwnerContractsTable.id, Number(ownerContractId)),
+    ));
+  if (!row) throw Object.assign(new Error("عقد المالك غير صالح"), { status: 422 });
+  return { priceIncludesVat: row.mode, vatPercent: row.vatPercent };
+}
+
 async function aggregateAdjustedContractValue(
   companyId: number,
   projectId: number,
@@ -3655,7 +3685,7 @@ async function aggregateAdjustedContractValue(
   subcontractorContractId: number | null,
 ): Promise<number> {
   if (direction === "incoming") {
-    const [contract] = await db.select({ value: contractingSubContractsTable.value })
+    const [contract] = await db.select({ value: contractingSubContractsTable.value, vatPercent: contractingSubContractsTable.vatPercent, priceIncludesVat: contractingSubContractsTable.priceIncludesVat })
       .from(contractingSubContractsTable)
       .where(and(
         eq(contractingSubContractsTable.id, Number(subcontractorContractId)),
@@ -3663,12 +3693,14 @@ async function aggregateAdjustedContractValue(
         eq(contractingSubContractsTable.projectId, projectId),
       ));
     if (!contract) throw Object.assign(new Error("عقد الباطن غير صالح لنطاق المستخلص"), { status: 422 });
-    return Number(contract.value ?? 0);
+    return Number(contractingQuotedNet(contract.value ?? 0, contract.vatPercent, contract.priceIncludesVat));
   }
 
   const [selected] = await db.select({
     id: contractingOwnerContractsTable.id,
     value: contractingOwnerContractsTable.value,
+    vatPercent: contractingOwnerContractsTable.vatPercent,
+    priceIncludesVat: contractingOwnerContractsTable.priceIncludesVat,
     contractType: contractingOwnerContractsTable.contractType,
     parentContractId: contractingOwnerContractsTable.parentContractId,
   }).from(contractingOwnerContractsTable).where(and(
@@ -3681,13 +3713,13 @@ async function aggregateAdjustedContractValue(
   const baseId = ["change_order", "addendum"].includes(String(selected.contractType))
     ? selected.parentContractId ?? selected.id
     : selected.id;
-  const [base] = await db.select({ value: contractingOwnerContractsTable.value })
+  const [base] = await db.select({ value: contractingOwnerContractsTable.value, vatPercent: contractingOwnerContractsTable.vatPercent, priceIncludesVat: contractingOwnerContractsTable.priceIncludesVat })
     .from(contractingOwnerContractsTable).where(and(
       eq(contractingOwnerContractsTable.id, baseId),
       eq(contractingOwnerContractsTable.companyId, companyId),
       eq(contractingOwnerContractsTable.projectId, projectId),
     ));
-  const children = await db.select({ value: contractingOwnerContractsTable.value })
+  const children = await db.select({ value: contractingOwnerContractsTable.value, vatPercent: contractingOwnerContractsTable.vatPercent, priceIncludesVat: contractingOwnerContractsTable.priceIncludesVat })
     .from(contractingOwnerContractsTable).where(and(
       eq(contractingOwnerContractsTable.companyId, companyId),
       eq(contractingOwnerContractsTable.projectId, projectId),
@@ -3695,8 +3727,9 @@ async function aggregateAdjustedContractValue(
       inArray(contractingOwnerContractsTable.contractType, ["change_order", "addendum"]),
       eq(contractingOwnerContractsTable.status, "approved"),
     ));
-  return Number(base?.value ?? selected.value ?? 0)
-    + children.reduce((sum, child) => sum + Number(child.value ?? 0), 0);
+  const primary = base ?? selected;
+  return Number(contractingQuotedNet(primary.value ?? 0, primary.vatPercent, primary.priceIncludesVat))
+    + children.reduce((sum, child) => sum + Number(contractingQuotedNet(child.value ?? 0, child.vatPercent, child.priceIncludesVat)), 0);
 }
 
 async function aggregatePriorAmounts(
@@ -4059,6 +4092,15 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       b.ownerContractId ? Number(b.ownerContractId) : null,
       b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
     );
+    if (b.priceIncludesVat !== undefined && typeof b.priceIncludesVat !== "boolean") {
+      res.status(422).json({ error: "خيار السعر شامل الضريبة غير صالح" }); return;
+    }
+    const contractPrice = await contractPriceSettings(
+      cid, projectId, direction,
+      b.ownerContractId ? Number(b.ownerContractId) : null,
+      b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
+    );
+    const priceIncludesVat = b.priceIncludesVat ?? contractPrice.priceIncludesVat;
 
     // Server-side computation. Client may send raw values; we recompute the
     // derived ones here so the math is consistent and tamper-resistant.
@@ -4076,7 +4118,10 @@ router.post("/projects/:projectId/bills", async (req, res) => {
         b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
       )
       : null;
-    let vatPct = b.vatPercent !== undefined ? Number(b.vatPercent) : 15;
+    let vatPct = b.vatPercent !== undefined ? Number(b.vatPercent) : Number(contractPrice.vatPercent);
+    if (!aggregateRequested && priceIncludesVat) {
+      gross = Number(contractingQuotedNet(b.grossAmount ?? 0, vatPct, true));
+    }
     let prevPaid = Number(b.previousPaid ?? 0);
     const requestedRetention = retEnabled
       ? Math.round((gross * retPct / 100) * 100) / 100
@@ -4127,13 +4172,13 @@ router.post("/projects/:projectId/bills", async (req, res) => {
         retentionEnabled: retEnabled,
         retentionPercent: retPct,
         retentionCapPercent: retCapPct,
-        vatPercent: b.vatPercent ?? 15,
+        vatPercent: vatPct,
       });
       gross = Number(aggregate.grossAmount);
       retEnabled = billRetentionSettings?.enabled ?? (b.retentionEnabled !== false);
       retPct = Number(billRetentionSettings?.percent ?? b.retentionPercent ?? 0);
       retCapPct = billRetentionSettings?.capPercent ?? (b.retentionCapPercent == null ? null : String(b.retentionCapPercent));
-      vatPct = b.vatPercent !== undefined ? Number(b.vatPercent) : 15;
+      vatPct = b.vatPercent !== undefined ? Number(b.vatPercent) : Number(contractPrice.vatPercent);
       prevPaid = Number(aggregate.previousPaid);
       retAmount = Number(aggregate.retentionAmount);
       dueAmount = Number(aggregate.dueAmount);
@@ -4161,6 +4206,7 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       previousPaid: String(prevPaid),
       dueAmount: String(dueAmount),
       vatPercent: String(vatPct),
+      priceIncludesVat,
       vatAmount: String(vatAmount),
       netAmount: String(netAmount),
       advanceRecoveryEnabled: billRecoverySettings.enabled,
@@ -4352,6 +4398,15 @@ router.put("/bills/:id", async (req, res) => {
       && numberChanged(b.progressPercent, cur.progressPercent);
     const contractChanged = numberChanged(finalOwnerContractId, cur.ownerContractId)
       || numberChanged(finalSubcontractorContractId, cur.subcontractorContractId);
+    if (b.priceIncludesVat !== undefined && typeof b.priceIncludesVat !== "boolean") {
+      res.status(422).json({ error: "خيار السعر شامل الضريبة غير صالح" }); return;
+    }
+    const priceIncludesVat = b.priceIncludesVat === undefined
+      ? contractChanged
+        ? (await contractPriceSettings(cid, cur.projectId, direction, finalOwnerContractId, finalSubcontractorContractId)).priceIncludesVat
+        : cur.priceIncludesVat
+      : b.priceIncludesVat;
+    if (contractChanged || b.priceIncludesVat !== undefined) upd.priceIncludesVat = priceIncludesVat;
     // Capture the policy when a draft first receives an exact contract link.
     // Existing drafts keep their original snapshot, so enabling recovery on a
     // contract cannot rewrite a legacy bill retroactively.
@@ -4437,6 +4492,10 @@ router.put("/bills/:id", async (req, res) => {
     // 15% — so editing a non-15% bill no longer silently rewrites its tax.
     const vatPct   = b.vatPercent       !== undefined ? Number(b.vatPercent)       : Number(cur.vatPercent ?? 15);
     upd.vatPercent = String(vatPct);
+    if (!aggregateRequested && priceIncludesVat && b.grossAmount !== undefined
+      && (numberChanged(b.grossAmount, cur.grossAmount) || b.priceIncludesVat !== undefined && b.priceIncludesVat !== cur.priceIncludesVat)) {
+      gross = Number(contractingQuotedNet(b.grossAmount, vatPct, true));
+    }
     const retentionCapBase = retCapPct == null
       || (finalOwnerContractId == null && finalSubcontractorContractId == null)
       ? null

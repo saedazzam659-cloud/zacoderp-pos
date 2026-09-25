@@ -235,6 +235,16 @@ function multiplyCentsByPercent(cents: bigint, percent: bigint): bigint {
   return (numerator + denominator / 2n) / denominator;
 }
 
+/** Invoice-style extraction, rounded half up to the nearest halala. */
+export function contractingQuotedNet(value: number | string, vatPercent: number | string, priceIncludesVat: boolean): string {
+  const quoted = scaledCents(value);
+  const rate = percentCents(vatPercent);
+  if (quoted < 0n || rate < 0n || rate > 10000n) throw new Error("السعر أو نسبة الضريبة غير صالح");
+  return centsString(priceIncludesVat
+    ? (quoted * 10000n + (10000n + rate) / 2n) / (10000n + rate)
+    : quoted);
+}
+
 /**
  * Server-authoritative cumulative certification math.  `priorGrossAmount`
  * and `priorRetentionAmount` are maxima/sums of certified bills for the

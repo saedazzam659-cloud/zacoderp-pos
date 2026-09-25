@@ -319,6 +319,7 @@ export const contractingOwnerContractsTable = pgTable(
     retentionPercent: numeric("retention_percent", { precision: 5,  scale: 2 }).notNull().default("5"),
     retentionCapPercent: numeric("retention_cap_percent", { precision: 5, scale: 2 }).notNull().default("100"),
     vatPercent:       numeric("vat_percent",       { precision: 5,  scale: 2 }).notNull().default("15"),
+    priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
     durationDays: integer("duration_days").notNull().default(0),
     startDate: date("start_date"),
     endDate:   date("end_date"),
@@ -375,6 +376,7 @@ export const contractingSubContractsTable = pgTable(
     retentionPercent: numeric("retention_percent", { precision: 5,  scale: 2 }).notNull().default("5"),
     retentionCapPercent: numeric("retention_cap_percent", { precision: 5, scale: 2 }).notNull().default("100"),
     vatPercent:       numeric("vat_percent",       { precision: 5,  scale: 2 }).notNull().default("15"),
+    priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
     durationDays: integer("duration_days").notNull().default(0),
     startDate: date("start_date"),
     endDate:   date("end_date"),
@@ -444,6 +446,7 @@ export const contractingProgressBillsTable = pgTable(
     previousPaid:    numeric("previous_paid",     { precision: 14, scale: 2 }).notNull().default("0"),
     dueAmount:       numeric("due_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     vatPercent:      numeric("vat_percent",       { precision: 5,  scale: 2 }).notNull().default("15"),
+    priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
     vatAmount:       numeric("vat_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     netAmount:       numeric("net_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     // Immutable recovery-policy and amount snapshots. Legacy bills remain

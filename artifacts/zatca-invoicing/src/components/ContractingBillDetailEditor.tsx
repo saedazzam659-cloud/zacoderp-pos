@@ -452,7 +452,9 @@ export default function ContractingBillDetailEditor({
       const payload = {
         boqLineId: selected.id,
         currentQty: line.currentQty,
-        currentValue: Number(line.currentQty || 0) * Number(selected.unitPrice || 0),
+        // Server derives canonical net from the quote and its VAT mode.
+        // Submitting a quoted (possibly inclusive) amount would fail the
+        // authoritative BOQ-value check.
         changeOrderId: line.changeOrderId || null,
         excessApproved: line.excessApproved,
         excessApprovalReason: line.excessApprovalReason,

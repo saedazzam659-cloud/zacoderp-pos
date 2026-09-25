@@ -10,6 +10,7 @@ import type { InvoiceData, PrepaymentAdjustment } from "./zatca-xml.js";
 import { assertWritableForDate } from "./periodGuard.js";
 import { fullAuditFor } from "./journalAudit.js";
 import { nextJeSubSequence } from "./sequences.js";
+import { contractingQuotedNet } from "./contracting-accounting-math.js";
 
 const rows = (r: any): any[] => Array.isArray(r) ? r : r?.rows ?? [];
 const fail = (message: string, status = 422): never => { throw Object.assign(new Error(message), { status }); };
@@ -47,6 +48,7 @@ const publicRow = (r: any) => ({
   ownerContractId: Number(r.owner_contract_id), billId: r.bill_id == null ? null : Number(r.bill_id),
   invoiceNumber: r.invoice_number, invoiceIssueDate: String(r.invoice_date).slice(0, 10),
   invoiceIssueTime: r.invoice_time, taxableAmount: r.taxable_amount, vatAmount: r.vat_amount,
+  priceIncludesVat: r.price_includes_vat === true, vatPercent: r.vat_percent,
   grossAmount: r.gross_amount, prepaymentAdjustments: r.prepayment_adjustments,
   zatcaStatus: r.status, zatcaUuid: r.zatca_uuid,
   xmlDownloadUrl:["cleared","reported"].includes(r.status)&&r.xml_content
@@ -56,28 +58,37 @@ const publicRow = (r: any) => ({
 /** No accounting movement: the later direct settlement or multi-receipt owns the only cash JE. */
 export async function createTaxableAdvance(input: {
   companyId: number; projectId: number; contractId: number; intentKey: string;
-  taxableAmount: string; invoiceDate: string; userId: number | null; req: any;
+  taxableAmount: string; priceIncludesVat?: boolean; invoiceDate: string; userId: number | null; req: any;
 }) {
   positiveId(input.companyId); positiveId(input.projectId); positiveId(input.contractId);
   await ensureContractingAccountingTables();
   if (!/^[\w:.-]{8,128}$/.test(input.intentKey)) fail("مفتاح نية سلفة ثابت (8–128 حرفاً) مطلوب");
-  const base = cents(input.taxableAmount);
-  if (base <= 0n) fail("قيمة السلفة الخاضعة للضريبة يجب أن تكون موجبة");
+  if (input.priceIncludesVat !== undefined && typeof input.priceIncludesVat !== "boolean")
+    fail("خيار السعر شامل الضريبة غير صالح");
+  const quoted = cents(input.taxableAmount);
+  if (quoted <= 0n) fail("قيمة السلفة الخاضعة للضريبة يجب أن تكون موجبة");
   date(input.invoiceDate);
   return db.transaction(async (tx) => {
     const c = await contractScope(tx, input.companyId, input.projectId, input.contractId, input.req, true);
-    if (c.status !== "approved") fail("اعتمد عقد المالك قبل إصدار فاتورة السلفة");
+    const inclusive = input.priceIncludesVat === true;
     const existing = rows(await tx.execute(sql`SELECT * FROM contracting_fiscal_invoices
       WHERE company_id=${input.companyId} AND intent_key=${input.intentKey}`))[0];
     if (existing) {
       if (existing.kind !== "advance" || Number(existing.project_id) !== input.projectId ||
           Number(existing.owner_contract_id) !== input.contractId ||
-          cents(existing.taxable_amount) !== base ||
+          existing.price_includes_vat !== inclusive ||
+          cents(inclusive ? existing.gross_amount : existing.taxable_amount) !== quoted ||
           String(existing.invoice_date).slice(0, 10) !== input.invoiceDate)
         fail("مفتاح النية مستخدم لفاتورة سلفة مختلفة", 409);
       return { ...publicRow(existing), idempotentReplay: true };
     }
-    if (Number(c.vat_percent) !== 15) fail("إصدار دفعات مقدمة ضريبية مدعوم فقط لعقود المالك ذات ضريبة 15%؛ لا تغيّر عقوداً قديمة تلقائياً");
+    if (c.status !== "approved") fail("اعتمد عقد المالك قبل إصدار فاتورة السلفة");
+    const base = cents(contractingQuotedNet(input.taxableAmount, c.vat_percent, inclusive));
+    if (base <= 0n) fail("مبلغ السلفة شامل الضريبة صغير جداً ولا يغطي أساساً ضريبياً");
+    const rate = cents(c.vat_percent);
+    if (rate !== 500n && rate !== 1500n)
+      fail("فاتورة السلفة الضريبية تدعم نسب ضريبة العقد 5% و15% فقط؛ لا تغيّر العقد أو تصدر مستنداً غير قابل للاعتماد");
+    const vat = inclusive ? quoted - base : (base * rate + 5000n) / 10000n;
     const used = rows(await tx.execute(sql`SELECT
       (SELECT COALESCE(SUM(amount),0) FROM contracting_accounting_settlements
        WHERE company_id=${input.companyId} AND owner_contract_id=${input.contractId}
@@ -91,16 +102,15 @@ export async function createTaxableAdvance(input: {
          AND f.kind='advance' AND f.status <> 'rejected') AS uncollected`))[0];
     if (base + cents(used.captured) + cents(used.uncollected) > cents(c.advance_payment))
       fail("فاتورة السلفة تتجاوز سقف سلفة العقد بعد الدفعات والفواتير المفتوحة");
-    const vat = (base * 15n + 50n) / 100n;
     const now = new Date();
     const invoiceTime = now.toISOString().slice(11, 19);
     const key = `CTG-ADV-${randomUUID()}`;
     const created = rows(await tx.execute(sql`INSERT INTO contracting_fiscal_invoices
       (company_id,project_id,owner_contract_id,intent_key,kind,invoice_number,
-       invoice_date,invoice_time,customer_id,taxable_amount,vat_amount,gross_amount,created_by)
+       invoice_date,invoice_time,customer_id,taxable_amount,price_includes_vat,vat_percent,vat_amount,gross_amount,created_by)
       VALUES (${input.companyId},${input.projectId},${input.contractId},${input.intentKey},
         'advance',${key},${input.invoiceDate},${invoiceTime},${c.customer_id},
-        ${amt(base)},${amt(vat)},${amt(base + vat)},${input.userId}) RETURNING *`))[0];
+        ${amt(base)},${inclusive},${c.vat_percent},${amt(vat)},${amt(base + vat)},${input.userId}) RETURNING *`))[0];
     return { ...publicRow(created), idempotentReplay: false };
   });
 }
@@ -203,9 +213,11 @@ export async function issueOwnerBillInvoice(input: {companyId: number; projectId
     if (existing) return { ...publicRow(existing), idempotentReplay: true };
     if (!["approved","posted","partially_paid","paid"].includes(bill.status) || bill.journal_status !== "posted" || bill.reversal_journal_entry_id)
       fail("يجب اعتماد وترحيل المستخلص قبل إصدار الفاتورة الضريبية");
-    if (Number(bill.vat_percent) !== 15) fail("إصدار فاتورة مستخلص مالك يتطلب ضريبة 15% على المستخلص");
+    const billRate = cents(bill.vat_percent);
+    if (billRate !== 500n && billRate !== 1500n)
+      fail("فاتورة المستخلص الضريبية تدعم نسب الضريبة 5% و15% فقط");
     const applications = rows(await tx.execute(sql`SELECT s.amount,s.taxable_vat_amount,s.taxable_advance_invoice_id,
-      f.invoice_number,f.invoice_date,f.invoice_time,f.status,f.taxable_amount,f.vat_amount
+      f.invoice_number,f.invoice_date,f.invoice_time,f.status,f.taxable_amount,f.vat_amount,f.vat_percent
       FROM contracting_accounting_settlements s
       JOIN contracting_accounting_settlements source ON source.id=s.source_settlement_id
         AND source.company_id=s.company_id AND source.status='posted'
@@ -228,35 +240,40 @@ export async function issueOwnerBillInvoice(input: {companyId: number; projectId
     for (const a of applications) {
       if (!["cleared","reported"].includes(a.status) || String(a.invoice_date).slice(0,10) > String(bill.bill_date).slice(0,10))
         fail("يجب قبول فاتورة السلفة الأصلية بتاريخ سابق أو مساوٍ للمستخلص", 409);
-      if (cents(a.taxable_vat_amount) !== (cents(a.amount) * cents(a.vat_amount) + cents(a.taxable_amount)/2n) / cents(a.taxable_amount)
-        && cents(a.amount) !== cents(a.taxable_amount)) fail("مبلغ ضريبة الاسترداد لا يطابق الفاتورة الأصلية",409);
+      if (cents(a.amount) <= 0n || cents(a.taxable_vat_amount) > cents(a.vat_amount)
+        || cents(a.amount) > cents(a.taxable_amount))
+        fail("مبالغ استرداد السلفة الضريبية غير صالحة أو تتجاوز فاتورة السلفة الأصلية",409);
       const prior=grouped.get(Number(a.taxable_advance_invoice_id));
       grouped.set(Number(a.taxable_advance_invoice_id),{
         invoiceNumber:a.invoice_number,invoiceIssueDate:String(a.invoice_date).slice(0,10),
         invoiceIssueTime:a.invoice_time,
         taxableAmount:amt(cents(a.amount)+(prior?cents(prior.taxableAmount):0n)),
         taxAmount:amt(cents(a.taxable_vat_amount)+(prior?cents(prior.taxAmount):0n)),
-        taxCategory:"S",taxPercent:"15.00",
+        taxCategory:"S",taxPercent:a.vat_percent,
       });
     }
     const adjustments=[...grouped.values()];
-    for (const a of adjustments)
-      if (cents(a.taxAmount)!==(cents(a.taxableAmount)*15n+50n)/100n)
-        fail("ضريبة الاسترداد المجمّعة لا تتطابق مع فاتورة السلفة الأصلية",409);
+    for (const [sourceId, a] of grouped) {
+      const source = applications.find(row => Number(row.taxable_advance_invoice_id) === sourceId);
+      if (!source || cents(a.taxableAmount) > cents(source.taxable_amount)
+        || cents(a.taxAmount) > cents(source.vat_amount)
+        || cents(a.taxAmount) !== (cents(a.taxableAmount) * cents(a.taxPercent) + 5000n) / 10000n)
+        fail("مبالغ استرداد السلفة لا تطابق نسبة الفاتورة الأصلية بالتقريب الدقيق؛ اختر مبلغ استرداد قابل للتمثيل",409);
+    }
     const base = cents(bill.gross_amount) - cents(bill.previous_paid);
     const vat = cents(bill.vat_amount);
-    if (base <= 0n || vat !== (base * 15n + 50n) / 100n)
-      fail("ضريبة المستخلص المخزنة لا تطابق 15% من وعائه قبل المحتجز؛ لا يمكن إعادة تسعير مستخلص معتمد تلقائياً. يلزم مسار تصحيح واعتماد محاسبي وضريبي منفصل قبل إصدار 388",409);
+    if (base <= 0n || vat !== (base * billRate + 5000n) / 10000n)
+      fail("ضريبة المستخلص المخزنة لا تطابق نسبة الضريبة المسجلة من وعائه قبل المحتجز؛ لا يمكن إعادة تسعير مستخلص معتمد تلقائياً. يلزم مسار تصحيح منفصل",409);
     if (adjustments.reduce((s,a)=>s+cents(a.taxableAmount)+cents(a.taxAmount),0n) > base + vat)
       fail("تطبيق السلفة الضريبية يتجاوز إجمالي المستخلص",409);
     const now = new Date();
     const number = `CTG-BILL-${randomUUID()}`;
     const issued = rows(await tx.execute(sql`INSERT INTO contracting_fiscal_invoices
       (company_id,project_id,owner_contract_id,bill_id,kind,invoice_number,invoice_date,
-       invoice_time,customer_id,taxable_amount,vat_amount,gross_amount,prepayment_adjustments,created_by)
+       invoice_time,customer_id,taxable_amount,price_includes_vat,vat_percent,vat_amount,gross_amount,prepayment_adjustments,created_by)
       VALUES (${input.companyId},${input.projectId},${bill.owner_contract_id},${input.billId},
         'bill',${number},${String(bill.bill_date).slice(0,10)},${now.toISOString().slice(11,19)},
-        ${c.customer_id},${amt(base)},${amt(vat)},${amt(base+vat)},${JSON.stringify(adjustments)}::jsonb,
+        ${c.customer_id},${amt(base)},${bill.price_includes_vat === true},${bill.vat_percent},${amt(vat)},${amt(base+vat)},${JSON.stringify(adjustments)}::jsonb,
         ${input.userId}) RETURNING *`))[0];
     return { ...publicRow(issued), idempotentReplay:false };
   });
@@ -304,7 +321,7 @@ export async function submitContractingFiscalInvoice(companyId: number, id: numb
       invoiceCounterValue:chain.maxIcv+1,previousInvoiceHash:chain.previousInvoiceHash,
       lineItems:[{id:1,description:f.kind==="advance"?"دفعة مقدمة لعقد المالك":"قيمة الأعمال المعتمدة قبل المحتجز",
         quantity:"1",unitCode:"PCE",unitPrice:v(f.taxable_amount),discountAmount:"0.00",
-        taxCategory:"S",vatRate:"15.00",vatAmount:v(f.vat_amount),
+        taxCategory:"S",vatRate:v(f.vat_percent),vatAmount:v(f.vat_amount),
         subtotal:v(f.taxable_amount),total:v(f.gross_amount)}],
       company:{nameAr:v(company.nameAr),nameEn:company.nameEn,vatNumber:v(company.vatNumber),
         crNumber:v(company.crNumber),street:v(company.street),buildingNumber:v(company.buildingNumber),

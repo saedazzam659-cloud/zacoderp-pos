@@ -61,6 +61,7 @@ import {
   contractingBillAmounts,
   contractingBillRoleLines,
   authoritativeCumulativeBillAmounts,
+  contractingQuotedNet,
   calculateAdvanceRecoveryCents,
   autoRecoveryApplicationIdempotencyKey,
   isNewContractingApprovalStatus,
@@ -566,7 +567,7 @@ export async function certifyBillAmounts(tx: Executor, companyId: number, bill: 
     ? "contracting_sub_contracts"
     : "contracting_owner_contracts";
   const contract = await tx.execute(sql`
-    SELECT id, value, contract_type, parent_contract_id
+    SELECT id, value, vat_percent, price_includes_vat, contract_type, parent_contract_id
       FROM ${sql.raw(contractTable)}
      WHERE id = ${contractId}
        AND company_id = ${companyId}
@@ -575,20 +576,21 @@ export async function certifyBillAmounts(tx: Executor, companyId: number, bill: 
   `);
   const lockedContract = resultRows(contract)[0];
   if (!lockedContract) throw failure("العقد المرتبط بالمستخلص غير موجود في نفس الشركة والمشروع", 422);
-  let adjustedContractValue = n(lockedContract.value);
+  let adjustedContractValue = n(contractingQuotedNet(lockedContract.value, lockedContract.vat_percent, lockedContract.price_includes_vat));
   if (bill.direction === "outgoing") {
     const baseId = ["change_order", "addendum"].includes(String(lockedContract.contract_type))
       ? Number(lockedContract.parent_contract_id ?? lockedContract.id)
       : Number(lockedContract.id);
     const baseResult = await tx.execute(sql`
-      SELECT value
+      SELECT value, vat_percent, price_includes_vat
         FROM contracting_owner_contracts
        WHERE id = ${baseId}
          AND company_id = ${companyId}
          AND project_id = ${bill.projectId}
     `);
     const childrenResult = await tx.execute(sql`
-      SELECT COALESCE(SUM(value), 0) AS value
+      SELECT COALESCE(SUM(CASE WHEN price_includes_vat
+        THEN ROUND(value / (1 + vat_percent / 100), 2) ELSE value END), 0) AS value
         FROM contracting_owner_contracts
        WHERE company_id = ${companyId}
          AND project_id = ${bill.projectId}
@@ -596,7 +598,9 @@ export async function certifyBillAmounts(tx: Executor, companyId: number, bill: 
          AND contract_type IN ('change_order', 'addendum')
          AND status = 'approved'
     `);
-    adjustedContractValue = n(resultRows(baseResult)[0]?.value ?? lockedContract.value)
+    adjustedContractValue = n(resultRows(baseResult)[0]
+      ? contractingQuotedNet(resultRows(baseResult)[0].value, resultRows(baseResult)[0].vat_percent, resultRows(baseResult)[0].price_includes_vat)
+      : contractingQuotedNet(lockedContract.value, lockedContract.vat_percent, lockedContract.price_includes_vat))
       + n(resultRows(childrenResult)[0]?.value);
   }
 
@@ -1005,30 +1009,33 @@ async function previewApprovedBase(
     ? "contracting_sub_contracts"
     : "contracting_owner_contracts";
   const contract = await executor.execute(sql`
-    SELECT value, contract_type, parent_contract_id
+    SELECT value, vat_percent, price_includes_vat, contract_type, parent_contract_id
       FROM ${sql.raw(contractTable)}
      WHERE id = ${contractId} AND company_id = ${companyId} AND project_id = ${projectId}
   `);
   const row = resultRows(contract)[0];
   if (!row) throw failure("العقد المرتبط بالمستخلص غير موجود في نفس الشركة والمشروع", 422);
-  let adjustedContractValue = n(row.value);
+  let adjustedContractValue = n(contractingQuotedNet(row.value, row.vat_percent, row.price_includes_vat));
   if (bill?.direction !== "incoming") {
     const baseId = ["change_order", "addendum"].includes(String(row.contract_type))
       ? Number(row.parent_contract_id ?? contractId)
       : contractId;
     const base = await executor.execute(sql`
-      SELECT value FROM contracting_owner_contracts
+      SELECT value, vat_percent, price_includes_vat FROM contracting_owner_contracts
        WHERE id = ${baseId} AND company_id = ${companyId} AND project_id = ${projectId}
     `);
     const children = await executor.execute(sql`
-      SELECT COALESCE(SUM(value), 0) AS value
+      SELECT COALESCE(SUM(CASE WHEN price_includes_vat
+        THEN ROUND(value / (1 + vat_percent / 100), 2) ELSE value END), 0) AS value
         FROM contracting_owner_contracts
        WHERE company_id = ${companyId} AND project_id = ${projectId}
          AND parent_contract_id = ${baseId}
          AND contract_type IN ('change_order', 'addendum')
          AND status = 'approved'
     `);
-    adjustedContractValue = n(resultRows(base)[0]?.value ?? row.value)
+    adjustedContractValue = n(resultRows(base)[0]
+      ? contractingQuotedNet(resultRows(base)[0].value, resultRows(base)[0].vat_percent, resultRows(base)[0].price_includes_vat)
+      : contractingQuotedNet(row.value, row.vat_percent, row.price_includes_vat))
       + n(resultRows(children)[0]?.value);
   }
   const contractColumn = bill?.direction === "incoming"
@@ -1352,7 +1359,8 @@ async function applyAdvanceTx(input: {
     originalTaxJournalId = Number(invoice.journal_entry_id);
   }
   // Compute from cumulative source consumption; the final application absorbs
-  // the remainder. A slice that cannot be expressed at 15% is rejected.
+  // the remainder. A slice that cannot be expressed at the frozen invoice
+  // rate is rejected rather than manufacturing VAT with a different rate.
   let vatCents=0n;
   if (taxable) {
     try {vatCents=taxableAdvanceRecoverySlice({
@@ -2255,6 +2263,10 @@ async function clonePostedCorrectionTx(
       companyId: line.companyId, projectId: line.projectId, billId: draft.id,
       workItemId: line.workItemId, boqLineId: line.boqLineId,
       unitSnapshot: line.unitSnapshot, unitPriceSnapshot: line.unitPriceSnapshot,
+      quotedUnitPriceSnapshot: line.quotedUnitPriceSnapshot,
+      quotedVatPercentSnapshot: line.quotedVatPercentSnapshot,
+      quotedPriceIncludesVatSnapshot: line.quotedPriceIncludesVatSnapshot,
+      quotedPriceComponentsSnapshot: line.quotedPriceComponentsSnapshot,
       changeOrderId: line.changeOrderId, changeOrderSubcontractId: line.changeOrderSubcontractId,
       previousQty: line.previousQty, currentQty: line.currentQty, cumulativeQty: line.cumulativeQty,
       previousValue: line.previousValue, currentValue: line.currentValue, cumulativeValue: line.cumulativeValue,

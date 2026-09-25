@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import {
   authoritativeCumulativeBillAmounts,
+  contractingQuotedNet,
   aggregateContractProgressAmounts,
   calculateAdvanceRecoveryCents,
   autoRecoveryApplicationIdempotencyKey,
@@ -50,6 +51,29 @@ function totals(lines: Array<{ debit: string; credit: string }>) {
     { debit: 0, credit: 0 },
   );
 }
+
+test("invoice-style inclusive quotes retain gross and certify only current net work at the configured rate", () => {
+  assert.equal(contractingQuotedNet("115000.00", "15.00", true), "100000.00");
+  assert.equal(contractingQuotedNet("100000.00", "15.00", true), "86956.52");
+  assert.equal(contractingQuotedNet("100000.00", "15.00", false), "100000.00");
+  assert.equal(contractingQuotedNet("105000.00", "5.00", true), "100000.00");
+  const certified = authoritativeCumulativeBillAmounts({
+    direction: "outgoing",
+    grossAmount: contractingQuotedNet("115000.00", "15.00", true),
+    priorGrossAmount: "0.00", priorRetentionAmount: "0.00",
+    retentionEnabled: true, retentionPercent: "5.00", vatPercent: "15.00",
+  });
+  assert.equal(certified.vatAmount, "15000.00");
+  assert.equal(certified.retentionAmount, "5000.00");
+  assert.equal(certified.netAmount, "110000.00");
+  const second = authoritativeCumulativeBillAmounts({
+    direction: "incoming",
+    grossAmount: "100000.00", priorGrossAmount: "50000.00",
+    priorRetentionAmount: "2500.00",
+    retentionEnabled: true, retentionPercent: "5.00", vatPercent: "5.00",
+  });
+  assert.equal(second.vatAmount, "2500.00");
+});
 
 test("approved outgoing bill amounts balance and reversal swaps every side", () => {
   const lines = contractingBillRoleLines({

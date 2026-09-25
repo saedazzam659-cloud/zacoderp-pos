@@ -15,8 +15,9 @@ export function taxableAdvanceReceiptSlice(input:{
     ? invoiceBase : ((captured+gross)*invoiceBase+invoiceGross/2n)/invoiceGross;
   const base=targetBase-previousBase;
   const vat=gross-base;
-  if (base<=0n || vat<0n || vat!==(base*15n+50n)/100n)
-    throw new Error("مبلغ القبض المجزأ لا يتوافق مع تقريب ضريبة 15%؛ اختر مبلغاً آخر");
+  if (base<=0n || vat<0n || base>invoiceBase-previousBase || vat>invoiceVat-previousVat
+    || vat!==(base*invoiceVat+invoiceBase/2n)/invoiceBase)
+    throw new Error("مبلغ القبض المجزأ لا يتوافق مع تقريب ضريبة الفاتورة الأصلية؛ اختر مبلغاً آخر");
   return {base,vat};
 }
 
@@ -32,7 +33,8 @@ export function taxableAdvanceRecoverySlice(input:{
   const targetVat=previousBase+base===sourceBase
     ? sourceVat : ((previousBase+base)*sourceVat+sourceBase/2n)/sourceBase;
   const vat=targetVat-previousVat;
-  if (vat<0n || vat!==(base*15n+50n)/100n)
-    throw new Error("مبلغ استرداد السلفة المجزأ لا يتوافق مع تقريب ضريبة 15%؛ اختر مبلغاً آخر");
+  if (vat<0n || vat>sourceVat-previousVat
+    || vat!==(base*sourceVat+sourceBase/2n)/sourceBase)
+    throw new Error("مبلغ استرداد السلفة المجزأ يتجاوز ضريبة السلفة الأصلية");
   return vat;
 }

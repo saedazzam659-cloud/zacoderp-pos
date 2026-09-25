@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   date,
   foreignKey,
@@ -184,6 +185,8 @@ export const contractingAccountingSettlementsTable = pgTable(
  * Accepted 386 invoices own their distinct tax-point receivable/liability/VAT JE;
  * the later contracting receipt clears that receivable with one cash JE. */
 export const contractingFiscalInvoicesTable = pgTable("contracting_fiscal_invoices", {
+  priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
+  vatPercent: numeric("vat_percent", { precision: 5, scale: 2 }).notNull().default("15"),
   id: serial("id").primaryKey(),
   companyId: integer("company_id").notNull(),
   projectId: integer("project_id").notNull(),

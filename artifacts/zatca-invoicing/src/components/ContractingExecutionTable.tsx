@@ -45,7 +45,13 @@ export default function ContractingExecutionTable({
             <TableRow className="border-b-0">
               <TableCell className="min-w-52">
                 <div className="font-semibold">{row.boqLineCode || row.workItemCode} {row.workItemName || "بند سابق"}</div>
-                <div className="text-xs text-muted-foreground">{row.unitSnapshot || row.unit || "—"} · سعر العقد: {money(Number(row.unitPriceSnapshot ?? row.boqUnitPrice ?? 0))}</div>
+                <div className="text-xs text-muted-foreground">{row.unitSnapshot || row.unit || "—"} · سعر العرض الفعّال {row.quotedPriceComponentsSnapshot?.length && row.quotedPriceComponentsSnapshot.length > 1
+                  ? "(أجزاء بنسب ضريبية مستقلة)" : row.boqPriceIncludesVat ? "(شامل الضريبة)" : "(قبل الضريبة)"}: {money(row.quotedPriceComponentsSnapshot?.length
+                  ? row.quotedPriceComponentsSnapshot.reduce((sum, part) => sum + Number(part.unitPrice), 0)
+                  : Number(row.boqUnitPrice ?? row.unitPriceSnapshot ?? 0))}
+                  {row.quotedPriceComponentsSnapshot?.length && row.unitPriceSnapshot != null
+                    ? ` · سعر الوحدة الصافي التقريبي: ${money(Number(row.unitPriceSnapshot))} (الاعتماد من إجمالي السطر قبل التقريب)` : ""}
+                </div>
                 {row.boqLineId == null && <div className="text-xs text-amber-700">سجل قديم — لا ربط تلقائي</div>}
                 {renderVariation?.(row)}
               </TableCell>

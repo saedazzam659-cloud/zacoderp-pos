@@ -81,6 +81,7 @@ router.post("/projects/:projectId/owner-contracts/:contractId/taxable-advances",
     try { return res.status(201).json(await createTaxableAdvance({companyId:cid,
       projectId:Number(req.params.projectId),contractId:Number(req.params.contractId),
       intentKey:String(req.body?.intentKey ?? ""), taxableAmount:String(req.body?.taxableAmount ?? ""),
+      priceIncludesVat: req.body?.priceIncludesVat,
       invoiceDate:String(req.body?.invoiceDate ?? ""),userId:userId(req),req})); }
     catch(e){return fail(res,e);}
   });

@@ -31,13 +31,15 @@ import type { AuthUser } from "../middleware/auth.js";
 import { ensureContractingBoqTables } from "./contracting-boq-service.js";
 import { ensureContractingAccountingTables } from "./contracting-accounting-storage.js";
 import { getContractingSettings } from "./contracting-settings.js";
-import { calculateAdvanceRecoveryCents } from "./contracting-accounting-math.js";
+import { calculateAdvanceRecoveryCents, contractingQuotedNet } from "./contracting-accounting-math.js";
 import {
   calculateSignedContractingBillNet,
   sumExactCents,
 } from "./contracting-bill-adjustment-math.js";
 import {
   calculateBoqCertification,
+  quotedBoqNetValue,
+  quotedBoqComponentsNet,
   pendingValueForBoqLines,
   type BoqCertificationResult,
   type CertificationPriorLine,
@@ -126,6 +128,10 @@ export function ensureContractingBillDetailsTables(): Promise<void> {
         boq_line_id INTEGER REFERENCES contracting_contract_boq_lines(id) ON DELETE SET NULL,
         unit_snapshot TEXT,
         unit_price_snapshot NUMERIC(14,2),
+        quoted_unit_price_snapshot NUMERIC(14,2),
+        quoted_vat_percent_snapshot NUMERIC(5,2),
+        quoted_price_includes_vat_snapshot BOOLEAN,
+        quoted_price_components_snapshot JSONB,
         change_order_subcontract_id INTEGER REFERENCES contracting_sub_contracts(id) ON DELETE SET NULL,
         previous_qty NUMERIC(14,4) NOT NULL DEFAULT 0 CHECK (previous_qty >= 0),
         current_qty NUMERIC(14,4) NOT NULL DEFAULT 0 CHECK (current_qty >= 0),
@@ -162,6 +168,12 @@ export function ensureContractingBillDetailsTables(): Promise<void> {
       ALTER TABLE contracting_bill_lines
         ADD COLUMN IF NOT EXISTS unit_price_snapshot NUMERIC(14,2)
     `);
+    await db.execute(sql`ALTER TABLE contracting_bill_lines
+      ADD COLUMN IF NOT EXISTS quoted_unit_price_snapshot NUMERIC(14,2),
+      ADD COLUMN IF NOT EXISTS quoted_vat_percent_snapshot NUMERIC(5,2),
+      ADD COLUMN IF NOT EXISTS quoted_price_includes_vat_snapshot BOOLEAN`);
+    await db.execute(sql`ALTER TABLE contracting_bill_lines
+      ADD COLUMN IF NOT EXISTS quoted_price_components_snapshot JSONB`);
     await db.execute(sql`
       ALTER TABLE contracting_bill_lines
         ADD COLUMN IF NOT EXISTS change_order_subcontract_id INTEGER
@@ -655,7 +667,8 @@ async function calculateLineCertification(
   companyId: number,
   bill: typeof contractingProgressBillsTable.$inferSelect,
   boqLineId: number,
-  unitPrice: number,
+  terms: { unitPrice: number; quotedUnitPrice: number | null; quotedVatPercent: string; quotedPriceIncludesVat: boolean;
+    quotedPriceComponents: Array<{unitPrice: string; vatPercent: string; priceIncludesVat: boolean}> | null },
   input: {
     currentQty: number;
     contractQuantity?: number;
@@ -675,7 +688,11 @@ async function calculateLineCertification(
   );
   return calculateBoqCertification({
     currentQty: input.currentQty,
-    unitPrice,
+    unitPrice: terms.unitPrice,
+    quotedUnitPrice: terms.quotedUnitPrice,
+    quotedVatPercent: terms.quotedVatPercent,
+    quotedPriceIncludesVat: terms.quotedPriceIncludesVat,
+    quotedPriceComponents: terms.quotedPriceComponents,
     contractQuantity: input.contractQuantity,
     certificationPercent: input.certificationPercent as any,
     priorPendingCertifiedValue: input.priorPendingCertifiedValue as any,
@@ -761,8 +778,24 @@ async function effectiveBoqTerms(
   changeOrderId: number | null,
   changeOrderSubcontractId: number | null,
 ) {
+  const contractTable = bill.direction === "incoming" ? "contracting_sub_contracts" : "contracting_owner_contracts";
+  const quoteToNet = async (quoted: number, contractId: number | null) => {
+    if (!contractId) return { net: quoted, rate: "0.00", inclusive: false };
+    const result = await db.execute(sql`SELECT vat_percent, price_includes_vat
+      FROM ${sql.raw(contractTable)} WHERE company_id=${companyId} AND project_id=${bill.projectId} AND id=${contractId}`);
+    const contract = (Array.isArray(result) ? result : result.rows ?? [])[0] as any;
+    if (!contract) throw error("عقد سعر سطر الكميات غير موجود");
+    return { net: Math.sign(quoted) * Number(contractingQuotedNet(Math.abs(quoted).toFixed(2), contract.vat_percent, contract.price_includes_vat)),
+      rate: String(contract.vat_percent), inclusive: contract.price_includes_vat === true };
+  };
+  const basePrice = await quoteToNet(Number(baseLine.unitPrice),
+    bill.direction === "incoming" ? baseLine.subcontractorContractId : baseLine.ownerContractId);
   if (changeOrderId == null && changeOrderSubcontractId == null) {
-    return { quantity: Number(baseLine.quantity), unitPrice: Number(baseLine.unitPrice) };
+    return { quantity: Number(baseLine.quantity), unitPrice: basePrice.net,
+      quotedUnitPrice: Number(baseLine.unitPrice), quotedVatPercent: basePrice.rate,
+      quotedPriceIncludesVat: basePrice.inclusive,
+      quotedPriceComponents: basePrice.inclusive ? [{ unitPrice: Number(baseLine.unitPrice).toFixed(2),
+        vatPercent: basePrice.rate, priceIncludesVat: true }] : null };
   }
   const [changeLine] = await db.select().from(contractingContractBoqLinesTable).where(and(
     eq(contractingContractBoqLinesTable.companyId, companyId),
@@ -777,13 +810,25 @@ async function effectiveBoqTerms(
   const delta = changeLine.quantityDelta == null
     ? Number(changeLine.quantity)
     : Number(changeLine.quantityDelta);
+  const changedQuote = await quoteToNet(Number(changeLine.unitPriceDelta ?? changeLine.unitPriceOverride ?? changeLine.unitPrice),
+    bill.direction === "incoming" ? changeLine.subcontractorContractId : changeLine.ownerContractId);
+  const combinedQuote = changeLine.unitPriceDelta == null ? Number(changeLine.unitPriceOverride ?? changeLine.unitPrice)
+    : Number(baseLine.unitPrice) + Number(changeLine.unitPriceDelta);
+  const homogeneous = changeLine.unitPriceDelta == null || basePrice.rate === changedQuote.rate && basePrice.inclusive === changedQuote.inclusive;
   return {
     quantity: Math.max(0, Number(baseLine.quantity) + delta),
     unitPrice: changeLine.unitPriceDelta != null
-      ? Math.max(0, Number(baseLine.unitPrice) + Number(changeLine.unitPriceDelta))
-      : changeLine.unitPriceOverride == null
-        ? Number(changeLine.unitPrice)
-        : Number(changeLine.unitPriceOverride),
+      ? Math.max(0, basePrice.net + changedQuote.net) : changedQuote.net,
+    quotedUnitPrice: homogeneous ? combinedQuote : null,
+    quotedVatPercent: changedQuote.rate,
+    quotedPriceIncludesVat: homogeneous && changedQuote.inclusive,
+    quotedPriceComponents: basePrice.inclusive || changedQuote.inclusive
+      ? (changeLine.unitPriceDelta == null
+        ? [{ unitPrice: combinedQuote.toFixed(2), vatPercent: changedQuote.rate, priceIncludesVat: changedQuote.inclusive }]
+        : [{ unitPrice: Number(baseLine.unitPrice).toFixed(2), vatPercent: basePrice.rate, priceIncludesVat: basePrice.inclusive },
+          { unitPrice: Number(changeLine.unitPriceDelta).toFixed(2), vatPercent: changedQuote.rate,
+            priceIncludesVat: changedQuote.inclusive }])
+      : null,
   };
 }
 
@@ -971,14 +1016,18 @@ async function contractCeiling(
   changeOrderId: number | null = null,
 ) {
   if (bill.direction === "incoming" && bill.subcontractorContractId) {
-    const [contract] = await db.select({ value: contractingSubContractsTable.value })
+    const [contract] = await db.select({
+      value: contractingSubContractsTable.value,
+      vatPercent: contractingSubContractsTable.vatPercent,
+      priceIncludesVat: contractingSubContractsTable.priceIncludesVat,
+    })
       .from(contractingSubContractsTable)
       .where(and(
         eq(contractingSubContractsTable.id, bill.subcontractorContractId),
         eq(contractingSubContractsTable.companyId, companyId),
         eq(contractingSubContractsTable.projectId, bill.projectId),
       ));
-    const value = Number(contract?.value ?? 0);
+    const value = contract ? Number(contractingQuotedNet(contract.value, contract.vatPercent, contract.priceIncludesVat)) : 0;
     return { total: value, bucket: value };
   }
   if (bill.direction === "outgoing") {
@@ -988,6 +1037,8 @@ async function contractCeiling(
       contractType: contractingOwnerContractsTable.contractType,
       status: contractingOwnerContractsTable.status,
       value: contractingOwnerContractsTable.value,
+      vatPercent: contractingOwnerContractsTable.vatPercent,
+      priceIncludesVat: contractingOwnerContractsTable.priceIncludesVat,
     }).from(contractingOwnerContractsTable).where(and(
       eq(contractingOwnerContractsTable.companyId, companyId),
       eq(contractingOwnerContractsTable.projectId, bill.projectId),
@@ -1009,11 +1060,14 @@ async function contractCeiling(
           ? contract.id === changeOrderId
           : baseId != null && contract.parentContractId === baseId),
       );
-      const total = Number(base?.value ?? 0) + approvedOrders
-        .reduce((sum, contract) => sum + Number(contract.value), 0);
+      const net = (contract: typeof contracts[number]) =>
+        Number(contractingQuotedNet(contract.value, contract.vatPercent, contract.priceIncludesVat));
+      const total = (base ? net(base) : 0) + approvedOrders
+        .reduce((sum, contract) => sum + net(contract), 0);
       const bucket = changeOrderId == null
         ? total
-        : Number(approvedOrders.find((contract) => contract.id === changeOrderId)?.value ?? 0);
+        : approvedOrders.find((contract) => contract.id === changeOrderId)
+          ? net(approvedOrders.find((contract) => contract.id === changeOrderId)!) : 0;
       return { total, bucket };
     }
   }
@@ -1080,10 +1134,16 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
        boqLineCode: contractingContractBoqLinesTable.lineCode,
        boqLineDescription: contractingContractBoqLinesTable.description,
        boqUnitPrice: contractingContractBoqLinesTable.unitPrice,
+       boqOwnerContractId: contractingContractBoqLinesTable.ownerContractId,
+       boqSubcontractorContractId: contractingContractBoqLinesTable.subcontractorContractId,
        contractQty: contractingContractBoqLinesTable.quantity,
        contractAmount: contractingContractBoqLinesTable.totalAmount,
        unitSnapshot: contractingBillLinesTable.unitSnapshot,
        unitPriceSnapshot: contractingBillLinesTable.unitPriceSnapshot,
+       quotedUnitPriceSnapshot: contractingBillLinesTable.quotedUnitPriceSnapshot,
+       quotedVatPercentSnapshot: contractingBillLinesTable.quotedVatPercentSnapshot,
+       quotedPriceIncludesVatSnapshot: contractingBillLinesTable.quotedPriceIncludesVatSnapshot,
+       quotedPriceComponentsSnapshot: contractingBillLinesTable.quotedPriceComponentsSnapshot,
        changeOrderNumber: sql<string | null>`COALESCE(${contractingOwnerContractsTable.contractNumber}, ${contractingSubContractsTable.contractNumber})`,
        changeOrderValue: sql<string | null>`COALESCE(${contractingOwnerContractsTable.value}, ${contractingSubContractsTable.value})`,
        changeOrderStatus: sql<string | null>`COALESCE(${contractingOwnerContractsTable.status}, ${contractingSubContractsTable.status})`,
@@ -1166,6 +1226,8 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
     db.select({
       id: contractingContractBoqLinesTable.id,
       projectId: contractingContractBoqLinesTable.projectId,
+      ownerContractId: contractingContractBoqLinesTable.ownerContractId,
+      subcontractorContractId: contractingContractBoqLinesTable.subcontractorContractId,
       workItemId: contractingContractBoqLinesTable.workItemId,
       lineCode: contractingContractBoqLinesTable.lineCode,
       description: contractingContractBoqLinesTable.description,
@@ -1195,6 +1257,9 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
   const lines = [...storedLines] as any[];
   const storedByBoq = new Set(storedLines.map((line) => line.boqLineId).filter((id): id is number => id != null));
   for (const line of lines) {
+    line.boqPriceIncludesVat = bill.direction === "incoming"
+      ? subContracts.find(c => c.id === line.boqSubcontractorContractId)?.priceIncludesVat === true
+      : ownerContracts.find(c => c.id === line.boqOwnerContractId)?.priceIncludesVat === true;
     if (line.boqLineId != null && line.contractQty != null) {
       const previous = await priorBoqTotals(companyId, bill, line.boqLineId, line.id ?? undefined);
        const priorCertificationLines = await priorBoqCertificationLines(
@@ -1213,6 +1278,10 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
        const certification = calculateBoqCertification({
          currentQty,
          unitPrice,
+          quotedUnitPrice: line.quotedUnitPriceSnapshot,
+          quotedVatPercent: line.quotedVatPercentSnapshot,
+          quotedPriceIncludesVat: line.quotedPriceIncludesVatSnapshot === true,
+          quotedPriceComponents: line.quotedPriceComponentsSnapshot as any,
          certificationPercent: line.certificationPercent,
          priorPendingCertifiedValue: line.priorPendingCertifiedValue,
          certificationReason: line.certificationReason,
@@ -1239,6 +1308,13 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
            ?? certification.pendingCertificationAllocations;
        }
        line.previousPendingValue = certification.previousPendingValue;
+        line.priorExecutionValue = money(priorCertificationLines.reduce((sum, prior) =>
+          sum + Number(prior.executionValue ?? prior.currentValue ?? 0), 0));
+        line.cumulativeQuoteCompatible = priorCertificationLines.every(prior =>
+          line.quotedPriceComponentsSnapshot != null && JSON.stringify(prior.quotedPriceComponentsSnapshot) === JSON.stringify(line.quotedPriceComponentsSnapshot)
+          || prior.quotedPriceIncludesVatSnapshot === true
+          && Number(prior.quotedUnitPriceSnapshot) === Number(line.quotedUnitPriceSnapshot)
+          && Number(prior.quotedVatPercentSnapshot) === Number(line.quotedVatPercentSnapshot));
        line.pendingValue = legacyCertification
         ? certification.previousPendingValue
          : certification.pendingValue;
@@ -1255,6 +1331,7 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
      const previousPendingValue = pendingValueForBoqLines(priorCertificationLines);
     const previousQty = previous.previousQty;
     const previousValue = previous.previousValue;
+    const terms = await effectiveBoqTerms(companyId, bill, boq, null, null);
     lines.push({
       id: null,
       projectId: boq.projectId,
@@ -1264,10 +1341,24 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
       boqLineCode: boq.lineCode,
       boqLineDescription: boq.description,
       boqUnitPrice: boq.unitPrice,
+      boqPriceIncludesVat: bill.direction === "incoming"
+        ? subContracts.find(c => c.id === boq.subcontractorContractId)?.priceIncludesVat === true
+        : ownerContracts.find(c => c.id === boq.ownerContractId)?.priceIncludesVat === true,
       contractQty: boq.quantity,
       contractAmount: boq.totalAmount,
       unitSnapshot: boq.unit,
-      unitPriceSnapshot: boq.unitPrice,
+      unitPriceSnapshot: money(terms.unitPrice),
+      quotedUnitPriceSnapshot: terms.quotedUnitPrice == null ? null : money(terms.quotedUnitPrice),
+      quotedVatPercentSnapshot: terms.quotedVatPercent,
+      quotedPriceIncludesVatSnapshot: terms.quotedPriceIncludesVat,
+      quotedPriceComponentsSnapshot: terms.quotedPriceComponents,
+      priorExecutionValue: money(priorCertificationLines.reduce((sum, prior) =>
+        sum + Number(prior.executionValue ?? prior.currentValue ?? 0), 0)),
+      cumulativeQuoteCompatible: priorCertificationLines.every(prior =>
+        terms.quotedPriceComponents != null && JSON.stringify(prior.quotedPriceComponentsSnapshot) === JSON.stringify(terms.quotedPriceComponents)
+        || prior.quotedPriceIncludesVatSnapshot === true
+        && Number(prior.quotedUnitPriceSnapshot) === Number(terms.quotedUnitPrice)
+        && Number(prior.quotedVatPercentSnapshot) === Number(terms.quotedVatPercent)),
       changeOrderId: null,
       changeOrderNumber: null,
       changeOrderValue: null,
@@ -1338,9 +1429,13 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
   const mainOwner = selectedOwner && ["change_order", "addendum"].includes(selectedOwner.contractType)
     ? ownerContracts.find((contract) => contract.id === selectedOwner.parentContractId)
     : selectedOwner;
+  const contractNet = (contract?: typeof ownerContracts[number] | typeof subContracts[number]) =>
+    contract ? Number(contractingQuotedNet(contract.value, contract.vatPercent, contract.priceIncludesVat)) : 0;
   const originalContractValue = bill.direction === "incoming"
-    ? Number(selectedSub?.value ?? 0)
-    : Number(mainOwner?.value ?? selectedOwner?.value ?? project[0]?.contractValue ?? 0);
+    ? contractNet(selectedSub)
+    : (mainOwner || selectedOwner
+      ? contractNet(mainOwner ?? selectedOwner)
+      : Number(project[0]?.contractValue ?? 0));
   const baseContractId = mainOwner?.id;
   const approvedVariations = bill.direction === "incoming"
     ? subContracts
@@ -1386,7 +1481,7 @@ export async function listBillDetails(companyId: number, billId: number, user?: 
         && baseContractId != null
         && contract.parentContractId === baseContractId,
       )
-      .reduce((total, contract) => total + Number(contract.value), 0);
+      .reduce((total, contract) => total + contractNet(contract), 0);
   const adjustedContractValue = originalContractValue + changeOrdersValue;
   const cumulativeWorks = lines.length > 0
     ? lines.reduce((total, row) => total + Number(row.cumulativeValue), 0)
@@ -1560,9 +1655,24 @@ export async function certificationPreview(
     subcontractorContractId,
     billDate,
   } as typeof contractingProgressBillsTable.$inferSelect;
+  const [quotedContract] = direction === "incoming"
+    ? await db.select({ priceIncludesVat: contractingSubContractsTable.priceIncludesVat })
+      .from(contractingSubContractsTable).where(and(
+        eq(contractingSubContractsTable.id, subcontractorContractId!),
+        eq(contractingSubContractsTable.companyId, companyId),
+        eq(contractingSubContractsTable.projectId, projectId),
+      ))
+    : await db.select({ priceIncludesVat: contractingOwnerContractsTable.priceIncludesVat })
+      .from(contractingOwnerContractsTable).where(and(
+        eq(contractingOwnerContractsTable.id, ownerContractId!),
+        eq(contractingOwnerContractsTable.companyId, companyId),
+        eq(contractingOwnerContractsTable.projectId, projectId),
+      ));
   const boqLines = await db.select({
     id: contractingContractBoqLinesTable.id,
     projectId: contractingContractBoqLinesTable.projectId,
+    ownerContractId: contractingContractBoqLinesTable.ownerContractId,
+    subcontractorContractId: contractingContractBoqLinesTable.subcontractorContractId,
     workItemId: contractingContractBoqLinesTable.workItemId,
     lineCode: contractingContractBoqLinesTable.lineCode,
     description: contractingContractBoqLinesTable.description,
@@ -1592,6 +1702,7 @@ export async function certificationPreview(
     const previous = await priorBoqTotals(companyId, previewBill, boq.id);
     const priorCertificationLines = await priorBoqCertificationLines(companyId, previewBill, boq.id);
     const previousPendingValue = pendingValueForBoqLines(priorCertificationLines);
+    const terms = await effectiveBoqTerms(companyId, previewBill, boq as typeof contractingContractBoqLinesTable.$inferSelect, null, null);
     lines.push({
       id: null,
       projectId,
@@ -1601,10 +1712,22 @@ export async function certificationPreview(
       boqLineCode: boq.lineCode,
       boqLineDescription: boq.description,
       boqUnitPrice: boq.unitPrice,
+      boqPriceIncludesVat: quotedContract?.priceIncludesVat === true,
       contractQty: boq.quantity,
       contractAmount: boq.totalAmount,
       unitSnapshot: boq.unit,
-      unitPriceSnapshot: boq.unitPrice,
+      unitPriceSnapshot: money(terms.unitPrice),
+      quotedUnitPriceSnapshot: terms.quotedUnitPrice == null ? null : money(terms.quotedUnitPrice),
+      quotedVatPercentSnapshot: terms.quotedVatPercent,
+      quotedPriceIncludesVatSnapshot: terms.quotedPriceIncludesVat,
+      quotedPriceComponentsSnapshot: terms.quotedPriceComponents,
+      priorExecutionValue: money(priorCertificationLines.reduce((sum, prior) =>
+        sum + Number(prior.executionValue ?? prior.currentValue ?? 0), 0)),
+      cumulativeQuoteCompatible: priorCertificationLines.every(prior =>
+        terms.quotedPriceComponents != null && JSON.stringify(prior.quotedPriceComponentsSnapshot) === JSON.stringify(terms.quotedPriceComponents)
+        || prior.quotedPriceIncludesVatSnapshot === true
+        && Number(prior.quotedUnitPriceSnapshot) === Number(terms.quotedUnitPrice)
+        && Number(prior.quotedVatPercentSnapshot) === Number(terms.quotedVatPercent)),
       changeOrderId: null,
       changeOrderSubcontractId: null,
       changeOrderNumber: null,
@@ -1676,7 +1799,7 @@ export async function createBillLine(companyId: number, billId: number, req: any
     companyId,
     bill,
     boqLineId,
-    terms.unitPrice,
+    terms,
     {
       currentQty,
         contractQuantity: terms.quantity,
@@ -1694,7 +1817,11 @@ export async function createBillLine(companyId: number, billId: number, req: any
   if (previous.previousQty + currentQty > terms.quantity + 0.0001) {
     throw error("الكمية التراكمية تتجاوز كمية سطر جدول الكميات");
   }
-  if (previous.previousValue + currentValue > terms.quantity * terms.unitPrice + 0.01) {
+  if (previous.previousValue + currentValue > Number(terms.quotedPriceComponents
+    ? quotedBoqComponentsNet(terms.quantity, terms.quotedPriceComponents)
+    : terms.quotedPriceIncludesVat && terms.quotedUnitPrice != null
+    ? quotedBoqNetValue(terms.quantity, terms.quotedUnitPrice, terms.quotedVatPercent, true)
+    : (terms.quantity * terms.unitPrice).toFixed(2)) + 0.01) {
     throw error("قيمة سطر المستخلص تتجاوز قيمة سطر جدول الكميات");
   }
   const [row] = await db.insert(contractingBillLinesTable).values({
@@ -1707,6 +1834,10 @@ export async function createBillLine(companyId: number, billId: number, req: any
     boqLineId,
     unitSnapshot: boqLine.unit,
     unitPriceSnapshot: money(terms.unitPrice),
+    quotedUnitPriceSnapshot: terms.quotedUnitPrice == null ? null : money(terms.quotedUnitPrice),
+    quotedVatPercentSnapshot: terms.quotedVatPercent,
+    quotedPriceIncludesVatSnapshot: terms.quotedPriceIncludesVat,
+    quotedPriceComponentsSnapshot: terms.quotedPriceComponents,
     previousQty: quantity(previous.previousQty),
     currentQty: quantity(currentQty),
     cumulativeQty: quantity(previous.previousQty + currentQty),
@@ -1796,7 +1927,7 @@ export async function saveBillLines(companyId: number, billId: number, req: any)
          companyId,
          bill,
          boqLineId,
-         terms.unitPrice,
+         terms,
          {
            currentQty,
            contractQuantity: terms.quantity,
@@ -1821,7 +1952,11 @@ export async function saveBillLines(companyId: number, billId: number, req: any)
         throw error("الكمية التراكمية تتجاوز كمية العقد؛ استخدم سطر أمر تغيير معتمد");
       }
       const currentValue = Number(certification.currentValue);
-      const effectiveAmount = terms.quantity * terms.unitPrice;
+      const effectiveAmount = Number(terms.quotedPriceComponents
+        ? quotedBoqComponentsNet(terms.quantity, terms.quotedPriceComponents)
+        : terms.quotedPriceIncludesVat && terms.quotedUnitPrice != null
+        ? quotedBoqNetValue(terms.quantity, terms.quotedUnitPrice, terms.quotedVatPercent, true)
+        : (terms.quantity * terms.unitPrice).toFixed(2));
       if (previous.previousValue + currentValue > effectiveAmount + 0.01) {
         throw error("قيمة الأعمال تتجاوز قيمة البند المعتمدة");
       }
@@ -1832,6 +1967,10 @@ export async function saveBillLines(companyId: number, billId: number, req: any)
         boqLineId,
         unitSnapshot: boqLine.unit,
         unitPriceSnapshot: money(terms.unitPrice),
+        quotedUnitPriceSnapshot: terms.quotedUnitPrice == null ? null : money(terms.quotedUnitPrice),
+        quotedVatPercentSnapshot: terms.quotedVatPercent,
+        quotedPriceIncludesVatSnapshot: terms.quotedPriceIncludesVat,
+        quotedPriceComponentsSnapshot: terms.quotedPriceComponents,
         previousQty: quantity(previous.previousQty),
         currentQty: quantity(currentQty),
         cumulativeQty: quantity(previous.previousQty + currentQty),
@@ -1939,7 +2078,7 @@ export async function updateBillLine(companyId: number, lineId: number, req: any
       companyId,
       bill,
       boqLineId,
-      terms.unitPrice,
+      terms,
       {
         currentQty,
         contractQuantity: terms.quantity,
@@ -1958,7 +2097,11 @@ export async function updateBillLine(companyId: number, lineId: number, req: any
     if (previous.previousQty + currentQty > terms.quantity + 0.0001) {
       throw error("الكمية التراكمية تتجاوز كمية سطر جدول الكميات");
     }
-    if (previous.previousValue + currentValue > terms.quantity * terms.unitPrice + 0.01) {
+    if (previous.previousValue + currentValue > Number(terms.quotedPriceComponents
+      ? quotedBoqComponentsNet(terms.quantity, terms.quotedPriceComponents)
+      : terms.quotedPriceIncludesVat && terms.quotedUnitPrice != null
+      ? quotedBoqNetValue(terms.quantity, terms.quotedUnitPrice, terms.quotedVatPercent, true)
+      : (terms.quantity * terms.unitPrice).toFixed(2)) + 0.01) {
       throw error("قيمة سطر المستخلص تتجاوز قيمة سطر جدول الكميات");
     }
     const [row] = await db.update(contractingBillLinesTable).set({
@@ -1968,6 +2111,10 @@ export async function updateBillLine(companyId: number, lineId: number, req: any
       boqLineId,
       unitSnapshot: boqLine.unit,
       unitPriceSnapshot: money(terms.unitPrice),
+      quotedUnitPriceSnapshot: terms.quotedUnitPrice == null ? null : money(terms.quotedUnitPrice),
+      quotedVatPercentSnapshot: terms.quotedVatPercent,
+      quotedPriceIncludesVatSnapshot: terms.quotedPriceIncludesVat,
+      quotedPriceComponentsSnapshot: terms.quotedPriceComponents,
       previousQty: quantity(previous.previousQty),
       currentQty: quantity(currentQty),
       cumulativeQty: quantity(previous.previousQty + currentQty),

@@ -48,6 +48,10 @@ export const contractingBillLinesTable = pgTable(
       .references(() => contractingContractBoqLinesTable.id, { onDelete: "set null" }),
     unitSnapshot: text("unit_snapshot"),
     unitPriceSnapshot: numeric("unit_price_snapshot", { precision: 14, scale: 2 }),
+    quotedUnitPriceSnapshot: numeric("quoted_unit_price_snapshot", { precision: 14, scale: 2 }),
+    quotedVatPercentSnapshot: numeric("quoted_vat_percent_snapshot", { precision: 5, scale: 2 }),
+    quotedPriceIncludesVatSnapshot: boolean("quoted_price_includes_vat_snapshot"),
+    quotedPriceComponentsSnapshot: jsonb("quoted_price_components_snapshot"),
     // Optional per-line relation to an approved owner-contract change order.
     // NULL deliberately preserves legacy work-item-only lines.
     changeOrderId: integer("change_order_id")

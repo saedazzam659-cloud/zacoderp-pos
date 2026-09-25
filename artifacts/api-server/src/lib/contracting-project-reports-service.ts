@@ -23,6 +23,7 @@ import { reportBillIsCertified, reportOwnerContractScope } from "./contracting-r
 import { sumExactCents } from "./contracting-bill-adjustment-math.js";
 import { contractingCostReportBreakdown } from "./contracting-cost-allocation-service.js";
 import { categoryCoverage } from "./contracting-cost-allocation-helper.js";
+import { contractingQuotedNet } from "./contracting-accounting-math.js";
 
 type BranchUser = Pick<AuthUser, "id" | "role" | "viewAllBranches" | "branchIds">;
 
@@ -36,6 +37,8 @@ function numberValue(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 }
+const netContractValue = (contract: any): number =>
+  contract ? numberValue(contractingQuotedNet(contract.value ?? "0", contract.vatPercent ?? "15", contract.priceIncludesVat === true)) : 0;
 
 function rounded(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -409,15 +412,15 @@ async function getLocalContractingProjectReports(
   const baseOwner = ownerBaseContracts
     .slice()
     .sort((left: any, right: any) => Number(right.id) - Number(left.id))[0];
-  const baseContractValue = numberValue(baseOwner?.value ?? project.contractValue);
+  const baseContractValue = baseOwner ? netContractValue(baseOwner) : numberValue(project.contractValue);
   const approvedVariationRows = ownerContracts.filter((contract: any) =>
     isVariation(contract) && String(contract.status) === "approved",
   );
   const approvedVariationsValue = approvedVariationRows.reduce(
-    (sum: number, contract: any) => sum + numberValue(contract.value), 0,
+    (sum: number, contract: any) => sum + netContractValue(contract), 0,
   );
   const adjustedContractValue = baseContractValue + approvedVariationsValue;
-  const subcontractBaseValue = subContracts.reduce((sum: number, contract: any) => sum + numberValue(contract.value), 0);
+  const subcontractBaseValue = subContracts.reduce((sum: number, contract: any) => sum + netContractValue(contract), 0);
 
   function sideRows(direction: "outgoing" | "incoming") {
     return certifiedRows.filter(row => String(row.direction) === direction);
@@ -666,12 +669,12 @@ async function getLocalContractingProjectReports(
     const base = isVariation(contract)
       ? ownerContracts.find((candidate: any) => Number(candidate.id) === Number(contract.parentContractId))
       : contract;
-    const baseValue = numberValue(base?.value ?? 0);
+    const baseValue = netContractValue(base);
     const approvedChildren = ownerContracts.filter((candidate: any) =>
       isVariation(candidate) && String(candidate.status) === "approved"
       && Number(candidate.parentContractId) === Number(base?.id),
     );
-    const approvedValue = approvedChildren.reduce((sum: number, child: any) => sum + numberValue(child.value), 0);
+    const approvedValue = approvedChildren.reduce((sum: number, child: any) => sum + netContractValue(child), 0);
     return {
       id: contract.id,
       contractNumber: contract.contractNumber,
@@ -680,7 +683,7 @@ async function getLocalContractingProjectReports(
       status: contract.status,
       approved: String(contract.status) === "approved",
       originalValue: rounded(baseValue),
-      variationValue: isVariation(contract) ? numberValue(contract.value) : approvedValue,
+      variationValue: isVariation(contract) ? netContractValue(contract) : approvedValue,
       adjustedValue: rounded(baseValue + approvedValue),
     };
   });

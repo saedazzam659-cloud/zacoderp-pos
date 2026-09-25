@@ -25,6 +25,7 @@ import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
+import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -45,6 +46,7 @@ type AssistResult = {
 // Compact, model-friendly snapshot of one project. Keep it small — the
 // model is more accurate when given less noisy context.
 async function loadProjectSnapshot(companyId: number, projectId: number) {
+  await ensureContractingAccountingTables();
   const [project] = await db.select().from(contractingProjectsTable)
     .where(and(eq(contractingProjectsTable.id, projectId), eq(contractingProjectsTable.companyId, companyId)));
   if (!project) return null;

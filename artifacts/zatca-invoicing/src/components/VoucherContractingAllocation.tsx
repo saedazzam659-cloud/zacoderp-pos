@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 export type TaxableAdvanceInvoice = {
   id: number; kind: string; ownerContractId: number; invoiceNumber: string; invoiceIssueDate: string;
   taxableAmount: string; vatAmount: string; grossAmount: string;
+  priceIncludesVat?: boolean; vatPercent?: string;
   capturedBase: string; capturedGross: string; outstandingGross: string | null; recoveredBase: string; zatcaStatus: string;
   xmlDownloadUrl: string | null;
   prepaymentAdjustments?: Array<{ invoiceNumber: string; taxableAmount: string; taxAmount: string }> | null;

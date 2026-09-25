@@ -17,6 +17,11 @@ export function ensureContractingAccountingTables(): Promise<void> {
   const current = externalContext ? externalReady.get(externalContext) : ready;
   if (current) return current;
   const initialization = (async () => {
+    // Existing agent tables predate these declarations; reconcile before any
+    // Drizzle SELECT * or fiscal query references the new fields.
+    for (const table of ["contracting_owner_contracts", "contracting_sub_contracts", "contracting_progress_bills"]) {
+      await db.execute(sql.raw(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS price_includes_vat BOOLEAN NOT NULL DEFAULT FALSE`));
+    }
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS contracting_accounting_settlements (
         id SERIAL PRIMARY KEY,
@@ -81,6 +86,8 @@ export function ensureContractingAccountingTables(): Promise<void> {
       bill_id INTEGER, intent_key VARCHAR(128), kind TEXT NOT NULL,
       invoice_number TEXT NOT NULL, invoice_date DATE NOT NULL, invoice_time TEXT NOT NULL,
       customer_id INTEGER NOT NULL, taxable_amount NUMERIC(18,2) NOT NULL,
+      price_includes_vat BOOLEAN NOT NULL DEFAULT FALSE,
+      vat_percent NUMERIC(5,2) NOT NULL DEFAULT 15,
       vat_amount NUMERIC(18,2) NOT NULL, gross_amount NUMERIC(18,2) NOT NULL,
       prepayment_adjustments JSONB NOT NULL DEFAULT '[]'::jsonb,
       status TEXT NOT NULL DEFAULT 'issued', journal_entry_id INTEGER,
@@ -93,6 +100,10 @@ export function ensureContractingAccountingTables(): Promise<void> {
     )`);
     await db.execute(sql`ALTER TABLE contracting_fiscal_invoices
       ADD COLUMN IF NOT EXISTS journal_entry_id INTEGER`);
+    await db.execute(sql`ALTER TABLE contracting_fiscal_invoices
+      ADD COLUMN IF NOT EXISTS price_includes_vat BOOLEAN NOT NULL DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE contracting_fiscal_invoices
+      ADD COLUMN IF NOT EXISTS vat_percent NUMERIC(5,2) NOT NULL DEFAULT 15`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ctg_fiscal_contract_idx
       ON contracting_fiscal_invoices(company_id,owner_contract_id)`);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS contracting_settlement_voucher_line_uq

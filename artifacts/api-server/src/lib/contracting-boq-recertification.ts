@@ -6,7 +6,8 @@ import {
   contractingProgressBillsTable,
   contractingSubContractsTable,
 } from "@workspace/db";
-import { calculateBoqCertification } from "./contracting-boq-certification.js";
+import { calculateBoqCertification, quotedBoqNetValue, quotedBoqComponentsNet } from "./contracting-boq-certification.js";
+import { contractingQuotedNet } from "./contracting-accounting-math.js";
 
 type Bill = typeof contractingProgressBillsTable.$inferSelect;
 type Tx = any;
@@ -154,10 +155,29 @@ async function approvedVariationLine(
   baseLine: typeof contractingContractBoqLinesTable.$inferSelect,
   variationId: number | null,
 ) {
+  const contractTable = bill.direction === "incoming" ? contractingSubContractsTable : contractingOwnerContractsTable;
+  const priceFor = async (contractId: number | null, quoted: number) => {
+    if (!contractId) throw failure("عقد BOQ غير صالح", 409);
+    const [contract] = await tx.select().from(contractTable).where(and(
+      eq(contractTable.id, contractId), eq(contractTable.companyId, companyId),
+      eq(contractTable.projectId, bill.projectId),
+    ));
+    if (!contract) throw failure("عقد تسعير BOQ غير موجود", 409);
+    return { net: Math.sign(quoted) * Number(contractingQuotedNet(Math.abs(quoted).toFixed(2), contract.vatPercent, contract.priceIncludesVat)),
+      rate: String(contract.vatPercent), inclusive: contract.priceIncludesVat === true };
+  };
+  const basePrice = await priceFor(bill.direction === "incoming" ? baseLine.subcontractorContractId : baseLine.ownerContractId,
+    Number(baseLine.unitPrice));
   if (variationId == null) {
     return {
       quantity: Number(baseLine.quantity),
-      unitPrice: Number(baseLine.unitPrice),
+      unitPrice: basePrice.net,
+      quotedUnitPrice: Number(baseLine.unitPrice),
+      quotedVatPercent: basePrice.rate,
+      quotedPriceIncludesVat: basePrice.inclusive,
+      quotedPriceComponents: basePrice.inclusive
+        ? [{ unitPrice: Number(baseLine.unitPrice).toFixed(2), vatPercent: basePrice.rate, priceIncludesVat: true }]
+        : null,
       unit: baseLine.unit,
     };
   }
@@ -210,13 +230,24 @@ async function approvedVariationLine(
   if (!line) throw failure("أمر التغيير المعتمد لا يحتوي على سطر BOQ مرتبط بالسطر الأساسي");
   const delta = line.quantityDelta == null ? Number(line.quantity) : Number(line.quantityDelta);
   const rateDelta = line.unitPriceDelta == null ? null : Number(line.unitPriceDelta);
-  const unitPrice = rateDelta == null
+  const quote = rateDelta == null
     ? line.unitPriceOverride == null ? Number(line.unitPrice) : Number(line.unitPriceOverride)
     : Number(baseLine.unitPrice) + rateDelta;
-  if (unitPrice < -0.0001) throw failure("سعر أمر التغيير لا يمكن أن يكون سالباً");
+  if (quote < -0.0001) throw failure("سعر أمر التغيير لا يمكن أن يكون سالباً");
+  const changedPrice = await priceFor(variationId, rateDelta ?? quote);
+  const homogeneous = rateDelta == null || basePrice.rate === changedPrice.rate && basePrice.inclusive === changedPrice.inclusive;
   return {
     quantity: Math.max(0, Number(baseLine.quantity) + delta),
-    unitPrice: Math.max(0, unitPrice),
+    unitPrice: rateDelta == null ? changedPrice.net : Math.max(0, basePrice.net + changedPrice.net),
+    quotedUnitPrice: homogeneous ? quote : null,
+    quotedVatPercent: changedPrice.rate,
+    quotedPriceIncludesVat: homogeneous && changedPrice.inclusive,
+    quotedPriceComponents: basePrice.inclusive || changedPrice.inclusive
+      ? (rateDelta == null
+        ? [{ unitPrice: quote.toFixed(2), vatPercent: changedPrice.rate, priceIncludesVat: changedPrice.inclusive }]
+        : [{ unitPrice: Number(baseLine.unitPrice).toFixed(2), vatPercent: basePrice.rate, priceIncludesVat: basePrice.inclusive },
+          { unitPrice: rateDelta.toFixed(2), vatPercent: changedPrice.rate, priceIncludesVat: changedPrice.inclusive }])
+      : null,
     unit: line.unit,
   };
 }
@@ -341,6 +372,10 @@ export async function recertifyBoqBill(
       certification = calculateBoqCertification({
         currentQty,
         unitPrice: terms.unitPrice,
+        quotedUnitPrice: terms.quotedUnitPrice,
+        quotedVatPercent: terms.quotedVatPercent,
+        quotedPriceIncludesVat: terms.quotedPriceIncludesVat,
+        quotedPriceComponents: terms.quotedPriceComponents,
         contractQuantity: terms.quantity,
         certificationPercent: line.certificationPercent,
         priorPendingCertifiedValue: line.priorPendingCertifiedValue,
@@ -351,12 +386,20 @@ export async function recertifyBoqBill(
       throw failure((caught as Error)?.message ?? "بيانات اعتماد BOQ غير صالحة", 409);
     }
     const currentValue = Number(certification.currentValue);
-    if (previousValue + currentValue > terms.quantity * terms.unitPrice + 0.01) {
+    if (previousValue + currentValue > Number(terms.quotedPriceComponents
+      ? quotedBoqComponentsNet(terms.quantity, terms.quotedPriceComponents)
+      : terms.quotedPriceIncludesVat && terms.quotedUnitPrice != null
+      ? quotedBoqNetValue(terms.quantity, terms.quotedUnitPrice, terms.quotedVatPercent, true)
+      : (terms.quantity * terms.unitPrice).toFixed(2)) + 0.01) {
       throw failure("الاعتماد يرفض تجاوز قيمة BOQ بعد إعادة التحقق من كل المستخلصات المعتمدة", 409);
     }
     await tx.update(contractingBillLinesTable).set({
       unitSnapshot: terms.unit,
       unitPriceSnapshot: money(terms.unitPrice),
+      quotedUnitPriceSnapshot: terms.quotedUnitPrice == null ? null : money(terms.quotedUnitPrice),
+      quotedVatPercentSnapshot: terms.quotedVatPercent,
+      quotedPriceIncludesVatSnapshot: terms.quotedPriceIncludesVat,
+      quotedPriceComponentsSnapshot: terms.quotedPriceComponents,
       previousQty: quantity(previousQty),
       currentQty: quantity(currentQty),
       cumulativeQty: quantity(previousQty + currentQty),

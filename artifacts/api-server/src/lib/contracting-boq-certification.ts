@@ -11,6 +11,7 @@ export type PendingCertificationAllocation = {
   sourceLineId: number;
   amount: string;
 };
+export type QuotedBoqComponent = { unitPrice: number | string; vatPercent: number | string; priceIncludesVat: boolean };
 
 export type CertificationPriorLine = {
   id: number;
@@ -19,11 +20,19 @@ export type CertificationPriorLine = {
   currentExecutionCertifiedValue?: number | string | null;
   currentValue?: number | string | null;
   pendingCertificationAllocations?: unknown;
+  quotedUnitPriceSnapshot?: number | string | null;
+  quotedVatPercentSnapshot?: number | string | null;
+  quotedPriceIncludesVatSnapshot?: boolean | null;
+  quotedPriceComponentsSnapshot?: QuotedBoqComponent[] | unknown;
 };
 
 export type BoqCertificationInput = {
   currentQty: number | string | null | undefined;
   unitPrice: number | string | null | undefined;
+  quotedUnitPrice?: number | string | null;
+  quotedVatPercent?: number | string | null;
+  quotedPriceIncludesVat?: boolean;
+  quotedPriceComponents?: QuotedBoqComponent[] | null;
   /** Effective BOQ quantity after the selected approved variation. */
   contractQuantity?: number | string | null;
   certificationPercent?: number | string | null;
@@ -61,6 +70,28 @@ function cents(value: unknown, label: string): number {
 
 function moneyFromCents(value: number): string {
   return (value / 100).toFixed(2);
+}
+
+/** Extract VAT once from the extended quoted line, never from rounded net
+ * unit × quantity. Four decimal quantity and two decimal rate/price mirrors
+ * the persisted BOQ precision; BigInt avoids intermediate floating drift. */
+export function quotedBoqNetValue(qty: number | string, quotedUnitPrice: number | string, vatPercent: number | string, inclusive: boolean): string {
+  const q = quantity(qty);
+  if (Math.abs(q * 10000 - Math.round(q * 10000)) > 0.00001) throw new Error("دقة كمية BOQ لا تتجاوز أربع خانات");
+  const unit = cents(quotedUnitPrice, "quoted unit price");
+  const rate = cents(vatPercent, "VAT rate");
+  if (rate < 0 || rate > 10000) throw new Error("نسبة الضريبة غير صالحة");
+  const numerator = BigInt(Math.round(q * 10000)) * BigInt(Math.abs(unit)) * 10000n;
+  const denominator = 10000n * BigInt(inclusive ? 10000 + rate : 10000);
+  return moneyFromCents(Math.sign(unit) * Number((numerator + denominator / 2n) / denominator));
+}
+
+export function quotedBoqComponentsNet(qty: number | string, components: QuotedBoqComponent[]): string {
+  if (!Array.isArray(components) || components.length === 0) throw new Error("تسعير BOQ غير صالح");
+  const amount = components.reduce((sum, item) =>
+    sum + cents(quotedBoqNetValue(qty, item.unitPrice, item.vatPercent, item.priceIncludesVat), "component net"), 0);
+  if (amount < 0) throw new Error("قيمة BOQ بعد أمر التغيير لا يمكن أن تكون سالبة");
+  return moneyFromCents(amount);
 }
 
 function quantity(value: unknown): number {
@@ -201,7 +232,30 @@ export function calculateBoqCertification(
     throw new Error("قيمة الاعتماد المحتجز السابق تتجاوز الرصيد المحتجز المتاح");
   }
 
-  const executionCentsValue = Math.round(currentQty * unitPriceCents);
+  const quoteComponents = input.quotedPriceComponents;
+  const sameComponents = quoteComponents?.length && priorLines.every(line =>
+    JSON.stringify(line.quotedPriceComponentsSnapshot) === JSON.stringify(quoteComponents));
+  const sameQuote = input.quotedPriceIncludesVat === true && input.quotedUnitPrice != null
+    && input.quotedVatPercent != null
+    && priorLines.every(line =>
+      line.quotedPriceIncludesVatSnapshot === true
+      && Number(line.quotedUnitPriceSnapshot) === Number(input.quotedUnitPrice)
+      && Number(line.quotedVatPercentSnapshot) === Number(input.quotedVatPercent));
+  const priorExecution = priorLines.reduce((sum, line) => sum + executionCents(line), 0);
+  const cumulativeQty = priorLines.reduce((sum, line) => sum + quantity(line.currentQty), currentQty);
+  const cumulativeNet = sameComponents || sameQuote
+    ? cents(quoteComponents?.length
+      ? quotedBoqComponentsNet(cumulativeQty, quoteComponents)
+      : quotedBoqNetValue(cumulativeQty, input.quotedUnitPrice!, input.quotedVatPercent!, true), "cumulative net")
+      - priorExecution
+    : null;
+  const executionCentsValue = cumulativeNet != null && cumulativeNet >= 0
+    ? cumulativeNet
+    : quoteComponents?.length
+      ? cents(quotedBoqComponentsNet(currentQty, quoteComponents), "extended components net")
+      : input.quotedPriceIncludesVat === true && input.quotedUnitPrice != null && input.quotedVatPercent != null
+      ? cents(quotedBoqNetValue(currentQty, input.quotedUnitPrice, input.quotedVatPercent, true), "extended net")
+      : Math.round(currentQty * unitPriceCents);
   const currentCertifiedCents = Math.round(executionCentsValue * percent / 100);
   const currentValueCents = currentCertifiedCents + priorPendingCents;
   const pendingCents = previousPendingCents

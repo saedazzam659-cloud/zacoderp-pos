@@ -13,8 +13,8 @@ function scenario(current: string, prior = "0", priorRetention = "0", persist = 
       const query = dialect.sqlToQuery(statement).sql;
       if (/COUNT\(\*\) AS line_count/.test(query)) return { rows: [{ line_count: 1, current_value: current }] };
       if (/prior_gross/.test(query)) return { rows: [{ prior_gross: prior, prior_retention: priorRetention }] };
-      if (/SUM\(value\)/.test(query)) return { rows: [{ value: "0" }] };
-      return { rows: [{ id: 1, value: "100000", contract_type: "main" }] };
+      if (/SUM\(CASE WHEN price_includes_vat/.test(query)) return { rows: [{ value: "0" }] };
+      return { rows: [{ id: 1, value: "100000", vat_percent: "15.00", price_includes_vat: false, contract_type: "main" }] };
     },
     update: () => ({ set: (value: any) => { written = value; return { where: async () => [] }; } }),
   };
@@ -28,20 +28,20 @@ test("saved certified lines replace stale zero header with period retention, VAT
   const result = await s.run();
   assert.equal(result.grossAmount, "8000.00");
   assert.equal(result.retentionAmount, "400.00");
-  assert.equal(result.vatAmount, "1140.00");
-  assert.equal(result.netAmount, "8740.00");
-  assert.equal(s.written().netAmount, "8740.00");
+  assert.equal(result.vatAmount, "1200.00");
+  assert.equal(result.netAmount, "8800.00");
+  assert.equal(s.written().netAmount, "8800.00");
 });
 test("later lines add to certified previous work without charging previous work again", async () => {
   const result = await scenario("5000", "8000", "400").run();
   assert.equal(result.grossAmount, "13000.00");
   assert.equal(result.previousPaid, "8000.00");
   assert.equal(result.retentionAmount, "250.00");
-  assert.equal(result.netAmount, "5462.50");
+  assert.equal(result.netAmount, "5500.00");
 });
 test("read-only detail projection fixes the display without rewriting historical data", async () => {
   const s = scenario("8000", "0", "0", false);
-  assert.equal((await s.run()).netAmount, "8740.00");
+  assert.equal((await s.run()).netAmount, "8800.00");
   assert.equal(s.written(), null);
 });
 test("advance recovery uses actual posted balance and current certified value, not contract advance percentage", () => {

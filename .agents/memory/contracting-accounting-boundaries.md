@@ -3,6 +3,12 @@ name: Contracting accounting boundaries
 description: Optional cost-center snapshots, legacy preservation, and planning versus posting boundaries.
 ---
 
+Inclusive contracting prices describe the quotation, not an additional tax charge. Preserve the entered quotation while comparing certification, retention, recovery and contract ceilings on a net basis. Extract VAT from the extended quoted line, not a rounded net unit price multiplied by quantity. Cumulative execution must reconcile to prior frozen amounts, and change-order components retain their own quoted tax basis. Changing a later bill's mode never rewrites earlier approved evidence.
+
+**Why:** The user explicitly approved invoice-like "السعر شامل الضريبة" on contracts, both certificate forms and taxable owner advance input, without repricing historical evidence or changing settlement methods.
+
+**How to apply:** Snapshot price meaning on create; convert quoted inclusive amounts once at boundary, and derive period VAT only from new NET certified work. Retention/recovery operate on that NET work; taxable owner advances freeze original base/VAT/gross at invoice creation so future contract or bill mode edits do not alter recovery.
+
 Use informational summaries and linked original recovery journals to clarify advance recovery in settlement screens and printouts; do not add the recovery again as a posting line in the cash receipt.
 
 **Why:** The user explicitly approved keeping the already-posted recovery separate while making gross entitlement, recovered advance, net cash and remaining advance visible together. The aim is accounting clarity, not a second financial effect.

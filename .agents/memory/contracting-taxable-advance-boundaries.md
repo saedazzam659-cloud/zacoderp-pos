@@ -3,6 +3,12 @@ name: Contracting taxable advance boundaries
 description: Tax-point ownership, fiscal-only certificates, legacy safety, and partial advance settlement.
 ---
 
+Taxable advance retries must preserve the original entered amount and inclusive/exclusive meaning rather than reprice against the contract's current VAT rate. Later certificate mode changes consume the original frozen principal and VAT. Unsupported rates or unrepresentable recovery cents must fail explicitly; never substitute a rate or convert historical accounting-only advances.
+
+**Why:** The user approved matching the sales invoice inclusive checkbox for explicit taxable owner advances without changing historical advances or payment methods. An inclusive 100000 at 15% must freeze base 86956.52 and VAT 13043.48.
+
+**How to apply:** Compare retries with the original input identity, and use the original invoice's tax split for subsequent receipt and recovery.
+
 Keep new and editable owner and incoming subcontract-certificate VAT on current-period certified work before retention. Do not retrospectively recompute approved or posted snapshots, including approved legacy draft-journal evidence. The prior incoming legacy-preserve decision is superseded only for new/editable incoming certificates.
 
 **Why:** Retention defers collection rather than reducing taxable work. Recomputing historical documents would detach their values from existing journals and electronic evidence.

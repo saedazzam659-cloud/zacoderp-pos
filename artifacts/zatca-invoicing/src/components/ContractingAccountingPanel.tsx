@@ -92,6 +92,7 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   const [fiscalError, setFiscalError] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [taxableAmount, setTaxableAmount] = useState("");
+  const [advancePriceIncludesVat, setAdvancePriceIncludesVat] = useState(false);
   const [invoiceIntent, setInvoiceIntent] = useState(() => crypto.randomUUID());
   const [taxableAdvanceInvoiceId, setTaxableAdvanceInvoiceId] = useState("");
   const [subLinks, setSubLinks] = useState<Array<{ id: number; contractorId: number | null }>>([]);
@@ -355,8 +356,13 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   const selectedAdvance = fiscalInvoices.find(row => row.id === Number(taxableAdvanceInvoiceId) && row.kind === "advance" && row.ownerContractId === Number(ownerContractId));
   const selectedOwnerContract = ownerContracts.find(row => row.id === Number(ownerContractId));
   const vatRate = Number(selectedOwnerContract?.vatPercent);
-  const previewVat = Number.isFinite(vatRate) && /^\d+(?:\.\d{1,2})?$/.test(taxableAmount) ?
-    (Math.round(Math.round(Number(taxableAmount) * 100) * vatRate / 100) / 100).toFixed(2) : null;
+  const previewBase = Number.isFinite(vatRate) && /^\d+(?:\.\d{1,2})?$/.test(taxableAmount)
+    ? advancePriceIncludesVat
+      ? Math.round(Number(taxableAmount) / (1 + vatRate / 100) * 100) / 100
+      : Number(taxableAmount)
+    : null;
+  const previewVat = previewBase === null ? null
+    : (advancePriceIncludesVat ? Number(taxableAmount) - previewBase : Math.round(previewBase * vatRate) / 100).toFixed(2);
   const advances = settlements.filter((s) => s.status === "posted" && (s.kind === "advance_receipt" || s.kind === "advance_payment"));
   const statusLabel = (status: string) => ({"posted": "مرحّل", "approved": "معتمد", "reversed": "معكوس", "draft": "مسودة", "partially_paid": "مسدد جزئياً", "paid": "مسدد"} as Record<string, string>)[status] || status;
   const billLedger: LedgerRow[] = bills.map(row => ({
@@ -545,10 +551,10 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   const approvedBills = bills.filter((bill) => ["approved", "posted", "partially_paid", "paid"].includes(bill.status));
   async function issueAdvance() {
     if (!selectedOwnerContract || !invoiceDate || !/^\d+(?:\.\d{1,2})?$/.test(taxableAmount) || Number(taxableAmount) <= 0) {
-      setFiscalError("اختر عقد مالك معتمداً وأدخل تاريخ الفاتورة ومبلغاً صافياً موجباً."); return;
+      setFiscalError(`اختر عقد مالك معتمداً وأدخل تاريخ الفاتورة ومبلغاً ${advancePriceIncludesVat ? "شاملاً" : "صافياً"} موجباً.`); return;
     }
     const result = await post(`/api/contracting/projects/${projectId}/owner-contracts/${selectedOwnerContract.id}/taxable-advances`,
-      { intentKey: invoiceIntent, taxableAmount, invoiceDate }, undefined, "تم إعداد سجل فاتورة السلفة؛ لم تُقبل من ZATCA أو تُرحّل بعد");
+      { intentKey: invoiceIntent, taxableAmount, priceIncludesVat: advancePriceIncludesVat, invoiceDate }, undefined, "تم إعداد سجل فاتورة السلفة؛ لم تُقبل من ZATCA أو تُرحّل بعد");
     if (result) { setInvoiceIntent(crypto.randomUUID()); setTaxableAmount(""); setFiscalError(""); }
   }
   async function issueBillInvoice(bill: Bill) {
@@ -684,9 +690,11 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
             <p className="text-xs">إعداد السجل لا يسجل قبضاً أو قبولاً من ZATCA. عند قبول فاتورة 386 يُرحّل قيد الاستحقاق، وعند القبض يُنشأ قيد النقد المستقل. اربط حساب ذمة فاتورة السلفة المستقل عن حساب العميل، والتزام السلفة وضريبة المخرجات صراحةً؛ لا تُنشأ حسابات تلقائياً.</p>
             <div className="grid gap-2 sm:grid-cols-2">
               <label className="text-sm">تاريخ الفاتورة<Input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} /></label>
-              <label className="text-sm">المبلغ الصافي الخاضع للضريبة<Input type="number" min="0.01" step="0.01" value={taxableAmount} onChange={e => setTaxableAmount(e.target.value)} /></label>
+              <label className="text-sm">{advancePriceIncludesVat ? "المبلغ الإجمالي شامل الضريبة" : "المبلغ الصافي الخاضع للضريبة"}<Input type="number" min="0.01" step="0.01" value={taxableAmount} onChange={e => setTaxableAmount(e.target.value)} /></label>
             </div>
-            {selectedOwnerContract && <p className="text-sm">ضريبة العقد: {selectedOwnerContract.vatPercent}% • VAT المتوقع: {previewVat ?? "—"} • الإجمالي المتوقع: {previewVat === null ? "—" : (Number(taxableAmount) + Number(previewVat)).toFixed(2)} (يعتمد المبلغ النهائي على الخادم)</p>}
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={advancePriceIncludesVat}
+              onChange={e => { setAdvancePriceIncludesVat(e.target.checked); setInvoiceIntent(crypto.randomUUID()); }} />السعر شامل الضريبة</label>
+            {selectedOwnerContract && <p className="text-sm">ضريبة العقد: {selectedOwnerContract.vatPercent}% • الصافي المتوقع: {previewBase?.toFixed(2) ?? "—"} • VAT المتوقع: {previewVat ?? "—"} • الإجمالي المتوقع: {previewVat === null ? "—" : (Number(previewBase) + Number(previewVat)).toFixed(2)} (يعتمد المبلغ النهائي على الخادم)</p>}
             <div className="flex gap-2">
               <Button disabled={busy || selectedOwnerContract?.status !== "approved" || !taxableAmount || !invoiceDate} onClick={() => void issueAdvance()}>إعداد فاتورة سلفة جديدة / إعادة المحاولة بنفس النية</Button>
               <Button variant="outline" disabled={busy} onClick={() => { setInvoiceIntent(crypto.randomUUID()); setFiscalError(""); }}>بدء سلفة جديدة بنية مستقلة</Button>

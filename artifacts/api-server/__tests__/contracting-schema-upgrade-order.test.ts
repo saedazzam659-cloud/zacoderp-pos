@@ -64,7 +64,22 @@ test("required contracting tables have additive DDL and no cross-database promis
   const end = service.indexOf("\nasync function ", start);
   const ddl = service.slice(start, end);
   for (const table of detailTables) assert.ok(ddl.includes(`CREATE TABLE IF NOT EXISTS ${table}`), table);
+  for (const column of [
+    "quoted_unit_price_snapshot", "quoted_vat_percent_snapshot",
+    "quoted_price_includes_vat_snapshot", "quoted_price_components_snapshot",
+  ]) assert.ok(ddl.includes(`ADD COLUMN IF NOT EXISTS ${column}`), column);
   assert.doesNotMatch(ddl, /\b(?:tablesReady|healPromise)\b/);
+});
+
+test("BOQ draft saves, read projections and approval share extended quoted-price snapshots", () => {
+  const service = readFileSync(new URL("../src/lib/contracting-bill-details-service.ts", import.meta.url), "utf8");
+  const approval = readFileSync(new URL("../src/lib/contracting-boq-recertification.ts", import.meta.url), "utf8");
+  assert.match(service, /quotedPriceComponents: terms\.quotedPriceComponents/);
+  assert.match(service, /quotedBoqComponentsNet\(terms\.quantity, terms\.quotedPriceComponents\)/);
+  assert.match(service, /quotedPriceComponentsSnapshot: terms\.quotedPriceComponents/);
+  assert.match(approval, /quotedPriceComponents: terms\.quotedPriceComponents/);
+  assert.match(approval, /quotedBoqComponentsNet\(terms\.quantity, terms\.quotedPriceComponents\)/);
+  assert.match(approval, /quotedPriceComponentsSnapshot: terms\.quotedPriceComponents/);
 });
 
 test("guarantee runtime DDL creates all external-agent composite targets first", () => {

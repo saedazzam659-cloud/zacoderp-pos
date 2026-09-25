@@ -3,7 +3,75 @@ import assert from "node:assert/strict";
 import {
   calculateBoqCertification,
   pendingValueForBoqLines,
+  quotedBoqNetValue,
+  quotedBoqComponentsNet,
 } from "../src/lib/contracting-boq-certification.js";
+import { authoritativeCumulativeBillAmounts } from "../src/lib/contracting-accounting-math.js";
+
+test("inclusive BOQ extends the quote before VAT extraction and cumulative certification reconciles to the cent", () => {
+  assert.equal(quotedBoqNetValue(1000, 100, 15, true), "86956.52");
+  assert.equal(quotedBoqNetValue(1000, 100, 5, true), "95238.10");
+  const mixed = [
+    { unitPrice: "100.00", vatPercent: "15.00", priceIncludesVat: true },
+    { unitPrice: "20.00", vatPercent: "5.00", priceIncludesVat: true },
+  ];
+  assert.equal(quotedBoqComponentsNet(1000, mixed), "106004.14");
+  assert.equal(quotedBoqComponentsNet(1000, [mixed[0], { unitPrice: "-10.00", vatPercent: "5.00", priceIncludesVat: true }]), "77432.71");
+  const mixedFirst = calculateBoqCertification({
+    unitPrice: "106.01", currentQty: 333, quotedPriceComponents: mixed,
+  });
+  const mixedLast = calculateBoqCertification({
+    unitPrice: "106.01", currentQty: 667, quotedPriceComponents: mixed,
+    priorLines: [{ id: 201, currentQty: 333, executionValue: mixedFirst.executionValue,
+      currentValue: mixedFirst.currentValue, quotedPriceComponentsSnapshot: mixed }],
+  });
+  assert.equal(Math.round((Number(mixedFirst.currentValue) + Number(mixedLast.currentValue)) * 100), 10600414);
+  assert.equal(quotedBoqNetValue("1.2345", 100, 15, true), "107.35");
+  const fractionalFirst = calculateBoqCertification({
+    unitPrice: "86.96", quotedUnitPrice: "100.00", quotedVatPercent: "15.00",
+    quotedPriceIncludesVat: true, currentQty: "0.3333",
+  });
+  const fractionalLast = calculateBoqCertification({
+    unitPrice: "86.96", quotedUnitPrice: "100.00", quotedVatPercent: "15.00",
+    quotedPriceIncludesVat: true, currentQty: "0.9012",
+    priorLines: [{ id: 301, currentQty: "0.3333", executionValue: fractionalFirst.executionValue,
+      currentValue: fractionalFirst.currentValue, quotedUnitPriceSnapshot: "100.00",
+      quotedVatPercentSnapshot: "15.00", quotedPriceIncludesVatSnapshot: true }],
+  });
+  assert.equal(Math.round((Number(fractionalFirst.currentValue) + Number(fractionalLast.currentValue)) * 100), 10735);
+  assert.equal(quotedBoqNetValue(1000, 100, 15, false), "100000.00");
+  const quote = { unitPrice: "86.96", quotedUnitPrice: "100.00",
+    quotedVatPercent: "15.00", quotedPriceIncludesVat: true, contractQuantity: 1000 };
+  const first = calculateBoqCertification({
+    ...quote, currentQty: 333, certificationPercent: 80,
+    certificationReason: "اعتماد مرحلي",
+  });
+  assert.equal(first.executionValue, "28956.52");
+  const prior = { id: 101, currentQty: 333, executionValue: first.executionValue,
+    currentExecutionCertifiedValue: first.currentExecutionCertifiedValue,
+    currentValue: first.currentValue, quotedUnitPriceSnapshot: "100.00",
+    quotedVatPercentSnapshot: "15.00", quotedPriceIncludesVatSnapshot: true };
+  const second = calculateBoqCertification({
+    ...quote, currentQty: 667, certificationPercent: 100,
+    priorPendingCertifiedValue: first.pendingValue,
+    certificationReason: "اعتماد الأعمال المعلقة", priorLines: [prior],
+  });
+  assert.equal(second.executionValue, "58000.00");
+  assert.equal(Number(first.currentValue) + Number(second.currentValue), 86956.52);
+  const firstBill = authoritativeCumulativeBillAmounts({
+    direction: "outgoing", grossAmount: first.currentValue,
+    adjustedContractValue: "86956.52", retentionPercent: "5", retentionCapPercent: "4",
+    vatPercent: "15", priorGrossAmount: "0", priorRetentionAmount: "0",
+  });
+  const finalBill = authoritativeCumulativeBillAmounts({
+    direction: "outgoing", grossAmount: "86956.52",
+    adjustedContractValue: "86956.52", retentionPercent: "5", retentionCapPercent: "4",
+    vatPercent: "15", priorGrossAmount: firstBill.grossAmount,
+    priorRetentionAmount: firstBill.retentionAmount,
+  });
+  assert.equal(Math.round(Number(firstBill.vatAmount) * 100) + Math.round(Number(finalBill.vatAmount) * 100), 1304348);
+  assert.equal(Math.round(Number(firstBill.retentionAmount) * 100) + Math.round(Number(finalBill.retentionAmount) * 100), 347826);
+});
 
 test("separates physical execution from partial certification and FIFO release", () => {
   const first = calculateBoqCertification({

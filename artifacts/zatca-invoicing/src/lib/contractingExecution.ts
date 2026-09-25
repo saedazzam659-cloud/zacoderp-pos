@@ -9,6 +9,13 @@ export type ExecutionLine = {
   unitSnapshot?: string | null;
   unitPriceSnapshot?: string | null;
   boqUnitPrice?: string | null;
+  boqPriceIncludesVat?: boolean;
+  quotedUnitPriceSnapshot?: string | null;
+  quotedVatPercentSnapshot?: string | null;
+  quotedPriceIncludesVatSnapshot?: boolean | null;
+  priorExecutionValue?: string | null;
+  cumulativeQuoteCompatible?: boolean;
+  quotedPriceComponentsSnapshot?: Array<{ unitPrice: string; vatPercent: string; priceIncludesVat: boolean }> | null;
   contractQty?: string | null;
   previousQty: string;
   currentQty: string;
@@ -46,6 +53,18 @@ export function executionInputs(rows: ExecutionLine[]): ExecutionInputs {
     .map(row => [row.boqLineId!, executionInput(row)]));
 }
 const cents = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+// The server's quotedBoqNetValue uses the same four-decimal quantity,
+// two-decimal quote/rate and one final half-up rounding of the EXTENDED line.
+function inclusiveExtendedNet(qty: number, quotedUnit: number, vatPercent: number): number {
+  const q = BigInt(Math.round(qty * 10000));
+  const unit = BigInt(Math.abs(Math.round(quotedUnit * 100)));
+  const divisor = 10000n * BigInt(10000 + Math.round(vatPercent * 100));
+  return Math.sign(quotedUnit) * Number((q * unit * 10000n + divisor / 2n) / divisor) / 100;
+}
+function extendedComponentsNet(qty: number, components: NonNullable<ExecutionLine["quotedPriceComponentsSnapshot"]>): number {
+  return cents(components.reduce((sum, item) => sum +
+    inclusiveExtendedNet(qty, Number(item.unitPrice), item.priceIncludesVat ? Number(item.vatPercent) : 0), 0));
+}
 export function executionEstimate(row: ExecutionLine, input: ExecutionInput) {
   const qty = Number(input.currentQty);
   const percent = Number(input.certificationPercent);
@@ -54,7 +73,18 @@ export function executionEstimate(row: ExecutionLine, input: ExecutionInput) {
     ?? (Number(row.currentQty) > 0 ? Number(row.executionValue ?? row.currentValue) / Number(row.currentQty) : 0));
   const previousQty = Number(row.previousQty);
   const previousPending = Number(row.previousPendingValue ?? 0);
-  const executionValue = cents(qty * rate);
+  const components = row.quotedPriceComponentsSnapshot;
+  const inclusive = row.quotedPriceIncludesVatSnapshot === true && row.quotedUnitPriceSnapshot != null
+    && row.quotedVatPercentSnapshot != null;
+  const extended = components?.length ? extendedComponentsNet(qty, components) : inclusive
+    ? inclusiveExtendedNet(qty, Number(row.quotedUnitPriceSnapshot), Number(row.quotedVatPercentSnapshot))
+    : cents(qty * rate);
+  const executionValue = (components?.length || inclusive) && row.cumulativeQuoteCompatible
+    ? Math.max(0, cents((components?.length
+      ? extendedComponentsNet(previousQty + qty, components)
+      : inclusiveExtendedNet(previousQty + qty, Number(row.quotedUnitPriceSnapshot),
+        Number(row.quotedVatPercentSnapshot))) - Number(row.priorExecutionValue ?? 0)))
+    : extended;
   const certifiedCurrent = cents(executionValue * percent / 100);
   return {
     executionValue, certifiedCurrent,
