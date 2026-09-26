@@ -649,7 +649,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   }
   if (printShowItemsSummary !== undefined) updates.printShowItemsSummary = !!printShowItemsSummary;
   // Print template visibility list — accept an array of integer ids
-  // (1..12), de-dup, drop garbage. Pass `null` (or empty array) to
+  // (1..15 and 20), de-dup, drop garbage. Pass `null` (or empty array) to
   // reset to "all templates visible".
   if (printEnabledTemplates !== undefined) {
     if (printEnabledTemplates === null) {
@@ -660,15 +660,15 @@ router.patch("/:id/general-settings", async (req, res) => {
       const cleaned = Array.from(new Set(
         printEnabledTemplates
           .map((x) => Number(x))
-          .filter((n) => Number.isInteger(n) && n >= 1 && n <= 15),
+          .filter((n) => Number.isInteger(n) && ((n >= 1 && n <= 15) || n === 20)),
       )).sort((a, b) => a - b);
       updates.printEnabledTemplates = cleaned.length === 0 ? null : cleaned;
     }
   }
   if (printDefaultTemplate !== undefined) {
     const n = Number(printDefaultTemplate);
-    if (!Number.isInteger(n) || n < 1 || n > 15) {
-      res.status(400).json({ error: "النموذج الافتراضي يجب أن يكون رقماً بين 1 و 15" }); return;
+    if (!Number.isInteger(n) || !((n >= 1 && n <= 15) || n === 20)) {
+      res.status(400).json({ error: "النموذج الافتراضي يجب أن يكون رقماً بين 1 و 15 أو 20" }); return;
     }
     updates.printDefaultTemplate = n;
   }
@@ -682,8 +682,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     if (val === undefined) continue;
     if (val === null) { updates[key] = null; continue; }
     const n = Number(val);
-    if (!Number.isInteger(n) || n < 1 || n > 15) {
-      res.status(400).json({ error: "النموذج الافتراضي لنوع المستند يجب أن يكون رقماً بين 1 و 15 أو فارغاً" }); return;
+    if (!Number.isInteger(n) || !((n >= 1 && n <= 15) || n === 20)) {
+      res.status(400).json({ error: "النموذج الافتراضي لنوع المستند يجب أن يكون رقماً بين 1 و 15 أو 20 أو فارغاً" }); return;
     }
     updates[key] = n;
   }

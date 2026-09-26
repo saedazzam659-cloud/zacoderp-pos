@@ -4152,6 +4152,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const TEMPLATE_CATALOG: { id: number; name: string; desc: string; color: string; thermal: boolean }[] = [
     { id: 14, name: "الأصلي",         desc: "نموذج مرتب بشعار وسط وبيانات شركة/عميل جانبية", color: "#b88a2a", thermal: false },
     { id: 15, name: "كلاسيكي ثنائي اللغة", desc: "نموذج تجاري بحدود كاملة عربي/إنجليزي", color: "#7c4a12", thermal: false },
+    { id: 20, name: "كلاسيكي مدمج", desc: "نموذج أبيض وأسود بجدول مدمج وشعار ورمز QR", color: "#333333", thermal: false },
     { id: 1,  name: "كلاسيكي",       desc: "حدود وجداول تقليدية",       color: "#2563eb", thermal: false },
     { id: 2,  name: "حديث",          desc: "تصميم نظيف بهيدر أخضر",     color: "#059669", thermal: false },
     { id: 3,  name: "مؤسسي",         desc: "هيدر داكن احترافي",         color: "#1e3a5f", thermal: false },

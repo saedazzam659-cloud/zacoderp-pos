@@ -2727,6 +2727,128 @@ function template15(d: PrintData): string {
   </body></html>`;
 }
 
+// ── Template 20 — compact, monochrome invoice with naturally paginated rows.
+// The browser repeats the table heading on every sheet; unlike template 14 no
+// artificial row count can split a wrapped description or manufacture a page.
+function template20(d: PrintData): string {
+  const { doc, company, customer } = d;
+  const lines = d.lines ?? [];
+  const t = computeFullTotals(doc, lines, d.type);
+  const e = escapePrintHtml;
+  const safeLogo = safeLogoSrc(company?.logo);
+  const number = e(doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`);
+  const taxDocument = !isNonPaymentDoc(d.type);
+  const name = customer?.nameAr ?? customer?.nameEn ?? doc.buyerName ?? "—";
+  const address = d.type === "quotation" ? quotationCustomerAddressText(d) : [
+    customer?.city ?? doc.buyerCity, customer?.district ?? doc.buyerDistrict,
+    customer?.buildingNumber ?? doc.buyerBuildingNumber,
+  ].filter(Boolean).join(" - ");
+  const row = (label: string, value: string, emph = false) =>
+    `<div class="sumrow${emph ? " emphasis" : ""}"><strong>${label}</strong><span class="mono">${value}</span></div>`;
+  const amount = (v: number) => `${fmt(v)} ${e(t.currencySym)}`;
+  // Settlement values on the invoice list are BASE-currency values (see
+  // batchInvoiceSettlementStatus). Never infer paid from paymentType: posted
+  // returns, credit notes, and partial voucher/JE links change the balance.
+  const hasSettlement = d.type === "invoice" &&
+    doc.paidAmount != null && doc.remainingAmount != null && doc.netDueAmount != null;
+  const fx = t.exchangeRate || 1;
+  const settlement = hasSettlement
+    ? row("مدفوع", amount(Number(doc.paidAmount) / fx))
+      + row("الرصيد المستحق", amount(Number(doc.remainingAmount) / fx))
+    : "";
+  const qr = shouldShowQr(d) && (d as any)._qrDataUrl
+    ? `<img class="qr" src="${e((d as any)._qrDataUrl)}" alt="رمز الاستجابة السريعة" />`
+    : "";
+  const title = d.type === "invoice" ? "فاتورة" : docTitle(d.type);
+  const rows = lines.map((l, i) => {
+    const f = lineFigures(l, t.priceIncludesVat);
+    const description = [l.itemName ?? l.itemCode ?? "—", l.brandName ? `العلامة التجارية: ${l.brandName}` : "", l.notes ?? l.description ?? ""]
+      .filter(Boolean).map(v => `<div>${e(v)}</div>`).join("");
+    return `<tr><td class="num">${i + 1}</td><td class="description">${description}</td>
+      <td class="mono">${fmt(f.qty)}</td><td class="mono">${fmt(f.price)}</td>
+      <td class="mono">${e(l.vatRate ?? 15)}%</td><td class="mono">${fmt(f.vat)}</td>
+      <td class="mono">${fmt(f.tot)}</td></tr>`;
+  }).join("");
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>${e(title)} ${number}</title>
+  <style>
+    @page { size:A4; margin:10mm 17mm 15mm; @bottom-center { content:counter(page) "/" counter(pages); font:9px Arial,sans-serif; } }
+    * { box-sizing:border-box; }
+    body { margin:0; color:#111; background:#fff; font:10px/1.35 Tahoma,Arial,sans-serif; direction:rtl; }
+    .sheet { width:100%; }
+    .top { display:grid; grid-template-columns:1fr 1fr 1fr; align-items:start; min-height:69mm; gap:8px; }
+    .title { text-align:left; font-size:16px; font-weight:700; }
+    .qr { display:block; width:33mm; height:33mm; object-fit:contain; margin-top:3mm; margin-right:auto; }
+    .company { text-align:center; line-height:1.5; font-size:9px; overflow-wrap:anywhere; }
+    .company strong { display:block; font-size:10px; }
+    .brand { text-align:right; }
+    .brand img { max-width:47mm; max-height:31mm; object-fit:contain; }
+    .divider { border-top:1px solid #111; border-bottom:1px solid #111; height:3px; margin:0 0 6mm; }
+    .meta { display:grid; grid-template-columns:1fr 1fr; gap:12mm; min-height:21mm; margin-bottom:2mm; }
+    .party { text-align:right; overflow-wrap:anywhere; }
+    .party strong { display:block; }
+    .docmeta { text-align:left; }
+    .docmeta div { display:flex; justify-content:flex-end; gap:8px; }
+    .mono { direction:ltr; unicode-bidi:isolate; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .lines { width:100%; border-collapse:collapse; table-layout:fixed; font-size:9px; }
+    .lines thead { display:table-header-group; }
+    .lines th { background:#e9e9e9; font-weight:700; }
+    .lines th,.lines td { border:1px solid #666; padding:3px 4px; vertical-align:top; }
+    .lines th:not(.description),.lines td:not(.description) { text-align:center; }
+    .lines .description { width:40%; text-align:right; overflow-wrap:anywhere; white-space:normal; }
+    .lines .num { width:5%; }
+    .lines th:nth-child(3) { width:9%; }
+    .lines th:nth-child(4) { width:12%; }
+    .lines th:nth-child(5) { width:11%; }
+    .lines th:nth-child(6) { width:12%; }
+    .lines th:nth-child(7) { width:11%; }
+    .lines tbody tr { break-inside:avoid; page-break-inside:avoid; }
+    .end { display:flex; justify-content:flex-end; margin-top:6mm; break-inside:avoid; page-break-inside:avoid; }
+    .totals { width:45%; min-width:68mm; }
+    .sumrow { display:flex; justify-content:space-between; gap:8px; border-bottom:1px solid #222; padding:3px 4px; }
+    .sumrow strong { font-weight:700; }
+    .sumrow.emphasis { background:#e9e9e9; }
+    .bank { text-align:right; margin-top:12mm; font-weight:700; white-space:pre-line; overflow-wrap:anywhere; break-inside:avoid; }
+    .note { margin-top:5mm; overflow-wrap:anywhere; }
+    @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+  </style></head><body><main class="sheet">
+    <header class="top">
+      <div class="brand">${safeLogo ? `<img src="${safeLogo}" alt="شعار الشركة">` : ""}</div>
+      <div class="company"><strong>${e(company?.nameAr ?? company?.nameEn ?? "")}</strong>
+        ${company?.nameEn ? `<div>${e(company.nameEn)}</div>` : ""}
+        ${company?.vatNumber ? `<div>الرقم الضريبي: <span class="mono">${e(company.vatNumber)}</span></div>` : ""}
+        ${company?.crNumber ? `<div>السجل التجاري: <span class="mono">${e(company.crNumber)}</span></div>` : ""}
+        ${company?.city ? `<div>${e(company.city)}${company?.country ? `، ${e(company.country)}` : ""}</div>` : ""}
+      </div>
+      <div class="title">${e(title)}${qr}</div>
+    </header>
+    <div class="divider"></div>
+    <div class="meta">
+      <div class="party"><strong>${e(name)}</strong>
+        ${customer?.vatNumber ?? doc.buyerVatNumber ? `<div>الرقم الضريبي: ${e(customer?.vatNumber ?? doc.buyerVatNumber)}</div>` : ""}
+        ${address ? `<div>${e(address)}</div>` : ""}
+      </div>
+      <div class="docmeta"><div><b>${e(title)}</b></div>
+        <div><span>رقم ${e(title)}</span><span class="mono">${number}</span></div>
+        <div><span>تاريخ ${e(title)}</span><span class="mono">${e(docDate(doc,d.type))}</span></div>
+        ${d.type === "quotation" && doc.validUntil ? `<div><span>صالح حتى</span><span class="mono">${e(doc.validUntil)}</span></div>` : ""}
+      </div>
+    </div>
+    <table class="lines"><thead><tr><th class="num">البند</th><th class="description">الوصف</th>
+      <th>الكمية</th><th>السعر</th><th>نسبة الضريبة</th><th>قيمة الضريبة</th><th>المجموع</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div class="end"><div class="totals">
+      ${row("المجموع", amount(t.netPreVat))}
+      ${t.discountTotal ? row("الخصم", amount(t.discountTotal)) : ""}
+      ${row("القيمة المضافة", amount(t.vatAmount))}
+      ${row("الإجمالي", amount(t.grandTotal), true)}
+      ${taxDocument ? settlement : ""}
+      ${t.showSarEq ? sarEqRowsHtml(t, "sumrow") : ""}
+    </div></div>
+    ${doc.notes ? `<div class="note">${e(doc.notes)}</div>` : ""}
+    ${company?.bankAccountText ? `<div class="bank">${e(company.bankAccountText)}</div>` : ""}
+  </main></body></html>`;
+}
+
 /** Per-doc-type default template id configured in General Settings
  *  (null/undefined = no override → company-wide default applies). */
 export function perTypeDefaultId(company: any, type?: SalesPrintType): number | null {
@@ -2798,6 +2920,7 @@ export async function renderSalesDocsBundleHtml(datas: PrintData[], company: any
 const TEMPLATES = [
   { id: 14, name: "الأصلي",         desc: "نموذج مرتب بشعار وسط وبيانات شركة/عميل جانبية", color: "#b88a2a", fn: template14, thermal: false },
   { id: 15, name: "كلاسيكي ثنائي اللغة", desc: "نموذج تجاري بحدود كاملة عربي/إنجليزي", color: "#7c4a12", fn: template15, thermal: false },
+  { id: 20, name: "كلاسيكي مدمج", desc: "نموذج أبيض وأسود بجدول مدمج وشعار ورمز QR", color: "#333333", fn: template20, thermal: false },
   { id: 1,  name: "كلاسيكي",       desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1,  thermal: false },
   { id: 2,  name: "حديث",          desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2,  thermal: false },
   { id: 3,  name: "مؤسسي",         desc: "هيدر داكن احترافي",        color: "#1e3a5f", fn: template3,  thermal: false },
@@ -2993,6 +3116,33 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // General Settings, which is what the user reported.
     const tmpl = TEMPLATES.find(t => t.id === selected);
     if (!tmpl) return;
+    // The detail endpoint does not include settlement figures. Template 20
+    // reads the invoice list's authoritative batch settlement fields instead
+    // of guessing that cash was paid or treating a credit invoice as unpaid.
+    if (selected === 20 && data.type === "invoice" && data.doc?.id != null &&
+        (data.doc.paidAmount == null || data.doc.remainingAmount == null)) {
+      try {
+        if (!token || !itemsCompanyId || !data.doc.docNumber) throw new Error("تعذّر تحديد بيانات سداد الفاتورة");
+        const params = new URLSearchParams({
+          companyId: String(itemsCompanyId), source: "all", paged: "1",
+          pageSize: "100", search: String(data.doc.docNumber),
+        });
+        const response = await fetch(`${API}/api/sales/sales-invoices?${params}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error(`تعذّر تحميل حالة سداد الفاتورة (${response.status})`);
+        const result = await response.json();
+        const invoice = result.items?.find((item: any) => Number(item.id) === Number(data.doc.id));
+        if (!invoice || invoice.paidAmount == null || invoice.remainingAmount == null || invoice.netDueAmount == null)
+          throw new Error("بيانات سداد الفاتورة غير متاحة");
+        data.doc.paidAmount = invoice.paidAmount;
+        data.doc.remainingAmount = invoice.remainingAmount;
+        data.doc.netDueAmount = invoice.netDueAmount;
+      } catch (error: any) {
+        toast({ title: error?.message ?? "تعذّر تحميل بيانات السداد", variant: "destructive" });
+        return;
+      }
+    }
     // Pre-compute the real ZATCA TLV QR (base64-encoded) so every
     // template can render it as a normal <img> — async so the QR png
     // is ready before the iframe document is built (otherwise the
