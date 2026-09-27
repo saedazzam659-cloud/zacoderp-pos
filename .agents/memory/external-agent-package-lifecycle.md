@@ -27,6 +27,12 @@ Portable raw downloads are distinct from installation-bound encrypted backups. R
 
 **How to apply:** Keep raw downloads authenticated and explicitly labelled unencrypted; verify stored signed ciphertext before releasing plaintext. Preserve ordinary upload validation and require platform regeneration for signed fresh-schema restore policy.
 
+Central's served web build is the release authority, not an incidental frontend copy shipped beside the API. Installations on different days must preserve an exact captured backend/frontend pair; an unavailable requested version must fail explicitly rather than silently substitute another.
+
+**Why:** Central can serve a newer independently built web artifact while its API carries an older frontend snapshot. A successful package install therefore does not by itself prove parity with the central website. Operators routinely update agents on separate days.
+
+**How to apply:** Capture both components once, validate the referenced entry assets, and derive split packages from that capture. Keep missing temporary archives distinguishable from durable stored external packages; never claim temporary release files survive deployment replacement. Do not repair an application-version mismatch by restoring a database.
+
 Bootstrap shell changes must preserve both first-install and retry behavior under inherited shell options.
 
 **Why:** Enabling `pipefail` globally changed an unrelated heartbeat cron pipeline's behavior; filtering an absent or heartbeat-only crontab also returns nonzero under `set -e`. A successful dependency install was therefore not evidence that bootstrap could continue.

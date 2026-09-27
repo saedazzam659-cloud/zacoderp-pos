@@ -5624,12 +5624,12 @@ router.post("/:id/external-package/prepare", async (req, res) => {
       await assertProbeTargetAllowed(parsedDbUrl.hostname);
     }
     workDir = await fsp.mkdtemp(path.join("/tmp", ".zacod-external-build-"));
-    const [{ getReleaseInfo, findDistDir }] = await Promise.all([import("../lib/agentRelease.js")]);
-    // The user explicitly requested a new package. Rebuild from the current
-    // dist instead of reusing getReleaseInfo's immutable download cache.
+    const { getReleaseInfo, extractReleaseSnapshot } = await import("../lib/agentRelease.js");
+    // Both packages derive from one captured archive, not a second read of
+    // the mutable dist tree after the backend package was prepared.
     const release = await getReleaseInfo({ forceRebuild: true });
-    const distDir = await findDistDir();
-    const frontendPath = await buildFrontendArchive(distDir, workDir);
+    const capturedDist = await extractReleaseSnapshot(release, workDir);
+    const frontendPath = await buildFrontendArchive(capturedDist, workDir);
     const databasePath = databaseSource === "fresh"
       ? await buildFreshAgentDatabaseSchema(dbUrl, workDir)
       : await buildAgentDatabaseDump(dbUrl, workDir);
@@ -7417,13 +7417,9 @@ agentPublicRouter.get("/agent/release/bundle", async (req, res) => {
     return;
   }
   try {
-    const { getReleaseInfo } = await import("../lib/agentRelease.js");
-    const rel = await getReleaseInfo();
     const expectedVersion = typeof req.query.version === "string" ? req.query.version : "";
-    if (expectedVersion && expectedVersion !== rel.version) {
-      res.status(409).json({ error: "release_changed", version: rel.version });
-      return;
-    }
+    const { getReleaseInfo, getReleaseByVersion } = await import("../lib/agentRelease.js");
+    const rel = expectedVersion ? await getReleaseByVersion(expectedVersion) : await getReleaseInfo();
     const enc = req.query.enc === "1";
     await logAgentEvent(inst.importedLink ? null : inst.id, "release_downloaded", {
       version: rel.version, encrypted: enc, linked: !!inst.importedLink,

@@ -840,6 +840,7 @@ export default function AgentServers() {
   const installAgent = (listQ.data ?? []).find(x => x.id === installDlg?.agentId) ?? null;
   const [pkgStatus, setPkgStatus] = useState<PackageStatus | null>(null);
   const [pkgBusy, setPkgBusy] = useState<string | null>(null);
+  const [preparingAgentId, setPreparingAgentId] = useState<number | null>(null);
 
   function packageLabel(kind: PackageKind): string {
     return kind === "backend" ? "Backend" : kind === "frontend" ? "Frontend" : "قاعدة البيانات";
@@ -906,6 +907,7 @@ export default function AgentServers() {
 
   async function prepareExternalPackage(a: Agent, databaseSource: DatabaseSource) {
     setPkgBusy("prepare");
+    setPreparingAgentId(a.id);
     try {
       const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/external-package/prepare`, {
         method: "POST", headers, body: JSON.stringify({ databaseSource }),
@@ -917,7 +919,7 @@ export default function AgentServers() {
       toast({ title: "تم تجهيز النسخة الخارجية", description: `الإصدار ${j.version} — الملفات الثلاثة مشفّرة ومتحقق منها${databaseSource === "fresh" ? "؛ قاعدة البيانات جداول فارغة فقط" : ""}` });
     } catch (e: any) {
       toast({ title: "فشل تجهيز النسخة الخارجية", description: String(e.message ?? e), variant: "destructive" });
-    } finally { setPkgBusy(null); }
+    } finally { setPkgBusy(null); setPreparingAgentId(null); }
   }
 
   async function downloadPkg(agentId: number, kind: PackageKind, format: "encrypted" | "raw" = "encrypted") {
@@ -1420,7 +1422,7 @@ export default function AgentServers() {
                       <Button variant="outline" size="sm" className="h-7 text-xs"
                         disabled={((cardDatabaseSources[a.id] ?? "agent") === "agent" && !a.dbUrlSet) || pkgBusy === "prepare" || a.deployStatus === "deploying"}
                         onClick={() => prepareExternalPackage(a, cardDatabaseSources[a.id] ?? "agent")} data-testid={`button-prepare-external-${a.id}`}>
-                        {pkgBusy === "prepare" ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}
+                        {pkgBusy === "prepare" && preparingAgentId === a.id ? <Loader2 className="h-3 w-3 ms-1 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}
                         تجهيز إصدار جديد
                       </Button>
                     </div>
@@ -2579,7 +2581,7 @@ export default function AgentServers() {
                        disabled={(formDatabaseSource === "agent" && !editingAgent?.dbUrlSet) || editingAgent?.mode !== "full" || pkgBusy === "prepare" || editingAgent?.deployStatus === "deploying" || (["backend", "frontend", "db"] as PackageKind[]).some(kind => !!formPackageFiles[kind])}
                       onClick={() => editingAgent && prepareExternalPackage(editingAgent, formDatabaseSource)}
                       data-testid="button-prepare-external-form">
-                      {pkgBusy === "prepare" ? <Loader2 className="h-3.5 w-3.5 ms-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 ms-1" />}
+                      {pkgBusy === "prepare" && preparingAgentId === editingAgent?.id ? <Loader2 className="h-3.5 w-3.5 ms-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 ms-1" />}
                       تجهيز Backend + Frontend + Database
                     </Button>
                    ) : (
