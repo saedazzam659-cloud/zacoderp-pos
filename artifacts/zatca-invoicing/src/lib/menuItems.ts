@@ -379,6 +379,8 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/inventory/reports/stock-balance", label: "رصيد المخزون", report: true },
       { path: "/inventory/reports/stock-ledger", label: "دفتر حركة المخزون", report: true },
       { path: "/inventory/reports/item-card", label: "كارت الصنف", report: true },
+      { path: "/inventory/reports/batches", label: "تقرير الدفعات", report: true },
+      { path: "/inventory/reports/expiry", label: "تقرير انتهاء الصلاحية", report: true },
       { path: "/inventory/reports/low-stock", label: "الأصناف منخفضة المخزون", report: true },
       { path: "/inventory/reports/valuation", label: "تقييم المخزون حسب المخزن", report: true },
       { path: "/inventory/reports/slow-moving", label: "الأصناف الراكدة", report: true },

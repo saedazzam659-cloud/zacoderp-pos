@@ -304,6 +304,7 @@ import StockLedger from "@/pages/inventory/StockLedger";
 import StockBalance from "@/pages/inventory/StockBalance";
 // Inventory Reports
 import InventoryReportsHub  from "@/pages/inventory/reports/InventoryReportsHub";
+import BatchExpiryReport from "@/pages/inventory/reports/BatchExpiryReport";
 import ItemCard              from "@/pages/inventory/reports/ItemCard";
 import LowStockReport        from "@/pages/inventory/reports/LowStockReport";
 import ValuationByWarehouse  from "@/pages/inventory/reports/ValuationByWarehouse";
@@ -1073,6 +1074,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/balance" module="items" component={StockBalance} />}
             {/* Inventory Reports */}
             {!isSuperAdmin && <PermRoute path="/inventory/reports"                  module="inventory_reports" component={InventoryReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/batches"          module="inventory_reports" component={BatchExpiryReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/expiry"           module="inventory_reports" component={BatchExpiryReport} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-balance"    module="inventory_reports" component={StockBalance} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-ledger"     module="inventory_reports" component={StockLedger} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/item-card"        module="inventory_reports" component={ItemCard} />}

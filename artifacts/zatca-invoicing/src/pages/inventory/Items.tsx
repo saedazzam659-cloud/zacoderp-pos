@@ -4054,20 +4054,20 @@ function ItemReorderPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
 // ════════════════════════════════════════════════════════════════════════════
 // Batches panel — رقم الدفعة + تاريخ الانتهاء
 // ════════════════════════════════════════════════════════════════════════════
-// Aggregates incoming purchase / goods-receipt movements by
-// (batchNumber, expiryDate, warehouse). Outgoing movements do not yet
-// carry a batch reference (medium-scope feature: historical recording
-// only, no FIFO/FEFO lot tracking), so we show *received* qty + expiry
-// status — not "remaining per batch".
+// The item tab uses the same attributed ledger totals as the company-wide reports.
 function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: string }) {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const { fmt, fmtQty } = useFmt();
+  const { user, actingCompanyId } = useAuth();
+  const cid = user?.role === "superadmin" ? actingCompanyId : (user?.company?.id ?? user?.companyId);
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["item-batches", itemId],
+    queryKey: ["item-batches", user?.id, cid, itemId],
     queryFn: () => inventoryApi.getItemBatches(itemId),
+    enabled: !!cid,
   });
 
+  if (!cid) return <p className="text-xs text-destructive py-4" role="alert">{isRtl ? "اختر شركة لعرض دفعات الصنف." : "Select a company to view item batches."}</p>;
   if (isLoading) return <Skeleton className="h-32 w-full" />;
   if (isError || !data) return (
     <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
@@ -4112,8 +4112,8 @@ function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
         </div>
       </div>
 
-      <div className="rounded-lg border overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="rounded-lg border overflow-x-auto">
+        <table className="w-full min-w-[980px] text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
               <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>{t("inventoryMaster.items.batchColNumber")}</th>
@@ -4121,6 +4121,8 @@ function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
               <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColStatus")}</th>
               <th className={cn("px-3 py-2 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>{t("inventoryMaster.items.batchColWarehouse")}</th>
               <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColReceivedQty")}</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColIssuedQty")}</th>
+              <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColRemainingQty")}</th>
               <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColAvgCost")}</th>
               <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColFirstReceived")}</th>
               <th className="px-3 py-2 text-center font-semibold text-muted-foreground text-xs">{t("inventoryMaster.items.batchColLastReceived")}</th>
@@ -4131,9 +4133,9 @@ function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
               const badge = statusBadge(b.status);
               return (
                 <tr key={`${b.batchNumber}-${b.expiryDate ?? ""}-${b.warehouseId ?? ""}-${i}`} className="hover:bg-muted/20">
-                  <td className="px-3 py-2 font-mono text-xs font-medium">{b.batchNumber}</td>
+                   <td className="px-3 py-2 font-mono text-xs font-medium">{b.batchNumber ?? t("inventoryMaster.items.batchUnattributed")}</td>
                   <td className="px-3 py-2 tabular-nums text-xs">
-                    {b.expiryDate ?? <span className="text-muted-foreground">—</span>}
+                     {b.expiryDate ?? <span className="text-muted-foreground">{t("inventoryMaster.items.batchUnknownExpiry")}</span>}
                     {b.daysToExpiry != null && (
                       <span className="block text-[10px] text-muted-foreground">
                         {b.daysToExpiry < 0 ? t("inventoryMaster.items.batchDaysAgo", { days: -b.daysToExpiry }) : t("inventoryMaster.items.batchDaysLater", { days: b.daysToExpiry })}
@@ -4151,6 +4153,8 @@ function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
                   <td className="px-3 py-2 text-center tabular-nums text-xs font-semibold">
                     {fmtQty(b.receivedQty)} <span className="text-muted-foreground font-normal">{unitCode}</span>
                   </td>
+                   <td className="px-3 py-2 text-center tabular-nums text-xs">{fmtQty(b.issuedQty)} <span className="text-muted-foreground">{unitCode}</span></td>
+                   <td className="px-3 py-2 text-center tabular-nums text-xs font-semibold">{fmtQty(b.remainingQty)} <span className="text-muted-foreground font-normal">{unitCode}</span></td>
                   <td className="px-3 py-2 text-center tabular-nums text-xs">{fmt(b.avgCost)}</td>
                   <td className="px-3 py-2 text-center tabular-nums text-[10px] text-muted-foreground">{b.firstSeen}</td>
                   <td className="px-3 py-2 text-center tabular-nums text-[10px] text-muted-foreground">{b.lastSeen}</td>

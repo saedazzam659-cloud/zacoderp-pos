@@ -2,11 +2,23 @@ import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import {
   BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell,
-  Gift, ReceiptText, ClipboardCheck,
+  Gift, ReceiptText, ClipboardCheck, Layers3, CalendarClock,
 } from "lucide-react";
 import { usePermission } from "@/hooks/usePermission";
 
 const REPORTS = [
+  {
+    href: "/inventory/reports/batches",
+    key: "batches",
+    icon: Layers3,
+    color: "from-cyan-50 to-cyan-100/40 text-cyan-700 border-cyan-200",
+  },
+  {
+    href: "/inventory/reports/expiry",
+    key: "expiry",
+    icon: CalendarClock,
+    color: "from-amber-50 to-amber-100/40 text-amber-700 border-amber-200",
+  },
   {
     href: "/inventory/reports/stock-balance",
     key: "stockBalance",
@@ -89,15 +101,13 @@ export default function InventoryReportsHub() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {visibleReports.map(r => (
-          <Link key={r.href} href={r.href}>
-            <a className={`group rounded-xl border bg-gradient-to-br ${r.color} p-5 transition-all hover:shadow-md hover:-translate-y-0.5 cursor-pointer block`}>
-              <div className="flex items-start justify-between mb-3">
-                <r.icon className="h-7 w-7" />
-                <ChevronLeft className={`h-4 w-4 opacity-40 group-hover:opacity-100 transition-all ${isRtl ? "group-hover:-translate-x-1" : "rotate-180 group-hover:translate-x-1"}`} />
-              </div>
-              <h3 className="text-base font-bold mb-1.5">{t(`inventoryReports.hub.${r.key}Title`)}</h3>
-              <p className="text-xs opacity-80 leading-relaxed">{t(`inventoryReports.hub.${r.key}Desc`)}</p>
-            </a>
+          <Link key={r.href} href={r.href} data-testid={`link-report-${r.key}`} className={`group rounded-xl border bg-gradient-to-br ${r.color} p-5 transition-all hover:shadow-md hover:-translate-y-0.5 cursor-pointer block`}>
+            <div className="flex items-start justify-between mb-3">
+              <r.icon className="h-7 w-7" />
+              <ChevronLeft className={`h-4 w-4 opacity-40 group-hover:opacity-100 transition-all ${isRtl ? "group-hover:-translate-x-1" : "rotate-180 group-hover:translate-x-1"}`} />
+            </div>
+            <h3 className="text-base font-bold mb-1.5">{t(`inventoryReports.hub.${r.key}Title`)}</h3>
+            <p className="text-xs opacity-80 leading-relaxed">{t(`inventoryReports.hub.${r.key}Desc`)}</p>
           </Link>
         ))}
       </div>

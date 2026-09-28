@@ -61,6 +61,10 @@ import {
   type BatchPick,
 } from "../lib/stockHelpers.js";
 import {
+  businessDate, validDateOnly, queryBatchGroups, queryBatchMovements,
+  NO_EXPIRY, type BatchStatus,
+} from "../lib/batchReport.js";
+import {
   INVENTORY_OPENING_CREDIT_MARKER,
   INVENTORY_OPENING_DEBIT_MARKER,
 } from "../lib/openingBalances.js";
@@ -116,6 +120,7 @@ router.use(pathRbac([
   // other inventory reports so the company-level menu permission applies.
   ["/reports/free-quantities",      "items"],
   ["/reports/item-sales-valuation", "items"],
+  ["/reports/batches",               "items"],
   // PRO Extension #6 — Smart Alerts: gate on "items" module like other
   // read-only inventory views.
   ["/alerts",                   "items"],
@@ -5336,16 +5341,12 @@ router.get("/items/:id/reorder-suggestion", async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 // Batches per item (رقم الدفعة + تاريخ الانتهاء)
 // ════════════════════════════════════════════════════════════════════════════
-// Aggregates incoming stock movements (purchases + goods receipts) by
-// (batch_number, expiry_date, warehouse). "Received" is the sum of positive
-// qty entries for that combination. Outgoing movements do NOT carry a
-// batch reference in this phase (medium scope: historical recording only,
-// no FIFO/FEFO lot tracking), so we cannot subtract usage per batch — the
-// UI shows received quantity + expiry status only.
+// This view and the report use the same signed ledger aggregation. Unattributed
+// historical issues remain in the NULL batch bucket, not guessed into receipts.
 router.get("/items/:id/batches", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
 
   // Existence check (matches sibling endpoints like /reorder-suggestion)
   const [item] = await db.select({ id: itemsTable.id })
@@ -5353,69 +5354,10 @@ router.get("/items/:id/batches", async (req, res) => {
     .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
   if (!item) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
 
-  // Restrict aggregation to inbound tx types that legitimately carry a batch
-  // reference (purchases + goods receipts). Other tx types may incidentally
-  // copy a batch field on outbound moves, but counting them would distort
-  // "received" totals.
-  const INBOUND_TX = ["purchase", "goods_receipt"] as const;
-
-  const rows = await db
-    .select({
-      batchNumber:  stockLedgerTable.batchNumber,
-      expiryDate:   stockLedgerTable.expiryDate,
-      warehouseId:  stockLedgerTable.warehouseId,
-      warehouseAr:  warehousesTable.nameAr,
-      warehouseEn:  warehousesTable.nameEn,
-      receivedQty:  sql<string>`coalesce(sum(${stockLedgerTable.qty}) filter (where ${stockLedgerTable.qty} > 0), 0)`,
-      firstSeen:    sql<string>`min(${stockLedgerTable.txDate})`,
-      lastSeen:     sql<string>`max(${stockLedgerTable.txDate})`,
-      avgCost:      sql<string>`coalesce(avg(nullif(${stockLedgerTable.costPrice}, 0)), 0)`,
-    })
-    .from(stockLedgerTable)
-    .leftJoin(warehousesTable, eq(stockLedgerTable.warehouseId, warehousesTable.id))
-    .where(and(
-      eq(stockLedgerTable.companyId, cid),
-      eq(stockLedgerTable.itemId, id),
-      inArray(stockLedgerTable.txType, INBOUND_TX),
-      sql`${stockLedgerTable.batchNumber} is not null`,
-      sql`length(trim(${stockLedgerTable.batchNumber})) > 0`,
-    ))
-    .groupBy(stockLedgerTable.batchNumber, stockLedgerTable.expiryDate, stockLedgerTable.warehouseId, warehousesTable.nameAr, warehousesTable.nameEn)
-    .having(sql`coalesce(sum(${stockLedgerTable.qty}) filter (where ${stockLedgerTable.qty} > 0), 0) > 0`)
-    .orderBy(asc(stockLedgerTable.expiryDate), asc(stockLedgerTable.batchNumber));
-
-  // Date-only arithmetic (timezone-safe). Both `today` and `expiryDate` are
-  // treated as YYYY-MM-DD strings and compared via UTC day count to avoid
-  // off-by-one drift across timezones.
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const dayDiff = (a: string, b: string): number => {
-    const [ay, am, ad] = a.split("-").map(Number);
-    const [by, bm, bd] = b.split("-").map(Number);
-    const aUtc = Date.UTC(ay, am - 1, ad);
-    const bUtc = Date.UTC(by, bm - 1, bd);
-    return Math.round((aUtc - bUtc) / 86400000);
-  };
-
-  const out = rows.map(r => {
-    let status: "expired" | "expiring_soon" | "active" | "no_expiry" = "no_expiry";
-    let daysToExpiry: number | null = null;
-    if (r.expiryDate) {
-      daysToExpiry = dayDiff(String(r.expiryDate), todayStr);
-      status = daysToExpiry < 0 ? "expired" : daysToExpiry <= 30 ? "expiring_soon" : "active";
-    }
-    return {
-      batchNumber: r.batchNumber,
-      expiryDate:  r.expiryDate,
-      warehouseId: r.warehouseId,
-      warehouse:   { id: r.warehouseId, nameAr: r.warehouseAr, nameEn: r.warehouseEn },
-      receivedQty: Number(r.receivedQty),
-      avgCost:     Number(r.avgCost),
-      firstSeen:   r.firstSeen,
-      lastSeen:    r.lastSeen,
-      daysToExpiry,
-      status,
-    };
+  const result = await queryBatchGroups(cid, {
+    itemId: id, nearDays: 30, today: businessDate(), page: 1, pageSize: 0,
   });
+  const out = result.rows;
 
   res.json({
     itemId: id,
@@ -5427,6 +5369,59 @@ router.get("/items/:id/batches", async (req, res) => {
       activeCount:     out.filter(b => b.status === "active" || b.status === "no_expiry").length,
     },
   });
+});
+
+function batchPage(req: any, res: any): { page: number; pageSize: number } | null {
+  const page = req.query.page === undefined ? 1 : Number(req.query.page);
+  const pageSize = req.query.pageSize === undefined ? 25 : Number(req.query.pageSize);
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    res.status(400).json({ error: "رقم الصفحة أو حجمها غير صالح" }); return null;
+  }
+  return { page, pageSize };
+}
+
+router.get("/reports/batches", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const paging = batchPage(req, res); if (!paging) return;
+  const query = req.query as Record<string, unknown>;
+  const positiveId = (value: unknown) => value === undefined || (typeof value === "string" && Number.isSafeInteger(Number(value)) && Number(value) > 0);
+  const date = (value: unknown) => value === undefined || (typeof value === "string" && validDateOnly(value));
+  const nearDays = query.nearDays === undefined ? 30 : Number(query.nearDays);
+  const statuses = ["expired", "expiring_soon", "active", "no_expiry"];
+  if (!positiveId(query.itemId) || !positiveId(query.warehouseId) ||
+      !date(query.expiryFrom) || !date(query.expiryTo) ||
+      (query.expiryFrom && query.expiryTo && String(query.expiryFrom) > String(query.expiryTo)) ||
+      (query.batch !== undefined && (typeof query.batch !== "string" || query.batch.length > 255)) ||
+      (query.status !== undefined && !statuses.includes(String(query.status))) ||
+      (query.onHandOnly !== undefined && query.onHandOnly !== "true" && query.onHandOnly !== "false") ||
+      !Number.isSafeInteger(nearDays) || nearDays < 0 || nearDays > 3650) {
+    res.status(400).json({ error: "مرشحات تقرير التشغيلات غير صالحة" }); return;
+  }
+  const report = await queryBatchGroups(cid, {
+    ...paging, today: businessDate(), nearDays,
+    itemId: query.itemId === undefined ? undefined : Number(query.itemId),
+    warehouseId: query.warehouseId === undefined ? undefined : Number(query.warehouseId),
+    batch: query.batch as string | undefined,
+    expiryFrom: query.expiryFrom as string | undefined,
+    expiryTo: query.expiryTo as string | undefined,
+    status: query.status as BatchStatus | undefined,
+    onHandOnly: query.onHandOnly === "true",
+  });
+  res.json(report);
+});
+
+router.get("/reports/batches/movements", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const paging = batchPage(req, res); if (!paging) return;
+  const { itemId, warehouseId, batch, expiryDate } = req.query;
+  if (![itemId, warehouseId].every(v => typeof v === "string" && Number.isSafeInteger(Number(v)) && Number(v) > 0) ||
+      typeof batch !== "string" || batch.length > 255 ||
+      typeof expiryDate !== "string" || (expiryDate !== NO_EXPIRY && !validDateOnly(expiryDate))) {
+    res.status(400).json({ error: "يلزم تحديد الصنف والمخزن والدفعة وتاريخ الانتهاء بدقة" }); return;
+  }
+  res.json(await queryBatchMovements(cid, {
+    itemId: Number(itemId), warehouseId: Number(warehouseId), batch, expiryDate,
+  }, paging.page, paging.pageSize));
 });
 
 // ════════════════════════════════════════════════════════════════════════════

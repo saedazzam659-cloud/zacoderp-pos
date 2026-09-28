@@ -1,11 +1,13 @@
+import { getActingCompanyIdForRequests } from "@/contexts/AuthContext";
+
 const API = import.meta.env.VITE_API_URL ?? "";
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("zatca_token");
-  const actingCompanyId = localStorage.getItem("zatca_acting_company_id");
+  const actingCompanyId = getActingCompanyIdForRequests();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (actingCompanyId) headers["x-acting-company-id"] = actingCompanyId;
+  if (actingCompanyId) headers["x-acting-company-id"] = String(actingCompanyId);
   return headers;
 }
 
@@ -59,6 +61,50 @@ export interface ItemSupplier {
   supplierName?: string | null;
   supplierNameEn?: string | null;
   supplierCode?: string | null;
+}
+
+export interface BatchRow {
+  itemId: number;
+  item: { id: number; code: string; nameAr: string; nameEn: string | null };
+  warehouseId: number;
+  warehouse: { id: number; nameAr: string | null; nameEn: string | null };
+  batchNumber: string | null;
+  expiryDate: string | null;
+  receivedQty: number;
+  issuedQty: number;
+  remainingQty: number;
+  avgCost: number;
+  firstSeen: string;
+  lastSeen: string;
+  daysToExpiry: number | null;
+  status: "expired" | "expiring_soon" | "active" | "no_expiry";
+}
+export interface BatchReportResponse {
+  rows: BatchRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  summary: {
+    totalBatches: number;
+    totalReceivedQty: number;
+    totalIssuedQty: number;
+    totalRemainingQty: number;
+    expiredCount: number;
+    expiringSoonCount: number;
+    activeCount: number;
+    noExpiryCount: number;
+  };
+}
+export interface BatchMovementsResponse {
+  rows: Array<{
+    id: number; txDate: string; txType: string; qty: number;
+    receivedQty: number; issuedQty: number; costPrice: number; totalCost: number;
+    balanceQty: number; refId: number | null; refType: string | null;
+    sourceLineId: number | null; batchNumber: string | null; expiryDate: string | null;
+    notes: string | null; createdAt: string;
+  }>;
+  total: number; page: number; pageSize: number; pageCount: number;
 }
 
 // ─── PRO Extension #20 — Item Variants ──────────────────────────────────────
@@ -311,22 +357,20 @@ export const inventoryApi = {
   getReorderSuggestion: (itemId: number) =>
     get<ReorderSuggestion>(`/items/${itemId}/reorder-suggestion`),
 
+  // One company-scoped ledger aggregation powers both inventory reports and item batches.
+  getBatchReport: (params: Record<string, string | number>) =>
+    get<BatchReportResponse>(`/reports/batches?${new URLSearchParams(
+      Object.entries(params).map(([key, value]) => [key, String(value)])
+    )}`),
+  getBatchMovements: (params: { itemId: number; warehouseId: number; batch: string; expiryDate: string; page: number; pageSize: number }) =>
+    get<BatchMovementsResponse>(`/reports/batches/movements?${new URLSearchParams(
+      Object.entries(params).map(([key, value]) => [key, String(value)])
+    )}`),
   // Batches per item (رقم الدفعة + تاريخ الانتهاء)
   getItemBatches: (itemId: number) =>
     get<{
       itemId: number;
-      batches: Array<{
-        batchNumber: string;
-        expiryDate: string | null;
-        warehouseId: number | null;
-        warehouse: { id: number | null; nameAr: string | null; nameEn: string | null };
-        receivedQty: number;
-        avgCost: number;
-        firstSeen: string;
-        lastSeen: string;
-        daysToExpiry: number | null;
-        status: "expired" | "expiring_soon" | "active" | "no_expiry";
-      }>;
+      batches: BatchRow[];
       summary: { totalBatches: number; expiredCount: number; expiringSoonCount: number; activeCount: number };
     }>(`/items/${itemId}/batches`),
 

@@ -49,14 +49,15 @@ function readActingCompanyFromRealm(): number | null {
   if (pinnedActingCompanyForRealm != null) return pinnedActingCompanyForRealm;
   return readActingCompanyHashOverride();
 }
-setActingCompanyIdGetter(() => {
+export function getActingCompanyIdForRequests(): number | null {
   const realmOverride = readActingCompanyFromRealm();
   if (realmOverride != null) return realmOverride;
   const v = localStorage.getItem("zatca_acting_company_id");
   if (!v) return null;
   const n = parseInt(v, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
-});
+}
+setActingCompanyIdGetter(getActingCompanyIdForRequests);
 
 export interface AuthUser {
   id: number;
