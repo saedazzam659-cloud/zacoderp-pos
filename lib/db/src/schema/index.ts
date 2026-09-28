@@ -1,3 +1,4 @@
+export * from "./internalControl";
 export * from "./companies";
 export * from "./documentArchives";
 export * from "./deliveryReceiptDocuments";

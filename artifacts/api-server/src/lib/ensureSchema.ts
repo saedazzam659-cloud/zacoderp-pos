@@ -20,6 +20,7 @@ import { ensureContractingCostAllocationTables } from "./contracting-cost-alloca
 import { ensureProjectFinancialLinks } from "./project-financial-link.js";
 import { ensureContractingExecutionSchema } from "./contracting-execution-storage.js";
 import { ensureContractingGuaranteeTables } from "./contracting-guarantees-storage.js";
+import { ensureInternalControlSchema } from "./internalControlStorage.js";
 
 let healPromise: Promise<void> | null = null;
 type SchemaReconciliationState =
@@ -4402,6 +4403,7 @@ async function runHeal(options: {
   const includeIdentitySteps = options.includeIdentitySteps !== false;
   const strictSchema = options.strictSchema === true;
   const { tables, enums } = collectSchemaEntities();
+  await ensureInternalControlSchema();
   logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
 
   // Run this compatibility DDL before generic inspection. Purchase-invoice
@@ -4523,6 +4525,7 @@ async function runHeal(options: {
   const includeIdentitySteps = options.includeIdentitySteps !== false;
   const strictSchema = options.strictSchema === true;
   const { tables, enums } = collectSchemaEntities();
+  await ensureInternalControlSchema();
   logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
 
   // Run this compatibility DDL before generic inspection. Purchase-invoice

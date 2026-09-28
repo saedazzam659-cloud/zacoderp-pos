@@ -24,9 +24,18 @@ export type PermAction = "view" | "create" | "edit" | "delete" | "post" | "unpos
 export function usePermission(module: string, action: PermAction = "view"): boolean {
   const { user } = useAuth() as any;
   if (!user) return false;
+  if ((module === "internal_control" || module.startsWith("internal_control_")) &&
+      user.role === "admin" && user.permissions?.internal_control?.view === false) return false;
   if (user.role === "superadmin") return true;
   if (!companyAllowsModule(user, module)) return false;
   if (user.role === "admin") return true;
-  const perm = (user.permissions ?? {})[module];
-  return !!perm?.[action];
+  return userHasGrant(user.permissions, module, action);
+}
+
+// Internal-control child keys never bypass the master user grant: without an
+// explicit internal_control.view every child permission is treated as absent.
+export function userHasGrant(perms: any, module: string, action: string): boolean {
+  const p = perms ?? {};
+  if (module.startsWith("internal_control_") && p.internal_control?.view !== true) return false;
+  return p[module]?.[action] === true;
 }

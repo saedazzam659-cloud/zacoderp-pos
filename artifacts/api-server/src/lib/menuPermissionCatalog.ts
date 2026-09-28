@@ -22,6 +22,7 @@
 //   2. Add it here. The two MUST stay in sync; an end-to-end test
 //      asserts shape compatibility on registration.
 export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
+  "internal_control",
   // ── رئيسي ──
   "dashboard",
   // ── الأعمال ──

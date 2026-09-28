@@ -1010,7 +1010,8 @@
     "devStudio": "DevStudio",
     "marketplace": "App Store & Marketplace",
     "marketplaceAdmin": "Marketplace Admin",
-    "adjustmentsSchedule": "Adjustments Movement Schedule"
+    "adjustmentsSchedule": "Adjustments Movement Schedule",
+    "internalControlGroup": "Internal Control"
   },
   "security": {
     "title": "Security & Monitoring",
@@ -2749,7 +2750,8 @@
       "office": "Zacode Office",
       "trainingRoom": "Live Training Hall",
       "deliveryDocs": "Goods Receipt / Delivery",
-      "demoAnalytics": "Demo Monitoring"
+      "demoAnalytics": "Demo Monitoring",
+      "internalControl": "Internal Control"
     },
     "actions": {
       "view": "View",
@@ -2848,7 +2850,15 @@
       "field_service_plans": "Field Service — Visit Plans",
       "field_service_tickets": "Field Service — Tickets & SLA",
       "field_service_tracking": "Field Service — Live Tracking",
-      "field_service_reports": "Field Service — Reports & KPIs"
+      "field_service_reports": "Field Service — Reports & KPIs",
+      "internal_control": "Internal control (master)",
+      "internal_control_cases": "Control cases",
+      "internal_control_review": "Review / note / assign / resolve",
+      "internal_control_ignore": "Ignore cases",
+      "internal_control_reopen": "Reopen cases",
+      "internal_control_rules": "Control rules & scan",
+      "internal_control_log": "Control log",
+      "internal_control_export": "Export control reports"
     }
   },
   "cashCommon": {

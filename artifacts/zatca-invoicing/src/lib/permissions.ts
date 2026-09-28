@@ -53,6 +53,7 @@ const G = {
   office:       "perms.groups.office",
   deliveryDocs: "perms.groups.deliveryDocs",
   trainingRoom: "perms.groups.trainingRoom",
+  internalControl: "perms.groups.internalControl",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -212,6 +213,19 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // company admin (onboarding 3rd-party companies, uploading their
   // invoices, dispatching to ZATCA, viewing reports, managing CSID).
   { key: "multi_link",              label: "perms.modules.multi_link",              group: G.multiLink,    actions: ALL },
+
+  // ─── الرقابة الداخلية ────────────────────────────────────────────────
+  // `internal_control.view` is the MASTER user grant: every child key below
+  // is ignored unless it is explicitly granted (usePermission enforces this).
+  // Never auto-granted by company enablement or legacy empty maps.
+  { key: "internal_control",        label: "perms.modules.internal_control",        group: G.internalControl, actions: VO },
+  { key: "internal_control_cases",  label: "perms.modules.internal_control_cases",  group: G.internalControl, actions: VO },
+  { key: "internal_control_review", label: "perms.modules.internal_control_review", group: G.internalControl, actions: ["view", "edit"] },
+  { key: "internal_control_ignore", label: "perms.modules.internal_control_ignore", group: G.internalControl, actions: ["edit"] },
+  { key: "internal_control_reopen", label: "perms.modules.internal_control_reopen", group: G.internalControl, actions: ["edit"] },
+  { key: "internal_control_rules",  label: "perms.modules.internal_control_rules",  group: G.internalControl, actions: ["view", "edit"] },
+  { key: "internal_control_log",    label: "perms.modules.internal_control_log",    group: G.internalControl, actions: VO },
+  { key: "internal_control_export", label: "perms.modules.internal_control_export", group: G.internalControl, actions: ["export"] },
 ];
 
 export const PERMISSION_GROUPS = Array.from(new Set(PERMISSION_MODULES.map(m => m.group)));

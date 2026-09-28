@@ -399,6 +399,7 @@ async function bootstrap() {
     // Auto-generate monthly accounting-adjustment JEs (prepaid/accrued) at
     // month end for adjustments flagged auto_generate=true.
     import("./lib/adjustmentScheduler.js").then(m => m.startAdjustmentScheduler?.()).catch(() => {});
+    import("./lib/internalControlEngine.js").then(m => m.registerInternalControlDatasource()).catch(() => {});
     import("./lib/posSessionJanitor.js").then(m => m.startPosSessionAutoCloseScheduler?.()).catch(() => {});
     import("./lib/githubReleaseSync.js").then(m => m.startGithubReleaseSyncScheduler?.()).catch(() => {});
   });

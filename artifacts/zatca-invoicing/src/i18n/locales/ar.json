@@ -1005,7 +1005,8 @@
     "devStudio": "التطوير من خلال زاكود",
     "marketplace": "المتجر والماركت بليس",
     "marketplaceAdmin": "إدارة المتجر",
-    "adjustmentsSchedule": "جدول التسويات وحركة المصروف"
+    "adjustmentsSchedule": "جدول التسويات وحركة المصروف",
+    "internalControlGroup": "الرقابة الداخلية"
   },
   "security": {
     "title": "الأمن والمراقبة",
@@ -1698,7 +1699,6 @@
       "legacyLimitedBackup": "نسخة قديمة محدودة",
       "confirmFullRestore": "هذه الاستعادة ستستبدل بيانات الشركة الحالية بجميع بيانات النسخة الكاملة. لا يمكن دمج المعاملات المتعارضة. هل تريد المتابعة؟",
       "failed": "فشل",
-      "updated": "تحديث",
       "pickBackupFile": "اختيار ملف النسخة الاحتياطية",
       "invalidBackupFile": "ملف النسخة الاحتياطية غير صالح",
       "backupFileMeta": "تاريخ التصدير: {{date}} · إصدار التخطيط: {{version}}",
@@ -2716,9 +2716,9 @@
     "mobQuotationsView": "عرض عروض الأسعار",
     "mobQuotationCreate": "إنشاء عرض سعر",
     "mobReportsView": "الملخص والتقارير",
-    "mobHrAttendanceView": "تقرير حضوري (حضور وانصراف الموظف المرتبط)"
-    ,"mobOfflineControls": "عناصر التحكم بوضع الأوف لاين"
-    ,"mobServerSettings": "إعدادات الخادم"
+    "mobHrAttendanceView": "تقرير حضوري (حضور وانصراف الموظف المرتبط)",
+    "mobOfflineControls": "عناصر التحكم بوضع الأوف لاين",
+    "mobServerSettings": "إعدادات الخادم"
   },
   "perms": {
     "groups": {
@@ -2752,7 +2752,8 @@
       "office": "أوفيس زاكود",
       "trainingRoom": "قاعة التدريب المباشر",
       "deliveryDocs": "سندات الاستلام والتسليم",
-      "demoAnalytics": "متابعة الديمو"
+      "demoAnalytics": "متابعة الديمو",
+      "internalControl": "الرقابة الداخلية"
     },
     "actions": {
       "view": "عرض",
@@ -2851,7 +2852,15 @@
       "field_service_plans": "الخدمة الميدانية — خطط الزيارات",
       "field_service_tickets": "الخدمة الميدانية — التذاكر و SLA",
       "field_service_tracking": "الخدمة الميدانية — التتبع المباشر",
-      "field_service_reports": "الخدمة الميدانية — التقارير ومؤشرات الأداء"
+      "field_service_reports": "الخدمة الميدانية — التقارير ومؤشرات الأداء",
+      "internal_control": "الرقابة الداخلية (صلاحية رئيسية)",
+      "internal_control_cases": "حالات الرقابة",
+      "internal_control_review": "مراجعة / ملاحظة / إسناد / معالجة",
+      "internal_control_ignore": "تجاهل الحالات",
+      "internal_control_reopen": "إعادة فتح الحالات",
+      "internal_control_rules": "قواعد الرقابة والفحص",
+      "internal_control_log": "سجل الرقابة",
+      "internal_control_export": "تصدير تقارير الرقابة"
     }
   },
   "cashCommon": {
@@ -6139,7 +6148,7 @@
       "fromUnit": "من وحدة (المصدر)",
       "baseRequired": "الوحدة الأساسية مطلوبة؛ اختر وحدة قياس قبل حفظ الصنف.",
       "initializeReferenceAsBase": "اعتماد الوحدة المرجعية كوحدة أساسية إذا لم تُحدد للصنف بعد (للصنف دون حركات سابقة فقط)",
-      "saveError": "تعذر حفظ علاقة الوحدة",
+      "saveError": "فشل الحفظ",
       "missingBaseError": "لم تُحدد وحدة أساسية واحدة للصنف. حددها في بيانات الصنف، أو اختر اعتماد الوحدة المرجعية كوحدة أساسية عند إنشاء أول علاقة.",
       "baseChangeBlockedError": "لا يمكن تغيير الوحدة الأساسية مع وجود علاقات أو حركات سابقة، أو استبدال وحدة أساسية مختلفة من هنا.",
       "itemUnitsTitle": "ربط وحدات القياس والتحويل",
@@ -6188,7 +6197,6 @@
       "deleteConfirmDesc": "حذف الوحدة «{{name}}»؟ لا يمكن حذف وحدة مرتبطة بأصناف أو وحدات أخرى.",
       "savedToast": "تم حفظ الوحدة",
       "deletedToast": "تم حذف الوحدة",
-      "saveError": "فشل الحفظ",
       "deleteError": "فشل الحذف",
       "itemLabel": "وحدة",
       "infoTitle": "كيف تعمل وحدات القياس المتعددة؟",

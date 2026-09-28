@@ -38,7 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
-import { usePermission } from "@/hooks/usePermission";
+import { usePermission, userHasGrant } from "@/hooks/usePermission";
 import { useIdleLogout } from "@/hooks/useIdleLogout";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -1785,6 +1785,71 @@ function ProductionNavGroup({
   );
 }
 
+// ─── InternalControlNavGroup (التقارير → الرقابة الداخلية) ─────────────────
+// Company gate `internal_control` is default-OFF; every non-admin user also
+// needs the explicit master grant internal_control.view (legacy empty maps
+// do NOT inherit it). Children are listed per their own granular key.
+const internalControlSubNav: NavDef[] = [
+  { nameKey: "nav.icDashboard",   href: "/internal-control",             icon: Gauge,         permKey: "internal_control", exact: true },
+  { nameKey: "nav.icCases",       href: "/internal-control/cases",       icon: ClipboardList, permKey: "internal_control_cases" },
+  { nameKey: "nav.icPermissions", href: "/internal-control/permissions", icon: ClipboardList, permKey: "internal_control_cases" },
+  { nameKey: "nav.icDocuments",   href: "/internal-control/documents",   icon: ClipboardList, permKey: "internal_control_cases" },
+  { nameKey: "nav.icAnomalies",   href: "/internal-control/anomalies",   icon: ClipboardList, permKey: "internal_control_cases" },
+  { nameKey: "nav.icProjects",    href: "/internal-control/projects",    icon: ClipboardList, permKey: "internal_control_cases" },
+  { nameKey: "nav.icInventory",   href: "/internal-control/inventory",   icon: ClipboardList, permKey: "internal_control_cases" },
+  { nameKey: "nav.icFinance",     href: "/internal-control/finance",     icon: ClipboardList, permKey: "internal_control_cases" },
+  { nameKey: "nav.icLog",         href: "/internal-control/log",         icon: ScrollText,    permKey: "internal_control_log" },
+  { nameKey: "nav.icRules",       href: "/internal-control/rules",       icon: Settings,      permKey: "internal_control_rules" },
+];
+function icAllowed(user: any, key: string): boolean {
+  if (!user) return false;
+  if (user.role === "admin" && user.permissions?.internal_control?.view === false) return false;
+  if (user.role === "superadmin") return true;
+  if (!companyAllowsModule(user, key)) return false;
+  if (user.role === "admin") return true;
+  return userHasGrant(user.permissions, key, "view");
+}
+function InternalControlNavGroup({
+  location, onNavigate,
+}: { location: string; onNavigate: () => void }) {
+  const { user } = useAuth();
+  if (!icAllowed(user, "internal_control")) return null;
+  const labels: Record<string, string> = {
+    "nav.icDashboard": "لوحة الرقابة الداخلية", "nav.icCases": "العمليات التي تحتاج مراجعة",
+    "nav.icPermissions": "مخالفات الصلاحيات", "nav.icDocuments": "التعديلات على المستندات",
+    "nav.icAnomalies": "العمليات غير الطبيعية", "nav.icProjects": "تنبيهات المشاريع والمقاولات",
+    "nav.icInventory": "تنبيهات المخزون", "nav.icFinance": "تنبيهات المالية",
+    "nav.icLog": "سجل الرقابة الداخلية", "nav.icRules": "قواعد الرقابة",
+  };
+  const items = internalControlSubNav.filter(i => icAllowed(user, i.permKey!));
+  return (
+    <div className="space-y-0.5">
+      <HubGroupButton
+        hubHref="/internal-control"
+        icon={ShieldCheck}
+        label="التقارير · الرقابة الداخلية"
+        isOn={location === "/internal-control"}
+        open
+        onToggle={() => undefined}
+        onNavigate={onNavigate}
+      />
+      <div className="mt-0.5 space-y-0.5 relative">
+        <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+        {items.map(item => (
+          <Link key={item.href} href={item.href} onClick={onNavigate}
+            className={`flex items-center gap-2 rounded-md ps-9 pe-2 py-1.5 text-[13px] transition-colors ${
+              (item.exact ? location === item.href : location.startsWith(item.href))
+                ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
+                : "text-sidebar-foreground/75 hover:bg-sidebar-accent/60"}`}>
+            <item.icon className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{labels[item.nameKey]}</span>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Compact manufacturing is a separate top-level group on purpose. It remains
 // reachable when advanced production is disabled without exposing any of its
 // screens or APIs.
@@ -2526,6 +2591,11 @@ function TopNavBar(props: any) {
       node: close => <ProductionNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
+      key: "internalControl",
+      label: "الرقابة الداخلية",
+      node: close => <InternalControlNavGroup location={location} onNavigate={nav(close)} />,
+    },
+    {
       key: "simpleManufacturing",
       label: t("nav.simpleManufacturingGroup", { defaultValue: "التصنيع الذكي" }),
       node: close => <SimpleManufacturingNavGroup location={location} onNavigate={nav(close)} />,
@@ -3065,6 +3135,8 @@ function SidebarInner({
             {isGroupAllowed(menuPerms, "simpleManufacturing", isSuperAdmin, user) && (
               <SimpleManufacturingNavGroup location={location} onNavigate={onNavigate} />
             )}
+
+            {!isSuperAdmin && <InternalControlNavGroup location={location} onNavigate={onNavigate} />}
 
             {isGroupAllowed(menuPerms, "safety", isSuperAdmin, user) && (
               <div className="space-y-0.5">

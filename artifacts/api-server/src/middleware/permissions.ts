@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { auditLogTable, usersTable } from "@workspace/db";
 import { mobilePermAllowed } from "../lib/mobilePerms.js";
+import { internalControlAllowed } from "../lib/internalControlPolicy.js";
 import { DEMO_OPERATIONAL_MODULES } from "../lib/demoOperationalPolicy.js";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -165,6 +166,14 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // متابعة الديمو للشركات — وحدة اختيارية مغلقة افتراضيًا. لا تستخدم
   // مسارات السوبر أدمن؛ واجهات الشركة المنفصلة تطبق عزل المصدر + الشركة.
   demo_analytics: "demo_analytics",
+  internal_control: "internal_control",
+  internal_control_cases: "internal_control",
+  internal_control_review: "internal_control",
+  internal_control_ignore: "internal_control",
+  internal_control_reopen: "internal_control",
+  internal_control_rules: "internal_control",
+  internal_control_log: "internal_control",
+  internal_control_export: "internal_control",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (must be
@@ -173,7 +182,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // sync with companyModuleGate.ts (frontend) + DEFAULT_OFF_KEYS in
 // MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
-  "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
+  "extensions_platform", "office", "demo_analytics", "simple_manufacturing", "internal_control",
 ]);
 
 // FROZEN legacy baseline (snapshot 2026-08): gate keys that keep the old
@@ -253,6 +262,7 @@ function userActionAllowed(u: any, module: string, action: PermAction): boolean 
 // "عرض الكل" iterates every postable module and keeps only the allowed ones)
 // without short-circuiting the whole request the way the middleware does.
 export function canAccessModule(authUser: any, module: string, action: PermAction): boolean {
+  if (module === "internal_control" || module.startsWith("internal_control_")) return internalControlAllowed(authUser,module,action);
   if (!authUser) return false;
   if (authUser.role === "superadmin") return true;
   if (!companyAllowsModule(authUser, module)) return false;
@@ -346,6 +356,10 @@ export function requirePermission(module: string, action: PermAction) {
   return async function permGuard(req: Request, res: Response, next: NextFunction) {
     const u = req.authUser;
     if (!u) { res.status(401).json({ error: "غير مصرح" }); return; }
+    if (module === "internal_control" || module.startsWith("internal_control_")) {
+      if (!internalControlAllowed(u,module,action)) { res.status(403).json({error:"لا تملك صلاحية الرقابة الداخلية أو الوحدة غير مفعلة"}); return; }
+      next(); return;
+    }
     // Superadmin (platform operator) bypasses every gate.
     if (u.role === "superadmin") { next(); return; }
     // Company-level upper bound — applies to admin AND regular users.
@@ -648,7 +662,7 @@ interface WriteRow {
 
 export async function writeAudit(row: WriteRow): Promise<void> {
   try {
-    await db.insert(auditLogTable).values({
+    const [insertedAudit] = await db.insert(auditLogTable).values({
       userId:     row.userId,
       username:   row.username,
       role:       row.role,
@@ -663,7 +677,14 @@ export async function writeAudit(row: WriteRow): Promise<void> {
       ip:         row.ip ?? null,
       userAgent:  row.userAgent ?? null,
       metadata:   row.metadata ?? null,
-    });
+    }).returning({ id: auditLogTable.id });
+    // Observation runs after the audit insert, outside the business transaction.
+    // Dynamic import avoids a permission/engine dependency cycle; rejection is
+    // intentionally isolated and cannot alter the original operation's result.
+    if (insertedAudit && row.companyId && !row.module.startsWith("internal_control")) {
+      void import("../lib/internalControlEngine.js").then(m => m.evaluateInternalControlAudit(insertedAudit.id))
+        .catch(e => console.warn("[internal-control] audit evaluation failed", e?.message));
+    }
   } catch (e) {
     // Audit must NEVER break a real request; just log to stderr
     // eslint-disable-next-line no-console

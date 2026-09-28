@@ -115,6 +115,9 @@ export const MENU_ITEMS: MenuItem[] = [
 
   // متابعة الديمو المعزولة للشركات — لا تضاف إلى legacy default-on.
   { key: "demo_analytics",     label: "متابعة الديمو",               section: "متابعة الديمو" },
+
+  // التقارير → الرقابة الداخلية — default OFF (not in legacy baseline).
+  { key: "internal_control",   label: "الرقابة الداخلية",            section: "التقارير" },
 ];
 
 export const SECTIONS: string[] = Array.from(new Set(MENU_ITEMS.map(m => m.section)));
@@ -216,6 +219,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   // billable parent module.
   training_room:      null,
   demo_analytics:     null,
+  internal_control:   null,
 };
 
 // Resolve the unique set of high-level module keys implied by a list of
@@ -271,6 +275,21 @@ export interface ModuleGroupDef {
 export const screenKey = (path: string): string => `nav:${path}`;
 
 export const MODULE_GROUPS: ModuleGroupDef[] = [
+  {
+    key: "internalControl", label: "الرقابة الداخلية", emoji: "", moduleKeys: ["internal_control"],
+    screens: [
+      { path: "/internal-control", label: "لوحة الرقابة الداخلية" },
+      { path: "/internal-control/cases", label: "العمليات التي تحتاج مراجعة" },
+      { path: "/internal-control/permissions", label: "مخالفات الصلاحيات", report: true },
+      { path: "/internal-control/documents", label: "التعديلات على المستندات", report: true },
+      { path: "/internal-control/anomalies", label: "العمليات غير الطبيعية", report: true },
+      { path: "/internal-control/projects", label: "تنبيهات المشاريع والمقاولات", report: true },
+      { path: "/internal-control/inventory", label: "تنبيهات المخزون", report: true },
+      { path: "/internal-control/finance", label: "تنبيهات المالية", report: true },
+      { path: "/internal-control/log", label: "سجل الرقابة الداخلية", report: true },
+      { path: "/internal-control/rules", label: "قواعد الرقابة" },
+    ],
+  },
   {
     key: "demoAnalytics", label: "متابعة الديمو", emoji: "📊", moduleKeys: ["demo_analytics"],
     screens: [

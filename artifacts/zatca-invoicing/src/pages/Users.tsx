@@ -401,7 +401,11 @@ export default function Users() {
       // Base on emptyPermissions() (NOT viewOnly) so the matrix reflects EXACTLY
       // what was saved: modules the user was never granted stay unchecked and a
       // plain re-save can never silently grant view on every module.
-      permissions: { ...emptyPermissions(), ...(u.permissions ?? {}) },
+      permissions: { ...emptyPermissions(), ...(u.permissions ?? {}),
+        // Admin bypass remains the default, but an explicit master false
+        // revokes this module. Do not create a denial just by re-saving.
+        ...(u.role === "admin" ? {internal_control: {...u.permissions?.internal_control,view:u.permissions?.internal_control?.view !== false}} : {}),
+      },
       postingPermissions: seedPostingPerms(u.postingPermissions),
       mobilePermissions: seedMobilePerms((u as any).mobilePermissions),
       // Approval workflow fields — coerce numeric-string cap to a string the
@@ -943,7 +947,7 @@ export default function Users() {
                   <div className="text-sm text-muted-foreground flex items-center gap-2">
                     <Shield className="h-4 w-4 text-indigo-600" />
                     {t("users.permsHint")}
-                    {form.role === "admin" && <span className="text-amber-600 font-semibold">{t("users.adminNote")}</span>}
+                    {form.role === "admin" && <span className="text-amber-600 font-semibold">{t("users.adminNote")} — يمكن سحب الرقابة الداخلية بإلغاء صلاحية العرض الرئيسية.</span>}
                   </div>
                   <div className="flex gap-2 flex-wrap">
                     <Button size="sm" variant="outline" onClick={() => applyPreset("full")}>{t("users.presetFull")}</Button>

@@ -42,6 +42,7 @@ export const GROUP_COMPANY_MENU_KEYS = {
   extensions: ["extensions_platform"],
   multiLink: ["multi_link"],
   liveMonitoring: ["user_tracking"],
+  internalControl: ["internal_control"],
 } as const;
 
 export type PermissionGroupKey = keyof typeof GROUP_COMPANY_MENU_KEYS;
@@ -106,6 +107,7 @@ export const GROUP_USER_PERMISSION_KEYS: Record<PermissionGroupKey, readonly str
   extensions: ["extensions"],
   multiLink: ["multi_link"],
   liveMonitoring: ["user_tracking"],
+  internalControl: ["internal_control"],
 };
 
 export function companyAllowsPermissionGroup(

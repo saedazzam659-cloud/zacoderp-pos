@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
+import internalControlRouter from "./internal-control";
 import companiesRouter from "./companies";
 import customersRouter from "./customers";
 import invoicesRouter from "./invoices";
@@ -325,6 +326,7 @@ router.use("/backup", backupRouter);
 router.use("/data-io", dataIoRouter);
 router.use("/sales-reps", salesRepsRouter);
 router.use("/audit-log", auditLogRouter);
+router.use("/internal-control", internalControlRouter);
 router.use("/sequences", sequencesRouter);
 router.use("/offers", offersRouter);
 router.use(deviceInfoRouter);

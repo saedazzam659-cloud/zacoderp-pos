@@ -350,7 +350,7 @@ router.patch("/:id", async (req, res) => {
     // Permission edits must reach an already-open session immediately. Emit
     // only after every user/branch write is complete so /auth/me cannot race
     // this request and reload a half-updated user.
-    if (permissions !== undefined || update.demoOperationalAdmin !== undefined) {
+    if (permissions !== undefined || update.demoOperationalAdmin !== undefined || branchIds !== undefined || viewAllBranches !== undefined || update.role !== undefined) {
       const shadowTargets = await propagateDemoSourcePermissions(id, permissions ?? existing.permissions);
       emitSessionRefresh(cid, "permissions_changed", {
         op: "user-permissions-update",

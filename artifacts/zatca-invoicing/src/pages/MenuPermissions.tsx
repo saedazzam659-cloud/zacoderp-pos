@@ -43,7 +43,7 @@ const EXTRA_KEYS = MENU_ITEMS.map(m => m.key).filter(k => !GROUPED_MODULE_KEYS.h
 // SuperAdmin). Keep in sync with MODULE_GATE_DEFAULT_OFF in companyModuleGate.ts
 // and permissions.ts (backend).
 const DEFAULT_OFF_KEYS = new Set<string>([
-  "office", "demo_analytics", "simple_manufacturing",
+  "office", "demo_analytics", "simple_manufacturing", "internal_control",
 ]);
 
 // Default for a key ABSENT from the saved JSON: legacy-baseline keys stay

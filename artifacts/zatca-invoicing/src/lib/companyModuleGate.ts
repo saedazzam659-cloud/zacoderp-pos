@@ -135,6 +135,15 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   multi_link: "multi_link",
   // متابعة الديمو للشركات — موديول مستقل اختياري، مغلق افتراضيًا.
   demo_analytics: "demo_analytics",
+  // الرقابة الداخلية — every granular key rolls up to ONE default-OFF gate.
+  internal_control: "internal_control",
+  internal_control_cases: "internal_control",
+  internal_control_review: "internal_control",
+  internal_control_ignore: "internal_control",
+  internal_control_reopen: "internal_control",
+  internal_control_rules: "internal_control",
+  internal_control_log: "internal_control",
+  internal_control_export: "internal_control",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (the inverse
@@ -142,6 +151,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
+  "internal_control",
 ]);
 
 // FROZEN legacy baseline of gate keys that keep the old "missing = allowed"
