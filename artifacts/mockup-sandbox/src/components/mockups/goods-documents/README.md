@@ -1,0 +1,6 @@
+# Current goods document form extraction
+
+- Snapshot sources: `artifacts/zatca-invoicing/src/pages/inventory/GoodsReceipts.tsx` (form JSX lines 1112–1402), `GoodsDeliveries.tsx` (form JSX lines 1100–1390), `src/components/FormPanel.tsx`, `src/components/DiscountRow.tsx`, `src/i18n/locales/ar.json` (`purchasingPages.goodsReceipts`, `salesPages.goodsDeliveries`, `goodsReceiptsPage`), and `src/index.css`.
+- `SalesInvoiceForm.tsx` delegates to `SalesDocumentForm.tsx`; it is **not** the source of these current receipt/delivery forms. The latter render inline `FormPanel` (6xl) with a single `Tabs` header, two-column `FormGrid`, horizontal item grid, VAT toggle, and total panel.
+- `_GoodsDocumentCurrent.tsx` contains the receipt/delivery form-only JSX, with original utility classes and Arabic strings. No list/audit grid, app API, authentication, routing, mutations, or persistence. Demo records and local state exist solely inside the sandbox.
+- Preview entries: `goods-documents/CurrentReceipt` and `goods-documents/CurrentDelivery`. Do not import from the main app or modify global sandbox CSS.

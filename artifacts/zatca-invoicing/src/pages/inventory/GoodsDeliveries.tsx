@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import "./goods-documents.css";
 import { useLocation, useSearch } from "wouter";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
@@ -1058,9 +1059,9 @@ ${sections}
   }
 
   return (
-    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
+    <div ref={enterNavRef} onKeyDown={enterNavKey} className="goods-document-page space-y-5" dir={isRtl ? "rtl" : "ltr"}>
       {/* Page header */}
-      <div className="flex items-center justify-between">
+      <div className="goods-document-page-heading flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <PackageMinus className="h-6 w-6 text-primary" />{tr("title")}
@@ -1124,6 +1125,7 @@ ${sections}
             </div>
           )}
           <FormPanel
+            className="goods-document-form-panel"
             icon={PackageMinus}
             title={
               <span className="inline-flex items-center gap-2 flex-wrap">
@@ -1131,20 +1133,21 @@ ${sections}
                 {currentGdn && <DocStatusBadge status={currentGdn.status} />}
               </span>
             }
-            width="6xl"
+            width="full"
             onClose={reset}
             onSave={() => handleSubmit({ preventDefault() {} } as any)}
             saveLabel={tr("saveLabel")}
             saving={saveMut.isPending}
             saveDisabled={lines.filter(l => l.itemName).length === 0}
           >
-            <Tabs defaultValue="header" className="w-full">
-              <TabsList className="mb-4">
-                <TabsTrigger value="header">{tr("headerData")}</TabsTrigger>
+            <Tabs defaultValue="header" className="goods-document-tabs w-full">
+              <TabsList className="goods-document-tab-list mb-4">
+                <TabsTrigger value="header" data-testid="tab-goods-delivery-header">{tr("headerData")}</TabsTrigger>
+                <TabsTrigger value="lines" data-testid="tab-goods-delivery-lines">{tr("linesTitle")} ({lines.filter(l => l.itemId || l.itemName).length})</TabsTrigger>
               </TabsList>
 
               <TabsContent value="header" className="mt-0 space-y-5">
-                <FormGrid>
+                <FormGrid cols={4} className="goods-document-form-grid">
                   <Field label={tr("deliveryNumber")}>
                     <Input
                       value={form.docNumber}
@@ -1229,9 +1232,11 @@ ${sections}
                     onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
                     placeholder={tr("notesPh")} />
                 </Field>
+              </TabsContent>
 
+              <TabsContent value="lines" className="mt-0 space-y-5">
                 {/* Lines */}
-                <div data-enter-nav-container="lines" className="space-y-1.5">
+                <div data-enter-nav-container="lines" className="goods-document-lines space-y-1.5">
                   <div className="border-t pt-4 flex items-center gap-2 text-sm font-semibold text-foreground/80">
                     <ListOrdered className="h-4 w-4" />
                     <span>{tr("linesTitle")} ({lines.filter(l => l.itemId || l.itemName).length})</span>
@@ -1239,7 +1244,7 @@ ${sections}
                   {(() => {
                     const GRID_COLS_GD = "110px minmax(260px,1.4fr) 160px 120px 90px 110px 80px 80px 130px 180px 40px";
                     return (
-                  <div className="rounded-xl border bg-card overflow-x-auto" dir={isRtl ? "rtl" : "ltr"}>
+                  <div className="goods-document-lines-scroll rounded-xl border bg-card overflow-x-auto" dir={isRtl ? "rtl" : "ltr"}>
                     <div className="min-w-max">
                   <div className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0" style={{ gridTemplateColumns: GRID_COLS_GD }}>
                     {lineColHeaders.map((h, i) => (
@@ -1345,7 +1350,7 @@ ${sections}
                     </div>
                   </label>
 
-                  <div className="w-72 text-sm border rounded-xl p-3 bg-muted/30 space-y-2">
+                  <div className="goods-document-totals w-72 text-sm border rounded-xl p-3 bg-muted/30 space-y-2">
                     <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
                       <span>{tr("calcMethod")}</span>
                       <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
