@@ -8,7 +8,7 @@ import { randomUUID } from "crypto";
 import dnsPromises from "node:dns/promises";
 import { writeAudit } from "../middleware/permissions.js";
 import { normalizeHost } from "../middleware/domainResolver.js";
-import { isLocalAgentSuperadminDisabled } from "../lib/localAgentSuperadmin.js";
+import { isLocalAgentSuperadminDisabled, readLocalAgentRuntimeState } from "../lib/localAgentSuperadmin.js";
 import { registrationCountry, seedRegistrationCountryDefaults } from "../lib/registrationCountry.js";
 
 // «النطاق الموطن» — true when the request arrives on a REGISTERED main
@@ -79,6 +79,7 @@ import {
   resolveDemoDeviceLogin,
 } from "../lib/demoDeviceIsolation.js";
 import { bindDemoProfilePhone } from "../lib/demoAnalytics.js";
+import { ASCII_DEMO_USERNAME_VARIANTS, isAsciiDemoUsername, isDemoWebLoginAttempt, selectDemoWebUsernameFallback } from "../lib/demoWebLoginUsername.js";
 
 const router = Router();
 
@@ -278,6 +279,35 @@ router.post("/login", async (req, res) => {
       eq(usersTable.companyId, tenantCompanyId),
       eq(usersTable.isDemoShadow, false),
     ));
+  // Only the web demo source account gets an ASCII case-insensitive fallback.
+  // Run after the exact lookup, inside the selected tenant, and never infer a
+  // demo identity from its name: a current isolation flag or workspace history
+  // must exist. Do not change the other clients' username matching.
+  // The ERP web demo submits the credential-gated preflight, then a phone.
+  // Other clients of this endpoint (including desktop POS) do not.
+  if (!user && isAsciiDemoUsername(username) && isDemoWebLoginAttempt({
+    username,
+    appChannel: req.headers["x-app-channel"],
+    surface: req.body?.surface,
+    agentDomainHit: !!(req as any).agentDomainHit,
+    isLocalAgent: (await readLocalAgentRuntimeState()).isLocalAgent,
+    intent: req.body?.intent,
+    demoPhone: req.body?.demoPhone,
+  })) {
+    const matches = await db.select({
+      user: usersTable,
+      hasHistory: sql<boolean>`EXISTS (
+        SELECT 1 FROM ${demoDeviceWorkspacesTable} ddw
+         WHERE ddw.source_user_id = ${usersTable.id}
+      )`,
+    }).from(usersTable).where(and(
+      eq(usersTable.companyId, tenantCompanyId),
+      inArray(usersTable.username, ASCII_DEMO_USERNAME_VARIANTS),
+      eq(usersTable.isDemoShadow, false),
+    ));
+    const match = selectDemoWebUsernameFallback(username, matches);
+    if (match) user = match.user;
+  }
   if (!user) {
     // Failed login → record as denied so the Security Center can show it.
     await writeAudit({

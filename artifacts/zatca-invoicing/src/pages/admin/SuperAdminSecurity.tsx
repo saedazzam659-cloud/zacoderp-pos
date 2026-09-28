@@ -8,6 +8,7 @@ import {
   ShieldCheck, Smartphone, KeyRound, History, AlertTriangle, RefreshCw,
   X, Copy, Download, Check, Clock, MailCheck, MailX, UserPlus, Users,
 } from "lucide-react";
+import SecurityMonitorPanel from "@/components/admin/SecurityMonitorPanel";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -287,6 +288,7 @@ export default function SuperAdminSecurity() {
           <TabsTrigger value="history">سجل الدخول</TabsTrigger>
           <TabsTrigger value="password">كلمة المرور</TabsTrigger>
           <TabsTrigger value="accounts">حسابات السوبر أدمن</TabsTrigger>
+          <TabsTrigger value="monitor">مراقبة الاستخراج الآلي</TabsTrigger>
         </TabsList>
 
         {/* Overview */}
@@ -620,6 +622,9 @@ export default function SuperAdminSecurity() {
               <p className="text-xs text-muted-foreground">يُسجَّل الإجراء في سجل التدقيق. (الحد: 5 حسابات/الساعة)</p>
             </div>
           </form>
+        </TabsContent>
+        <TabsContent value="monitor" className="space-y-3">
+          {tab === "monitor" && <SecurityMonitorPanel />}
         </TabsContent>
       </Tabs>
     </div>

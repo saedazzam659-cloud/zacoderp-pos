@@ -1,0 +1,751 @@
+استراتيجية حماية ZaCode ERP من السحب والتحليل الآلي
+
+Lightweight Anti-Scraping & Anti-Automation Security
+
+الهدف الرئيسي
+
+أريد إضافة طبقة حماية ذكية وخفيفة لنظام ZaCode ERP لحماية الواجهات والـ API والبيانات ومنع أو تقليل محاولات:
+
+- Web Scraping
+- Headless Browsers
+- Puppeteer
+- Selenium
+- Playwright
+- PhantomJS
+- Automated Crawlers
+- محاولات نسخ عدد كبير من الشاشات آليًا
+- محاولات استدعاء الـ API بصورة غير طبيعية
+- تحليل النظام آليًا بهدف إعادة بناء الواجهات أو الوظائف
+
+شرط أساسي جدًا
+
+لا تقم بإعادة بناء أو استبدال أي وظيفة موجودة حاليًا.
+
+قبل تنفيذ أي تعديل:
+
+1. افحص النظام الحالي بالكامل.
+2. تحقق من وجود Authentication وAuthorization وRate Limiting وAudit Logs وCloudflare وأي وسائل حماية موجودة.
+3. إذا كانت الوظيفة موجودة وتؤدي المطلوب، استخدمها وطوّرها بدل إنشاء نسخة جديدة.
+4. لا تنشئ APIs أو Middleware مكررة.
+5. لا تغير تصميم الشاشات أو الـ Workflow الحالي.
+6. لا تغير قاعدة البيانات الحالية إلا إذا كان هناك احتياج واضح جدًا.
+7. لا تحذف أو تعدل بيانات العملاء.
+8. لا تكسر أي API أو شاشة أو صلاحية أو تقرير أو عملية حالية.
+9. يجب أن تعمل الحماية بشكل تدريجي وغير مزعج للمستخدم الطبيعي.
+
+---
+
+1. مبدأ الحماية
+
+اعتمد على Multi-Layer Security ولكن بطريقة Lightweight.
+
+البنية المطلوبة:
+
+Internet
+↓
+Cloudflare / WAF
+↓
+Authentication
+↓
+Session Security
+↓
+Behavior Detection
+↓
+API Authorization
+↓
+Backend
+↓
+PostgreSQL
+
+لا تعتمد على حماية Frontend وحدها.
+
+الحماية الحقيقية يجب أن تكون في Backend وAPI.
+
+---
+
+2. حماية تسجيل الدخول
+
+إذا كان النظام يحتوي على نظام تسجيل دخول حالي، لا تستبدله.
+
+أضف فقط ما ينقصه.
+
+Login Rate Limiting
+
+حماية محاولات تسجيل الدخول من التخمين أو الأتمتة.
+
+مثال مبدئي:
+
+- 5 محاولات فاشلة خلال 15 دقيقة لكل IP.
+- مع مراعاة عدم حظر المستخدم الطبيعي بشكل دائم.
+- بعد انتهاء المدة يتم السماح بالمحاولة مرة أخرى.
+
+لا تطبق نفس الحد على باقي API.
+
+---
+
+3. CAPTCHA / Turnstile
+
+استخدم Cloudflare Turnstile أو وسيلة CAPTCHA مناسبة عند الحاجة فقط.
+
+لا تظهر CAPTCHA لكل مستخدم وفي كل عملية.
+
+التدرج المطلوب:
+
+مستخدم طبيعي
+→ لا CAPTCHA
+
+سلوك مشبوه
+→ CAPTCHA
+
+استمرار السلوك الآلي
+→ Temporary Block
+
+الهدف هو عدم التأثير على سرعة وتجربة المستخدم الطبيعي.
+
+---
+
+4. اكتشاف Automation
+
+أنشئ Middleware خفيف لاكتشاف مؤشرات الأتمتة.
+
+راقب مؤشرات مثل:
+
+- Puppeteer
+- Selenium
+- Playwright
+- PhantomJS
+- Headless Chrome
+- webdriver
+- أنماط User-Agent المشبوهة
+
+لكن:
+
+لا تعتمد على User-Agent وحده لاتخاذ قرار الحظر.
+
+لأن User-Agent يمكن تغييره.
+
+استخدمه كمؤشر فقط ضمن نظام تقييم السلوك.
+
+---
+
+5. Behavioral Detection
+
+أنشئ نظام Risk Score بسيط.
+
+مثال:
+
+سلوك طبيعي:
+
+Risk Score = 0
+
+مؤشر Automation واحد:
+
+Risk Score = 20
+
+عدد كبير جدًا من API Requests:
+
+Risk Score = 30
+
+فتح عشرات الشاشات بسرعة غير طبيعية:
+
+Risk Score = 30
+
+محاولات API غير مصرح بها:
+
+Risk Score = 40
+
+إذا وصل المستخدم إلى مستوى معين:
+
+Risk منخفض
+→ السماح الطبيعي
+
+Risk متوسط
+→ مراقبة
+
+Risk مرتفع
+→ CAPTCHA / Throttling
+
+Risk شديد
+→ Temporary Block
+
+لا تستخدم الحظر الدائم تلقائيًا.
+
+---
+
+6. Rate Limiting ذكي
+
+ممنوع تطبيق Rate Limiting واحد منخفض على جميع النظام.
+
+قسّم الـ API إلى مستويات.
+
+Login
+
+حماية قوية.
+
+Normal API
+
+حد مرتفع يسمح بالاستخدام الطبيعي لنظام ERP.
+
+Reports
+
+حد مناسب لأن التقارير قد تحتاج أكثر من Request.
+
+Static Files
+
+لا تضع عليها Rate Limiting يسبب بطء.
+
+WebSocket
+
+إذا كان النظام يستخدم WebSocket، لا تقم بتعطيله أو تقييده بطريقة تؤثر على النظام.
+
+Sensitive APIs
+
+مثل:
+
+- Users
+- Permissions
+- System Settings
+- Company Settings
+- Data Export
+- Bulk Operations
+
+هذه يمكن إعطاؤها حماية أعلى.
+
+---
+
+7. حماية API Authorization
+
+هذه أهم نقطة.
+
+لا تعتمد على React في حماية البيانات.
+
+مثال خاطئ:
+
+المستخدم لا يرى زرًا في React
+→ إذن لا يستطيع الوصول للوظيفة.
+
+هذا غير كافٍ.
+
+المطلوب:
+
+React
+↓
+API
+↓
+Authentication
+↓
+Company Validation
+↓
+Role Validation
+↓
+Permission Validation
+↓
+Backend
+↓
+Database
+
+كل API حساس يجب أن يتحقق من:
+
+- المستخدم
+- الشركة
+- الدور
+- الصلاحية
+- المورد المطلوب
+- نطاق البيانات
+
+حتى لو تمكن شخص من استخدام DevTools أو Browser Automation، لا يحصل على بيانات أو وظائف خارج صلاحياته.
+
+---
+
+8. حماية Multi-Tenant
+
+بما أن النظام يدعم شركات متعددة، يجب التأكد من أن كل Request مرتبط بالشركة الصحيحة.
+
+يجب منع أي محاولة لتغيير:
+
+companyId
+tenantId
+companyCode
+
+من Frontend للحصول على بيانات شركة أخرى.
+
+يجب أن يكون التحقق من Backend.
+
+---
+
+9. Session Security
+
+استخدم نظام الـ Session الحالي إذا كان موجودًا.
+
+أضف فقط ما يلزم:
+
+- Secure Cookies
+- HttpOnly
+- SameSite مناسب
+- Session Expiration
+- Idle Timeout عند الحاجة
+- Session Revocation
+
+يمكن ربط الجلسة بمؤشرات الجهاز/IP ولكن بطريقة مرنة.
+
+لا تجعل تغيير IP بسيطًا يؤدي تلقائيًا إلى Logout لأن المستخدم قد ينتقل بين Wi-Fi و4G أو شبكات مختلفة.
+
+بدل ذلك:
+
+تغير بسيط
+→ مراقبة
+
+تغير كبير + سلوك مشبوه
+→ تحقق إضافي
+
+---
+
+10. منع Session Theft
+
+إذا تم استخدام Session Token من بيئة مختلفة بشكل واضح:
+
+- سجل الحدث.
+- ارفع Risk Score.
+- يمكن طلب إعادة التوثيق.
+- يمكن إبطال الجلسة إذا كان السلوك شديد الخطورة.
+
+لا تقم بحظر المستخدم الطبيعي بسبب تغير IP فقط.
+
+---
+
+11. حماية Frontend
+
+استخدم:
+
+- Production Build
+- Minification
+- Code Splitting
+- Obfuscation عند الحاجة
+
+الهدف هو جعل قراءة الكود وإعادة بناء مكوناته أصعب.
+
+لكن:
+
+لا تعتبر Obfuscation وسيلة حماية حقيقية للبيانات أو الأسرار.
+
+ممنوع وضع:
+
+- Database passwords
+- API secrets
+- Private keys
+- Sensitive business logic
+
+داخل Frontend.
+
+---
+
+12. DevTools
+
+لا تقم بمحاولة تعطيل F12 أو DevTools بشكل إجباري.
+
+لا تستخدم:
+
+- Infinite loops
+- Browser crashes
+- Console traps
+- إجبار المستخدم على إغلاق DevTools
+- أكواد تؤثر على أداء المتصفح
+
+هذه الإجراءات سهلة التجاوز وقد تسبب مشاكل للمستخدمين والمطورين.
+
+يمكن فقط منع النسخ أو التحديد في الأماكن الحساسة إذا كان ذلك موجودًا أصلًا ومطلوبًا، بدون التأثير على النظام.
+
+---
+
+13. حماية البيانات
+
+البيانات الحساسة يجب ألا يتم إرسالها للـ Frontend إلا عند الحاجة.
+
+مبدأ:
+
+Send only what is needed.
+
+لا ترسل:
+
+- بيانات غير مستخدمة
+- حقولًا حساسة غير ظاهرة
+- بيانات شركات أخرى
+- معلومات إدارية غير مصرح بها
+
+ولا تعتمد على إخفائها باستخدام CSS أو React فقط.
+
+---
+
+14. منع Bulk Scraping
+
+إذا اكتشف النظام أن مستخدمًا يقوم بتحميل عدد كبير جدًا من البيانات:
+
+مثال:
+
+طلب صفحة 1
+طلب صفحة 2
+طلب صفحة 3
+...
+طلب مئات الصفحات خلال وقت قصير
+
+يتم:
+
+1. تسجيل السلوك.
+2. رفع Risk Score.
+3. تطبيق Throttling تدريجي.
+4. طلب CAPTCHA إذا استمر.
+5. Temporary Block إذا استمر السلوك.
+
+لا يتم تعطيل الحساب الطبيعي مباشرة.
+
+---
+
+15. Pagination
+
+تأكد من أن الـ APIs التي تعرض قوائم كبيرة تستخدم Pagination حقيقية.
+
+مثال:
+
+?page=1&limit=50
+
+ولا تسمح افتراضيًا بإرجاع آلاف أو ملايين السجلات في Request واحد.
+
+ضع Maximum Limit مناسبًا.
+
+مثال:
+
+limit <= 100
+
+لكن لا تغير الحدود الحالية إذا كانت بعض العمليات تحتاج قيمة أكبر إلا بعد فحصها.
+
+---
+
+16. Export Protection
+
+عمليات:
+
+- Excel Export
+- PDF Export
+- CSV Export
+- Bulk Download
+- Data Export
+
+يجب مراقبتها بشكل أكبر من القراءة العادية.
+
+لأنها من أكثر العمليات التي يمكن استخدامها لسحب البيانات.
+
+يمكن تطبيق:
+
+- Permission
+- Rate Limit
+- Audit Log
+- Risk Detection
+
+بدون منع التصدير الطبيعي المصرح به.
+
+---
+
+17. Audit Logs
+
+لا تسجل كل Mouse Movement أو كل Request بالتفصيل لأن ذلك قد يسبب:
+
+- زيادة حجم Database
+- زيادة CPU
+- بطء
+- تكلفة إضافية
+
+بدلًا من ذلك سجل الأحداث المهمة:
+
+- Login
+- Failed Login
+- Logout
+- Permission Denied
+- API Abuse
+- Bulk Export
+- Suspicious Session
+- Temporary Block
+- CAPTCHA Trigger
+- Unusual Request Rate
+
+ويفضل أن تكون عملية تسجيل الأحداث الأمنية Asynchronous عندما يكون ذلك ممكنًا.
+
+---
+
+18. Cloudflare
+
+إذا كان النظام خلف Cloudflare، استفد من:
+
+- WAF
+- Bot Protection
+- Rate Limiting Rules
+- IP Reputation
+- Challenge
+
+بحيث يتم إيقاف جزء من الترافيك المشبوه قبل وصوله إلى السيرفر.
+
+لا تقم بوضع قواعد شديدة تؤدي إلى منع العملاء الحقيقيين.
+
+---
+
+19. لا تحظر Data Centers بشكل عشوائي
+
+لا تقم بحظر كل IP تابع لـ:
+
+- AWS
+- Azure
+- Google Cloud
+- Contabo
+- DigitalOcean
+- Replit
+- VPS
+
+لأن بعض العملاء أو الموظفين قد يدخلون من VPN أو شبكات شركات أو خوادم.
+
+استخدم Reputation + Behavior بدل الحظر الشامل.
+
+---
+
+20. Security Headers
+
+تحقق من وجود Headers مناسبة مثل:
+
+- Content-Security-Policy
+- X-Content-Type-Options
+- Referrer-Policy
+- Strict-Transport-Security
+- Permissions-Policy
+
+لكن افحص الـ Frontend الحالي أولًا.
+
+أي CSP يجب اختبارها حتى لا تكسر:
+
+- React
+- API
+- WebSocket
+- External Services
+- ZATCA integrations
+- Payment integrations
+- أي خدمة خارجية مستخدمة حاليًا
+
+---
+
+21. CSRF / XSS / Injection
+
+تحقق من الحماية الحالية ضد:
+
+- XSS
+- CSRF
+- SQL Injection
+- NoSQL Injection إذا كانت مستخدمة
+- Command Injection
+- Path Traversal
+
+لا تضف مكتبات أو Middleware جديدة إذا كان النظام لديه حماية مكافئة بالفعل.
+
+---
+
+22. لا تؤثر الحماية على الأداء
+
+هذا شرط أساسي.
+
+الحماية يجب ألا تجعل كل Request يمر في عمليات ثقيلة.
+
+تجنب:
+
+- Database Query إضافي ثقيل لكل Request
+- Browser Fingerprinting معقد في كل عملية
+- تحليل AI لكل Request
+- كتابة Audit Log متزامنة لكل Request
+- حسابات تشفير ثقيلة بدون ضرورة
+
+استخدم:
+
+- Memory Cache عند الحاجة
+- Redis إذا كان موجودًا ومناسبًا
+- Counters
+- Lightweight Middleware
+- Asynchronous Logging
+
+---
+
+23. Performance First
+
+بعد تطبيق الحماية اختبر:
+
+- Login
+- Dashboard
+- Inventory
+- Customers
+- Suppliers
+- Sales
+- Purchases
+- Cash
+- Banks
+- GL
+- HR
+- Manufacturing
+- Construction
+- Reports
+- ZATCA
+- Mobile APIs
+- WebSocket إن وجد
+
+قارن الأداء قبل وبعد.
+
+إذا تسبب أي إجراء أمني في تأثير ملحوظ على الأداء:
+
+خفف الإجراء أو انقله إلى طبقة أخرى بدل التضحية بسرعة النظام.
+
+---
+
+24. Local Testing قبل Production
+
+قبل النشر:
+
+1. خذ Backup كامل.
+2. شغّل نسخة محلية.
+3. طبق التعديلات.
+4. اختبر جميع الوظائف.
+5. اختبر Login.
+6. اختبر صلاحيات المستخدمين.
+7. اختبر Multi-Tenant.
+8. اختبر API.
+9. اختبر التقارير.
+10. اختبر ZATCA.
+11. اختبر WebSocket.
+12. اختبر Mobile إذا كان مرتبطًا.
+13. اختبر الأداء.
+14. اختبر Browser عادي.
+15. اختبر Automation بشكل Controlled للتأكد من اكتشافه.
+
+---
+
+25. Rollback
+
+قبل أي Deployment:
+
+أنشئ نقطة استرجاع واضحة.
+
+إذا حدث:
+
+- Error
+- API Failure
+- Login Failure
+- Performance Problem
+- Broken Workflow
+- مشكلة في Permissions
+- مشكلة في ZATCA
+
+يجب إمكانية الرجوع سريعًا إلى النسخة السابقة.
+
+---
+
+26. SuperAdmin
+
+أضف إعدادات الحماية إلى SuperAdmin فقط إذا كان النظام لديه SuperAdmin بالفعل.
+
+مثال:
+
+Security Settings:
+
+- Anti-Scraping: ON/OFF
+- Bot Detection: ON/OFF
+- CAPTCHA: ON/OFF
+- Rate Limiting: ON/OFF
+- Behavioral Detection: ON/OFF
+- Temporary Block Duration
+- Risk Threshold
+- Audit Security Logs
+
+ويفضل أن تكون الإعدادات الافتراضية آمنة ولكن غير مزعجة للمستخدم.
+
+---
+
+27. وضع الحماية المقترح
+
+الوضع الافتراضي:
+
+Balanced Security
+
+ويعمل كالتالي:
+
+المستخدم الطبيعي
+→ لا يشعر بالحماية.
+
+Bot بسيط
+→ يتم اكتشافه.
+
+Scraper متوسط
+→ يتم إبطاؤه أو طلب CAPTCHA.
+
+Scraper مستمر
+→ Temporary Block.
+
+محاولة الوصول إلى API غير مصرح به
+→ رفض + تسجيل الحدث.
+
+محاولة الوصول إلى بيانات شركة أخرى
+→ رفض فوري + Security Log.
+
+---
+
+28. أهم قاعدة
+
+لا نريد حماية شكلية فقط.
+
+الهدف الحقيقي:
+
+حتى لو تمكن شخص من تشغيل DevTools أو Selenium أو Playwright، لا يستطيع الحصول على بيانات أو APIs أو وظائف خارج الصلاحيات المسموحة له.
+
+وفي نفس الوقت:
+
+المستخدم الطبيعي يجب أن يحصل على نفس سرعة وتجربة النظام الحالية تقريبًا.
+
+---
+
+29. ممنوعات التنفيذ
+
+ممنوع:
+
+- كسر أي Workflow.
+- حذف أي Feature.
+- إنشاء APIs مكررة.
+- تغيير Database Structure بدون ضرورة.
+- تغيير بيانات العملاء.
+- تعطيل F12 بطريقة تسبب مشاكل.
+- منع Copy بشكل شامل إذا كان يؤثر على العمل.
+- CAPTCHA في كل Request.
+- Rate Limit منخفض على كل API.
+- تسجيل كل حركة للمستخدم.
+- حظر كل VPS أو Data Center.
+- حظر IP بسبب تغير بسيط.
+- استخدام AI لتحليل كل Request.
+- إضافة مكتبات ضخمة بدون حاجة.
+
+---
+
+30. المطلوب النهائي
+
+نفذ الحماية كطبقة إضافية فوق النظام الحالي، وليس كنظام جديد.
+
+ابدأ أولًا بعملية:
+
+Audit → Detect Existing Security → Reuse Existing Components → Add Missing Protection → Local Test → Performance Test → Backup → Deploy
+
+وفي حالة وجود أي حماية أو Middleware تؤدي نفس الغرض:
+
+لا تنشئ نسخة جديدة منها.
+
+الهدف النهائي هو:
+
+Maximum Practical Protection + Minimum Performance Impact + Zero Breaking Changes
+
+مع التركيز على حماية:
+
+Backend + API + Authentication + Authorization + Sessions + Behavioral Detection + Cloudflare
+
+وليس الاعتماد فقط على:
+
+F12 Blocking + Copy Blocking + User-Agent Detection.
+
+وأي تعديل يجب أن يكون قابلًا للتراجع عنه، ويتم اختباره محليًا قبل نشره على Production.

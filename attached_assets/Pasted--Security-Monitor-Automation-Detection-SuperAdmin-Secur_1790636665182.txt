@@ -1,0 +1,599 @@
+إضافة Security Monitor وAutomation Detection
+
+SuperAdmin Security Monitoring
+
+الهدف
+
+إضافة شاشة أمنية داخل SuperAdmin لمراقبة الحسابات التي يظهر منها سلوك غير طبيعي أو يشبه:
+
+- AI Automation
+- Headless Browser
+- Selenium
+- Puppeteer
+- Playwright
+- Web Scraping
+- API Scraping
+- Bulk Data Extraction
+- Automated Navigation
+
+مهم جدًا:
+
+لا يتم اعتبار المستخدم "يستخدم AI" بشكل مؤكد اعتمادًا على السلوك فقط.
+
+استخدم المصطلح:
+
+Suspicious Automation
+
+أو:
+
+Automation Risk
+
+لأن النظام يستطيع اكتشاف مؤشرات الأتمتة، وليس تحديد اسم أداة الـAI المستخدمة بشكل قطعي.
+
+---
+
+1. شاشة Security Monitor
+
+إضافة شاشة جديدة داخل:
+
+SuperAdmin → Security → Security Monitor
+
+إذا كانت هناك شاشة أمنية موجودة بالفعل، قم بتطويرها وعدم إنشاء شاشة مكررة.
+
+تعرض الشاشة:
+
+البيان| الوصف
+User| المستخدم
+Company| الشركة
+Login Time| وقت الدخول
+Last Activity| آخر نشاط
+IP| عنوان الاتصال
+Device| الجهاز
+Browser| المتصفح
+Requests/min| الطلبات بالدقيقة
+Pages/min| الشاشات بالدقيقة
+API Errors| محاولات API المرفوضة
+Exports| عمليات التصدير
+Risk Score| درجة الخطورة
+Status| الحالة
+
+---
+
+2. حالات المستخدم
+
+استخدم حالات بسيطة:
+
+Normal
+
+سلوك طبيعي.
+
+Monitoring
+
+ظهرت مؤشرات تحتاج مراقبة.
+
+Suspicious Automation
+
+السلوك يشبه Automation أو Scraping.
+
+Challenged
+
+تم طلب CAPTCHA أو تحقق إضافي.
+
+Temporarily Blocked
+
+تم إيقاف الجلسة مؤقتًا بسبب استمرار السلوك المشبوه.
+
+لا تستخدم Permanent Ban تلقائيًا.
+
+---
+
+3. Risk Score
+
+إنشاء درجة خطر من:
+
+0 → 100
+
+مثال:
+
+0–29
+
+Normal
+
+30–59
+
+Monitoring
+
+60–79
+
+Suspicious Automation
+
+80–100
+
+High Risk
+
+هذه الأرقام قابلة للتعديل من SuperAdmin.
+
+---
+
+4. مؤشرات رفع Risk Score
+
+لا تعتمد على مؤشر واحد.
+
+يمكن رفع الدرجة تدريجيًا عند وجود عدة مؤشرات مثل:
+
+سرعة API غير طبيعية
+
+عدد كبير جدًا من Requests خلال فترة قصيرة.
+
+التنقل الآلي
+
+فتح عدد كبير من الشاشات خلال ثوانٍ.
+
+Pagination Scraping
+
+طلب:
+
+Page 1
+Page 2
+Page 3
+Page 4
+...
+بسرعة غير طبيعية.
+
+API Permission Errors
+
+محاولات متكررة للوصول إلى APIs غير مصرح بها.
+
+Bulk Export
+
+عمليات Excel / CSV / PDF متكررة وغير طبيعية.
+
+Headless Indicators
+
+وجود مؤشرات Automation في المتصفح.
+
+Session Anomaly
+
+تغيرات غير طبيعية في الجلسة أو البيئة.
+
+Repeated Pattern
+
+تكرار نفس تسلسل الطلبات بشكل آلي.
+
+---
+
+5. لا تستخدم AI لتحليل كل Request
+
+ممنوع تشغيل نموذج AI على كل Request.
+
+ذلك قد يسبب:
+
+- زيادة CPU
+- زيادة RAM
+- زيادة التكلفة
+- بطء النظام
+
+استخدم Rules + Counters + Thresholds خفيفة.
+
+ويمكن تحليل الأحداث الأمنية الثقيلة بشكل:
+
+Asynchronous Background Job
+
+بدل تنفيذها أثناء طلب المستخدم.
+
+---
+
+6. Security Events
+
+أنشئ Security Event Log للأحداث المهمة فقط:
+
+- Login
+- Failed Login
+- Logout
+- Suspicious Automation
+- API Permission Denied
+- Bulk Export
+- Excessive Requests
+- CAPTCHA Triggered
+- Session Anomaly
+- Temporary Block
+- Cross-Company Access Attempt
+
+لا تسجل Mouse Movement.
+
+لا تسجل كل Click.
+
+لا تسجل كل Request إذا لم تكن هناك حاجة.
+
+---
+
+7. Performance Protection
+
+يجب ألا تقوم شاشة Security Monitor بعمل Query ثقيل على قاعدة البيانات مع كل حركة.
+
+استخدم:
+
+- Counters
+- Caching
+- Aggregation
+- Async Logging
+
+مثلاً يتم تجميع النشاط خلال فترة قصيرة ثم تسجيل Summary.
+
+بدل تسجيل:
+
+1000 Request = 1000 Database Insert
+
+يمكن تسجيل:
+
+User X
+→ 1000 Requests
+→ خلال 30 ثانية
+→ 12 Screens
+→ 4 API Errors
+→ Risk Score 72
+
+وهذا أفضل للأداء.
+
+---
+
+8. Real-Time Alert
+
+إذا وصل المستخدم إلى مستوى خطر مرتفع:
+
+يظهر تنبيه في SuperAdmin:
+
+⚠️ Suspicious Automation Detected
+
+مثال:
+
+User:
+demo
+
+Company:
+Company 11
+
+Risk Score:
+84
+
+Reason:
+
+- Excessive API requests
+- Rapid page navigation
+- Repeated pagination
+- Multiple unauthorized API requests
+
+Action:
+
+Monitoring / Challenge / Temporary Block
+
+---
+
+9. تفاصيل المستخدم
+
+عند الضغط على المستخدم، افتح:
+
+Security Activity Details
+
+وتعرض Timeline:
+
+10:31:02 Login
+
+10:31:05 Dashboard
+
+10:31:06 Customers
+
+10:31:07 Customers Page 2
+
+10:31:07 Customers Page 3
+
+10:31:08 Customers Page 4
+
+10:31:08 API Permission Denied
+
+10:31:09 Export Attempt
+
+10:31:10 Risk Score = 78
+
+وهكذا.
+
+---
+
+10. Security Actions
+
+من SuperAdmin يمكن:
+
+View Details
+
+عرض النشاط.
+
+Force Logout
+
+إجبار المستخدم على تسجيل الخروج.
+
+Revoke Sessions
+
+إلغاء الجلسات الحالية.
+
+Require Re-Authentication
+
+طلب تسجيل الدخول مرة أخرى.
+
+Require CAPTCHA
+
+طلب تحقق إضافي.
+
+Temporary Block
+
+حظر مؤقت.
+
+مدة الحظر قابلة للتعديل.
+
+مثلاً:
+
+5 دقائق
+15 دقيقة
+30 دقيقة
+1 ساعة
+
+---
+
+11. عدم التأثير على المستخدم الطبيعي
+
+هذه نقطة إلزامية.
+
+إذا كان المستخدم:
+
+- يتنقل طبيعيًا
+- يدخل البيانات
+- يعمل تقارير
+- يستخدم النظام بسرعة طبيعية
+- يستخدم أكثر من شاشة
+- يعمل من هاتف أو كمبيوتر
+- ينتقل بين Wi-Fi و4G
+
+فلا يتم تقييده لمجرد ذلك.
+
+لا تعتمد على IP وحده.
+
+لا تعتمد على User-Agent وحده.
+
+لا تعتمد على سرعة واحدة فقط.
+
+يجب أن يكون القرار مبنيًا على مجموعة مؤشرات.
+
+---
+
+12. AI Detection Disclaimer داخل النظام
+
+لا تعرض للمستخدم:
+
+"تم اكتشاف AI"
+
+بل استخدم:
+
+Suspicious Automation Detected
+
+لأن النظام يستطيع اكتشاف سلوك آلي أو غير طبيعي، ولكنه لا يستطيع إثبات أن الأداة المستخدمة هي ChatGPT أو Gemini أو Claude أو أي AI معين.
+
+---
+
+13. حماية SuperAdmin
+
+Security Monitor نفسه يجب أن يكون متاحًا فقط لـ:
+
+SuperAdmin / Authorized Security Administrator
+
+ولا يظهر للمستخدمين العاديين.
+
+يجب تسجيل أي شخص يدخل شاشة Security Monitor.
+
+---
+
+14. Data Retention
+
+لا تحتفظ بكل التفاصيل إلى الأبد.
+
+يمكن وضع:
+
+Security Logs Retention:
+
+7 أيام
+30 يوم
+90 يوم
+
+حسب إعداد SuperAdmin.
+
+الأحداث عالية الخطورة يمكن الاحتفاظ بها مدة أطول إذا لزم الأمر.
+
+---
+
+15. عدم كشف نظام الحماية
+
+لا ترسل للعميل تفاصيل:
+
+- Risk Score
+- Detection Rules
+- Thresholds
+- Security Algorithms
+- Bot Detection Rules
+
+عند الرفض استخدم رسالة عامة مثل:
+
+Access temporarily restricted. Please try again later or contact your administrator.
+
+حتى لا يستطيع المهاجم معرفة بالضبط كيف يتجاوز النظام.
+
+---
+
+16. حماية من تجاوز الحماية
+
+يجب أن تكون الحماية الأساسية Server-Side.
+
+لا تعتمد على React أو JavaScript فقط.
+
+أي شخص يستطيع فتح DevTools يجب ألا يستطيع تعطيل:
+
+- API Authorization
+- Rate Limiting
+- Session Security
+- Risk Detection
+- Security Logs
+- Temporary Blocking
+
+---
+
+17. SuperAdmin Dashboard
+
+إضافة مؤشرات مختصرة:
+
+Security Status
+
+🟢 Normal
+
+🟡 Monitoring
+
+🟠 Suspicious
+
+🔴 High Risk
+
+مع إحصائيات:
+
+- Active Sessions
+- Suspicious Users
+- Blocked Sessions
+- CAPTCHA Challenges
+- API Abuse Attempts
+- Export Attempts
+- Security Events
+
+---
+
+18. أهم شرط للأداء
+
+يجب ألا تؤثر هذه الشاشة أو نظام المراقبة على سرعة ERP.
+
+لا تجعل:
+
+Security Monitoring
+
+سببًا في إضافة عمليات ثقيلة إلى كل Request.
+
+استخدم:
+
+Lightweight Middleware + Counters + Cache + Async Logging
+
+وأي عملية تحليل ثقيلة يتم تنفيذها في Background وليس أثناء استجابة المستخدم.
+
+---
+
+19. اختبار الأداء
+
+قبل Production:
+
+قارن:
+
+Before Security
+
+Response Time
+
+CPU
+
+RAM
+
+Database Load
+
+API Throughput
+
+After Security
+
+Response Time
+
+CPU
+
+RAM
+
+Database Load
+
+API Throughput
+
+إذا ظهر تأثير ملحوظ:
+
+قم بتحسين طبقة الحماية قبل نشرها.
+
+---
+
+20. الاختبار ضد Automation
+
+في بيئة Local/Staging فقط:
+
+اختبر:
+
+- Browser Automation
+- Headless Browser
+- Rapid Navigation
+- Pagination Scraping
+- API Requests
+- Unauthorized API Access
+- Bulk Export
+- Session Reuse
+
+وتأكد أن النظام:
+
+1. يكتشف السلوك.
+2. يرفع Risk Score.
+3. يسجل الحدث.
+4. يطبق التدرج المناسب.
+5. لا يؤثر على المستخدم الطبيعي.
+
+---
+
+21. Rollback
+
+قبل Deployment:
+
+- Backup
+- Git Commit / Version
+- Database Backup إذا لزم
+- Local Test
+- Staging Test
+
+وفي حالة حدوث مشكلة:
+
+Rollback سريع للنسخة السابقة.
+
+---
+
+22. قاعدة نهائية
+
+هذه الإضافة ليست لمنع الإنسان من استخدام النظام.
+
+هدفها:
+
+اكتشاف ومنع الاستخدام الآلي غير الطبيعي، وتقليل قدرة أي Bot أو AI Agent على استكشاف النظام وسحب الشاشات والـAPI والبيانات بشكل جماعي.
+
+ولا يتم التضحية بأداء النظام أو تجربة المستخدم لتحقيق الحماية.
+
+النتيجة المطلوبة
+
+User طبيعي:
+
+Normal → بدون قيود
+
+Automation محتمل:
+
+Monitoring
+
+Automation واضح:
+
+Challenge
+
+استمرار السحب:
+
+Temporary Block
+
+محاولة الوصول إلى بيانات غير مصرح بها:
+
+Reject + Security Event
+
+وكل ذلك يتم من خلال Backend وAPI وSuperAdmin Security Monitor وليس من خلال تعطيل المتصفح أو الاعتماد على F12 وCopy Protection فقط.

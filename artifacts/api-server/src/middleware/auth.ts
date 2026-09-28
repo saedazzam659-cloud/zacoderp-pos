@@ -1,4 +1,5 @@
 import { setContextAuthUser } from "../lib/requestContext.js";
+import { observeWebRequest } from "../lib/securityAutomation.js";
 import { db } from "@workspace/db";
 import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable, kioskTokensTable, branchesTable } from "@workspace/db";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -108,6 +109,7 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
     id: number; username: string; role: string; companyId: number | null;
     isActive: boolean; permissions: any; postingPermissions?: any; viewAllBranches: boolean; email: string | null;
     sessionId: string | null;
+    sessionChannel?: string | null;
     demoOperationalVerified?: boolean;
     storedPermissions?: any;
   };
@@ -122,6 +124,7 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
       permissions: usersTable.permissions, postingPermissions: usersTable.postingPermissions,
       viewAllBranches: usersTable.viewAllBranches,
       email: usersTable.email, sessionId: usersTable.sessionId,
+      sessionChannel: usersTable.sessionChannel,
       currentSessionId: usersTable.currentSessionId,
       isDemoShadow: usersTable.isDemoShadow,
       demoDeviceIsolation: usersTable.demoDeviceIsolation,
@@ -315,6 +318,13 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
     companyMenuPermissions,
   };
   setContextAuthUser(req.authUser);
+
+  try {
+    observeWebRequest(req, _res, user.sessionChannel);
+  } catch {
+    // Monitoring is strictly best-effort, including listener installation.
+    // Malformed request inputs or monitor failures must never change auth.
+  }
 
   // Manual-session header (`x-session-id`). Honoured only when the value
   // matches the user's persisted currentSessionId — that field is set via
