@@ -26,8 +26,10 @@ import {
   multiplyQuantity,
   divideQuantity,
   roundQuantity,
+  UnitConversionError,
 } from "../lib/unitConversion.js";
 import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
+import { insertGoodsDocumentLines } from "../lib/goodsDocumentLines.js";
 import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
 
 const router = Router();
@@ -101,6 +103,11 @@ async function resolveReceiptLineUnits(
       unitCode: input.unitCode == null ? undefined : String(input.unitCode),
       historicalFactor: snapshot?.conversionFactor == null ? undefined : String(snapshot.conversionFactor),
       executor,
+    }).catch((error) => {
+      if (error instanceof UnitConversionError) {
+        Object.assign(error, { status: 400, details: { ...error.details, itemId, itemName: mapped.itemName } });
+      }
+      throw error;
     });
     mapped.unitId = resolved.unitId;
     mapped.conversionFactor = roundQuantity(String(resolved.factor), 18, "half_up");
@@ -371,7 +378,8 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    const [gr] = await db.insert(goodsReceiptsTable).values({
+    const gr = await db.transaction(async (tx) => {
+    const [gr] = await tx.insert(goodsReceiptsTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       projectId: await resolveProjectLink(cid, req.body.projectId, branchId, req.authUser),
       docNumber: resolvedDocNumber,
@@ -391,6 +399,7 @@ router.post("/", async (req, res) => {
       createdById: (req as any).authUser?.id ?? null,
     }).returning();
 
+    let savedLines: any[] = [];
     if (lines?.length) {
       const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
       const mappedLines = await resolveReceiptLineUnits(
@@ -409,13 +418,15 @@ router.post("/", async (req, res) => {
           expiryDate: l.expiryDate ? String(l.expiryDate) : null, notes: l.notes || null,
         })),
         lines,
+        [],
+        tx,
       );
-      await db.insert(goodsReceiptLinesTable).values(
-        mappedLines
-      );
+      savedLines = await insertGoodsDocumentLines(tx, goodsReceiptLinesTable, mappedLines, lines);
     }
+    return { ...gr, lines: savedLines };
+    });
     res.status(201).json(gr);
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e?.status ? e.message : "تعذر حفظ إذن الاستلام", code: e.code, details: e.details }); }
 });
 
 router.put("/:id", async (req, res) => {
@@ -443,7 +454,8 @@ router.put("/:id", async (req, res) => {
     });
     if (tenantErr) { res.status(400).json({ error: tenantErr }); return; }
 
-    const [gr] = await db.update(goodsReceiptsTable).set({
+    const gr = await db.transaction(async (tx) => {
+    const [gr] = await tx.update(goodsReceiptsTable).set({
       branchId: branchId ? Number(branchId) : null,
       projectId: await resolveProjectLink(cid, req.body.projectId === undefined ? existing.projectId : req.body.projectId, branchId, req.authUser),
       supplierInvoiceNumber: supplierInvoiceNumber || null,
@@ -461,10 +473,11 @@ router.put("/:id", async (req, res) => {
       taxId: taxId ? Number(taxId) : null,
     }).where(and(eq(goodsReceiptsTable.id, id), eq(goodsReceiptsTable.companyId, cid))).returning();
 
+    let savedLines: any[] = [];
     if (lines !== undefined) {
-      const previousLines = await db.select().from(goodsReceiptLinesTable)
+      const previousLines = await tx.select().from(goodsReceiptLinesTable)
         .where(eq(goodsReceiptLinesTable.receiptId, id));
-      await db.delete(goodsReceiptLinesTable).where(eq(goodsReceiptLinesTable.receiptId, id));
+      await tx.delete(goodsReceiptLinesTable).where(eq(goodsReceiptLinesTable.receiptId, id));
       if (lines.length) {
         const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
         const mappedLines = await resolveReceiptLineUnits(
@@ -484,14 +497,15 @@ router.put("/:id", async (req, res) => {
           })),
           lines,
           previousLines,
+          tx,
         );
-        await db.insert(goodsReceiptLinesTable).values(
-          mappedLines
-        );
+        savedLines = await insertGoodsDocumentLines(tx, goodsReceiptLinesTable, mappedLines, lines);
       }
     }
+    return { ...gr, lines: savedLines };
+    });
     res.json(gr);
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e?.status ? e.message : "تعذر حفظ إذن الاستلام", code: e.code, details: e.details }); }
 });
 
 router.delete("/:id", async (req, res) => {
@@ -773,7 +787,7 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
     res.json(updated);
   } catch (e: any) {
     req.log?.error?.({ err: e }, "goods-receipts: post failed");
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: "تعذر ترحيل إذن الاستلام. راجع إعدادات الحسابات والمخزون وأعد المحاولة." });
   }
 });
 

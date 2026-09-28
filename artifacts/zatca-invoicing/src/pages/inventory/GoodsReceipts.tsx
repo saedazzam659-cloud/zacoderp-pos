@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import "./goods-documents.css";
+import { goodsDocumentError } from "@/lib/goodsDocumentError";
 import { useLocation, useSearch } from "wouter";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
@@ -305,55 +306,69 @@ export default function GoodsReceipts() {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["goods-receipts"] });
 
   // ── Mutations ────────────────────────────────────────────
+  const saveLock = useRef(false);
+  const savedDraftId = useRef<number | null>(null);
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
-      const isEdit = !!editingId;
+      const targetId = savedDraftId.current ?? editingId;
+      const isEdit = !!targetId;
       const url = isEdit
-        ? `${API}/api/goods-receipts/${editingId}`
+        ? `${API}/api/goods-receipts/${targetId}`
         : `${API}/api/goods-receipts`;
       const res = await fetch(url, {
         method: isEdit ? "PUT" : "POST", headers, body: JSON.stringify({ ...data, companyId: cid }),
       });
-      const j = await res.json(); if (!res.ok) throw new Error(j.error);
+      const j = await res.json(); if (!res.ok) throw new Error(JSON.stringify(j));
+      if (!editingId && j?.id) savedDraftId.current = j.id;
+      const savedLineIds = new Map<string, number>((j.lines ?? [])
+        .filter((line: any) => typeof line.clientLineId === "string" && Number.isInteger(line.id))
+        .map((line: any) => [line.clientLineId, line.id]));
+      setLines(current => current.map(line => savedLineIds.has(line._id)
+        ? { ...line, id: savedLineIds.get(line._id)! } : line));
       // Auto-post on create — keeps the GRN useful (stock updated) without a
       // separate click. Edits stay as-is so users can tweak drafts freely.
-      if (!isEdit && j?.id && (j.status ?? "draft") === "draft") {
+      if (!editingId && j?.id && (j.status ?? "draft") === "draft") {
         const pr = await fetch(`${API}/api/goods-receipts/${j.id}/post`, { method: "PATCH", headers });
         const pj = await pr.json().catch(() => ({}));
-        if (!pr.ok) throw new Error(tr("toasts.savedNoPost", { err: pj.error || pr.statusText }));
+        if (!pr.ok) throw new Error(JSON.stringify(pj));
         return pj;
       }
       return j;
     },
     onSuccess: () => { invalidate(); reset(); toast({ title: editingId ? tr("toasts.edited") : tr("toasts.createdAndPosted") }); },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      invalidate();
+      const message = goodsDocumentError(e, t, isRtl);
+      toast({ title: savedDraftId.current ? tr("toasts.savedNoPost", { err: message }) : message, variant: "destructive" });
+    },
+    onSettled: () => { saveLock.current = false; },
   });
 
   const postMut = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API}/api/goods-receipts/${id}/post`, { method: "PATCH", headers });
-      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+      const j = await res.json(); if (!res.ok) throw new Error(JSON.stringify(j)); return j;
     },
     onSuccess: () => { invalidate(); toast({ title: tr("toasts.posted") }); },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: goodsDocumentError(e, t, isRtl), variant: "destructive" }),
   });
 
   const unpostMut = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API}/api/goods-receipts/${id}/unpost`, { method: "PATCH", headers });
-      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+      const j = await res.json(); if (!res.ok) throw new Error(JSON.stringify(j)); return j;
     },
     onSuccess: () => { invalidate(); toast({ title: tr("toasts.unposted") }); },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: goodsDocumentError(e, t, isRtl), variant: "destructive" }),
   });
 
   const deleteMut = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API}/api/goods-receipts/${id}`, { method: "DELETE", headers });
-      if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
+      if (!res.ok) { const j = await res.json(); throw new Error(JSON.stringify(j)); }
     },
     onSuccess: () => { invalidate(); toast({ title: tr("toasts.deleted") }); },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: goodsDocumentError(e, t, isRtl), variant: "destructive" }),
   });
 
   // Convert dialog state — opens with the GRN id; user picks paymentType +
@@ -378,7 +393,7 @@ export default function GoodsReceipts() {
       const res = await fetch(`${API}/api/goods-receipts/${payload.id}/convert-to-invoice`, {
         method: "POST", headers, body: JSON.stringify(payload.body),
       });
-      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+      const j = await res.json(); if (!res.ok) throw new Error(JSON.stringify(j)); return j;
     },
     onSuccess: (inv: any) => {
       qc.invalidateQueries({ queryKey: ["goods-receipts"] });
@@ -387,7 +402,7 @@ export default function GoodsReceipts() {
       setConvertGrnId(null);
       if (inv?.id) navigate(`/purchasing/invoices/${inv.id}`);
     },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: goodsDocumentError(e, t, isRtl), variant: "destructive" }),
   });
 
   async function startEdit(grnId: number) {
@@ -395,6 +410,7 @@ export default function GoodsReceipts() {
       const res = await fetch(`${API}/api/goods-receipts/${grnId}`, { headers: authH });
       if (!res.ok) { toast({ title: tr("toasts.loadFail"), variant: "destructive" }); return; }
       const full = await res.json();
+      savedDraftId.current = null;
       setEditingId(grnId);
       setForm({
         docNumber:    full.docNumber ?? "",
@@ -438,7 +454,7 @@ export default function GoodsReceipts() {
       );
       setShowForm(true);
     } catch (e: any) {
-      toast({ title: e.message || tr("toasts.loadError"), variant: "destructive" });
+      toast({ title: goodsDocumentError(e, t, isRtl), variant: "destructive" });
     }
   }
 
@@ -447,6 +463,7 @@ export default function GoodsReceipts() {
       const res = await fetch(`${API}/api/goods-receipts/${grnId}`, { headers: authH });
       if (!res.ok) { toast({ title: tr("toasts.loadFail"), variant: "destructive" }); return; }
       const full = await res.json();
+      savedDraftId.current = null;
       setEditingId(null);
       setForm({
         docNumber:    "",
@@ -489,11 +506,12 @@ export default function GoodsReceipts() {
       setShowForm(true);
       toast({ title: tr("toasts.duplicated") });
     } catch (e: any) {
-      toast({ title: e.message || tr("toasts.loadError"), variant: "destructive" });
+      toast({ title: goodsDocumentError(e, t, isRtl), variant: "destructive" });
     }
   }
 
   function reset() {
+    savedDraftId.current = null;
     setForm({ ...EMPTY, priceIncludesVat: stickyPriceIncl.read() });
     setLines([newLine()]);
     setHeaderTaxId("");
@@ -600,6 +618,8 @@ export default function GoodsReceipts() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (saveLock.current) return;
+    saveLock.current = true;
     saveMut.mutate({
       ...form,
       supplierId: form.supplierId || null,
@@ -609,7 +629,7 @@ export default function GoodsReceipts() {
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
       taxId: headerTaxId ? Number(headerTaxId) : null,
-      lines: lines.filter(l => l.itemName).map(l => serializeDocumentLine(l)),
+      lines: lines.filter(l => l.itemName).map(l => ({ ...serializeDocumentLine(l), clientLineId: l._id })),
     });
   }
 
@@ -958,7 +978,7 @@ ${sections}
     const failed: Array<{ id: number; error: string }> = [];
     for (const id of ids) {
       try { await perId(id); ok++; }
-      catch (e: any) { failed.push({ id, error: e?.message ?? tg("errorFallback") }); }
+      catch (e: any) { failed.push({ id, error: goodsDocumentError(e, t, isRtl) }); }
     }
     return { ok, failed };
   }
@@ -1027,7 +1047,7 @@ ${sections}
     try {
       const { ok, failed } = await bulkRun(ids, async (id) => {
         const res = await fetch(`${API}/api/goods-receipts/${id}/post`, { method: "PATCH", headers });
-        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(JSON.stringify(j)); }
       });
       qc.invalidateQueries({ queryKey: ["goods-receipts"] });
       if (failed.length === 0) toast({ title: tg("postedCount", { count: ok }) });
@@ -1044,7 +1064,7 @@ ${sections}
     try {
       const { ok, failed } = await bulkRun(ids, async (id) => {
         const res = await fetch(`${API}/api/goods-receipts/${id}/unpost`, { method: "PATCH", headers });
-        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(JSON.stringify(j)); }
       });
       qc.invalidateQueries({ queryKey: ["goods-receipts"] });
       if (failed.length === 0) toast({ title: tg("unpostedCount", { count: ok }) });
@@ -1061,7 +1081,7 @@ ${sections}
     try {
       const { ok, failed } = await bulkRun(ids, async (id) => {
         const res = await fetch(`${API}/api/goods-receipts/${id}`, { method: "DELETE", headers });
-        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(JSON.stringify(j)); }
       });
       qc.invalidateQueries({ queryKey: ["goods-receipts"] });
       if (failed.length === 0) toast({ title: tg("deletedCount", { count: ok }) });

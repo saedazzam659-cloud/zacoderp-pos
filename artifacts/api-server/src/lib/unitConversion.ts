@@ -607,7 +607,7 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
   }
   const baseUnitId = item.unitId ?? null;
   const soleLegacyUnit = soleUnrootedOwnedUnit(baseUnitId, rows);
-  const chosenId = requestedUnitId ?? baseUnitId ?? rows.find((row: UnitGraphRow) => row.isBase)?.unitId ?? null;
+  const chosenId = requestedUnitId ?? baseUnitId ?? rows.find((row: UnitGraphRow) => row.isBase)?.unitId ?? soleLegacyUnit?.unitId ?? null;
 
   if (rows.length === 0) {
     if (baseUnitId === null) {
