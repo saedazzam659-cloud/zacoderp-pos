@@ -33,7 +33,7 @@ import { isMobileChannel, mobilePermAllowed } from "../lib/mobilePerms.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { usersTable } from "@workspace/db";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
-import { canAccessModule, pathRbac, requireAdminRole } from "../middleware/permissions.js";
+import { canAccessModule, pathRbac, requireAdminRole, hasDemoOperationalPrivilege } from "../middleware/permissions.js";
 import {
   upsertBalance,
   getBalance,
@@ -2034,6 +2034,7 @@ async function enforceMobileSalesRights(
   }
   const role = req.authUser?.role;
   if (role === "admin" || role === "superadmin") return true;
+  if (hasDemoOperationalPrivilege(req.authUser, "sales_invoices", "edit")) return true;
   const uid = Number(req.authUser?.id);
   if (!Number.isFinite(uid) || uid <= 0) return true; // no user context → other guards handle auth
   const [u] = await db.select({
@@ -2898,7 +2899,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     const hasRepKey = Object.prototype.hasOwnProperty.call(req.body ?? {}, "salesRepId");
     const loadRepPatch = async () => {
       const role = req.authUser?.role;
-      const linkedRepId = role === "admin" || role === "superadmin"
+      const linkedRepId = role === "admin" || role === "superadmin" || hasDemoOperationalPrivilege(req.authUser, "sales_invoices", "create")
         ? null
         : await repIdForUser(cid, req.authUser?.id);
       if (!hasRepKey && linkedRepId == null) return {};

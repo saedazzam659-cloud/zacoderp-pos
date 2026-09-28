@@ -19,6 +19,23 @@
 //   2. /:id/post endpoints → requirePostRight / canPostDoc.
 //   3. /:id/unpost endpoints → requireUnpostRight / canUnpostDoc.
 import type { AutoPostDocType } from "./postingStatus";
+import { canAccessModule } from "../middleware/permissions.js";
+
+const DEMO_POST_MODULE: Record<string, string> = {
+  journalEntry: "journal_entries", sales: "sales_invoices", purchase: "purchase_invoices",
+  receipt: "receipt_vouchers", payment: "payment_vouchers", financial: "journal_entries",
+  cashTransfer: "journal_entries", payroll: "hr_payroll", production: "production",
+  stockMovement: "stock_transfers", goodsReceipt: "warehouses",
+  goodsDelivery: "warehouses", adjustment: "stock_adjustments",
+  faAcquisition: "fixed_assets", faDepreciation: "fixed_assets", faDisposal: "fixed_assets",
+  ctgOutgoingBill: "contracting", ctgIncomingBill: "contracting",
+};
+
+function demoPostingRight(user: any, docType: string, action: "post" | "unpost"): boolean | null {
+  const module = DEMO_POST_MODULE[docType];
+  if (user?.demoOperationalVerified !== true || !module) return null;
+  return canAccessModule(user, module, action);
+}
 
 type PostingPermsMap = Partial<Record<string, { post?: boolean; unpost?: boolean }>>;
 
@@ -43,6 +60,8 @@ function isPrivileged(user: AuthUserLike): boolean {
 export function canPostDoc(user: AuthUserLike, docType: AutoPostDocType | string): boolean {
   if (!user) return true;                 // system/scheduler paths — no user context
   if (isPrivileged(user)) return true;
+  const demoRight = demoPostingRight(user, String(docType), "post");
+  if (demoRight !== null) return demoRight;
   return permsOf(user)?.[String(docType)]?.post !== false;
 }
 
@@ -50,6 +69,8 @@ export function canPostDoc(user: AuthUserLike, docType: AutoPostDocType | string
 export function canUnpostDoc(user: AuthUserLike, docType: AutoPostDocType | string): boolean {
   if (!user) return true;
   if (isPrivileged(user)) return true;
+  const demoRight = demoPostingRight(user, String(docType), "unpost");
+  if (demoRight !== null) return demoRight;
   return permsOf(user)?.[String(docType)]?.unpost !== false;
 }
 

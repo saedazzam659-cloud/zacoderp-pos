@@ -105,6 +105,7 @@ export const usersTable = pgTable("users", {
   // Optional per-user demo isolation. When enabled, every unpaired browser
   // receives its own hidden company workspace at login.
   demoDeviceIsolation: boolean("demo_device_isolation").notNull().default(false),
+  demoOperationalAdmin: boolean("demo_operational_admin").notNull().default(false),
   // Shadow users live only inside hidden demo workspaces. They are excluded
   // from quotas and normal user-management screens and cannot password-login.
   isDemoShadow: boolean("is_demo_shadow").notNull().default(false),

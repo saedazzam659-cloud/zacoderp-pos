@@ -10,7 +10,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
-import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { moduleAudit, requireModulePermission, hasDemoOperationalPrivilege } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -74,7 +74,7 @@ router.get("/me/current", async (req, res) => {
     // in the UI for them (the create handler still lets them attribute to any rep
     // by passing salesRepId explicitly).
     const role = req.authUser?.role;
-    if (role === "admin" || role === "superadmin") {
+    if (role === "admin" || role === "superadmin" || hasDemoOperationalPrivilege(req.authUser, "sales_invoices", "create")) {
       res.status(404).json({ error: "مدير الشركة غير مقيّد بمندوب" }); return;
     }
     const [rep] = await db.select().from(salesRepsTable)

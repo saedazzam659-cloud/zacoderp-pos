@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { hasDemoOperationalPrivilege } from "../middleware/permissions.js";
 import { db } from "@workspace/db";
 import {
   posSessionsTable,
@@ -128,7 +129,7 @@ router.post("/open", async (req, res) => {
         // Per-terminal user allow-list. When at least one row exists for this
         // terminal, only the listed users (plus admins of the company) may
         // open a session on it.
-        if (u.role !== "admin" && u.role !== "superadmin") {
+        if (u.role !== "admin" && u.role !== "superadmin" && !hasDemoOperationalPrivilege(u, "pos", "create")) {
           const allow = await tx.select({ userId: posTerminalUsersTable.userId })
             .from(posTerminalUsersTable)
             .where(and(
@@ -202,7 +203,7 @@ router.post("/:id/close", async (req, res) => {
     if (!u.companyId || s.companyId !== u.companyId) {
       res.status(403).json({ error: "لا تملك صلاحية إغلاق هذه الجلسة" }); return;
     }
-    const isAdmin = u.role === "admin";
+    const isAdmin = u.role === "admin" || hasDemoOperationalPrivilege(u, "pos", "post");
     if (s.userId !== u.id && !isAdmin) {
       res.status(403).json({ error: "لا تملك صلاحية إغلاق هذه الجلسة" }); return;
     }

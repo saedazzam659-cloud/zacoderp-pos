@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { hasDemoOperationalPrivilege } from "../middleware/permissions.js";
 import crypto from "node:crypto";
 import { db } from "@workspace/db";
 import {
@@ -130,6 +131,7 @@ const MAX_ACCEPTABLE_ACCURACY_M = 75;
 // timeline reports) to admin/superadmin/manager roles. Returns true if the
 // caller is denied (response already sent); routes should return early.
 function requireManager(req: any, res: any): boolean {
+  if (hasDemoOperationalPrivilege(req.authUser, "hr_face_attendance", "edit")) return false;
   const role = req.authUser?.role;
   if (role !== "superadmin" && role !== "admin" && role !== "manager") {
     res.status(403).json({ error: "صلاحيات غير كافية — مطلوب مدير" });

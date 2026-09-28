@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { auditLogTable, usersTable } from "@workspace/db";
 import { mobilePermAllowed } from "../lib/mobilePerms.js";
+import { DEMO_OPERATIONAL_MODULES } from "../lib/demoOperationalPolicy.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Granular permission middleware
@@ -256,6 +257,21 @@ export function canAccessModule(authUser: any, module: string, action: PermActio
   if (authUser.role === "superadmin") return true;
   if (!companyAllowsModule(authUser, module)) return false;
   return userActionAllowed(authUser, module, action);
+}
+
+/** Narrow substitute for an ad-hoc admin gate on a documented operation only.
+ * Never use for settings, user management, module grants, or tenant resolution. */
+export function requireOperationalManager(module: string, action: PermAction) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (hasDemoOperationalPrivilege(req.authUser, module, action)) { next(); return; }
+    requireAdminRole(req, res, next);
+  };
+}
+
+export function hasDemoOperationalPrivilege(user: any, module: string, action: PermAction): boolean {
+  return user?.demoOperationalVerified === true &&
+    (DEMO_OPERATIONAL_MODULES as readonly string[]).includes(module) &&
+    canAccessModule(user, module, action);
 }
 
 // Mobile-companion sessions are governed by users.mobile_permissions (NULL =

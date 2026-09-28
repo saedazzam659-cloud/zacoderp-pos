@@ -99,6 +99,7 @@ import {
   requirePermission,
   moduleAudit,
   canAccessModule,
+  hasDemoOperationalPrivilege,
 } from "../middleware/permissions.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
@@ -11554,7 +11555,8 @@ router.get("/operators/performance", async (req, res) => {
     // ?operatorUserId=X to peek at a colleague's stats. Admins and
     // superadmins may pass any id or omit it to see everyone.
     const role = req.authUser?.role ?? "";
-    const isPrivileged = role === "superadmin" || role === "admin";
+    const isPrivileged = role === "superadmin" || role === "admin" ||
+      hasDemoOperationalPrivilege(req.authUser, "production", "view");
     let operatorFilter: number | null = null;
     if (req.query.operatorUserId != null && req.query.operatorUserId !== "") {
       const n = Number(req.query.operatorUserId);

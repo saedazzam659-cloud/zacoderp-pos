@@ -31,7 +31,7 @@ import {
   multiBranchScopeSpread, effectiveBranchCondition,
 } from "../middleware/auth.js";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
-import { pathRbac, requireAdminRole, requirePermission } from "../middleware/permissions.js";
+import { pathRbac, requireAdminRole, requirePermission, requireOperationalManager } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry, refreshItemCost } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber, nextSequenceForPayment, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
@@ -1356,7 +1356,7 @@ async function recomputeLcUsage(cid: number, lcId: number): Promise<void> {
 }
 
 // ─── Manual LC close / reopen (admin override) ───────────────────────────
-router.patch("/letters-of-credit/:id/close", requireAdminRole, async (req, res) => {
+router.patch("/letters-of-credit/:id/close", requireOperationalManager("purchase_invoices", "post"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -1369,7 +1369,7 @@ router.patch("/letters-of-credit/:id/close", requireAdminRole, async (req, res) 
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/letters-of-credit/:id/reopen", requireAdminRole, async (req, res) => {
+router.patch("/letters-of-credit/:id/reopen", requireOperationalManager("purchase_invoices", "unpost"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

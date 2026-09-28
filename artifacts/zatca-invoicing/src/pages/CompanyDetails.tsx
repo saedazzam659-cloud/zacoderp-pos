@@ -205,6 +205,19 @@ export default function CompanyDetails() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  const demoOperationalMutation = useMutation({
+    mutationFn: async ({ userId, enabled }: { userId: number; enabled: boolean }) => {
+      const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}${agentQS}`, {
+        method: "PUT", headers, body: JSON.stringify({ demoOperationalAdmin: enabled }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "تعذر تحديث صلاحيات الديمو");
+      return json;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-company", id] }),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   const { data: demoDevicesData, isLoading: demoDevicesLoading } = useQuery({
     queryKey: ["admin-demo-devices", id, demoDevicesUser?.id, agentId],
     queryFn: async () => {
@@ -544,6 +557,15 @@ export default function CompanyDetails() {
                         })}
                         data-testid={`demo-device-isolation-${u.id}`}
                       />
+                      <label className="inline-flex items-center gap-1 text-xs" title="كل العمليات في الوحدات المفعلة فقط، دون الإعدادات أو إدارة المستخدمين">
+                        <input type="checkbox" className="h-4 w-4 accent-primary"
+                          checked={u.demoOperationalAdmin === true}
+                          disabled={!u.demoDeviceIsolation || demoOperationalMutation.isPending}
+                          onChange={e => demoOperationalMutation.mutate({ userId: u.id, enabled: e.target.checked })}
+                          data-testid={`demo-operational-admin-${u.id}`}
+                        />
+                        مدير عمليات الديمو
+                      </label>
                       <button
                         type="button"
                         className="text-xs text-primary hover:underline inline-flex items-center gap-1 disabled:text-muted-foreground"

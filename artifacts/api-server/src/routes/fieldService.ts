@@ -13,7 +13,7 @@ import {
 } from "@workspace/db";
 import { and, eq, desc, asc, sql, gte, lte, isNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, denyKiosk, effectiveBranchCondition } from "../middleware/auth.js";
-import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
+import { requireModulePermission, moduleAudit, hasDemoOperationalPrivilege } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -37,6 +37,7 @@ function guard(req: any, res: any): number | null {
 // tickets list, reports, tracking dashboard). The mobile self check-in
 // endpoints stay open to any authenticated user.
 function requireManager(req: any, res: any): boolean {
+  if (hasDemoOperationalPrivilege(req.authUser, "field_service_locations", "edit")) return false;
   const role = req.authUser?.role;
   if (role !== "superadmin" && role !== "admin" && role !== "manager") {
     res.status(403).json({ error: "صلاحيات غير كافية — مطلوب مدير" });
@@ -46,6 +47,7 @@ function requireManager(req: any, res: any): boolean {
 }
 
 function isManager(req: any): boolean {
+  if (hasDemoOperationalPrivilege(req.authUser, "field_service_locations", "view")) return true;
   const role = req.authUser?.role;
   return role === "superadmin" || role === "admin" || role === "manager";
 }

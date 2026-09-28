@@ -12,8 +12,10 @@ import {
   verifyStrictDemoBrowserBinding,
 } from "../lib/demoDeviceIsolation.js";
 import { isLocalAgentSuperadminDisabled } from "../lib/localAgentSuperadmin.js";
+import { effectiveDemoPermissions, isDemoOperationalRequest } from "../lib/demoOperationalPolicy.js";
 
 export interface AuthUser {
+  demoOperationalVerified?: boolean;
   id: number;
   username: string;
   role: string;
@@ -106,6 +108,8 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
     id: number; username: string; role: string; companyId: number | null;
     isActive: boolean; permissions: any; postingPermissions?: any; viewAllBranches: boolean; email: string | null;
     sessionId: string | null;
+    demoOperationalVerified?: boolean;
+    storedPermissions?: any;
   };
   origin: "user" | "superadmin";
   saSessionRowId?: number;
@@ -130,15 +134,24 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
       // Shadow sessions must present the same per-browser cookie that owns
       // their device link — a copied bearer token alone is useless elsewhere.
       const browserToken = readDemoBrowserCookie(rawCookieHeader);
-      const sourceUserId = await resolveDemoShadowBinding(u.id, browserToken);
+      if (!u.companyId) return null;
+      const sourceUserId = await resolveDemoShadowBinding(u.id, browserToken, u.companyId);
       if (sourceUserId == null) return null;
       const decorated = await decorateDemoShadowUser(u);
-      if (!(decorated as any).demoSourceUserId) return null;
-      return { user: decorated, origin: "user" };
+      if ((decorated as any).demoSourceUserId !== sourceUserId) return null;
+      const [source] = await db.select().from(usersTable)
+        .where(eq(usersTable.id, sourceUserId)).limit(1);
+      if (!source?.isActive || source.isDemoShadow || !source.companyId || source.role === "superadmin") return null;
+      return { user: { ...decorated, storedPermissions: decorated.permissions, demoOperationalVerified: source.demoDeviceIsolation && source.demoOperationalAdmin, permissions: effectiveDemoPermissions(
+        decorated.permissions, source.demoDeviceIsolation && source.demoOperationalAdmin,
+      ) }, origin: "user" };
     }
     if (isDemoDeviceIsolationEnabled() && u.demoDeviceIsolation) {
       const browserToken = readDemoBrowserCookie(rawCookieHeader);
       if (!await verifyStrictDemoBrowserBinding(u.id, browserToken)) return null;
+      const [source] = await db.select({ enabled: usersTable.demoOperationalAdmin })
+        .from(usersTable).where(eq(usersTable.id, u.id)).limit(1);
+      return { user: { ...u, storedPermissions: u.permissions, demoOperationalVerified: source?.enabled === true, permissions: effectiveDemoPermissions(u.permissions, source?.enabled === true) }, origin: "user" };
     }
     return { user: u, origin: "user" };
   }
@@ -256,6 +269,10 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
   const resolved = await resolveBearerToken(token, req.headers.cookie);
   if (!resolved) { next(); return; }
   const { user } = resolved;
+  if (user.demoOperationalVerified && !isDemoOperationalRequest(req.originalUrl)) {
+    user.permissions = user.storedPermissions;
+    user.demoOperationalVerified = false;
+  }
 
   // Load explicit branch grants (only relevant when viewAllBranches=false,
   // but cheap enough to load always — typically a tiny list per user) and the
@@ -291,6 +308,7 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
     role: user.role,
     companyId: user.companyId,
     permissions: user.permissions as any,
+    demoOperationalVerified: user.demoOperationalVerified === true,
     postingPermissions: (user as any).postingPermissions ?? null,
     viewAllBranches: user.viewAllBranches,
     branchIds: links.map(l => l.branchId),

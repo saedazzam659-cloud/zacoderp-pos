@@ -16,6 +16,10 @@ A shared demo source account creates one independent workspace per normalized ph
 
 **Why:** Source-user-only binding merged every demo visitor into one company. Phone-keyed workspaces preserve each visitor's data across devices without exposing another visitor's operations.
 
+Demo operational-manager grants are optional per source demo, not a stored role promotion. They must remain bounded by enabled company modules, apply to verified retained demo sessions, and be revocable without replacing those sessions' original permissions.
+
+**Why:** Demo visitors need to exercise operational documents across independent workspaces, but must not acquire authority to enable modules, manage real users, or change platform administration. Normal-user document behavior is outside this exception's scope.
+
 **How to apply:**
 - Normalize and require the phone before provisioning. Scope active-link queries and revocation by both source user and phone.
 - Under the source-user advisory lock, claim a provisioning row before cloning so concurrent first logins cannot create duplicate workspaces.

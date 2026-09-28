@@ -1495,6 +1495,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
   const stmts: { label: string; sql: string }[] = [
     { label: "users.demo_device_isolation",
       sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS demo_device_isolation BOOLEAN NOT NULL DEFAULT FALSE` },
+    { label: "users.demo_operational_admin",
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS demo_operational_admin BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "users.is_demo_shadow",
       sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_demo_shadow BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "companies.is_internal_demo_workspace",

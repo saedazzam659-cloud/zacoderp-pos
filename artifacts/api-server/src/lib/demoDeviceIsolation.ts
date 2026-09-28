@@ -978,12 +978,19 @@ export async function releaseDemoDeviceLink(sourceUserId: number, linkId: number
 export async function resolveDemoShadowBinding(
   workspaceUserId: number,
   rawCookieToken: string | undefined,
+  workspaceCompanyId?: number | null,
 ): Promise<number | null> {
   if (!validDeviceToken(rawCookieToken)) return null;
   const [link] = await db.select({
     sourceUserId: demoDeviceWorkspacesTable.sourceUserId,
-  }).from(demoDeviceWorkspacesTable).where(and(
+  }).from(demoDeviceWorkspacesTable).innerJoin(usersTable, and(
+    eq(usersTable.id, demoDeviceWorkspacesTable.sourceUserId),
+    eq(usersTable.companyId, demoDeviceWorkspacesTable.sourceCompanyId),
+    eq(usersTable.isActive, true),
+    eq(usersTable.isDemoShadow, false),
+  )).where(and(
     eq(demoDeviceWorkspacesTable.workspaceUserId, workspaceUserId),
+    workspaceCompanyId != null ? eq(demoDeviceWorkspacesTable.workspaceCompanyId, workspaceCompanyId) : undefined,
     eq(demoDeviceWorkspacesTable.deviceTokenHash, sha256(rawCookieToken)),
     eq(demoDeviceWorkspacesTable.status, "ready"),
     isNull(demoDeviceWorkspacesTable.revokedAt),

@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { sanitizeMobilePermissions } from "../lib/mobilePerms.js";
 import { propagateDemoSourcePermissions } from "../lib/demoDeviceIsolation.js";
+import { canManageDemoOperationalSetting } from "../lib/demoOperationalPolicy.js";
 import { emitSessionRefresh, emitSessionRefreshMany } from "../lib/sessionEvents.js";
 
 const router = Router();
@@ -114,6 +115,8 @@ router.get("/", async (req, res) => {
       viewAllBranches: usersTable.viewAllBranches,
       scopeOwnCustomersOnly: usersTable.scopeOwnCustomersOnly,
       isActive: usersTable.isActive,
+      demoOperationalAdmin: usersTable.demoOperationalAdmin,
+      demoDeviceIsolation: usersTable.demoDeviceIsolation,
       lastLoginAt: usersTable.lastLoginAt,
       createdAt: usersTable.createdAt,
       // ─── Approval permissions (see schema/users.ts) ───
@@ -265,6 +268,12 @@ router.patch("/:id", async (req, res) => {
     } = req.body ?? {};
 
     const update: any = { updatedAt: new Date() };
+    if (req.body?.demoOperationalAdmin !== undefined) {
+      if (!canManageDemoOperationalSetting(req.authUser, existing, req.body.demoOperationalAdmin)) {
+        res.status(400).json({ error: "الصلاحية متاحة لحساب ديمو معزول آخر فقط" }); return;
+      }
+      update.demoOperationalAdmin = req.body.demoOperationalAdmin;
+    }
     // Allow renaming the login username (incl. the company manager) from
     // within the company. Scoped-unique per company, excluding self.
     if (username !== undefined) {
@@ -341,8 +350,8 @@ router.patch("/:id", async (req, res) => {
     // Permission edits must reach an already-open session immediately. Emit
     // only after every user/branch write is complete so /auth/me cannot race
     // this request and reload a half-updated user.
-    if (permissions !== undefined) {
-      const shadowTargets = await propagateDemoSourcePermissions(id, permissions);
+    if (permissions !== undefined || update.demoOperationalAdmin !== undefined) {
+      const shadowTargets = await propagateDemoSourcePermissions(id, permissions ?? existing.permissions);
       emitSessionRefresh(cid, "permissions_changed", {
         op: "user-permissions-update",
         userId: id,

@@ -46,6 +46,7 @@ import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 import { writeAudit } from "../middleware/permissions.js";
 import { resolveBearerToken } from "../middleware/auth.js";
+import { canManageDemoOperationalSetting } from "../lib/demoOperationalPolicy.js";
 import { accrueResellerCommission } from "../lib/resellerCommissions.js";
 import { accruePartnerCommission } from "../lib/partnerCommissions.js";
 import { resolveCountryForIp, resolveLocationForIp, type IpLocation } from "../middleware/visitorCountry.js";
@@ -57,6 +58,7 @@ import {
   createDemoPairCode,
   DemoDeviceError,
   listDemoDevices,
+  propagateDemoSourcePermissions,
   revokeAllDemoDevices,
   revokeDemoDevice,
 } from "../lib/demoDeviceIsolation.js";
@@ -1454,6 +1456,7 @@ async function ensureUsersSecurityNoticeColumn(): Promise<void> {
     const { sql } = await import("drizzle-orm");
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS security_notice_exempt boolean DEFAULT false NOT NULL`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS demo_device_isolation boolean DEFAULT false NOT NULL`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS demo_operational_admin boolean DEFAULT false NOT NULL`);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_demo_shadow boolean DEFAULT false NOT NULL`);
     await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_internal_demo_workspace boolean DEFAULT false NOT NULL`);
     await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS demo_parent_company_id integer REFERENCES companies(id) ON DELETE CASCADE`);
@@ -1522,6 +1525,7 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
     isActive: usersTable.isActive,
     securityNoticeExempt: usersTable.securityNoticeExempt,
     demoDeviceIsolation: usersTable.demoDeviceIsolation,
+    demoOperationalAdmin: usersTable.demoOperationalAdmin,
     lastLoginAt: usersTable.lastLoginAt,
     createdAt: usersTable.createdAt,
   }).from(usersTable).where(and(
@@ -2554,12 +2558,26 @@ router.put("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) =
     if (!managedUser) { res.status(404).json({ error: "المستخدم غير موجود" }); return; }
     const { isActive, password, securityNoticeExempt, demoDeviceIsolation } = req.body;
     const updates: Record<string, any> = { updatedAt: new Date() };
+    if (req.body.demoOperationalAdmin !== undefined) {
+      if (typeof req.body.demoOperationalAdmin !== "boolean") {
+        res.status(400).json({ error: "قيمة صلاحية الديمو يجب أن تكون منطقية" }); return;
+      }
+      const [source] = await db.select().from(usersTable).where(and(
+        eq(usersTable.id, userId), eq(usersTable.companyId, companyId),
+        eq(usersTable.isDemoShadow, false),
+      )).limit(1);
+      if (!canManageDemoOperationalSetting(req.authUser, source, req.body.demoOperationalAdmin)) {
+        res.status(400).json({ error: "الصلاحية متاحة لحساب ديمو معزول فقط" }); return;
+      }
+      updates.demoOperationalAdmin = req.body.demoOperationalAdmin;
+    }
     if (isActive != null) updates.isActive = isActive;
     if (securityNoticeExempt != null) {
       updates.securityNoticeExempt = !!securityNoticeExempt;
     }
     if (demoDeviceIsolation != null) {
       updates.demoDeviceIsolation = !!demoDeviceIsolation;
+      if (demoDeviceIsolation === false) updates.demoOperationalAdmin = false;
     }
     if (password) updates.passwordHash = await bcrypt.hash(password, 12);
     // Restrict RETURNING to core columns — a bare .returning() names every
@@ -2572,6 +2590,13 @@ router.put("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) =
       .returning({ id: usersTable.id, username: usersTable.username, email: usersTable.email, role: usersTable.role, isActive: usersTable.isActive, companyId: usersTable.companyId });
     if (updated?.companyId != null) {
       emitSessionRefresh(updated.companyId, "permissions_changed", { op: "user-update", userId });
+    }
+    if (req.body.demoOperationalAdmin !== undefined) {
+      const [source] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+      const targets = await propagateDemoSourcePermissions(userId, source.permissions);
+      for (const cid of targets.workspaceCompanyIds) {
+        emitSessionRefresh(cid, "permissions_changed", { op: "user-update", userId });
+      }
     }
     if ((isActive === false) || (demoDeviceIsolation === false)) {
       await revokeAllDemoDevices(userId);

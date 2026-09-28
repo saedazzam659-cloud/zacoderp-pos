@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { effectiveDemoPermissions } from "../lib/demoOperationalPolicy.js";
 import { db } from "@workspace/db";
 import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable, traineeRequestsTable, companyDomainsTable, demoDeviceWorkspacesTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
@@ -706,7 +707,8 @@ router.post("/login", async (req, res) => {
       code: (user as any).code ?? null,
       nameAr: (user as any).nameAr ?? null,
       nameEn: (user as any).nameEn ?? null,
-      permissions: (sessionUser as any).permissions ?? {},
+      permissions: effectiveDemoPermissions((sessionUser as any).permissions ?? {},
+        !!demoLogin.deviceLinkId && user.demoDeviceIsolation && user.demoOperationalAdmin),
       viewAllBranches: (sessionUser as any).viewAllBranches ?? true,
       demoSourceUserId: sessionUser.id === user.id ? undefined : user.id,
       demoDeviceIsolation: user.demoDeviceIsolation === true,
@@ -958,6 +960,11 @@ router.get("/me", async (req, res) => {
   // log the user out as soon as the tab became visible again.
   user = await refreshDemoShadowAuthorization(user);
   user = await decorateDemoShadowUser(user);
+  // Refresh above loads stored permissions; only the bearer resolver may add
+  // the live, cookie-bound operational overlay. Never persist that overlay.
+  const liveAuthorization = await resolveBearerToken(token, req.headers.cookie);
+  if (!liveAuthorization) { res.status(401).json({ error: "الجلسة منتهية" }); return; }
+  user = { ...user, permissions: liveAuthorization.user.permissions };
 
   // Same "latest subscription" rule as the login gate so /me stays consistent
   // with the gate decision (see login handler above).
