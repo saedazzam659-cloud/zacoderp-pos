@@ -407,7 +407,7 @@ export default function CompanyNew() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-12">
+    <div className="min-w-0 max-w-4xl mx-auto space-y-6 pb-12">
       <div className="flex items-center gap-4">
         <Button asChild variant="ghost" size="icon">
           <Link href="/companies">
@@ -1257,11 +1257,11 @@ export default function CompanyNew() {
           </Card>
 
           {/* Actions */}
-          <div className="flex justify-end gap-4">
-            <Button type="button" variant="outline" asChild>
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end sm:gap-4">
+            <Button type="button" variant="outline" asChild className="w-full sm:w-auto">
               <Link href="/companies">إلغاء</Link>
             </Button>
-            <Button type="submit" className="gap-2 min-w-36" disabled={submitting}>
+            <Button type="submit" className="w-full gap-2 sm:w-auto sm:min-w-36" disabled={submitting} data-testid="button-save-company">
               <Save className="h-4 w-4" />
               <span>{submitting ? "جاري الحفظ..." : "حفظ بيانات الشركة"}</span>
             </Button>

@@ -356,7 +356,12 @@ export default function Companies() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">إدارة الشركات المسجّلة في نظام الفاتورة الإلكترونية</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          <Button asChild size="sm" className="order-first w-full gap-2 sm:order-last sm:w-auto" data-testid="link-add-company">
+            <Link href="/companies/new">
+              <Plus className="h-3.5 w-3.5" />إضافة شركة
+            </Link>
+          </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-2">
             <RefreshCw className="h-3.5 w-3.5" />تحديث
           </Button>
@@ -396,11 +401,6 @@ export default function Companies() {
           <Button asChild size="sm" variant="outline" className="gap-2">
             <Link href="/companies/deleted">
               <Trash2 className="h-3.5 w-3.5" />الشركات المحذوفة
-            </Link>
-          </Button>
-          <Button asChild size="sm" className="gap-2">
-            <Link href="/companies/new">
-              <Plus className="h-3.5 w-3.5" />إضافة شركة
             </Link>
           </Button>
         </div>
