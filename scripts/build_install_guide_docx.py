@@ -502,6 +502,17 @@ pm2 startup    # نفّذ السطر الذي يعرضه ليعمل عند ال�
     root /home/zatca/zatca/artifacts/zatca-invoicing/dist;
     index index.html;
 
+    # Advisory indexing policy uses the original URI, before SPA fallback.
+    set $zacod_robots "noindex, nofollow, noarchive";
+    if ($request_uri ~ "^/(?:\\?.*)?$") { set $zacod_robots "index, follow"; }
+    if ($request_uri ~ "^/(?:index\\.html|pricing|compare|why-zacod|pos-system|download|install|login|register|trainee-register)/?(?:\\?.*)?$") { set $zacod_robots "index, follow"; }
+    if ($request_uri ~ "^/blog/[^/?]+/?(?:\\?.*)?$") { set $zacod_robots "index, follow"; }
+    add_header X-Robots-Tag $zacod_robots always;
+    proxy_hide_header X-Robots-Tag;
+    location ~* ^/assets/.*\\.(js|css)\\.map$ { return 404; }
+    location = /robots.txt { proxy_pass http://localhost:8080; proxy_set_header Host $host; }
+    location = /sitemap.xml { proxy_pass http://localhost:8080; proxy_set_header Host $host; }
+
     client_max_body_size 50M;
 
     # توجيه الـ API للخادم

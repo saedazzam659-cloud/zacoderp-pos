@@ -1,4 +1,5 @@
 # Durable memory indexes
+- [Crawler hardening boundary](crawl-hardening-boundary.md) — advisory indexing controls must preserve ERP workflows; agent gateway rollout is separate from central publication.
 - [Batch reporting boundary](batch-reporting-boundary.md) — reuse ledger attribution; preserve optional tracking and explicitly unknown historical batches.
 - [Contracting accounting boundaries](contracting-accounting-boundaries.md) — optional cost-center snapshots, planning versus posting, and preservation of existing customer/bill data.
 - [Taxable contracting advances](contracting-taxable-advance-boundaries.md) — tax-point ownership, fiscal-only certificates, legacy safety, and exact partial settlements.

@@ -22,6 +22,7 @@
 // Explicit superadmin role check on the router — mirrors routes/domains.ts.
 
 import express, { Router, type Request } from "express";
+import { caddyCrawlPolicy } from "../lib/crawlPolicy.js";
 import fs from "node:fs";
 import path from "node:path";
 import { promises as fsp } from "node:fs";
@@ -2797,6 +2798,7 @@ fi
   const caddyfile = inst.mode === "full"
     ? `${inst.domain} {
   encode zstd gzip
+${caddyCrawlPolicy()}
 
   @backend {
     path /api /api/* /storage/* /objects/* /healthz /robots.txt /sitemap.xml
@@ -2820,6 +2822,7 @@ fi
 }
 `
     : `${inst.domain} {
+${caddyCrawlPolicy()}
   # صفحات الدخول تُقدَّم محليًا بنسخة معدّلة بالعلامة التجارية (يحدّثها كرون
   # النبض كل ٥ دقائق). إن لم يوجد الملف بعد، يسقط الطلب تلقائيًا إلى الوكيل.
   @branded {

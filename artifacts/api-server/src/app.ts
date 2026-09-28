@@ -9,6 +9,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { visitorCountryMiddleware, visitorCountryHandler } from "./middleware/visitorCountry.js";
 import { runAuthContext } from "./lib/requestContext.js";
+import { robotsText, robotsHeader, frontendSourceMap } from "./lib/crawlPolicy.js";
 
 // ─── Marketing/SEO discovery surface ────────────────────────────────────
 // Builds the dynamic sitemap.xml + robots.txt so Google can discover the
@@ -92,73 +93,24 @@ async function sitemapHandler(req: express.Request, res: express.Response): Prom
 
 function robotsHandler(req: express.Request, res: express.Response): void {
   const origin = originFromReq(req);
-  // Explicit Allow rules for the public marketing surface ensure no
-  // crawler interprets a parent Disallow as covering them. Disallow
-  // covers private app routes, the API, and the internal admin surface
-  // so crawlers don't waste crawl budget on auth-walled pages.
-  // AI bot policy:
-  //  - BLOCK training crawlers (GPTBot, ClaudeBot, Google-Extended,
-  //    CCBot, Bytespider, …) so competitors can't ingest zacoderp.com's
-  //    UI/copy/ZATCA workflows into their model weights.
-  //  - ALLOW live search/browse bots (OAI-SearchBot, ChatGPT-User,
-  //    PerplexityBot, Claude-Web/User, Applebot) so the site remains
-  //    discoverable and reviewable when a user asks an AI assistant to
-  //    look it up. These bots fetch on-demand and do NOT train.
-  //  - ALLOW Googlebot/Bingbot normally — SEO unchanged.
-  const trainingBots = [
-    "GPTBot", "ClaudeBot", "anthropic-ai", "Google-Extended",
-    "CCBot", "Bytespider", "Amazonbot", "cohere-ai", "Diffbot",
-    "FacebookBot", "Omgilibot", "ImagesiftBot", "Applebot-Extended",
-  ];
-  const liveSearchBots = [
-    "OAI-SearchBot", "ChatGPT-User", "PerplexityBot",
-    "Perplexity-User", "Claude-Web", "Claude-User", "Applebot",
-  ];
-  const lines: string[] = [];
-  lines.push("# AI training crawlers — blocked (no model-weight ingestion).");
-  for (const bot of trainingBots) {
-    lines.push(`User-agent: ${bot}`);
-    lines.push("Disallow: /");
-    lines.push("");
-  }
-  lines.push("# AI live-search / browse bots — allowed (on-demand review).");
-  for (const bot of liveSearchBots) {
-    lines.push(`User-agent: ${bot}`);
-    lines.push("Allow: /");
-    lines.push("");
-  }
-  lines.push("# Default rules for every other crawler (SEO unchanged).");
-  lines.push("User-agent: *");
-  lines.push("Allow: /$");
-  lines.push("Allow: /pricing");
-  lines.push("Allow: /compare");
-  lines.push("Allow: /why-zacod");
-  lines.push("Allow: /ai-overview.json");
-  lines.push("Allow: /pos-system");
-  lines.push("Allow: /blog/");
-  lines.push("Allow: /register");
-  lines.push("Allow: /login");
-  lines.push("Disallow: /api/");
-  lines.push("Disallow: /admin/");
-  lines.push("Disallow: /accounting/");
-  lines.push("Disallow: /settings/");
-  lines.push("Disallow: /pos-app/");
-  lines.push("Disallow: /super/");
-  lines.push("Disallow: /pending-approval");
-  lines.push("Disallow: /recover-superadmin");
-  lines.push("");
-  lines.push(`Sitemap: ${origin}/sitemap.xml`);
-  lines.push("");
-  const body = lines.join("\n");
-  // X-Robots-Tag header — second line of defence. Honoured even when a
-  // crawler ignores robots.txt for the file but respects HTTP headers.
-  res.setHeader("X-Robots-Tag", "noai, noimageai");
+  const body = robotsText(origin);
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.setHeader("Cache-Control", "public, max-age=3600");
   res.send(body);
 }
 
 const app: Express = express();
+
+app.use((req, res, next) => {
+  res.setHeader("X-Robots-Tag", robotsHeader(req.originalUrl));
+  if (process.env.NODE_ENV === "production" &&
+      (req.method === "GET" || req.method === "HEAD") &&
+      frontendSourceMap(req.originalUrl)) {
+    res.sendStatus(404);
+    return;
+  }
+  next();
+});
 
 // Disable ETag generation to prevent 304 stale responses
 app.set("etag", false);
@@ -364,14 +316,8 @@ app.get(["/", "/index.html", "/login", "/register"], async (req, res, next) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// /ai-overview.json — a single canonical JSON document AI assistants
-// (ChatGPT, Perplexity, Claude, Gemini, Copilot) can fetch to get an
-// accurate, opinionated summary of what زاكود is. Without this they
-// scrape sparse marketing copy and produce shallow comparisons. With
-// it, any model that opens zacoderp.com finds one well-structured
-// authoritative source — boosting both accuracy and how often we get
-// cited inside AI answers. Listed in robots.txt Allow list above and
-// linked from index.html via <link rel="alternate">.
+// Public product metadata retained for existing consumers. Automated AI
+// training/search/browse access is opted out in robots.txt (advisory only).
 // ─────────────────────────────────────────────────────────────────────
 app.get("/ai-overview.json", (req, res) => {
   const origin = originFromReq(req);
@@ -503,7 +449,7 @@ app.get("/ai-overview.json", (req, res) => {
     },
     licensing: {
       aiTrainingPolicy:
-        "AI training bots (GPTBot, ClaudeBot, Google-Extended, CCBot, Bytespider, etc.) are blocked via robots.txt and X-Robots-Tag headers. Live AI search and browse bots (OAI-SearchBot, ChatGPT-User, PerplexityBot, Claude-Web, Applebot) are allowed so the site remains discoverable and reviewable.",
+        "robots.txt requests that known AI training, search and user-triggered browse agents do not crawl this site. Ordinary search engines may crawl public marketing pages. Internal routes carry noindex, nofollow, noarchive. These are advisory signals, not access controls or a guarantee against copying.",
       contentReusePolicy:
         "Quoting short factual claims with attribution to zacoderp.com is welcomed. Reproducing entire UI screens, copy, or design without permission is not permitted.",
     },

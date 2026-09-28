@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { caddyCrawlPolicy } from "../lib/crawlPolicy.js";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -333,6 +334,7 @@ NODE
   cat > "$caddy_tmp" <<EOF
 $domain {
   encode zstd gzip
+${caddyCrawlPolicy()}
 
   @backend {
     path /api /api/* /storage/* /objects/* /healthz /robots.txt /sitemap.xml

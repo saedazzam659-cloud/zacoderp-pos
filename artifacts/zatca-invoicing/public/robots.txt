@@ -1,10 +1,4 @@
-# ============================================================
-# AI Training Bots — BLOCKED
-# These crawlers harvest content to train commercial LLMs.
-# Blocking them keeps zacoderp.com's UI, copy, ZATCA workflows
-# and accounting terminology out of competitor model weights.
-# (Honored by OpenAI, Anthropic, Google, Common Crawl, etc.)
-# ============================================================
+# Advisory opt-out: AI training, search and user-triggered browsing.
 User-agent: GPTBot
 Disallow: /
 
@@ -41,68 +35,83 @@ Disallow: /
 User-agent: ImagesiftBot
 Disallow: /
 
-# ============================================================
-# AI Live-Search / Browse Bots — ALLOWED
-# These fetch the page in real time when a user asks an AI
-# assistant to look up or evaluate zacoderp.com. Allowing them
-# keeps the site discoverable & reviewable inside ChatGPT
-# Search, Perplexity, Claude, etc.
-# ============================================================
-User-agent: OAI-SearchBot
-Allow: /
-
-User-agent: ChatGPT-User
-Allow: /
-
-User-agent: PerplexityBot
-Allow: /
-
-User-agent: Perplexity-User
-Allow: /
-
-User-agent: Claude-Web
-Allow: /
-
-User-agent: Claude-User
-Allow: /
-
-User-agent: Applebot
-Allow: /
-
 User-agent: Applebot-Extended
 Disallow: /
 
-# ============================================================
-# Traditional search engines — ALLOWED (SEO unchanged)
-# ============================================================
-User-agent: Googlebot
-Allow: /
+User-agent: OAI-SearchBot
+Disallow: /
 
-User-agent: Googlebot-Image
-Allow: /
+User-agent: ChatGPT-User
+Disallow: /
 
-User-agent: Bingbot
-Allow: /
+User-agent: PerplexityBot
+Disallow: /
 
-User-agent: DuckDuckBot
-Allow: /
+User-agent: Perplexity-User
+Disallow: /
 
-User-agent: YandexBot
-Allow: /
+User-agent: Claude-Web
+Disallow: /
 
-# ============================================================
-# Default rules for every other crawler.
-# Public pages are crawlable; authenticated app areas are not.
-# ============================================================
+User-agent: Claude-User
+Disallow: /
+
+User-agent: Claude-SearchBot
+Disallow: /
+
 User-agent: *
-Allow: /
-Disallow: /api/
-Disallow: /admin/
-Disallow: /accounting/
-Disallow: /settings/
-Disallow: /pos-app/
-Disallow: /super/
-Disallow: /pending-approval
-Disallow: /recover-superadmin
-
-Sitemap: https://zacoderp.com/sitemap.xml
+Disallow: /
+Allow: /$
+Allow: /?
+Allow: /index.html$
+Allow: /index.html?
+Allow: /index.html/$
+Allow: /index.html/?
+Allow: /pricing$
+Allow: /pricing?
+Allow: /pricing/$
+Allow: /pricing/?
+Allow: /compare$
+Allow: /compare?
+Allow: /compare/$
+Allow: /compare/?
+Allow: /why-zacod$
+Allow: /why-zacod?
+Allow: /why-zacod/$
+Allow: /why-zacod/?
+Allow: /pos-system$
+Allow: /pos-system?
+Allow: /pos-system/$
+Allow: /pos-system/?
+Allow: /download$
+Allow: /download?
+Allow: /download/$
+Allow: /download/?
+Allow: /install$
+Allow: /install?
+Allow: /install/$
+Allow: /install/?
+Allow: /login$
+Allow: /login?
+Allow: /login/$
+Allow: /login/?
+Allow: /register$
+Allow: /register?
+Allow: /register/$
+Allow: /register/?
+Allow: /trainee-register$
+Allow: /trainee-register?
+Allow: /trainee-register/$
+Allow: /trainee-register/?
+Allow: /blog/
+Allow: /assets/
+Allow: /favicon
+Allow: /icons/
+Allow: /images/
+Allow: /manifest
+Allow: /icon-
+Allow: /apple-touch-icon.png$
+Allow: /opengraph.jpg$
+Allow: /robots.txt$
+Allow: /sitemap.xml$
+Allow: /ai-overview.json$

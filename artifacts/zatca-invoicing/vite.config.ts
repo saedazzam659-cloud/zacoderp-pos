@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { robotsHeader, robotsText, frontendSourceMap } from "../api-server/src/lib/crawlPolicy";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
@@ -27,25 +28,29 @@ if (!basePath) {
   );
 }
 
-// Vite middleware that asserts a positive X-Robots-Tag on every HTML
-// response. Without this, an upstream proxy / CDN can silently inject
-// `noindex` and Lighthouse's "Page is blocked from indexing" audit
-// fails even though the HTML <meta name="robots"> is set to
-// `index,follow`. Applies to both dev and preview servers.
-function positiveRobotsHeader() {
+// Route-sensitive advisory policy; development source maps/HMR stay intact.
+function crawlPolicy() {
+  const middleware = (production: boolean) => (req: any, res: any, next: any) => {
+    res.setHeader("X-Robots-Tag", robotsHeader(req.url || "/"));
+    if (production && /^(GET|HEAD)$/.test(req.method) && frontendSourceMap(req.url || "")) {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+    if ((req.url || "").split("?")[0] === "/robots.txt") {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end(robotsText(`${req.headers["x-forwarded-proto"] || "https"}://${req.headers.host || "localhost"}`));
+      return;
+    }
+    next();
+  };
   return {
-    name: "positive-robots-header",
+    name: "crawl-policy",
     configureServer(server: any) {
-      server.middlewares.use((req: any, res: any, next: any) => {
-        res.setHeader("X-Robots-Tag", "index, follow");
-        next();
-      });
+      server.middlewares.use(middleware(false));
     },
     configurePreviewServer(server: any) {
-      server.middlewares.use((req: any, res: any, next: any) => {
-        res.setHeader("X-Robots-Tag", "index, follow");
-        next();
-      });
+      server.middlewares.use(middleware(true));
     },
   };
 }
@@ -53,7 +58,7 @@ function positiveRobotsHeader() {
 export default defineConfig({
   base: basePath,
   plugins: [
-    positiveRobotsHeader(),
+    crawlPolicy(),
     react(),
     tailwindcss(),
     runtimeErrorOverlay(),

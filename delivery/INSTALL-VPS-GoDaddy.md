@@ -219,10 +219,20 @@ curl http://localhost:8080/api/healthz
 
 ```bash
 sudo tee /etc/nginx/sites-available/zacoderp <<'NGINX'
+map $request_uri $zacod_robots {
+    default "noindex, nofollow, noarchive";
+    ~^/(?:\?.*)?$ "index, follow";
+    ~^/(?:index\.html|pricing|compare|why-zacod|pos-system|download|install|login|register|trainee-register)/?(?:\?.*)?$ "index, follow";
+    ~^/blog/[^/?]+/?(?:\?.*)?$ "index, follow";
+}
 server {
     listen 80;
     server_name your-domain.com;     # ضع نطاقك أو IP السيرفر
     client_max_body_size 25m;
+    add_header X-Robots-Tag $zacod_robots always;
+    proxy_hide_header X-Robots-Tag;
+    # Frontend build maps only; never uploads, API files, POS or mobile.
+    location ~* ^/assets/.*\.(js|css)\.map$ { return 404; }
 
     # الـ API + المسارات الخاصة بالخادم
     location /api/            { proxy_pass http://127.0.0.1:8080; include /etc/nginx/proxy_params; }
