@@ -89,10 +89,10 @@
 }
 
 .goods-document-totals {
-  width: min(100%, 23rem);
-  padding: 1rem;
+  width: 100%;
+  padding: 0.625rem 1rem;
   border-color: hsl(var(--border));
-  background: linear-gradient(145deg, hsl(var(--muted) / 0.72), hsl(var(--background)));
+  background: hsl(var(--muted) / 0.3);
 }
 
 @media (max-width: 767px) {

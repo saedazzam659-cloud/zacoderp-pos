@@ -639,6 +639,7 @@ export default function GoodsReceipts() {
   const priceIncludesVat = !!form.priceIncludesVat;
   const grossTotal  = lines.reduce((s, l) => s + Number(l.lineTotal || 0), 0);
   const vatAmount   = lines.reduce((s, l) => s + calcLineParts(l, priceIncludesVat).vat, 0);
+  const subtotalAmount = lines.reduce((s, l) => s + calcLineParts(l, priceIncludesVat).subtotal, 0);
   const lineDiscountTotal = lines.reduce((s, l) => {
     const noDisc   = calcLineTotal({ ...l, discount: "0" }, priceIncludesVat);
     const withDisc = calcLineTotal(l, priceIncludesVat);
@@ -1436,33 +1437,33 @@ ${sections}
                 <div className="goods-document-totals mt-3 rounded-xl border bg-muted/30 px-4 py-2.5">
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
                     <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
-                      {tr("calcMethod")}: {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
+                      {priceIncludesVat ? t("salesDocForm.calcInclusive") : t("salesDocForm.calcExclusive")}
                     </span>
                     <div className="flex items-center gap-1.5 ms-auto">
-                      <span className="text-muted-foreground text-xs">{tr("subtotalIncl")}</span>
-                      <span className="font-mono">{fmt(grossTotal)}</span>
+                      <span className="text-muted-foreground text-xs">{t("salesDocForm.subtotalLabel")}</span>
+                      <span className="font-mono">{fmt(subtotalAmount)}</span>
                     </div>
                     {lineDiscountTotal > 0 && (
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-muted-foreground text-xs">{tr("itemDiscount")}</span>
+                      <div className="flex items-center gap-1.5" data-testid="grn-line-discount-total">
+                        <span className="text-muted-foreground text-xs">{t("salesDocForm.lineDiscountTotal")}</span>
                         <span className="font-mono text-rose-700">−{fmt(lineDiscountTotal)}</span>
                       </div>
                     )}
                     <div className="flex items-center gap-1.5">
-                      <span className="text-muted-foreground text-xs">{tr("vatAmount")}</span>
+                      <span className="text-muted-foreground text-xs">{t("salesDocForm.vatLabel")}</span>
                       <span className="font-mono text-amber-700">{fmt(vatAmount)}</span>
                     </div>
                     <div className="min-w-[210px]">
                       <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} currencySymbol={currencySymbol(form.currencyCode, currencies)} />
                     </div>
                     <div className="flex items-center gap-1.5 border-s ps-4">
-                      <span className="font-semibold text-xs">{tr("totalLabel")}</span>
+                      <span className="font-semibold text-xs">{priceIncludesVat ? t("salesDocForm.totalLabelInclusive") : t("salesDocForm.totalLabel")}</span>
                       <span className="font-mono text-base font-bold text-primary" data-testid="grn-total">{fmt(totalAmount)}</span>
                     </div>
                   </div>
                   {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(form.exchangeRate) > 0 && (
                       <p className="mt-1 text-[10px] text-muted-foreground text-end">
-                        {tr("equivIn")} {defaultCurrency?.code}: {fmt(totalAmount * Number(form.exchangeRate))}
+                        {t("salesDocForm.equivalentIn", { currency: defaultCurrency?.code ?? "SAR", value: fmt(totalAmount * Number(form.exchangeRate)) })}
                       </p>
                     )}
                 </div>
