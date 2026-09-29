@@ -90,6 +90,16 @@ function newLine(): DeliveryLine {
   };
 }
 
+function hasLineEntry(line: DeliveryLine) {
+  return Boolean(
+    line.itemId || line.itemName.trim() || line.itemCode.trim() ||
+    line.unitId || line.unit.trim() || line.warehouseId ||
+    Number(line.qty) !== 1 || Number(line.unitPrice) !== 0 ||
+    Number(line.discount) !== 0 || Number(line.vatRate) !== 15 ||
+    line.notes.trim()
+  );
+}
+
 const EMPTY = {
   costCenterId: "",
   docNumber: "", customerOrderNumber: "", deliveryDate: today(),
@@ -113,6 +123,7 @@ export default function GoodsDeliveries() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
+  const hideQuickAddBar = !!user?.company?.hideQuickAddBar;
   const { toast } = useToast();
   const qc = useQueryClient();
   const [, navigate] = useLocation();
@@ -131,6 +142,10 @@ export default function GoodsDeliveries() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines] = useState<DeliveryLine[]>([newLine()]);
+  const [revealedEmptyLineIds, setRevealedEmptyLineIds] = useState<string[]>([]);
+  const visibleLines = hideQuickAddBar
+    ? lines.filter(line => hasLineEntry(line) || revealedEmptyLineIds.includes(line._id))
+    : lines;
 
   const seqPeek = useNextSequenceNumber("goods_delivery", showForm && editingId == null, undefined, form.branchId);
   useEffect(() => {
@@ -147,10 +162,21 @@ export default function GoodsDeliveries() {
     }
   }, [lines, focusLineId]);
   const addLine = () => {
+    if (hideQuickAddBar) {
+      const hiddenEmptyLine = lines.find(line =>
+        !hasLineEntry(line) && !revealedEmptyLineIds.includes(line._id)
+      );
+      if (hiddenEmptyLine) {
+        setRevealedEmptyLineIds(previous => [...previous, hiddenEmptyLine._id]);
+        setFocusLineId(hiddenEmptyLine._id);
+        return;
+      }
+    }
     const l = newLine();
     const r = percentRateOf(headerTaxId);
     if (r !== null) l.vatRate = String(r);
     setLines(p => [...p, l]);
+    if (hideQuickAddBar) setRevealedEmptyLineIds(previous => [...previous, l._id]);
     setFocusLineId(l._id);
   };
   useEnterNavContainer({ onAppend: () => addLine() });
@@ -536,6 +562,7 @@ export default function GoodsDeliveries() {
     savedDraftId.current = null;
     setForm({ ...EMPTY, priceIncludesVat: stickyPriceIncl.read() });
     setLines([newLine()]);
+    setRevealedEmptyLineIds([]);
     setHeaderTaxId("");
     setEditingId(null);
     setShowForm(false);
@@ -1327,14 +1354,14 @@ ${sections}
                     const GRID_COLS_GD = "110px minmax(260px,1.4fr) 160px 120px 90px 110px 80px 80px 130px 180px 40px";
                     return (
                   <div className="goods-document-lines-scroll rounded-xl border bg-card overflow-hidden" dir={isRtl ? "rtl" : "ltr"}>
-                    <div className="overflow-auto min-h-[200px] max-h-[calc(100vh-300px)]"><div className="min-w-max">
+                    <div className={cn("overflow-auto max-h-[calc(100vh-300px)]", hideQuickAddBar && visibleLines.length === 0 ? "min-h-0" : "min-h-[200px]")}><div className="min-w-max">
                   <div className="grid gap-1.5 px-3 py-2 border-b bg-muted/40 sticky top-0 z-10" style={{ gridTemplateColumns: GRID_COLS_GD }}>
                     {lineColHeaders.map((h, i) => (
                       <p key={i} className={cn("text-[11px] font-medium truncate", h === tr("lineCols.total") ? "font-semibold text-primary" : "text-muted-foreground")} title={h}>{h}</p>
                     ))}
                   </div>
                   <div className="divide-y">
-                  {lines.map(l => (
+                  {visibleLines.map(l => (
                     <div key={l._id} className="px-3 py-2 text-xs hover:bg-muted/30 transition-colors">
                       <div className="mb-2">{centerPicker(l.costCenterId ?? "", value => updateLine(l._id, "costCenterId", value), true)}</div>
                       <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: GRID_COLS_GD }}>
@@ -1394,7 +1421,10 @@ ${sections}
                         <Input className="h-8 text-xs" value={l.notes}
                           onChange={e => updateLine(l._id, "notes", e.target.value)} placeholder={tr("lineCols.notes")} />
                         <Button type="button" size="icon" variant="ghost" className="h-7 w-7 text-rose-700 hover:bg-rose-50"
-                          onClick={() => setLines(prev => prev.filter(x => x._id !== l._id))}
+                          onClick={() => {
+                            setLines(prev => prev.filter(x => x._id !== l._id));
+                            setRevealedEmptyLineIds(prev => prev.filter(id => id !== l._id));
+                          }}
                           disabled={lines.length === 1}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
