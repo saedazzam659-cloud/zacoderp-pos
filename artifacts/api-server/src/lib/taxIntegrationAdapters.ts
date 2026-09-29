@@ -120,18 +120,22 @@ export async function submitEtaSandboxDocuments(
   const accessToken = requiredText(input.accessToken, "accessToken");
   if (input.signedDocuments.length === 0) throw new Error("At least one signed document is required");
 
-  const response = await transport({
-    url: `${ETA_PREPROD_INVOICING_BASE_URL}/api/v1.0/documentsubmissions/`,
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ documents: input.signedDocuments }),
-  }).catch(() => null);
+  let response: TaxProviderResponse;
+  try {
+    response = await transport({
+      url: `${ETA_PREPROD_INVOICING_BASE_URL}/api/v1.0/documentsubmissions/`,
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ documents: input.signedDocuments }),
+    });
+  } catch {
+    return { ok: false, reason: "provider_unavailable" };
+  }
 
-  if (!response) return { ok: false, reason: "provider_unavailable" };
   return response.status >= 200 && response.status < 300
     ? { ok: true, httpStatus: response.status }
     : { ok: false, reason: "provider_rejected", httpStatus: response.status };
@@ -173,8 +177,12 @@ export async function submitJordanSandboxInvoice(
   transport: TaxProviderTransport,
 ): Promise<SubmissionResult> {
   const request = buildJordanSandboxInvoiceRequest(input);
-  const response = await transport(request).catch(() => null);
-  if (!response) return { ok: false, reason: "provider_unavailable" };
+  let response: TaxProviderResponse;
+  try {
+    response = await transport(request);
+  } catch {
+    return { ok: false, reason: "provider_unavailable" };
+  }
   return response.status >= 200 && response.status < 300
     ? { ok: true, httpStatus: response.status }
     : { ok: false, reason: "provider_rejected", httpStatus: response.status };
