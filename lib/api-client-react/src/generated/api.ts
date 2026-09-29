@@ -30,6 +30,7 @@ import type {
   Customer,
   CustomerUpdate,
   DashboardSummary,
+  ErrorResponse,
   GetDashboardSummaryParams,
   GetMonthlyStatsParams,
   GetRecentInvoicesParams,
@@ -48,6 +49,7 @@ import type {
   ListInvoicesParams,
   ListRiskAssessmentsParams,
   ListSuppliersParams,
+  ListTaxIntegrationSubmissionsParams,
   ManufacturingDeliveryEvidence,
   MonthlyStat,
   OkResponse,
@@ -58,8 +60,12 @@ import type {
   SupplierInput,
   SupplierUpdate,
   TaxIntegrationAudit,
+  TaxIntegrationConnectionTestResult,
   TaxIntegrationSetup,
   TaxIntegrationSetupInput,
+  TaxIntegrationSubmission,
+  TaxIntegrationSubmissionInput,
+  TaxIntegrationSubmissionResult,
   UpdateIncidentActionBody,
   UpdateIncidentBody,
   UpdateRiskAssessmentBody,
@@ -5033,6 +5039,274 @@ export const useSaveTaxIntegrationSetup = <
   TContext
 > => {
   return useMutation(getSaveTaxIntegrationSetupMutationOptions(options));
+};
+
+export const getTestTaxIntegrationConnectionUrl = () => {
+  return `/api/tax-integrations/test-connection`;
+};
+
+export const testTaxIntegrationConnection = async (
+  options?: RequestInit,
+): Promise<TaxIntegrationConnectionTestResult> => {
+  return customFetch<TaxIntegrationConnectionTestResult>(
+    getTestTaxIntegrationConnectionUrl(),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getTestTaxIntegrationConnectionMutationOptions = <
+  TError = ErrorType<TaxIntegrationConnectionTestResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testTaxIntegrationConnection>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof testTaxIntegrationConnection>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["testTaxIntegrationConnection"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof testTaxIntegrationConnection>>,
+    void
+  > = () => {
+    return testTaxIntegrationConnection(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TestTaxIntegrationConnectionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof testTaxIntegrationConnection>>
+>;
+
+export type TestTaxIntegrationConnectionMutationError =
+  ErrorType<TaxIntegrationConnectionTestResult>;
+
+export const useTestTaxIntegrationConnection = <
+  TError = ErrorType<TaxIntegrationConnectionTestResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testTaxIntegrationConnection>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof testTaxIntegrationConnection>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getTestTaxIntegrationConnectionMutationOptions(options));
+};
+
+export const getListTaxIntegrationSubmissionsUrl = (
+  params: ListTaxIntegrationSubmissionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/tax-integrations/submissions?${stringifiedParams}`
+    : `/api/tax-integrations/submissions`;
+};
+
+export const listTaxIntegrationSubmissions = async (
+  params: ListTaxIntegrationSubmissionsParams,
+  options?: RequestInit,
+): Promise<TaxIntegrationSubmission[]> => {
+  return customFetch<TaxIntegrationSubmission[]>(
+    getListTaxIntegrationSubmissionsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListTaxIntegrationSubmissionsQueryKey = (
+  params?: ListTaxIntegrationSubmissionsParams,
+) => {
+  return [
+    `/api/tax-integrations/submissions`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListTaxIntegrationSubmissionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listTaxIntegrationSubmissions>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListTaxIntegrationSubmissionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listTaxIntegrationSubmissions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListTaxIntegrationSubmissionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listTaxIntegrationSubmissions>>
+  > = ({ signal }) =>
+    listTaxIntegrationSubmissions(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listTaxIntegrationSubmissions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListTaxIntegrationSubmissionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listTaxIntegrationSubmissions>>
+>;
+export type ListTaxIntegrationSubmissionsQueryError = ErrorType<unknown>;
+
+export function useListTaxIntegrationSubmissions<
+  TData = Awaited<ReturnType<typeof listTaxIntegrationSubmissions>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListTaxIntegrationSubmissionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listTaxIntegrationSubmissions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListTaxIntegrationSubmissionsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getSubmitTaxIntegrationInvoiceUrl = (invoiceId: number) => {
+  return `/api/tax-integrations/invoices/${invoiceId}/submit`;
+};
+
+export const submitTaxIntegrationInvoice = async (
+  invoiceId: number,
+  taxIntegrationSubmissionInput: TaxIntegrationSubmissionInput,
+  options?: RequestInit,
+): Promise<TaxIntegrationSubmissionResult> => {
+  return customFetch<TaxIntegrationSubmissionResult>(
+    getSubmitTaxIntegrationInvoiceUrl(invoiceId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(taxIntegrationSubmissionInput),
+    },
+  );
+};
+
+export const getSubmitTaxIntegrationInvoiceMutationOptions = <
+  TError = ErrorType<ErrorResponse | TaxIntegrationSubmissionResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitTaxIntegrationInvoice>>,
+    TError,
+    { invoiceId: number; data: BodyType<TaxIntegrationSubmissionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof submitTaxIntegrationInvoice>>,
+  TError,
+  { invoiceId: number; data: BodyType<TaxIntegrationSubmissionInput> },
+  TContext
+> => {
+  const mutationKey = ["submitTaxIntegrationInvoice"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof submitTaxIntegrationInvoice>>,
+    { invoiceId: number; data: BodyType<TaxIntegrationSubmissionInput> }
+  > = (props) => {
+    const { invoiceId, data } = props ?? {};
+
+    return submitTaxIntegrationInvoice(invoiceId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SubmitTaxIntegrationInvoiceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof submitTaxIntegrationInvoice>>
+>;
+export type SubmitTaxIntegrationInvoiceMutationBody =
+  BodyType<TaxIntegrationSubmissionInput>;
+export type SubmitTaxIntegrationInvoiceMutationError = ErrorType<
+  ErrorResponse | TaxIntegrationSubmissionResult
+>;
+
+export const useSubmitTaxIntegrationInvoice = <
+  TError = ErrorType<ErrorResponse | TaxIntegrationSubmissionResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitTaxIntegrationInvoice>>,
+    TError,
+    { invoiceId: number; data: BodyType<TaxIntegrationSubmissionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof submitTaxIntegrationInvoice>>,
+  TError,
+  { invoiceId: number; data: BodyType<TaxIntegrationSubmissionInput> },
+  TContext
+> => {
+  return useMutation(getSubmitTaxIntegrationInvoiceMutationOptions(options));
 };
 
 export const getListTaxIntegrationLogsUrl = () => {

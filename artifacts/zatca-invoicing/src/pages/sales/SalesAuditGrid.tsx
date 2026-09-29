@@ -37,7 +37,9 @@ import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
+import { usePermission } from "@/hooks/usePermission";
 import { printAuditPageIfNothingSelected } from "@/lib/auditPagePrint";
+import { companyTaxPermissionForCountry } from "@/lib/companyModuleGate";
 
 // ── Header color theme palette ────────────────────────────────────────────
 // Default is "white" (light header with dark text). Selecting any other color
@@ -114,6 +116,27 @@ type InvoicePage = {
     totalPostedAmount: number;
   };
 };
+
+type TaxSubmissionState = {
+  invoiceId: number;
+  environment: "sandbox" | "production";
+  status: "submitting" | "processing" | "submitted" | "rejected" | "unknown";
+  attemptCount: number;
+  providerSubmissionId: string | null;
+  responseCode: string | null;
+  updatedAt: string;
+};
+
+function taxSubmissionLabel(status?: TaxSubmissionState["status"]) {
+  switch (status) {
+    case "submitting": return "جارٍ الإرسال";
+    case "processing": return "قيد المعالجة لدى ETA";
+    case "submitted": return "أُرسل — بانتظار التحقق";
+    case "rejected": return "رفض المزود";
+    case "unknown": return "نتيجة غير مؤكدة — لا تكرر";
+    default: return "";
+  }
+}
 import { cn } from "@/lib/utils";
 import {
   rowToneFor,
@@ -714,8 +737,13 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   const qc = useQueryClient();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const isAdmin = user?.role === "admin" || user?.role === "superadmin";
+  const taxCountry = String(user?.company?.country ?? "").toUpperCase();
+  const taxPermissionKey = companyTaxPermissionForCountry(taxCountry);
+  const taxModuleAllowed = usePermission(taxPermissionKey ?? "egypt_tax");
+  const canSubmitCountryTax = user?.role === "admin" && !!taxPermissionKey && taxModuleAllowed;
   const authH = { Authorization: `Bearer ${token}` };
   const headers = { ...authH, "Content-Type": "application/json" };
+  const [taxSubmitBusyId, setTaxSubmitBusyId] = useState<number | null>(null);
 
   // ── Field-policy governance (الجرد الخارجي scope) ──────────────────────
   // SuperAdmin can hide individual toolbar buttons + filters per user-profile
@@ -1186,6 +1214,115 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
   });
   const invoices = invoicePage?.items ?? [];
   const invoiceTotal = invoicePage?.total ?? 0;
+  const visibleTaxInvoiceIds = useMemo(
+    () => invoices.map((invoice: any) => Number(invoice.id)).filter(Number.isInteger).join(","),
+    [invoices],
+  );
+
+  const taxSetupQuery = useQuery<{
+    country: string;
+    environment: "sandbox" | "production" | null;
+    hasCredentials: boolean;
+    setupStatus: string;
+  }>({
+    queryKey: ["tax-integration-setup", cid, taxCountry],
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/tax-integrations/setup`, { headers: authH });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    },
+    enabled: canSubmitCountryTax,
+    staleTime: 30_000,
+  });
+
+  const taxSubmissionsQuery = useQuery<TaxSubmissionState[]>({
+    queryKey: ["tax-integration-submissions", cid, visibleTaxInvoiceIds],
+    queryFn: async () => {
+      if (!visibleTaxInvoiceIds) return [];
+      const params = new URLSearchParams({ invoiceIds: visibleTaxInvoiceIds });
+      const response = await fetch(`${API}/api/tax-integrations/submissions?${params}`, { headers: authH });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const rows = await response.json();
+      if (!Array.isArray(rows)) throw new Error("استجابة حالات الإرسال غير صالحة");
+      return rows;
+    },
+    enabled: canSubmitCountryTax && !!visibleTaxInvoiceIds,
+    refetchInterval: (query) => query.state.data?.some(
+      row => row.status === "submitting" || row.status === "processing",
+    ) ? 10_000 : false,
+  });
+  const taxSubmissionByInvoice = useMemo(
+    () => new Map((taxSubmissionsQuery.data ?? []).map((row) => [row.invoiceId, row])),
+    [taxSubmissionsQuery.data],
+  );
+
+  const submitCountryTaxInvoice = async (invoice: any) => {
+    if (!canSubmitCountryTax || invoice.status !== "posted" || taxSubmitBusyId !== null) return;
+    const setup = taxSetupQuery.data;
+    if (!setup?.hasCredentials || !setup.environment) {
+      navigate("/tax-integration");
+      return;
+    }
+    const setupReady = taxCountry === "EG"
+      ? setup.setupStatus === "connection_verified"
+      : setup.environment === "production"
+        ? setup.setupStatus === "configured_unverified"
+        : setup.setupStatus === "endpoint_reachable_unverified";
+    if (!setupReady) {
+      toast({ title: "اختبر إعداد التكامل أولاً", description: "افتح إعدادات التكامل الضريبي واحفظها ثم اختبر الاتصال." });
+      navigate("/tax-integration");
+      return;
+    }
+    if (taxSubmissionsQuery.isLoading || taxSubmissionsQuery.isError) {
+      toast({ title: "حالة الإرسال غير متاحة", description: "تعذر التحقق من وجود محاولة سابقة؛ لن نرسل لتجنب التكرار.", variant: "destructive" });
+      return;
+    }
+    const existing = taxSubmissionByInvoice.get(Number(invoice.id));
+    const retry = existing?.status === "rejected";
+    if (existing && !retry) {
+      toast({ title: "لا يمكن تكرار الإرسال", description: "توجد محاولة سابقة غير مرفوضة؛ راجع حالة المزود قبل اتخاذ إجراء." });
+      return;
+    }
+    const confirmations: string[] = [];
+    if (retry) confirmations.push("المزود رفض المحاولة السابقة. ستعيد إرسال الفاتورة بعد المراجعة.");
+    if (setup.environment === "production") confirmations.push("سيُرسل مستند فعلي إلى بيئة الإنتاج ولا يمكن سحب الإرسال.");
+    if (confirmations.length && !window.confirm(`${confirmations.join("\n\n")}\n\nهل تريد المتابعة؟`)) return;
+
+    setTaxSubmitBusyId(Number(invoice.id));
+    try {
+      const response = await fetch(`${API}/api/tax-integrations/invoices/${invoice.id}/submit`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          retry,
+          confirmProduction: setup.environment === "production",
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        toast({
+          title: "لم يتم تأكيد إرسال الفاتورة",
+          description: result?.message || result?.error || `HTTP ${response.status}`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "تم إرسال طلب الفاتورة",
+          description: result?.message || "استلم المزود الطلب.",
+        });
+      }
+      await taxSubmissionsQuery.refetch();
+    } catch (submitError) {
+      toast({
+        title: "تعذر تأكيد نتيجة الإرسال",
+        description: submitError instanceof Error ? submitError.message : "راجع حالة الإرسال قبل إعادة المحاولة.",
+        variant: "destructive",
+      });
+      await taxSubmissionsQuery.refetch();
+    } finally {
+      setTaxSubmitBusyId(null);
+    }
+  };
 
   const { data: salesReps = [] } = useQuery<any[]>({
     queryKey: ["sales-reps-audit", cid],
@@ -2931,6 +3068,67 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                               >
                                 <Printer className="h-3.5 w-3.5" />
                               </Button>
+                              {canSubmitCountryTax && inv.status === "posted" && (() => {
+                                const submission = taxSubmissionByInvoice.get(Number(inv.id));
+                                const setup = taxSetupQuery.data;
+                                const readyStatus = taxCountry === "EG"
+                                  ? setup?.setupStatus === "connection_verified"
+                                  : setup?.environment === "production"
+                                    ? setup?.setupStatus === "configured_unverified"
+                                    : setup?.setupStatus === "endpoint_reachable_unverified";
+                                const blockedByPriorAttempt = !!submission && submission.status !== "rejected";
+                                const checking = taxSetupQuery.isLoading || taxSubmissionsQuery.isLoading;
+                                const unavailable = taxSetupQuery.isError || taxSubmissionsQuery.isError;
+                                const label = taxSubmitBusyId === Number(inv.id)
+                                  ? "جارٍ الإرسال"
+                                  : submission
+                                    ? taxSubmissionLabel(submission.status)
+                                    : checking ? "جارٍ فحص الحالة" : "";
+                                const buttonLabel = !setup?.hasCredentials || !readyStatus
+                                  ? "الإعداد"
+                                  : submission?.status === "rejected" ? "إعادة الإرسال" : "إرسال ضريبي";
+                                return (
+                                  <div className="flex max-w-[88px] flex-col items-center">
+                                    {label && (
+                                      <span className={cn(
+                                        "max-w-full truncate text-[8px] leading-3",
+                                        submission?.status === "rejected" ? "text-rose-700"
+                                          : submission?.status === "unknown" ? "text-amber-700" : "text-slate-500",
+                                      )} title={label}>
+                                        {label}
+                                      </span>
+                                    )}
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 gap-1 px-1 text-[9px]"
+                                      title={unavailable
+                                        ? "تعذر قراءة حالة الإرسال؛ لا ترسل لتجنب التكرار"
+                                        : blockedByPriorAttempt
+                                          ? `${taxSubmissionLabel(submission?.status)} — لن نكرر الإرسال`
+                                          : !setup?.hasCredentials || !readyStatus
+                                            ? "افتح إعدادات التكامل واحفظها واختبرها"
+                                            : buttonLabel}
+                                      aria-label={`${buttonLabel} للفاتورة ${inv.docNumber ?? inv.id}`}
+                                      data-testid={`button-submit-tax-invoice-${inv.id}`}
+                                      disabled={checking || unavailable || blockedByPriorAttempt || taxSubmitBusyId === Number(inv.id)}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        if (!setup?.hasCredentials || !readyStatus) {
+                                          navigate("/tax-integration");
+                                          return;
+                                        }
+                                        void submitCountryTaxInvoice(inv);
+                                      }}
+                                    >
+                                      {taxSubmitBusyId === Number(inv.id)
+                                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                                        : <Send className="h-3 w-3" />}
+                                      <span>{buttonLabel}</span>
+                                    </Button>
+                                  </div>
+                                );
+                              })()}
                               <Button
                                 variant="ghost"
                                 size="icon"

@@ -1095,6 +1095,85 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaxIntegrationSetup"
+  /tax-integrations/test-connection:
+    post:
+      operationId: testTaxIntegrationConnection
+      responses:
+        "200":
+          description: Provider reachability/authentication result without secret values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxIntegrationConnectionTestResult"
+        "502":
+          description: Provider did not answer successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxIntegrationConnectionTestResult"
+        "409":
+          description: A safe credential test is unavailable in the selected environment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxIntegrationConnectionTestResult"
+  /tax-integrations/submissions:
+    get:
+      operationId: listTaxIntegrationSubmissions
+      parameters:
+        - name: invoiceIds
+          in: query
+          required: true
+          description: Comma-separated sales invoice IDs, up to 100
+          schema: { type: string }
+      responses:
+        "200":
+          description: Redacted provider submission states for the current company
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaxIntegrationSubmission"
+  /tax-integrations/invoices/{invoiceId}/submit:
+    post:
+      operationId: submitTaxIntegrationInvoice
+      parameters:
+        - name: invoiceId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxIntegrationSubmissionInput"
+      responses:
+        "202":
+          description: Provider received the submission; final tax acceptance is not asserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxIntegrationSubmissionResult"
+        "409":
+          description: Invoice is not posted, production was not confirmed, or a prior submission blocks duplicates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invoice data cannot be mapped to the provider format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Provider rejected or did not confirm the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxIntegrationSubmissionResult"
   /tax-integrations/logs:
     get:
       operationId: listTaxIntegrationLogs
@@ -1110,6 +1189,11 @@ paths:
 
 components:
   schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
     TaxIntegrationSetup:
       type: object
       required: [country, provider, environment, hasCredentials, setupStatus, updatedAt]
@@ -1118,7 +1202,7 @@ components:
         provider: { type: string, enum: [egypt_eta, jordan_national] }
         environment: { type: ["string", "null"], enum: [sandbox, production, null] }
         hasCredentials: { type: boolean }
-        setupStatus: { type: string, enum: [not_configured, configured_unverified] }
+        setupStatus: { type: string, enum: [not_configured, configured_unverified, connection_verified, endpoint_reachable_unverified] }
         updatedAt: { type: ["string", "null"], format: date-time }
     TaxIntegrationSetupInput:
       type: object
@@ -1128,6 +1212,41 @@ components:
         credentials:
           type: object
           additionalProperties: { type: string, maxLength: 262144 }
+    TaxIntegrationConnectionTestResult:
+      type: object
+      required: [ok, setupStatus, credentialsVerified, message]
+      properties:
+        ok: { type: boolean }
+        setupStatus: { type: string, enum: [configured_unverified, connection_verified, endpoint_reachable_unverified] }
+        credentialsVerified: { type: boolean }
+        httpStatus: { type: ["integer", "null"] }
+        message: { type: string }
+        error: { type: string }
+    TaxIntegrationSubmission:
+      type: object
+      required: [invoiceId, environment, status, attemptCount, providerSubmissionId, responseCode, updatedAt]
+      properties:
+        invoiceId: { type: integer }
+        environment: { type: string, enum: [sandbox, production] }
+        status: { type: string, enum: [submitting, processing, submitted, rejected, unknown] }
+        attemptCount: { type: integer }
+        providerSubmissionId: { type: ["string", "null"] }
+        responseCode: { type: ["string", "null"] }
+        updatedAt: { type: string, format: date-time }
+    TaxIntegrationSubmissionInput:
+      type: object
+      properties:
+        retry: { type: boolean, default: false }
+        confirmProduction: { type: boolean, default: false }
+    TaxIntegrationSubmissionResult:
+      type: object
+      required: [ok, invoiceId, status, providerSubmissionId, message]
+      properties:
+        ok: { type: boolean }
+        invoiceId: { type: integer }
+        status: { type: string, enum: [processing, submitted, rejected, unknown] }
+        providerSubmissionId: { type: ["string", "null"] }
+        message: { type: string }
     TaxIntegrationAudit:
       type: object
       required: [id, provider, action, environment, metadata, createdAt]

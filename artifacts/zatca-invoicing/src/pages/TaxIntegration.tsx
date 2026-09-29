@@ -18,6 +18,7 @@ import {
   KeyRound,
   Loader2,
   LockKeyhole,
+  PlugZap,
   Save,
   ShieldCheck,
 } from "lucide-react";
@@ -27,7 +28,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type Country = "EG" | "JO";
 type Environment = "sandbox" | "production";
-type SetupStatus = "not_configured" | "configured_unverified";
+type SetupStatus = "not_configured" | "configured_unverified" | "connection_verified" | "endpoint_reachable_unverified";
 
 interface SetupState {
   country: Country;
@@ -51,18 +52,26 @@ interface AuditLog {
 }
 
 const EGYPT_FIELDS = [
-  { key: "taxpayerId", label: "رقم التسجيل الضريبي", hint: "Taxpayer ID", kind: "input" },
-  { key: "clientId", label: "معرّف العميل", hint: "Client ID", kind: "input" },
-  { key: "clientSecret", label: "سر العميل", hint: "Client secret", kind: "secret" },
-  { key: "signingCertificate", label: "شهادة التوقيع", hint: "Signing certificate", kind: "textarea" },
-  { key: "signingPrivateKey", label: "المفتاح الخاص للتوقيع", hint: "Signing private key", kind: "textarea" },
+  { key: "taxpayerId", label: "رقم التسجيل الضريبي", hint: "Taxpayer ID", kind: "input", required: true },
+  { key: "taxpayerActivityCode", label: "كود النشاط المسجل لدى ETA", hint: "Taxpayer activity code", kind: "input", required: true },
+  { key: "branchCode", label: "كود فرع ETA", hint: "ETA branch code", kind: "input", required: true },
+  { key: "clientId", label: "معرّف العميل", hint: "Client ID", kind: "input", required: true },
+  { key: "clientSecret", label: "سر العميل", hint: "Client secret", kind: "secret", required: true },
+  { key: "signingCertificate", label: "شهادة التوقيع", hint: "Signing certificate", kind: "textarea", required: true },
+  { key: "signingPrivateKey", label: "المفتاح الخاص للتوقيع", hint: "Signing private key", kind: "textarea", required: true },
+  { key: "signingPrivateKeyPassphrase", label: "عبارة مرور المفتاح (اختياري)", hint: "Private key passphrase", kind: "secret", required: false },
 ] as const;
 
 const JORDAN_FIELDS = [
-  { key: "taxNumber", label: "الرقم الضريبي", hint: "Tax number", kind: "input" },
-  { key: "userNumber", label: "رقم المستخدم", hint: "User number", kind: "input" },
-  { key: "secretKey", label: "المفتاح السري", hint: "Secret key", kind: "secret" },
+  { key: "taxNumber", label: "الرقم الضريبي", hint: "Tax number", kind: "input", required: true },
+  { key: "userNumber", label: "رقم المستخدم", hint: "User number", kind: "input", required: true },
+  { key: "secretKey", label: "المفتاح السري", hint: "Secret key", kind: "secret", required: true },
+  { key: "sandboxEndpoint", label: "عنوان اختبار JoFotara الرسمي", hint: "Official HTTPS sandbox endpoint", kind: "input", required: false },
 ] as const;
+
+function taxFieldIsRequired(field: { key: string; required: boolean }, environment: Environment): boolean {
+  return field.key === "sandboxEndpoint" ? environment === "sandbox" : field.required;
+}
 
 function countryName(country: Country) {
   return country === "EG" ? "مصر" : "الأردن";
@@ -102,9 +111,11 @@ export default function TaxIntegration() {
   const [environment, setEnvironment] = useState<Environment>("sandbox");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
   const [error, setError] = useState("");
   const [logsError, setLogsError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+  const [connectionMessage, setConnectionMessage] = useState<{ ok: boolean; message: string; credentialsVerified?: boolean; httpStatus?: number | null } | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
 
   const fields = useMemo(
@@ -174,7 +185,12 @@ export default function TaxIntegration() {
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!setup || saving) return;
-    const missing = fields.filter((field) => !form[field.key]?.trim());
+    const missing = fields.filter((field) => {
+      const required = field.key === "sandboxEndpoint"
+        ? environment === "sandbox"
+        : field.required !== false;
+      return required && !form[field.key]?.trim();
+    });
     if (missing.length > 0) {
       setError("أكمل جميع بيانات الاعتماد المطلوبة قبل الحفظ. لا يمكن استكمال الحزمة من البيانات السابقة.");
       return;
@@ -189,19 +205,52 @@ export default function TaxIntegration() {
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({
           environment,
-          credentials: Object.fromEntries(fields.map((field) => [field.key, form[field.key].trim()])),
+          credentials: Object.fromEntries(fields
+            .filter((field) => form[field.key]?.trim())
+            .map((field) => [field.key, form[field.key].trim()])),
         }),
       });
       if (!response.ok) {
         throw new Error(await parseError(response, "تعذر حفظ بيانات التكامل"));
       }
       setSaveMessage("تم حفظ بيانات التكامل. الحالة الحالية: محفوظة وغير متحقق منها.");
+      setConnectionMessage(null);
       setForm({});
       await load();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "تعذر حفظ بيانات التكامل");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const testConnection = async () => {
+    if (!setup?.hasCredentials || testingConnection || saving) return;
+    setTestingConnection(true);
+    setError("");
+    setConnectionMessage(null);
+    try {
+      const response = await fetch(`${API}/api/tax-integrations/test-connection`, {
+        method: "POST",
+        credentials: "include",
+        headers,
+      });
+      const result = await response.json().catch(() => ({}));
+      const message = result?.message || result?.error || "تعذر اختبار الاتصال.";
+      setConnectionMessage({
+        ok: response.ok && result?.ok === true,
+        message,
+        credentialsVerified: result?.credentialsVerified === true,
+        httpStatus: result?.httpStatus ?? null,
+      });
+      await load();
+    } catch (testError) {
+      setConnectionMessage({
+        ok: false,
+        message: testError instanceof Error ? testError.message : "تعذر اختبار الاتصال.",
+      });
+    } finally {
+      setTestingConnection(false);
     }
   };
 
@@ -250,7 +299,13 @@ export default function TaxIntegration() {
     );
   }
 
-  const configured = setup?.setupStatus === "configured_unverified";
+  const configured = setup?.hasCredentials === true;
+  const statusLabel = setup?.setupStatus === "connection_verified"
+    ? "تم التحقق من اتصال ETA"
+    : setup?.setupStatus === "endpoint_reachable_unverified"
+      ? "الخادم متاح — بيانات اعتماد JoFotara غير متحققة"
+      : configured ? "محفوظ — غير متحقق منه" : "غير مُعد بعد";
+  const statusVerified = setup?.setupStatus === "connection_verified";
 
   return (
     <div dir="rtl" className="mx-auto max-w-6xl space-y-6 pb-10">
@@ -266,7 +321,7 @@ export default function TaxIntegration() {
               تكامل {countryName(companyCountry)} داخل زاكود
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-7 text-slate-600">
-              مساحة إعداد آمنة لبيانات مزود الفوترة الإلكترونية الخاص ببلد شركتك. لا ترسل هذه الشاشة فواتير ولا تختبر الاتصال.
+              احفظ بيانات التكامل واختبر الوصول أو بيانات ETA. إرسال الفواتير المرحّلة متاح من شاشة المبيعات بعد اكتمال الإعداد.
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-3 rounded-xl border border-white/80 bg-white/70 px-4 py-3 shadow-sm">
@@ -305,12 +360,14 @@ export default function TaxIntegration() {
               </div>
               <Badge className={cn(
                 "w-fit gap-1.5 border px-3 py-1 font-medium",
-                configured
-                  ? "border-amber-200 bg-amber-50 text-amber-800"
+                statusVerified
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : configured
+                    ? "border-amber-200 bg-amber-50 text-amber-800"
                   : "border-slate-200 bg-white text-slate-600",
               )}>
-                {configured ? <Clock3 className="h-3.5 w-3.5" /> : <LockKeyhole className="h-3.5 w-3.5" />}
-                {configured ? "محفوظ — غير متحقق منه" : "غير مُعد بعد"}
+                {statusVerified ? <Check className="h-3.5 w-3.5" /> : configured ? <Clock3 className="h-3.5 w-3.5" /> : <LockKeyhole className="h-3.5 w-3.5" />}
+                {statusLabel}
               </Badge>
             </div>
           </CardHeader>
@@ -360,7 +417,7 @@ export default function TaxIntegration() {
                         id={`tax-${field.key}`}
                         value={form[field.key] ?? ""}
                         onChange={(event) => updateField(field.key, event.target.value)}
-                        required
+                        required={taxFieldIsRequired(field, environment)}
                         rows={5}
                         dir="ltr"
                         spellCheck={false}
@@ -373,7 +430,7 @@ export default function TaxIntegration() {
                         type={field.kind === "secret" ? "password" : "text"}
                         value={form[field.key] ?? ""}
                         onChange={(event) => updateField(field.key, event.target.value)}
-                        required
+                        required={taxFieldIsRequired(field, environment)}
                         dir="ltr"
                         spellCheck={false}
                         autoComplete="new-password"
@@ -387,11 +444,27 @@ export default function TaxIntegration() {
                 <p className="text-xs leading-5 text-muted-foreground">
                   آخر تحديث: <span className="font-medium text-foreground">{formatDate(setup?.updatedAt)}</span>
                 </p>
-                <Button type="submit" disabled={saving} className="gap-2 bg-teal-700 text-white hover:bg-teal-800">
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {saving ? "جارٍ الحفظ..." : "حفظ بيانات التكامل"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" disabled={!setup?.hasCredentials || saving || testingConnection} onClick={() => void testConnection()} className="gap-2">
+                    {testingConnection ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
+                    {testingConnection ? "جارٍ الاختبار..." : "اختبار الاتصال"}
+                  </Button>
+                  <Button type="submit" disabled={saving || testingConnection} className="gap-2 bg-teal-700 text-white hover:bg-teal-800">
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    {saving ? "جارٍ الحفظ..." : "حفظ بيانات التكامل"}
+                  </Button>
+                </div>
               </div>
+              {connectionMessage && (
+                <div className={cn(
+                  "rounded-xl border px-4 py-3 text-sm leading-6",
+                  connectionMessage.ok ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900",
+                )} role="status">
+                  {connectionMessage.message}
+                  {companyCountry === "JO" && connectionMessage.ok && " لم يتم إرسال فاتورة أو التحقق من المفتاح السري."}
+                  {connectionMessage.httpStatus ? ` (HTTP ${connectionMessage.httpStatus})` : ""}
+                </div>
+              )}
             </form>
           </CardContent>
         </Card>
@@ -406,7 +479,9 @@ export default function TaxIntegration() {
               <ul className="space-y-3 text-sm leading-6 text-slate-600">
                 <li className="flex gap-2"><Check className="mt-1 h-4 w-4 shrink-0 text-teal-700" />حفظ إعدادات الوصول الخاصة ببلد الشركة فقط.</li>
                 <li className="flex gap-2"><Check className="mt-1 h-4 w-4 shrink-0 text-teal-700" />عرض سجل تغييرات الإعدادات بعد إخفاء الأسرار.</li>
-                <li className="flex gap-2"><Check className="mt-1 h-4 w-4 shrink-0 text-teal-700" />إرسال الفواتير غير متاح حتى اعتماد التحقق الرسمي من البيئة التجريبية.</li>
+                <li className="flex gap-2"><Check className="mt-1 h-4 w-4 shrink-0 text-teal-700" />يمكن إرسال الفواتير المرحّلة من شبكة المبيعات بعد التحقق من إعداد الاتصال.</li>
+                <li className="flex gap-2"><Check className="mt-1 h-4 w-4 shrink-0 text-teal-700" />اختبار الأردن يثبت الوصول إلى الخادم فقط، ولا يتحقق من بيانات الاعتماد.</li>
+                {environment === "production" && <li className="flex gap-2 text-amber-800"><AlertCircle className="mt-1 h-4 w-4 shrink-0" />الإنتاج يرسل مستندات فعلية؛ يتطلب كل إرسال تأكيداً مستقلاً.</li>}
               </ul>
             </CardContent>
           </Card>

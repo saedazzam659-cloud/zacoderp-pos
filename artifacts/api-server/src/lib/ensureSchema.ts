@@ -62,6 +62,52 @@ async function ensureTaxIntegrationSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS tax_setup_audit_company_time_idx
       ON tax_integration_audit(company_id, created_at)
   `));
+  await db.execute(sql.raw(`
+    CREATE TABLE IF NOT EXISTS tax_integration_submissions (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      environment TEXT NOT NULL,
+      status TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 1,
+      document_uuid TEXT,
+      provider_submission_id TEXT,
+      response_code TEXT,
+      error_code TEXT,
+      request_hash TEXT,
+      last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `));
+  await db.execute(sql.raw(`
+    DO $$
+    DECLARE existing_index text;
+    BEGIN
+      SELECT indexdef INTO existing_index
+      FROM pg_indexes
+      WHERE schemaname = current_schema()
+        AND indexname = 'tax_submission_company_provider_invoice_uniq';
+      IF existing_index IS NOT NULL
+        AND lower(existing_index) NOT LIKE '%(company_id, provider, invoice_id, environment)%' THEN
+        EXECUTE format(
+          'DROP INDEX %I.%I',
+          current_schema(),
+          'tax_submission_company_provider_invoice_uniq'
+        );
+      END IF;
+    END;
+    $$
+  `));
+  await db.execute(sql.raw(`
+    CREATE UNIQUE INDEX IF NOT EXISTS tax_submission_company_provider_invoice_uniq
+      ON tax_integration_submissions(company_id, provider, invoice_id, environment)
+  `));
+  await db.execute(sql.raw(`
+    CREATE INDEX IF NOT EXISTS tax_submission_company_status_idx
+      ON tax_integration_submissions(company_id, provider, status)
+  `));
 }
 
 let healPromise: Promise<void> | null = null;
@@ -4580,6 +4626,7 @@ async function runHeal(options: {
   const { tables, enums } = collectSchemaEntities();
   await ensureInternalControlSchema();
   await ensureDocumentExpenseSchema();
+  await ensureTaxIntegrationSchema();
   logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
 
   // Run this compatibility DDL before generic inspection. Purchase-invoice

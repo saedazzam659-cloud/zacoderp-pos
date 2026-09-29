@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import {
   buildEtaConnectionRequest,
   buildJordanSandboxInvoiceRequest,
+  buildJordanInvoiceRequest,
+  submitEtaDocuments,
   submitEtaSandboxDocuments,
   submitJordanSandboxInvoice,
   testEtaConnection,
+  testJordanEndpointReachability,
   type TaxProviderRequest,
   type TaxProviderResponse,
 } from "../src/lib/taxIntegrationAdapters.ts";
@@ -13,7 +16,7 @@ import {
 const etaCredentials = { clientId: "local-client", clientSecret: "local-secret" };
 const jordanSandbox = {
   environment: "sandbox" as const,
-  endpoint: "https://jofotara.sandbox.test/core/invoices/",
+  endpoint: "https://sandbox.jofotara.gov.jo/core/invoices/",
   userNumber: "local-user-number",
   secretKey: "local-secret-key",
   ublXml: "<Invoice><ID>MOCK-1</ID></Invoice>",
@@ -65,7 +68,7 @@ test("ETA submission builds a sandbox-only document-submission request", async (
   assert.equal(captured?.url, "https://api.preprod.invoicing.eta.gov.eg/api/v1.0/documentsubmissions/");
   assert.equal(captured?.headers.Authorization, "Bearer mock-token");
   assert.deepEqual(JSON.parse(captured?.body ?? "{}"), { documents: [signedDocument] });
-  assert.deepEqual(result, { ok: true, httpStatus: 202 });
+  assert.deepEqual(result, { ok: true, httpStatus: 202, providerSubmissionId: "mock-submission" });
 });
 
 test("ETA refuses production submission before invoking any transport", async () => {
@@ -82,6 +85,20 @@ test("ETA refuses production submission before invoking any transport", async ()
     /disabled outside sandbox mode/,
   );
   assert.equal(calls, 0);
+});
+
+test("ETA production submission uses the fixed production API only when explicitly requested", async () => {
+  let captured: TaxProviderRequest | undefined;
+  const result = await submitEtaDocuments({
+    environment: "production",
+    accessToken: "mock-token",
+    signedDocuments: [{ documentType: "I" }],
+  }, async (request) => {
+    captured = request;
+    return { status: 200, body: { submissionUUID: "prod-mock-id" } };
+  });
+  assert.equal(captured?.url, "https://api.invoicing.eta.gov.eg/api/v1.0/documentsubmissions/");
+  assert.deepEqual(result, { ok: true, httpStatus: 200, providerSubmissionId: "prod-mock-id" });
 });
 
 test("Jordan request maps the documented API headers and Base64 UBL body", () => {
@@ -103,7 +120,7 @@ test("Jordan sandbox submit maps mock acceptance without returning provider payl
     return { status: 200, body: { invoiceId: "mock-id", qr: "mock-qr" } };
   });
   assert.equal(captured?.url, jordanSandbox.endpoint);
-  assert.deepEqual(result, { ok: true, httpStatus: 200 });
+  assert.deepEqual(result, { ok: true, httpStatus: 200, providerSubmissionId: "mock-id" });
 });
 
 test("Jordan live endpoint and production mode are blocked before transport", async () => {
@@ -124,6 +141,37 @@ test("Jordan live endpoint and production mode are blocked before transport", as
     /disabled outside sandbox mode/,
   );
   assert.equal(calls, 0);
+});
+
+test("Jordan reachability check sends no credentials and never claims they were verified", async () => {
+  let captured: TaxProviderRequest | undefined;
+  const result = await testJordanEndpointReachability(jordanSandbox.endpoint, async (request) => {
+    captured = request;
+    return { status: 405, body: {} };
+  });
+  assert.deepEqual(result, { ok: true, httpStatus: 405, credentialsVerified: false });
+  assert.equal(captured?.method, "HEAD");
+  assert.equal(captured?.headers["Client-Id"], undefined);
+  assert.equal(captured?.headers["Secret-Key"], undefined);
+});
+
+test("Jordan production credential test is refused without contacting the live host", async () => {
+  let calls = 0;
+  const result = await testJordanEndpointReachability("", async () => {
+    calls += 1;
+    return { status: 200, body: {} };
+  }, "production");
+  assert.deepEqual(result, { ok: false, reason: "production_test_unsupported" });
+  assert.equal(calls, 0);
+});
+
+test("Jordan production builder ignores caller endpoint and pins the official host", () => {
+  const request = buildJordanInvoiceRequest({
+    ...jordanSandbox,
+    environment: "production",
+    endpoint: "https://attacker.example/collect",
+  });
+  assert.equal(request.url, "https://backend.jofotara.gov.jo/core/invoices/");
 });
 
 test("provider transport failures are normalized without leaking errors", async () => {

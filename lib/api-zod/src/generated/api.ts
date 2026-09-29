@@ -2437,7 +2437,12 @@ export const GetTaxIntegrationSetupResponse = zod.object({
     ])
     .nullable(),
   hasCredentials: zod.boolean(),
-  setupStatus: zod.enum(["not_configured", "configured_unverified"]),
+  setupStatus: zod.enum([
+    "not_configured",
+    "configured_unverified",
+    "connection_verified",
+    "endpoint_reachable_unverified",
+  ]),
   updatedAt: zod.coerce.date().nullable(),
 });
 
@@ -2462,8 +2467,65 @@ export const SaveTaxIntegrationSetupResponse = zod.object({
     ])
     .nullable(),
   hasCredentials: zod.boolean(),
-  setupStatus: zod.enum(["not_configured", "configured_unverified"]),
+  setupStatus: zod.enum([
+    "not_configured",
+    "configured_unverified",
+    "connection_verified",
+    "endpoint_reachable_unverified",
+  ]),
   updatedAt: zod.coerce.date().nullable(),
+});
+
+export const TestTaxIntegrationConnectionResponse = zod.object({
+  ok: zod.boolean(),
+  setupStatus: zod.enum([
+    "configured_unverified",
+    "connection_verified",
+    "endpoint_reachable_unverified",
+  ]),
+  credentialsVerified: zod.boolean(),
+  httpStatus: zod.number().nullish(),
+  message: zod.string(),
+  error: zod.string().optional(),
+});
+
+export const ListTaxIntegrationSubmissionsQueryParams = zod.object({
+  invoiceIds: zod.coerce
+    .string()
+    .describe("Comma-separated sales invoice IDs, up to 100"),
+});
+
+export const ListTaxIntegrationSubmissionsResponseItem = zod.object({
+  invoiceId: zod.number(),
+  environment: zod.enum(["sandbox", "production"]),
+  status: zod.enum([
+    "submitting",
+    "processing",
+    "submitted",
+    "rejected",
+    "unknown",
+  ]),
+  attemptCount: zod.number(),
+  providerSubmissionId: zod.string().nullable(),
+  responseCode: zod.string().nullable(),
+  updatedAt: zod.coerce.date(),
+});
+export const ListTaxIntegrationSubmissionsResponse = zod.array(
+  ListTaxIntegrationSubmissionsResponseItem,
+);
+
+export const SubmitTaxIntegrationInvoiceParams = zod.object({
+  invoiceId: zod.coerce.number().min(1),
+});
+
+export const submitTaxIntegrationInvoiceBodyRetryDefault = false;
+export const submitTaxIntegrationInvoiceBodyConfirmProductionDefault = false;
+
+export const SubmitTaxIntegrationInvoiceBody = zod.object({
+  retry: zod.boolean().default(submitTaxIntegrationInvoiceBodyRetryDefault),
+  confirmProduction: zod
+    .boolean()
+    .default(submitTaxIntegrationInvoiceBodyConfirmProductionDefault),
 });
 
 export const ListTaxIntegrationLogsResponseItem = zod.object({

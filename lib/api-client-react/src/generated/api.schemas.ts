@@ -5,6 +5,10 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export interface ErrorResponse {
+  error: string;
+}
+
 export type TaxIntegrationSetupCountry =
   (typeof TaxIntegrationSetupCountry)[keyof typeof TaxIntegrationSetupCountry];
 
@@ -39,6 +43,8 @@ export type TaxIntegrationSetupSetupStatus =
 export const TaxIntegrationSetupSetupStatus = {
   not_configured: "not_configured",
   configured_unverified: "configured_unverified",
+  connection_verified: "connection_verified",
+  endpoint_reachable_unverified: "endpoint_reachable_unverified",
 } as const;
 
 export interface TaxIntegrationSetup {
@@ -65,6 +71,80 @@ export type TaxIntegrationSetupInputCredentials = { [key: string]: string };
 export interface TaxIntegrationSetupInput {
   environment: TaxIntegrationSetupInputEnvironment;
   credentials: TaxIntegrationSetupInputCredentials;
+}
+
+export type TaxIntegrationConnectionTestResultSetupStatus =
+  (typeof TaxIntegrationConnectionTestResultSetupStatus)[keyof typeof TaxIntegrationConnectionTestResultSetupStatus];
+
+export const TaxIntegrationConnectionTestResultSetupStatus = {
+  configured_unverified: "configured_unverified",
+  connection_verified: "connection_verified",
+  endpoint_reachable_unverified: "endpoint_reachable_unverified",
+} as const;
+
+export interface TaxIntegrationConnectionTestResult {
+  ok: boolean;
+  setupStatus: TaxIntegrationConnectionTestResultSetupStatus;
+  credentialsVerified: boolean;
+  /** @nullable */
+  httpStatus?: number | null;
+  message: string;
+  error?: string;
+}
+
+export type TaxIntegrationSubmissionEnvironment =
+  (typeof TaxIntegrationSubmissionEnvironment)[keyof typeof TaxIntegrationSubmissionEnvironment];
+
+export const TaxIntegrationSubmissionEnvironment = {
+  sandbox: "sandbox",
+  production: "production",
+} as const;
+
+export type TaxIntegrationSubmissionStatus =
+  (typeof TaxIntegrationSubmissionStatus)[keyof typeof TaxIntegrationSubmissionStatus];
+
+export const TaxIntegrationSubmissionStatus = {
+  submitting: "submitting",
+  processing: "processing",
+  submitted: "submitted",
+  rejected: "rejected",
+  unknown: "unknown",
+} as const;
+
+export interface TaxIntegrationSubmission {
+  invoiceId: number;
+  environment: TaxIntegrationSubmissionEnvironment;
+  status: TaxIntegrationSubmissionStatus;
+  attemptCount: number;
+  /** @nullable */
+  providerSubmissionId: string | null;
+  /** @nullable */
+  responseCode: string | null;
+  updatedAt: string;
+}
+
+export interface TaxIntegrationSubmissionInput {
+  retry?: boolean;
+  confirmProduction?: boolean;
+}
+
+export type TaxIntegrationSubmissionResultStatus =
+  (typeof TaxIntegrationSubmissionResultStatus)[keyof typeof TaxIntegrationSubmissionResultStatus];
+
+export const TaxIntegrationSubmissionResultStatus = {
+  processing: "processing",
+  submitted: "submitted",
+  rejected: "rejected",
+  unknown: "unknown",
+} as const;
+
+export interface TaxIntegrationSubmissionResult {
+  ok: boolean;
+  invoiceId: number;
+  status: TaxIntegrationSubmissionResultStatus;
+  /** @nullable */
+  providerSubmissionId: string | null;
+  message: string;
 }
 
 export type TaxIntegrationAuditMetadata = { [key: string]: unknown };
@@ -1034,4 +1114,11 @@ export type ListIncidentsParams = {
   status?: string;
   type?: string;
   q?: string;
+};
+
+export type ListTaxIntegrationSubmissionsParams = {
+  /**
+   * Comma-separated sales invoice IDs, up to 100
+   */
+  invoiceIds: string;
 };
