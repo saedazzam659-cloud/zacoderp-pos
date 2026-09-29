@@ -94,11 +94,10 @@ function newLine(): ReceiptLine {
 
 function hasLineEntry(line: ReceiptLine) {
   return Boolean(
-    line.itemId || line.itemName.trim() || line.itemCode.trim() ||
-    line.unitId || line.unit.trim() || line.warehouseId ||
+    line.itemId || line.itemName?.trim() || line.itemCode?.trim() ||
     Number(line.qty) !== 1 || Number(line.unitPrice) !== 0 ||
-    Number(line.discount) !== 0 || Number(line.vatRate) !== 15 ||
-    line.batchNumber.trim() || line.expiryDate || line.notes.trim()
+    Number(line.discount) !== 0 ||
+    line.batchNumber?.trim() || line.expiryDate || line.notes?.trim()
   );
 }
 
@@ -170,7 +169,9 @@ export default function GoodsReceipts() {
         !hasLineEntry(line) && !revealedEmptyLineIds.includes(line._id)
       );
       if (hiddenEmptyLine) {
-        setRevealedEmptyLineIds(previous => [...previous, hiddenEmptyLine._id]);
+        setRevealedEmptyLineIds(previous =>
+          previous.includes(hiddenEmptyLine._id) ? previous : [...previous, hiddenEmptyLine._id]
+        );
         setFocusLineId(hiddenEmptyLine._id);
         return;
       }
@@ -179,7 +180,9 @@ export default function GoodsReceipts() {
     const r = percentRateOf(headerTaxId);
     if (r !== null) l.vatRate = String(r);
     setLines(p => [...p, l]);
-    if (hideQuickAddBar) setRevealedEmptyLineIds(previous => [...previous, l._id]);
+    if (hideQuickAddBar) setRevealedEmptyLineIds(previous =>
+      previous.includes(l._id) ? previous : [...previous, l._id]
+    );
     setFocusLineId(l._id);
   };
   useEnterNavContainer({ onAppend: () => addLine() });
