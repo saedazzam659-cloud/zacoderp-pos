@@ -1301,28 +1301,54 @@ ${sections}
                 </Field>
               </TabsContent>
 
-              <TabsContent value="lines" className="mt-0 space-y-5">
+              <TabsContent value="lines" className="mt-0 space-y-3">
                 {/* Lines */}
-                <div data-enter-nav-container="lines" className="goods-document-lines space-y-1.5">
-                  <div className="border-t pt-4 flex items-center gap-2 text-sm font-semibold text-foreground/80">
-                    <ListOrdered className="h-4 w-4" />
-                    <span>{tr("linesTitle")} ({lines.filter(l => l.itemId || l.itemName).length})</span>
+                <div data-enter-nav-container="lines" className="goods-document-lines space-y-3 pt-2">
+                  <div className="goods-document-items-toolbar rounded-xl border-2 border-primary/30 bg-primary/5 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-primary">
+                      <ListOrdered className="h-4 w-4" />
+                      <span>{tr("linesTitle")} ({lines.filter(l => l.itemId || l.itemName).length})</span>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <label
+                      data-testid="price-includes-vat-toggle"
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs select-none cursor-pointer transition-colors",
+                        priceIncludesVat ? "border-primary bg-primary/5" : "border-border bg-background hover:bg-muted/50",
+                      )}
+                      title={(priceIncludesVat ? tr("vatHintIncl") : tr("vatHintExcl")) as string}
+                    >
+                      <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-primary cursor-pointer"
+                      checked={priceIncludesVat}
+                      onChange={e => {
+                        setForm((p: any) => ({ ...p, priceIncludesVat: e.target.checked }));
+                        stickyPriceIncl.persist(e.target.checked);
+                      }}
+                    />
+                      <span className="font-semibold whitespace-nowrap">{tr("priceIncludesVat")}</span>
+                      <span className={cn("px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+                        {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
+                      </span>
+                    </label>
+                    </div>
                   </div>
                   {(() => {
                     const GRID_COLS_GR = "110px minmax(260px,1.4fr) 160px 120px 90px 110px 80px 80px 130px 120px 130px 180px 40px";
                     return (
-                  <div className="goods-document-lines-scroll rounded-xl border bg-card overflow-x-auto" dir={isRtl ? "rtl" : "ltr"}>
-                    <div className="min-w-max">
-                  <div className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0" style={{ gridTemplateColumns: GRID_COLS_GR }}>
+                  <div className="goods-document-lines-scroll rounded-xl border bg-card overflow-hidden" dir={isRtl ? "rtl" : "ltr"}>
+                    <div className="overflow-auto min-h-[200px] max-h-[calc(100vh-300px)]"><div className="min-w-max">
+                  <div className="grid gap-1.5 px-3 py-2 border-b bg-muted/40 sticky top-0 z-10" style={{ gridTemplateColumns: GRID_COLS_GR }}>
                     {lineColHeaders.map((h, i) => (
                       <p key={i} className={cn("text-[11px] font-medium truncate", h === tr("lineCols.total") ? "font-semibold text-primary" : "text-muted-foreground")} title={h}>{h}</p>
                     ))}
                   </div>
                   <div className="divide-y">
                   {lines.map(l => (
-                    <div key={l._id} className="px-3 py-2 hover:bg-muted/30 transition-colors">
+                    <div key={l._id} className="px-3 py-2 text-xs hover:bg-muted/30 transition-colors">
                       <div className="mb-2">{centerPicker(l.costCenterId ?? "", value => updateLine(l._id, "costCenterId", value), true)}</div>
-                      <div className="grid gap-2 items-center" style={{ gridTemplateColumns: GRID_COLS_GR }}>
+                      <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: GRID_COLS_GR }}>
                         <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                           onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                         {inventoryItems.length > 0 ? (
@@ -1393,75 +1419,52 @@ ${sections}
                     </div>
                   ))}
                   </div>
-                    </div>
+                    </div></div>
+                  <div className="border-t bg-muted/20 px-3 py-2">
+                    <Button type="button" variant="outline" size="sm" className="gap-2 h-8" onClick={addLine}>
+                      <Plus className="h-4 w-4" />{tr("addLine")}
+                    </Button>
+                  </div>
                   </div>
                     );
                   })()}
-
-                  <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
-                    <Plus className="h-4 w-4" />{tr("addLine")}
-                  </Button>
                 </div>
 
                 {/* Totals */}
-                <div className="my-3">{centerPicker(form.costCenterId ?? "", value => setForm((p: any) => ({ ...p, costCenterId: value })))}</div>
-                <div className="mt-5 flex flex-wrap justify-between gap-4">
-                  <label
-                    data-testid="price-includes-vat-toggle"
-                    className={cn(
-                      "flex items-start gap-2.5 rounded-xl border-2 p-3 cursor-pointer select-none transition-colors max-w-sm",
-                      priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50",
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
-                      checked={priceIncludesVat}
-                      onChange={e => {
-                        setForm((p: any) => ({ ...p, priceIncludesVat: e.target.checked }));
-                        stickyPriceIncl.persist(e.target.checked);
-                      }}
-                    />
-                    <div className="space-y-0.5">
-                      <p className="text-xs font-semibold">{tr("priceIncludesVat")}</p>
-                      <p className="text-[10px] text-muted-foreground leading-relaxed">
-                        {priceIncludesVat ? tr("vatHintIncl") : tr("vatHintExcl")}
-                      </p>
-                    </div>
-                  </label>
-
-                  <div className="goods-document-totals w-72 text-sm border rounded-xl p-3 bg-muted/30 space-y-2">
-                    <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
-                      <span>{tr("calcMethod")}</span>
-                      <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
-                        {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">{tr("subtotalIncl")}</span>
+                <div className="mt-3 rounded-xl border bg-muted/30 px-3 py-2"><div>{centerPicker(form.costCenterId ?? "", value => setForm((p: any) => ({ ...p, costCenterId: value })))}</div>
+                </div>
+                <div className="goods-document-totals mt-3 rounded-xl border bg-muted/30 px-4 py-2.5">
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                    <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+                      {tr("calcMethod")}: {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
+                    </span>
+                    <div className="flex items-center gap-1.5 ms-auto">
+                      <span className="text-muted-foreground text-xs">{tr("subtotalIncl")}</span>
                       <span className="font-mono">{fmt(grossTotal)}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">{tr("vatAmount")}</span>
-                      <span className="font-mono text-amber-700">{fmt(vatAmount)}</span>
-                    </div>
                     {lineDiscountTotal > 0 && (
-                      <div className="flex justify-between text-rose-700">
-                        <span className="text-muted-foreground">{tr("itemDiscount")}</span>
-                        <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-muted-foreground text-xs">{tr("itemDiscount")}</span>
+                        <span className="font-mono text-rose-700">−{fmt(lineDiscountTotal)}</span>
                       </div>
                     )}
-                    <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} currencySymbol={currencySymbol(form.currencyCode, currencies)} />
-                    <div className="flex justify-between font-bold border-t pt-2 text-base">
-                      <span>{tr("totalLabel")}</span>
-                      <span className="font-mono text-primary" data-testid="grn-total">{fmt(totalAmount)}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-muted-foreground text-xs">{tr("vatAmount")}</span>
+                      <span className="font-mono text-amber-700">{fmt(vatAmount)}</span>
                     </div>
-                    {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(form.exchangeRate) > 0 && (
-                      <p className="text-[10px] text-muted-foreground border-t pt-1">
+                    <div className="min-w-[210px]">
+                      <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} currencySymbol={currencySymbol(form.currencyCode, currencies)} />
+                    </div>
+                    <div className="flex items-center gap-1.5 border-s ps-4">
+                      <span className="font-semibold text-xs">{tr("totalLabel")}</span>
+                      <span className="font-mono text-base font-bold text-primary" data-testid="grn-total">{fmt(totalAmount)}</span>
+                    </div>
+                  </div>
+                  {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(form.exchangeRate) > 0 && (
+                      <p className="mt-1 text-[10px] text-muted-foreground text-end">
                         {tr("equivIn")} {defaultCurrency?.code}: {fmt(totalAmount * Number(form.exchangeRate))}
                       </p>
                     )}
-                  </div>
                 </div>
               </TabsContent>
             </Tabs>
