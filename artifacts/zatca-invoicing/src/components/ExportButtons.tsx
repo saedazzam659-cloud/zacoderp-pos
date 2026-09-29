@@ -40,10 +40,12 @@ interface ExportButtonsProps {
   // PDF/print only: force every table cell onto ONE line (nowrap) with
   // auto font shrinking by column count. Excel is unaffected.
   pdfFitOneLine?: boolean;
+  /** Also show a one-click print action beside the export menu. */
+  showPrintButton?: boolean;
 }
 
 export default function ExportButtons({
-  rows, loadRows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections, label, pdfFitOneLine,
+  rows, loadRows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections, label, pdfFitOneLine, showPrintButton = false,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
   const gate = useDemoActionGate();
@@ -144,40 +146,59 @@ export default function ExportButtons({
     }
   }
 
-  return (
+  const exportMenu = (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          size={size}
-          disabled={disabled || busy}
-          className="gap-2"
-        >
-          {busy
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <Download className="h-3.5 w-3.5" />}
-          {label ?? "تصدير"}
-          <ChevronDown className="h-3 w-3 text-muted-foreground" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuLabel className="text-xs text-muted-foreground">
-          {rows.length === 0 ? "لا توجد بيانات" : `${rows.length} سجل`}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("excel")}>
-          <FileSpreadsheet className="h-4 w-4 text-green-600" />
-          <span>Excel (.xlsx)</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("pdf")}>
-          <FileText className="h-4 w-4 text-red-500" />
-          <span>PDF (.pdf)</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("print")}>
-          <Printer className="h-4 w-4 text-blue-600" />
-          <span>طباعة</span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size={size}
+            disabled={disabled || busy}
+            className="gap-2"
+          >
+            {busy
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Download className="h-3.5 w-3.5" />}
+            {label ?? "تصدير"}
+            <ChevronDown className="h-3 w-3 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuLabel className="text-xs text-muted-foreground">
+            {rows.length === 0 ? "لا توجد بيانات" : `${rows.length} سجل`}
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("excel")}>
+            <FileSpreadsheet className="h-4 w-4 text-green-600" />
+            <span>Excel (.xlsx)</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("pdf")}>
+            <FileText className="h-4 w-4 text-red-500" />
+            <span>PDF (.pdf)</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("print")}>
+            <Printer className="h-4 w-4 text-blue-600" />
+            <span>طباعة</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
     </DropdownMenu>
+  );
+
+  if (!showPrintButton) return exportMenu;
+
+  return (
+    <div className="flex items-center gap-2">
+      {exportMenu}
+      <Button
+        type="button"
+        variant="outline"
+        size={size}
+        disabled={disabled || busy}
+        className="gap-2"
+        onClick={() => void handleExport("print")}
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+        طباعة
+      </Button>
+    </div>
   );
 }

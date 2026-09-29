@@ -19,12 +19,17 @@ import {
 import * as apiClient from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { useFormatters } from "@/lib/format";
+import { useFmt } from "@/hooks/use-fmt";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { DateField } from "@/components/ui/date-field";
+import ExportButtons from "@/components/ExportButtons";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import type { ExportColumn } from "@/lib/export";
 
 type ReportId =
   | "general_ledger"
@@ -177,14 +182,6 @@ const isNumberLike = (value: unknown): value is number | string =>
 
 const toNumber = (value: unknown) => (isNumberLike(value) ? Number(value) : 0);
 
-const formatAmount = (value: unknown) =>
-  isNumberLike(value)
-    ? new Intl.NumberFormat("ar-SA", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(Number(value))
-    : "—";
-
 const displayValue = (value: unknown) => {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "object") {
@@ -197,16 +194,93 @@ const displayValue = (value: unknown) => {
   return String(value);
 };
 
-const dateLabel = (value: unknown) => {
-  if (!value) return "—";
-  const date = new Date(String(value));
-  return Number.isNaN(date.getTime())
-    ? String(value)
-    : new Intl.DateTimeFormat("ar-SA", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      }).format(date);
+const localDateISO = (date = new Date()) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+const entryTypeLabels: Record<string, string> = {
+  sales_invoice: "فاتورة مبيعات",
+  sales_return: "مرتجع مبيعات",
+  purchase_invoice: "فاتورة مشتريات",
+  purchase_return: "مرتجع مشتريات",
+  receipt: "سند قبض",
+  receipt_cash: "سند قبض نقدي",
+  receipt_bank: "سند قبض بنكي",
+  payment: "سند صرف",
+  payment_cash: "سند صرف نقدي",
+  payment_bank: "سند صرف بنكي",
+  opening: "رصيد افتتاحي",
+  general: "قيد عام",
+  manual: "قيد يدوي",
+  pos_sale: "بيع نقاط بيع",
+  pos_return: "مرتجع نقاط بيع",
+  payroll_run: "مسير رواتب",
+  employee_loan: "سلفة موظف",
+  eos_payment: "تسوية نهاية خدمة",
+  fa_acquisition: "اقتناء أصل ثابت",
+  fa_depreciation: "إهلاك أصول ثابتة",
+  fa_disposal: "استبعاد أصل ثابت",
+  contracting_outgoing_bill: "مستخلص صادر",
+  contracting_incoming_bill: "مستخلص وارد",
+  stock_adjustment: "تسوية مخزون",
+  stock_transfer: "تحويل مخزون",
+  goods_receipt: "إذن استلام بضاعة",
+  goods_delivery: "إذن تسليم بضاعة",
+  trial_balance_adjustment: "تسوية ميزان المراجعة",
+  adjustment_prepaid: "تسوية مصروف مدفوع مقدماً",
+  adjustment_accrued: "تسوية مصروف مستحق",
+  lc_funding: "تمويل اعتماد مستندي",
+  lc_expense_payment: "دفع مصروف اعتماد",
+  production_issue: "صرف إنتاج",
+  production_issue_reversal: "عكس صرف إنتاج",
+  production_receipt: "استلام إنتاج",
+  closing_revenue: "إقفال إيرادات",
+  closing_expense: "إقفال مصروفات",
+  closing_transfer_profit: "ترحيل أرباح",
+  closing_transfer_loss: "ترحيل خسائر",
+};
+
+const accountTypeLabels: Record<string, string> = {
+  asset: "أصول",
+  liability: "التزامات",
+  equity: "حقوق ملكية",
+  revenue: "إيرادات",
+  expense: "مصروفات",
+};
+
+const actionLabels: Record<string, string> = {
+  create: "إنشاء",
+  created: "إنشاء",
+  insert: "إنشاء",
+  update: "تعديل",
+  updated: "تعديل",
+  edit: "تعديل",
+  delete: "حذف",
+  deleted: "حذف",
+  post: "ترحيل",
+  posted: "ترحيل",
+  unpost: "إلغاء الترحيل",
+  unposted: "إلغاء الترحيل",
+};
+
+const localizeReportValue = (key: string, value: unknown) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const raw = String(value);
+  const normalized = raw.toLowerCase();
+  if (key === "entryType") return entryTypeLabels[normalized] ?? "قيد محاسبي";
+  if (key === "accountType") return accountTypeLabels[normalized] ?? "نوع حساب";
+  if (key === "method") {
+    return ({ get: "عرض", post: "تنفيذ", put: "تعديل", patch: "تعديل", delete: "حذف" } as Record<string, string>)[normalized] ?? "عملية";
+  }
+  if (key === "action") return actionLabels[normalized] ?? "إجراء محاسبي";
+  if (key === "entityType") {
+    return ({
+      journal_entry: "قيد محاسبي",
+      journal_entries: "القيود المحاسبية",
+      journal_entry_line: "بند قيد",
+      journal_entry_lines: "بنود القيود",
+    } as Record<string, string>)[normalized] ?? "سجل محاسبي";
+  }
+  return displayValue(value);
 };
 
 function parseMenuPermissions(raw: unknown): Record<string, boolean> {
@@ -336,7 +410,7 @@ function ReportSelector({
               )}
               <span className="min-w-0">
                 <span className="block truncate text-sm font-bold">{selected?.name ?? "اختر التقرير"}</span>
-                {selected && <span className="block truncate text-[11px] text-slate-500" dir="ltr">{selected.englishName}</span>}
+                {selected && <span className="block truncate text-[11px] text-slate-500">{selected.description}</span>}
               </span>
             </span>
             <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" />
@@ -374,7 +448,7 @@ function ReportSelector({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-bold">{report.name}</span>
-                        <span className="block truncate text-[11px] text-slate-500" dir="ltr">{report.englishName}</span>
+                          <span className="block truncate text-[11px] text-slate-500">{report.description}</span>
                       </span>
                       {isSelected && <Check className="h-4 w-4 shrink-0 text-teal-700" />}
                     </CommandItem>
@@ -406,8 +480,38 @@ function FilterField({
   );
 }
 
-function ReportTable({ reportId, rows }: { reportId: ReportId; rows: ReportRow[] }) {
+function ReportTable({
+  reportId,
+  reportTitle,
+  rows,
+  companyId,
+  fromDate,
+  toDate,
+}: {
+  reportId: ReportId;
+  reportTitle: string;
+  rows: ReportRow[];
+  companyId?: number;
+  fromDate: string;
+  toDate: string;
+}) {
+  const { fmt, fmtDate, fmtInt } = useFormatters();
+  const { dp } = useFmt();
   const columns = getReportColumns(reportId);
+  const numericIds = ["id", "userId", "entityId", "lineId", "entryId", "accountId", "statusCode"];
+  const moneyFormat = dp > 0 ? `#,##0.${"0".repeat(dp)}` : "#,##0";
+  const formattedDateTime = (value: unknown) => {
+    if (!value) return "—";
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) return String(value);
+    return new Intl.DateTimeFormat("ar-SA-u-ca-gregory-nu-latn", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  };
   const totals = useMemo(() => {
     const result: Record<string, number> = {};
     columns.forEach(([key]) => {
@@ -415,67 +519,99 @@ function ReportTable({ reportId, rows }: { reportId: ReportId; rows: ReportRow[]
     });
     return result;
   }, [columns, rows]);
+  const gridColumns: GridColumn<ReportRow>[] = columns.map(([key, label]) => {
+    const isAmount = amountFields.includes(key);
+    const isNumeric = isAmount || numericIds.includes(key);
+    return {
+      key,
+      label,
+      type: isNumeric ? "num" : "text",
+      align: isAmount ? "end" : "start",
+      width: isAmount ? 145 : key === "description" ? 300 : key === "metadata" || key === "path" ? 240 : 130,
+      totalable: isAmount,
+      value: (row) => row[key] as string | number | null | undefined,
+      render: (row) => {
+        const value = row[key];
+        if (isAmount) {
+          return (
+            <span className={cn("font-mono tabular-nums whitespace-nowrap", toNumber(value) < 0 && "text-rose-700")} dir="ltr">
+              {isNumberLike(value) ? fmt(toNumber(value), { minimumFractionDigits: dp, maximumFractionDigits: dp }) : "—"}
+            </span>
+          );
+        }
+        if (key === "entryDate") return <span className="font-mono tabular-nums whitespace-nowrap" dir="ltr">{fmtDate(value)}</span>;
+        if (key === "createdAt") return <span className="font-mono tabular-nums whitespace-nowrap" dir="ltr">{formattedDateTime(value)}</span>;
+        return <span className={cn("block", key === "metadata" && "max-w-[16rem] truncate font-mono text-[11px]")} title={displayValue(value)}>{localizeReportValue(key, value)}</span>;
+      },
+    };
+  });
+  const exportColumns: ExportColumn[] = columns.map(([key, header]) => ({
+    key,
+    header,
+    width: key === "description" || key === "metadata" || key === "path" ? 32 : 18,
+    ...(amountFields.includes(key) ? { numFmt: moneyFormat } : {}),
+  }));
+  const exportRows = rows.map((row) => Object.fromEntries(columns.map(([key]) => {
+    const value = row[key];
+    if (amountFields.includes(key)) return [key, isNumberLike(value) ? toNumber(value) : ""];
+    if (key === "entryDate") return [key, value ? fmtDate(value) : ""];
+    if (key === "createdAt") return [key, value ? formattedDateTime(value) : ""];
+    return [key, value === null || value === undefined ? "" : localizeReportValue(key, value)];
+  })));
+  const exportTotalsRow: Record<string, unknown> | null = rows.length > 0
+    ? {
+        [columns[0]?.[0] ?? "label"]: "الإجمالي",
+        ...Object.fromEntries(columns
+          .filter(([key]) => amountFields.includes(key))
+          .map(([key]) => [key, totals[key] ?? 0])),
+      }
+    : null;
+  const gridTotalsRow: Partial<Record<string, ReactNode>> & { __label?: ReactNode } = {
+    __label: <span>الإجمالي</span>,
+    ...Object.fromEntries(columns
+      .filter(([key]) => amountFields.includes(key))
+      .map(([key]) => [
+        key,
+        <span className="font-mono font-bold tabular-nums" dir="ltr">
+          {fmt(totals[key] ?? 0, { minimumFractionDigits: dp, maximumFractionDigits: dp })}
+        </span>,
+      ])),
+  };
+  const filename = `additional-accounting-${reportId}-${fromDate || "all"}-${toDate || "all"}`;
+  const subtitle = `الفترة: ${fromDate ? fmtDate(fromDate) : "—"} إلى ${toDate ? fmtDate(toDate) : "—"}`;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_14px_35px_-28px_rgba(15,23,42,0.65)]" data-testid="table-report-results">
+    <div className="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_14px_35px_-28px_rgba(15,23,42,0.65)]" data-testid="table-report-results">
       <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-4 py-3">
         <div className="flex items-center gap-2">
           <Table2 className="h-4 w-4 text-teal-700" />
           <span className="text-sm font-bold text-slate-800">نتائج التقرير</span>
         </div>
-        <span className="font-mono text-xs text-slate-500" dir="ltr">{rows.length.toLocaleString("en-US")} rows</span>
+        <span className="font-mono text-xs text-slate-500">{fmtInt(rows.length)} سجل</span>
       </div>
-      <div className="max-h-[min(58vh,42rem)] overflow-auto">
-        <table className="min-w-full border-separate border-spacing-0 text-sm">
-          <thead className="sticky top-0 z-10 bg-slate-100/95 backdrop-blur">
-            <tr>
-              <th className="w-12 border-b border-slate-200 px-3 py-3 text-center text-[11px] font-bold text-slate-400">#</th>
-              {columns.map(([key, label]) => (
-                <th key={key} className={cn("whitespace-nowrap border-b border-slate-200 px-3 py-3 text-start text-[11px] font-bold text-slate-600", amountFields.includes(key) && "text-end")}>
-                  {label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={String(row.lineId ?? row.id ?? row.accountId ?? index)} className="group hover:bg-teal-50/35" data-testid={`row-report-${index}`}>
-                <td className="border-b border-slate-100 px-3 py-3 text-center font-mono text-xs text-slate-400">{index + 1}</td>
-                {columns.map(([key]) => {
-                  const value = row[key];
-                  const isAmount = amountFields.includes(key);
-                  const isDate = key === "entryDate" || key === "createdAt";
-                  return (
-                    <td
-                      key={key}
-                      className={cn(
-                        "max-w-[18rem] border-b border-slate-100 px-3 py-3 text-slate-700",
-                        isAmount && "whitespace-nowrap text-end font-mono tabular-nums",
-                        isDate && "whitespace-nowrap text-xs text-slate-500",
-                        key === "metadata" && "max-w-[16rem] font-mono text-[11px] text-slate-500",
-                      )}
-                      title={displayValue(value)}
-                    >
-                      <span className={cn("block truncate", isAmount && toNumber(value) < 0 && "text-rose-700")}>
-                        {isAmount ? formatAmount(value) : isDate ? dateLabel(value) : displayValue(value)}
-                      </span>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-          <tfoot className="bg-slate-50">
-            <tr>
-              <td className="px-3 py-3 text-center text-xs font-bold text-slate-500">Σ</td>
-              {columns.map(([key], index) => (
-                <td key={key} className={cn("px-3 py-3 text-sm font-bold text-slate-700", amountFields.includes(key) && "text-end font-mono tabular-nums")}>
-                  {index === 0 ? "الإجمالي" : amountFields.includes(key) ? formatAmount(totals[key]) : ""}
-                </td>
-              ))}
-            </tr>
-          </tfoot>
-        </table>
+      <div className="w-full">
+        <AdvancedReportGrid
+          slug={`additionalAccountingReports-${reportId}`}
+          cid={companyId}
+          columns={gridColumns}
+          rowKey={(row, index) => String(row.lineId ?? row.id ?? row.accountId ?? `${reportId}-${index}`)}
+          rows={rows}
+          totalsRow={rows.length > 0 ? gridTotalsRow : null}
+          unitLabel="سجل"
+          emptyMessage="لا توجد بيانات ضمن النطاق المحدد"
+          toolbarExtras={
+            <ExportButtons
+              rows={exportRows}
+              columns={exportColumns}
+              filename={filename}
+              title={reportTitle}
+              subtitle={subtitle}
+              totalsRow={exportTotalsRow}
+              pdfFitOneLine={columns.length >= 9}
+              showPrintButton
+            />
+          }
+        />
       </div>
     </div>
   );
@@ -490,7 +626,7 @@ export default function AdditionalAccountingReports() {
   );
   const [selectedId, setSelectedId] = useState<ReportId | null>(allowedReports[0]?.id ?? null);
   const [fromDate, setFromDate] = useState(() => `${new Date().getFullYear()}-01-01`);
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [toDate, setToDate] = useState(() => localDateISO());
   const [comparisonFromDate, setComparisonFromDate] = useState("");
   const [comparisonToDate, setComparisonToDate] = useState("");
   const [branchId, setBranchId] = useState("");
@@ -542,7 +678,7 @@ export default function AdditionalAccountingReports() {
 
   return (
     <main className="min-h-[calc(100dvh-4rem)] bg-[#f5f8f8] px-3 py-5 sm:px-5 lg:px-7" dir="rtl" data-testid="additional-accounting-reports-page">
-      <div className="mx-auto max-w-[1800px] space-y-5">
+      <div className="w-full space-y-5">
         <header className="relative overflow-hidden rounded-2xl bg-[#123c42] px-5 py-6 text-white shadow-[0_18px_45px_-25px_rgba(18,60,66,0.8)] sm:px-7">
           <div className="absolute -left-12 -top-16 h-48 w-48 rounded-full border-[28px] border-white/5" />
           <div className="absolute -bottom-24 right-24 h-48 w-48 rounded-full border-[22px] border-teal-200/10" />
@@ -562,8 +698,10 @@ export default function AdditionalAccountingReports() {
           </div>
         </header>
 
-        <div className="grid items-start gap-5 xl:grid-cols-[18rem_minmax(0,1fr)]">
-          <ReportSelector reports={allowedReports} selectedId={selectedReport?.id ?? null} onSelect={setSelectedId} />
+        <div className="grid w-full grid-cols-1 items-start gap-5">
+          <div className="w-full md:max-w-sm">
+            <ReportSelector reports={allowedReports} selectedId={selectedReport?.id ?? null} onSelect={setSelectedId} />
+          </div>
 
           <section className="min-w-0 space-y-4">
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_12px_35px_-24px_rgba(15,23,42,0.5)] sm:p-5" data-testid="panel-report-filters">
@@ -664,7 +802,16 @@ export default function AdditionalAccountingReports() {
               </div>
             )}
 
-            {!isLoading && !isError && rows.length > 0 && <ReportTable reportId={effectiveReportId} rows={rows} />}
+            {!isLoading && !isError && rows.length > 0 && (
+              <ReportTable
+                reportId={effectiveReportId}
+                reportTitle={selectedReport?.name ?? "التقرير المحاسبي"}
+                rows={rows}
+                companyId={typeof companyId === "number" ? companyId : undefined}
+                fromDate={fromDate}
+                toDate={toDate}
+              />
+            )}
           </section>
         </div>
       </div>
