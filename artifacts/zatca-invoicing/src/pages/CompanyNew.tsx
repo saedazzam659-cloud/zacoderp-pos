@@ -313,7 +313,7 @@ export default function CompanyNew() {
   });
   const selectedCountry = COUNTRIES.find(c => c.code === form.watch("country")) ?? COUNTRIES[0];
   const selectedTaxRate = selectedCountry.code === "EG" ? "14" : selectedCountry.code === "SA" ? "15"
-    : ({ AE: "5", BH: "10", OM: "5", KW: "0", QA: "0", GLOBAL: "0" } as Record<string, string>)[selectedCountry.code];
+    : ({ AE: "5", BH: "10", OM: "5", KW: "0", QA: "0", JO: "16", GLOBAL: "0" } as Record<string, string>)[selectedCountry.code];
 
   const scanDevice = async () => {
     setScanning(true);

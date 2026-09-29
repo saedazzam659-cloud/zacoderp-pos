@@ -775,6 +775,8 @@
     "branches": "Branches",
     "zatcaLink": "ZATCA Integration",
     "zatcaGroup": "ZATCA Integration",
+    "egyptTax": "Egyptian E-Invoicing Setup",
+    "jordanTax": "Jordanian E-Invoicing Setup",
     "generalSettings": "General Settings",
     "printDesigner": "Print Template Designer",
     "companyProfile": "Company Profile",

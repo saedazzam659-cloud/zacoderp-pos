@@ -23,6 +23,47 @@ import { ensureContractingGuaranteeTables } from "./contracting-guarantees-stora
 import { ensureInternalControlSchema } from "./internalControlStorage.js";
 import { ensureDocumentExpenseSchema } from "./documentExpenses.js";
 
+async function ensureTaxIntegrationSchema(): Promise<void> {
+  await db.execute(sql.raw(`
+    CREATE TABLE IF NOT EXISTS tax_integration_setups (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      country TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      environment TEXT NOT NULL,
+      credentials_enc TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'configured_unverified',
+      updated_by INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `));
+  await db.execute(sql.raw(`
+    CREATE UNIQUE INDEX IF NOT EXISTS tax_setup_company_provider_uniq
+      ON tax_integration_setups(company_id, provider)
+  `));
+  await db.execute(sql.raw(`
+    CREATE INDEX IF NOT EXISTS tax_setup_company_idx
+      ON tax_integration_setups(company_id)
+  `));
+  await db.execute(sql.raw(`
+    CREATE TABLE IF NOT EXISTS tax_integration_audit (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      user_id INTEGER,
+      provider TEXT NOT NULL,
+      action TEXT NOT NULL,
+      environment TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `));
+  await db.execute(sql.raw(`
+    CREATE INDEX IF NOT EXISTS tax_setup_audit_company_time_idx
+      ON tax_integration_audit(company_id, created_at)
+  `));
+}
+
 let healPromise: Promise<void> | null = null;
 type SchemaReconciliationState =
   | { state: "idle" | "running" }
@@ -4414,6 +4455,7 @@ async function runHeal(options: {
   const { tables, enums } = collectSchemaEntities();
   await ensureInternalControlSchema();
   await ensureDocumentExpenseSchema();
+  await ensureTaxIntegrationSchema();
   logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
 
   // Run this compatibility DDL before generic inspection. Purchase-invoice

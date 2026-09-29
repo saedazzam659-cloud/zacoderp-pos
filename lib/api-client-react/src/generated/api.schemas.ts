@@ -5,6 +5,80 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export type TaxIntegrationSetupCountry =
+  (typeof TaxIntegrationSetupCountry)[keyof typeof TaxIntegrationSetupCountry];
+
+export const TaxIntegrationSetupCountry = {
+  EG: "EG",
+  JO: "JO",
+} as const;
+
+export type TaxIntegrationSetupProvider =
+  (typeof TaxIntegrationSetupProvider)[keyof typeof TaxIntegrationSetupProvider];
+
+export const TaxIntegrationSetupProvider = {
+  egypt_eta: "egypt_eta",
+  jordan_national: "jordan_national",
+} as const;
+
+/**
+ * @nullable
+ */
+export type TaxIntegrationSetupEnvironment =
+  | (typeof TaxIntegrationSetupEnvironment)[keyof typeof TaxIntegrationSetupEnvironment]
+  | null;
+
+export const TaxIntegrationSetupEnvironment = {
+  sandbox: "sandbox",
+  production: "production",
+} as const;
+
+export type TaxIntegrationSetupSetupStatus =
+  (typeof TaxIntegrationSetupSetupStatus)[keyof typeof TaxIntegrationSetupSetupStatus];
+
+export const TaxIntegrationSetupSetupStatus = {
+  not_configured: "not_configured",
+  configured_unverified: "configured_unverified",
+} as const;
+
+export interface TaxIntegrationSetup {
+  country: TaxIntegrationSetupCountry;
+  provider: TaxIntegrationSetupProvider;
+  /** @nullable */
+  environment: TaxIntegrationSetupEnvironment;
+  hasCredentials: boolean;
+  setupStatus: TaxIntegrationSetupSetupStatus;
+  /** @nullable */
+  updatedAt: string | null;
+}
+
+export type TaxIntegrationSetupInputEnvironment =
+  (typeof TaxIntegrationSetupInputEnvironment)[keyof typeof TaxIntegrationSetupInputEnvironment];
+
+export const TaxIntegrationSetupInputEnvironment = {
+  sandbox: "sandbox",
+  production: "production",
+} as const;
+
+export type TaxIntegrationSetupInputCredentials = { [key: string]: string };
+
+export interface TaxIntegrationSetupInput {
+  environment: TaxIntegrationSetupInputEnvironment;
+  credentials: TaxIntegrationSetupInputCredentials;
+}
+
+export type TaxIntegrationAuditMetadata = { [key: string]: unknown };
+
+export interface TaxIntegrationAudit {
+  id: number;
+  provider: string;
+  action: string;
+  /** @nullable */
+  environment: string | null;
+  metadata: TaxIntegrationAuditMetadata;
+  createdAt: string;
+}
+
 export interface InternalDeliveryOrderLink {
   /**
    * Requested order; unlinking is subject to accounting lifecycle guards

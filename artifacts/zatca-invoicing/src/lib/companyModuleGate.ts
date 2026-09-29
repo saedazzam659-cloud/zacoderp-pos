@@ -144,6 +144,10 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   internal_control_rules: "internal_control",
   internal_control_log: "internal_control",
   internal_control_export: "internal_control",
+  // Country-isolated tax setup. These keys are default-off and are additionally
+  // restricted by the authenticated company's canonical country below.
+  egypt_tax: "egypt_tax",
+  jordan_tax: "jordan_tax",
 };
 
 // Modules whose gate is LOCKED by default — an ABSENT key means OFF (the inverse
@@ -151,7 +155,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
-  "internal_control",
+  "internal_control", "egypt_tax", "jordan_tax",
 ]);
 
 // FROZEN legacy baseline of gate keys that keep the old "missing = allowed"
@@ -180,7 +184,18 @@ const LEGACY_DEFAULT_ON_GATE_KEYS = new Set<string>([
 // Pass the auth user object (must have .company.menuPermissions populated by
 // /api/auth/me).
 export function companyAllowsModule(user: any, permKey?: string): boolean {
+  const country = String(user?.company?.country ?? "").toUpperCase();
+  if (permKey === "egypt_tax" && country !== "EG") return false;
+  if (permKey === "jordan_tax" && country !== "JO") return false;
   return companyAllowsPermissionModule(user?.company?.menuPermissions, permKey);
+}
+
+/** Resolve the only tax setup permission valid for a canonical company country. */
+export function companyTaxPermissionForCountry(country?: string | null): "egypt_tax" | "jordan_tax" | null {
+  const normalized = String(country ?? "").toUpperCase();
+  if (normalized === "EG") return "egypt_tax";
+  if (normalized === "JO") return "jordan_tax";
+  return null;
 }
 
 /**

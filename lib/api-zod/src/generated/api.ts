@@ -2425,3 +2425,55 @@ export const DeleteIncidentActionParams = zod.object({
 export const DeleteIncidentActionResponse = zod.object({
   ok: zod.boolean(),
 });
+
+export const GetTaxIntegrationSetupResponse = zod.object({
+  country: zod.enum(["EG", "JO"]),
+  provider: zod.enum(["egypt_eta", "jordan_national"]),
+  environment: zod
+    .union([
+      zod.literal("sandbox"),
+      zod.literal("production"),
+      zod.literal(null),
+    ])
+    .nullable(),
+  hasCredentials: zod.boolean(),
+  setupStatus: zod.enum(["not_configured", "configured_unverified"]),
+  updatedAt: zod.coerce.date().nullable(),
+});
+
+export const saveTaxIntegrationSetupBodyCredentialsMaxOne = 262144;
+
+export const SaveTaxIntegrationSetupBody = zod.object({
+  environment: zod.enum(["sandbox", "production"]),
+  credentials: zod.record(
+    zod.string(),
+    zod.string().max(saveTaxIntegrationSetupBodyCredentialsMaxOne),
+  ),
+});
+
+export const SaveTaxIntegrationSetupResponse = zod.object({
+  country: zod.enum(["EG", "JO"]),
+  provider: zod.enum(["egypt_eta", "jordan_national"]),
+  environment: zod
+    .union([
+      zod.literal("sandbox"),
+      zod.literal("production"),
+      zod.literal(null),
+    ])
+    .nullable(),
+  hasCredentials: zod.boolean(),
+  setupStatus: zod.enum(["not_configured", "configured_unverified"]),
+  updatedAt: zod.coerce.date().nullable(),
+});
+
+export const ListTaxIntegrationLogsResponseItem = zod.object({
+  id: zod.number(),
+  provider: zod.string(),
+  action: zod.string(),
+  environment: zod.string().nullable(),
+  metadata: zod.record(zod.string(), zod.unknown()),
+  createdAt: zod.coerce.date(),
+});
+export const ListTaxIntegrationLogsResponse = zod.array(
+  ListTaxIntegrationLogsResponseItem,
+);

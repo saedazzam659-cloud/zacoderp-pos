@@ -1070,8 +1070,74 @@ paths:
               schema:
                 $ref: "#/components/schemas/OkResponse"
 
+  /tax-integrations/setup:
+    get:
+      operationId: getTaxIntegrationSetup
+      responses:
+        "200":
+          description: Safe tax integration setup metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxIntegrationSetup"
+    put:
+      operationId: saveTaxIntegrationSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxIntegrationSetupInput"
+      responses:
+        "200":
+          description: Saved setup metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxIntegrationSetup"
+  /tax-integrations/logs:
+    get:
+      operationId: listTaxIntegrationLogs
+      responses:
+        "200":
+          description: Redacted configuration audit events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaxIntegrationAudit"
+
 components:
   schemas:
+    TaxIntegrationSetup:
+      type: object
+      required: [country, provider, environment, hasCredentials, setupStatus, updatedAt]
+      properties:
+        country: { type: string, enum: [EG, JO] }
+        provider: { type: string, enum: [egypt_eta, jordan_national] }
+        environment: { type: ["string", "null"], enum: [sandbox, production, null] }
+        hasCredentials: { type: boolean }
+        setupStatus: { type: string, enum: [not_configured, configured_unverified] }
+        updatedAt: { type: ["string", "null"], format: date-time }
+    TaxIntegrationSetupInput:
+      type: object
+      required: [environment, credentials]
+      properties:
+        environment: { type: string, enum: [sandbox, production] }
+        credentials:
+          type: object
+          additionalProperties: { type: string, maxLength: 262144 }
+    TaxIntegrationAudit:
+      type: object
+      required: [id, provider, action, environment, metadata, createdAt]
+      properties:
+        id: { type: integer }
+        provider: { type: string }
+        action: { type: string }
+        environment: { type: ["string", "null"] }
+        metadata: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time }
     InternalDeliveryOrderLink:
       type: object
       required: [productionOrderId]

@@ -86,6 +86,8 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "user_tracking",      label: "تتبع مواقع المستخدمين",       section: "المراقبة المباشرة" },
 
   { key: "zatca",              label: "ربط ZATCA",                   section: "النظام" },
+  { key: "egypt_tax",          label: "إعدادات الفوترة الإلكترونية المصرية", section: "التكاملات الضريبية" },
+  { key: "jordan_tax",         label: "إعدادات الفوترة الإلكترونية الأردنية", section: "التكاملات الضريبية" },
 
   // ── ربط متعدد ──────────────────────────────────────────────────
   // Multi-tenant external invoice gateway: a top-level group housing
@@ -220,6 +222,8 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   training_room:      null,
   demo_analytics:     null,
   internal_control:   null,
+  egypt_tax:          null,
+  jordan_tax:         null,
 };
 
 // Resolve the unique set of high-level module keys implied by a list of

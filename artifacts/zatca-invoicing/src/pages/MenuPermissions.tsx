@@ -44,6 +44,7 @@ const EXTRA_KEYS = MENU_ITEMS.map(m => m.key).filter(k => !GROUPED_MODULE_KEYS.h
 // and permissions.ts (backend).
 const DEFAULT_OFF_KEYS = new Set<string>([
   "office", "demo_analytics", "simple_manufacturing", "internal_control",
+  "egypt_tax", "jordan_tax",
 ]);
 
 // Default for a key ABSENT from the saved JSON: legacy-baseline keys stay
@@ -191,7 +192,15 @@ export default function MenuPermissions() {
     setDraft(d => {
       if (!d) return d;
       const next = { ...d };
-      MENU_ITEMS.forEach(m => { next[m.key] = val; });
+      const country = String(selected?.country ?? "").toUpperCase();
+      const countryTaxKey = country === "EG" ? "egypt_tax" : country === "JO" ? "jordan_tax" : null;
+      MENU_ITEMS.forEach(m => {
+        if ((m.key === "egypt_tax" || m.key === "jordan_tax") && m.key !== countryTaxKey) {
+          next[m.key] = false;
+        } else {
+          next[m.key] = val;
+        }
+      });
       MODULE_GROUPS.forEach(g => g.screens.forEach(s => { next[screenKey(s.path)] = val; }));
       return next;
     });
@@ -211,6 +220,11 @@ export default function MenuPermissions() {
   // Helpers reading current draft state
   const screenOn = (d: Record<string, boolean>, path: string) => d[screenKey(path)] !== false;
   const moduleOn = (d: Record<string, boolean>, moduleKeys: string[]) => moduleKeys.every(k => d[k] !== false);
+  const selectedCountry = String(selected?.country ?? "").toUpperCase();
+  const countryTaxKey = selectedCountry === "EG" ? "egypt_tax" : selectedCountry === "JO" ? "jordan_tax" : null;
+  const visibleExtraKeys = EXTRA_KEYS.filter(k =>
+    (k !== "egypt_tax" && k !== "jordan_tax") || k === countryTaxKey,
+  );
 
   return (
     <div className="space-y-5" dir="rtl">
@@ -496,7 +510,7 @@ export default function MenuPermissions() {
               )}
 
               {/* Other coarse-only modules */}
-              {draft && EXTRA_KEYS.length > 0 && (
+              {draft && visibleExtraKeys.length > 0 && (
                 <Card className="overflow-hidden border">
                   <div className="px-4 py-3 border-b bg-muted/40 flex items-center gap-2">
                     <Layers className="h-4 w-4 text-muted-foreground" />
@@ -504,7 +518,7 @@ export default function MenuPermissions() {
                     <span className="text-xs text-muted-foreground">(تفعيل/تعطيل عام)</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4">
-                    {EXTRA_KEYS.map(k => {
+                    {visibleExtraKeys.map(k => {
                       const on = !!draft[k];
                       const label = MENU_ITEM_BY_KEY[k]?.label ?? k;
                       return (

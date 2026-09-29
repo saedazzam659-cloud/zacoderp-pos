@@ -775,6 +775,8 @@
     "branches": "الفروع",
     "zatcaLink": "ربط ZATCA",
     "zatcaGroup": "ربط ZATCA",
+    "egyptTax": "إعدادات الفوترة الإلكترونية المصرية",
+    "jordanTax": "إعدادات الفوترة الإلكترونية الأردنية",
     "generalSettings": "الإعدادات العامة",
     "printDesigner": "مصمم نماذج الطباعة",
     "companyProfile": "بيانات الشركة",

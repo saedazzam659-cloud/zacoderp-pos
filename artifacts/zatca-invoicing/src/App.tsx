@@ -107,6 +107,7 @@ import PlanSettings from "@/pages/PlanSettings";
 import ZatcaIntegration from "@/pages/ZatcaIntegration";
 import ZatcaBridge from "@/pages/ZatcaBridge";
 import ZatcaReport from "@/pages/ZatcaReport";
+import TaxIntegration from "@/pages/TaxIntegration";
 import Users from "@/pages/Users";
 import MenuPermissions from "@/pages/MenuPermissions";
 import WindowsAppPermissions from "@/pages/WindowsAppPermissions";
@@ -495,7 +496,7 @@ const PROTECTED_PREFIXES = [
   "/chat", "/notifications", "/org", "/pos-management", "/pos-monitoring", "/pos-operations",
   "/pos-settings", "/pos-terminals", "/production", "/simple-manufacturing", "/internal-control", "/purchasing",
   "/sales", "/security", "/seo", "/sessions", "/settings", "/suppliers",
-  "/users", "/vat-declaration", "/voice-assistant", "/work-sessions",
+  "/users", "/vat-declaration", "/voice-assistant", "/work-sessions", "/tax-integration",
   "/zatca", "/zatca-bridge", "/zatca-report",
 ];
 
@@ -853,6 +854,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/zatca"         module="zatca_setup"   component={ZatcaIntegration} />}
             {!isSuperAdmin && <PermRoute path="/zatca-bridge"  module="zatca_bridge"  component={ZatcaBridge} />}
             {!isSuperAdmin && <PermRoute path="/zatca-report"  module="zatca_report"  component={ZatcaReport} />}
+            {!isSuperAdmin && <Route path="/tax-integration" component={TaxIntegration} />}
             {!isSuperAdmin && <PermRoute path="/general-settings" module="general_settings" component={GeneralSettings} />}
             {!isSuperAdmin && <PermRoute path="/company-profile" module="company_profile" component={CompanyProfile} />}
             {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/users" module="users" component={Users} />}

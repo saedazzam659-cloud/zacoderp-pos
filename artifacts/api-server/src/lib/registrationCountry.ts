@@ -11,6 +11,7 @@ export const REGISTRATION_COUNTRIES = {
   BH: { currency: { code: "BHD", nameAr: "دينار بحريني", nameEn: "Bahraini Dinar", symbol: "د.ب" }, rate: "10" },
   OM: { currency: { code: "OMR", nameAr: "ريال عُماني", nameEn: "Omani Rial", symbol: "ر.ع" }, rate: "5" },
   EG: { currency: { code: "EGP", nameAr: "جنيه مصري", nameEn: "Egyptian Pound", symbol: "ج.م" }, rate: "14" },
+  JO: { currency: { code: "JOD", nameAr: "دينار أردني", nameEn: "Jordanian Dinar", symbol: "د.أ" }, rate: "16" },
   GLOBAL: { currency: { code: "USD", nameAr: "دولار أمريكي", nameEn: "US Dollar", symbol: "$" }, rate: "0" },
 } as const;
 

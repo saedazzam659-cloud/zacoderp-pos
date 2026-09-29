@@ -157,6 +157,7 @@ import demoAnalyticsRouter from "./demo-analytics";
 import adminDemoAnalyticsRouter from "./admin-demo-analytics";
 import companyDemoAnalyticsRouter from "./company-demo-analytics";
 import { demoQuotaMiddleware } from "../middleware/demoQuota";
+import taxIntegrationsRouter from "./tax-integrations";
 
 const router: IRouter = Router();
 
@@ -246,6 +247,7 @@ router.use("/admin/marketplace", marketplaceAdminRouter);
 // طلبات المتدربين — trainee registration requests (SuperAdmin self-guarded).
 router.use("/admin/trainee-requests", traineeRequestsRouter);
 router.use("/integrations", integrationsRouter);
+router.use("/tax-integrations", taxIntegrationsRouter);
 router.use("/integrations/inbound", integrationsInboundRouter);
 router.use("/admin", adminRouter);
 router.use("/seo", seoRouter);

@@ -13,7 +13,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote, Wrench,
   Wallet, Landmark, Waves, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft, Mic,
-  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator, LogIn,
+  ShoppingBag, FileSignature, FileKey2, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator, LogIn,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope, Video,
   ScrollText, Database, ListOrdered, HardDrive, Trash2, BadgePercent, Percent,
   Gift, ReceiptText,
@@ -65,6 +65,8 @@ import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
 type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permKey?: string;
+  /** Country-specific entries are only visible for the matching tenant. */
+  country?: "EG" | "JO";
   /** When true, hide this entry from non-admin users even if they were granted the matching permission.
    *  Use for screens whose backend is hard-coded admin-only (e.g. user management) so non-admins
    *  don't see a menu link that would 404 / 403 when clicked. */
@@ -96,6 +98,7 @@ function navItemAllowed(item: NavDef, user: any): boolean {
   // Admin-only items stay hidden for non-admin roles regardless of granted
   // perms, because their backend endpoints require admin role and would 403/404.
   if (item.requireAdmin && user.role !== "admin") return false;
+  if (item.country && String(user.company?.country ?? "").toUpperCase() !== item.country) return false;
   // Company-level gate — applies to admin AND regular users (not superadmin).
   if (!companyAllowsModule(user, item.permKey)) return false;
   // Per-SCREEN visibility overlay (nav:<path>) — also applies to admin AND
@@ -210,6 +213,8 @@ const superAdminNav: NavDef[] = [
 // stays empty (kept around for future business-level top-level NavItems).
 const companyBusinessNav: NavDef[] = [
   { nameKey: "nav.demoAnalytics", href: "/demo-analytics", icon: Activity, permKey: "demo_analytics", requireAdmin: true },
+  { nameKey: "nav.egyptTax", href: "/tax-integration", icon: FileKey2, permKey: "egypt_tax", country: "EG", requireAdmin: true },
+  { nameKey: "nav.jordanTax", href: "/tax-integration", icon: FileKey2, permKey: "jordan_tax", country: "JO", requireAdmin: true },
 ];
 
 // ── POS Management submenu ──────────────────────────────────────────────

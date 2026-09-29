@@ -80,6 +80,13 @@ export const COUNTRIES: Country[] = [
     currency: { code: "EGP", nameAr: "جنيه مصري", nameEn: "Egyptian Pound", symbol: "ج.م" },
   },
   {
+    code: "JO", nameAr: "الأردن", nameEn: "Jordan",
+    policyAr: "الالتزام بضريبة المبيعات والفوترة الإلكترونية الأردنية",
+    policyEn: "Jordanian sales tax and e-invoicing compliance",
+    adjAr: "أردني", adjArFem: "أردنية",
+    currency: { code: "JOD", nameAr: "دينار أردني", nameEn: "Jordanian Dinar", symbol: "د.أ" },
+  },
+  {
     code: "GLOBAL", nameAr: "دول أخرى", nameEn: "Other Countries",
     policyAr: "سياسات عامة حسب الدولة",
     policyEn: "General policies depending on country",

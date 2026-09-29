@@ -1183,6 +1183,7 @@ const COUNTRY_CURRENCY: Record<string, { code: string; nameAr: string; nameEn: s
   BH: { code: "BHD", nameAr: "دينار بحريني", nameEn: "Bahraini Dinar",symbol: "د.ب" },
   OM: { code: "OMR", nameAr: "ريال عُماني",  nameEn: "Omani Rial",    symbol: "ر.ع" },
   EG: { code: "EGP", nameAr: "جنيه مصري",    nameEn: "Egyptian Pound",symbol: "ج.م" },
+  JO: { code: "JOD", nameAr: "دينار أردني",   nameEn: "Jordanian Dinar", symbol: "د.أ" },
   GLOBAL: { code: "USD", nameAr: "دولار أمريكي", nameEn: "US Dollar", symbol: "$" },
 };
 
