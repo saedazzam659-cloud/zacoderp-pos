@@ -19,3 +19,9 @@ Treat invoice-tab expenses as internal net-of-recoverable-VAT costs, not extra t
 **Why:** The approved scope requires preserving ZATCA totals and separating existing LC landed costs from new internal costs; inventory received through a goods receipt must not be capitalized a second time through its later invoice.
 
 **How to apply:** Keep capitalization unavailable for LC/receipt-linked purchases until a separately approved attribution design exists. Do not claim that a separate supporting VAT invoice can duplicate the already recognized net expense; any future payable/tax settlement UI must reconcile the accrued expense rather than recognize it again.
+
+Hide the internal-expense interface and mapping roles for sales invoices and sales returns; keep them visible for purchase invoices and purchase returns.
+
+**Why:** The user confirmed that sales expense tabs and their accounting-linking options should be hidden in the web UI, without deleting old records or journal effects.
+
+**How to apply:** Keep existing sales expense rows, saved mapping records, API compatibility, and historical posting behavior intact. Remove only the sales-facing UI; do not hide ordinary COGS, inventory, discount, revenue, or VAT mappings.
