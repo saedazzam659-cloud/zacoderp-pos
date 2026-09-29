@@ -1369,7 +1369,7 @@ ${sections}
                     const GRID_COLS_GR = "110px minmax(260px,1.4fr) 160px 120px 90px 110px 80px 80px 130px 120px 130px 180px 40px";
                     return (
                   <div className="goods-document-lines-scroll rounded-xl border bg-card overflow-hidden" dir={isRtl ? "rtl" : "ltr"}>
-                    <div className={cn("overflow-auto max-h-[calc(100vh-300px)]", hideQuickAddBar && visibleLines.length === 0 ? "min-h-0" : "min-h-[200px]")}><div className="min-w-max">
+                    <div className="overflow-auto min-h-[200px] max-h-[calc(100vh-300px)]"><div className="min-w-max">
                   <div className="grid gap-1.5 px-3 py-2 border-b bg-muted/40 sticky top-0 z-10" style={{ gridTemplateColumns: GRID_COLS_GR }}>
                     {lineColHeaders.map((h, i) => (
                       <p key={i} className={cn("text-[11px] font-medium truncate", h === tr("lineCols.total") ? "font-semibold text-primary" : "text-muted-foreground")} title={h}>{h}</p>
