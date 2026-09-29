@@ -1,4 +1,7 @@
+import { Receipt as ReceiptIcon_ } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
+import { DocumentExpensesTab } from "@/components/DocumentExpensesTab";
+import { guardDocumentExpensesBeforePost } from "@/lib/documentExpensesApi";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
@@ -152,7 +155,7 @@ export default function PurchaseReturns() {
   // let the items grid grow ~2 rows taller in its place.
   const hideQuickAdd = !!(user?.company as any)?.hideQuickAddBar;
   const [viewMode, setViewMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "industrialCosts" | "details">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "industrialCosts" | "details" | "expenses">("basic");
 
   const seqPeek = useNextSequenceNumber("purchase_return", showForm && editingId == null, undefined, form.branchId, form.paymentType);
   useEffect(() => {
@@ -386,6 +389,7 @@ export default function PurchaseReturns() {
       });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
       if (!isEdit && j?.id && (j.status ?? "draft") === "draft") {
+        guardDocumentExpensesBeforePost("purchase_return", Number(j.id));
         const pr = await fetch(`${API}/api/purchasing/purchase-returns/${j.id}/post`, { method: "PATCH", headers });
         const pj = await pr.json().catch(() => ({}));
         if (!pr.ok) throw new Error(tr("toasts.savedNoPost", { err: pj.error || pr.statusText }));
@@ -407,6 +411,7 @@ export default function PurchaseReturns() {
 
   const postMut = useMutation({
     mutationFn: async (id: number) => {
+      guardDocumentExpensesBeforePost("purchase_return", id);
       const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}/post`, { method: "PATCH", headers });
       const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
     },
@@ -1532,7 +1537,8 @@ ${sections}
     setBulkBusy(true);
     try {
       const { ok, failed } = await bulkRun(ids, async (id) => {
-        const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}/post`, { method: "PATCH", headers });
+        guardDocumentExpensesBeforePost("purchase_return", id);
+      const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}/post`, { method: "PATCH", headers });
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
       });
       qc.invalidateQueries({ queryKey: ["purchase-returns"] });
@@ -1705,6 +1711,9 @@ ${sections}
               </TabsTrigger>
               <TabsTrigger value="industrialCosts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <TrendingUp className="h-3.5 w-3.5" />التكاليف الصناعية
+              </TabsTrigger>
+              <TabsTrigger value="expenses" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <ReceiptIcon_ className="h-3.5 w-3.5" />المصروفات والتكاليف
               </TabsTrigger>
               <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <Info className="h-3.5 w-3.5" />التفاصيل
@@ -2301,6 +2310,12 @@ ${sections}
                 disabled={viewMode || currentRet?.status === "posted"}
                 onChange={(lineId, industrialCost) => setLines(prev => prev.map(line => line._id === lineId ? { ...line, industrialCost } : line))}
               />
+            </TabsContent>
+            )}
+
+            {useTabbedLayout && (
+            <TabsContent value="expenses" forceMount className="mt-0 data-[state=inactive]:hidden">
+              <DocumentExpensesTab documentType="purchase_return" documentId={editingId} isRtl={isRtl} readOnly={viewMode} />
             </TabsContent>
             )}
 

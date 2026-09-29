@@ -5,17 +5,17 @@ import { and, eq, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
-import { seedDefaultAccountingMappings } from "../lib/accountingMappings.js";
+import { seedDefaultAccountingMappings, seedInternalExpenseAccountingDefaults } from "../lib/accountingMappings.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { requireAiFeature, logAiUsage } from "../middleware/requireAiFeature.js";
 
 const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
-  purchase_invoice:      ["inventory", "vat_input", "payable", "discount"],
-  purchase_return:       ["inventory", "vat_input", "payable", "discount", "variance"],
+  purchase_invoice:      ["inventory", "vat_input", "payable", "discount", "internal_expense", "internal_expense_payable"],
+  purchase_return:       ["inventory", "vat_input", "payable", "discount", "variance", "internal_expense", "internal_expense_payable"],
   supplier_settlement:   ["payable", "cash", "bank", "discount"],
-  sales_invoice:         ["receivable", "revenue", "vat_output", "cogs", "inventory", "discount"],
+  sales_invoice:         ["receivable", "revenue", "vat_output", "cogs", "inventory", "discount", "internal_expense", "internal_expense_payable"],
   pos_invoice:           ["cash", "bank", "receivable", "revenue", "vat_output", "cogs", "inventory", "discount"],
-  sales_return:          ["receivable", "revenue_return", "vat_output", "cogs", "inventory", "discount"],
+  sales_return:          ["receivable", "revenue_return", "vat_output", "cogs", "inventory", "discount", "internal_expense", "internal_expense_payable"],
   customer_settlement:   ["receivable", "cash", "bank", "discount"],
   warehouse:             ["inventory", "opening_balance"],
   warehouse_adjustment:  ["inventory", "adjustment_gain", "adjustment_loss"],
@@ -76,8 +76,18 @@ router.get("/", async (req, res) => {
     const raw = req.query.companyId ? Number(req.query.companyId) : undefined;
     const companyId = resolveCompanyId(req, raw);
     if (!companyId) { res.json([]); return; }
-    const rows = await db.select().from(accountingMappingsTable)
+    let rows = await db.select().from(accountingMappingsTable)
       .where(eq(accountingMappingsTable.companyId, companyId));
+    // Config reads also repair tenants that reached the screen before the
+    // non-blocking boot backfill finished. Existing role rows are untouched.
+    const invoiceTypes = new Set(["sales_invoice", "sales_return", "purchase_invoice", "purchase_return"]);
+    const internalRoles = rows.filter(r => invoiceTypes.has(r.documentType) &&
+      (r.roleKey === "internal_expense" || r.roleKey === "internal_expense_payable"));
+    if (internalRoles.length < 8) {
+      await seedInternalExpenseAccountingDefaults(companyId);
+      rows = await db.select().from(accountingMappingsTable)
+        .where(eq(accountingMappingsTable.companyId, companyId));
+    }
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

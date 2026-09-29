@@ -13,3 +13,9 @@ New expense accounts and their posting mappings must be provisioned automaticall
 **Why:** The user explicitly requires new companies to receive these defaults without manually recreating accounts or mappings.
 
 **How to apply:** Extend the existing company-creation defaults with the eventual approved expense accounts and mappings, reusing appropriate default accounts rather than duplicating them. Do not reset existing companies' customized mappings.
+
+Treat invoice-tab expenses as internal net-of-recoverable-VAT costs, not extra taxable invoice lines or automatic refunds on returns.
+
+**Why:** The approved scope requires preserving ZATCA totals and separating existing LC landed costs from new internal costs; inventory received through a goods receipt must not be capitalized a second time through its later invoice.
+
+**How to apply:** Keep capitalization unavailable for LC/receipt-linked purchases until a separately approved attribution design exists. Do not claim that a separate supporting VAT invoice can duplicate the already recognized net expense; any future payable/tax settlement UI must reconcile the accrued expense rather than recognize it again.

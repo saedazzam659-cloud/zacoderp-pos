@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { DocumentExpensesTab } from "@/components/DocumentExpensesTab";
 import { useQuery } from "@tanstack/react-query";
 import { useFormatters } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -442,6 +443,13 @@ export default function PurchaseInvoiceDetails({
           )}
         </div>
       </section>
+
+      {docId ? (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold">{isRtl ? "المصروفات والتكاليف (للعرض)" : "Expenses & costs (read-only)"}</h3>
+          <DocumentExpensesTab documentType="purchase_invoice" documentId={Number(docId)} isRtl={isRtl} readOnly />
+        </section>
+      ) : null}
 
       {/* ════════════════════ MODALS ════════════════════ */}
 

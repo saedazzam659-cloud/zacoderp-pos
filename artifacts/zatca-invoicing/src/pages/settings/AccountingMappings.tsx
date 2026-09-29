@@ -312,8 +312,8 @@ export default function AccountingMappings() {
         body: JSON.stringify({
           documentType: doc.key,
           roleKey,
-          roleLabel: role.label,
-          roleDescription: role.description,
+          roleLabel: !isAr && role.labelEn ? role.labelEn : role.label,
+          roleDescription: !isAr && role.descriptionEn ? role.descriptionEn : role.description,
           accounts: accounts.filter((a: any) => a.isActive).map((a: any) => ({
             id: a.id, code: a.code, nameAr: a.nameAr, accountType: a.accountType, isPosting: a.isPosting,
           })),
@@ -462,7 +462,7 @@ export default function AccountingMappings() {
         rows.push({
           docTypeLabel: doc.label,
           docTypeKey:   doc.key,
-          roleLabel:    role.label,
+          roleLabel:    !isAr && role.labelEn ? role.labelEn : role.label,
           roleKey:      role.key,
           accountCode:  acc?.code ?? "",
           accountName:  acc?.nameAr ?? "",
@@ -785,9 +785,9 @@ export default function AccountingMappings() {
                       <div key={role.key} className="space-y-1.5">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <Label className="text-xs font-medium text-foreground/80">{role.label}</Label>
+                            <Label className="text-xs font-medium text-foreground/80">{!isAr && role.labelEn ? role.labelEn : role.label}</Label>
                             <p className="text-[11px] text-muted-foreground flex items-start gap-1 leading-snug mt-0.5">
-                              <Info className="h-3 w-3 shrink-0 mt-0.5" />{role.description}
+                              <Info className="h-3 w-3 shrink-0 mt-0.5" />{!isAr && role.descriptionEn ? role.descriptionEn : role.description}
                             </p>
                           </div>
                           <Button

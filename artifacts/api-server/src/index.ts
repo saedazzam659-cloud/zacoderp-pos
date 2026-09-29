@@ -372,6 +372,14 @@ async function bootstrap() {
     }
 
     logger.info({ port }, "Server listening");
+    // Do not delay the health-check port for an existing-tenant data backfill.
+    // Wait for schema reconciliation before querying mapping tables; the
+    // additive seeder preserves every existing (including blank/locked) role.
+    void schemaReady.then(async () => {
+      const { backfillInternalExpenseAccountingDefaults } = await import("./lib/accountingMappings.js");
+      const result = await backfillInternalExpenseAccountingDefaults();
+      logger.info(result, "internal expense accounting defaults backfilled");
+    }).catch(err => logger.error({ err }, "internal expense accounting defaults backfill failed"));
     seedSuperAdmin();
     seedPlanConfigs();
     seedIndustries();

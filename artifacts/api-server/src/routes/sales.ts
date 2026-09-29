@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { expenseJournalLines, expenseWhere, installExpenseDocumentTransactions } from "../lib/documentExpenses.js";
 import { canPostDoc, requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { randomUUID } from "node:crypto";
 import { db, getActiveExternalDb } from "@workspace/db";
@@ -25,6 +26,7 @@ import {
   brandsTable,
   accountsTable,
   salesLineProductionCostAttributionsTable,
+  documentExpensesTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte, ilike, or, ne } from "drizzle-orm";
@@ -553,6 +555,7 @@ export async function createJournalEntry(opts: {
   executor?: any;
 }): Promise<number> {
   const executor = opts.executor ?? db;
+  opts.lines = [...opts.lines, ...await expenseJournalLines(executor, opts.companyId, opts.sourceType, opts.sourceId)];
   const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
   if (cleanLines.length < 2) {
     // Build a diagnostic showing which proposed lines were rejected and why,
@@ -4133,6 +4136,7 @@ router.delete("/sales-invoices/:id", async (req, res) => {
         deletedByUsername: req.authUser?.username ?? null,
         reason: "حذف فاتورة مبيعات مسودة",
       });
+      await tx.delete(documentExpensesTable).where(expenseWhere(cid, "sales_invoice", id));
     });
     res.json({ ok: true });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
@@ -6647,4 +6651,5 @@ router.get("/sales-invoices-zatca-bridge", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+installExpenseDocumentTransactions(router);
 export default router;

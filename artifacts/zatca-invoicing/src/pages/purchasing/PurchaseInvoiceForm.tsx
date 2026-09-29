@@ -1,4 +1,7 @@
+import { Receipt as ReceiptIcon_ } from "lucide-react";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
+import { DocumentExpensesTab } from "@/components/DocumentExpensesTab";
+import { guardDocumentExpensesBeforePost } from "@/lib/documentExpensesApi";
 import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
@@ -183,7 +186,7 @@ function PurchaseInvoiceFormContent() {
   // Company-wide UX flag (الإعدادات العامة): hide the quick add-item bar and
   // let the items grid grow ~2 rows taller in its place.
   const hideQuickAdd = !!_co?.hideQuickAddBar;
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "industrialCosts" | "debitNote" | "creditNote" | "payments" | "returns" | "archive" | "details" | "deferred">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "industrialCosts" | "debitNote" | "creditNote" | "payments" | "returns" | "archive" | "details" | "deferred" | "expenses">("basic");
   // مصروف يوزع على فترات — سطر الحوار المفتوح لتحرير خطة التوزيع
   const [deferredDialogLineId, setDeferredDialogLineId] = useState<string | null>(null);
   useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
@@ -892,6 +895,7 @@ function PurchaseInvoiceFormContent() {
       }
 
       if (autoPostingEnabled && j?.id && (j.status ?? "draft") === "draft") {
+        guardDocumentExpensesBeforePost("purchase_invoice", Number(j.id));
         const postRes = await fetch(`${API}/api/purchasing/purchase-invoices/${j.id}/post`, {
           method: "PATCH", headers,
         });
@@ -1416,6 +1420,9 @@ function PurchaseInvoiceFormContent() {
                   )}
                   <TabsTrigger value="archive" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <Archive className="h-3.5 w-3.5" />أرشفة
+                  </TabsTrigger>
+                  <TabsTrigger value="expenses" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <ReceiptIcon_ className="h-3.5 w-3.5" />المصروفات والتكاليف
                   </TabsTrigger>
                   <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ClipboardList className="h-3.5 w-3.5" />التفاصيل
@@ -2277,6 +2284,11 @@ function PurchaseInvoiceFormContent() {
                 </CardContent>
               </TabsContent>
             )}
+            <TabsContent value="expenses" forceMount className="mt-0 data-[state=inactive]:hidden">
+              <CardContent className="pt-5 pb-5">
+                <DocumentExpensesTab documentType="purchase_invoice" documentId={editId ?? persistedInvoiceIdRef.current} isRtl={isRtl} readOnly={editLock} hasLc={!!lcId} />
+              </CardContent>
+            </TabsContent>
             <TabsContent value="details" className="mt-0">
               <CardContent className="pt-5 pb-5">
                 {detailsSection}

@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
+import documentExpensesRouter from "./document-expenses";
 import internalControlRouter from "./internal-control";
 import companiesRouter from "./companies";
 import customersRouter from "./customers";
@@ -264,6 +265,7 @@ router.use("/trial-balances", trialBalancesRouter);
 router.use("/currencies", currenciesRouter);
 router.use("/accounting-reports", accountingReportsRouter);
 router.use("/purchasing", purchasingRouter);
+router.use("/document-expenses", documentExpensesRouter);
 router.use("/goods-receipts", goodsReceiptsRouter);
 router.use("/goods-deliveries", goodsDeliveriesRouter);
 router.use("/sales", salesRouter);

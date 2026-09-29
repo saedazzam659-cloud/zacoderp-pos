@@ -100,3 +100,4 @@ export * from "./zatcaRegistrationTransfers";
 export * from "./externalDatabases";
 export * from "./demoDeviceWorkspaces";
 export * from "./demoAnalytics";
+export * from "./documentExpenses";

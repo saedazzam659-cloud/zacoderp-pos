@@ -1,4 +1,7 @@
+import { Receipt as ReceiptIcon_ } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
+import { DocumentExpensesTab } from "@/components/DocumentExpensesTab";
+import { guardDocumentExpensesBeforePost } from "@/lib/documentExpensesApi";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useEnterNavContainer } from "@/lib/enterNav";
@@ -181,7 +184,7 @@ export default function SalesReturns() {
   // let the items grid grow ~2 rows taller in its place.
   const hideQuickAdd = !!(user?.company as any)?.hideQuickAddBar;
   const [viewMode, setViewMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<"basic" | "items" | "details">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "items" | "details" | "expenses">("basic");
   // Inline-error state for the mandatory "ملاحظات / سبب المرتجع" field.
   // Goes red+shake when the user tries to save without writing anything,
   // and clears automatically as soon as they start typing. Pair with the
@@ -451,6 +454,7 @@ export default function SalesReturns() {
       });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
       if (j?.id && (j.status ?? "draft") === "draft") {
+        guardDocumentExpensesBeforePost("sales_return", Number(j.id));
         const pr = await fetch(`${API}/api/sales/sales-returns/${j.id}/post`, { method: "PATCH", headers });
         const pj = await pr.json().catch(() => ({}));
         if (!pr.ok) throw new Error(t("salesReturns.savedButPostFailed", { error: pj.error || pr.statusText }));
@@ -473,6 +477,7 @@ export default function SalesReturns() {
 
   const postMut = useMutation({
     mutationFn: async (id: number) => {
+      guardDocumentExpensesBeforePost("sales_return", id);
       const res = await fetch(`${API}/api/sales/sales-returns/${id}/post`, { method: "PATCH", headers });
       const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
     },
@@ -2035,7 +2040,8 @@ ${sections}
     setBulkBusy(true);
     try {
       const { ok, failed } = await bulkRun(ids, async (id) => {
-        const res = await fetch(`${API}/api/sales/sales-returns/${id}/post`, { method: "PATCH", headers });
+        guardDocumentExpensesBeforePost("sales_return", id);
+      const res = await fetch(`${API}/api/sales/sales-returns/${id}/post`, { method: "PATCH", headers });
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
       });
       invalidate();
@@ -2217,6 +2223,9 @@ ${sections}
               </TabsTrigger>
               <TabsTrigger value="items" disabled={!basicFieldsValid} className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <ListOrdered className="h-3.5 w-3.5" />الأصناف
+              </TabsTrigger>
+              <TabsTrigger value="expenses" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <ReceiptIcon_ className="h-3.5 w-3.5" />المصروفات والتكاليف
               </TabsTrigger>
               <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <Info className="h-3.5 w-3.5" />التفاصيل
@@ -2715,6 +2724,12 @@ ${sections}
             )}
             </fieldset>
             </TabsContent>
+
+            {useTabbedLayout && (
+            <TabsContent value="expenses" forceMount className="mt-0 data-[state=inactive]:hidden">
+              <DocumentExpensesTab documentType="sales_return" documentId={editingId} isRtl={isRtl} readOnly={viewMode} />
+            </TabsContent>
+            )}
 
             {useTabbedLayout && (
             <TabsContent value="details" className="mt-0">

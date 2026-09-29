@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { capitalizedExpenseShares, expenseJournalLines, installExpenseDocumentTransactions, readExpenseRows, withDocumentExpenseSavepoint } from "../lib/documentExpenses.js";
+import { returnedCostShare } from "../lib/documentExpenseAllocation.js";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
@@ -32,7 +34,7 @@ import {
 } from "../middleware/auth.js";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole, requirePermission, requireOperationalManager } from "../middleware/permissions.js";
-import { upsertBalance, getBalance, addStockLedgerEntry, refreshItemCost } from "../lib/stockHelpers.js";
+import { upsertBalance, getBalance, addStockLedgerEntry, refreshItemCost, lockStockBalances } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber, nextSequenceForPayment, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
@@ -411,6 +413,7 @@ async function createJournalEntry(opts: {
   lines: JLine[];
 }): Promise<number> {
   const executor = opts.dx ?? db;
+  opts.lines = [...opts.lines, ...await expenseJournalLines(executor, opts.companyId, opts.sourceType, opts.sourceId)];
   // Filter out lines with zero amount or no account
   const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
   if (cleanLines.length < 2) throw new Error("القيد المحاسبي يحتاج إلى طرفين على الأقل");
@@ -2139,6 +2142,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
     const groupInvItemNamesByAccount: Record<string, string[]> = {};
     let groupInvTotal = 0;
     const costRefreshItemIds = new Set<number>();
+    const directExpenseShares = await capitalizedExpenseShares(db, cid, inv);
     for (const line of lines) {
       if (!line.itemId) continue;
       // فئة أصل ثابت / مصروف: debit the category account, NO stock movement.
@@ -2176,8 +2180,9 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
       const qty      = Number(multiplyQuantity(String(line.qty || "0"), factor))
         + Number(multiplyQuantity(String(line.freeQty || "0"), factor));
       const cost     = Number(line.finalCost || line.unitPrice);
+      const landedCost = cost + (directExpenseShares.get(line.id) ?? 0);
       const costUnit = qty > 0
-        ? Number(roundQuantity(divideQuantity(String(cost), String(qty)), 18, "half_up"))
+        ? Number(roundQuantity(divideQuantity(String(landedCost), String(qty)), 18, "half_up"))
         : Number(roundQuantity(divideQuantity(String(line.unitPrice || "0"), factor), 18, "half_up"));
       // فئة مخزون: debit the CATEGORY's own inventory account instead of the
       // warehouse-derived one (stock movement below is identical either way).
@@ -2204,7 +2209,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
         txType:      "purchase",
         qty:         String(qty),
         costPrice:   String(costUnit.toFixed(4)),
-        totalCost:   String(cost.toFixed(2)),
+        totalCost:   String(landedCost.toFixed(2)),
         balanceQty:  String(newBal),
         refId:       id,
         refType:     "purchase_invoice",
@@ -2676,7 +2681,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
               ));
           }
           for (const adjId of activeIds) {
-            try { await runDueAdjustmentsForCompany(cid, req as any, adjId); }
+            try { await withDocumentExpenseSavepoint(() => runDueAdjustmentsForCompany(cid, req as any, adjId)); }
             catch (err: any) {
               req.log?.warn({ adjId, err: err?.message }, "post-invoice: auto-run adjustment failed");
               const nm = sourceLinkedAdjs.find(a => a.id === adjId)?.name || `#${adjId}`;
@@ -2792,6 +2797,13 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
         eq(stockLedgerTable.refType, "purchase_invoice"),
         eq(stockLedgerTable.refId, id),
       ));
+    const internalCapitalized = (await readExpenseRows(db, cid, "purchase_invoice", id)).rows.some(r => r.treatment === "capitalized");
+    if (internalCapitalized) {
+      const children = await db.select({ id: purchaseReturnsTable.id }).from(purchaseReturnsTable)
+        .where(and(eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.invoiceId, id), eq(purchaseReturnsTable.status, "posted")));
+      if (children.length) throw new Error("يجب فك ترحيل مرتجعات الفاتورة قبل عكس تكلفتها المحملة");
+      await lockStockBalances(ledger.map(row => ({ companyId: cid, itemId: row.itemId, warehouseId: row.warehouseId })), db);
+    }
     for (const row of ledger) {
       const qty = Number(row.qty);
       // Reverse: subtract the qty that was added (cost stays at current avg)
@@ -2801,10 +2813,17 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
           eq(stockBalanceTable.itemId, row.itemId),
           eq(stockBalanceTable.warehouseId, row.warehouseId),
         ));
+      if (internalCapitalized && !bal) throw new Error("رصيد المخزون المرتبط بالتكلفة المحملة غير موجود");
       if (bal) {
+        const remainingQty = Number(bal.qty) - qty;
+        const remainingValue = Number(bal.qty) * Number(bal.avgCost) - Number(row.totalCost);
+        const roundingTolerance = Math.abs(Number(bal.qty)) * 0.00005 + 0.01; // stock WAC is stored at four decimals
+        if (internalCapitalized && (remainingQty < -0.000001 || remainingValue < -roundingTolerance || (Math.abs(remainingQty) < 0.000001 && Math.abs(remainingValue) > roundingTolerance)))
+          throw new Error("تعذر عكس التكلفة المحملة بعد استهلاك أو تغير تكلفة المخزون؛ اعكس الحركات اللاحقة أولاً");
         await db.update(stockBalanceTable)
-          .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
+          .set({ qty: String(remainingQty), ...(internalCapitalized ? { avgCost: remainingQty > 0 ? String(Math.max(0, remainingValue) / remainingQty) : "0" } : {}), updatedAt: new Date() })
           .where(eq(stockBalanceTable.id, bal.id));
+        if (internalCapitalized) await refreshItemCost(cid, row.itemId);
       }
     }
     if (!grnSourced) {
@@ -3719,8 +3738,17 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status === "posted") { res.status(400).json({ error: "المرتجع مُرحَّل مسبقاً" }); return; }
 
+    const sourceHasInternalLandedCosts = ret.invoiceId
+      ? (await readExpenseRows(db, cid, "purchase_invoice", ret.invoiceId)).rows.some(r => r.treatment === "capitalized")
+      : false;
     // Source-invoice integrity check: if linked, must exist in same company.
     if (ret.invoiceId) {
+      if (sourceHasInternalLandedCosts) {
+        const [source] = await db.select().from(purchaseInvoicesTable).where(and(
+          eq(purchaseInvoicesTable.id, ret.invoiceId), eq(purchaseInvoicesTable.companyId, cid),
+        )).for("update");
+        if (source?.status !== "posted") throw new Error("يجب أن تكون الفاتورة ذات التكلفة المحملة مرحلة قبل ترحيل مرتجعها");
+      }
       const [srcCheck] = await db
         .select({ id: purchaseInvoicesTable.id })
         .from(purchaseInvoicesTable)
@@ -3843,6 +3871,9 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     // collectively over-deduct the same source batch.
     // Key: `${itemId}|${warehouseId}|${batch||__null__}|${expiry||""}`
     const consumedThisDoc = new Map<string, number>();
+    if (sourceHasInternalLandedCosts) await lockStockBalances(lines.filter(l => l.itemId && l.warehouseId).map(l => ({
+      companyId: cid, itemId: l.itemId!, warehouseId: l.warehouseId!,
+    })), db);
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId || isSvcLine(line)) continue;
       const factor   = String(line.conversionFactor || "1");
@@ -3864,7 +3895,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
         : 0;
 
       const mode = retModeById.get(line.itemId) ?? "none";
-      const canBatchTrace = mode !== "none" && !!ret.invoiceId;
+      const canBatchTrace = (mode !== "none" || sourceHasInternalLandedCosts) && !!ret.invoiceId;
 
       type ReturnPart = { takeQty: number; costPrice: number; batchNumber: string | null; expiryDate: string | null };
       const parts: ReturnPart[] = [];
@@ -3877,6 +3908,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
             id: stockLedgerTable.id,
             qty: stockLedgerTable.qty,
             costPrice: stockLedgerTable.costPrice,
+            totalCost: stockLedgerTable.totalCost,
             batchNumber: stockLedgerTable.batchNumber,
             expiryDate: stockLedgerTable.expiryDate,
           })
@@ -3902,13 +3934,13 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
           const b = buckets.get(k);
           if (b) {
             b.received += received;
-            b.costSum += received * Number(row.costPrice);
+            b.costSum += sourceHasInternalLandedCosts ? Number(row.totalCost) : received * Number(row.costPrice);
           } else {
             buckets.set(k, {
               batchNumber: row.batchNumber,
               expiryDate: row.expiryDate,
               received,
-              costSum: received * Number(row.costPrice),
+              costSum: sourceHasInternalLandedCosts ? Number(row.totalCost) : received * Number(row.costPrice),
               firstId: row.id,
             });
           }
@@ -3951,7 +3983,9 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
           const returnable = Math.max(0, b.received - consumedPrior - consumedDoc);
           if (returnable <= 0.0001) continue;
           const take = Math.min(returnable, remaining);
-          const wacCost = b.received > 0 ? b.costSum / b.received : 0;
+          const wacCost = sourceHasInternalLandedCosts
+            ? returnedCostShare(b.costSum, b.received, consumedPrior + consumedDoc, take) / take
+            : b.received > 0 ? b.costSum / b.received : 0;
           parts.push({
             takeQty: take,
             costPrice: wacCost,
@@ -3963,6 +3997,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
         }
         // Excess overflow → single unbatched OUT row at the line's derived cost.
         if (remaining > 0.0001) {
+          if (sourceHasInternalLandedCosts) throw new Error("كمية المرتجع تتجاوز الكمية المتاحة من الفاتورة ذات التكلفة المحملة");
           parts.push({ takeQty: remaining, costPrice: costUnit, batchNumber: null, expiryDate: null });
         }
       } else {
@@ -3977,7 +4012,22 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
       docNetByWarehouse[whCcKey] = (docNetByWarehouse[whCcKey] ?? 0) + paidLineValue;
 
       const wac = qty > 0 ? lineRemovedCost / qty : costUnit;
+      const [priorLandedBalance] = sourceHasInternalLandedCosts ? await db.select().from(stockBalanceTable).where(and(
+        eq(stockBalanceTable.companyId, cid), eq(stockBalanceTable.itemId, line.itemId), eq(stockBalanceTable.warehouseId, line.warehouseId),
+      )) : [];
+      if (sourceHasInternalLandedCosts && (!priorLandedBalance || Number(priorLandedBalance.qty) < qty - 0.000001))
+        throw new Error("رصيد المخزون لا يكفي لعكس التكلفة المحملة");
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, wac);
+      if (priorLandedBalance) {
+        const remainingQty = Number(priorLandedBalance.qty) - qty;
+        const remainingValue = Number(priorLandedBalance.qty) * Number(priorLandedBalance.avgCost) - lineRemovedCost;
+        const roundingTolerance = Math.abs(Number(priorLandedBalance.qty)) * 0.00005 + 0.01;
+        if (remainingValue < -roundingTolerance || (remainingQty < 0.000001 && Math.abs(remainingValue) > roundingTolerance))
+          throw new Error("تعذر عكس تكلفة المصدر دون الإخلال بقيمة المخزون المتبقي");
+        await db.update(stockBalanceTable).set({ avgCost: remainingQty > 0.000001 ? String(Math.max(0, remainingValue) / remainingQty) : "0" })
+          .where(eq(stockBalanceTable.id, priorLandedBalance.id));
+        await refreshItemCost(cid, line.itemId);
+      }
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
       let cursor = newBal + qty; // pre-issue total
       for (const p of parts) {
@@ -4094,7 +4144,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     const svcRawTotal = Object.values(serviceCreditByKey).reduce((s, v) => s + v, 0);
     let svcCreditByKey: Record<string, number> = { ...serviceCreditByKey };
 
-    const useVariance = (ret as any).postVariance === true;
+    const useVariance = (ret as any).postVariance === true || sourceHasInternalLandedCosts;
     let creditBaseByWh = useVariance ? inventoryByWarehouse : docNetByWarehouse;
     if (!useVariance) {
       // paidLineValue is the RAW discounted line value — with price-includes-
@@ -4311,12 +4361,16 @@ router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), asy
     await assertIndustrialCostPeriodsWritable(cid, industrialLines);
 
     // Reverse stock movements (returns reduce stock; unposting adds it back)
+    const restoreLandedValue = ret.invoiceId
+      ? (await readExpenseRows(db, cid, "purchase_invoice", ret.invoiceId)).rows.some(r => r.treatment === "capitalized")
+      : false;
     const ledger = await db.select().from(stockLedgerTable)
       .where(and(
         eq(stockLedgerTable.companyId, cid),
         eq(stockLedgerTable.refType, "purchase_return"),
         eq(stockLedgerTable.refId, id),
       ));
+    if (restoreLandedValue) await lockStockBalances(ledger.map(row => ({ companyId: cid, itemId: row.itemId, warehouseId: row.warehouseId })), db);
     for (const row of ledger) {
       const qty = Number(row.qty);
       const [bal] = await db.select().from(stockBalanceTable)
@@ -4325,10 +4379,14 @@ router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), asy
           eq(stockBalanceTable.itemId, row.itemId),
           eq(stockBalanceTable.warehouseId, row.warehouseId),
         ));
+      if (restoreLandedValue && !bal) throw new Error("رصيد المخزون المرتبط بالتكلفة المحملة غير موجود");
       if (bal) {
+        const newQty = Number(bal.qty) - qty;
+        const newValue = Number(bal.qty) * Number(bal.avgCost) - Number(row.totalCost);
         await db.update(stockBalanceTable)
-          .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
+          .set({ qty: String(newQty), ...(restoreLandedValue ? { avgCost: newQty > 0 ? String(newValue / newQty) : "0" } : {}), updatedAt: new Date() })
           .where(eq(stockBalanceTable.id, bal.id));
+        if (restoreLandedValue) await refreshItemCost(cid, row.itemId);
       }
     }
     await db.delete(stockLedgerTable)
@@ -4985,4 +5043,5 @@ ${expList}
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+installExpenseDocumentTransactions(router);
 export default router;

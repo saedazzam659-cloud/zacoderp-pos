@@ -301,6 +301,17 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultCoaRow[] = [
     "reportDirection": "balance_sheet"
   },
   {
+    "code": "21071",
+    "nameAr": "مصروفات المستندات الداخلية المستحقة",
+    "nameEn": "Accrued Internal Document Expenses",
+    "accountType": "liability",
+    "parentCode": "2107",
+    "level": 4,
+    "isPosting": true,
+    "isActive": true,
+    "reportDirection": "balance_sheet"
+  },
+  {
     "code": "22",
     "nameAr": "الخصوم غير المتداولة",
     "nameEn": "Non-current Liabilities",
@@ -986,6 +997,17 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultCoaRow[] = [
     "code": "5215",
     "nameAr": "مكافأة نهاية الخدمة",
     "nameEn": "End-of-Service Expense",
+    "accountType": "expense",
+    "parentCode": "52",
+    "level": 3,
+    "isPosting": true,
+    "isActive": true,
+    "reportDirection": "income_statement"
+  },
+  {
+    "code": "5216",
+    "nameAr": "مصروفات المستندات الداخلية",
+    "nameEn": "Internal Document Expenses",
     "accountType": "expense",
     "parentCode": "52",
     "level": 3,

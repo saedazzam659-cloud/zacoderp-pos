@@ -1,7 +1,8 @@
 import { db } from "@workspace/db";
-import { accountingMappingsTable, accountsTable } from "@workspace/db";
+import { accountingMappingsTable, accountsTable, companiesTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
+import { DEFAULT_CHART_OF_ACCOUNTS } from "./defaultChartOfAccounts.js";
 
 export type MappingLookup = (documentType: string, roleKey: string) => number | null;
 
@@ -74,6 +75,66 @@ export interface DefaultMapping {
   accountCode:  string;
 }
 
+// Invoice/return internal costs are independent of invoice balances and LC
+// charges. These posting children are distinct from the non-posting COA parents.
+const INTERNAL_EXPENSE_DOCUMENT_TYPES = [
+  "sales_invoice", "sales_return", "purchase_invoice", "purchase_return",
+] as const;
+
+export const INTERNAL_EXPENSE_MAPPINGS: DefaultMapping[] = INTERNAL_EXPENSE_DOCUMENT_TYPES.flatMap((documentType) => [
+  { documentType, roleKey: "internal_expense", accountCode: "5216" },
+  { documentType, roleKey: "internal_expense_payable", accountCode: "21071" },
+]);
+
+/**
+ * Add only accounts needed for missing roles. Existing tenant mappings
+ * (including deliberately blank ones) and existing COA codes always win.
+ * Called by the ordinary safe defaults/config seeder, as well as on new
+ * company creation through that same path.
+ */
+export async function ensureInternalExpenseMappingAccounts(companyId: number): Promise<number> {
+  return db.transaction(async (tx) => {
+    // Several API replicas can run the additive backfill concurrently. Account
+    // codes have no DB uniqueness constraint, so serialize this company's
+    // account provisioning rather than allowing duplicate posting children.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('internal_expense_defaults'), ${companyId})`);
+    const existingMappings = await tx.select({
+      documentType: accountingMappingsTable.documentType,
+      roleKey: accountingMappingsTable.roleKey,
+    }).from(accountingMappingsTable).where(eq(accountingMappingsTable.companyId, companyId));
+    const mapped = new Set(existingMappings.map((m) => `${m.documentType}::${m.roleKey}`));
+    const needed = new Set(INTERNAL_EXPENSE_MAPPINGS
+      .filter((m) => !mapped.has(`${m.documentType}::${m.roleKey}`))
+      .map((m) => m.accountCode));
+    if (!needed.size) return 0;
+    const rows = await tx.select({ id: accountsTable.id, code: accountsTable.code })
+      .from(accountsTable).where(eq(accountsTable.companyId, companyId));
+    const codeToId = new Map(rows.map((row) => [row.code, row.id]));
+    let inserted = 0;
+    async function ensureParent(code: string): Promise<number> {
+      const existingId = codeToId.get(code);
+      if (existingId != null) return existingId;
+      const standard = DEFAULT_CHART_OF_ACCOUNTS.find((row) => row.code === code);
+      if (!standard) throw new Error(`Missing standard COA parent ${code}`);
+      const parentId = standard.parentCode ? await ensureParent(standard.parentCode) : null;
+      const [created] = await tx.insert(accountsTable).values({
+        companyId, parentId, code: standard.code, nameAr: standard.nameAr,
+        nameEn: standard.nameEn, accountType: standard.accountType,
+        reportDirection: standard.reportDirection, level: standard.level,
+        isPosting: standard.isPosting, isActive: standard.isActive,
+      }).onConflictDoNothing().returning({ id: accountsTable.id });
+      const id = created?.id ?? (await tx.select({ id: accountsTable.id }).from(accountsTable)
+        .where(and(eq(accountsTable.companyId, companyId), eq(accountsTable.code, code))))[0]?.id;
+      if (id == null) throw new Error(`Unable to provision COA parent ${code}`);
+      if (created) inserted++;
+      codeToId.set(code, id);
+      return id;
+    }
+    for (const code of needed) await ensureParent(code);
+    return inserted;
+  });
+}
+
 // Synced from the customer-supplied template
 // `accounting-mappings-2026-04-26_1777181797171.xlsx` (41 entries) — this
 // is the wiring a brand-new tenant gets out of the box.
@@ -85,6 +146,7 @@ export interface DefaultMapping {
 // تبقى لأنها قيم احتياطية فعلية تستخدمها سندات القبض والصرف عند عدم تحديد
 // خزينة/بنك معيّن.
 export const DEFAULT_MAPPINGS: DefaultMapping[] = [
+  ...INTERNAL_EXPENSE_MAPPINGS,
   // فواتير المشتريات
   { documentType: "purchase_invoice",     roleKey: "inventory",              accountCode: "11051" },
   { documentType: "purchase_invoice",     roleKey: "vat_input",              accountCode: "11071" },
@@ -227,10 +289,13 @@ export interface SeedDefaultsResult {
  */
 export async function seedDefaultAccountingMappings(
   companyId: number,
-  opts: { overwrite?: boolean; excludeContracting?: boolean } = {},
+  opts: { overwrite?: boolean; excludeContracting?: boolean; onlyInternalExpenses?: boolean } = {},
 ): Promise<SeedDefaultsResult> {
+  await ensureInternalExpenseMappingAccounts(companyId);
   const overwrite = !!opts.overwrite;
-  const defaults = opts.excludeContracting
+  const defaults = opts.onlyInternalExpenses
+    ? INTERNAL_EXPENSE_MAPPINGS
+    : opts.excludeContracting
     ? DEFAULT_MAPPINGS.filter((m) => !m.documentType.startsWith("contracting_"))
     : DEFAULT_MAPPINGS;
 
@@ -320,4 +385,30 @@ export async function seedDefaultAccountingMappings(
   });
 
   return { inserted, updated, skippedMissingAccount, skippedAlreadyMapped, missingAccountCodes };
+}
+
+/** Safe additive config/bootstrap backfill for existing companies. Never relinks an existing role. */
+export async function seedInternalExpenseAccountingDefaults(companyId: number): Promise<SeedDefaultsResult> {
+  return seedDefaultAccountingMappings(companyId, { onlyInternalExpenses: true });
+}
+
+/** Backfill only tenants missing one of the eight roles, without touching other mappings. */
+export async function backfillInternalExpenseAccountingDefaults(): Promise<{ companies: number; inserted: number }> {
+  const pending = await db.select({ id: companiesTable.id }).from(companiesTable).where(sql`
+    (SELECT count(*) FROM accounting_mappings m
+      WHERE m.company_id = ${companiesTable.id}
+        AND m.document_type IN ('sales_invoice', 'sales_return', 'purchase_invoice', 'purchase_return')
+        AND m.role_key IN ('internal_expense', 'internal_expense_payable')) < 8
+  `);
+  let inserted = 0;
+  const failed: number[] = [];
+  for (const company of pending) {
+    try {
+      inserted += (await seedInternalExpenseAccountingDefaults(company.id)).inserted;
+    } catch {
+      failed.push(company.id);
+    }
+  }
+  if (failed.length) throw new Error(`Internal expense accounting backfill failed for companies: ${failed.join(", ")}`);
+  return { companies: pending.length, inserted };
 }

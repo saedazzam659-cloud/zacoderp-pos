@@ -1,7 +1,9 @@
 export type RoleDef = {
   key: string;
   label: string;
+  labelEn?: string;
   description: string;
+  descriptionEn?: string;
   defaultHintCode?: string;
   accountType?: "asset" | "liability" | "equity" | "revenue" | "expense";
 };
@@ -39,6 +41,8 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "vat_input",   label: "ضريبة القيمة المضافة (مدخلات)", description: "الحساب المدين لضريبة الشراء القابلة للاسترداد.", defaultHintCode: "1240", accountType: "asset" },
       { key: "payable",     label: "حساب الموردين (دائن)", description: "الحساب الدائن مقابل الفاتورة الآجلة.", defaultHintCode: "2110", accountType: "liability" },
       { key: "discount",    label: "خصم مكتسب", description: "الحساب الدائن لخصومات الشراء المكتسبة (اختياري).", accountType: "revenue" },
+      { key: "internal_expense", label: "مصروفات المستند الداخلية (مدين)", labelEn: "Internal document expenses (debit)", description: "تكاليف الفترة الداخلية المعتمدة؛ مستقلة عن مبلغ فاتورة المورد وضريبتها وعن مصروفات الاعتماد المستندي.", descriptionEn: "Approved internal period costs, separate from supplier invoice totals, VAT and LC charges.", defaultHintCode: "5216", accountType: "expense" },
+      { key: "internal_expense_payable", label: "مصروفات داخلية مستحقة (دائن)", labelEn: "Accrued internal expenses (credit)", description: "التزام مستقل مقابل المصروفات الداخلية، بما فيها تكاليف الشراء المرسملة بالمخزون؛ ليس ذمة المورد.", descriptionEn: "Separate liability for internal costs, including inventory-capitalized purchase costs; not supplier payable.", defaultHintCode: "21071", accountType: "liability" },
     ],
   },
   {
@@ -52,6 +56,8 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "vat_input", label: "ضريبة المدخلات (دائن)", description: "عكس ضريبة المدخلات على المرتجع.", defaultHintCode: "1240", accountType: "asset" },
       { key: "discount",  label: "خصم (مدين)", description: "نفس حساب الخصم المكتسب في فاتورة الشراء — يُعكس في طرف المدين لإلغاء الخصم على البضاعة المرتجعة.", defaultHintCode: "4103", accountType: "revenue" },
       { key: "variance",  label: "فروق سعر مرتجع المشتريات (مدين/دائن)", description: "الفرق بين قيمة المرتجع المتفق عليها مع المورد (المبلغ على المستند) وتكلفة البضاعة الفعلية الخارجة من المخزون (متوسط تكلفة التشغيلة الأصلية). يُسجل كقيد مدين إذا كانت تكلفة البضاعة أعلى من قيمة الاسترداد (خسارة)، أو كقيد دائن إذا كانت أقل (ربح). يُطلب فقط عند وجود فرق فعلي أعلى من قروش التقريب.", defaultHintCode: "5108", accountType: "expense" },
+      { key: "internal_expense", label: "مصروفات المستند الداخلية (مدين)", labelEn: "Internal document expenses (debit)", description: "تكاليف فترة جديدة خاصة بالمرتجع؛ لا تُعكس مصاريف فاتورة الشراء الأصلية تلقائياً.", descriptionEn: "New period costs for this return; original invoice costs are not automatically reversed.", defaultHintCode: "5216", accountType: "expense" },
+      { key: "internal_expense_payable", label: "مصروفات داخلية مستحقة (دائن)", labelEn: "Accrued internal expenses (credit)", description: "التزام مستقل عن رصيد المورد مقابل تكاليف المرتجع الداخلية.", descriptionEn: "Separate accrued liability for return costs, not supplier payable.", defaultHintCode: "21071", accountType: "liability" },
     ],
   },
   {
@@ -77,6 +83,8 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "cogs",       label: "تكلفة البضاعة المباعة (مدين)", description: "تسجيل تكلفة المخزون المباع.", defaultHintCode: "5110", accountType: "expense" },
       { key: "inventory",  label: "المخزون (دائن لأجل COGS)", description: "تخفيض المخزون بمقدار تكلفة المباع.", defaultHintCode: "1220", accountType: "asset" },
       { key: "discount",   label: "خصم مسموح به (مدين)", description: "الحساب المدين لقيمة الخصم الممنوح للعميل على الفاتورة (طبيعته مصروف).", defaultHintCode: "5103", accountType: "expense" },
+      { key: "internal_expense", label: "مصروفات المستند الداخلية (مدين)", labelEn: "Internal document expenses (debit)", description: "تكاليف الفترة الداخلية المعتمدة، منفصلة عن فاتورة العميل وضريبتها وتكلفة البضاعة المباعة.", descriptionEn: "Approved internal period costs, separate from customer invoice totals, VAT and COGS.", defaultHintCode: "5216", accountType: "expense" },
+      { key: "internal_expense_payable", label: "مصروفات داخلية مستحقة (دائن)", labelEn: "Accrued internal expenses (credit)", description: "التزام مستقل مقابل التكاليف الداخلية؛ ليس ذمة العميل.", descriptionEn: "Separate liability for internal costs, not customer receivable.", defaultHintCode: "21071", accountType: "liability" },
     ],
   },
   {
@@ -107,6 +115,8 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "inventory",      label: "المخزون (مدين)", description: "إعادة البضاعة للمخزون بالتكلفة.", defaultHintCode: "1220", accountType: "asset" },
       { key: "cogs",           label: "تكلفة البضاعة المباعة (دائن)", description: "عكس التكلفة للبضاعة المرتجعة.", defaultHintCode: "5110", accountType: "expense" },
       { key: "discount",       label: "خصم مسموح به (دائن)", description: "نفس حساب الخصم الممنوح في الفاتورة الأصلية — يُعكس في طرف الدائن لاسترداد الخصم عند المرتجع.", defaultHintCode: "5103", accountType: "expense" },
+      { key: "internal_expense", label: "مصروفات المستند الداخلية (مدين)", labelEn: "Internal document expenses (debit)", description: "تكاليف فترة جديدة خاصة بالمرتجع؛ لا تُعكس مصاريف فاتورة البيع الأصلية تلقائياً.", descriptionEn: "New period costs for this return; original invoice costs are not automatically reversed.", defaultHintCode: "5216", accountType: "expense" },
+      { key: "internal_expense_payable", label: "مصروفات داخلية مستحقة (دائن)", labelEn: "Accrued internal expenses (credit)", description: "التزام مستقل عن رصيد العميل مقابل تكاليف المرتجع الداخلية.", descriptionEn: "Separate accrued liability for return costs, not customer receivable.", defaultHintCode: "21071", accountType: "liability" },
     ],
   },
   {

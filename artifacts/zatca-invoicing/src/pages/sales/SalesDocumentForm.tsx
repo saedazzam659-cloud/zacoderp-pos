@@ -1,4 +1,7 @@
+import { Receipt as ReceiptIcon_ } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
+import { DocumentExpensesTab } from "@/components/DocumentExpensesTab";
+import { guardDocumentExpensesBeforePost } from "@/lib/documentExpensesApi";
 import { useRegisterScreenActions, type ScreenActionsRegistration, type ScreenFieldDef } from "@/contexts/ScreenActionsContext";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
@@ -1508,6 +1511,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
       // Auto-post immediately after save for invoices only (not quotations) — only when enabled system-wide
       if (autoPostingEnabled && isInvoice && !deferDraftNoWarehouse && j?.id && (j.status ?? "draft") === "draft") {
+        guardDocumentExpensesBeforePost("sales_invoice", Number(j.id));
         const postRes = await fetch(`${API}/api/sales/${apiPath}/${j.id}/post`, {
           method: "PATCH", headers,
         });
@@ -3310,6 +3314,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <Archive className="h-3.5 w-3.5" />أرشفة
                     </TabsTrigger>
                   )}
+                  {isInvoice && (
+                    <TabsTrigger value="expenses" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                      <ReceiptIcon_ className="h-3.5 w-3.5" />المصروفات والتكاليف
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                     <ClipboardList className="h-3.5 w-3.5" />التفاصيل
                   </TabsTrigger>
@@ -3732,6 +3741,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </CardContent>
                 </TabsContent>
                 </>
+              )}
+              {isInvoice && (
+                <TabsContent value="expenses" forceMount className="mt-0 data-[state=inactive]:hidden">
+                  <CardContent className="pt-5 pb-5">
+                    <DocumentExpensesTab documentType="sales_invoice" documentId={editId ?? persistedInvoiceIdRef.current} isRtl={isRtl} readOnly={editLock} />
+                  </CardContent>
+                </TabsContent>
               )}
               <TabsContent value="details" className="mt-0">
                 <CardContent className="pt-5 pb-5">
