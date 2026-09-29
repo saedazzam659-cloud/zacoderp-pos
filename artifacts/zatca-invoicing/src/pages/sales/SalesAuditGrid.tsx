@@ -1286,6 +1286,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     const confirmations: string[] = [];
     if (retry) confirmations.push("المزود رفض المحاولة السابقة. ستعيد إرسال الفاتورة بعد المراجعة.");
     if (setup.environment === "production") confirmations.push("سيُرسل مستند فعلي إلى بيئة الإنتاج ولا يمكن سحب الإرسال.");
+    if (taxCountry === "JO" && setup.environment === "production") {
+      confirmations.push("ملف UBL الأردني لم يُثبت قبوله رسمياً بعد؛ تابع فقط بعد مطابقة الملف مع تعليمات JoFotara.");
+    }
     if (confirmations.length && !window.confirm(`${confirmations.join("\n\n")}\n\nهل تريد المتابعة؟`)) return;
 
     setTaxSubmitBusyId(Number(invoice.id));
