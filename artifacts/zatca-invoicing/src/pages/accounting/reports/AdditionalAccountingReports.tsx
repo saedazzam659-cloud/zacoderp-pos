@@ -328,7 +328,8 @@ function getReportColumns(reportId: ReportId) {
       ["username", "المستخدم"],
       ["action", "الإجراء"],
       ["method", "الطريقة"],
-      ["path", "المسار"],
+      // Raw API routes are implementation details; the action, method,
+      // entity type, and entity ID already provide the useful audit context.
       ["entityType", "نوع الكيان"],
       ["entityId", "معرّف الكيان"],
       ["statusCode", "الحالة"],
@@ -527,7 +528,7 @@ function ReportTable({
       label,
       type: isNumeric ? "num" : "text",
       align: isAmount ? "end" : "start",
-      width: isAmount ? 145 : key === "description" ? 300 : key === "metadata" || key === "path" ? 240 : 130,
+      width: isAmount ? 145 : key === "description" ? 300 : key === "metadata" ? 240 : 130,
       totalable: isAmount,
       value: (row) => row[key] as string | number | null | undefined,
       render: (row) => {
@@ -548,7 +549,7 @@ function ReportTable({
   const exportColumns: ExportColumn[] = columns.map(([key, header]) => ({
     key,
     header,
-    width: key === "description" || key === "metadata" || key === "path" ? 32 : 18,
+    width: key === "description" || key === "metadata" ? 32 : 18,
     ...(amountFields.includes(key) ? { numFmt: moneyFormat } : {}),
   }));
   const exportRows = rows.map((row) => Object.fromEntries(columns.map(([key]) => {

@@ -42,9 +42,11 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   // ── المبيعات ──
   "sales_module",
   "sales_reports",
+  "additional_sales_reports",
   // ── المشتريات ──
   "purchases_module",
   "purchases_reports",
+  "additional_purchase_reports",
   // ── نقاط البيع ──
   "pos",
   // ── المحاسبة ──

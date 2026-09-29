@@ -2585,3 +2585,91 @@ export const GetAdditionalAccountingReportResponse = zod.object({
   rows: zod.array(zod.record(zod.string(), zod.unknown())),
   limitations: zod.array(zod.string()).optional(),
 });
+
+/**
+ * @summary Read one explicitly enabled additional sales report
+ */
+export const GetAdditionalSalesReportParams = zod.object({
+  reportId: zod.enum([
+    "sales_by_representative",
+    "sales_discounts",
+    "inactive_customers",
+    "sales_by_warehouse",
+    "invoice_status",
+    "returns_detail",
+  ]),
+});
+
+export const GetAdditionalSalesReportQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+  customerId: zod.coerce.number().min(1).optional(),
+  itemId: zod.coerce.number().min(1).optional(),
+  salesRepId: zod.coerce.number().min(1).optional(),
+  warehouseId: zod.coerce.number().min(1).optional(),
+  fromDate: zod.date().optional(),
+  toDate: zod.date().optional(),
+  status: zod.coerce.string().optional(),
+});
+
+export const GetAdditionalSalesReportResponse = zod.object({
+  reportId: zod.enum([
+    "sales_by_representative",
+    "sales_discounts",
+    "inactive_customers",
+    "sales_by_warehouse",
+    "invoice_status",
+    "returns_detail",
+  ]),
+  rows: zod.array(zod.record(zod.string(), zod.unknown())),
+  limitations: zod.array(zod.string()).optional(),
+});
+
+/**
+ * @summary Read one explicitly enabled additional purchasing report
+ */
+export const GetAdditionalPurchaseReportParams = zod.object({
+  reportId: zod.enum([
+    "purchase_analysis",
+    "purchase_cost_summary",
+    "purchase_price_history",
+    "purchase_discounts",
+    "inactive_suppliers",
+    "purchases_by_location",
+    "invoice_status",
+    "payment_methods",
+    "item_movement",
+    "returns_detail",
+  ]),
+});
+
+export const GetAdditionalPurchaseReportQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+  supplierId: zod.coerce.number().min(1).optional(),
+  itemId: zod.coerce.number().min(1).optional(),
+  itemGroupId: zod.coerce.number().min(1).optional(),
+  warehouseId: zod.coerce.number().min(1).optional(),
+  fromDate: zod.date().optional(),
+  toDate: zod.date().optional(),
+  paymentType: zod.coerce.string().optional(),
+  status: zod.coerce.string().optional(),
+  groupBy: zod.enum(["day", "week", "month", "quarter", "year"]).optional(),
+});
+
+export const GetAdditionalPurchaseReportResponse = zod.object({
+  reportId: zod.enum([
+    "purchase_analysis",
+    "purchase_cost_summary",
+    "purchase_price_history",
+    "purchase_discounts",
+    "inactive_suppliers",
+    "purchases_by_location",
+    "invoice_status",
+    "payment_methods",
+    "item_movement",
+    "returns_detail",
+  ]),
+  rows: zod.array(zod.record(zod.string(), zod.unknown())),
+  limitations: zod.array(zod.string()).optional(),
+});

@@ -30,9 +30,11 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "sales_module",       label: "العملاء والمبيعات",          section: "المبيعات" },
   { key: "sales_reports",      label: "تقارير العملاء والمبيعات",   section: "المبيعات" },
+  { key: "additional_sales_reports", label: "تقارير المبيعات الإضافية", section: "المبيعات" },
 
   { key: "purchases_module",   label: "الموردون والمشتريات",        section: "المشتريات" },
   { key: "purchases_reports",  label: "تقارير الموردين والمشتريات", section: "المشتريات" },
+  { key: "additional_purchase_reports", label: "تقارير المشتريات الإضافية", section: "المشتريات" },
 
   { key: "pos",                label: "نقاط البيع",                  section: "نقاط البيع" },
 
@@ -169,6 +171,34 @@ export const ADDITIONAL_ACCOUNTING_REPORTS = [
 export type AdditionalAccountingReportId =
   typeof ADDITIONAL_ACCOUNTING_REPORTS[number]["id"];
 
+export const ADDITIONAL_SALES_REPORTS = [
+  { id: "sales_by_representative", label: "مبيعات مندوبي المبيعات" },
+  { id: "sales_discounts", label: "تحليل خصومات المبيعات" },
+  { id: "inactive_customers", label: "العملاء غير النشطين" },
+  { id: "sales_by_warehouse", label: "المبيعات حسب المستودع" },
+  { id: "invoice_status", label: "الفواتير حسب الحالة" },
+  { id: "returns_detail", label: "تفاصيل مرتجعات المبيعات" },
+] as const;
+
+export type AdditionalSalesReportId =
+  typeof ADDITIONAL_SALES_REPORTS[number]["id"];
+
+export const ADDITIONAL_PURCHASE_REPORTS = [
+  { id: "purchase_analysis", label: "تحليل المشتريات" },
+  { id: "purchase_cost_summary", label: "تحليل تكلفة الشراء" },
+  { id: "purchase_price_history", label: "تاريخ أسعار الشراء" },
+  { id: "purchase_discounts", label: "خصومات المشتريات" },
+  { id: "inactive_suppliers", label: "الموردون غير النشطين" },
+  { id: "purchases_by_location", label: "المشتريات حسب الفرع والمستودع" },
+  { id: "invoice_status", label: "فواتير المشتريات حسب الحالة" },
+  { id: "payment_methods", label: "طرق دفع المشتريات" },
+  { id: "item_movement", label: "حركة شراء الأصناف" },
+  { id: "returns_detail", label: "تفاصيل مرتجعات المشتريات" },
+] as const;
+
+export type AdditionalPurchaseReportId =
+  typeof ADDITIONAL_PURCHASE_REPORTS[number]["id"];
+
 // ─────────────────────────────────────────────────────────────────────
 // Reverse mapping: menu permission key → high-level billable module key
 // (the catalog managed in /admin/modules). When an industry template
@@ -193,8 +223,10 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   sister_companies:   null,
   sales_module:       "sales",
   sales_reports:      "sales",
+  additional_sales_reports: "sales",
   purchases_module:   "purchasing",
   purchases_reports:  "purchasing",
+  additional_purchase_reports: "purchasing",
   pos:                "pos",
   cash_module:        "cash",
   cash_reports:       "cash",
@@ -340,7 +372,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
     ],
   },
   {
-    key: "sales", label: "العملاء والمبيعات", emoji: "🛒", moduleKeys: ["sales_module", "sales_reports"],
+    key: "sales", label: "العملاء والمبيعات", emoji: "🛒", moduleKeys: ["sales_module", "sales_reports", "additional_sales_reports"],
     screens: [
       { path: "/customers", label: "العملاء" },
       { path: "/sales/customer-groups", label: "مجموعات العملاء" },
@@ -367,10 +399,11 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/sales/reports/daily-detailed", label: "تقرير مبيعات تفصيلي يومي", report: true },
       { path: "/sales/reports/profitability", label: "تقرير الربحية", report: true },
       { path: "/sales/reports/invoice-payment-status", label: "حالة سداد فواتير المبيعات", report: true },
+      { path: "/sales/reports/additional", label: "تقارير المبيعات الإضافية", report: true },
     ],
   },
   {
-    key: "purchasing", label: "الموردون والمشتريات", emoji: "🚚", moduleKeys: ["purchases_module", "purchases_reports"],
+    key: "purchasing", label: "الموردون والمشتريات", emoji: "🚚", moduleKeys: ["purchases_module", "purchases_reports", "additional_purchase_reports"],
     screens: [
       { path: "/suppliers", label: "الموردون" },
       { path: "/purchasing/supplier-groups", label: "مجموعات الموردين" },
@@ -395,6 +428,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/purchasing/reports/lc-statement", label: "كشف حساب الاعتمادات", report: true },
       { path: "/purchasing/reports/invoice-payment-status", label: "حالة سداد فواتير المشتريات", report: true },
       { path: "/purchasing/reports/purchases-vat-register", label: "سجل المشتريات المحلية بضريبة القيمة المضافة", report: true },
+      { path: "/purchasing/reports/additional", label: "تقارير المشتريات الإضافية", report: true },
     ],
   },
   {

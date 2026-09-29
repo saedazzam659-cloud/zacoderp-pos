@@ -27,6 +27,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   sales_returns: "sales_module",
   sales_settlements: "sales_module",
   sales_reports: "sales_reports",
+  additional_sales_reports: "additional_sales_reports",
   customer_notes: "sales_module",
   // Purchasing / Suppliers
   suppliers: "purchases_module",
@@ -34,6 +35,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   purchase_returns: "purchases_module",
   supplier_settlements: "purchases_module",
   supplier_notes: "purchases_module",
+  additional_purchase_reports: "additional_purchase_reports",
   // Cash & Banks
   cash_boxes: "cash_module",
   bank_accounts: "cash_module",
@@ -157,6 +159,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
   "internal_control", "egypt_tax", "jordan_tax", "additional_accounting_reports",
+  "additional_sales_reports", "additional_purchase_reports",
 ]);
 
 // FROZEN legacy baseline of gate keys that keep the old "missing = allowed"

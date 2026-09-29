@@ -45,6 +45,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   sales_returns: "sales_module",
   sales_settlements: "sales_module",
   sales_reports: "sales_reports",
+  additional_sales_reports: "additional_sales_reports",
   customer_notes: "sales_module",
   // Purchasing / Suppliers
   suppliers: "purchases_module",
@@ -52,6 +53,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   purchase_returns: "purchases_module",
   supplier_settlements: "purchases_module",
   supplier_notes: "purchases_module",
+  additional_purchase_reports: "additional_purchase_reports",
   // Cash & Banks
   cash_boxes: "cash_module",
   bank_accounts: "cash_module",
@@ -185,6 +187,8 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing", "internal_control",
   "additional_accounting_reports",
+  "additional_sales_reports",
+  "additional_purchase_reports",
 ]);
 
 // FROZEN legacy baseline (snapshot 2026-08): gate keys that keep the old
@@ -292,6 +296,33 @@ export function requireAdditionalAccountingReport(reportId: string) {
     }
     const menuPermissions = u.companyMenuPermissions;
     if (!menuPermissions || menuPermissions[`aar:${reportId}`] !== true) {
+      res.status(403).json({ error: "هذا التقرير غير مفعل" });
+      return;
+    }
+    next();
+  };
+}
+
+/**
+ * Guard for the additive sales and purchasing report catalogs.
+ * The parent switch and each report's switch are independent and default off.
+ */
+export function requireAdditionalOperationalReport(domain: "sales" | "purchases", reportId: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const u = req.authUser;
+    if (!u) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const module = domain === "sales" ? "sales_reports" : "purchase_invoices";
+    const gate = domain === "sales" ? "additional_sales_reports" : "additional_purchase_reports";
+    const key = `${domain === "sales" ? "asr" : "apr"}:${reportId}`;
+    if (!canAccessModule(u, module, "view")) {
+      res.status(403).json({ error: "صلاحيات غير كافية للوصول إلى التقارير" });
+      return;
+    }
+    if (!companyAllowsModule(u, gate)) {
+      res.status(403).json({ error: "التقارير الإضافية غير مفعلة" });
+      return;
+    }
+    if (u.companyMenuPermissions?.[key] !== true) {
       res.status(403).json({ error: "هذا التقرير غير مفعل" });
       return;
     }

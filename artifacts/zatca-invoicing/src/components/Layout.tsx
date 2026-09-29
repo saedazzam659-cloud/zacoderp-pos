@@ -1135,6 +1135,7 @@ const salesReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.paymentMixReport",   href: "/sales/reports/payment-mix",        icon: FileText, permKey: "sales_reports" },
   { nameKey: "navExtra.dailyDetailedReport",href: "/sales/reports/daily-detailed",     icon: FileText, permKey: "sales_reports" },
   { nameKey: "navExtra.profitabilityReport",href: "/sales/reports/profitability",      icon: TrendingUp, permKey: "sales_reports" },
+  { nameKey: "تقارير المبيعات الإضافية", href: "/sales/reports/additional", icon: FileSpreadsheet, permKey: "sales_reports", companyGateKey: "additional_sales_reports" },
 ];
 const salesReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/sales/reports", icon: BarChart2, permKey: "sales_reports" };
 
@@ -1194,6 +1195,7 @@ const purchasingReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.topSuppliers",           href: "/purchasing/reports/top-suppliers",         icon: FileText, permKey: "suppliers" },
   { nameKey: "navExtra.purchaseReturnsReport",  href: "/purchasing/reports/returns",               icon: FileText, permKey: "purchase_returns" },
   { nameKey: "navExtra.lcStatement",            href: "/purchasing/reports/lc-statement",          icon: FileText, permKey: "purchase_invoices" },
+  { nameKey: "تقارير المشتريات الإضافية", href: "/purchasing/reports/additional", icon: FileSpreadsheet, permKey: "purchase_invoices", companyGateKey: "additional_purchase_reports" },
 ];
 const purchasingReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/purchasing/reports", icon: BarChart2 };
 

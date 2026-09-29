@@ -33,6 +33,50 @@ export interface AdditionalAccountingReport {
   limitations?: string[];
 }
 
+export type AdditionalSalesReportReportId =
+  (typeof AdditionalSalesReportReportId)[keyof typeof AdditionalSalesReportReportId];
+
+export const AdditionalSalesReportReportId = {
+  sales_by_representative: "sales_by_representative",
+  sales_discounts: "sales_discounts",
+  inactive_customers: "inactive_customers",
+  sales_by_warehouse: "sales_by_warehouse",
+  invoice_status: "invoice_status",
+  returns_detail: "returns_detail",
+} as const;
+
+export interface AdditionalOperationalReportRow {
+  [key: string]: unknown;
+}
+
+export interface AdditionalSalesReport {
+  reportId: AdditionalSalesReportReportId;
+  rows: AdditionalOperationalReportRow[];
+  limitations?: string[];
+}
+
+export type AdditionalPurchaseReportReportId =
+  (typeof AdditionalPurchaseReportReportId)[keyof typeof AdditionalPurchaseReportReportId];
+
+export const AdditionalPurchaseReportReportId = {
+  purchase_analysis: "purchase_analysis",
+  purchase_cost_summary: "purchase_cost_summary",
+  purchase_price_history: "purchase_price_history",
+  purchase_discounts: "purchase_discounts",
+  inactive_suppliers: "inactive_suppliers",
+  purchases_by_location: "purchases_by_location",
+  invoice_status: "invoice_status",
+  payment_methods: "payment_methods",
+  item_movement: "item_movement",
+  returns_detail: "returns_detail",
+} as const;
+
+export interface AdditionalPurchaseReport {
+  reportId: AdditionalPurchaseReportReportId;
+  rows: AdditionalOperationalReportRow[];
+  limitations?: string[];
+}
+
 export type TaxIntegrationSetupCountry =
   (typeof TaxIntegrationSetupCountry)[keyof typeof TaxIntegrationSetupCountry];
 
@@ -1170,3 +1214,76 @@ export type GetAdditionalAccountingReportParams = {
   comparisonToDate?: string;
   includeZero?: boolean;
 };
+
+export type GetAdditionalSalesReportParams = {
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
+  /**
+   * @minimum 1
+   */
+  customerId?: number;
+  /**
+   * @minimum 1
+   */
+  itemId?: number;
+  /**
+   * @minimum 1
+   */
+  salesRepId?: number;
+  /**
+   * @minimum 1
+   */
+  warehouseId?: number;
+  fromDate?: string;
+  toDate?: string;
+  status?: string;
+};
+
+export type GetAdditionalPurchaseReportParams = {
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
+  /**
+   * @minimum 1
+   */
+  supplierId?: number;
+  /**
+   * @minimum 1
+   */
+  itemId?: number;
+  /**
+   * @minimum 1
+   */
+  itemGroupId?: number;
+  /**
+   * @minimum 1
+   */
+  warehouseId?: number;
+  fromDate?: string;
+  toDate?: string;
+  paymentType?: string;
+  status?: string;
+  groupBy?: GetAdditionalPurchaseReportGroupBy;
+};
+
+export type GetAdditionalPurchaseReportGroupBy =
+  (typeof GetAdditionalPurchaseReportGroupBy)[keyof typeof GetAdditionalPurchaseReportGroupBy];
+
+export const GetAdditionalPurchaseReportGroupBy = {
+  day: "day",
+  week: "week",
+  month: "month",
+  quarter: "quarter",
+  year: "year",
+} as const;

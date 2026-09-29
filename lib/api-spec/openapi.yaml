@@ -1259,6 +1259,128 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /additional-sales-reports/{reportId}:
+    get:
+      operationId: getAdditionalSalesReport
+      tags: [sales]
+      summary: Read one explicitly enabled additional sales report
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [sales_by_representative, sales_discounts, inactive_customers, sales_by_warehouse, invoice_status, returns_detail]
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: customerId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: itemId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: salesRepId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: warehouseId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: fromDate
+          in: query
+          schema: { type: string, format: date }
+        - name: toDate
+          in: query
+          schema: { type: string, format: date }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Report rows based on persisted sales documents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdditionalSalesReport"
+        "403":
+          description: Company report module or individual report is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown report ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /additional-purchase-reports/{reportId}:
+    get:
+      operationId: getAdditionalPurchaseReport
+      tags: [purchasing]
+      summary: Read one explicitly enabled additional purchasing report
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [purchase_analysis, purchase_cost_summary, purchase_price_history, purchase_discounts, inactive_suppliers, purchases_by_location, invoice_status, payment_methods, item_movement, returns_detail]
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: supplierId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: itemId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: itemGroupId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: warehouseId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: fromDate
+          in: query
+          schema: { type: string, format: date }
+        - name: toDate
+          in: query
+          schema: { type: string, format: date }
+        - name: paymentType
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: groupBy
+          in: query
+          schema: { type: string, enum: [day, week, month, quarter, year] }
+      responses:
+        "200":
+          description: Report rows based on persisted purchase and return documents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdditionalPurchaseReport"
+        "403":
+          description: Company report module or individual report is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown report ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
@@ -1290,6 +1412,35 @@ components:
           type: array
           items: { type: string }
     AdditionalAccountingReportRow:
+      type: object
+      additionalProperties: true
+    AdditionalSalesReport:
+      type: object
+      required: [reportId, rows]
+      properties:
+        reportId:
+          type: string
+          enum: [sales_by_representative, sales_discounts, inactive_customers, sales_by_warehouse, invoice_status, returns_detail]
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/AdditionalOperationalReportRow" }
+        limitations:
+          type: array
+          items: { type: string }
+    AdditionalPurchaseReport:
+      type: object
+      required: [reportId, rows]
+      properties:
+        reportId:
+          type: string
+          enum: [purchase_analysis, purchase_cost_summary, purchase_price_history, purchase_discounts, inactive_suppliers, purchases_by_location, invoice_status, payment_methods, item_movement, returns_detail]
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/AdditionalOperationalReportRow" }
+        limitations:
+          type: array
+          items: { type: string }
+    AdditionalOperationalReportRow:
       type: object
       additionalProperties: true
     TaxIntegrationSetup:

@@ -18,6 +18,8 @@ import type {
 
 import type {
   AdditionalAccountingReport,
+  AdditionalPurchaseReport,
+  AdditionalSalesReport,
   Company,
   ContractingContractorOption,
   ContractingGuaranteeOptions,
@@ -33,6 +35,8 @@ import type {
   DashboardSummary,
   ErrorResponse,
   GetAdditionalAccountingReportParams,
+  GetAdditionalPurchaseReportParams,
+  GetAdditionalSalesReportParams,
   GetDashboardSummaryParams,
   GetMonthlyStatsParams,
   GetRecentInvoicesParams,
@@ -5532,6 +5536,331 @@ export function useGetAdditionalAccountingReport<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetAdditionalAccountingReportQueryOptions(
+    reportId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read one explicitly enabled additional sales report
+ */
+export const getGetAdditionalSalesReportUrl = (
+  reportId:
+    | "sales_by_representative"
+    | "sales_discounts"
+    | "inactive_customers"
+    | "sales_by_warehouse"
+    | "invoice_status"
+    | "returns_detail",
+  params?: GetAdditionalSalesReportParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/additional-sales-reports/${reportId}?${stringifiedParams}`
+    : `/api/additional-sales-reports/${reportId}`;
+};
+
+export const getAdditionalSalesReport = async (
+  reportId:
+    | "sales_by_representative"
+    | "sales_discounts"
+    | "inactive_customers"
+    | "sales_by_warehouse"
+    | "invoice_status"
+    | "returns_detail",
+  params?: GetAdditionalSalesReportParams,
+  options?: RequestInit,
+): Promise<AdditionalSalesReport> => {
+  return customFetch<AdditionalSalesReport>(
+    getGetAdditionalSalesReportUrl(reportId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAdditionalSalesReportQueryKey = (
+  reportId:
+    | "sales_by_representative"
+    | "sales_discounts"
+    | "inactive_customers"
+    | "sales_by_warehouse"
+    | "invoice_status"
+    | "returns_detail",
+  params?: GetAdditionalSalesReportParams,
+) => {
+  return [
+    `/api/additional-sales-reports/${reportId}`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAdditionalSalesReportQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAdditionalSalesReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  reportId:
+    | "sales_by_representative"
+    | "sales_discounts"
+    | "inactive_customers"
+    | "sales_by_warehouse"
+    | "invoice_status"
+    | "returns_detail",
+  params?: GetAdditionalSalesReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAdditionalSalesReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetAdditionalSalesReportQueryKey(reportId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAdditionalSalesReport>>
+  > = ({ signal }) =>
+    getAdditionalSalesReport(reportId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!reportId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAdditionalSalesReport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAdditionalSalesReportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAdditionalSalesReport>>
+>;
+export type GetAdditionalSalesReportQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read one explicitly enabled additional sales report
+ */
+
+export function useGetAdditionalSalesReport<
+  TData = Awaited<ReturnType<typeof getAdditionalSalesReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  reportId:
+    | "sales_by_representative"
+    | "sales_discounts"
+    | "inactive_customers"
+    | "sales_by_warehouse"
+    | "invoice_status"
+    | "returns_detail",
+  params?: GetAdditionalSalesReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAdditionalSalesReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAdditionalSalesReportQueryOptions(
+    reportId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read one explicitly enabled additional purchasing report
+ */
+export const getGetAdditionalPurchaseReportUrl = (
+  reportId:
+    | "purchase_analysis"
+    | "purchase_cost_summary"
+    | "purchase_price_history"
+    | "purchase_discounts"
+    | "inactive_suppliers"
+    | "purchases_by_location"
+    | "invoice_status"
+    | "payment_methods"
+    | "item_movement"
+    | "returns_detail",
+  params?: GetAdditionalPurchaseReportParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/additional-purchase-reports/${reportId}?${stringifiedParams}`
+    : `/api/additional-purchase-reports/${reportId}`;
+};
+
+export const getAdditionalPurchaseReport = async (
+  reportId:
+    | "purchase_analysis"
+    | "purchase_cost_summary"
+    | "purchase_price_history"
+    | "purchase_discounts"
+    | "inactive_suppliers"
+    | "purchases_by_location"
+    | "invoice_status"
+    | "payment_methods"
+    | "item_movement"
+    | "returns_detail",
+  params?: GetAdditionalPurchaseReportParams,
+  options?: RequestInit,
+): Promise<AdditionalPurchaseReport> => {
+  return customFetch<AdditionalPurchaseReport>(
+    getGetAdditionalPurchaseReportUrl(reportId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAdditionalPurchaseReportQueryKey = (
+  reportId:
+    | "purchase_analysis"
+    | "purchase_cost_summary"
+    | "purchase_price_history"
+    | "purchase_discounts"
+    | "inactive_suppliers"
+    | "purchases_by_location"
+    | "invoice_status"
+    | "payment_methods"
+    | "item_movement"
+    | "returns_detail",
+  params?: GetAdditionalPurchaseReportParams,
+) => {
+  return [
+    `/api/additional-purchase-reports/${reportId}`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAdditionalPurchaseReportQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAdditionalPurchaseReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  reportId:
+    | "purchase_analysis"
+    | "purchase_cost_summary"
+    | "purchase_price_history"
+    | "purchase_discounts"
+    | "inactive_suppliers"
+    | "purchases_by_location"
+    | "invoice_status"
+    | "payment_methods"
+    | "item_movement"
+    | "returns_detail",
+  params?: GetAdditionalPurchaseReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAdditionalPurchaseReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetAdditionalPurchaseReportQueryKey(reportId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAdditionalPurchaseReport>>
+  > = ({ signal }) =>
+    getAdditionalPurchaseReport(reportId, params, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!reportId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAdditionalPurchaseReport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAdditionalPurchaseReportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAdditionalPurchaseReport>>
+>;
+export type GetAdditionalPurchaseReportQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read one explicitly enabled additional purchasing report
+ */
+
+export function useGetAdditionalPurchaseReport<
+  TData = Awaited<ReturnType<typeof getAdditionalPurchaseReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  reportId:
+    | "purchase_analysis"
+    | "purchase_cost_summary"
+    | "purchase_price_history"
+    | "purchase_discounts"
+    | "inactive_suppliers"
+    | "purchases_by_location"
+    | "invoice_status"
+    | "payment_methods"
+    | "item_movement"
+    | "returns_detail",
+  params?: GetAdditionalPurchaseReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAdditionalPurchaseReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAdditionalPurchaseReportQueryOptions(
     reportId,
     params,
     options,
