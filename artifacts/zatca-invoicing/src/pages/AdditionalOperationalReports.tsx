@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  CalendarDays, Check, ChevronDown, Download, FileSearch, Filter, Loader2,
-  Printer, Search, ShieldCheck, Table2, X,
+  CalendarDays, Check, ChevronDown, FileSearch, Filter, Loader2,
+  Search, ShieldCheck, X,
 } from "lucide-react";
 import * as apiClient from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,6 +12,7 @@ import { DateField } from "@/components/ui/date-field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { ADDITIONAL_SALES_REPORTS, ADDITIONAL_PURCHASE_REPORTS } from "@/lib/menuItems";
+import AdditionalOperationalReportGrid from "@/components/AdditionalOperationalReportGrid";
 
 type Domain = "sales" | "purchases";
 type Report = { id: string; label: string; filters: string[] };
@@ -68,8 +69,10 @@ const fieldLabels: Record<string, string> = {
   branchId: "الفرع", warehouseId: "المستودع", warehouseName: "المستودع",
   salesRepId: "مندوب المبيعات", salesRepName: "مندوب المبيعات", status: "الحالة",
   invoiceStatus: "حالة الفاتورة", paymentType: "طريقة الدفع", value: "القيمة",
-  total: "الإجمالي", totalAmount: "إجمالي المستند", net: "الصافي", gross: "الإجمالي قبل الخصم",
-  sales: "المبيعات", returns: "المرتجعات", postedReturns: "المرتجعات المرحلة",
+  total: "الإجمالي", totalAmount: "إجمالي المستند", totalValue: "إجمالي القيمة",
+  invoiceValue: "قيمة الفاتورة", net: "الصافي", gross: "الإجمالي قبل الخصم",
+  sales: "المبيعات", returns: "المرتجعات", discounts: "إجمالي الخصومات",
+  postedReturns: "المرتجعات المرحلة",
   discount: "الخصم", headerDiscount: "خصم رأس الفاتورة",
   lineDiscount: "خصم السطور", lineDiscountAmount: "خصم السطر",
   lineDiscountPercent: "نسبة خصم السطر", vat: "الضريبة", headerVat: "ضريبة الفاتورة",
@@ -83,7 +86,7 @@ const fieldLabels: Record<string, string> = {
   lastDate: "تاريخ آخر فاتورة", lastValue: "قيمة آخر فاتورة", historicalValue: "القيمة التاريخية",
   originalInvoiceId: "الفاتورة الأصلية", originalDocumentNumber: "رقم الفاتورة الأصلية",
   notes: "ملاحظات", headerNotes: "ملاحظات المستند", lineNotes: "ملاحظات السطر",
-  source: "المصدر", createdById: "أُنشئت بواسطة", currencyCode: "العملة",
+  source: "المصدر", createdById: "معرّف المنشئ", currencyCode: "العملة",
   unitPrice: "سعر الوحدة", finalCost: "التكلفة المحفوظة", averagePrice: "متوسط السعر",
   minPrice: "أقل سعر", maxPrice: "أعلى سعر", lastPrice: "آخر سعر",
   lineValue: "قيمة السطر", lineTotal: "إجمالي السطر", period: "الفترة",
@@ -119,27 +122,6 @@ function positiveId(value: string): number | undefined {
   return value.trim() && Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function cleanCell(value: unknown): string {
-  const text = value == null ? "" : String(value);
-  return /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
-}
-
-function csvCell(value: unknown): string {
-  const text = typeof value === "number" && Number.isFinite(value) ? String(value) : cleanCell(value);
-  return `"${text.replaceAll('"', '""')}"`;
-}
-
-function displayValue(value: unknown): string {
-  if (value == null || value === "") return "—";
-  if (typeof value === "number") return new Intl.NumberFormat("ar-EG", { maximumFractionDigits: 3 }).format(value);
-  return String(value);
-}
-
-function titleFor(key: string): string {
-  if (fieldLabels[key]) return fieldLabels[key];
-  return key.replace(/([A-Z])/g, " $1").replace(/^./, value => value.toUpperCase());
-}
-
 export default function AdditionalOperationalReportsPage({ domain }: { domain: Domain }) {
   const { user, token, actingCompanyId } = useAuth() as any;
   const definitions = domain === "sales" ? salesReports : purchaseReports;
@@ -158,9 +140,6 @@ export default function AdditionalOperationalReportsPage({ domain }: { domain: D
   const [toDate, setToDate] = useState(() => localDate(new Date()));
   const [draftFilters, setDraftFilters] = useState<Record<string, string>>({});
   const [applied, setApplied] = useState<{ id: string; params: ReportParams } | null>(null);
-  const [gridSearch, setGridSearch] = useState("");
-  const [sort, setSort] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
-  const [page, setPage] = useState(0);
 
   useEffect(() => {
     if (!allowedReports.some(report => report.id === selectedId)) {
@@ -183,32 +162,6 @@ export default function AdditionalOperationalReportsPage({ domain }: { domain: D
   const query = domain === "sales" ? salesQuery : purchaseQuery;
   const rows = (query.data?.rows ?? []) as Record<string, unknown>[];
 
-  const columns = useMemo(() => {
-    const first = rows[0];
-    return first ? Object.keys(first).filter(key => first[key] !== undefined && !key.startsWith("_")) : [];
-  }, [rows]);
-  const visibleRows = useMemo(() => {
-    const needle = gridSearch.trim().toLocaleLowerCase();
-    let result = needle
-      ? rows.filter(row => Object.values(row).some(value => String(value ?? "").toLocaleLowerCase().includes(needle)))
-      : [...rows];
-    if (sort) {
-      const key = sort.key;
-      result.sort((a, b) => {
-        const av = a[key], bv = b[key];
-        const an = Number(av), bn = Number(bv);
-        const cmp = Number.isFinite(an) && Number.isFinite(bn)
-          ? an - bn
-          : String(av ?? "").localeCompare(String(bv ?? ""), "ar");
-        return sort.direction === "asc" ? cmp : -cmp;
-      });
-    }
-    return result;
-  }, [gridSearch, rows, sort]);
-  const pageSize = 25;
-  const pageCount = Math.max(1, Math.ceil(visibleRows.length / pageSize));
-  const pageRows = visibleRows.slice(page * pageSize, (page + 1) * pageSize);
-
   const buildParams = (): ReportParams => {
     const numericKeys = ["branchId", "customerId", "supplierId", "itemId", "itemGroupId", "salesRepId", "warehouseId"];
     const result: ReportParams = {
@@ -226,24 +179,7 @@ export default function AdditionalOperationalReportsPage({ domain }: { domain: D
 
   const applyFilters = () => {
     if (!selected) return;
-    setPage(0);
-    setGridSearch("");
     setApplied({ id: selected.id, params: buildParams() });
-  };
-
-  const downloadCsv = () => {
-    if (!rows.length || !columns.length) return;
-    const lines = [
-      columns.map(key => csvCell(titleFor(key))).join(","),
-      ...visibleRows.map(row => columns.map(key => csvCell(row[key])).join(",")),
-    ];
-    const blob = new Blob(["\uFEFF", lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${domain === "sales" ? "sales" : "purchases"}-${selected?.id ?? "report"}-${localDate(new Date())}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   if (allowedReports.length === 0) {
@@ -312,7 +248,6 @@ export default function AdditionalOperationalReportsPage({ domain }: { domain: D
                           setSelectedId(report.id);
                           setApplied(null);
                           setSelectorOpen(false);
-                          setPage(0);
                         }}>
                           <Check className={cn("ms-2 h-4 w-4", selected?.id === report.id ? "opacity-100" : "opacity-0")} />
                           {report.label}
@@ -381,88 +316,39 @@ export default function AdditionalOperationalReportsPage({ domain }: { domain: D
           </div>
         )}
 
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center">
-            <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-              <Table2 className="h-4 w-4 text-teal-700" />
-              النتائج
-              {queryEnabled && <span className="text-xs font-normal text-slate-400">({visibleRows.length})</span>}
+        {query.isLoading && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="mb-4 flex items-center gap-3 text-sm font-bold text-slate-700">
+              <Loader2 className="h-5 w-5 animate-spin text-teal-700" /> جارٍ تحميل التقرير...
             </div>
-            <div className="no-print flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <Search className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 text-slate-400" />
-                <Input value={gridSearch} onChange={event => { setGridSearch(event.target.value); setPage(0); }}
-                  placeholder="بحث داخل النتائج..." className="h-9 w-full min-w-[210px] pe-9" data-testid="search-additional-report-rows" />
-              </div>
-              <Button variant="outline" size="sm" onClick={downloadCsv} disabled={!rows.length} className="gap-2">
-                <Download className="h-4 w-4" /> تصدير CSV
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!rows.length} className="gap-2">
-                <Printer className="h-4 w-4" /> طباعة
-              </Button>
-            </div>
+            <div className="space-y-3">{[1, 2, 3, 4].map(item => <div key={item} className="h-10 animate-pulse rounded-lg bg-slate-100" />)}</div>
           </div>
-          {query.isLoading ? (
-            <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-slate-500">
-              <Loader2 className="h-5 w-5 animate-spin" /> جارٍ تحميل التقرير...
-            </div>
-          ) : !applied ? (
-            <div className="flex min-h-48 flex-col items-center justify-center gap-2 text-sm text-slate-500">
-              <Search className="h-6 w-6 text-slate-300" /> حدّد الفلاتر ثم اختر «عرض التقرير».
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="flex min-h-48 flex-col items-center justify-center gap-2 text-sm text-slate-500">
-              <X className="h-6 w-6 text-slate-300" /> لا توجد نتائج للفلاتر المحددة.
-            </div>
-          ) : (
-            <>
-              <div className="screen-results max-h-[65vh] overflow-auto">
-                <table className="w-full min-w-max border-collapse text-sm">
-                  <thead className="sticky top-0 z-10 bg-slate-50 text-right text-xs text-slate-600">
-                    <tr>{columns.map(key => (
-                      <th key={key} className="whitespace-nowrap border-b border-slate-200 px-3 py-3 font-bold">
-                        <button className="inline-flex items-center gap-1 hover:text-teal-800" onClick={() => {
-                          setSort(old => old?.key === key ? { key, direction: old.direction === "asc" ? "desc" : "asc" } : { key, direction: "asc" });
-                        }}>
-                          {titleFor(key)} {sort?.key === key ? (sort.direction === "asc" ? "↑" : "↓") : null}
-                        </button>
-                      </th>
-                    ))}</tr>
-                  </thead>
-                  <tbody>
-                    {pageRows.map((row, rowIndex) => (
-                      <tr key={rowIndex} className="border-b border-slate-100 odd:bg-white even:bg-slate-50/50 hover:bg-teal-50/40">
-                        {columns.map(key => (
-                          <td key={key} className="whitespace-nowrap px-3 py-2.5 text-slate-700">{displayValue(row[key])}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="print-results hidden">
-                <table className="w-full border-collapse text-xs">
-                  <thead>
-                    <tr>{columns.map(key => <th key={key} className="border px-2 py-1 text-right">{titleFor(key)}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {visibleRows.map((row, rowIndex) => (
-                      <tr key={rowIndex}>{columns.map(key => <td key={key} className="border px-2 py-1">{displayValue(row[key])}</td>)}</tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="no-print flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-                <span>عرض {visibleRows.length ? page * pageSize + 1 : 0}–{Math.min((page + 1) * pageSize, visibleRows.length)} من {visibleRows.length}</span>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage(value => value - 1)}>السابق</Button>
-                  <Button size="sm" variant="outline" disabled={page + 1 >= pageCount} onClick={() => setPage(value => value + 1)}>التالي</Button>
-                </div>
-              </div>
-            </>
-          )}
-        </section>
-        <style>{`@media print { .no-print { display: none !important; } .screen-results { display: none !important; } .print-results { display: block !important; } main { background: white !important; padding: 0 !important; } }`}</style>
+        )}
+        {!query.isLoading && !query.isError && !applied && (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">
+            <Search className="mx-auto h-7 w-7 text-slate-300" />
+            <p className="mt-3">حدّد الفلاتر ثم اختر «عرض التقرير».</p>
+          </div>
+        )}
+        {!query.isLoading && !query.isError && applied && rows.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">
+            <X className="mx-auto h-7 w-7 text-slate-300" />
+            <p className="mt-3">لا توجد نتائج للفلاتر المحددة.</p>
+          </div>
+        )}
+        {!query.isLoading && !query.isError && applied && rows.length > 0 && selected && (
+          <AdditionalOperationalReportGrid
+            key={`${domain}:${selected.id}:${JSON.stringify(applied.params)}`}
+            domain={domain}
+            reportId={selected.id}
+            reportTitle={selected.label}
+            companyId={typeof companyId === "number" ? companyId : undefined}
+            fromDate={String(applied.params.fromDate ?? "")}
+            toDate={String(applied.params.toDate ?? "")}
+            rows={rows}
+            labels={fieldLabels}
+          />
+        )}
       </div>
     </main>
   );
