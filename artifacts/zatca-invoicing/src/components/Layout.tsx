@@ -64,7 +64,7 @@ import SessionIndicator from "@/components/SessionIndicator";
 import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
-type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permKey?: string;
+type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permKey?: string; companyGateKey?: string;
   /** Country-specific entries are only visible for the matching tenant. */
   country?: "EG" | "JO";
   /** When true, hide this entry from non-admin users even if they were granted the matching permission.
@@ -101,6 +101,7 @@ function navItemAllowed(item: NavDef, user: any): boolean {
   if (item.country && String(user.company?.country ?? "").toUpperCase() !== item.country) return false;
   // Company-level gate — applies to admin AND regular users (not superadmin).
   if (!companyAllowsModule(user, item.permKey)) return false;
+  if (item.companyGateKey && !companyAllowsModule(user, item.companyGateKey)) return false;
   // Per-SCREEN visibility overlay (nav:<path>) — also applies to admin AND
   // regular users (not superadmin). Default-on when absent, so existing
   // tenants are unaffected; a SuperAdmin hiding a single screen sets
@@ -593,6 +594,7 @@ const reportsSubNav: NavDef[] = [
   { nameKey: "nav.forecastIncomeStatement", href: "/accounting/reports/forecast-income-statement", icon: Sparkles, permKey: "accounting_reports" },
   { nameKey: "nav.taxDeclaration",   href: "/accounting/reports/tax-declaration",   icon: BadgePercent, permKey: "accounting_reports" },
   { nameKey: "nav.adjustmentsSchedule", href: "/accounting/reports/adjustments-schedule", icon: CalendarRange, permKey: "accounting_reports" },
+  { nameKey: "nav.additionalAccountingReports", href: "/accounting/reports/additional", icon: FileSpreadsheet, permKey: "accounting_reports", companyGateKey: "additional_accounting_reports" },
 ];
 const cashSubNav: NavDef[] = [
   { nameKey: "nav.cashBoxes",        href: "/cash/boxes",            icon: Wallet,          permKey: "cash_boxes" },

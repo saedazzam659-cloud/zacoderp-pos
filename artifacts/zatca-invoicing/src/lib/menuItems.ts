@@ -40,6 +40,7 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "cash_reports",       label: "تقارير النقد والبنوك",       section: "الحسابات العامة" },
   { key: "accounts",           label: "الحسابات العامة",            section: "الحسابات العامة" },
   { key: "accounting_reports", label: "التقارير المحاسبية",         section: "الحسابات العامة" },
+  { key: "additional_accounting_reports", label: "التقارير المحاسبية الإضافية", section: "الحسابات العامة" },
   { key: "accounting_maintenance", label: "الصيانة المحاسبية وميزان المراجعة", section: "صيانة الحسابات" },
 
   { key: "hr_module",          label: "شؤون الموظفين",              section: "شؤون الموظفين" },
@@ -153,6 +154,20 @@ export const LEGACY_DEFAULT_ON_MENU_KEYS: ReadonlySet<string> = new Set([
 export const MENU_ITEM_BY_KEY: Record<string, MenuItem> = Object.fromEntries(
   MENU_ITEMS.map(m => [m.key, m]),
 );
+
+export const ADDITIONAL_ACCOUNTING_REPORTS = [
+  { id: "general_ledger", label: "دفتر الأستاذ العام" },
+  { id: "trial_balance_balances", label: "ميزان المراجعة بالأرصدة" },
+  { id: "expense_analysis", label: "تحليل المصروفات" },
+  { id: "revenue_analysis", label: "تحليل الإيرادات" },
+  { id: "cost_center_report", label: "تقرير مراكز التكلفة" },
+  { id: "comparative_profit_loss", label: "قائمة الدخل المقارنة" },
+  { id: "changes_in_equity", label: "التغيرات في حقوق الملكية" },
+  { id: "journal_audit", label: "تدقيق القيود" },
+] as const;
+
+export type AdditionalAccountingReportId =
+  typeof ADDITIONAL_ACCOUNTING_REPORTS[number]["id"];
 
 // ─────────────────────────────────────────────────────────────────────
 // Reverse mapping: menu permission key → high-level billable module key
@@ -487,6 +502,13 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/accounting/reports/forecast-income-statement", label: "قائمة دخل تقديرية (AI)", report: true },
       { path: "/accounting/reports/tax-declaration", label: "الإقرار الضريبي", report: true },
       { path: "/accounting/reports/adjustments-schedule", label: "جدول التسويات", report: true },
+    ],
+  },
+  {
+    key: "additionalAccountingReports", label: "التقارير المحاسبية الإضافية", emoji: "",
+    moduleKeys: ["additional_accounting_reports"],
+    screens: [
+      { path: "/accounting/reports/additional", label: "التقارير المحاسبية الإضافية", report: true },
     ],
   },
   {

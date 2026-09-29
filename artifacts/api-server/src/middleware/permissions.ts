@@ -62,6 +62,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   taxes: "accounts",
   journal_entries: "accounts",
   accounting_reports: "accounting_reports",
+  additional_accounting_reports: "additional_accounting_reports",
   accounting_maintenance: "accounting_maintenance",
   // POS
   pos: "pos",
@@ -183,6 +184,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing", "internal_control",
+  "additional_accounting_reports",
 ]);
 
 // FROZEN legacy baseline (snapshot 2026-08): gate keys that keep the old
@@ -267,6 +269,34 @@ export function canAccessModule(authUser: any, module: string, action: PermActio
   if (authUser.role === "superadmin") return true;
   if (!companyAllowsModule(authUser, module)) return false;
   return userActionAllowed(authUser, module, action);
+}
+
+/**
+ * Guard for the additive general-accounting reports surface.
+ *
+ * This deliberately does not alter the legacy accounting report routes.  The
+ * report id is an independent company-menu switch (`aar:<id>`), and absence
+ * is always treated as disabled, including for superadmins.
+ */
+export function requireAdditionalAccountingReport(reportId: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const u = req.authUser;
+    if (!u) { res.status(401).json({ error: "غير مصرح" }); return; }
+    if (!canAccessModule(u, "accounting_reports", "view")) {
+      res.status(403).json({ error: "صلاحيات غير كافية للوصول إلى accounting_reports" });
+      return;
+    }
+    if (!companyAllowsModule(u, "additional_accounting_reports")) {
+      res.status(403).json({ error: "التقارير المحاسبية الإضافية غير مفعلة" });
+      return;
+    }
+    const menuPermissions = u.companyMenuPermissions;
+    if (!menuPermissions || menuPermissions[`aar:${reportId}`] !== true) {
+      res.status(403).json({ error: "هذا التقرير غير مفعل" });
+      return;
+    }
+    next();
+  };
 }
 
 /** Narrow substitute for an ad-hoc admin gate on a documented operation only.

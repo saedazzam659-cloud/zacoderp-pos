@@ -17,6 +17,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AdditionalAccountingReport,
   Company,
   ContractingContractorOption,
   ContractingGuaranteeOptions,
@@ -31,6 +32,7 @@ import type {
   CustomerUpdate,
   DashboardSummary,
   ErrorResponse,
+  GetAdditionalAccountingReportParams,
   GetDashboardSummaryParams,
   GetMonthlyStatsParams,
   GetRecentInvoicesParams,
@@ -5370,6 +5372,170 @@ export function useListTaxIntegrationLogs<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListTaxIntegrationLogsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read one explicitly enabled additional accounting report
+ */
+export const getGetAdditionalAccountingReportUrl = (
+  reportId:
+    | "general_ledger"
+    | "trial_balance_balances"
+    | "expense_analysis"
+    | "revenue_analysis"
+    | "cost_center_report"
+    | "comparative_profit_loss"
+    | "changes_in_equity"
+    | "journal_audit",
+  params?: GetAdditionalAccountingReportParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/additional-accounting-reports/${reportId}?${stringifiedParams}`
+    : `/api/additional-accounting-reports/${reportId}`;
+};
+
+export const getAdditionalAccountingReport = async (
+  reportId:
+    | "general_ledger"
+    | "trial_balance_balances"
+    | "expense_analysis"
+    | "revenue_analysis"
+    | "cost_center_report"
+    | "comparative_profit_loss"
+    | "changes_in_equity"
+    | "journal_audit",
+  params?: GetAdditionalAccountingReportParams,
+  options?: RequestInit,
+): Promise<AdditionalAccountingReport> => {
+  return customFetch<AdditionalAccountingReport>(
+    getGetAdditionalAccountingReportUrl(reportId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAdditionalAccountingReportQueryKey = (
+  reportId:
+    | "general_ledger"
+    | "trial_balance_balances"
+    | "expense_analysis"
+    | "revenue_analysis"
+    | "cost_center_report"
+    | "comparative_profit_loss"
+    | "changes_in_equity"
+    | "journal_audit",
+  params?: GetAdditionalAccountingReportParams,
+) => {
+  return [
+    `/api/additional-accounting-reports/${reportId}`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAdditionalAccountingReportQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAdditionalAccountingReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  reportId:
+    | "general_ledger"
+    | "trial_balance_balances"
+    | "expense_analysis"
+    | "revenue_analysis"
+    | "cost_center_report"
+    | "comparative_profit_loss"
+    | "changes_in_equity"
+    | "journal_audit",
+  params?: GetAdditionalAccountingReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAdditionalAccountingReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetAdditionalAccountingReportQueryKey(reportId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAdditionalAccountingReport>>
+  > = ({ signal }) =>
+    getAdditionalAccountingReport(reportId, params, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!reportId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAdditionalAccountingReport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAdditionalAccountingReportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAdditionalAccountingReport>>
+>;
+export type GetAdditionalAccountingReportQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read one explicitly enabled additional accounting report
+ */
+
+export function useGetAdditionalAccountingReport<
+  TData = Awaited<ReturnType<typeof getAdditionalAccountingReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  reportId:
+    | "general_ledger"
+    | "trial_balance_balances"
+    | "expense_analysis"
+    | "revenue_analysis"
+    | "cost_center_report"
+    | "comparative_profit_loss"
+    | "changes_in_equity"
+    | "journal_audit",
+  params?: GetAdditionalAccountingReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAdditionalAccountingReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAdditionalAccountingReportQueryOptions(
+    reportId,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

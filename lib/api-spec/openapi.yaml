@@ -1186,6 +1186,79 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/TaxIntegrationAudit"
+  /additional-accounting-reports/{reportId}:
+    get:
+      operationId: getAdditionalAccountingReport
+      tags: [accounting]
+      summary: Read one explicitly enabled additional accounting report
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - general_ledger
+              - trial_balance_balances
+              - expense_analysis
+              - revenue_analysis
+              - cost_center_report
+              - comparative_profit_loss
+              - changes_in_equity
+              - journal_audit
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: accountId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: costCenterId
+          in: query
+          description: One cost-center ID or a comma-separated list of IDs
+          schema: { type: string }
+        - name: fromDate
+          in: query
+          schema: { type: string, format: date }
+        - name: toDate
+          in: query
+          schema: { type: string, format: date }
+        - name: comparisonFromDate
+          in: query
+          schema: { type: string, format: date }
+        - name: comparisonToDate
+          in: query
+          schema: { type: string, format: date }
+        - name: includeZero
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Report data rows and any evidence limitations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdditionalAccountingReport"
+        "400":
+          description: Invalid company scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Company report module or individual report is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown report ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
@@ -1194,6 +1267,31 @@ components:
       required: [error]
       properties:
         error: { type: string }
+    AdditionalAccountingReport:
+      type: object
+      required: [reportId, rows]
+      properties:
+        reportId:
+          type: string
+          enum:
+            - general_ledger
+            - trial_balance_balances
+            - expense_analysis
+            - revenue_analysis
+            - cost_center_report
+            - comparative_profit_loss
+            - changes_in_equity
+            - journal_audit
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdditionalAccountingReportRow"
+        limitations:
+          type: array
+          items: { type: string }
+    AdditionalAccountingReportRow:
+      type: object
+      additionalProperties: true
     TaxIntegrationSetup:
       type: object
       required: [country, provider, environment, hasCredentials, setupStatus, updatedAt]

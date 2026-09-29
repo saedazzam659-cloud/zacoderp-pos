@@ -2539,3 +2539,49 @@ export const ListTaxIntegrationLogsResponseItem = zod.object({
 export const ListTaxIntegrationLogsResponse = zod.array(
   ListTaxIntegrationLogsResponseItem,
 );
+
+/**
+ * @summary Read one explicitly enabled additional accounting report
+ */
+export const GetAdditionalAccountingReportParams = zod.object({
+  reportId: zod.enum([
+    "general_ledger",
+    "trial_balance_balances",
+    "expense_analysis",
+    "revenue_analysis",
+    "cost_center_report",
+    "comparative_profit_loss",
+    "changes_in_equity",
+    "journal_audit",
+  ]),
+});
+
+export const GetAdditionalAccountingReportQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+  accountId: zod.coerce.number().min(1).optional(),
+  costCenterId: zod.coerce
+    .string()
+    .optional()
+    .describe("One cost-center ID or a comma-separated list of IDs"),
+  fromDate: zod.date().optional(),
+  toDate: zod.date().optional(),
+  comparisonFromDate: zod.date().optional(),
+  comparisonToDate: zod.date().optional(),
+  includeZero: zod.coerce.boolean().optional(),
+});
+
+export const GetAdditionalAccountingReportResponse = zod.object({
+  reportId: zod.enum([
+    "general_ledger",
+    "trial_balance_balances",
+    "expense_analysis",
+    "revenue_analysis",
+    "cost_center_report",
+    "comparative_profit_loss",
+    "changes_in_equity",
+    "journal_audit",
+  ]),
+  rows: zod.array(zod.record(zod.string(), zod.unknown())),
+  limitations: zod.array(zod.string()).optional(),
+});

@@ -9,6 +9,30 @@ export interface ErrorResponse {
   error: string;
 }
 
+export type AdditionalAccountingReportReportId =
+  (typeof AdditionalAccountingReportReportId)[keyof typeof AdditionalAccountingReportReportId];
+
+export const AdditionalAccountingReportReportId = {
+  general_ledger: "general_ledger",
+  trial_balance_balances: "trial_balance_balances",
+  expense_analysis: "expense_analysis",
+  revenue_analysis: "revenue_analysis",
+  cost_center_report: "cost_center_report",
+  comparative_profit_loss: "comparative_profit_loss",
+  changes_in_equity: "changes_in_equity",
+  journal_audit: "journal_audit",
+} as const;
+
+export interface AdditionalAccountingReportRow {
+  [key: string]: unknown;
+}
+
+export interface AdditionalAccountingReport {
+  reportId: AdditionalAccountingReportReportId;
+  rows: AdditionalAccountingReportRow[];
+  limitations?: string[];
+}
+
 export type TaxIntegrationSetupCountry =
   (typeof TaxIntegrationSetupCountry)[keyof typeof TaxIntegrationSetupCountry];
 
@@ -1121,4 +1145,28 @@ export type ListTaxIntegrationSubmissionsParams = {
    * Comma-separated sales invoice IDs, up to 100
    */
   invoiceIds: string;
+};
+
+export type GetAdditionalAccountingReportParams = {
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
+  /**
+   * @minimum 1
+   */
+  accountId?: number;
+  /**
+   * One cost-center ID or a comma-separated list of IDs
+   */
+  costCenterId?: string;
+  fromDate?: string;
+  toDate?: string;
+  comparisonFromDate?: string;
+  comparisonToDate?: string;
+  includeZero?: boolean;
 };

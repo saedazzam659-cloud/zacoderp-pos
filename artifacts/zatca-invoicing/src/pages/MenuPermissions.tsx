@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   MENU_ITEMS, MENU_ITEM_BY_KEY, MODULE_GROUPS, screenKey, LEGACY_DEFAULT_ON_MENU_KEYS,
+  ADDITIONAL_ACCOUNTING_REPORTS,
 } from "@/lib/menuItems";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -44,20 +45,23 @@ const EXTRA_KEYS = MENU_ITEMS.map(m => m.key).filter(k => !GROUPED_MODULE_KEYS.h
 // and permissions.ts (backend).
 const DEFAULT_OFF_KEYS = new Set<string>([
   "office", "demo_analytics", "simple_manufacturing", "internal_control",
-  "egypt_tax", "jordan_tax",
+  "egypt_tax", "jordan_tax", "additional_accounting_reports",
 ]);
 
 // Default for a key ABSENT from the saved JSON: legacy-baseline keys stay
 // enabled (old behavior); keys added to the catalog AFTER the 2026-08
 // snapshot default OFF — mirrors parseMenuPerms (Layout.tsx) and the
 // backend gate so the editor and runtime always agree.
-const DEFAULT_PERMISSIONS: Record<string, boolean> = MENU_ITEMS.reduce(
-  (acc, m) => {
-    acc[m.key] = LEGACY_DEFAULT_ON_MENU_KEYS.has(m.key) && !DEFAULT_OFF_KEYS.has(m.key);
-    return acc;
-  },
-  {} as Record<string, boolean>,
-);
+const DEFAULT_PERMISSIONS: Record<string, boolean> = {
+  ...MENU_ITEMS.reduce(
+    (acc, m) => {
+      acc[m.key] = LEGACY_DEFAULT_ON_MENU_KEYS.has(m.key) && !DEFAULT_OFF_KEYS.has(m.key);
+      return acc;
+    },
+    {} as Record<string, boolean>,
+  ),
+  ...Object.fromEntries(ADDITIONAL_ACCOUNTING_REPORTS.map(r => [`aar:${r.id}`, false])),
+};
 
 function parsePerms(raw: string | null | undefined): Record<string, boolean> {
   try { return { ...DEFAULT_PERMISSIONS, ...JSON.parse(raw ?? "{}") }; }
@@ -495,6 +499,37 @@ export default function MenuPermissions() {
                                           {s.label}
                                         </span>
                                         <Switch checked={on} onCheckedChange={() => toggleScreen(s.path, on)} />
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {group.key === "additionalAccountingReports" && (
+                              <div>
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                  <p className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
+                                    <FileBarChart className="h-3.5 w-3.5" /> تفعيل كل تقرير على حدة
+                                  </p>
+                                  <Badge variant="outline" className="h-5 text-[10px]">
+                                    {ADDITIONAL_ACCOUNTING_REPORTS.filter(r => draft[`aar:${r.id}`] === true).length}/{ADDITIONAL_ACCOUNTING_REPORTS.length}
+                                  </Badge>
+                                </div>
+                                <p className="mb-2 text-[11px] text-muted-foreground">
+                                  التقارير الجديدة متوقفة افتراضياً. تفعيل الشاشة الرئيسية لا يفعّل أي تقرير تلقائياً.
+                                </p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
+                                  {ADDITIONAL_ACCOUNTING_REPORTS.map(report => {
+                                    const key = `aar:${report.id}`;
+                                    const on = draft[key] === true;
+                                    return (
+                                      <label key={report.id}
+                                        className="flex items-center justify-between gap-2 py-1.5 cursor-pointer border-b border-dashed border-muted/60">
+                                        <span className={cn("text-xs truncate", !on && "text-muted-foreground")}>
+                                          {report.label}
+                                        </span>
+                                        <Switch checked={on} onCheckedChange={() => toggleExtra(key)} />
                                       </label>
                                     );
                                   })}
