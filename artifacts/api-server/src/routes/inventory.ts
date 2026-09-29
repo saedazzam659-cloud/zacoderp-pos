@@ -3641,14 +3641,14 @@ router.get("/stock-ledger", async (req, res) => {
   for (const doc of receiptDocs) {
     sourceRefs.set(`goods_receipt:${doc.id}`, {
       documentNumber: doc.docNumber,
-      documentPath: "/goods-receipts",
+      documentPath: "/inventory/goods-receipts",
       notes: doc.notes,
     });
   }
   for (const doc of deliveryDocs) {
     sourceRefs.set(`goods_delivery:${doc.id}`, {
       documentNumber: doc.docNumber,
-      documentPath: "/goods-deliveries",
+      documentPath: "/inventory/goods-deliveries",
       notes: doc.notes,
     });
   }

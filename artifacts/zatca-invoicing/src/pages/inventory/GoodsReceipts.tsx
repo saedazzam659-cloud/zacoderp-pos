@@ -62,6 +62,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
 interface ReceiptLine {
+  costCenterId?: string;
   _id: string;
   /** Persisted database line id; absent on newly added/duplicated lines. */
   id?: number;
@@ -92,6 +93,7 @@ function newLine(): ReceiptLine {
 }
 
 const EMPTY = {
+  costCenterId: "",
   docNumber: "", supplierInvoiceNumber: "", receiptDate: today(),
   supplierId: "", branchId: "", projectId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
@@ -165,6 +167,32 @@ export default function GoodsReceipts() {
     queryFn: () => fetchJsonArray(cid ? `${API}/api/goods-receipts?companyId=${cid}` : `${API}/api/goods-receipts`, authH),
     enabled: !!user,
   });
+
+  const { data: costCenters = [], isError: costCenterError } = useQuery<any[]>({
+    queryKey: ["goods-receipt-cost-centers", cid],
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/goods-receipts/cost-center-options?companyId=${cid}`, { headers: authH });
+      if (!response.ok) throw new Error("تعذر تحميل مراكز التكلفة");
+      const data = await response.json();
+      if (!Array.isArray(data)) throw new Error("استجابة مراكز التكلفة غير صالحة");
+      return data;
+    },
+    enabled: !!user && !!cid,
+  });
+  const centerLabel = (id: any) => {
+    const center = costCenters.find(c => c.id === Number(id));
+    return id ? (center ? `${center.code} — ${center.nameAr}` : `#${id}`) : "—";
+  };
+  const centerPicker = (value: string, change: (value: string) => void, inherit = false) => (
+    <label className="text-xs flex items-center gap-2">مركز التكلفة
+      <select aria-label={inherit ? "مركز تكلفة السطر" : "مركز تكلفة المستند"} className="h-8 rounded border bg-background px-2 min-w-40" value={value || ""} onChange={e => change(e.target.value)}>
+        <option value="">{inherit ? "حسب رأس المستند" : "بدون مركز تكلفة"}</option>
+        {costCenters.filter(c => (c.isActive && c.isPosting) || c.id === Number(value)).map(c => <option key={c.id} value={c.id}>{centerLabel(c.id)}{!c.isActive || !c.isPosting ? " (غير متاح للاختيار الجديد)" : ""}</option>)}
+        {value && !costCenters.some(c => c.id === Number(value)) && <option value={value}>{centerLabel(value)}</option>}
+      </select>
+      {costCenterError && <span role="alert">تعذر تحميل مراكز التكلفة</span>}
+    </label>
+  );
 
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey: ["suppliers", cid],
@@ -416,6 +444,7 @@ export default function GoodsReceipts() {
         docNumber:    full.docNumber ?? "",
         supplierInvoiceNumber: full.supplierInvoiceNumber ?? "",
         receiptDate:  full.receiptDate ?? today(),
+        costCenterId: full.costCenterId == null ? "" : String(full.costCenterId),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
         projectId: full.projectId == null ? "" : String(full.projectId),
@@ -429,6 +458,7 @@ export default function GoodsReceipts() {
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
         _id:         crypto.randomUUID(),
         id:          Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
+        costCenterId: l.costCenterId == null ? "" : String(l.costCenterId),
         itemId:      l.itemId      ? String(l.itemId)      : "",
         itemName:    l.itemName    ?? "",
         itemCode:    l.itemCode    ?? "",
@@ -469,6 +499,7 @@ export default function GoodsReceipts() {
         docNumber:    "",
         supplierInvoiceNumber: full.supplierInvoiceNumber ?? "",
         receiptDate:  today(),
+        costCenterId: full.costCenterId == null ? "" : String(full.costCenterId),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
         projectId: full.projectId == null ? "" : String(full.projectId),
@@ -481,6 +512,7 @@ export default function GoodsReceipts() {
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
         _id:         crypto.randomUUID(),
         itemId:      l.itemId      ? String(l.itemId)      : "",
+        costCenterId: l.costCenterId == null ? "" : String(l.costCenterId),
         itemName:    l.itemName    ?? "",
         itemCode:    l.itemCode    ?? "",
         unitId:      l.unitId      ? String(l.unitId)      : "",
@@ -686,6 +718,7 @@ export default function GoodsReceipts() {
   type ColType = "text" | "num" | "none";
   interface ColDef { key: string; label: string; type: ColType; valueOf: (r: any) => string | number; }
   const COLUMNS: ColDef[] = [
+    { key: "costCenter", label: "مركز التكلفة", type: "text", valueOf: r => centerLabel(r.costCenterId) },
     { key: "_sel",     label: "",                     type: "none", valueOf: () => "" },
     { key: "_idx",     label: "#",                    type: "none", valueOf: () => "" },
     { key: "doc",      label: tr("listCols.number"),  type: "text", valueOf: (r) => r.docNumber ?? `GRN-${r.id}` },
@@ -833,7 +866,7 @@ tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 </tr></thead><tbody>
 ${source.map((r: any, i: number) => `<tr>
   <td>${i + 1}</td>
-  <td>${escapeHtml(r.docNumber ?? `GRN-${r.id}`)}</td>
+  <td>${escapeHtml(r.docNumber ?? `GRN-${r.id}`)}<br/>مركز التكلفة: ${escapeHtml(centerLabel(r.costCenterId))}</td>
   <td>${escapeHtml(r.receiptDate ?? "")}</td>
   <td>${escapeHtml(supMap[r.supplierId] ?? "")}</td>
   <td>${escapeHtml(r.currencyCode ?? "")}</td>
@@ -876,7 +909,7 @@ ${source.map((r: any, i: number) => `<tr>
             const ttl = Number(l.lineTotal ?? 0);
             return `<tr>
               <td style="text-align:center;">${i + 1}</td>
-              <td>${escapeHtml(itemLabel)}</td>
+              <td>${escapeHtml(itemLabel)}<br/>مركز التكلفة: ${escapeHtml(centerLabel(l.costCenterId ?? d.costCenterId))}</td>
               <td class="num">${fmt2(qty)}</td>
               <td class="num">${fmt2(up)}</td>
               <td class="num">${vat.toFixed(2)}%</td>
@@ -886,6 +919,7 @@ ${source.map((r: any, i: number) => `<tr>
       return `<section class="doc">
         <div class="doc-head">
           <span class="badge b-doc">${tg("printColNumber")}: ${escapeHtml(docNo)}</span>
+          <span class="badge">مركز التكلفة: ${escapeHtml(centerLabel(d.costCenterId))}</span>
           <span class="badge b-date">${tg("printColDate")}: ${escapeHtml(d.receiptDate ?? "")}</span>
           <span class="badge b-cust">${tg("printColSupplier")}: ${escapeHtml(supMap[d.supplierId] ?? "—")}</span>
           <span class="badge b-status s-${escapeHtml(d.status)}">${escapeHtml(statusLabel(d.status))}</span>
@@ -953,6 +987,7 @@ ${sections}
     if (filteredReceipts.length === 0) { toast({ title: tg("noDataToExport"), variant: "destructive" }); return; }
     const rows = filteredReceipts.map((r: any) => ({
       [tg("printColNumber")]: r.docNumber ?? `GRN-${r.id}`,
+      ["مركز التكلفة"]: centerLabel(r.costCenterId),
       [tg("printColDate")]: r.receiptDate ?? "",
       [tg("printColSupplier")]: supMap[r.supplierId] ?? "",
       [tg("printColCurrency")]: r.currencyCode ?? "",
@@ -1286,6 +1321,7 @@ ${sections}
                   <div className="divide-y">
                   {lines.map(l => (
                     <div key={l._id} className="px-3 py-2 hover:bg-muted/30 transition-colors">
+                      <div className="mb-2">{centerPicker(l.costCenterId ?? "", value => updateLine(l._id, "costCenterId", value), true)}</div>
                       <div className="grid gap-2 items-center" style={{ gridTemplateColumns: GRID_COLS_GR }}>
                         <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                           onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
@@ -1334,7 +1370,7 @@ ${sections}
                               onChange={e => updateLine(l._id, "unit", e.target.value)} />
                           );
                         })()}
-                        <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty} data-hide-default-one
+                        <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty}
                           onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
                         <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}
                           onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
@@ -1368,6 +1404,7 @@ ${sections}
                 </div>
 
                 {/* Totals */}
+                <div className="my-3">{centerPicker(form.costCenterId ?? "", value => setForm((p: any) => ({ ...p, costCenterId: value })))}</div>
                 <div className="mt-5 flex flex-wrap justify-between gap-4">
                   <label
                     data-testid="price-includes-vat-toggle"

@@ -77,11 +77,6 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
       type === "number" ||
       props.inputMode === "numeric" ||
       props.inputMode === "decimal";
-    // Quantity fields explicitly opt in to hiding their default value of 1.
-    // This is independent of the company "show zeros" preference: a resting
-    // default quantity stays visually blank, while the parent still holds 1.
-    const hideDefaultOne = (props as any)["data-hide-default-one"] != null &&
-      (props as any)["data-hide-default-one"] !== false;
     // Excel-style live thousands separators for amount fields. Only controlled
     // text inputs declaring inputMode="decimal" (never type="number" — the
     // browser rejects commas there, and never inputMode="numeric" — that
@@ -96,7 +91,6 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
       const blankValue = shouldBlankNumericValue({
         value,
         showZeros,
-        hideDefaultOne,
         focused,
         typedSinceFocus,
       });

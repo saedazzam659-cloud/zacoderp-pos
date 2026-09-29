@@ -62,6 +62,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
 interface DeliveryLine {
+  costCenterId?: string;
   _id: string;
   /** Persisted database line id; absent on newly added/duplicated lines. */
   id?: number;
@@ -90,6 +91,7 @@ function newLine(): DeliveryLine {
 }
 
 const EMPTY = {
+  costCenterId: "",
   docNumber: "", customerOrderNumber: "", deliveryDate: today(),
   customerId: "", branchId: "", projectId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
@@ -162,6 +164,32 @@ export default function GoodsDeliveries() {
     queryFn: () => fetchJsonArray(cid ? `${API}/api/goods-deliveries?companyId=${cid}` : `${API}/api/goods-deliveries`, authH),
     enabled: !!user,
   });
+
+  const { data: costCenters = [], isError: costCenterError } = useQuery<any[]>({
+    queryKey: ["goods-delivery-cost-centers", cid],
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/goods-deliveries/cost-center-options?companyId=${cid}`, { headers: authH });
+      if (!response.ok) throw new Error("تعذر تحميل مراكز التكلفة");
+      const data = await response.json();
+      if (!Array.isArray(data)) throw new Error("استجابة مراكز التكلفة غير صالحة");
+      return data;
+    },
+    enabled: !!user && !!cid,
+  });
+  const centerLabel = (id: any) => {
+    const center = costCenters.find(c => c.id === Number(id));
+    return id ? (center ? `${center.code} — ${center.nameAr}` : `#${id}`) : "—";
+  };
+  const centerPicker = (value: string, change: (value: string) => void, inherit = false) => (
+    <label className="text-xs flex items-center gap-2">مركز التكلفة
+      <select aria-label={inherit ? "مركز تكلفة السطر" : "مركز تكلفة المستند"} className="h-8 rounded border bg-background px-2 min-w-40" value={value || ""} onChange={e => change(e.target.value)}>
+        <option value="">{inherit ? "حسب رأس المستند" : "بدون مركز تكلفة"}</option>
+        {costCenters.filter(c => (c.isActive && c.isPosting) || c.id === Number(value)).map(c => <option key={c.id} value={c.id}>{centerLabel(c.id)}{!c.isActive || !c.isPosting ? " (غير متاح للاختيار الجديد)" : ""}</option>)}
+        {value && !costCenters.some(c => c.id === Number(value)) && <option value={value}>{centerLabel(value)}</option>}
+      </select>
+      {costCenterError && <span role="alert">تعذر تحميل مراكز التكلفة</span>}
+    </label>
+  );
 
   const { data: customers = [] } = useQuery<any[]>({
     queryKey: ["customers", cid],
@@ -410,6 +438,7 @@ export default function GoodsDeliveries() {
         docNumber:    full.docNumber ?? "",
         customerOrderNumber: full.customerOrderNumber ?? "",
         deliveryDate: full.deliveryDate ?? today(),
+        costCenterId: full.costCenterId == null ? "" : String(full.costCenterId),
         customerId:   full.customerId ? String(full.customerId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
         projectId: full.projectId == null ? "" : String(full.projectId),
@@ -423,6 +452,7 @@ export default function GoodsDeliveries() {
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
         _id:         crypto.randomUUID(),
         id:          Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
+        costCenterId: l.costCenterId == null ? "" : String(l.costCenterId),
         itemId:      l.itemId      ? String(l.itemId)      : "",
         itemName:    l.itemName    ?? "",
         itemCode:    l.itemCode    ?? "",
@@ -461,6 +491,7 @@ export default function GoodsDeliveries() {
         docNumber:    "",
         customerOrderNumber: full.customerOrderNumber ?? "",
         deliveryDate: today(),
+        costCenterId: full.costCenterId == null ? "" : String(full.costCenterId),
         customerId:   full.customerId ? String(full.customerId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
         projectId: full.projectId == null ? "" : String(full.projectId),
@@ -473,6 +504,7 @@ export default function GoodsDeliveries() {
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
         _id:         crypto.randomUUID(),
         itemId:      l.itemId      ? String(l.itemId)      : "",
+        costCenterId: l.costCenterId == null ? "" : String(l.costCenterId),
         itemName:    l.itemName    ?? "",
         itemCode:    l.itemCode    ?? "",
         unitId:      l.unitId      ? String(l.unitId)      : "",
@@ -675,6 +707,7 @@ export default function GoodsDeliveries() {
   type ColType = "text" | "num" | "none";
   interface ColDef { key: string; label: string; type: ColType; valueOf: (r: any) => string | number; }
   const COLUMNS: ColDef[] = [
+    { key: "costCenter", label: "مركز التكلفة", type: "text", valueOf: r => centerLabel(r.costCenterId) },
     { key: "_sel",     label: "",                     type: "none", valueOf: () => "" },
     { key: "_idx",     label: "#",                    type: "none", valueOf: () => "" },
     { key: "doc",      label: tr("listCols.number"),  type: "text", valueOf: (r) => r.docNumber ?? `GDN-${r.id}` },
@@ -823,7 +856,7 @@ tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-w
 </tr></thead><tbody>
 ${source.map((r: any, i: number) => `<tr>
   <td>${i + 1}</td>
-  <td>${escapeHtml(r.docNumber ?? `GDN-${r.id}`)}</td>
+  <td>${escapeHtml(r.docNumber ?? `GDN-${r.id}`)}<br/>مركز التكلفة: ${escapeHtml(centerLabel(r.costCenterId))}</td>
   <td>${escapeHtml(r.deliveryDate ?? "")}</td>
   <td>${escapeHtml(custMap[r.customerId] ?? "")}</td>
   <td>${escapeHtml(r.currencyCode ?? "")}</td>
@@ -867,7 +900,7 @@ ${source.map((r: any, i: number) => `<tr>
             const ttl = Number(l.lineTotal ?? 0);
             return `<tr>
               <td style="text-align:center;">${i + 1}</td>
-              <td>${escapeHtml(itemLabel)}</td>
+              <td>${escapeHtml(itemLabel)}<br/>مركز التكلفة: ${escapeHtml(centerLabel(l.costCenterId ?? d.costCenterId))}</td>
               <td class="num">${fmt2(qty)}</td>
               <td class="num">${fmt2(up)}</td>
               <td class="num">${vat.toFixed(2)}%</td>
@@ -877,6 +910,7 @@ ${source.map((r: any, i: number) => `<tr>
       return `<section class="doc">
         <div class="doc-head">
           <span class="badge b-doc">${escapeHtml(tr("print.docNoLabel"))}${escapeHtml(docNo)}</span>
+          <span class="badge">مركز التكلفة: ${escapeHtml(centerLabel(d.costCenterId))}</span>
           <span class="badge b-date">${escapeHtml(tr("print.dateLabel"))}${escapeHtml(d.deliveryDate ?? "")}</span>
           <span class="badge b-cust">${escapeHtml(tr("print.customerLabel"))}${escapeHtml(custMap[d.customerId] ?? "—")}</span>
           <span class="badge b-status s-${escapeHtml(d.status)}">${escapeHtml(statusLabel(d.status))}</span>
@@ -944,6 +978,7 @@ ${sections}
     if (filteredDeliveries.length === 0) { toast({ title: tr("toasts.noDataExport"), variant: "destructive" }); return; }
     const rows = filteredDeliveries.map((r: any) => ({
       [tr("excelCols.docNo")]: r.docNumber ?? `GDN-${r.id}`,
+      ["مركز التكلفة"]: centerLabel(r.costCenterId),
       [tr("excelCols.date")]: r.deliveryDate ?? "",
       [tr("excelCols.customer")]: custMap[r.customerId] ?? "",
       [tr("excelCols.currency")]: r.currencyCode ?? "",
@@ -1274,6 +1309,7 @@ ${sections}
                   <div className="divide-y">
                   {lines.map(l => (
                     <div key={l._id} className="px-3 py-2 hover:bg-muted/30 transition-colors">
+                      <div className="mb-2">{centerPicker(l.costCenterId ?? "", value => updateLine(l._id, "costCenterId", value), true)}</div>
                       <div className="grid gap-2 items-center" style={{ gridTemplateColumns: GRID_COLS_GD }}>
                         <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                           onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
@@ -1319,7 +1355,7 @@ ${sections}
                             </Select>
                           );
                         })()}
-                        <Input className="h-8 text-xs text-end" inputMode="decimal" value={l.qty} data-hide-default-one
+                        <Input className="h-8 text-xs text-end" inputMode="decimal" value={l.qty}
                           onChange={e => updateLine(l._id, "qty", e.target.value)} />
                         <Input className="h-8 text-xs text-end" inputMode="decimal" value={l.unitPrice}
                           onChange={e => updateLine(l._id, "unitPrice", e.target.value)} />
@@ -1351,6 +1387,7 @@ ${sections}
                 </div>
 
                 {/* Totals */}
+                <div className="my-3">{centerPicker(form.costCenterId ?? "", value => setForm((p: any) => ({ ...p, costCenterId: value })))}</div>
                 <div className="flex flex-wrap gap-4 justify-between border-t pt-4">
                   <label className="flex items-start gap-2 text-xs cursor-pointer">
                     <input

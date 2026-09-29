@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
-import { inventoryApi } from "@/lib/inventoryApi";
+import { inventoryApi, type StockLedgerRow } from "@/lib/inventoryApi";
+import { Link } from "wouter";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +26,43 @@ const TX_TYPE_COLOR: Record<string, string> = {
   opening:      "bg-slate-50 text-slate-600",
   return_in:    "bg-teal-50 text-teal-700",
   return_out:   "bg-pink-50 text-pink-700",
+};
+
+// Only destinations that exist in App.tsx. List-only screens intentionally use
+// the collection route; never append an ID to a route without a detail screen.
+const SOURCE_ROUTES: Record<string, (id: number) => string> = {
+  sales_invoice: id => `/sales/invoices/${id}`,
+  purchase_invoice: id => `/purchasing/invoices/${id}`,
+  sales_return: () => "/sales/returns",
+  purchase_return: () => "/purchasing/returns",
+  transfer: () => "/inventory/transfers",
+  adjustment: () => "/inventory/adjustments",
+  count: () => "/inventory/counts",
+  goods_receipt: () => "/inventory/goods-receipts",
+  goods_delivery: () => "/inventory/goods-deliveries",
+  production_order: id => `/production/orders/${id}`,
+  production_order_reversal: id => `/production/orders/${id}`,
+  production_order_cancel: id => `/production/orders/${id}`,
+  sister_transfer: id => `/inventory/sister-transfers/${id}`,
+  sister_return: id => `/inventory/sister-returns/${id}`,
+};
+
+const SOURCE_LABELS: Record<string, [string, string]> = {
+  sales_invoice: ["فاتورة بيع", "Sales invoice"],
+  purchase_invoice: ["فاتورة شراء", "Purchase invoice"],
+  sales_return: ["مرتجع بيع", "Sales return"],
+  purchase_return: ["مرتجع شراء", "Purchase return"],
+  transfer: ["تحويل مخزون", "Stock transfer"],
+  adjustment: ["تسوية مخزون", "Stock adjustment"],
+  count: ["جرد مخزون", "Stock count"],
+  goods_receipt: ["إذن استلام", "Goods receipt"],
+  goods_delivery: ["إذن تسليم", "Goods delivery"],
+  production_order: ["أمر إنتاج", "Production order"],
+  production_order_reversal: ["عكس أمر إنتاج", "Production reversal"],
+  production_order_cancel: ["إلغاء أمر إنتاج", "Production cancellation"],
+  sister_transfer: ["تحويل شركة شقيقة", "Sister transfer"],
+  sister_return: ["مرتجع شركة شقيقة", "Sister return"],
+  opening_balance: ["رصيد افتتاحي", "Opening balance"],
 };
 
 export default function StockLedger() {
@@ -64,7 +102,7 @@ export default function StockLedger() {
     return params;
   };
   const emptyLedgerPage = {
-    rows: [] as any[],
+    rows: [] as StockLedgerRow[],
     total: 0,
     page: 1,
     pageSize,
@@ -76,10 +114,19 @@ export default function StockLedger() {
     queryFn: () => inventoryApi.getLedgerPage(ledgerParams(page, pageSize)),
   });
   const rows = ledgerPage.rows;
+  const sourceLabel = (r: StockLedgerRow) => {
+    const type = r.refType ?? r.txType;
+    const name = SOURCE_LABELS[type]?.[isRtl ? 0 : 1] ?? type.replaceAll("_", " ");
+    const number = r.documentNumber || (r.refId != null && r.refId > 0 ? `#${r.refId}` : "");
+    return number ? `${name} ${number}` : name;
+  };
+  const sourcePath = (r: StockLedgerRow) =>
+    r.refType && r.refId != null && r.refId > 0 ? SOURCE_ROUTES[r.refType]?.(r.refId) : undefined;
 
   const EXPORT_COLS = [
     { key: "txDate",       header: tr("exportDate"),       width: 14 },
     { key: "txType",       header: tr("exportTxType"),     width: 18 },
+    { key: "source",       header: isRtl ? "المستند المصدر" : "Source document", width: 26 },
     { key: "itemCode",     header: tr("exportItemCode"),   width: 16 },
     { key: "itemName",     header: tr("exportItemName"),   width: 30 },
     { key: "warehouseName",header: tr("exportWarehouse"),  width: 22 },
@@ -90,9 +137,10 @@ export default function StockLedger() {
     { key: "expiryDate",   header: isRtl ? "تاريخ الانتهاء" : "Expiry Date", width: 16 },
   ];
 
-  const toExportRow = (r: any) => ({
+  const toExportRow = (r: StockLedgerRow) => ({
     txDate:        r.txDate,
     txType:        txLabel(r.txType),
+    source:        sourceLabel(r),
     itemCode:      r.item?.code ?? "",
     itemName:      pickName(r.item?.nameAr, r.item?.nameEn),
     warehouseName: pickName(r.warehouse?.nameAr, r.warehouse?.nameEn),
@@ -116,7 +164,7 @@ export default function StockLedger() {
     return [first, ...remaining].flatMap(result => result.rows).map(toExportRow);
   };
 
-  const gridColumns = useMemo<GridColumn<any>[]>(() => [
+  const gridColumns = useMemo<GridColumn<StockLedgerRow>[]>(() => [
     {
       key: "txDate",
       label: tr("colDate"),
@@ -139,6 +187,23 @@ export default function StockLedger() {
           {txLabel(r.txType)}
         </span>
       ),
+    },
+    {
+      key: "source",
+      label: isRtl ? "المستند المصدر" : "Source document",
+      type: "text",
+      width: 205,
+      className: "text-xs",
+      value: r => sourceLabel(r),
+      render: r => {
+        const label = sourceLabel(r);
+        const path = sourcePath(r);
+        return path ? (
+          <Link href={path} className="text-primary hover:underline font-medium" data-testid={`link-stock-source-${r.id}`}>
+            {label}
+          </Link>
+        ) : <span data-testid={`text-stock-source-${r.id}`}>{label}</span>;
+      },
     },
     {
       key: "item",

@@ -107,6 +107,34 @@ export interface BatchMovementsResponse {
   total: number; page: number; pageSize: number; pageCount: number;
 }
 
+export interface StockLedgerRow {
+  id: number;
+  txDate: string;
+  txType: string;
+  item: { code: string; nameAr: string | null; nameEn: string | null } | null;
+  warehouse: { nameAr: string | null; nameEn: string | null } | null;
+  qty: string;
+  costPrice: string;
+  totalCost: string;
+  balanceQty: string;
+  batchNumber: string | null;
+  expiryDate: string | null;
+  refType: string | null;
+  refId: number | null;
+  documentNumber: string | null;
+  documentPath: string | null;
+  costCenter: string | null;
+}
+
+export interface StockLedgerPage {
+  rows: StockLedgerRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  summary: { opening: number; totalIn: number; totalOut: number; final: number };
+}
+
 // ─── PRO Extension #20 — Item Variants ──────────────────────────────────────
 // A variant is a full-fledged item whose `parentItemId` points to another
 // item in the same tenant (e.g. "T-Shirt – Red – L" under "T-Shirt"). The
@@ -275,14 +303,8 @@ export const inventoryApi = {
   linkTransferToProductionOrder: (transferId: number, data: { productionOrderId: number | null }) => post<any>(`/stock-transfers/${transferId}/link-production-order`, data),
   // Ledger & Balance
   getLedger:  (params: Record<string, string>) => get<any[]>(`/stock-ledger?${new URLSearchParams(params)}`),
-  getLedgerPage: (params: Record<string, string>) => get<{
-    rows: any[];
-    total: number;
-    page: number;
-    pageSize: number;
-    pageCount: number;
-    summary: { opening: number; totalIn: number; totalOut: number; final: number };
-  }>(`/stock-ledger?${new URLSearchParams({ ...params, paged: "1" })}`),
+  getLedgerPage: (params: Record<string, string>) =>
+    get<StockLedgerPage>(`/stock-ledger?${new URLSearchParams({ ...params, paged: "1" })}`),
   getBalance: (params: Record<string, string>) => get<any[]>(`/stock-balance?${new URLSearchParams(params)}`),
   getLastMovements: (cid?: number) => get<{ itemId: number; lastDate: string }[]>(`/last-movements${cid ? `?companyId=${cid}` : ""}`),
   // Free-quantities report (تقرير الكميات المجانية) — aggregates `free_qty`

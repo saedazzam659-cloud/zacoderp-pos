@@ -3,6 +3,7 @@ import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
   goodsReceiptsTable, goodsReceiptLinesTable,
+  costCentersTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
   suppliersTable, accountsTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
@@ -278,7 +279,44 @@ async function findFallbackInventoryAccountId(cid: number): Promise<number | nul
   return rows[0]?.id ?? null;
 }
 
-type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
+type JLine = { accountId: number | null; warehouseId?: number; costCenter?: string | null; debit?: number; credit?: number; description?: string | null };
+
+// Split the original rounded posting amount, rather than rounding each source
+// line independently. Cumulative allocation conserves every legacy account amount.
+function splitCenters(line: JLine, buckets: Map<string, number>): JLine[] {
+  const entries = [...buckets].filter(([, amount]) => amount > 0);
+  const total = entries.reduce((sum, [, amount]) => sum + amount, 0);
+  if (!total) return [{ ...line, costCenter: null }];
+  const amount = Number(((line.debit ?? line.credit) ?? 0).toFixed(2));
+  let cumulative = 0, allocated = 0;
+  return entries.map(([center, weight], index) => {
+    cumulative += weight;
+    const next = index === entries.length - 1 ? amount : Number((amount * cumulative / total).toFixed(2));
+    const part = Number((next - allocated).toFixed(2));
+    allocated = next;
+    return { ...line, costCenter: center || null, ...(line.debit !== undefined ? { debit: part } : { credit: part }) };
+  });
+}
+
+async function validateCostCenters(cid: number, body: any, existing?: any, previous: any[] = []) {
+  const check = async (value: any, old: any) => {
+    if (value === undefined) return old ?? null;
+    if (value === null || value === "") return null;
+    if (typeof value !== "number" && typeof value !== "string") throw Object.assign(new Error("مركز التكلفة غير صالح"), { status: 400 });
+    const id = Number(value);
+    if (!Number.isSafeInteger(id) || id <= 0) throw Object.assign(new Error("مركز التكلفة غير صالح"), { status: 400 });
+    const [center] = await db.select().from(costCentersTable).where(and(eq(costCentersTable.id, id), eq(costCentersTable.companyId, cid)));
+    if (!center || (id !== old && (!center.isActive || !center.isPosting))) {
+      throw Object.assign(new Error("مركز التكلفة يجب أن ينتمي للشركة وأن يكون نشطاً وقابلاً للترحيل"), { status: 400 });
+    }
+    return id;
+  };
+  body.costCenterId = await check(body.costCenterId, existing?.costCenterId);
+  for (const line of body.lines ?? []) {
+    const old = previous.find(p => p.id === Number(line.id));
+    line.costCenterId = await check(line.costCenterId, old?.costCenterId);
+  }
+}
 
 // ═══════════════════════════════════════════════
 // LIST / GET
@@ -314,6 +352,13 @@ router.get("/", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
+router.get("/cost-center-options", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    res.json(await db.select().from(costCentersTable).where(eq(costCentersTable.companyId, cid)).orderBy(asc(costCentersTable.code)));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const cid = getCid(req);
@@ -341,6 +386,7 @@ router.post("/", async (req, res) => {
       totalAmount, priceIncludesVat, notes, lines, taxId,
     } = req.body;
     if (!receiptDate) { res.status(400).json({ error: "تاريخ الاستلام مطلوب" }); return; }
+    await validateCostCenters(cid, req.body);
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
       const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0))) as number[];
@@ -380,6 +426,7 @@ router.post("/", async (req, res) => {
 
     const gr = await db.transaction(async (tx) => {
     const [gr] = await tx.insert(goodsReceiptsTable).values({
+      costCenterId: req.body.costCenterId,
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       projectId: await resolveProjectLink(cid, req.body.projectId, branchId, req.authUser),
       docNumber: resolvedDocNumber,
@@ -406,6 +453,7 @@ router.post("/", async (req, res) => {
         cid,
         lines.map((l: any) => ({
           receiptId: gr.id, companyId: cid,
+          costCenterId: l.costCenterId,
           itemId: l.itemId ? Number(l.itemId) : null,
           itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
           unitId: l.unitId ? Number(l.unitId) : null,
@@ -455,7 +503,9 @@ router.put("/:id", async (req, res) => {
     if (tenantErr) { res.status(400).json({ error: tenantErr }); return; }
 
     const gr = await db.transaction(async (tx) => {
+    await validateCostCenters(cid, req.body, existing, await tx.select().from(goodsReceiptLinesTable).where(eq(goodsReceiptLinesTable.receiptId, id)));
     const [gr] = await tx.update(goodsReceiptsTable).set({
+      costCenterId: req.body.costCenterId,
       branchId: branchId ? Number(branchId) : null,
       projectId: await resolveProjectLink(cid, req.body.projectId === undefined ? existing.projectId : req.body.projectId, branchId, req.authUser),
       supplierInvoiceNumber: supplierInvoiceNumber || null,
@@ -484,6 +534,7 @@ router.put("/:id", async (req, res) => {
           cid,
           lines.map((l: any) => ({
             receiptId: id, companyId: cid,
+            costCenterId: l.costCenterId,
             itemId: l.itemId ? Number(l.itemId) : null,
             itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
             unitId: l.unitId ? Number(l.unitId) : null,
@@ -543,6 +594,7 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
     const lines = await db.select().from(goodsReceiptLinesTable)
       .where(eq(goodsReceiptLinesTable.receiptId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في إذن الاستلام" }); return; }
+    await validateCostCenters(cid, { ...gr, lines: lines.map(l => ({ ...l })) }, gr, lines);
 
     // Item Usage Control (Phase ب): block posting a doc carrying restricted items.
     {
@@ -572,6 +624,8 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
     type LineComputed = { itemId: number; warehouseId: number; qtyBase: number; costUnit: number; goodsNet: number; notes: string | null; batchNumber: string | null; expiryDate: string | null };
     const computed: LineComputed[] = [];
     const goodsByWh: Record<number, number> = {};
+    const centerBuckets = new Map<number, Map<string, number>>();
+    const allCenters = new Map<string, number>();
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor   = String(line.conversionFactor || "1");
@@ -589,6 +643,11 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
         : Number(roundQuantity(divideQuantity(String(unitPrice), factor), 18, "half_up"));
 
       goodsByWh[line.warehouseId] = (goodsByWh[line.warehouseId] ?? 0) + goodsNet;
+      const center = String(line.costCenterId ?? gr.costCenterId ?? "");
+      const bucket = centerBuckets.get(line.warehouseId) ?? new Map<string, number>();
+      bucket.set(center, (bucket.get(center) ?? 0) + goodsNet);
+      centerBuckets.set(line.warehouseId, bucket);
+      allCenters.set(center, (allCenters.get(center) ?? 0) + goodsNet);
       computed.push({
         itemId: line.itemId,
         warehouseId: line.warehouseId,
@@ -641,13 +700,23 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
           const wid = Number(widStr);
           return {
             accountId: whAccount[wid]!,
+            warehouseId: wid,
             debit: amt,
             description: `استلام بضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
           };
         }),
       { accountId: clearingAccId, credit: totalGoods, description: "وسيط استلام البضاعة" },
     ];
-    const cleanJeLines = jeLines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
+    const inventoryLines = jeLines.filter(l => l.warehouseId).flatMap(l => splitCenters(l, centerBuckets.get(l.warehouseId!)!));
+    const postedCenters = new Map<string, number>();
+    for (const line of inventoryLines) {
+      const center = line.costCenter ?? "";
+      postedCenters.set(center, (postedCenters.get(center) ?? 0) + (line.debit ?? 0));
+    }
+    const cleanJeLines = [
+      ...inventoryLines,
+      ...jeLines.filter(l => !l.warehouseId).flatMap(l => splitCenters(l, postedCenters.size ? postedCenters : allCenters)),
+    ].filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
     if (cleanJeLines.length < 2) {
       res.status(400).json({ error: "لا يمكن إنشاء قيد محاسبي بطرف واحد فقط" });
       return;
@@ -768,6 +837,7 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
           credit:      String((l.credit ?? 0).toFixed(2)),
           description: l.description ?? description,
           sortOrder:   i,
+          costCenter: l.costCenter ?? null,
         }))
       );
 
@@ -955,6 +1025,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
         companyId: cid,
         branchId: gr.branchId,
         projectId: gr.projectId,
+        costCenter: gr.costCenterId == null ? null : String(gr.costCenterId),
         docNumber: resolvedDocNumber,
         supplierInvoiceNumber: gr.supplierInvoiceNumber,
         invoiceDate: gr.receiptDate,
@@ -980,6 +1051,7 @@ router.post("/:id/convert-to-invoice", async (req, res) => {
         await tx.insert(purchaseInvoiceLinesTable).values(
           lines.map((l) => ({
             invoiceId: created.id, companyId: cid,
+            costCenter: l.costCenterId == null ? null : String(l.costCenterId),
             itemId: l.itemId,
             itemName: l.itemName, itemCode: l.itemCode,
             unit: l.unit,

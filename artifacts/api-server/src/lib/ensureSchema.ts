@@ -344,6 +344,14 @@ const CONTRACTING_COST_CENTER_COMPATIBILITY_DDL = [
   `CREATE INDEX IF NOT EXISTS ctg_bill_cost_center_idx ON contracting_progress_bills(company_id, cost_center_id)`,
 ] as const;
 
+async function ensureGoodsCostCenterCompatibility(): Promise<void> {
+  // Additive, nullable document dimensions; shared central/agent entry points
+  // call this before generic strict schema reconciliation.
+  for (const table of ["goods_receipts", "goods_receipt_lines", "goods_deliveries", "goods_delivery_lines"]) {
+    await execDDL(`ALTER TABLE IF EXISTS ${table} ADD COLUMN IF NOT EXISTS cost_center_id INTEGER`);
+  }
+}
+
 async function ensureContractingCostCenterCompatibility(): Promise<void> {
   for (const stmt of CONTRACTING_COST_CENTER_COMPATIBILITY_DDL) {
     try {
@@ -4421,6 +4429,7 @@ async function runHeal(options: {
   await ensureContractingResourceInventoryCompatibility();
   await ensureContractingProjectCustomerCompatibility();
   await ensureContractingCostCenterCompatibility();
+  await ensureGoodsCostCenterCompatibility();
   await ensureContractingAdvanceRecoveryCompatibility();
   await ensureContractingSettingsTable();
   // A newly upgraded external-agent database may not yet contain the BOQ
@@ -4543,6 +4552,7 @@ async function runHeal(options: {
   await ensureContractingResourceInventoryCompatibility();
   await ensureContractingProjectCustomerCompatibility();
   await ensureContractingCostCenterCompatibility();
+  await ensureGoodsCostCenterCompatibility();
   await ensureContractingAdvanceRecoveryCompatibility();
   await ensureContractingSettingsTable();
   if (getActiveExternalDb()) await ensureContractingBoqTables();

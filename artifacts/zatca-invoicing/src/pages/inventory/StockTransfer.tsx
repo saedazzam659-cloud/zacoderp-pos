@@ -865,7 +865,6 @@ export default function StockTransfer() {
                                         dir="ltr"
                                         className="h-8 text-xs text-left"
                                         value={line.qty}
-                                        data-hide-default-one
                                         onChange={e => updateLine(i, "qty", e.target.value)}
                                       />
 
