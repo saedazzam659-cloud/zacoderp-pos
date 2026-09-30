@@ -6,7 +6,7 @@ import { Link } from "wouter";
 import {
   Package, Warehouse, AlertTriangle, TrendingUp,
   ArrowRightLeft, SlidersHorizontal, ClipboardList, BookOpen,
-  ChevronLeft, Plus,
+  ChevronLeft, Plus, ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
+import { appRouteHref } from "@/lib/appRouteHref";
 import {
   Package as PackageIcon, Tag, Ruler, Warehouse as WarehouseIcon, Layers,
   ArrowRightLeft as ArrowRightLeftIcon, SlidersHorizontal as SlidersHIcon,
@@ -149,21 +150,36 @@ export default function InventoryDashboard() {
         <h2 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">{t("inventoryMaster.dashboard.quickActions")}</h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {quickActions.map(a => (
-            <Link key={a.label} href={a.href}>
-              <div className={cn(
-                "flex flex-col items-center gap-2 border transition-colors cursor-pointer text-center",
-                moduleShortcutIcons
-                  ? "min-h-[112px] justify-center rounded-2xl border-primary/15 bg-gradient-to-br from-primary/5 via-card to-card p-5 shadow-sm hover:-translate-y-1 hover:shadow-lg"
-                  : "rounded-lg bg-muted/30 p-4 hover:bg-muted/60"
-              )}>
-                <a.icon className={cn(
-                  "h-6 w-6",
-                  a.color,
-                  moduleShortcutIcons && "h-12 w-12 rounded-2xl bg-primary/10 p-3"
-                )} />
-                <span className={moduleShortcutIcons ? "text-sm font-semibold" : "text-xs font-medium"}>{a.label}</span>
-              </div>
-            </Link>
+            <div key={a.label} className="relative">
+              <Link href={a.href}>
+                <div className={cn(
+                  "flex flex-col items-center gap-2 border transition-colors cursor-pointer text-center",
+                  moduleShortcutIcons
+                    ? "min-h-[112px] justify-center rounded-2xl border-primary/15 bg-gradient-to-br from-primary/5 via-card to-card p-5 shadow-sm hover:-translate-y-1 hover:shadow-lg"
+                    : "rounded-lg bg-muted/30 p-4 hover:bg-muted/60"
+                )}>
+                  <a.icon className={cn(
+                    "h-6 w-6",
+                    a.color,
+                    moduleShortcutIcons && "h-12 w-12 rounded-2xl bg-primary/10 p-3"
+                  )} />
+                  <span className={moduleShortcutIcons ? "text-sm font-semibold" : "text-xs font-medium"}>{a.label}</span>
+                </div>
+              </Link>
+              {moduleShortcutIcons && (
+                <a
+                  href={appRouteHref(a.href)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`فتح ${a.label} في تبويب جديد`}
+                  title="فتح في تبويب جديد"
+                  className="absolute start-2 top-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-xl border border-primary/15 bg-background/95 text-primary shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/10 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  data-testid={`inventory-quick-action-open-new-tab-${a.href.replace(/[^a-zA-Z0-9]+/g, "-")}`}
+                >
+                  <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                </a>
+              )}
+            </div>
           ))}
         </div>
       </div>

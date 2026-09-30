@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { companyAllowsModule } from "@/lib/companyModuleGate";
 import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
+import { appRouteHref } from "@/lib/appRouteHref";
 
 export type HubTone =
   | "blue" | "indigo" | "violet" | "fuchsia" | "rose"
@@ -215,8 +216,8 @@ function Tile({
       )}
       </Link>
       {shortcutIcons && (
-        <Link
-          href={tile.href}
+        <a
+          href={appRouteHref(tile.href)}
           target="_blank"
           rel="noopener noreferrer"
           aria-label={`فتح ${t(tile.nameKey)} في تبويب جديد`}
@@ -225,7 +226,7 @@ function Tile({
           data-testid={`hub-tile-open-new-tab-${tile.href.replace(/[^a-zA-Z0-9]+/g, "-")}`}
         >
           <ExternalLink className="h-4 w-4" aria-hidden="true" />
-        </Link>
+        </a>
       )}
     </div>
   );

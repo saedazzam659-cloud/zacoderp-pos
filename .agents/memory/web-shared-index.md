@@ -12,3 +12,4 @@
 - [List-grid COLUMNS memo dep trap](list-grid-columns-memo-dep.md) — unmemoized column-descriptor arrays in a filtered-useMemo's deps refilter huge grids every render (reads as a hang); memoize COLUMNS+totals, defer search.
 - [Large registers must stay paged](large-register-no-show-all.md) — server-paged high-volume grids must not honor legacy “all”; normalize saved 0 values before the first request and cap the API page size.
 - [Item-group category routing](item-group-category-routing.md) — categoryType asset/expense = no stock + debit group acct (mirrors service-item pattern); inventoryApi prefixes /api/inventory — never fetch /api/item-groups.
+- [Wouter new-tab links](wouter-native-new-tab.md) — use native anchors with artifact-base URLs; Wouter Link intercepts ordinary clicks even when target is _blank.

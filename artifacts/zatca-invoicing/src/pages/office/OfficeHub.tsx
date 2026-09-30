@@ -1,9 +1,10 @@
 import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
-import { FileText, FileSpreadsheet, FolderOpen, Save, FileDown, FileUp } from "lucide-react";
+import { FileText, FileSpreadsheet, FolderOpen, Save, FileDown, FileUp, ExternalLink } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
+import { appRouteHref } from "@/lib/appRouteHref";
 
 export default function OfficeHub() {
   const { t, i18n } = useTranslation();
@@ -76,8 +77,12 @@ export default function OfficeHub() {
 
       <div className="grid gap-4 sm:grid-cols-2">
         {tiles.map((tile) => (
-          <Link key={tile.href} href={tile.href}>
-            <a className={cn("group block", moduleShortcutIcons && "focus-visible:outline-none")} data-testid={`tile-office-${tile.href.split("/").pop()}`}>
+          <div key={tile.href} className="relative">
+            <Link
+              href={tile.href}
+              className={cn("group block", moduleShortcutIcons && "focus-visible:outline-none")}
+              data-testid={`tile-office-${tile.href.split("/").pop()}`}
+            >
               <Card className={cn(
                 "h-full transition-shadow hover:shadow-md",
                 moduleShortcutIcons && "border-primary/15 shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl"
@@ -98,8 +103,21 @@ export default function OfficeHub() {
                   <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{tile.desc}</p>
                 </CardContent>
               </Card>
-            </a>
-          </Link>
+            </Link>
+            {moduleShortcutIcons && (
+              <a
+                href={appRouteHref(tile.href)}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`${tile.title} — فتح في تبويب جديد`}
+                title="فتح في تبويب جديد"
+                className="absolute start-2 top-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-xl border border-primary/15 bg-background/95 text-primary shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/10 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                data-testid={`office-tile-open-new-tab-${tile.href.replace(/[^a-zA-Z0-9]+/g, "-")}`}
+              >
+                <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              </a>
+            )}
+          </div>
         ))}
       </div>
 

@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   FileText, CheckCircle2, XCircle, FileWarning, TrendingUp, ShieldCheck,
   Plus, Users, Truck, Package, Wallet, BookOpen, ArrowUpRight, Receipt,
-  Calendar, Award, Star, BarChart3, PieChart as PieChartIcon,
+  Calendar, Award, Star, BarChart3, PieChart as PieChartIcon, ExternalLink,
   Bell, Activity, Clock, AlertTriangle, User as UserIcon,
 } from "lucide-react";
 import { Link } from "wouter";
@@ -30,6 +30,7 @@ import BranchFilter from "@/components/BranchFilter";
 import { dashboardOverviewApi, type DashboardOverview } from "@/lib/dashboardOverviewApi";
 import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
+import { appRouteHref } from "@/lib/appRouteHref";
 
 // ─── KPI Tile (SAP Fiori-style) ────────────────────────────────────────────────
 type Tone = "primary" | "success" | "warning" | "danger" | "info" | "violet" | "amber";
@@ -91,23 +92,38 @@ function QuickAction({
   moduleShortcutIcons: boolean;
 }) {
   return (
-    <Link
-      href={href}
-      className={moduleShortcutIcons
-        ? "group flex min-h-[112px] flex-col items-center justify-center gap-3 rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/5 via-card to-card p-5 text-center shadow-sm transition-all hover:-translate-y-1 hover:border-primary/35 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-        : "group flex flex-col items-center justify-center gap-2 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-md transition-all"}
-    >
-      <div className={cn(
-        "flex items-center justify-center transition-transform group-hover:scale-110",
-        color,
-        moduleShortcutIcons ? "h-14 w-14 rounded-2xl shadow-md" : "h-11 w-11 rounded-xl"
-      )}>
-        <Icon className={moduleShortcutIcons ? "h-6 w-6 text-white" : "h-5 w-5 text-white"} />
-      </div>
-      <span className={moduleShortcutIcons
-        ? "text-sm font-semibold text-foreground text-center leading-tight"
-        : "text-xs font-medium text-foreground text-center leading-tight"}>{label}</span>
-    </Link>
+    <div className="relative">
+      <Link
+        href={href}
+        className={moduleShortcutIcons
+          ? "group flex min-h-[112px] flex-col items-center justify-center gap-3 rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/5 via-card to-card p-5 text-center shadow-sm transition-all hover:-translate-y-1 hover:border-primary/35 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          : "group flex flex-col items-center justify-center gap-2 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-md transition-all"}
+      >
+        <div className={cn(
+          "flex items-center justify-center transition-transform group-hover:scale-110",
+          color,
+          moduleShortcutIcons ? "h-14 w-14 rounded-2xl shadow-md" : "h-11 w-11 rounded-xl"
+        )}>
+          <Icon className={moduleShortcutIcons ? "h-6 w-6 text-white" : "h-5 w-5 text-white"} />
+        </div>
+        <span className={moduleShortcutIcons
+          ? "text-sm font-semibold text-foreground text-center leading-tight"
+          : "text-xs font-medium text-foreground text-center leading-tight"}>{label}</span>
+      </Link>
+      {moduleShortcutIcons && (
+        <a
+          href={appRouteHref(href)}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`فتح ${label} في تبويب جديد`}
+          title="فتح في تبويب جديد"
+          className="absolute start-2 top-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-xl border border-primary/15 bg-background/95 text-primary shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/10 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          data-testid={`dashboard-quick-action-open-new-tab-${href.replace(/[^a-zA-Z0-9]+/g, "-")}`}
+        >
+          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+        </a>
+      )}
+    </div>
   );
 }
 

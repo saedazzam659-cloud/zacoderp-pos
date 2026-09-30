@@ -15,6 +15,12 @@ For module shortcut icon styling, the approved scope is shortcut grids across mo
 
 **How to apply:** Gate any future shortcut-grid styling with the agent's central preference and preserve existing hrefs, filtering, permissions, and screen logic.
 
+The separate open-in-new-tab arrow belongs on agent module navigation and shortcut grids, including the dashboard and inventory quick-action grids and the Office module grid. Do not add it to General Settings section tiles, sidebars, metrics, or unrelated cards.
+
+**Why:** The user clarified that the arrow is for module icons throughout the agent system, not icons inside company settings; it must remain separate from the broader shortcut-grid styling preference.
+
+**How to apply:** Gate the arrow with the same agent shortcut-icons preference and keep the card's existing click behavior unchanged.
+
 Agent login customization is presentation-only. Keep required credential inputs and existing authentication, host restrictions, and signup/pricing policy intact. Do not render central-platform marketing on an agent domain; optional marketing must use that agent's display identity.
 
 **Why:** The user wants independent login-page controls and colors for each agent without changing the central platform or weakening the login flow.
