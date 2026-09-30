@@ -4128,6 +4128,113 @@ async function collectSessions(): Promise<SessionRowBase[]> {
   return rows;
 }
 
+interface ActiveCompanyBase {
+  companyId: number;
+  companyName: string;
+  companyNameEn: string | null;
+  vatNumber: string;
+  crNumber: string;
+  city: string;
+  district: string | null;
+  street: string;
+  buildingNumber: string;
+  postalCode: string;
+  additionalNumber: string | null;
+  phone: string | null;
+  country: string;
+  industryName: string | null;
+  zatcaStatus: "production" | "sandbox" | "not_linked";
+  activeSessionCount: number;
+  activeUsersPreview: string[];
+  latestLoginAt: string | null;
+}
+
+// Lightweight company-level projection for the central security dashboard.
+// Session tokens and raw ZATCA credentials are never selected or returned.
+async function collectActiveCompanyData(): Promise<{
+  companies: ActiveCompanyBase[];
+  unassignedSessionCount: number;
+}> {
+  const activeUsers = await db.select({
+    username: usersTable.username,
+    companyId: usersTable.companyId,
+    lastLoginAt: usersTable.lastLoginAt,
+  }).from(usersTable).where(sql`${usersTable.sessionToken} IS NOT NULL`);
+
+  const usersByCompany = new Map<number, { username: string; lastLoginAt: Date | string | null }[]>();
+  let unassignedSessionCount = 0;
+  for (const user of activeUsers) {
+    if (user.companyId == null) {
+      unassignedSessionCount += 1;
+      continue;
+    }
+    const group = usersByCompany.get(user.companyId) ?? [];
+    group.push({ username: user.username, lastLoginAt: user.lastLoginAt });
+    usersByCompany.set(user.companyId, group);
+  }
+
+  const companyIds = Array.from(usersByCompany.keys());
+  if (companyIds.length === 0) return { companies: [], unassignedSessionCount };
+
+  const companyRows = await db.select({
+    id: companiesTable.id,
+    nameAr: companiesTable.nameAr,
+    nameEn: companiesTable.nameEn,
+    vatNumber: companiesTable.vatNumber,
+    crNumber: companiesTable.crNumber,
+    city: companiesTable.city,
+    district: companiesTable.district,
+    street: companiesTable.street,
+    buildingNumber: companiesTable.buildingNumber,
+    postalCode: companiesTable.postalCode,
+    additionalNumber: companiesTable.additionalNumber,
+    phone: companiesTable.phone,
+    country: companiesTable.country,
+    industryName: companiesTable.industryName,
+    zatcaCsid: companiesTable.zatcaCsid,
+    zatcaPcsid: companiesTable.zatcaPcsid,
+    isSandbox: companiesTable.isSandbox,
+  }).from(companiesTable).where(inArray(companiesTable.id, companyIds));
+
+  const companies: ActiveCompanyBase[] = companyRows.map((company) => {
+    const users = usersByCompany.get(company.id) ?? [];
+    const sortedUsers = [...users].sort((a, b) => {
+      const bt = b.lastLoginAt ? new Date(b.lastLoginAt).getTime() : 0;
+      const at = a.lastLoginAt ? new Date(a.lastLoginAt).getTime() : 0;
+      return bt - at;
+    });
+    const latestLoginAt = sortedUsers[0]?.lastLoginAt
+      ? new Date(sortedUsers[0].lastLoginAt).toISOString()
+      : null;
+    const zatcaStatus = company.zatcaPcsid && !company.isSandbox
+      ? "production"
+      : company.zatcaPcsid || company.zatcaCsid
+        ? "sandbox"
+        : "not_linked";
+    return {
+      companyId: company.id,
+      companyName: company.nameAr,
+      companyNameEn: company.nameEn,
+      vatNumber: company.vatNumber,
+      crNumber: company.crNumber,
+      city: company.city,
+      district: company.district,
+      street: company.street,
+      buildingNumber: company.buildingNumber,
+      postalCode: company.postalCode,
+      additionalNumber: company.additionalNumber,
+      phone: company.phone,
+      country: company.country,
+      industryName: company.industryName,
+      zatcaStatus,
+      activeSessionCount: users.length,
+      activeUsersPreview: sortedUsers.slice(0, 3).map((user) => user.username),
+      latestLoginAt,
+    };
+  });
+  return { companies, unassignedSessionCount };
+}
+
 // GET /api/admin/security/sessions — list every user with a non-null
 // sessionToken across the CENTRAL DB and (optionally) initialized Agent
 // Instance databases.
@@ -4230,6 +4337,108 @@ router.get("/security/sessions", requireSuperAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/security/active-companies — aggregate live sessions by
+// company and source. Company identity is source-qualified because numeric
+// company IDs may overlap between the central database and agent databases.
+router.get("/security/active-companies", requireSuperAdmin, async (req, res): Promise<void> => {
+  try {
+    const rawSource = req.query.source;
+    const source = String(Array.isArray(rawSource) ? rawSource[0] : rawSource ?? "central").trim() || "central";
+    if (source !== "central" && source !== "all" && !/^\d+$/.test(source)) {
+      res.status(400).json({ error: "مصدر الجلسات غير صالح" });
+      return;
+    }
+
+    const warnings: { source: string; name: string; error: string }[] = [];
+    const companies: (ActiveCompanyBase & {
+      source: string;
+      agentInstanceId: number | null;
+      agentName: string | null;
+      agentDomain: string | null;
+    })[] = [];
+    let unassignedSessionCount = 0;
+
+    if (source === "central" || source === "all") {
+      try {
+        const central = await collectActiveCompanyData();
+        unassignedSessionCount += central.unassignedSessionCount;
+        companies.push(...central.companies.map((company) => ({
+          ...company,
+          source: "central",
+          agentInstanceId: null,
+          agentName: null,
+          agentDomain: null,
+        })));
+      } catch (e: unknown) {
+        req.log.error({ err: e }, "Failed to collect central active companies");
+        warnings.push({ source: "central", name: "المركزي", error: "تعذّر قراءة الشركات النشطة من المصدر المركزي" });
+      }
+    }
+
+    if (source === "all" || /^\d+$/.test(source)) {
+      const { listInitializedAgents } = await import("../lib/agentScope.js");
+      const { runWithExternalDb } = await import("@workspace/db");
+      const { getAgentDbContext } = await import("../lib/agentDb.js");
+      const initialized = await listInitializedAgents();
+      const wanted = source === "all"
+        ? initialized
+        : initialized.filter((agent) => agent.id === Number(source));
+      for (const agent of wanted) {
+        try {
+          const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
+          const result = await runWithExternalDb(ctx, () => collectActiveCompanyData());
+          unassignedSessionCount += result.unassignedSessionCount;
+          companies.push(...result.companies.map((company) => ({
+            ...company,
+            source: `agent:${agent.id}`,
+            agentInstanceId: agent.id,
+            agentName: agent.name,
+            agentDomain: agent.domain,
+          })));
+        } catch (e: unknown) {
+          req.log.warn({ err: e, agentId: agent.id }, "Agent active-company source is unavailable");
+          warnings.push({
+            source: `agent:${agent.id}`,
+            name: agent.name,
+            error: "تعذّر الاتصال بقاعدة بيانات سيرفر الوكيل",
+          });
+        }
+      }
+    }
+
+    const search = String(Array.isArray(req.query.search) ? req.query.search[0] : req.query.search ?? "")
+      .trim().toLocaleLowerCase();
+    const filtered = search
+      ? companies.filter((company) => [
+          company.companyName,
+          company.companyNameEn,
+          company.vatNumber,
+          company.crNumber,
+          company.city,
+          company.phone,
+          company.agentName,
+          company.agentDomain,
+          ...company.activeUsersPreview,
+        ].some((value) => String(value ?? "").toLocaleLowerCase().includes(search)))
+      : companies;
+    filtered.sort((a, b) => {
+      const bt = b.latestLoginAt ? new Date(b.latestLoginAt).getTime() : 0;
+      const at = a.latestLoginAt ? new Date(a.latestLoginAt).getTime() : 0;
+      return bt - at || a.companyName.localeCompare(b.companyName, "ar");
+    });
+
+    res.json({
+      companies: filtered,
+      totalActiveSessions: filtered.reduce((sum, company) => sum + company.activeSessionCount, 0),
+      unassignedSessionCount,
+      warnings,
+    });
+  } catch (err: unknown) {
+    req.log.error({ err }, "Failed to list active security companies");
+    res.status(500).json({ error: "تعذّر جلب الشركات النشطة" });
+  }
+});
+
 // ─── Source-qualified session id routing ────────────────────────────────
 // The sessions list stamps each row with a source-qualified `rowId` so the
 // same numeric user id in the central DB and an agent DB never collide:
@@ -4269,6 +4478,119 @@ async function runInSessionScope<T>(ref: SessionRef, fn: () => Promise<T>): Prom
   const ctx = getAgentDbContext(inst.id, inst.dbUrlEnc);
   return runWithExternalDb(ctx, fn);
 }
+
+function parseSecuritySource(raw: unknown): SessionRef | null {
+  const source = String(raw ?? "").trim();
+  if (source === "central") return { source: "central" };
+  const agent = source.match(/^agent:(\d+)$/);
+  if (!agent) return null;
+  const agentId = Number(agent[1]);
+  return Number.isSafeInteger(agentId) && agentId > 0
+    ? { source: "agent", agentId }
+    : null;
+}
+
+router.get("/security/active-companies/:companyId/sessions", requireSuperAdmin, async (req, res): Promise<void> => {
+  try {
+    const companyId = Number(req.params.companyId);
+    const ref = parseSecuritySource(req.query.source);
+    if (!Number.isSafeInteger(companyId) || companyId <= 0 || !ref) {
+      res.status(400).json({ error: "معرّف الشركة أو المصدر غير صالح" });
+      return;
+    }
+
+    const result = await runInSessionScope(ref, async () => {
+      const [company] = await db.select({ id: companiesTable.id })
+        .from(companiesTable)
+        .where(eq(companiesTable.id, companyId))
+        .limit(1);
+      if (!company) return { status: 404 as const, body: { error: "الشركة غير موجودة" } };
+      const sessions = (await collectSessions())
+        .filter((session) => session.companyId === companyId)
+        .map((session) => ({
+          userId: session.userId,
+          username: session.username,
+          email: session.email,
+          role: session.role,
+          companyId: session.companyId!,
+          lastLoginAt: session.lastLoginAt ? new Date(session.lastLoginAt).toISOString() : null,
+          ip: session.ip,
+          country: session.country,
+          userAgent: session.userAgent,
+          loginPlace: session.loginPlace,
+          loginAddress: session.loginAddress,
+          loginLat: session.loginLat,
+          loginLng: session.loginLng,
+          loginAccuracy: session.loginAccuracy,
+          loginZoneName: session.loginZoneName,
+          ipCity: session.ipCity,
+          ipRegion: session.ipRegion,
+          ipCountryName: session.ipCountryName,
+        }));
+      return { status: 200 as const, body: { sessions } };
+    });
+    res.status(result.status).json(result.body);
+  } catch (err: unknown) {
+    req.log.error({ err }, "Failed to list active sessions for a company");
+    res.status(500).json({ error: "تعذّر جلب جلسات الشركة" });
+  }
+});
+
+router.post("/security/active-companies/:companyId/end", requireSuperAdmin, async (req, res): Promise<void> => {
+  try {
+    const companyId = Number(req.params.companyId);
+    const ref = parseSecuritySource(req.body?.source);
+    if (!Number.isSafeInteger(companyId) || companyId <= 0 || !ref) {
+      res.status(400).json({ error: "معرّف الشركة أو المصدر غير صالح" });
+      return;
+    }
+
+    const result = await runInSessionScope(ref, async () => {
+      const [company] = await db.select({
+        id: companiesTable.id,
+        nameAr: companiesTable.nameAr,
+      }).from(companiesTable)
+        .where(eq(companiesTable.id, companyId))
+        .limit(1);
+      if (!company) return { status: 404 as const, body: { error: "الشركة غير موجودة" } };
+
+      const endedRows = await db.update(usersTable)
+        .set({ sessionToken: null, sessionId: null, updatedAt: new Date() })
+        .where(and(
+          eq(usersTable.companyId, companyId),
+          sql`${usersTable.sessionToken} IS NOT NULL`,
+        ))
+        .returning({ id: usersTable.id });
+
+      if (endedRows.length > 0) {
+        await writeAudit({
+          userId: ref.source === "agent" ? null : (req.adminUser?.id ?? null),
+          username: req.adminUser?.username ?? null,
+          role: "superadmin",
+          companyId,
+          module: "security",
+          action: "edit",
+          entityType: "company_sessions",
+          entityId: String(companyId),
+          metadata: {
+            op: "force-logout-company",
+            companyName: company.nameAr,
+            ended: endedRows.length,
+            source: ref.source === "agent" ? `agent:${ref.agentId}` : "central",
+          },
+        });
+      }
+      return {
+        status: 200 as const,
+        body: { ok: true, ended: endedRows.length, companyId, companyName: company.nameAr },
+      };
+    });
+    res.status(result.status).json(result.body);
+  } catch (err: unknown) {
+    req.log.error({ err }, "Failed to end active sessions for a company");
+    res.status(500).json({ error: "تعذّر إنهاء جلسات الشركة" });
+  }
+});
 
 // POST /api/admin/security/sessions/:userId/end — force a single user logout
 // by clearing both sessionToken AND sessionId (the auth middleware checks

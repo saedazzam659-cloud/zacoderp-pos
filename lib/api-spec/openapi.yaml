@@ -19,6 +19,8 @@ tags:
     description: Dashboard & analytics
   - name: safety
     description: Occupational Safety & Health (OSH / ISO 45001)
+  - name: security
+    description: Central SuperAdmin security operations
 paths:
   /inventory/stock-transfers:
     get:
@@ -163,6 +165,102 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /admin/security/active-companies:
+    get:
+      operationId: listSecurityActiveCompanies
+      tags: [security]
+      summary: List companies with active user sessions across selected server sources
+      parameters:
+        - name: source
+          in: query
+          required: false
+          schema: { type: string, default: central }
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Active companies and partial-source warnings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityActiveCompaniesResponse"
+        "400":
+          description: Invalid source filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /admin/security/active-companies/{companyId}/sessions:
+    parameters:
+      - name: companyId
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+      - name: source
+        in: query
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getSecurityActiveCompanySessions
+      tags: [security]
+      summary: List active user session details for one company and server source
+      responses:
+        "200":
+          description: Active user session details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityActiveCompanySessionsResponse"
+        "400":
+          description: Invalid company or source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Company not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /admin/security/active-companies/{companyId}/end:
+    parameters:
+      - name: companyId
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    post:
+      operationId: endSecurityActiveCompanySessions
+      tags: [security]
+      summary: Force-end every active user session for one company on one server source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecurityActiveCompanyEndInput"
+      responses:
+        "200":
+          description: Number of sessions ended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityActiveCompanyEndResult"
+        "400":
+          description: Invalid company or source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Company not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /companies:
     get:
@@ -1389,6 +1487,142 @@ components:
       required: [error]
       properties:
         error: { type: string }
+    SecuritySourceWarning:
+      type: object
+      required: [source, name, error]
+      properties:
+        source: { type: string }
+        name: { type: string }
+        error: { type: string }
+    SecurityActiveCompanySummary:
+      type: object
+      required:
+        - source
+        - companyId
+        - companyName
+        - companyNameEn
+        - vatNumber
+        - crNumber
+        - city
+        - district
+        - street
+        - buildingNumber
+        - postalCode
+        - additionalNumber
+        - phone
+        - country
+        - industryName
+        - zatcaStatus
+        - activeSessionCount
+        - activeUsersPreview
+        - latestLoginAt
+        - agentInstanceId
+        - agentName
+        - agentDomain
+      properties:
+        source: { type: string }
+        companyId: { type: integer }
+        companyName: { type: string }
+        companyNameEn: { type: ["string", "null"] }
+        vatNumber: { type: string }
+        crNumber: { type: string }
+        city: { type: string }
+        district: { type: ["string", "null"] }
+        street: { type: string }
+        buildingNumber: { type: string }
+        postalCode: { type: string }
+        additionalNumber: { type: ["string", "null"] }
+        phone: { type: ["string", "null"] }
+        country: { type: string }
+        industryName: { type: ["string", "null"] }
+        zatcaStatus:
+          type: string
+          enum: [production, sandbox, not_linked]
+        activeSessionCount: { type: integer, minimum: 0 }
+        activeUsersPreview:
+          type: array
+          items: { type: string }
+        latestLoginAt: { type: ["string", "null"], format: date-time }
+        agentInstanceId: { type: ["integer", "null"] }
+        agentName: { type: ["string", "null"] }
+        agentDomain: { type: ["string", "null"] }
+    SecurityActiveCompaniesResponse:
+      type: object
+      required: [companies, totalActiveSessions, unassignedSessionCount, warnings]
+      properties:
+        companies:
+          type: array
+          items:
+            $ref: "#/components/schemas/SecurityActiveCompanySummary"
+        totalActiveSessions: { type: integer, minimum: 0 }
+        unassignedSessionCount: { type: integer, minimum: 0 }
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/SecuritySourceWarning"
+    SecurityActiveCompanySession:
+      type: object
+      required:
+        - userId
+        - username
+        - email
+        - role
+        - companyId
+        - lastLoginAt
+        - ip
+        - country
+        - userAgent
+        - loginPlace
+        - loginAddress
+        - loginLat
+        - loginLng
+        - loginAccuracy
+        - loginZoneName
+        - ipCity
+        - ipRegion
+        - ipCountryName
+      properties:
+        userId: { type: integer }
+        username: { type: string }
+        email: { type: ["string", "null"] }
+        role: { type: string }
+        companyId: { type: integer }
+        lastLoginAt: { type: ["string", "null"], format: date-time }
+        ip: { type: ["string", "null"] }
+        country: { type: ["string", "null"] }
+        userAgent: { type: ["string", "null"] }
+        loginPlace: { type: ["string", "null"] }
+        loginAddress: { type: ["string", "null"] }
+        loginLat: { type: ["number", "null"] }
+        loginLng: { type: ["number", "null"] }
+        loginAccuracy: { type: ["number", "null"] }
+        loginZoneName: { type: ["string", "null"] }
+        ipCity: { type: ["string", "null"] }
+        ipRegion: { type: ["string", "null"] }
+        ipCountryName: { type: ["string", "null"] }
+    SecurityActiveCompanySessionsResponse:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SecurityActiveCompanySession"
+    SecurityActiveCompanyEndInput:
+      type: object
+      required: [source]
+      properties:
+        source:
+          type: string
+          pattern: '^(central|agent:[1-9][0-9]*)$'
+    SecurityActiveCompanyEndResult:
+      type: object
+      required: [ok, ended, companyId, companyName]
+      properties:
+        ok: { type: boolean }
+        ended: { type: integer, minimum: 0 }
+        companyId: { type: integer }
+        companyName: { type: string }
     AdditionalAccountingReport:
       type: object
       required: [reportId, rows]

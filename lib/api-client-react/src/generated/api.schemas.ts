@@ -9,6 +9,117 @@ export interface ErrorResponse {
   error: string;
 }
 
+export interface SecuritySourceWarning {
+  source: string;
+  name: string;
+  error: string;
+}
+
+export type SecurityActiveCompanySummaryZatcaStatus =
+  (typeof SecurityActiveCompanySummaryZatcaStatus)[keyof typeof SecurityActiveCompanySummaryZatcaStatus];
+
+export const SecurityActiveCompanySummaryZatcaStatus = {
+  production: "production",
+  sandbox: "sandbox",
+  not_linked: "not_linked",
+} as const;
+
+export interface SecurityActiveCompanySummary {
+  source: string;
+  companyId: number;
+  companyName: string;
+  /** @nullable */
+  companyNameEn: string | null;
+  vatNumber: string;
+  crNumber: string;
+  city: string;
+  /** @nullable */
+  district: string | null;
+  street: string;
+  buildingNumber: string;
+  postalCode: string;
+  /** @nullable */
+  additionalNumber: string | null;
+  /** @nullable */
+  phone: string | null;
+  country: string;
+  /** @nullable */
+  industryName: string | null;
+  zatcaStatus: SecurityActiveCompanySummaryZatcaStatus;
+  /** @minimum 0 */
+  activeSessionCount: number;
+  activeUsersPreview: string[];
+  /** @nullable */
+  latestLoginAt: string | null;
+  /** @nullable */
+  agentInstanceId: number | null;
+  /** @nullable */
+  agentName: string | null;
+  /** @nullable */
+  agentDomain: string | null;
+}
+
+export interface SecurityActiveCompaniesResponse {
+  companies: SecurityActiveCompanySummary[];
+  /** @minimum 0 */
+  totalActiveSessions: number;
+  /** @minimum 0 */
+  unassignedSessionCount: number;
+  warnings: SecuritySourceWarning[];
+}
+
+export interface SecurityActiveCompanySession {
+  userId: number;
+  username: string;
+  /** @nullable */
+  email: string | null;
+  role: string;
+  companyId: number;
+  /** @nullable */
+  lastLoginAt: string | null;
+  /** @nullable */
+  ip: string | null;
+  /** @nullable */
+  country: string | null;
+  /** @nullable */
+  userAgent: string | null;
+  /** @nullable */
+  loginPlace: string | null;
+  /** @nullable */
+  loginAddress: string | null;
+  /** @nullable */
+  loginLat: number | null;
+  /** @nullable */
+  loginLng: number | null;
+  /** @nullable */
+  loginAccuracy: number | null;
+  /** @nullable */
+  loginZoneName: string | null;
+  /** @nullable */
+  ipCity: string | null;
+  /** @nullable */
+  ipRegion: string | null;
+  /** @nullable */
+  ipCountryName: string | null;
+}
+
+export interface SecurityActiveCompanySessionsResponse {
+  sessions: SecurityActiveCompanySession[];
+}
+
+export interface SecurityActiveCompanyEndInput {
+  /** @pattern ^(central|agent:[1-9][0-9]*)$ */
+  source: string;
+}
+
+export interface SecurityActiveCompanyEndResult {
+  ok: boolean;
+  /** @minimum 0 */
+  ended: number;
+  companyId: number;
+  companyName: string;
+}
+
 export type AdditionalAccountingReportReportId =
   (typeof AdditionalAccountingReportReportId)[keyof typeof AdditionalAccountingReportReportId];
 
@@ -1123,6 +1234,15 @@ export interface SafetyKpis {
   risks: SafetyKpisRisks;
   capa: SafetyKpisCapa;
 }
+
+export type ListSecurityActiveCompaniesParams = {
+  source?: string;
+  search?: string;
+};
+
+export type GetSecurityActiveCompanySessionsParams = {
+  source: string;
+};
 
 export type ListCustomersParams = {
   companyId?: number;

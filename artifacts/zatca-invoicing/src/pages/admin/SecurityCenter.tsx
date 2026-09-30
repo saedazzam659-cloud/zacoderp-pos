@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import ActiveCompaniesTab from "./ActiveCompaniesTab";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1768,7 +1769,10 @@ export default function SecurityCenter() {
       <AnomaliesBanner token={token} />
 
       <Tabs defaultValue="sessions" dir="rtl">
-        <TabsList>
+        <TabsList className="h-auto w-full flex flex-wrap justify-start gap-1">
+          <TabsTrigger value="companies" data-testid="tab-active-companies">
+            <Building2 className="h-4 w-4 ml-1" /> الشركات المتصلة
+          </TabsTrigger>
           <TabsTrigger value="sessions" data-testid="tab-sessions">
             <Users className="h-4 w-4 ml-1" /> الجلسات النشطة
           </TabsTrigger>
@@ -1779,6 +1783,7 @@ export default function SecurityCenter() {
             <KeyRound className="h-4 w-4 ml-1" /> الصلاحيات والوصول
           </TabsTrigger>
         </TabsList>
+        <TabsContent value="companies" className="mt-3"><ActiveCompaniesTab token={token} /></TabsContent>
         <TabsContent value="sessions" className="mt-3"><ActiveSessionsTab token={token} /></TabsContent>
         <TabsContent value="history"  className="mt-3"><LoginAttemptsTab  token={token} /></TabsContent>
         <TabsContent value="perms"    className="mt-3"><PermissionsTab    token={token} /></TabsContent>

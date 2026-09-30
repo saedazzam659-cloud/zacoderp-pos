@@ -340,6 +340,132 @@ export const HealthCheckResponse = zod.object({
 });
 
 /**
+ * @summary List companies with active user sessions across selected server sources
+ */
+export const listSecurityActiveCompaniesQuerySourceDefault = `central`;
+
+export const ListSecurityActiveCompaniesQueryParams = zod.object({
+  source: zod.coerce
+    .string()
+    .default(listSecurityActiveCompaniesQuerySourceDefault),
+  search: zod.coerce.string().optional(),
+});
+
+export const listSecurityActiveCompaniesResponseCompaniesItemActiveSessionCountMin = 0;
+
+export const listSecurityActiveCompaniesResponseTotalActiveSessionsMin = 0;
+
+export const listSecurityActiveCompaniesResponseUnassignedSessionCountMin = 0;
+
+export const ListSecurityActiveCompaniesResponse = zod.object({
+  companies: zod.array(
+    zod.object({
+      source: zod.string(),
+      companyId: zod.number(),
+      companyName: zod.string(),
+      companyNameEn: zod.string().nullable(),
+      vatNumber: zod.string(),
+      crNumber: zod.string(),
+      city: zod.string(),
+      district: zod.string().nullable(),
+      street: zod.string(),
+      buildingNumber: zod.string(),
+      postalCode: zod.string(),
+      additionalNumber: zod.string().nullable(),
+      phone: zod.string().nullable(),
+      country: zod.string(),
+      industryName: zod.string().nullable(),
+      zatcaStatus: zod.enum(["production", "sandbox", "not_linked"]),
+      activeSessionCount: zod
+        .number()
+        .min(
+          listSecurityActiveCompaniesResponseCompaniesItemActiveSessionCountMin,
+        ),
+      activeUsersPreview: zod.array(zod.string()),
+      latestLoginAt: zod.coerce.date().nullable(),
+      agentInstanceId: zod.number().nullable(),
+      agentName: zod.string().nullable(),
+      agentDomain: zod.string().nullable(),
+    }),
+  ),
+  totalActiveSessions: zod
+    .number()
+    .min(listSecurityActiveCompaniesResponseTotalActiveSessionsMin),
+  unassignedSessionCount: zod
+    .number()
+    .min(listSecurityActiveCompaniesResponseUnassignedSessionCountMin),
+  warnings: zod.array(
+    zod.object({
+      source: zod.string(),
+      name: zod.string(),
+      error: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * @summary List active user session details for one company and server source
+ */
+
+export const GetSecurityActiveCompanySessionsParams = zod.object({
+  companyId: zod.coerce.number().min(1),
+});
+
+export const GetSecurityActiveCompanySessionsQueryParams = zod.object({
+  source: zod.coerce.string(),
+});
+
+export const GetSecurityActiveCompanySessionsResponse = zod.object({
+  sessions: zod.array(
+    zod.object({
+      userId: zod.number(),
+      username: zod.string(),
+      email: zod.string().nullable(),
+      role: zod.string(),
+      companyId: zod.number(),
+      lastLoginAt: zod.coerce.date().nullable(),
+      ip: zod.string().nullable(),
+      country: zod.string().nullable(),
+      userAgent: zod.string().nullable(),
+      loginPlace: zod.string().nullable(),
+      loginAddress: zod.string().nullable(),
+      loginLat: zod.number().nullable(),
+      loginLng: zod.number().nullable(),
+      loginAccuracy: zod.number().nullable(),
+      loginZoneName: zod.string().nullable(),
+      ipCity: zod.string().nullable(),
+      ipRegion: zod.string().nullable(),
+      ipCountryName: zod.string().nullable(),
+    }),
+  ),
+});
+
+/**
+ * @summary Force-end every active user session for one company on one server source
+ */
+
+export const EndSecurityActiveCompanySessionsParams = zod.object({
+  companyId: zod.coerce.number().min(1),
+});
+
+export const endSecurityActiveCompanySessionsBodySourceRegExp = new RegExp(
+  "^(central|agent:[1-9][0-9]\*)$",
+);
+
+export const EndSecurityActiveCompanySessionsBody = zod.object({
+  source: zod.string().regex(endSecurityActiveCompanySessionsBodySourceRegExp),
+});
+
+export const endSecurityActiveCompanySessionsResponseEndedMin = 0;
+
+export const EndSecurityActiveCompanySessionsResponse = zod.object({
+  ok: zod.boolean(),
+  ended: zod.number().min(endSecurityActiveCompanySessionsResponseEndedMin),
+  companyId: zod.number(),
+  companyName: zod.string(),
+});
+
+/**
  * @summary List all companies
  */
 export const listCompaniesResponseCountryDefault = `SA`;

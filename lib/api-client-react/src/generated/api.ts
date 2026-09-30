@@ -41,6 +41,7 @@ import type {
   GetMonthlyStatsParams,
   GetRecentInvoicesParams,
   GetSafetyKpisParams,
+  GetSecurityActiveCompanySessionsParams,
   HealthStatus,
   Incident,
   IncidentAction,
@@ -54,6 +55,7 @@ import type {
   ListIncidentsParams,
   ListInvoicesParams,
   ListRiskAssessmentsParams,
+  ListSecurityActiveCompaniesParams,
   ListSuppliersParams,
   ListTaxIntegrationSubmissionsParams,
   ManufacturingDeliveryEvidence,
@@ -62,6 +64,10 @@ import type {
   RiskAssessment,
   RiskControl,
   SafetyKpis,
+  SecurityActiveCompaniesResponse,
+  SecurityActiveCompanyEndInput,
+  SecurityActiveCompanyEndResult,
+  SecurityActiveCompanySessionsResponse,
   Supplier,
   SupplierInput,
   SupplierUpdate,
@@ -873,6 +879,330 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List companies with active user sessions across selected server sources
+ */
+export const getListSecurityActiveCompaniesUrl = (
+  params?: ListSecurityActiveCompaniesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/security/active-companies?${stringifiedParams}`
+    : `/api/admin/security/active-companies`;
+};
+
+export const listSecurityActiveCompanies = async (
+  params?: ListSecurityActiveCompaniesParams,
+  options?: RequestInit,
+): Promise<SecurityActiveCompaniesResponse> => {
+  return customFetch<SecurityActiveCompaniesResponse>(
+    getListSecurityActiveCompaniesUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListSecurityActiveCompaniesQueryKey = (
+  params?: ListSecurityActiveCompaniesParams,
+) => {
+  return [
+    `/api/admin/security/active-companies`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListSecurityActiveCompaniesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSecurityActiveCompanies>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListSecurityActiveCompaniesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSecurityActiveCompanies>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListSecurityActiveCompaniesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listSecurityActiveCompanies>>
+  > = ({ signal }) =>
+    listSecurityActiveCompanies(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSecurityActiveCompanies>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListSecurityActiveCompaniesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSecurityActiveCompanies>>
+>;
+export type ListSecurityActiveCompaniesQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List companies with active user sessions across selected server sources
+ */
+
+export function useListSecurityActiveCompanies<
+  TData = Awaited<ReturnType<typeof listSecurityActiveCompanies>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListSecurityActiveCompaniesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSecurityActiveCompanies>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSecurityActiveCompaniesQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List active user session details for one company and server source
+ */
+export const getGetSecurityActiveCompanySessionsUrl = (
+  companyId: number,
+  params: GetSecurityActiveCompanySessionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {});
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/security/active-companies/${companyId}/sessions?${stringifiedParams}`
+    : `/api/admin/security/active-companies/${companyId}/sessions`;
+};
+
+export const getSecurityActiveCompanySessions = async (
+  companyId: number,
+  params: GetSecurityActiveCompanySessionsParams,
+  options?: RequestInit,
+): Promise<SecurityActiveCompanySessionsResponse> => {
+  return customFetch<SecurityActiveCompanySessionsResponse>(
+    getGetSecurityActiveCompanySessionsUrl(companyId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSecurityActiveCompanySessionsQueryKey = (
+  companyId: number,
+  params?: GetSecurityActiveCompanySessionsParams,
+) => {
+  return [
+    `/api/admin/security/active-companies/${companyId}/sessions`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSecurityActiveCompanySessionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSecurityActiveCompanySessions>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  companyId: number,
+  params: GetSecurityActiveCompanySessionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSecurityActiveCompanySessions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetSecurityActiveCompanySessionsQueryKey(companyId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSecurityActiveCompanySessions>>
+  > = ({ signal }) =>
+    getSecurityActiveCompanySessions(companyId, params, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!companyId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSecurityActiveCompanySessions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSecurityActiveCompanySessionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSecurityActiveCompanySessions>>
+>;
+export type GetSecurityActiveCompanySessionsQueryError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary List active user session details for one company and server source
+ */
+
+export function useGetSecurityActiveCompanySessions<
+  TData = Awaited<ReturnType<typeof getSecurityActiveCompanySessions>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  companyId: number,
+  params: GetSecurityActiveCompanySessionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSecurityActiveCompanySessions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSecurityActiveCompanySessionsQueryOptions(
+    companyId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Force-end every active user session for one company on one server source
+ */
+export const getEndSecurityActiveCompanySessionsUrl = (companyId: number) => {
+  return `/api/admin/security/active-companies/${companyId}/end`;
+};
+
+export const endSecurityActiveCompanySessions = async (
+  companyId: number,
+  securityActiveCompanyEndInput: SecurityActiveCompanyEndInput,
+  options?: RequestInit,
+): Promise<SecurityActiveCompanyEndResult> => {
+  return customFetch<SecurityActiveCompanyEndResult>(
+    getEndSecurityActiveCompanySessionsUrl(companyId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(securityActiveCompanyEndInput),
+    },
+  );
+};
+
+export const getEndSecurityActiveCompanySessionsMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof endSecurityActiveCompanySessions>>,
+    TError,
+    { companyId: number; data: BodyType<SecurityActiveCompanyEndInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof endSecurityActiveCompanySessions>>,
+  TError,
+  { companyId: number; data: BodyType<SecurityActiveCompanyEndInput> },
+  TContext
+> => {
+  const mutationKey = ["endSecurityActiveCompanySessions"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof endSecurityActiveCompanySessions>>,
+    { companyId: number; data: BodyType<SecurityActiveCompanyEndInput> }
+  > = (props) => {
+    const { companyId, data } = props ?? {};
+
+    return endSecurityActiveCompanySessions(companyId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EndSecurityActiveCompanySessionsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof endSecurityActiveCompanySessions>>
+>;
+export type EndSecurityActiveCompanySessionsMutationBody =
+  BodyType<SecurityActiveCompanyEndInput>;
+export type EndSecurityActiveCompanySessionsMutationError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary Force-end every active user session for one company on one server source
+ */
+export const useEndSecurityActiveCompanySessions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof endSecurityActiveCompanySessions>>,
+    TError,
+    { companyId: number; data: BodyType<SecurityActiveCompanyEndInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof endSecurityActiveCompanySessions>>,
+  TError,
+  { companyId: number; data: BodyType<SecurityActiveCompanyEndInput> },
+  TContext
+> => {
+  return useMutation(
+    getEndSecurityActiveCompanySessionsMutationOptions(options),
+  );
+};
 
 /**
  * @summary List all companies
