@@ -16,9 +16,14 @@ const productionTileTones: HubTone[] = [
   "violet", "indigo", "amber", "blue", "teal", "cyan", "sky",
   "emerald", "fuchsia", "rose", "orange", "pink",
 ];
+const coreProductionTones: Record<string, HubTone> = {
+  "/production": "violet",
+  "/production/orders": "indigo",
+  "/production/resources": "amber",
+};
 const allProductionHubTiles: HubTile[] = productionSubNav.map((item, index) => ({
   ...item,
-  tone: productionTileTones[index % productionTileTones.length],
+  tone: coreProductionTones[item.href] ?? productionTileTones[index % productionTileTones.length],
 }));
 const coreProductionHrefs = new Set([
   "/production",
