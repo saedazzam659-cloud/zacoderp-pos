@@ -133,7 +133,7 @@ export default function StockLedger() {
     { key: "qty",          header: tr("exportQty"),        width: 14 },
     { key: "costPrice",    header: tr("exportCostPrice"),  width: 16 },
     { key: "totalCost",    header: tr("exportTotalCost"),  width: 18 },
-    { key: "batchNumber",  header: isRtl ? "رقم الدفعة" : "Batch No.", width: 16 },
+    { key: "batchNumber",  header: isRtl ? "رقم التشغيلة" : "Batch No.", width: 16 },
     { key: "expiryDate",   header: isRtl ? "تاريخ الانتهاء" : "Expiry Date", width: 16 },
   ];
 
@@ -273,7 +273,7 @@ export default function StockLedger() {
     },
     {
       key: "batchNumber",
-      label: isRtl ? "رقم الدفعة" : "Batch No.",
+      label: isRtl ? "رقم التشغيلة" : "Batch No.",
       type: "text",
       align: "center",
       width: 115,

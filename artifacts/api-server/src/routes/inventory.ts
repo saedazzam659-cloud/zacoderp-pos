@@ -5339,7 +5339,7 @@ router.get("/items/:id/reorder-suggestion", async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Batches per item (رقم الدفعة + تاريخ الانتهاء)
+// Batches per item (رقم التشغيلة + تاريخ الانتهاء)
 // ════════════════════════════════════════════════════════════════════════════
 // This view and the report use the same signed ledger aggregation. Unattributed
 // historical issues remain in the NULL batch bucket, not guessed into receipts.

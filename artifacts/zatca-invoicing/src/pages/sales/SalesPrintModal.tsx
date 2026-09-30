@@ -61,6 +61,52 @@ const escapePrintHtml = (value: unknown) => String(value ?? "")
   .replace(/</g, "&lt;")
   .replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;");
+
+export function renderInventoryPrintDetailsHtml(
+  line: any,
+  type: SalesPrintType,
+  language: "ar" | "en" = "ar",
+): string {
+  if (type !== "invoice" && type !== "return") return "";
+  const details = (Array.isArray(line?.inventoryPrintDetails) ? line.inventoryPrintDetails : [])
+    .filter((detail: any) =>
+      String(detail?.batchNumber ?? "").trim() || String(detail?.expiryDate ?? "").trim()
+    );
+  if (!details.length) return "";
+  const isEn = language === "en";
+  const hasPlanned = details.some((detail: any) => detail.planned);
+  const heading = hasPlanned
+    ? (isEn ? "Selected lots (not posted)" : "دفعات محددة (غير مرحّلة)")
+    : type === "return"
+      ? (isEn ? "Restored lots" : "دفعات الإرجاع الفعلية")
+      : (isEn ? "Issued lots" : "دفعات الصرف الفعلية");
+  const qtyText = (value: unknown) => {
+    const qty = Number(value);
+    return Number.isFinite(qty) ? qty.toFixed(4).replace(/\.?0+$/, "") : "—";
+  };
+  const detailRows = details.map((detail: any) => {
+    const warehouseName = isEn
+      ? (detail.warehouseNameEn ?? detail.warehouseNameAr ?? line.warehouseNameEn ?? line.warehouseNameAr)
+      : (detail.warehouseNameAr ?? detail.warehouseNameEn ?? line.warehouseNameAr ?? line.warehouseNameEn);
+    const batchNumber = String(detail.batchNumber ?? "").trim();
+    const expiryDate = String(detail.expiryDate ?? "").trim().slice(0, 10);
+    const parts = [
+      warehouseName
+        ? `${isEn ? "Warehouse" : "المخزن"}: ${escapePrintHtml(warehouseName)}`
+        : "",
+      batchNumber
+        ? `${isEn ? "Batch number" : "رقم التشغيلة"}: ${escapePrintHtml(batchNumber)}`
+        : "",
+      expiryDate
+        ? `${isEn ? "Expiry" : "الصلاحية"}: ${escapePrintHtml(expiryDate)}`
+        : "",
+      `${isEn ? "Qty" : "الكمية"}: <span class="mono">${qtyText(detail.qty)}</span>`,
+    ].filter(Boolean);
+    return `<div>${parts.join(" · ")}</div>`;
+  }).join("");
+  return `<div style="font-size:9px;line-height:1.45;color:#475569;margin-top:2px;overflow-wrap:anywhere;"><div style="font-weight:600;">${heading}</div>${detailRows}</div>`;
+}
+
 // Build the Arabic-name → English-name lookup map from an inventory item list.
 // Keys are normalised (trimmed + lower-cased) Arabic names; only items that
 // actually carry an English name are included.
@@ -542,7 +588,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "", inc = fal
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
-        <td>${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}</td>
+        <td>${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}${renderInventoryPrintDetailsHtml(l, d.type, (d as any)._lang === "en" ? "en" : "ar")}</td>
         <td class="mono">${Math.round(Number(l.qty) || 0)}</td>
         ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td>${l.unit ?? "—"}</td>
@@ -978,7 +1024,7 @@ function template6(d: PrintData): string {
     const { tot } = lineFigures(l, !!doc.priceIncludesVat);
     return `
       <tr>
-        <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}</td>
+        <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}${renderInventoryPrintDetailsHtml(l, d.type)}</td>
       </tr>
       <tr>
         <td class="mono" style="padding-bottom:4px;border-bottom:1px dashed #999;">
@@ -1107,7 +1153,7 @@ function template7(d: PrintData): string {
     return `
       <div class="line ${i % 2 === 0 ? "alt" : ""}">
         <div class="line-top">
-          <span class="line-name">${l.itemName ?? l.itemCode ?? "—"}</span>${l.brandName ? `<span class="line-name" style="display:block;font-size:10px;color:#555;">العلامة التجارية: ${l.brandName}</span>` : ""}
+          <span class="line-name">${l.itemName ?? l.itemCode ?? "—"}</span>${l.brandName ? `<span class="line-name" style="display:block;font-size:10px;color:#555;">العلامة التجارية: ${l.brandName}</span>` : ""}${renderInventoryPrintDetailsHtml(l, d.type, (d as any)._lang === "en" ? "en" : "ar")}
           <span class="mono line-tot">${fmt(tot)}</span>
         </div>
         <div class="line-sub mono">
@@ -2468,7 +2514,7 @@ export function template14(d: PrintData): string {
       const itemRow = `
         <tr class="item-row">
           <td>${idx + 1}</td>
-          <td>${itemDisplayName(l)}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}</td>
+          <td>${itemDisplayName(l)}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}${renderInventoryPrintDetailsHtml(l, d.type, lang)}</td>
           <td>${unitDisplay(l)}</td>
           <td class="mono">${nf(l.unitPrice)}</td>
           <td class="mono">${Math.round(qty)}</td>
@@ -2617,7 +2663,7 @@ function template15(d: PrintData): string {
     const f = lineFigures(l, inc);
     return `<tr>
       <td class="c">${i + 1}</td>
-      <td class="desc">${esc(l.itemName ?? l.itemCode ?? "—")}</td>
+      <td class="desc">${esc(l.itemName ?? l.itemCode ?? "—")}${renderInventoryPrintDetailsHtml(l, d.type, (d as any)._lang === "en" ? "en" : "ar")}</td>
       <td class="c">${esc(l.unit ?? "—")}</td>
       <td class="c mono">${fmt(f.qty)}</td>
       <td class="c mono">${fmt(f.price)}</td>
@@ -2763,7 +2809,8 @@ function template20(d: PrintData): string {
   const rows = lines.map((l, i) => {
     const f = lineFigures(l, t.priceIncludesVat);
     const description = [l.itemName ?? l.itemCode ?? "—", l.brandName ? `العلامة التجارية: ${l.brandName}` : "", l.notes ?? l.description ?? ""]
-      .filter(Boolean).map(v => `<div>${e(v)}</div>`).join("");
+      .filter(Boolean).map(v => `<div>${e(v)}</div>`).join("")
+      + renderInventoryPrintDetailsHtml(l, d.type, (d as any)._lang === "en" ? "en" : "ar");
     return `<tr><td class="num">${i + 1}</td><td class="description">${description}</td>
       <td class="mono">${fmt(f.qty)}</td><td class="mono">${fmt(f.price)}</td>
       <td class="mono">${e(l.vatRate ?? 15)}%</td><td class="mono">${fmt(f.vat)}</td>

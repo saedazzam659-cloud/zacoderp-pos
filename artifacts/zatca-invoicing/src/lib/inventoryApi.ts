@@ -388,7 +388,7 @@ export const inventoryApi = {
     get<BatchMovementsResponse>(`/reports/batches/movements?${new URLSearchParams(
       Object.entries(params).map(([key, value]) => [key, String(value)])
     )}`),
-  // Batches per item (رقم الدفعة + تاريخ الانتهاء)
+  // Batches per item (رقم التشغيلة + تاريخ الانتهاء)
   getItemBatches: (itemId: number) =>
     get<{
       itemId: number;

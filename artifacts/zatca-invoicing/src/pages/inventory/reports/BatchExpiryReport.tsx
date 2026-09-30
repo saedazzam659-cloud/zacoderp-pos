@@ -109,7 +109,7 @@ function BatchExpiryReportContent({ expiry }: { expiry: boolean }) {
           {(warehouses as any[]).map((wh: any) => <option key={wh.id} value={wh.id}>{ar ? wh.nameAr : wh.nameEn || wh.nameAr}</option>)}
         </select>
       </label>
-      <label className="text-sm space-y-1">{label("رقم الدفعة", "Batch number")}
+      <label className="text-sm space-y-1">{label("رقم التشغيلة", "Batch number")}
         <Input data-testid="input-batch-number" value={filters.batch} onChange={e => update("batch", e.target.value)} />
       </label>
       <label className="text-sm space-y-1">{label("رصيد غير منسوب", "Unattributed stock")}

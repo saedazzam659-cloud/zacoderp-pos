@@ -40,7 +40,7 @@ import {
 import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
-import SalesPrintModal from "./SalesPrintModal";
+import SalesPrintModal, { renderInventoryPrintDetailsHtml } from "./SalesPrintModal";
 import { SalesBatchAllocationControl } from "./SalesBatchAllocationControl";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -1848,7 +1848,7 @@ ${source.map((r: any, i: number) => {
             const ttl  = Number(l.totalAmount ?? 0);
             return `<tr>
               <td style="text-align:center;">${i + 1}</td>
-              <td>${escapeHtml(itemLabel)}</td>
+              <td>${escapeHtml(itemLabel)}${renderInventoryPrintDetailsHtml(l, "return")}</td>
               <td>${escapeHtml(l.description ?? "")}</td>
               <td class="num">${fmt2(qty)}</td>
               <td class="num">${fmt2(up)}</td>

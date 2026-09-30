@@ -1105,7 +1105,7 @@ function PurchaseInvoiceFormContent() {
     tr("lineCols.vat"),
     tr("lineCols.expenses"),
     tr("lineCols.finalCost"),
-    "رقم الدفعة",
+    "رقم التشغيلة",
     "تاريخ الانتهاء",
     "مركز التكلفة",
     "",
@@ -1996,7 +1996,7 @@ function PurchaseInvoiceFormContent() {
                       {isNoStockLine(l) ? (
                         <Input className="h-8 text-xs bg-muted/30" placeholder="—" readOnly />
                       ) : (
-                        <Input className="h-8 text-xs" placeholder="رقم الدفعة" value={l.batchNumber}
+                        <Input className="h-8 text-xs" placeholder="رقم التشغيلة" value={l.batchNumber}
                           onChange={e => updateLine(l._id, "batchNumber", e.target.value)} />
                       )}
                       {isNoStockLine(l) ? (

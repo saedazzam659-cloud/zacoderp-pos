@@ -371,7 +371,7 @@ ${source.map((r: any, i: number) => `<tr>
             const batchNumber = String(l.batchNumber ?? "").trim();
             const expiryDate = String(l.expiryDate ?? "").trim().slice(0, 10);
             const traceDetails = [
-              batchNumber ? `رقم الدفعة: ${escapeHtml(batchNumber)}` : "",
+              batchNumber ? `رقم التشغيلة: ${escapeHtml(batchNumber)}` : "",
               expiryDate ? `تاريخ الانتهاء: ${escapeHtml(expiryDate)}` : "",
             ].filter(Boolean);
             const traceHtml = traceDetails.length
@@ -677,7 +677,7 @@ ${sections}
                 const batchNumber = String(l.batchNumber ?? "").trim();
                 const expiryDate = String(l.expiryDate ?? "").trim().slice(0, 10);
                 const traceDetails = [
-                  batchNumber ? `رقم الدفعة: ${batchNumber}` : "",
+                  batchNumber ? `رقم التشغيلة: ${batchNumber}` : "",
                   expiryDate ? `تاريخ الانتهاء: ${expiryDate}` : "",
                 ].filter(Boolean);
                 const itemName = l.itemName ?? l.description ?? `#${l.itemId ?? ""}`;

@@ -23,7 +23,7 @@ const receipt = {
   calcMethod: "طريقة الحساب", inclVat: "شامل الضريبة", exclVat: "غير شامل الضريبة",
   subtotalIncl: "المجموع شامل الضريبة", vatAmount: "قيمة الضريبة", itemDiscount: "خصم الأصناف",
   totalLabel: "الإجمالي",
-  headers: ["كود الصنف", "الصنف", "المخزن", "الوحدة", "الكمية", "السعر", "خصم%", "ضريبة%", "الإجمالي", "رقم الدفعة", "تاريخ الانتهاء", "ملاحظات", ""],
+  headers: ["كود الصنف", "الصنف", "المخزن", "الوحدة", "الكمية", "السعر", "خصم%", "ضريبة%", "الإجمالي", "رقم التشغيلة", "تاريخ الانتهاء", "ملاحظات", ""],
 } as const;
 const delivery = {
   newTitle: "إذن تسليم جديد", saveLabel: "حفظ الإذن", headerData: "البيانات الرئيسية",
@@ -151,7 +151,7 @@ export function GoodsDocumentCurrent({ kind }: { kind: "receipt" | "delivery" })
                       <Input className={cn("h-8 text-xs", !isReceipt && "text-end")} inputMode="decimal" value={l.discount} onChange={e => updateLine(l._id, "discount", e.target.value)} />
                       <Input className={cn("h-8 text-xs", !isReceipt && "text-end")} inputMode="decimal" value={l.vatRate} onChange={e => updateLine(l._id, "vatRate", e.target.value)} />
                       <Input className={isReceipt ? "h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" : "h-8 text-xs text-end font-semibold text-primary bg-primary/5"} dir={isReceipt ? "ltr" : undefined} readOnly value={fmt(lineMath[i].total)} />
-                      {isReceipt && <><Input className="h-8 text-xs" placeholder="رقم الدفعة" value={l.batchNumber} onChange={e => updateLine(l._id, "batchNumber", e.target.value)} /><Input type="date" className="h-8 text-xs" value={l.expiryDate} onChange={e => updateLine(l._id, "expiryDate", e.target.value)} /></>}
+                      {isReceipt && <><Input className="h-8 text-xs" placeholder="رقم التشغيلة" value={l.batchNumber} onChange={e => updateLine(l._id, "batchNumber", e.target.value)} /><Input type="date" className="h-8 text-xs" value={l.expiryDate} onChange={e => updateLine(l._id, "expiryDate", e.target.value)} /></>}
                       <Input className="h-8 text-xs" value={l.notes} onChange={e => updateLine(l._id, "notes", e.target.value)} placeholder={isReceipt ? undefined : "ملاحظات"} />
                       <Button type="button" variant="ghost" size="icon" className={isReceipt ? "h-8 w-8 text-destructive" : "h-7 w-7 text-rose-700 hover:bg-rose-50"} onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>

@@ -2164,7 +2164,7 @@ export default function Items() {
                             >
                               <Building2 className="h-3.5 w-3.5" />{t("pages.items.branches.tabLabel")}
                             </button>
-                            {/* Batches: رقم الدفعة + تاريخ الانتهاء */}
+                            {/* Batches: رقم التشغيلة + تاريخ الانتهاء */}
                             <button
                               onClick={() => setExpandedTab("batches")}
                               className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
@@ -4052,7 +4052,7 @@ function ItemReorderPanel({ itemId, unitCode }: { itemId: number; unitCode: stri
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Batches panel — رقم الدفعة + تاريخ الانتهاء
+// Batches panel — رقم التشغيلة + تاريخ الانتهاء
 // ════════════════════════════════════════════════════════════════════════════
 // The item tab uses the same attributed ledger totals as the company-wide reports.
 function ItemBatchesPanel({ itemId, unitCode }: { itemId: number; unitCode: string }) {

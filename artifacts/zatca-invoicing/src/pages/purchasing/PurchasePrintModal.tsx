@@ -37,7 +37,7 @@ const lineTraceDetails = (line: any) => {
   const batchNumber = String(line.batchNumber ?? "").trim();
   const expiryDate = String(line.expiryDate ?? "").trim().slice(0, 10);
   return [
-    batchNumber ? `رقم الدفعة: ${escapePrintText(batchNumber)}` : "",
+    batchNumber ? `رقم التشغيلة: ${escapePrintText(batchNumber)}` : "",
     expiryDate ? `تاريخ الانتهاء: ${escapePrintText(expiryDate)}` : "",
   ].filter(Boolean);
 };

@@ -481,6 +481,130 @@ function queryRows<T>(result: unknown): T[] {
   return [];
 }
 
+async function attachInventoryPrintDetails(
+  executor: any,
+  companyId: number,
+  documentType: "sales_invoice" | "sales_return",
+  documentId: number,
+  status: string,
+  lines: any[],
+): Promise<any[]> {
+  if (!lines.length) return lines;
+  const postedLedgerRows = status === "posted"
+    ? await executor.select({
+        id: stockLedgerTable.id,
+        sourceLineId: stockLedgerTable.sourceLineId,
+        warehouseId: stockLedgerTable.warehouseId,
+        batchNumber: stockLedgerTable.batchNumber,
+        expiryDate: stockLedgerTable.expiryDate,
+        qty: stockLedgerTable.qty,
+      })
+        .from(stockLedgerTable)
+        .where(and(
+          eq(stockLedgerTable.companyId, companyId),
+          eq(stockLedgerTable.refType, documentType),
+          eq(stockLedgerTable.refId, documentId),
+          ...(documentType === "sales_invoice"
+            ? [sql`${stockLedgerTable.qty} < 0`]
+            : [sql`${stockLedgerTable.qty} > 0`]),
+        ))
+        .orderBy(asc(stockLedgerTable.id))
+    : [];
+  const lineIds = new Set(lines.map((line) => Number(line.id)));
+  const detailsByLine = new Map<number, Array<{
+    batchNumber: string | null;
+    expiryDate: string | null;
+    warehouseId: number | null;
+    qty: number;
+    planned: boolean;
+  }>>();
+  for (const row of postedLedgerRows) {
+    const lineId = Number(row.sourceLineId);
+    const qty = Math.abs(Number(row.qty) || 0);
+    if (
+      !lineIds.has(lineId)
+      || qty <= 0
+      || (!String(row.batchNumber ?? "").trim() && !String(row.expiryDate ?? "").trim())
+    ) continue;
+    const detail = {
+      batchNumber: row.batchNumber ?? null,
+      expiryDate: row.expiryDate ?? null,
+      warehouseId: row.warehouseId ?? null,
+      qty,
+      planned: false,
+    };
+    const current = detailsByLine.get(lineId) ?? [];
+    const existing = current.find((candidate) =>
+      candidate.batchNumber === detail.batchNumber
+      && candidate.expiryDate === detail.expiryDate
+      && candidate.warehouseId === detail.warehouseId,
+    );
+    if (existing) existing.qty += qty;
+    else current.push(detail);
+    detailsByLine.set(lineId, current);
+  }
+
+  const warehouseIds = [...new Set([
+    ...lines.map((line) => Number(line.warehouseId)),
+    ...postedLedgerRows.map((row: any) => Number(row.warehouseId)),
+  ].filter((id) => Number.isInteger(id) && id > 0))];
+  const warehouseRows = warehouseIds.length
+    ? await executor.select({
+        id: warehousesTable.id,
+        nameAr: warehousesTable.nameAr,
+        nameEn: warehousesTable.nameEn,
+      }).from(warehousesTable).where(and(
+        eq(warehousesTable.companyId, companyId),
+        inArray(warehousesTable.id, warehouseIds),
+      ))
+    : [];
+  const warehouseById = new Map<number, any>(
+    warehouseRows.map((warehouse: any) => [Number(warehouse.id), warehouse] as [number, any]),
+  );
+
+  return lines.map((line) => {
+    const warehouse = line.warehouseId != null
+      ? warehouseById.get(Number(line.warehouseId))
+      : undefined;
+    let details = detailsByLine.get(Number(line.id)) ?? [];
+    if (
+      details.length === 0
+      && documentType === "sales_invoice"
+      && status !== "posted"
+      && Array.isArray(line.batchAllocations)
+    ) {
+      details = line.batchAllocations
+        .map((allocation: any) => ({
+          batchNumber: allocation?.batchNumber ?? null,
+          expiryDate: allocation?.expiryDate ?? null,
+          warehouseId: line.warehouseId ?? null,
+          qty: Number(allocation?.qty),
+          planned: true,
+        }))
+        .filter((allocation: any) =>
+          Number.isFinite(allocation.qty)
+          && allocation.qty > 0
+          && (String(allocation.batchNumber ?? "").trim() || String(allocation.expiryDate ?? "").trim())
+        );
+    }
+    return {
+      ...line,
+      warehouseNameAr: warehouse?.nameAr ?? null,
+      warehouseNameEn: warehouse?.nameEn ?? null,
+      inventoryPrintDetails: details.map((detail) => {
+        const detailWarehouse = detail.warehouseId != null
+          ? warehouseById.get(Number(detail.warehouseId))
+          : undefined;
+        return {
+          ...detail,
+          warehouseNameAr: detailWarehouse?.nameAr ?? null,
+          warehouseNameEn: detailWarehouse?.nameEn ?? null,
+        };
+      }),
+    };
+  });
+}
+
 type CapturedRead<T> =
   | { ok: true; value: T }
   | { ok: false; error: unknown };
@@ -1649,7 +1773,10 @@ router.get("/sales-invoices/:id", async (req, res) => {
       if (existing) existing.push(attribution);
       else attributionByLine.set(attribution.documentLineId, [attribution]);
     }
-    const linesWithOfferName = lines.map(l => ({
+    const linesWithInventory = await attachInventoryPrintDetails(
+      db, cid, "sales_invoice", id, inv.status, lines,
+    );
+    const linesWithOfferName = linesWithInventory.map(l => ({
       ...l,
       appliedOfferName: l.appliedOfferId ? (offerNameById.get(l.appliedOfferId) ?? null) : null,
       productionCostAttributions: attributionByLine.get(l.id) ?? [],
@@ -4484,12 +4611,16 @@ router.get("/sales-returns/:id", async (req, res) => {
       if (existing) existing.push(attribution);
       else attributionByLine.set(attribution.documentLineId, [attribution]);
     }
+    const linesWithAttributions = lines.map((line) => ({
+      ...line,
+      productionCostAttributions: attributionByLine.get(line.id) ?? [],
+    }));
+    const linesWithInventory = await attachInventoryPrintDetails(
+      db, ret.companyId, "sales_return", id, ret.status, linesWithAttributions,
+    );
     res.json({
       ...ret,
-      lines: lines.map((line) => ({
-        ...line,
-        productionCostAttributions: attributionByLine.get(line.id) ?? [],
-      })),
+      lines: linesWithInventory,
     });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
