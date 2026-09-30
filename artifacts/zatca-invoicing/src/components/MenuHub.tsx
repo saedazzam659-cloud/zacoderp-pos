@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { companyAllowsModule } from "@/lib/companyModuleGate";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 
 export type HubTone =
@@ -164,16 +164,17 @@ function Tile({
   const Icon = tile.icon;
   const tone = toneStyles[tile.tone];
   return (
-    <Link
-      href={tile.href}
-      className={cn(
-        "group relative block rounded-2xl border bg-card transition-all overflow-hidden",
-        shortcutIcons
-          ? "min-h-[132px] border-primary/10 bg-gradient-to-br from-primary/5 via-card to-card shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          : "hover:shadow-lg hover:-translate-y-0.5 hover:border-slate-300",
-        compact ? (shortcutIcons ? "p-4" : "p-3") : (shortcutIcons ? "p-6" : "p-5")
-      )}
-    >
+    <div className="relative">
+      <Link
+        href={tile.href}
+        className={cn(
+          "group relative block rounded-2xl border bg-card transition-all overflow-hidden",
+          shortcutIcons
+            ? "min-h-[132px] border-primary/10 bg-gradient-to-br from-primary/5 via-card to-card shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            : "hover:shadow-lg hover:-translate-y-0.5 hover:border-slate-300",
+          compact ? (shortcutIcons ? "p-4" : "p-3") : (shortcutIcons ? "p-6" : "p-5")
+        )}
+      >
         {/* Soft top accent strip */}
         {!shortcutIcons && <div className={cn("absolute inset-x-0 top-0 h-1.5", tone.bg, "opacity-90")} />}
         <div className={cn(
@@ -212,6 +213,20 @@ function Tile({
             <Chevron className="h-4 w-4 text-muted-foreground" />
           </div>
       )}
-    </Link>
+      </Link>
+      {shortcutIcons && (
+        <Link
+          href={tile.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`فتح ${t(tile.nameKey)} في تبويب جديد`}
+          title="فتح في تبويب جديد"
+          className="absolute start-2 top-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-xl border border-primary/15 bg-background/95 text-primary shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/10 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          data-testid={`hub-tile-open-new-tab-${tile.href.replace(/[^a-zA-Z0-9]+/g, "-")}`}
+        >
+          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      )}
+    </div>
   );
 }
