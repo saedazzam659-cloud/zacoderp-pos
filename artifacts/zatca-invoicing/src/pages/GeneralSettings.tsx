@@ -1505,7 +1505,7 @@ export default function GeneralSettings() {
 
       {/* ─── Document entry preferences (شاشات المستندات) ─────────────────── */}
       {(!agentShortcutIcons || activeAgentGeneralSection === "document-options") && (
-      <div className="rounded-xl border bg-card p-5 space-y-4">
+      <div id="agent-general-settings-panel-document-options" className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Settings2 className="h-4 w-4 text-muted-foreground" />
           خيارات شاشات المستندات
@@ -1547,7 +1547,7 @@ export default function GeneralSettings() {
 
       {/* ─── Logo Section ──────────────────────────────────────────────────── */}
       {(!agentShortcutIcons || activeAgentGeneralSection === "company-logo") && (
-      <div className="rounded-xl border bg-card p-5 space-y-4">
+      <div id="agent-general-settings-panel-company-logo" className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <ImageIcon className="h-4 w-4 text-muted-foreground" />
           {t("pages.generalSettings.companyLogo")}
@@ -1622,7 +1622,7 @@ export default function GeneralSettings() {
 
       {/* ─── Brand Mark Section (علامة تجارية) — mirrors the logo UX ─────── */}
       {(!agentShortcutIcons || activeAgentGeneralSection === "brand-mark") && (
-      <div className="rounded-xl border bg-card p-5 space-y-4">
+      <div id="agent-general-settings-panel-brand-mark" className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <ImageIcon className="h-4 w-4 text-muted-foreground" />
           {t("pages.generalSettings.brandMark", { defaultValue: "العلامة التجارية" })}
@@ -1696,7 +1696,7 @@ export default function GeneralSettings() {
 
       {/* ─── Optional ZATCA auto-send (default/manual remains unchanged) ─── */}
       {(!agentShortcutIcons || activeAgentGeneralSection === "zatca-auto-send") && (
-      <div className="rounded-xl border bg-card p-5 space-y-4">
+      <div id="agent-general-settings-panel-zatca-auto-send" className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Send className="h-4 w-4 text-emerald-600" />
           الإرسال إلى هيئة الزكاة والضريبة والجمارك (ZATCA)
@@ -1743,7 +1743,7 @@ export default function GeneralSettings() {
 
       {/* ─── Posting Mode Section (per-doc-type toggles) ──────────────────── */}
       {(!agentShortcutIcons || activeAgentGeneralSection === "posting-mode") && (
-      <div className="rounded-xl border bg-card p-5 space-y-4">
+      <div id="agent-general-settings-panel-posting-mode" className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Repeat className="h-4 w-4 text-muted-foreground" />
           {t("pages.generalSettings.postingMode", { defaultValue: "وضع الترحيل" })}
@@ -1853,7 +1853,7 @@ export default function GeneralSettings() {
 
       {/* ── سياسة حفظ فواتير المبيعات (السماح بالحفظ كمسودة بدون مستودع) ── */}
       {(!agentShortcutIcons || activeAgentGeneralSection === "sales-draft-policy") && (
-      <div className="rounded-xl border bg-card p-5 space-y-4">
+      <div id="agent-general-settings-panel-sales-draft-policy" className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Calculator className="h-4 w-4 text-muted-foreground" />
           سياسة حفظ فواتير المبيعات
