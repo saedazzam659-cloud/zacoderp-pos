@@ -3,7 +3,6 @@ import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
   useAgentBrandName,
-  useAgentModuleShortcutIcons,
   useAgentModuleScreensAsTiles,
   useIsAgentDomain,
   useLocalSuperadminScreens,
@@ -1554,7 +1553,6 @@ function DashboardNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const iconOnlyLabels = useAgentModuleShortcutIcons() === true;
   // Hide the entire "لوحة التحكم" group when none of its children would be
   // visible to this user (e.g. a sales rep who has no admin/settings perms).
   // Mirrors the pattern used by AIToolsNavGroup.
@@ -1582,7 +1580,6 @@ function DashboardNavGroup({
               location={location}
               onClick={onNavigate}
               indent
-              iconOnlyLabels={iconOnlyLabels}
             />
           ))}
         </div>
@@ -2594,7 +2591,7 @@ function TopNavDropdown({
 // forced true so everything shows inside the dropdown panel.
 function TopNavBar(props: any) {
   const { t } = useTranslation();
-  const { location, isSuperAdmin, user, menuPerms, onNavigate } = props;
+  const { location, isSuperAdmin, isAgentDomain, user, menuPerms, onNavigate } = props;
   const localSuperadminScreens = useLocalSuperadminScreens();
   const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
   const NOOP = () => {};
@@ -2822,6 +2819,27 @@ function TopNavBar(props: any) {
           user,
         ))
         .map(g => {
+          if (isAgentDomain && g.key === "dashboard") {
+            const active = location === "/control-panel" || location.startsWith("/control-panel/");
+            return (
+              <Link
+                key={g.key}
+                href="/control-panel"
+                onClick={onNavigate}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+                  active
+                    ? "bg-sidebar-accent text-sidebar-foreground"
+                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                )}
+                data-testid="topnav-agent-control-panel"
+              >
+                <Settings className="h-4 w-4" aria-hidden="true" />
+                {g.label}
+              </Link>
+            );
+          }
           const tileHub = moduleScreensAsTiles.includes(g.key)
             ? AGENT_MODULE_SCREEN_TILE_OPTIONS.find(option => option.id === g.key)
             : undefined;
@@ -2870,6 +2888,7 @@ function TopNavBar(props: any) {
 function SidebarInner({
   location,
   isSuperAdmin,
+  isAgentDomain,
   user,
   menuPerms,
   dashboardOpen,
@@ -2949,6 +2968,7 @@ function SidebarInner({
 }: {
   location: string;
   isSuperAdmin: boolean;
+  isAgentDomain: boolean;
   user: any;
   menuPerms: Record<string, boolean>;
   dashboardOpen: boolean;
@@ -3134,17 +3154,27 @@ function SidebarInner({
                 only see groups whose permission keys are explicitly true. */}
             {isGroupAllowed(menuPerms, "dashboard", isSuperAdmin, user) && (
               <div className="space-y-0.5">
-                <NavItem
-                  item={{ nameKey: "nav.infoBoard", href: "/", icon: LayoutDashboard, exact: true }}
-                  location={location}
-                  onClick={onNavigate}
-                />
-                <DashboardNavGroup
-                  location={location}
-                  onNavigate={onNavigate}
-                  open={dashboardOpen}
-                  onToggle={onDashboardToggle}
-                />
+                {isAgentDomain ? (
+                  <NavItem
+                    item={{ nameKey: "nav.dashboardGroup", href: "/control-panel", icon: Settings }}
+                    location={location}
+                    onClick={onNavigate}
+                  />
+                ) : (
+                  <>
+                    <NavItem
+                      item={{ nameKey: "nav.infoBoard", href: "/", icon: LayoutDashboard, exact: true }}
+                      location={location}
+                      onClick={onNavigate}
+                    />
+                    <DashboardNavGroup
+                      location={location}
+                      onNavigate={onNavigate}
+                      open={dashboardOpen}
+                      onToggle={onDashboardToggle}
+                    />
+                  </>
+                )}
               </div>
             )}
 
@@ -4270,6 +4300,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const sharedProps = {
     location,
     isSuperAdmin,
+    isAgentDomain,
     user,
     menuPerms,
     dashboardOpen,

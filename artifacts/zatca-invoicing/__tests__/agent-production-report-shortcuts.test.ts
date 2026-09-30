@@ -7,12 +7,16 @@ const layout = read("../src/components/Layout.tsx");
 const productionDashboard = read("../src/pages/ProductionDashboard.tsx");
 const productionNavigation = read("../src/lib/productionNavigation.ts");
 const unifiedReports = read("../src/pages/UnifiedModuleReports.tsx");
+const controlPanel = read("../src/pages/ControlPanelHub.tsx");
+const unifiedInventoryReports = read("../src/pages/inventory/reports/UnifiedInventoryReports.tsx");
 
-test("dashboard-group labels become accessible icon-only links only under the agent icon setting", () => {
-  assert.match(layout, /const iconOnlyLabels = useAgentModuleShortcutIcons\(\) === true/);
-  assert.match(layout, /iconOnlyLabels=\{iconOnlyLabels\}/);
-  assert.match(layout, /aria-label=\{iconOnlyLabels \? t\(item\.nameKey\) : undefined\}/);
-  assert.match(layout, /<span className=\{iconOnlyLabels \? "sr-only" : undefined\}>\{t\(item\.nameKey\)\}<\/span>/);
+test("agent dashboard navigation opens the icon hub and keeps the information board inside it", () => {
+  assert.match(layout, /if \(isAgentDomain && g\.key === "dashboard"\)/);
+  assert.match(layout, /data-testid="topnav-agent-control-panel"/);
+  assert.match(layout, /item=\{\{ nameKey: "nav\.dashboardGroup", href: "\/control-panel", icon: Settings \}\}/);
+  assert.match(layout, /isAgentDomain \? \([\s\S]*?nav\.dashboardGroup[\s\S]*?\/control-panel[\s\S]*?\) : \([\s\S]*?nav\.infoBoard[\s\S]*?DashboardNavGroup/);
+  assert.match(controlPanel, /nameKey: "nav\.infoBoard",[\s\S]*?href: "\/",[\s\S]*?icon: LayoutDashboard/);
+  assert.match(controlPanel, /tiles=\{isAgentDomain \? \[agentDashboardTile, \.\.\.tiles\] : tiles\}/);
 });
 
 test("agent production tiles reuse all 22 production routes and keep core tiles as the default", () => {
@@ -30,4 +34,11 @@ test("unified report selection scrolls to the embedded report and respects reduc
   assert.match(unifiedReports, /container\.scrollIntoView\(\{/);
   assert.match(unifiedReports, /prefers-reduced-motion: reduce/);
   assert.match(unifiedReports, /\{selectedReport && \([\s\S]*?ref=\{selectedReportContainerRef\}/);
+});
+
+test("agent inventory report selection scrolls to the embedded report table", () => {
+  assert.match(unifiedInventoryReports, /if \(!isAgentDomain \|\| !selectedReport \|\| !container\) return/);
+  assert.match(unifiedInventoryReports, /container\.scrollIntoView\(\{/);
+  assert.match(unifiedInventoryReports, /prefers-reduced-motion: reduce/);
+  assert.match(unifiedInventoryReports, /data-testid="container-selected-unified-inventory-report"/);
 });

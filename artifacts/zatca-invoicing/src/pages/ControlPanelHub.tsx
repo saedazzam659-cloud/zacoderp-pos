@@ -5,6 +5,7 @@ import {
   LayoutDashboard, BadgeCheck, Printer,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
+import { useIsAgentDomain } from "@/lib/agentBranding";
 
 const tiles: HubTile[] = [
   { nameKey: "nav.regions",            href: "/org/regions",                  icon: MapPin,      tone: "emerald", permKey: "regions" },
@@ -23,15 +24,23 @@ const tiles: HubTile[] = [
   { nameKey: "nav.auditLog",           href: "/admin/audit-log",              icon: ScrollText,  tone: "orange",  requireAdmin: true },
 ];
 
+const agentDashboardTile: HubTile = {
+  nameKey: "nav.infoBoard",
+  href: "/",
+  icon: LayoutDashboard,
+  tone: "indigo",
+};
+
 export default function ControlPanelHub() {
   const { t } = useTranslation();
+  const isAgentDomain = useIsAgentDomain();
   return (
     <MenuHub
       title={t("nav.dashboardGroup")}
       subtitle={t("hub.controlPanelSubtitle")}
       icon={LayoutDashboard}
       headerTone="indigo"
-      tiles={tiles}
+      tiles={isAgentDomain ? [agentDashboardTile, ...tiles] : tiles}
     />
   );
 }

@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BarChart2, Search, X, ChevronLeft } from "lucide-react";
 import { usePermission } from "@/hooks/usePermission";
+import { useIsAgentDomain } from "@/lib/agentBranding";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { INVENTORY_REPORTS } from "./InventoryReportsHub";
@@ -10,7 +11,9 @@ import { UnifiedReportEmbed, useUnifiedReportSelection } from "@/components/Unif
 export default function UnifiedInventoryReports() {
   const { t, i18n } = useTranslation();
   const canViewSmartAlerts = usePermission("items", "view");
+  const isAgentDomain = useIsAgentDomain();
   const [search, setSearch] = useState("");
+  const selectedReportContainerRef = useRef<HTMLDivElement>(null);
   const isRtl = i18n.language === "ar";
 
   const visibleReports = useMemo(
@@ -32,6 +35,18 @@ export default function UnifiedInventoryReports() {
     "inventory",
     reportChoices,
   );
+
+  useEffect(() => {
+    const container = selectedReportContainerRef.current;
+    if (!isAgentDomain || !selectedReport || !container) return;
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "start",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isAgentDomain, selectedReport]);
 
   const filteredReports = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase(i18n.language);
@@ -184,7 +199,13 @@ export default function UnifiedInventoryReports() {
         </div>
       )}
       {selectedReport && (
-        <UnifiedReportEmbed report={selectedReport} onClose={clearReport} />
+        <div
+          ref={selectedReportContainerRef}
+          className="scroll-mt-32"
+          data-testid="container-selected-unified-inventory-report"
+        >
+          <UnifiedReportEmbed report={selectedReport} onClose={clearReport} />
+        </div>
       )}
     </div>
   );
