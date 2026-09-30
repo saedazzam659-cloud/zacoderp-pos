@@ -368,13 +368,22 @@ ${source.map((r: any, i: number) => `<tr>
         ? `<tr><td colspan="6" style="text-align:center;color:#6b7280;padding:14px;">لا توجد بنود لهذه الفاتورة.</td></tr>`
         : lines.map((l: any, i: number) => {
             const itemLabel = l.itemName ?? l.description ?? `#${l.itemId ?? ""}`;
+            const batchNumber = String(l.batchNumber ?? "").trim();
+            const expiryDate = String(l.expiryDate ?? "").trim().slice(0, 10);
+            const traceDetails = [
+              batchNumber ? `رقم الدفعة: ${escapeHtml(batchNumber)}` : "",
+              expiryDate ? `تاريخ الانتهاء: ${escapeHtml(expiryDate)}` : "",
+            ].filter(Boolean);
+            const traceHtml = traceDetails.length
+              ? `<div class="line-meta">${traceDetails.join(" • ")}</div>`
+              : "";
             const qty = Number(l.quantity ?? l.qty ?? 0);
             const up  = Number(l.unitPrice ?? 0);
             const vat = Number(l.vatAmount ?? 0);
             const ttl = Number(l.totalAmount ?? l.lineTotal ?? 0);
             return `<tr>
               <td style="text-align:center;">${i + 1}</td>
-              <td>${escapeHtml(itemLabel)}</td>
+              <td>${escapeHtml(itemLabel)}${traceHtml}</td>
               <td class="num">${fmt2(qty)}</td>
               <td class="num">${fmt2(up)}</td>
               <td class="num">${fmt2(vat)}</td>
@@ -429,6 +438,7 @@ thead th { background:#1e3a8a; color:#fff; padding:5px 6px; border:1px solid #1e
 tbody td { padding:4px 6px; border:1px solid #d1d5db; text-align:right; }
 tfoot td { padding:5px 6px; border:1px solid #1e3a8a; background:#eef2ff; font-weight:700; }
 .num { font-family:"Consolas",monospace; }
+.line-meta { margin-top:3px; color:#475569; font-size:9px; line-height:1.4; }
 .print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
 @media print { .print-btn { display:none; } }
 </style></head><body>
@@ -663,13 +673,22 @@ ${sections}
                 vat: Number(d.vatAmount ?? 0),
                 total: Number(d.totalAmount ?? 0),
               }),
-              getLines: (d: any) => (Array.isArray(d.lines) ? d.lines : []).map((l: any) => ({
-                name: l.itemName ?? l.description ?? `#${l.itemId ?? ""}`,
-                qty: Number(l.quantity ?? l.qty ?? 0),
-                unitPrice: Number(l.unitPrice ?? 0),
-                vatAmount: Number(l.vatAmount ?? 0),
-                total: Number(l.totalAmount ?? l.lineTotal ?? 0),
-              })),
+              getLines: (d: any) => (Array.isArray(d.lines) ? d.lines : []).map((l: any) => {
+                const batchNumber = String(l.batchNumber ?? "").trim();
+                const expiryDate = String(l.expiryDate ?? "").trim().slice(0, 10);
+                const traceDetails = [
+                  batchNumber ? `رقم الدفعة: ${batchNumber}` : "",
+                  expiryDate ? `تاريخ الانتهاء: ${expiryDate}` : "",
+                ].filter(Boolean);
+                const itemName = l.itemName ?? l.description ?? `#${l.itemId ?? ""}`;
+                return {
+                  name: traceDetails.length ? `${itemName} — ${traceDetails.join(" • ")}` : itemName,
+                  qty: Number(l.quantity ?? l.qty ?? 0),
+                  unitPrice: Number(l.unitPrice ?? 0),
+                  vatAmount: Number(l.vatAmount ?? 0),
+                  total: Number(l.totalAmount ?? l.lineTotal ?? 0),
+                };
+              }),
             }}
             company={user?.company}
             buildSummary={(docs) => buildListHtml(docs as any[])}

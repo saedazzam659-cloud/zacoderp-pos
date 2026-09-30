@@ -29,6 +29,18 @@ const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, 
 // Latin-digit formatter for English print mode.
 const EN_NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtEn = (n: any) => EN_NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+const escapePrintText = (value: unknown) =>
+  String(value ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!),
+  );
+const lineTraceDetails = (line: any) => {
+  const batchNumber = String(line.batchNumber ?? "").trim();
+  const expiryDate = String(line.expiryDate ?? "").trim().slice(0, 10);
+  return [
+    batchNumber ? `رقم الدفعة: ${escapePrintText(batchNumber)}` : "",
+    expiryDate ? `تاريخ الانتهاء: ${escapePrintText(expiryDate)}` : "",
+  ].filter(Boolean);
+};
 
 // Build the Arabic-name → English-name lookup map from an inventory item list.
 function buildEnNamesMap(items: any[]): Map<string, string> {
@@ -81,6 +93,7 @@ function baseStyles(accent: string, accentText = "#fff") {
       table { width: 100%; border-collapse: collapse; }
       th, td { padding: 5px 8px; text-align: right; }
       .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+      .line-trace { margin-top: 2px; color: #475569; font-size: 9px; line-height: 1.4; }
       @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
     </style>`;
 }
@@ -140,13 +153,17 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "", inc = fal
     const { vat, tot } = f;
     const discPct = Math.max(0, Math.min(100, Number(l.discount) || 0));
     const freeQ = Number(l.freeQty) || 0;
+    const traceDetails = lineTraceDetails(l);
+    const traceHtml = traceDetails.length
+      ? `<div class="line-trace">${traceDetails.join(" • ")}</div>`
+      : "";
     // % cell shows percentage; value cell shows the SAR amount (as entered).
     const discPctCell = discPct > 0 ? `${discPct}%` : "—";
     const discValCell = f.disc > 0 ? fmt(f.disc) : "—";
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
-        <td>${l.itemName ?? l.itemCode ?? "—"}</td>
+        <td><div>${l.itemName ?? l.itemCode ?? "—"}</div>${traceHtml}</td>
         <td class="mono">${Math.round(Number(l.qty) || 0)}</td>
         ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td>${l.unit ?? "—"}</td>
@@ -871,9 +888,13 @@ function template6(d: PrintData): string {
   const itemsRows = lines.map((l) => {
     // Honors the doc's tax mode (السعر شامل الضريبة vs ضريبة إضافية).
     const { tot } = lineFigures(l, !!doc.priceIncludesVat);
+    const traceDetails = lineTraceDetails(l);
     return `
       <tr>
-        <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}</td>
+        <td colspan="3" style="padding-top:4px;">
+          ${l.itemName ?? l.itemCode ?? "—"}
+          ${traceDetails.length ? `<div class="line-trace">${traceDetails.join(" • ")}</div>` : ""}
+        </td>
       </tr>
       <tr>
         <td class="mono" style="padding-bottom:4px;border-bottom:1px dashed #999;">
@@ -898,6 +919,7 @@ function template6(d: PrintData): string {
     .name-ar { font-size: 14px; font-weight: 700; }
     .name-en { font-size: 9px; opacity: .75; margin-top: 2px; }
     .meta { font-size: 10px; line-height: 1.45; }
+    .line-trace { font-size: 9px; line-height: 1.4; color: #444; margin-top: 2px; }
     .doc-type { background: ${accent}; color: #fff; display: inline-block; padding: 3px 10px; margin: 6px 0 4px; font-weight: 700; font-size: 11px; border-radius: 3px; }
     .doc-num  { font-size: 12px; font-weight: 700; margin-top: 2px; }
     .sep { border-top: 1px dashed #555; margin: 6px 0; }
@@ -988,12 +1010,14 @@ function template7(d: PrintData): string {
     const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
     // Honors the doc's tax mode (السعر شامل الضريبة vs ضريبة إضافية).
     const { tot } = lineFigures(l, !!doc.priceIncludesVat);
+    const traceDetails = lineTraceDetails(l);
     return `
       <div class="line ${i % 2 === 0 ? "alt" : ""}">
         <div class="line-top">
           <span class="line-name">${l.itemName ?? l.itemCode ?? "—"}</span>
           <span class="mono line-tot">${fmt(tot)}</span>
         </div>
+        ${traceDetails.length ? `<div class="line-trace">${traceDetails.join(" • ")}</div>` : ""}
         <div class="line-sub mono">
           ${Math.round(Number(l.qty) || 0)} ${l.unit ?? ""} × ${fmt(l.unitPrice)}
           ${(Number(l.freeQty) || 0) > 0 ? ` <span style="color:#b45309;font-weight:700;">+ ${Math.round(Number(l.freeQty))} مجاني</span>` : ""}
@@ -1026,6 +1050,7 @@ function template7(d: PrintData): string {
     .line-top { display: flex; justify-content: space-between; align-items: baseline; }
     .line-name { font-size: 11px; font-weight: 600; flex: 1; }
     .line-tot { font-size: 11px; font-weight: 700; color: ${accent}; }
+    .line-trace { font-size: 9px; color: #475569; line-height: 1.4; margin-top: 2px; }
     .line-sub { font-size: 9.5px; color: #666; margin-top: 2px; }
     .totals { margin-top: 8px; padding: 6px 8px; background: #f9fafb; border-radius: 4px; font-size: 10.5px; }
     .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
