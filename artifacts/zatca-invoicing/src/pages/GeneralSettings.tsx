@@ -33,6 +33,7 @@ import SenderSettingsTab from "./settings/SenderSettingsTab";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -135,6 +136,7 @@ function splitDataUrl(dataUrl: string): { b64: string; mime: string } | null {
 }
 
 export default function GeneralSettings() {
+  const agentShortcutIcons = useAgentModuleShortcutIcons() === true;
     const gate = useDemoActionGate();
   const { t } = useTranslation();
   const { user, token, setUser } = useAuth() as any;
@@ -1222,7 +1224,19 @@ export default function GeneralSettings() {
 
       {/* ─── Tabs Header — modern wrap-pill layout (RTL-aware, no text overlap) ─ */}
       <Tabs defaultValue="general" dir="rtl" className="w-full">
-        <TabsList className="flex flex-wrap h-auto w-full justify-start gap-1.5 bg-muted/40 border border-border/50 p-1.5 rounded-xl shadow-sm">
+        <TabsList className={cn(
+          "flex flex-wrap h-auto w-full justify-start gap-1.5 bg-muted/40 border border-border/50 p-1.5 rounded-xl shadow-sm",
+          agentShortcutIcons && [
+            "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3 bg-transparent border-0 p-0 shadow-none",
+            "[&>button]:min-w-0 [&>button]:h-auto [&>button]:min-h-[84px] [&>button]:w-full [&>button]:flex-none",
+            "[&>button]:flex-col [&>button]:justify-center [&>button]:gap-2 [&>button]:whitespace-normal [&>button]:px-2 [&>button]:py-3",
+            "[&>button]:rounded-xl [&>button]:border [&>button]:border-border/60 [&>button]:bg-card [&>button]:text-center [&>button]:text-xs [&>button]:shadow-sm",
+            "[&>button]:transition-all [&>button]:hover:-translate-y-0.5 [&>button]:hover:shadow-md",
+            "[&>button[data-state=active]]:border-primary [&>button[data-state=active]]:bg-primary/5 [&>button[data-state=active]]:text-primary [&>button[data-state=active]]:shadow-md",
+            "[&>button>svg]:h-7 [&>button>svg]:w-7 [&>button>svg]:shrink-0 [&>button>svg]:rounded-xl [&>button>svg]:bg-primary/10 [&>button>svg]:p-1.5 [&>button>svg]:text-primary",
+            "[&>button>span]:w-full [&>button>span]:whitespace-normal [&>button>span]:overflow-visible [&>button>span]:text-center [&>button>span]:leading-tight",
+          ]
+        )}>
           <TabsTrigger
             value="general"
             className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"

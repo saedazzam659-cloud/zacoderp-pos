@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { companyAllowsModule } from "@/lib/companyModuleGate";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 
 export type HubTone =
   | "blue" | "indigo" | "violet" | "fuchsia" | "rose"
@@ -79,6 +80,7 @@ export function MenuHub({
 }) {
   const { user } = useAuth() as any;
   const { i18n } = useTranslation();
+  const shortcutIcons = useAgentModuleShortcutIcons() === true;
   const visible = tiles.filter(t => tileAllowed(t, user));
   const isRtl = i18n.dir() === "rtl";
   const Chevron = isRtl ? ChevronLeft : ChevronRight;
@@ -97,7 +99,7 @@ export function MenuHub({
             {subtitle && <p className="text-xs text-muted-foreground truncate">{subtitle}</p>}
           </div>
         </div>
-        <HubGrid tiles={visible} compact Chevron={Chevron} />
+        <HubGrid tiles={visible} compact Chevron={Chevron} shortcutIcons={shortcutIcons} />
       </div>
     );
   }
@@ -131,7 +133,7 @@ export function MenuHub({
           —
         </div>
       ) : (
-        <HubGrid tiles={visible} Chevron={Chevron} />
+        <HubGrid tiles={visible} Chevron={Chevron} shortcutIcons={shortcutIcons} />
       )}
     </div>
   );
@@ -139,8 +141,8 @@ export function MenuHub({
 
 // ─── Grid + Tile ────────────────────────────────────────────────────────────────
 function HubGrid({
-  tiles, compact = false, Chevron,
-}: { tiles: HubTile[]; compact?: boolean; Chevron: React.ElementType }) {
+  tiles, compact = false, Chevron, shortcutIcons = false,
+}: { tiles: HubTile[]; compact?: boolean; Chevron: React.ElementType; shortcutIcons?: boolean }) {
   const { t } = useTranslation();
   return (
     <div className={cn(
@@ -150,15 +152,15 @@ function HubGrid({
         : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
     )}>
       {tiles.map(tile => (
-        <Tile key={tile.href} tile={tile} compact={compact} t={t} Chevron={Chevron} />
+        <Tile key={tile.href} tile={tile} compact={compact} t={t} Chevron={Chevron} shortcutIcons={shortcutIcons} />
       ))}
     </div>
   );
 }
 
 function Tile({
-  tile, compact, t, Chevron,
-}: { tile: HubTile; compact: boolean; t: (k: string) => string; Chevron: React.ElementType }) {
+  tile, compact, t, Chevron, shortcutIcons,
+}: { tile: HubTile; compact: boolean; t: (k: string) => string; Chevron: React.ElementType; shortcutIcons: boolean }) {
   const Icon = tile.icon;
   const tone = toneStyles[tile.tone];
   return (
@@ -166,24 +168,34 @@ function Tile({
       href={tile.href}
       className={cn(
         "group relative block rounded-2xl border bg-card transition-all overflow-hidden",
-        "hover:shadow-lg hover:-translate-y-0.5 hover:border-slate-300",
-        compact ? "p-3" : "p-5"
+        shortcutIcons
+          ? "min-h-[132px] border-primary/10 bg-gradient-to-br from-primary/5 via-card to-card shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          : "hover:shadow-lg hover:-translate-y-0.5 hover:border-slate-300",
+        compact ? (shortcutIcons ? "p-4" : "p-3") : (shortcutIcons ? "p-6" : "p-5")
       )}
     >
         {/* Soft top accent strip */}
-        <div className={cn("absolute inset-x-0 top-0 h-1.5", tone.bg, "opacity-90")} />
-        <div className={cn("flex flex-col items-center text-center", compact ? "gap-2" : "gap-3 pt-2")}>
+        {!shortcutIcons && <div className={cn("absolute inset-x-0 top-0 h-1.5", tone.bg, "opacity-90")} />}
+        <div className={cn(
+          "flex flex-col items-center text-center",
+          compact ? "gap-2" : "gap-3 pt-2",
+          shortcutIcons && "justify-center gap-3"
+        )}>
           <div className={cn(
             "rounded-2xl flex items-center justify-center transition-transform group-hover:scale-105",
             tone.bg, tone.fg, "ring-4 ring-white shadow-md",
-            compact ? "h-12 w-12" : "h-16 w-16 md:h-[72px] md:w-[72px]"
+            shortcutIcons
+              ? "h-14 w-14 md:h-16 md:w-16 shadow-lg group-hover:rotate-3"
+              : compact ? "h-12 w-12" : "h-16 w-16 md:h-[72px] md:w-[72px]"
           )}>
-            <Icon className={cn(compact ? "h-6 w-6" : "h-8 w-8 md:h-9 md:w-9")} />
+            <Icon className={cn(
+              shortcutIcons ? "h-7 w-7 md:h-8 md:w-8" : compact ? "h-6 w-6" : "h-8 w-8 md:h-9 md:w-9"
+            )} />
           </div>
           <div className="min-w-0 w-full">
             <div className={cn(
               "font-semibold text-foreground leading-tight line-clamp-2",
-              compact ? "text-xs" : "text-sm md:text-[15px]"
+              shortcutIcons ? "text-sm md:text-base font-bold" : compact ? "text-xs" : "text-sm md:text-[15px]"
             )}>
               {t(tile.nameKey)}
             </div>
@@ -195,7 +207,7 @@ function Tile({
           </div>
         </div>
         {/* Hover affordance */}
-        {!compact && (
+        {(!compact || shortcutIcons) && (
           <div className="absolute bottom-2 end-2 opacity-0 group-hover:opacity-100 transition-opacity">
             <Chevron className="h-4 w-4 text-muted-foreground" />
           </div>

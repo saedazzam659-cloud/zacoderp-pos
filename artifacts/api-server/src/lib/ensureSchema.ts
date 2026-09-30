@@ -295,6 +295,7 @@ const CENTRAL_ONLY_AGENT_CONTROL_COLUMNS = [
   "agent_instances.invoice_acceleration_generation",
   "agent_instances.invoice_acceleration_baseline",
   "agent_instances.inventory_reports_unified",
+  "agent_instances.module_shortcut_icons",
 ] as const;
 
 // These control-plane records contain an encrypted, one-time registration

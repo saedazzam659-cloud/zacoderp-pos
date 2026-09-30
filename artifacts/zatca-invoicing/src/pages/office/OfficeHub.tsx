@@ -2,9 +2,12 @@ import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import { FileText, FileSpreadsheet, FolderOpen, Save, FileDown, FileUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 
 export default function OfficeHub() {
   const { t, i18n } = useTranslation();
+  const moduleShortcutIcons = useAgentModuleShortcutIcons() === true;
   const ar = i18n.language?.startsWith("ar") ?? true;
 
   const tiles = [
@@ -74,10 +77,23 @@ export default function OfficeHub() {
       <div className="grid gap-4 sm:grid-cols-2">
         {tiles.map((tile) => (
           <Link key={tile.href} href={tile.href}>
-            <a className="group block" data-testid={`tile-office-${tile.href.split("/").pop()}`}>
-              <Card className="h-full transition-shadow hover:shadow-md">
-                <CardContent className={`p-6 border border-transparent rounded-lg ${tile.ring} transition-colors`}>
-                  <tile.icon className={`h-10 w-10 ${tile.accent}`} />
+            <a className={cn("group block", moduleShortcutIcons && "focus-visible:outline-none")} data-testid={`tile-office-${tile.href.split("/").pop()}`}>
+              <Card className={cn(
+                "h-full transition-shadow hover:shadow-md",
+                moduleShortcutIcons && "border-primary/15 shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl"
+              )}>
+                <CardContent className={cn(
+                  "p-6 border border-transparent rounded-lg transition-colors",
+                  tile.ring,
+                  moduleShortcutIcons && "flex flex-col items-center text-center"
+                )}>
+                  {moduleShortcutIcons ? (
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 shadow-inner">
+                      <tile.icon className={cn("h-9 w-9", tile.accent)} />
+                    </div>
+                  ) : (
+                    <tile.icon className={`h-10 w-10 ${tile.accent}`} />
+                  )}
                   <h2 className="text-lg font-semibold mt-3">{tile.title}</h2>
                   <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{tile.desc}</p>
                 </CardContent>

@@ -94,6 +94,8 @@ export const agentInstancesTable = pgTable("agent_instances", {
   // Central per-agent presentation option. Off by default; external agent
   // schema reconciliation and package export deliberately exclude this field.
   inventoryReportsUnified: boolean("inventory_reports_unified").notNull().default(false),
+  // Central-only display preference; never materialized in an agent's business DB.
+  moduleShortcutIcons: boolean("module_shortcut_icons").notNull().default(false),
 
   // Runtime health
   lastHeartbeatAt: timestamp("last_heartbeat_at"),

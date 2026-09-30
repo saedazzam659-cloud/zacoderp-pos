@@ -8,7 +8,8 @@ test("fresh schema removes the final central column without leaving a trailing c
     name text,
     invoice_acceleration_mode text DEFAULT 'off'::text NOT NULL,
     invoice_trial_remaining integer,
-    inventory_reports_unified boolean NOT NULL DEFAULT false
+    inventory_reports_unified boolean NOT NULL DEFAULT false,
+    module_shortcut_icons boolean NOT NULL DEFAULT false
 );
 ALTER TABLE ONLY public.agent_instances
     ALTER COLUMN invoice_acceleration_mode SET DEFAULT 'off'::text;
@@ -18,7 +19,7 @@ CREATE TABLE public.companies (id integer);
   assert.match(cleaned, /name text\s*\);/);
   assert.doesNotMatch(cleaned, /name text,\s*\)/);
   assert.match(cleaned, /CREATE TABLE public\.companies \(id integer\)/);
-  assert.doesNotMatch(cleaned, /invoice_acceleration|invoice_trial_remaining|inventory_reports_unified/);
+  assert.doesNotMatch(cleaned, /invoice_acceleration|invoice_trial_remaining|inventory_reports_unified|module_shortcut_icons/);
 });
 
 test("fresh schema preserves multiline definitions, nested commas and SQL literals", () => {

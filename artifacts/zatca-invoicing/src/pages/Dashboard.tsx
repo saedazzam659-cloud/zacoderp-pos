@@ -29,6 +29,7 @@ import { useFmt } from "@/hooks/use-fmt";
 import BranchFilter from "@/components/BranchFilter";
 import { dashboardOverviewApi, type DashboardOverview } from "@/lib/dashboardOverviewApi";
 import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
+import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 
 // ─── KPI Tile (SAP Fiori-style) ────────────────────────────────────────────────
 type Tone = "primary" | "success" | "warning" | "danger" | "info" | "violet" | "amber";
@@ -81,22 +82,31 @@ function KpiTile({
 
 // ─── Quick Action Tile ────────────────────────────────────────────────────────
 function QuickAction({
-  href, icon: Icon, label, color,
+  href, icon: Icon, label, color, moduleShortcutIcons,
 }: {
   href: string;
   icon: React.ElementType;
   label: string;
   color: string;
+  moduleShortcutIcons: boolean;
 }) {
   return (
     <Link
       href={href}
-      className="group flex flex-col items-center justify-center gap-2 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-md transition-all"
+      className={moduleShortcutIcons
+        ? "group flex min-h-[112px] flex-col items-center justify-center gap-3 rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/5 via-card to-card p-5 text-center shadow-sm transition-all hover:-translate-y-1 hover:border-primary/35 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+        : "group flex flex-col items-center justify-center gap-2 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-md transition-all"}
     >
-      <div className={cn("flex h-11 w-11 items-center justify-center rounded-xl transition-transform group-hover:scale-110", color)}>
-        <Icon className="h-5 w-5 text-white" />
+      <div className={cn(
+        "flex items-center justify-center transition-transform group-hover:scale-110",
+        color,
+        moduleShortcutIcons ? "h-14 w-14 rounded-2xl shadow-md" : "h-11 w-11 rounded-xl"
+      )}>
+        <Icon className={moduleShortcutIcons ? "h-6 w-6 text-white" : "h-5 w-5 text-white"} />
       </div>
-      <span className="text-xs font-medium text-foreground text-center leading-tight">{label}</span>
+      <span className={moduleShortcutIcons
+        ? "text-sm font-semibold text-foreground text-center leading-tight"
+        : "text-xs font-medium text-foreground text-center leading-tight"}>{label}</span>
     </Link>
   );
 }
@@ -190,6 +200,7 @@ function daysUntilEnd(iso?: string | null): number | null {
 
 export default function Dashboard() {
   const { t, i18n } = useTranslation();
+  const moduleShortcutIcons = useAgentModuleShortcutIcons() === true;
   const { user } = useAuth();
   const { fmtCurrency } = useFmt();
   const companyId = user?.companyId;
@@ -425,12 +436,12 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-4">
-          <QuickAction href="/sales/invoices/new"      icon={Receipt}   label={t("pages.dashboard.newInvoice")}     color="bg-primary" />
-          <QuickAction href="/customers/new"           icon={Users}     label={t("pages.dashboard.newCustomer")}    color="bg-sky-500" />
-          <QuickAction href="/suppliers/new"           icon={Truck}     label={t("pages.dashboard.newSupplier")}    color="bg-indigo-500" />
-          <QuickAction href="/inventory/items"         icon={Package}   label={t("pages.dashboard.addItem")}        color="bg-emerald-500" />
-          <QuickAction href="/cash/receipt-vouchers"   icon={Wallet}    label={t("pages.dashboard.receiptVoucher")} color="bg-amber-500" />
-          <QuickAction href="/accounting/accounts"     icon={BookOpen}  label={t("pages.dashboard.chartOfAccounts")} color="bg-rose-500" />
+          <QuickAction href="/sales/invoices/new"      icon={Receipt}   label={t("pages.dashboard.newInvoice")}     color="bg-primary" moduleShortcutIcons={moduleShortcutIcons} />
+          <QuickAction href="/customers/new"           icon={Users}     label={t("pages.dashboard.newCustomer")}    color="bg-sky-500" moduleShortcutIcons={moduleShortcutIcons} />
+          <QuickAction href="/suppliers/new"           icon={Truck}     label={t("pages.dashboard.newSupplier")}    color="bg-indigo-500" moduleShortcutIcons={moduleShortcutIcons} />
+          <QuickAction href="/inventory/items"         icon={Package}   label={t("pages.dashboard.addItem")}        color="bg-emerald-500" moduleShortcutIcons={moduleShortcutIcons} />
+          <QuickAction href="/cash/receipt-vouchers"   icon={Wallet}    label={t("pages.dashboard.receiptVoucher")} color="bg-amber-500" moduleShortcutIcons={moduleShortcutIcons} />
+          <QuickAction href="/accounting/accounts"     icon={BookOpen}  label={t("pages.dashboard.chartOfAccounts")} color="bg-rose-500" moduleShortcutIcons={moduleShortcutIcons} />
         </div>
       </div>
 

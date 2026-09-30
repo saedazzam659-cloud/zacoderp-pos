@@ -7,6 +7,7 @@ const EXTERNAL_AGENT_FORBIDDEN_CONTROL_COLUMNS = [
   "invoice_acceleration_generation",
   "invoice_acceleration_baseline",
   "inventory_reports_unified",
+  "module_shortcut_icons",
 ] as const;
 
 const forbiddenColumn = new RegExp(

@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
+import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 import {
   Package as PackageIcon, Tag, Ruler, Warehouse as WarehouseIcon, Layers,
   ArrowRightLeft as ArrowRightLeftIcon, SlidersHorizontal as SlidersHIcon,
@@ -44,6 +45,7 @@ const TX_TYPE_META: Record<string, { txKey: string; color: string }> = {
 
 export default function InventoryDashboard() {
   const { t, i18n } = useTranslation();
+  const moduleShortcutIcons = useAgentModuleShortcutIcons() === true;
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { fmtQty, fmtVal } = useFmt();
@@ -148,9 +150,18 @@ export default function InventoryDashboard() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {quickActions.map(a => (
             <Link key={a.label} href={a.href}>
-              <div className="flex flex-col items-center gap-2 rounded-lg border bg-muted/30 p-4 hover:bg-muted/60 transition-colors cursor-pointer text-center">
-                <a.icon className={cn("h-6 w-6", a.color)} />
-                <span className="text-xs font-medium">{a.label}</span>
+              <div className={cn(
+                "flex flex-col items-center gap-2 border transition-colors cursor-pointer text-center",
+                moduleShortcutIcons
+                  ? "min-h-[112px] justify-center rounded-2xl border-primary/15 bg-gradient-to-br from-primary/5 via-card to-card p-5 shadow-sm hover:-translate-y-1 hover:shadow-lg"
+                  : "rounded-lg bg-muted/30 p-4 hover:bg-muted/60"
+              )}>
+                <a.icon className={cn(
+                  "h-6 w-6",
+                  a.color,
+                  moduleShortcutIcons && "h-12 w-12 rounded-2xl bg-primary/10 p-3"
+                )} />
+                <span className={moduleShortcutIcons ? "text-sm font-semibold" : "text-xs font-medium"}>{a.label}</span>
               </div>
             </Link>
           ))}

@@ -18,6 +18,7 @@ test("public agent branding exposes contact phone but no supplied secrets", () =
     brandColor: "#123456",
     contactPhone: "01000903159",
     inventoryReportsUnified: true,
+    moduleShortcutIcons: true,
     dbUrlEnc: "secret",
     proxyToken: "secret",
   } as any);
@@ -25,6 +26,7 @@ test("public agent branding exposes contact phone but no supplied secrets", () =
   assert.equal(payload.contactPhone, "01000903159");
   assert.equal(payload.isAgentDomain, true);
   assert.equal(payload.inventoryReportsUnified, true);
+  assert.equal(payload.moduleShortcutIcons, true);
   assert.equal("dbUrlEnc" in payload, false);
   assert.equal("proxyToken" in payload, false);
 });
@@ -44,12 +46,14 @@ test("installed branding uses only installer-owned origin and domain, and ignore
       isAgentDomain: true, brandName: "Installed Brand", brandLogoUrl: "https://cdn.example/logo.png",
       brandColor: "#123456", contactPhone: null,
       inventoryReportsUnified: true,
+      moduleShortcutIcons: true,
       localSuperadminEnabled: true, localSuperadminScreens: ["users"], licenseKey: "secret",
     }), { headers: { "content-type": "application/json" } });
   }) as typeof fetch;
   const result = await localAgentPublicBranding(installed, fetchBrand);
   assert.equal(result?.brandName, "Installed Brand");
   assert.equal(result?.inventoryReportsUnified, true);
+  assert.equal(result?.moduleShortcutIcons, true);
   assert.equal(result?.localSuperadminEnabled, false);
   assert.deepEqual(result?.localSuperadminScreens, []);
   assert.equal("licenseKey" in (result ?? {}), false);
