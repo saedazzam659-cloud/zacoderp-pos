@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "wouter";
 import { BarChart3, ChevronLeft, Search, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermission } from "@/hooks/usePermission";
@@ -12,6 +11,7 @@ import {
 } from "@/lib/unifiedModuleReports";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { UnifiedReportEmbed, useUnifiedReportSelection } from "@/components/UnifiedReportEmbed";
 
 const reportTileColors = [
   "from-sky-50 to-sky-100/40 text-sky-700 border-sky-200",
@@ -21,15 +21,20 @@ const reportTileColors = [
   "from-cyan-50 to-cyan-100/40 text-cyan-700 border-cyan-200",
   "from-rose-50 to-rose-100/40 text-rose-700 border-rose-200",
 ];
+const EMPTY_REPORTS: UnifiedReportLink[] = [];
 
 function ReportTile({
   report,
   index,
   user,
+  selected,
+  onSelect,
 }: {
   report: UnifiedReportLink;
   index: number;
   user: any;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const { i18n } = useTranslation();
   const canView = usePermission(report.permissionKey);
@@ -41,9 +46,11 @@ function ReportTile({
   const ReportIcon = report.icon;
   const color = reportTileColors[index % reportTileColors.length];
   return (
-    <Link
-      href={report.href}
-      className={`group block cursor-pointer rounded-xl border bg-gradient-to-br p-5 transition-all hover:-translate-y-0.5 hover:shadow-md ${color}`}
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={`group block w-full cursor-pointer rounded-xl border bg-gradient-to-br p-5 text-start transition-all hover:-translate-y-0.5 hover:shadow-md ${color} ${selected ? "ring-2 ring-primary ring-offset-2" : ""}`}
       data-testid={`link-unified-report-${report.href.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}`}
     >
       <div className="mb-3 flex items-start justify-between">
@@ -57,7 +64,7 @@ function ReportTile({
       <p className="mt-1.5 text-xs opacity-80">
         {i18n.language.startsWith("en") ? "Open report" : "فتح التقرير"}
       </p>
-    </Link>
+    </button>
   );
 }
 
@@ -80,6 +87,10 @@ export default function UnifiedModuleReports({
       report.label.toLocaleLowerCase(i18n.language).includes(normalizedSearch),
     );
   }, [i18n.language, module, search]);
+  const { selectedReport, selectReport, clearReport } = useUnifiedReportSelection(
+    moduleId,
+    module?.reports ?? EMPTY_REPORTS,
+  );
 
   if (!module) {
     return (
@@ -167,9 +178,19 @@ export default function UnifiedModuleReports({
           data-testid={`grid-unified-reports-${moduleId}`}
         >
           {filteredReports.map((report, index) => (
-            <ReportTile key={report.href} report={report} index={index} user={user} />
+            <ReportTile
+              key={report.href}
+              report={report}
+              index={index}
+              user={user}
+              selected={selectedReport?.href === report.href}
+              onSelect={() => selectReport(report.href)}
+            />
           ))}
         </div>
+      )}
+      {selectedReport && (
+        <UnifiedReportEmbed report={selectedReport} onClose={clearReport} />
       )}
     </div>
   );

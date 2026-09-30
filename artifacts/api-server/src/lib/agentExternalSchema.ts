@@ -9,6 +9,7 @@ const EXTERNAL_AGENT_FORBIDDEN_CONTROL_COLUMNS = [
   "inventory_reports_unified",
   "module_shortcut_icons",
   "module_reports_unified",
+  "module_reports_unified_modules",
 ] as const;
 
 const forbiddenColumn = new RegExp(

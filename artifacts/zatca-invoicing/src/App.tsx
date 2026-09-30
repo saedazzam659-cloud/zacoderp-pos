@@ -526,7 +526,7 @@ function safeRedirectTarget(raw: string | null | undefined): string | null {
 
 function AgentUnifiedInventoryReportsRoute() {
   const inventoryEnabled = useUnifiedInventoryReports();
-  const modulesEnabled = useUnifiedModuleReports();
+  const modulesEnabled = useUnifiedModuleReports("inventory");
   if (inventoryEnabled === null || modulesEnabled === null) {
     return (
       <div className="p-6 text-sm text-muted-foreground" role="status">
@@ -541,7 +541,7 @@ function AgentUnifiedInventoryReportsRoute() {
 
 function AgentUnifiedModuleReportsRoute() {
   const { moduleKey } = useParams<{ moduleKey: string }>();
-  const enabled = useUnifiedModuleReports();
+  const enabled = useUnifiedModuleReports(moduleKey);
   if (enabled === null) {
     return (
       <div className="p-6 text-sm text-muted-foreground" role="status">
@@ -561,7 +561,7 @@ function AgentUnifiedModuleReportsRoute() {
 
 function AgentInventoryReportsHubRoute() {
   const inventoryEnabled = useUnifiedInventoryReports();
-  const modulesEnabled = useUnifiedModuleReports();
+  const modulesEnabled = useUnifiedModuleReports("inventory");
   if (inventoryEnabled === null || modulesEnabled === null) {
     return (
       <div className="p-6 text-sm text-muted-foreground" role="status">
@@ -575,7 +575,7 @@ function AgentInventoryReportsHubRoute() {
 }
 
 function AgentSalesReportsHubRoute() {
-  const enabled = useUnifiedModuleReports();
+  const enabled = useUnifiedModuleReports("sales");
   if (enabled === null) {
     return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
   }
@@ -583,7 +583,7 @@ function AgentSalesReportsHubRoute() {
 }
 
 function AgentPurchasingReportsHubRoute() {
-  const enabled = useUnifiedModuleReports();
+  const enabled = useUnifiedModuleReports("purchasing");
   if (enabled === null) {
     return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
   }
@@ -591,7 +591,7 @@ function AgentPurchasingReportsHubRoute() {
 }
 
 function AgentCashReportsHubRoute() {
-  const enabled = useUnifiedModuleReports();
+  const enabled = useUnifiedModuleReports("cash");
   if (enabled === null) {
     return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
   }
@@ -599,7 +599,7 @@ function AgentCashReportsHubRoute() {
 }
 
 function AgentHrReportsHubRoute() {
-  const enabled = useUnifiedModuleReports();
+  const enabled = useUnifiedModuleReports("hr");
   if (enabled === null) {
     return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
   }
@@ -607,7 +607,7 @@ function AgentHrReportsHubRoute() {
 }
 
 function AccountingReportsRoute() {
-  const enabled = useUnifiedModuleReports();
+  const enabled = useUnifiedModuleReports("accounting");
   if (enabled === null) {
     return (
       <div className="p-6 text-sm text-muted-foreground" role="status">

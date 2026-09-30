@@ -98,6 +98,9 @@ export const agentInstancesTable = pgTable("agent_instances", {
   moduleShortcutIcons: boolean("module_shortcut_icons").notNull().default(false),
   // Central-only report navigation preference; legacy module routes remain available.
   moduleReportsUnified: boolean("module_reports_unified").notNull().default(false),
+  // Empty preserves the historical "all modules" meaning when the master
+  // report chooser is enabled; otherwise this is the explicit module allowlist.
+  moduleReportsUnifiedModules: jsonb("module_reports_unified_modules").$type<string[]>().notNull().default([]),
 
   // Runtime health
   lastHeartbeatAt: timestamp("last_heartbeat_at"),

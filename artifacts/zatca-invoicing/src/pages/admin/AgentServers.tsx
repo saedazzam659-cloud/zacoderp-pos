@@ -23,6 +23,7 @@ import {
   Zap, Activity, BarChart, ServerCog, Link as LinkIcon
 } from "lucide-react";
 import { DEFAULT_LOCAL_SUPERADMIN_SCREENS, LOCAL_SUPERADMIN_SCREENS } from "@/lib/localSuperadminScreens";
+import { UNIFIED_REPORT_MODULE_OPTIONS } from "@/lib/unifiedModuleReports";
 import { PlatformLinksTopLevel } from "./platform-links/PlatformLinksManagement";
 import { LocalAgentLinks } from "./platform-links/LocalAgentLinks";
 import { ImportedAgentsList } from "./platform-links/ImportedAgentsList";
@@ -30,6 +31,7 @@ import { ZatcaTransferAction } from "./ZatcaTransferWizard";
 import { AgentHandoffAction } from "./AgentHandoffWizard";
 
 const API = import.meta.env.VITE_API_URL ?? "";
+const ALL_UNIFIED_REPORT_MODULE_IDS = UNIFIED_REPORT_MODULE_OPTIONS.map(({ id }) => id);
 
 // جريدة ألوان جاهزة لهوية الوكيل
 const BRAND_PALETTE = [
@@ -78,6 +80,7 @@ type Agent = {
   inventoryReportsUnified?: boolean;
   moduleShortcutIcons?: boolean;
   moduleReportsUnified?: boolean;
+  moduleReportsUnifiedModules?: string[];
   lastHeartbeatAt: string | null; lastSeenIp: string | null; deployedVersion: string | null;
   deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
   operationKind?: "schema" | "provision" | null;
@@ -179,6 +182,7 @@ const emptyForm = {
   inventoryReportsUnified: false,
   moduleShortcutIcons: false,
   moduleReportsUnified: false,
+  moduleReportsUnifiedModules: [] as string[],
   saUsername: "", saEmail: "", saPassword: "",
   autoDomainSetup: false, autoDomainProxyEnabled: false,
 };
@@ -523,6 +527,7 @@ export default function AgentServers() {
         payload.inventoryReportsUnified = form.inventoryReportsUnified;
         payload.moduleShortcutIcons = form.moduleShortcutIcons;
         payload.moduleReportsUnified = form.moduleReportsUnified;
+        payload.moduleReportsUnifiedModules = form.moduleReportsUnifiedModules;
       }
       // Existing agents save their Super Admin policy through its dedicated
       // button. The general/package save must never submit password fields:
@@ -762,6 +767,7 @@ export default function AgentServers() {
           inventoryReportsUnified: form.inventoryReportsUnified,
           moduleShortcutIcons: form.moduleShortcutIcons,
           moduleReportsUnified: form.moduleReportsUnified,
+          moduleReportsUnifiedModules: form.moduleReportsUnifiedModules,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -1142,6 +1148,11 @@ export default function AgentServers() {
       inventoryReportsUnified: a.inventoryReportsUnified === true,
       moduleShortcutIcons: a.moduleShortcutIcons === true,
       moduleReportsUnified: a.moduleReportsUnified === true,
+      moduleReportsUnifiedModules: a.moduleReportsUnified === true
+        ? (Array.isArray(a.moduleReportsUnifiedModules) && a.moduleReportsUnifiedModules.length > 0
+          ? a.moduleReportsUnifiedModules
+          : ALL_UNIFIED_REPORT_MODULE_IDS)
+        : [],
       notes: a.notes ?? "",
       saUsername: a.saUsername ?? "", saEmail: a.saEmail ?? "", saPassword: "",
       autoDomainSetup: a.autoDomainSetup ?? false,
@@ -2332,8 +2343,8 @@ export default function AgentServers() {
                 <div>
                   <h3 className="text-sm font-semibold">شاشة موحدة لتقارير الوحدات</h3>
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    عند التفعيل، تعرض وحدات التقارير شاشة اختيار موحدة ببطاقات وأيقونات، مع إبقاء صفحات التقارير وروابطها وصلاحياتها الحالية.
-                    يشمل الخيار المخازن؛ وإعداد المخازن المستقل أدناه يظل متوافقًا معه.
+                    اختر الوحدات التي تستبدل قوائم تقاريرها بشاشة اختيار موحدة. تبقى صفحات التقارير ومساراتها وصلاحياتها الحالية كما هي.
+                    خيار المخازن المستقل أدناه يظل متوافقًا مع هذا الإعداد.
                   </p>
                 </div>
                 <label className="flex cursor-pointer items-start gap-2 text-sm">
@@ -2342,11 +2353,46 @@ export default function AgentServers() {
                     className="mt-0.5 h-4 w-4 accent-primary"
                     checked={form.moduleReportsUnified}
                     disabled={busy === `save-agent-ui-${form.id}`}
-                    onChange={event => set("moduleReportsUnified", event.target.checked)}
+                    onChange={event => {
+                      const enabled = event.target.checked;
+                      set("moduleReportsUnified", enabled);
+                      if (enabled && form.moduleReportsUnifiedModules.length === 0) {
+                        set("moduleReportsUnifiedModules", ALL_UNIFIED_REPORT_MODULE_IDS);
+                      }
+                    }}
                     data-testid="checkbox-agent-unified-module-reports"
                   />
-                  <span>تفعيل شاشات التقارير الموحدة لكل الوحدات لهذا الوكيل</span>
+                  <span>تفعيل شاشة التقارير الموحدة لهذا الوكيل</span>
                 </label>
+                {form.moduleReportsUnified && (
+                  <fieldset className="rounded-md border bg-background/70 p-3">
+                    <legend className="px-1 text-xs font-semibold text-muted-foreground">
+                      الوحدات المشمولة
+                    </legend>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {UNIFIED_REPORT_MODULE_OPTIONS.map(({ id, label }) => (
+                        <label key={id} className="flex cursor-pointer items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-primary"
+                            checked={form.moduleReportsUnifiedModules.includes(id)}
+                            disabled={busy === `save-agent-ui-${form.id}`}
+                            onChange={event => {
+                              const selected = new Set(form.moduleReportsUnifiedModules);
+                              if (event.target.checked) selected.add(id);
+                              else selected.delete(id);
+                              const next = [...selected];
+                              set("moduleReportsUnifiedModules", next);
+                              if (next.length === 0) set("moduleReportsUnified", false);
+                            }}
+                            data-testid={`checkbox-agent-unified-report-module-${id}`}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                )}
                 <div className="border-t pt-3 space-y-3">
                 <div>
                   <h3 className="text-sm font-semibold">عرض تقارير المخازن الموحد</h3>

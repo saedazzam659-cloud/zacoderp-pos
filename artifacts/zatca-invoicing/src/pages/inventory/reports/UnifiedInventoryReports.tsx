@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "wouter";
 import { BarChart2, Search, X, ChevronLeft } from "lucide-react";
 import { usePermission } from "@/hooks/usePermission";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { INVENTORY_REPORTS } from "./InventoryReportsHub";
+import { UnifiedReportEmbed, useUnifiedReportSelection } from "@/components/UnifiedReportEmbed";
 
 export default function UnifiedInventoryReports() {
   const { t, i18n } = useTranslation();
@@ -20,6 +20,17 @@ export default function UnifiedInventoryReports() {
           report.href !== "/inventory/alerts" || canViewSmartAlerts,
       ),
     [canViewSmartAlerts],
+  );
+  const reportChoices = useMemo(
+    () => visibleReports.map(report => ({
+      href: report.href,
+      label: t(`inventoryReports.hub.${report.key}Title`),
+    })),
+    [i18n.language, t, visibleReports],
+  );
+  const { selectedReport, selectReport, clearReport } = useUnifiedReportSelection(
+    "inventory",
+    reportChoices,
   );
 
   const filteredReports = useMemo(() => {
@@ -140,11 +151,14 @@ export default function UnifiedInventoryReports() {
         >
           {filteredReports.map((report) => {
             const ReportIcon = report.icon;
+            const reportHref = report.href;
             return (
-              <Link
+              <button
                 key={report.href}
-                href={report.href}
-                className={`group block cursor-pointer rounded-xl border bg-gradient-to-br p-5 transition-all hover:-translate-y-0.5 hover:shadow-md ${report.color}`}
+                type="button"
+                onClick={() => selectReport(reportHref)}
+                aria-pressed={selectedReport?.href === reportHref}
+                className={`group block w-full cursor-pointer rounded-xl border bg-gradient-to-br p-5 text-start transition-all hover:-translate-y-0.5 hover:shadow-md ${report.color} ${selectedReport?.href === reportHref ? "ring-2 ring-primary ring-offset-2" : ""}`}
                 data-testid={`link-unified-inventory-report-${report.key}`}
               >
                 <div className="mb-3 flex items-start justify-between">
@@ -164,10 +178,13 @@ export default function UnifiedInventoryReports() {
                 <p className="text-xs leading-relaxed opacity-80">
                   {t(`inventoryReports.hub.${report.key}Desc`)}
                 </p>
-              </Link>
+              </button>
             );
           })}
         </div>
+      )}
+      {selectedReport && (
+        <UnifiedReportEmbed report={selectedReport} onClose={clearReport} />
       )}
     </div>
   );

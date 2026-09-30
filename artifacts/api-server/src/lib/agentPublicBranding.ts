@@ -12,7 +12,21 @@ export type PublicBrandingAgent = {
   inventoryReportsUnified: boolean;
   moduleShortcutIcons: boolean;
   moduleReportsUnified: boolean;
+  moduleReportsUnifiedModules?: string[];
 };
+
+const REPORT_MODULE_IDS = new Set([
+  "zatca", "sales", "purchasing", "inventory", "sister", "cash", "accounting",
+  "internal-control", "hr", "field-service", "production", "installments",
+  "fixed-assets", "security", "user-tracking",
+]);
+
+function safeReportModuleIds(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((id): id is string =>
+        typeof id === "string" && REPORT_MODULE_IDS.has(id)))].slice(0, REPORT_MODULE_IDS.size)
+    : [];
+}
 
 /** Match only an agent's normalized primary or explicitly registered domains. */
 export function agentOwnsHost(
@@ -39,11 +53,12 @@ export function resolvedAgentBranding(agent: PublicBrandingAgent) {
     inventoryReportsUnified: agent.inventoryReportsUnified === true,
     moduleShortcutIcons: agent.moduleShortcutIcons === true,
     moduleReportsUnified: agent.moduleReportsUnified === true,
+    moduleReportsUnifiedModules: safeReportModuleIds(agent.moduleReportsUnifiedModules),
   };
 }
 
 type BrandFields = Pick<PublicBrandingAgent,
-  "brandName" | "brandLogoUrl" | "brandColor" | "contactPhone" | "inventoryReportsUnified" | "moduleShortcutIcons" | "moduleReportsUnified">;
+  "brandName" | "brandLogoUrl" | "brandColor" | "contactPhone" | "inventoryReportsUnified" | "moduleShortcutIcons" | "moduleReportsUnified" | "moduleReportsUnifiedModules">;
 const brandCache = new Map<string, { fields: BrandFields | null; expires: number }>();
 const brandPending = new Map<string, Promise<BrandFields | null>>();
 const BRAND_TTL_MS = 60_000;
@@ -126,7 +141,11 @@ export async function localAgentPublicBranding(
       try { return await request; }
       finally { brandPending.delete(key); }
     })();
-  return fields ? { isAgentDomain: true, suspended: false, ...fields,
+  return fields ? {
+    isAgentDomain: true,
+    suspended: false,
+    ...fields,
+    moduleReportsUnifiedModules: safeReportModuleIds(fields.moduleReportsUnifiedModules),
     localSuperadminEnabled: state.localSuperadminEnabled, localSuperadminScreens: state.localSuperadminScreens } : null;
 }
 
@@ -155,6 +174,7 @@ async function fetchLocalBranding(
       inventoryReportsUnified: remote.inventoryReportsUnified === true,
       moduleShortcutIcons: remote.moduleShortcutIcons === true,
       moduleReportsUnified: remote.moduleReportsUnified === true,
+      moduleReportsUnifiedModules: safeReportModuleIds(remote.moduleReportsUnifiedModules),
     };
     brandCache.set(key, { fields, expires: Date.now() + BRAND_TTL_MS });
     return fields;

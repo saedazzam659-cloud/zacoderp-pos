@@ -867,7 +867,7 @@ function CashReportsNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("cash") === true;
   if (!groupVisible(user, CASH_REPORTS_PERMS)) return null;
   if (moduleReportsUnified) {
     return <NavItem item={unifiedModuleReportsNav("cash")} location={location} onClick={onNavigate} indent />;
@@ -1171,7 +1171,7 @@ function SalesReportsNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("sales") === true;
   if (!groupVisible(user, SALES_REPORTS_PERMS)) return null;
   if (moduleReportsUnified) {
     return <NavItem item={unifiedModuleReportsNav("sales", "sales_reports")} location={location} onClick={onNavigate} indent />;
@@ -1235,7 +1235,7 @@ function PurchasingReportsNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("purchasing") === true;
   if (!groupVisible(user, PURCHASING_REPORTS_PERMS)) return null;
   if (moduleReportsUnified) {
     return <NavItem item={unifiedModuleReportsNav("purchasing")} location={location} onClick={onNavigate} indent />;
@@ -1338,7 +1338,7 @@ function InventoryReportsNavGroup({
   const { t } = useTranslation();
   const { user } = useAuth() as any;
   const showUnifiedReports = useUnifiedInventoryReports() === true;
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("inventory") === true;
   if (!groupVisible(user, INVENTORY_REPORTS_PERMS)) return null;
   if (showUnifiedReports || moduleReportsUnified) {
     return <NavItem item={inventoryReportsUnifiedNav} location={location} onClick={onNavigate} indent />;
@@ -1389,7 +1389,7 @@ function SisterNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("sister") === true;
   if (!groupVisible(user, SISTER_GROUP_PERMS)) return null;
   const sisterItems = moduleReportsUnified
     ? sisterSubNav.map(item => item.href === "/inventory/sister-statements"
@@ -1528,7 +1528,7 @@ function ReportsNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("accounting") === true;
   if (!groupVisible(user, ACCOUNTING_REPORTS_PERMS)) return null;
   if (moduleReportsUnified) {
     return <NavItem item={unifiedModuleReportsNav("accounting", "accounting_reports")} location={location} onClick={onNavigate} indent />;
@@ -1621,7 +1621,7 @@ function LiveMonitoringNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("user-tracking") === true;
   const reportPaths = new Set(["/user-tracking/attendance", "/user-tracking/movement-report"]);
   const ordinaryChildren = filterNav(
     moduleReportsUnified
@@ -1675,7 +1675,7 @@ function ZatcaNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("zatca") === true;
   // Hide the entire "ربط ZATCA" group unless the user has at least one
   // of the *real* ZATCA permissions. We deliberately exclude the
   // sales_invoices-gated /invoices child from the visibility decision:
@@ -1799,7 +1799,7 @@ function HrNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("hr") === true;
   if (!groupVisible(user, HR_GROUP_PERMS)) return null;
   const hrReportPermissionKeys = ["hr_employees", "hr_payroll", "hr_attendance", "hr_loans", "hr_eos"];
   const canSeeAnyHrReport = hrReportPermissionKeys.some(key => groupVisible(user, [key]));
@@ -1841,7 +1841,7 @@ function ProductionNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("production") === true;
   if (!groupVisible(user, PRODUCTION_GROUP_PERMS)) return null;
   const productionReportPaths = new Set([
     "/production/quality-report",
@@ -1908,7 +1908,7 @@ function InternalControlNavGroup({
   location, onNavigate,
 }: { location: string; onNavigate: () => void }) {
   const { user } = useAuth();
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("internal-control") === true;
   if (!icAllowed(user, "internal_control")) return null;
   const labels: Record<string, string> = {
     "nav.icDashboard": "لوحة الرقابة الداخلية", "nav.icCases": "العمليات التي تحتاج مراجعة",
@@ -2100,7 +2100,7 @@ function InstallmentsNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("installments") === true;
   if (!groupVisible(user, INSTALLMENTS_GROUP_PERMS)) return null;
   const navItems = moduleReportsUnified
     ? installmentsSubNav.map(item => item.href === "/installments/reports"
@@ -2206,7 +2206,7 @@ function FixedAssetsNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("fixed-assets") === true;
   if (!groupVisible(user, FIXED_ASSETS_GROUP_PERMS)) return null;
   const navItems = moduleReportsUnified
     ? fixedAssetsSubNav.map(item => item.href === "/fixed-assets/reports"
@@ -2529,7 +2529,7 @@ function SecurityNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("security") === true;
   if (!groupVisible(user, SECURITY_GROUP_PERMS)) return null;
   const navItems = moduleReportsUnified
     ? securitySubNav.map(item => item.href === "/security/reports"
@@ -2633,7 +2633,7 @@ function TopNavBar(props: any) {
     );
   }
 
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("field-service") === true;
   const filteredBusiness = useMemo(() => {
     const items = moduleReportsUnified
       ? [...companyBusinessNav, fieldServiceUnifiedReportsNav]
@@ -3022,7 +3022,7 @@ function SidebarInner({
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
-  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports("field-service") === true;
   // Agent-domain brand (e.g. «طفرة») replaces the default app name.
   const agentBrand = useAgentBrandName();
   const localSuperadminScreens = useLocalSuperadminScreens();
@@ -4346,6 +4346,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const langCode = normalizeLang(i18n.language);
   const langMeta = SUPPORTED_LANGUAGES.find(l => l.code === langCode) ?? SUPPORTED_LANGUAGES[0];
   const isRtl = langMeta.dir === "rtl";
+
+  const isEmbeddedUnifiedReport = typeof window !== "undefined"
+    && window.self !== window.top
+    && new URLSearchParams(window.location.search).get("__unifiedReportEmbed") === "1";
+  if (isEmbeddedUnifiedReport) {
+    return (
+      <div
+        className="min-h-screen w-full bg-background p-3 sm:p-5"
+        dir={langMeta.dir}
+        data-testid="unified-report-embedded-layout"
+      >
+        {children}
+      </div>
+    );
+  }
 
   return (
     <div

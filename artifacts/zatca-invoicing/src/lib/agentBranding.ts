@@ -15,6 +15,7 @@ type AgentBranding = {
   inventoryReportsUnified: boolean;
   moduleShortcutIcons: boolean;
   moduleReportsUnified: boolean;
+  moduleReportsUnifiedModules: string[];
 };
 
 let cache: AgentBranding | null = null;
@@ -35,11 +36,14 @@ function fetchBranding(): Promise<AgentBranding> {
         inventoryReportsUnified: j?.isAgentDomain === true && j?.inventoryReportsUnified === true,
         moduleShortcutIcons: j?.isAgentDomain === true && j?.moduleShortcutIcons === true,
         moduleReportsUnified: j?.isAgentDomain === true && j?.moduleReportsUnified === true,
+        moduleReportsUnifiedModules: Array.isArray(j?.moduleReportsUnifiedModules)
+          ? j.moduleReportsUnifiedModules.filter((id: unknown): id is string => typeof id === "string")
+          : [],
       }))
       .catch(() => (cache = {
         isAgentDomain: false, brandName: null, brandLogoUrl: null,
         localSuperadminScreens: null, inventoryReportsUnified: false, moduleShortcutIcons: false,
-        moduleReportsUnified: false,
+        moduleReportsUnified: false, moduleReportsUnifiedModules: [],
       }))
       .then(b => { try { applyDocumentBranding(b); } catch { /* cosmetic only */ } return b; });
   }
@@ -134,13 +138,20 @@ export function useUnifiedInventoryReports(): boolean | null {
 }
 
 /** Null while the public agent policy is loading; true only for an enabled agent domain. */
-export function useUnifiedModuleReports(): boolean | null {
+function moduleReportsEnabled(branding: AgentBranding, moduleId?: string): boolean {
+  if (!branding.isAgentDomain || !branding.moduleReportsUnified) return false;
+  if (!moduleId) return true;
+  return branding.moduleReportsUnifiedModules.length === 0
+    || branding.moduleReportsUnifiedModules.includes(moduleId);
+}
+
+export function useUnifiedModuleReports(moduleId?: string): boolean | null {
   const [v, setV] = useState<boolean | null>(
-    cache == null ? null : cache.isAgentDomain && cache.moduleReportsUnified,
+    cache == null ? null : moduleReportsEnabled(cache, moduleId),
   );
   useEffect(() => {
-    fetchBranding().then(b => setV(b.isAgentDomain && b.moduleReportsUnified));
-  }, []);
+    fetchBranding().then(b => setV(moduleReportsEnabled(b, moduleId)));
+  }, [moduleId]);
   return v;
 }
 

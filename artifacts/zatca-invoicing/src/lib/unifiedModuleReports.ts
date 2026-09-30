@@ -197,6 +197,10 @@ const MODULE_PRESENTATION: Record<
   "user-tracking": { label: "تقارير تتبع المستخدمين", icon: Activity, legacyHref: "/user-tracking" },
 };
 
+export const UNIFIED_REPORT_MODULE_OPTIONS = Object.entries(MODULE_PRESENTATION).map(
+  ([id, presentation]) => ({ id: id as UnifiedReportModuleId, label: presentation.label }),
+);
+
 const EXTRA_REPORTS: Array<{
   moduleId: UnifiedReportModuleId;
   href: string;
@@ -204,6 +208,7 @@ const EXTRA_REPORTS: Array<{
   permissionKey: string;
   companyGateKey?: string;
 }> = [
+  { moduleId: "zatca", href: "/vat-declaration", label: "إقرار ضريبة القيمة المضافة", permissionKey: "vat_declaration" },
   { moduleId: "sales", href: "/sales/reports/daily", label: "تقرير المبيعات اليومي", permissionKey: "sales_reports" },
   { moduleId: "sales", href: "/sales/reports/free-returns", label: "مرتجع الكميات المجانية", permissionKey: "sales_reports" },
   { moduleId: "cash", href: "/cash/reports/bank-reconciliation", label: "مطابقة كشف البنك", permissionKey: "bank_accounts" },
