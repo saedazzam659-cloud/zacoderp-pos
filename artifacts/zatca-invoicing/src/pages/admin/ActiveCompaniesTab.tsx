@@ -237,6 +237,112 @@ function CompanyRow({
   );
 }
 
+function CompanyTableRow({
+  company,
+  selected,
+  onInspect,
+  onEnd,
+}: {
+  company: SecurityActiveCompanySummary;
+  selected: boolean;
+  onInspect: () => void;
+  onEnd: () => void;
+}) {
+  const address = [
+    company.street,
+    company.buildingNumber && `مبنى ${company.buildingNumber}`,
+    company.postalCode && `الرمز ${company.postalCode}`,
+    company.additionalNumber && `الرقم الإضافي ${company.additionalNumber}`,
+    company.country,
+  ].filter(Boolean).join(" · ");
+  const city = [company.city, company.district].filter(Boolean).join(" · ");
+  const sourceDetails = [company.agentName, company.agentDomain].filter(Boolean).join(" · ");
+
+  return (
+    <tr
+      className={`border-b last:border-0 transition-colors hover:bg-muted/30 ${
+        selected ? "bg-primary/[0.045]" : ""
+      }`}
+      data-testid={`active-company-row-${company.companyId}-${company.source.replace(/[^a-zA-Z0-9]/g, "-")}`}
+    >
+      <td className="px-3 py-3 align-middle">
+        <div className="flex min-w-[200px] items-center gap-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-slate-50">
+            <Building2 className="h-4 w-4" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <p className="truncate font-medium" data-testid={`active-company-name-table-${company.companyId}`}>
+              {company.companyName}
+            </p>
+            {company.companyNameEn && <p className="truncate text-[11px] text-muted-foreground">{company.companyNameEn}</p>}
+            <p className="truncate text-[10px] text-muted-foreground">
+              VAT {company.vatNumber || "—"} · CR {company.crNumber || "—"}
+            </p>
+          </div>
+        </div>
+      </td>
+      <td className="min-w-[160px] px-3 py-3 align-middle">
+        <p className="font-medium">{sourceLabel(company.source)}</p>
+        {sourceDetails && <p className="mt-0.5 max-w-48 truncate text-[11px] text-muted-foreground" title={sourceDetails}>{sourceDetails}</p>}
+      </td>
+      <td className="min-w-[220px] px-3 py-3 align-middle">
+        <p className="truncate" title={city || undefined}>{city || "العنوان غير متوفر"}</p>
+        <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={address || undefined}>
+          {address || "تفاصيل العنوان غير متوفرة"}
+        </p>
+        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+          {company.phone || "رقم الهاتف غير متوفر"} · {company.industryName || "النشاط غير محدد"}
+        </p>
+      </td>
+      <td className="min-w-[150px] px-3 py-3 align-middle">
+        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+          <CircleDot className="me-1 h-3 w-3 fill-current" aria-hidden="true" />
+          {formatNumber(company.activeSessionCount)} جلسة
+        </Badge>
+        {company.activeUsersPreview.length > 0 && (
+          <p className="mt-1 max-w-40 truncate text-[11px] text-muted-foreground" title={company.activeUsersPreview.join("، ")}>
+            {company.activeUsersPreview.join("، ")}
+          </p>
+        )}
+      </td>
+      <td className="px-3 py-3 align-middle">
+        <Badge variant="outline" className={zatcaClass(company.zatcaStatus)}>
+          <ShieldCheck className="me-1 h-3 w-3" aria-hidden="true" />
+          {zatcaLabel(company.zatcaStatus)}
+        </Badge>
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 align-middle text-xs text-muted-foreground">
+        {formatDate(company.latestLoginAt)}
+      </td>
+      <td className="px-3 py-3 align-middle">
+        <div className="flex items-center gap-1.5 whitespace-nowrap">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onInspect}
+            data-testid={`inspect-active-company-table-${company.companyId}`}
+          >
+            <UsersRound className="me-1 h-3.5 w-3.5" aria-hidden="true" />
+            التفاصيل
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+            onClick={onEnd}
+            data-testid={`end-active-company-table-${company.companyId}`}
+          >
+            <LogOut className="me-1 h-3.5 w-3.5" aria-hidden="true" />
+            إنهاء الكل
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function SessionRow({ session }: { session: SecurityActiveCompanySession }) {
   const isMobile = /mobile|android|iphone|ipad/i.test(session.userAgent || "");
   return (
@@ -452,18 +558,52 @@ export default function ActiveCompaniesTab(_props?: { token?: string | null }) {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.85fr)]">
-          <div className="space-y-3" data-testid="active-companies-list">
-            <div className="flex items-center justify-between px-1">
-              <p className="text-sm font-medium">الشركات المتصلة</p>
-              <p className="text-xs text-muted-foreground">{formatNumber(companies.length)} نتيجة</p>
-            </div>
-            <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
-              {companies.map((company) => (
-                <CompanyRow key={`${company.source}:${company.companyId}`} company={company} selected={selectedCompany?.companyId === company.companyId && selectedCompany.source === company.source} onInspect={() => setSelectedCompany(company)} onEnd={() => setConfirmCompany(company)} />
-              ))}
-            </div>
+        <div className="space-y-3" data-testid="active-companies-list">
+          <div className="flex items-center justify-between px-1">
+            <p className="text-sm font-medium">الشركات المتصلة</p>
+            <p className="text-xs text-muted-foreground">{formatNumber(companies.length)} نتيجة</p>
           </div>
+
+          {/* Use the same responsive pattern as the active-sessions table:
+              stacked rows on mobile, a sortable-looking data table on desktop. */}
+          <div className="grid grid-cols-1 gap-3 md:hidden">
+            {companies.map((company) => (
+              <CompanyRow
+                key={`mobile:${company.source}:${company.companyId}`}
+                company={company}
+                selected={selectedCompany?.companyId === company.companyId && selectedCompany.source === company.source}
+                onInspect={() => setSelectedCompany(company)}
+                onEnd={() => setConfirmCompany(company)}
+              />
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto rounded-xl border border-slate-200/80 bg-card shadow-sm md:block">
+            <table className="w-full min-w-[1180px] text-sm">
+              <thead className="border-b bg-muted/40">
+                <tr className="text-right text-xs text-muted-foreground">
+                  <th className="px-3 py-2 font-medium">الشركة</th>
+                  <th className="px-3 py-2 font-medium">مصدر الاتصال</th>
+                  <th className="px-3 py-2 font-medium">الموقع والتواصل</th>
+                  <th className="px-3 py-2 font-medium">الجلسات النشطة</th>
+                  <th className="px-3 py-2 font-medium">حالة الربط</th>
+                  <th className="px-3 py-2 font-medium">آخر دخول</th>
+                  <th className="px-3 py-2 font-medium">الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {companies.map((company) => (
+                  <CompanyTableRow
+                    key={`table:${company.source}:${company.companyId}`}
+                    company={company}
+                    selected={selectedCompany?.companyId === company.companyId && selectedCompany.source === company.source}
+                    onInspect={() => setSelectedCompany(company)}
+                    onEnd={() => setConfirmCompany(company)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
           <Card className="h-fit border-slate-200/80 shadow-sm xl:sticky xl:top-4" data-testid="active-company-session-detail">
             {!selectedCompany ? (
               <CardContent className="flex min-h-72 flex-col items-center justify-center p-8 text-center">
