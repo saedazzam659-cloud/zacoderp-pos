@@ -16,7 +16,7 @@ import {
   Wand2, PanelTop, PanelRight, Scale,
   Archive, Cloud, HardDrive, Ban,
   LayoutTemplate, LayoutGrid, LayoutList,
-  Mail, Send, ShieldAlert, MessageCircle, XCircle
+  Mail, Send, ShieldAlert, MessageCircle, XCircle, ExternalLink
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -78,6 +78,14 @@ const AGENT_GENERAL_SETTINGS_SECTIONS = [
 
 type AgentGeneralSettingsSectionId =
   typeof AGENT_GENERAL_SETTINGS_SECTIONS[number]["id"];
+
+const AGENT_GENERAL_SETTINGS_SECTION_QUERY = "agentGeneralSettingsSection";
+
+function getAgentGeneralSettingsSectionHref(sectionId: AgentGeneralSettingsSectionId): string {
+  const url = new URL(window.location.href);
+  url.searchParams.set(AGENT_GENERAL_SETTINGS_SECTION_QUERY, sectionId);
+  return url.toString();
+}
 
 const DECIMAL_OPTIONS = [
   { value: 0, label: "0",    example: "1,234" },
@@ -180,7 +188,12 @@ function splitDataUrl(dataUrl: string): { b64: string; mime: string } | null {
 export default function GeneralSettings() {
   const agentShortcutIcons = useAgentModuleShortcutIcons() === true;
   const [activeAgentGeneralSection, setActiveAgentGeneralSection] =
-    useState<AgentGeneralSettingsSectionId>("document-options");
+    useState<AgentGeneralSettingsSectionId>(() => {
+      const requestedSection = new URLSearchParams(window.location.search)
+        .get(AGENT_GENERAL_SETTINGS_SECTION_QUERY);
+      return AGENT_GENERAL_SETTINGS_SECTIONS.find(({ id }) => id === requestedSection)?.id
+        ?? "document-options";
+    });
   const gate = useDemoActionGate();
   const { t } = useTranslation();
   const { user, token, setUser } = useAuth() as any;
@@ -1480,24 +1493,36 @@ export default function GeneralSettings() {
             const SectionIcon = section.icon;
             const active = activeAgentGeneralSection === section.id;
             return (
-              <button
-                key={section.id}
-                type="button"
-                aria-pressed={active}
-                aria-controls={`agent-general-settings-panel-${section.id}`}
-                onClick={() => setActiveAgentGeneralSection(section.id)}
-                className={cn(
-                  "group flex min-h-[112px] flex-col items-center justify-center gap-2 rounded-xl border bg-card px-3 py-3 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md",
-                  active && "border-primary bg-primary/5 text-primary shadow-md ring-1 ring-primary/15",
-                )}
-                data-testid={`agent-general-settings-tile-${section.id}`}
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
-                  <SectionIcon className="h-5 w-5" aria-hidden="true" />
-                </span>
-                <span className="text-xs font-semibold leading-tight">{section.label}</span>
-                <span className="text-[10px] leading-snug text-muted-foreground">{section.description}</span>
-              </button>
+              <div key={section.id} className="relative">
+                <button
+                  type="button"
+                  aria-pressed={active}
+                  aria-controls={`agent-general-settings-panel-${section.id}`}
+                  onClick={() => setActiveAgentGeneralSection(section.id)}
+                  className={cn(
+                    "group flex min-h-[112px] w-full flex-col items-center justify-center gap-2 rounded-xl border bg-card px-3 py-3 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md",
+                    active && "border-primary bg-primary/5 text-primary shadow-md ring-1 ring-primary/15",
+                  )}
+                  data-testid={`agent-general-settings-tile-${section.id}`}
+                >
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+                    <SectionIcon className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span className="text-xs font-semibold leading-tight">{section.label}</span>
+                  <span className="text-[10px] leading-snug text-muted-foreground">{section.description}</span>
+                </button>
+                <a
+                  href={getAgentGeneralSettingsSectionHref(section.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`فتح ${section.label} في تبويب جديد`}
+                  title="فتح في تبويب جديد"
+                  className="absolute left-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-background/90 text-muted-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  data-testid={`agent-general-settings-open-${section.id}`}
+                >
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                </a>
+              </div>
             );
           })}
         </div>
