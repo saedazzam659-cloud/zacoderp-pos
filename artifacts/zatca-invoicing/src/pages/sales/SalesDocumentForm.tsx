@@ -2255,6 +2255,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       onChange={e => updateLine(l._id, "notes", e.target.value)}
                       data-testid={`input-line-notes-${l._id}`} />
                   </div>
+                  {isInvoice && l.itemId && l.warehouseId && (
+                    <SalesBatchAllocationControl
+                      kind="sale"
+                      companyId={cid ?? ""}
+                      itemId={l.itemId}
+                      warehouseId={l.warehouseId}
+                      requestedQty={(Number(l.qty || 0) + Number(l.freeQty || 0)) * (Number(l.conversionFactor || 1) || 1)}
+                      value={l.batchAllocations}
+                      onChange={(allocations) => updateBatchAllocations(l._id, allocations)}
+                      canManuallyPick={canManuallyPickBatches && !Boolean((existing as any)?.sourceGdnId)}
+                      headers={authH}
+                      rowId={l._id}
+                    />
+                  )}
                 </div>
                 );
               })}
