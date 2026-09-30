@@ -77,6 +77,7 @@ type Agent = {
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
   inventoryReportsUnified?: boolean;
   moduleShortcutIcons?: boolean;
+  moduleReportsUnified?: boolean;
   lastHeartbeatAt: string | null; lastSeenIp: string | null; deployedVersion: string | null;
   deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
   operationKind?: "schema" | "provision" | null;
@@ -177,6 +178,7 @@ const emptyForm = {
   brandName: "", brandLogoUrl: "", brandColor: "", notes: "",
   inventoryReportsUnified: false,
   moduleShortcutIcons: false,
+  moduleReportsUnified: false,
   saUsername: "", saEmail: "", saPassword: "",
   autoDomainSetup: false, autoDomainProxyEnabled: false,
 };
@@ -520,6 +522,7 @@ export default function AgentServers() {
       if (!wasEdit) {
         payload.inventoryReportsUnified = form.inventoryReportsUnified;
         payload.moduleShortcutIcons = form.moduleShortcutIcons;
+        payload.moduleReportsUnified = form.moduleReportsUnified;
       }
       // Existing agents save their Super Admin policy through its dedicated
       // button. The general/package save must never submit password fields:
@@ -758,6 +761,7 @@ export default function AgentServers() {
         body: JSON.stringify({
           inventoryReportsUnified: form.inventoryReportsUnified,
           moduleShortcutIcons: form.moduleShortcutIcons,
+          moduleReportsUnified: form.moduleReportsUnified,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -1137,6 +1141,7 @@ export default function AgentServers() {
       brandName: a.brandName ?? "", brandLogoUrl: a.brandLogoUrl ?? "", brandColor: a.brandColor ?? "",
       inventoryReportsUnified: a.inventoryReportsUnified === true,
       moduleShortcutIcons: a.moduleShortcutIcons === true,
+      moduleReportsUnified: a.moduleReportsUnified === true,
       notes: a.notes ?? "",
       saUsername: a.saUsername ?? "", saEmail: a.saEmail ?? "", saPassword: "",
       autoDomainSetup: a.autoDomainSetup ?? false,
@@ -2325,6 +2330,25 @@ export default function AgentServers() {
             <TabsContent value="ui" className="mt-3 space-y-3">
               <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
                 <div>
+                  <h3 className="text-sm font-semibold">شاشة موحدة لتقارير الوحدات</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    عند التفعيل، تعرض وحدات التقارير شاشة اختيار موحدة ببطاقات وأيقونات، مع إبقاء صفحات التقارير وروابطها وصلاحياتها الحالية.
+                    يشمل الخيار المخازن؛ وإعداد المخازن المستقل أدناه يظل متوافقًا معه.
+                  </p>
+                </div>
+                <label className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-primary"
+                    checked={form.moduleReportsUnified}
+                    disabled={busy === `save-agent-ui-${form.id}`}
+                    onChange={event => set("moduleReportsUnified", event.target.checked)}
+                    data-testid="checkbox-agent-unified-module-reports"
+                  />
+                  <span>تفعيل شاشات التقارير الموحدة لكل الوحدات لهذا الوكيل</span>
+                </label>
+                <div className="border-t pt-3 space-y-3">
+                <div>
                   <h3 className="text-sm font-semibold">عرض تقارير المخازن الموحد</h3>
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     عند التفعيل، يستبدل قائمة روابط تقارير المخازن برابط واحد يفتح شاشة بحث واختيار للتقارير الحالية.
@@ -2362,6 +2386,7 @@ export default function AgentServers() {
                     />
                     <span>تفعيل أيقونات اختصارات الوحدات لهذا الوكيل فقط</span>
                   </label>
+                </div>
                 </div>
                 {isEdit ? (
                   <Button

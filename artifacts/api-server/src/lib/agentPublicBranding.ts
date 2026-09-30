@@ -11,6 +11,7 @@ export type PublicBrandingAgent = {
   contactPhone: string | null;
   inventoryReportsUnified: boolean;
   moduleShortcutIcons: boolean;
+  moduleReportsUnified: boolean;
 };
 
 /** Match only an agent's normalized primary or explicitly registered domains. */
@@ -37,11 +38,12 @@ export function resolvedAgentBranding(agent: PublicBrandingAgent) {
     contactPhone: agent.contactPhone,
     inventoryReportsUnified: agent.inventoryReportsUnified === true,
     moduleShortcutIcons: agent.moduleShortcutIcons === true,
+    moduleReportsUnified: agent.moduleReportsUnified === true,
   };
 }
 
 type BrandFields = Pick<PublicBrandingAgent,
-  "brandName" | "brandLogoUrl" | "brandColor" | "contactPhone" | "inventoryReportsUnified" | "moduleShortcutIcons">;
+  "brandName" | "brandLogoUrl" | "brandColor" | "contactPhone" | "inventoryReportsUnified" | "moduleShortcutIcons" | "moduleReportsUnified">;
 const brandCache = new Map<string, { fields: BrandFields | null; expires: number }>();
 const brandPending = new Map<string, Promise<BrandFields | null>>();
 const BRAND_TTL_MS = 60_000;
@@ -152,6 +154,7 @@ async function fetchLocalBranding(
       contactPhone: brandField(remote.contactPhone, 240),
       inventoryReportsUnified: remote.inventoryReportsUnified === true,
       moduleShortcutIcons: remote.moduleShortcutIcons === true,
+      moduleReportsUnified: remote.moduleReportsUnified === true,
     };
     brandCache.set(key, { fields, expires: Date.now() + BRAND_TTL_MS });
     return fields;

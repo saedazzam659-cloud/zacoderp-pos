@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation, useParams, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import CustomerCobrowseWidget from "@/components/cobrowse/CustomerCobrowseWidget";
 import WhatsAppFloat from "@/components/WhatsAppFloat";
@@ -12,7 +12,8 @@ import Layout from "@/components/Layout";
 import { useAutoCheckinOnLogin } from "@/hooks/useAutoCheckinOnLogin";
 import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import PermRoute from "@/components/PermRoute";
-import { useUnifiedInventoryReports } from "@/lib/agentBranding";
+import { useUnifiedInventoryReports, useUnifiedModuleReports } from "@/lib/agentBranding";
+import { getUnifiedReportModule } from "@/lib/unifiedModuleReports";
 import Dashboard from "@/pages/Dashboard";
 import UserTracking from "@/pages/admin/UserTracking";
 import UserTrackingLive from "@/pages/admin/UserTrackingLive";
@@ -308,6 +309,7 @@ import StockBalance from "@/pages/inventory/StockBalance";
 // Inventory Reports
 import InventoryReportsHub  from "@/pages/inventory/reports/InventoryReportsHub";
 import UnifiedInventoryReports from "@/pages/inventory/reports/UnifiedInventoryReports";
+import UnifiedModuleReports from "@/pages/UnifiedModuleReports";
 import BatchExpiryReport from "@/pages/inventory/reports/BatchExpiryReport";
 import ItemCard              from "@/pages/inventory/reports/ItemCard";
 import LowStockReport        from "@/pages/inventory/reports/LowStockReport";
@@ -501,6 +503,7 @@ const PROTECTED_PREFIXES = [
   "/chat", "/notifications", "/org", "/pos-management", "/pos-monitoring", "/pos-operations",
   "/pos-settings", "/pos-terminals", "/production", "/simple-manufacturing", "/internal-control", "/purchasing",
   "/sales", "/security", "/seo", "/sessions", "/settings", "/suppliers",
+  "/module-reports",
   "/users", "/vat-declaration", "/voice-assistant", "/work-sessions", "/tax-integration",
   "/zatca", "/zatca-bridge", "/zatca-report",
 ];
@@ -522,7 +525,23 @@ function safeRedirectTarget(raw: string | null | undefined): string | null {
 }
 
 function AgentUnifiedInventoryReportsRoute() {
-  const enabled = useUnifiedInventoryReports();
+  const inventoryEnabled = useUnifiedInventoryReports();
+  const modulesEnabled = useUnifiedModuleReports();
+  if (inventoryEnabled === null || modulesEnabled === null) {
+    return (
+      <div className="p-6 text-sm text-muted-foreground" role="status">
+        جارٍ تحميل إعدادات الوكيل…
+      </div>
+    );
+  }
+  return inventoryEnabled || modulesEnabled
+    ? <UnifiedInventoryReports />
+    : <Redirect to="/inventory/reports" />;
+}
+
+function AgentUnifiedModuleReportsRoute() {
+  const { moduleKey } = useParams<{ moduleKey: string }>();
+  const enabled = useUnifiedModuleReports();
   if (enabled === null) {
     return (
       <div className="p-6 text-sm text-muted-foreground" role="status">
@@ -530,7 +549,75 @@ function AgentUnifiedInventoryReportsRoute() {
       </div>
     );
   }
-  return enabled ? <UnifiedInventoryReports /> : <Redirect to="/inventory/reports" />;
+  if (moduleKey === "inventory") {
+    return enabled ? <UnifiedInventoryReports /> : <Redirect to="/inventory/reports" />;
+  }
+  const module = getUnifiedReportModule(moduleKey);
+  if (!module) return <NotFound />;
+  return enabled
+    ? <UnifiedModuleReports moduleId={module.id} />
+    : <Redirect to={module.legacyHref} />;
+}
+
+function AgentInventoryReportsHubRoute() {
+  const inventoryEnabled = useUnifiedInventoryReports();
+  const modulesEnabled = useUnifiedModuleReports();
+  if (inventoryEnabled === null || modulesEnabled === null) {
+    return (
+      <div className="p-6 text-sm text-muted-foreground" role="status">
+        جارٍ تحميل إعدادات الوكيل…
+      </div>
+    );
+  }
+  return inventoryEnabled || modulesEnabled
+    ? <UnifiedInventoryReports />
+    : <InventoryReportsHub />;
+}
+
+function AgentSalesReportsHubRoute() {
+  const enabled = useUnifiedModuleReports();
+  if (enabled === null) {
+    return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
+  }
+  return enabled ? <UnifiedModuleReports moduleId="sales" /> : <SalesReportsHub />;
+}
+
+function AgentPurchasingReportsHubRoute() {
+  const enabled = useUnifiedModuleReports();
+  if (enabled === null) {
+    return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
+  }
+  return enabled ? <UnifiedModuleReports moduleId="purchasing" /> : <PurchaseReportsHub />;
+}
+
+function AgentCashReportsHubRoute() {
+  const enabled = useUnifiedModuleReports();
+  if (enabled === null) {
+    return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
+  }
+  return enabled ? <UnifiedModuleReports moduleId="cash" /> : <CashReportsHub />;
+}
+
+function AgentHrReportsHubRoute() {
+  const enabled = useUnifiedModuleReports();
+  if (enabled === null) {
+    return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
+  }
+  return enabled ? <UnifiedModuleReports moduleId="hr" /> : <HRReportsHub />;
+}
+
+function AccountingReportsRoute() {
+  const enabled = useUnifiedModuleReports();
+  if (enabled === null) {
+    return (
+      <div className="p-6 text-sm text-muted-foreground" role="status">
+        جارٍ تحميل إعدادات الوكيل…
+      </div>
+    );
+  }
+  return enabled
+    ? <Redirect to="/module-reports/accounting" />
+    : <Redirect to="/accounting/reports/trial-balance" />;
 }
 
 // سياسة نطاق/لوحة الوكيل — كاش على مستوى الموديول حتى لا يُستعلم
@@ -1048,7 +1135,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/fixed-assets/ai"                module="fixed_assets"   component={FaAI} />}
 
             {/* HR reports — all gated against hr_employees permission */}
-            {!isSuperAdmin && <PermRoute path="/hr/reports"                 module="hr_employees"   component={HRReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports"                 module="hr_employees"   component={AgentHrReportsHubRoute} />}
             {!isSuperAdmin && <PermRoute path="/hr/reports/employees"       module="hr_employees"   component={HRReportEmployees} />}
             {!isSuperAdmin && <PermRoute path="/hr/reports/payroll"         module="hr_payroll"     component={HRReportPayroll} />}
             {!isSuperAdmin && <PermRoute path="/hr/reports/attendance"      module="hr_attendance"  component={HRReportAttendance} />}
@@ -1099,8 +1186,9 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/ledger"  module="items" component={StockLedger} />}
             {!isSuperAdmin && <PermRoute path="/inventory/balance" module="items" component={StockBalance} />}
             {/* Inventory Reports */}
+            {!isSuperAdmin && <Route path="/module-reports/:moduleKey" component={AgentUnifiedModuleReportsRoute} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/unified" module="inventory_reports" component={AgentUnifiedInventoryReportsRoute} />}
-            {!isSuperAdmin && <PermRoute path="/inventory/reports"                  module="inventory_reports" component={InventoryReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports"                  module="inventory_reports" component={AgentInventoryReportsHubRoute} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/batches"          module="inventory_reports" component={BatchExpiryReport} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/expiry"           module="inventory_reports" component={BatchExpiryReport} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-balance"    module="inventory_reports" component={StockBalance} />}
@@ -1133,7 +1221,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/accounting/maintenance"      module="accounting_maintenance" component={TrialBalances} />}
             {!isSuperAdmin && <PermRoute path="/accounting/maintenance/:id"  module="accounting_maintenance" component={TrialBalanceDetail} />}
             {/* Accounting Reports */}
-            {!isSuperAdmin && <Route path="/accounting/reports"><Redirect to="/accounting/reports/trial-balance" /></Route>}
+            {!isSuperAdmin && <Route path="/accounting/reports" component={AccountingReportsRoute} />}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/account-statement" module="accounting_reports" component={AccountStatement} />}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/trial-balance"     module="accounting_reports" component={TrialBalance} />}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/balance-sheet"     module="accounting_reports" component={BalanceSheet} />}
@@ -1229,7 +1317,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/reports/free-returns"       module="sales_reports"  component={FreeReturnsReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/profitability"      module="sales_reports"  component={ProfitabilityReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/additional" module="sales_reports" component={AdditionalSalesReports} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reports"                    module="sales_reports"  component={SalesReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports"                    module="sales_reports"  component={AgentSalesReportsHubRoute} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-statement"   module="suppliers"          component={SupplierStatement} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-statement-detailed"   module="suppliers"          component={SupplierStatementDetailed} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-balances"    module="suppliers"          component={SupplierBalances} />}
@@ -1244,7 +1332,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/lc-statement"          module="purchase_invoices"  component={LcStatement} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/additional" module="purchase_invoices" component={AdditionalPurchaseReports} />}
             {!isSuperAdmin && <PermRoute path="/suppliers/reports/lc-statement"           module="purchase_invoices"  component={LcStatement} />}
-            {!isSuperAdmin && <PermRoute path="/purchasing/reports"                      module="purchase_invoices"  component={PurchaseReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports"                      module="purchase_invoices"  component={AgentPurchasingReportsHubRoute} />}
 
             {!isSuperAdmin && <PermRoute path="/cash/reports/cash-balances"      module="cash_boxes"        component={CashBalances} />}
             {!isSuperAdmin && <PermRoute path="/cash/reports/bank-balances"      module="bank_accounts"     component={BankBalances} />}
@@ -1255,7 +1343,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/cash/reports/receipts"           module="receipt_vouchers"  component={ReceiptVouchersReport} />}
             {!isSuperAdmin && <PermRoute path="/cash/reports/payments"           module="payment_vouchers"  component={PaymentVouchersReport} />}
             {!isSuperAdmin && <PermRoute path="/cash/reports/transfers"          module="cash_boxes"        component={TransfersReport} />}
-            {!isSuperAdmin && <PermRoute path="/cash/reports"                    module="cash_boxes"        component={CashReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports"                    module="cash_boxes"        component={AgentCashReportsHubRoute} />}
             {!isSuperAdmin && <PermRoute path="/sales/settlements"               module="sales_settlements" component={CustomerSettlement} />}
 
             {/* Cash & Banks */}

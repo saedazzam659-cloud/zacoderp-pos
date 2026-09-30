@@ -96,6 +96,8 @@ export const agentInstancesTable = pgTable("agent_instances", {
   inventoryReportsUnified: boolean("inventory_reports_unified").notNull().default(false),
   // Central-only display preference; never materialized in an agent's business DB.
   moduleShortcutIcons: boolean("module_shortcut_icons").notNull().default(false),
+  // Central-only report navigation preference; legacy module routes remain available.
+  moduleReportsUnified: boolean("module_reports_unified").notNull().default(false),
 
   // Runtime health
   lastHeartbeatAt: timestamp("last_heartbeat_at"),

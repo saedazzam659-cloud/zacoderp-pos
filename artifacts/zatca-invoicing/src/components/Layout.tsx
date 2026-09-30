@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { useAgentBrandName, useIsAgentDomain, useLocalSuperadminScreens, useUnifiedInventoryReports } from "@/lib/agentBranding";
+import { useAgentBrandName, useIsAgentDomain, useLocalSuperadminScreens, useUnifiedInventoryReports, useUnifiedModuleReports } from "@/lib/agentBranding";
 import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import AgentServerUpdateDialog from "@/components/AgentServerUpdateDialog";
 import {
@@ -162,6 +162,18 @@ const inventoryReportsUnifiedNav: NavDef = {
   icon: BarChart2,
   permKey: "inventory_reports",
 };
+const unifiedModuleReportsNav = (moduleId: string, permKey?: string, companyGateKey?: string): NavDef => ({
+  nameKey: "nav.allReports",
+  href: `/module-reports/${moduleId}`,
+  icon: BarChart2,
+  permKey,
+  companyGateKey,
+});
+const fieldServiceUnifiedReportsNav = unifiedModuleReportsNav(
+  "field-service",
+  "field_service_reports",
+  "field_service",
+);
 // Includes "accounting_reports" so users who only have the reports
 // permission still see the (now-parent) Accounting menu, since the
 // accounting reports section is nested INSIDE this group.
@@ -855,7 +867,11 @@ function CashReportsNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, CASH_REPORTS_PERMS)) return null;
+  if (moduleReportsUnified) {
+    return <NavItem item={unifiedModuleReportsNav("cash")} location={location} onClick={onNavigate} indent />;
+  }
   const isOnReports = location.startsWith("/cash/reports");
   return (
     <div>
@@ -1155,7 +1171,11 @@ function SalesReportsNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, SALES_REPORTS_PERMS)) return null;
+  if (moduleReportsUnified) {
+    return <NavItem item={unifiedModuleReportsNav("sales", "sales_reports")} location={location} onClick={onNavigate} indent />;
+  }
   const isOnReports = location.startsWith("/sales/reports");
   return (
     <div>
@@ -1215,7 +1235,11 @@ function PurchasingReportsNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, PURCHASING_REPORTS_PERMS)) return null;
+  if (moduleReportsUnified) {
+    return <NavItem item={unifiedModuleReportsNav("purchasing")} location={location} onClick={onNavigate} indent />;
+  }
   const isOnReports = location.startsWith("/purchasing/reports");
   return (
     <div>
@@ -1314,8 +1338,9 @@ function InventoryReportsNavGroup({
   const { t } = useTranslation();
   const { user } = useAuth() as any;
   const showUnifiedReports = useUnifiedInventoryReports() === true;
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, INVENTORY_REPORTS_PERMS)) return null;
-  if (showUnifiedReports) {
+  if (showUnifiedReports || moduleReportsUnified) {
     return <NavItem item={inventoryReportsUnifiedNav} location={location} onClick={onNavigate} indent />;
   }
   const isOnReports = location.startsWith("/inventory/reports");
@@ -1364,9 +1389,15 @@ function SisterNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, SISTER_GROUP_PERMS)) return null;
+  const sisterItems = moduleReportsUnified
+    ? sisterSubNav.map(item => item.href === "/inventory/sister-statements"
+      ? { ...item, href: "/module-reports/sister" }
+      : item)
+    : sisterSubNav;
   const isOnSister =
-    location.startsWith("/inventory/sister-");
+    location.startsWith("/inventory/sister-") || location === "/module-reports/sister";
   return (
     <div>
       <HubGroupButton
@@ -1381,7 +1412,7 @@ function SisterNavGroup({
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
-          {sisterSubNav.map(item => (
+          {sisterItems.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -1497,7 +1528,11 @@ function ReportsNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, ACCOUNTING_REPORTS_PERMS)) return null;
+  if (moduleReportsUnified) {
+    return <NavItem item={unifiedModuleReportsNav("accounting", "accounting_reports")} location={location} onClick={onNavigate} indent />;
+  }
   const isOnReports = location.startsWith("/accounting/reports");
   return (
     <div>
@@ -1586,7 +1621,20 @@ function LiveMonitoringNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const visibleChildren = filterNav(liveMonitoringSubNav, user);
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const reportPaths = new Set(["/user-tracking/attendance", "/user-tracking/movement-report"]);
+  const ordinaryChildren = filterNav(
+    moduleReportsUnified
+      ? liveMonitoringSubNav.filter(item => !reportPaths.has(item.href))
+      : liveMonitoringSubNav,
+    user,
+  );
+  const visibleReportChildren = moduleReportsUnified
+    ? filterNav(liveMonitoringSubNav.filter(item => reportPaths.has(item.href)), user)
+    : [];
+  const visibleChildren = moduleReportsUnified && visibleReportChildren.length > 0
+    ? [...ordinaryChildren, unifiedModuleReportsNav("user-tracking", "user_tracking")]
+    : ordinaryChildren;
   if (visibleChildren.length === 0) return null;
   const isOnSub = visibleChildren.some(i => location.startsWith(i.href));
   return (
@@ -1627,6 +1675,7 @@ function ZatcaNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   // Hide the entire "ربط ZATCA" group unless the user has at least one
   // of the *real* ZATCA permissions. We deliberately exclude the
   // sales_invoices-gated /invoices child from the visibility decision:
@@ -1636,7 +1685,11 @@ function ZatcaNavGroup({
   // list that's already in their Sales group.
   const ZATCA_OWN_PERMS = ["zatca_setup", "zatca_bridge", "zatca_report"];
   if (!groupVisible(user, ZATCA_OWN_PERMS)) return null;
-  const visibleChildren = filterNav(zatcaGroupSubNav, user);
+  const visibleChildren = filterNav(zatcaGroupSubNav, user).map(item =>
+    moduleReportsUnified && item.href === "/zatca-report"
+      ? { ...item, href: "/module-reports/zatca" }
+      : item,
+  );
   if (visibleChildren.length === 0) return null;
   const isOnSub = visibleChildren.some(i => location.startsWith(i.href));
   return (
@@ -1746,8 +1799,17 @@ function HrNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, HR_GROUP_PERMS)) return null;
-  const isOnSub = location.startsWith("/hr") || hrSubNav.some(i => location.startsWith(i.href));
+  const hrReportPermissionKeys = ["hr_employees", "hr_payroll", "hr_attendance", "hr_loans", "hr_eos"];
+  const canSeeAnyHrReport = hrReportPermissionKeys.some(key => groupVisible(user, [key]));
+  const hrItems = moduleReportsUnified
+    ? [
+        ...hrSubNav.filter(item => item.href !== "/hr/reports"),
+        ...(canSeeAnyHrReport ? [unifiedModuleReportsNav("hr")] : []),
+      ]
+    : hrSubNav;
+  const isOnSub = location.startsWith("/hr") || location === "/module-reports/hr" || hrItems.some(i => location.startsWith(i.href));
   return (
     <div>
       <HubGroupButton
@@ -1762,7 +1824,7 @@ function HrNavGroup({
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
-          {hrSubNav.map(item => (
+          {hrItems.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -1779,8 +1841,22 @@ function ProductionNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, PRODUCTION_GROUP_PERMS)) return null;
-  const isOnSub = productionSubNav.some(i => location.startsWith(i.href));
+  const productionReportPaths = new Set([
+    "/production/quality-report",
+    "/production/waste-report",
+    "/production/operator-performance",
+    "/production/my-performance",
+  ]);
+  const productionItems = moduleReportsUnified
+    ? productionSubNav
+        .filter(item => !productionReportPaths.has(item.href))
+        .flatMap(item => item.href === "/production/cost-rollup"
+          ? [item, unifiedModuleReportsNav("production", "production")]
+          : [item])
+    : productionSubNav;
+  const isOnSub = productionItems.some(i => location.startsWith(i.href));
   return (
     <div>
       <HubGroupButton
@@ -1795,7 +1871,7 @@ function ProductionNavGroup({
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
-          {productionSubNav.map(item => (
+          {productionItems.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -1832,6 +1908,7 @@ function InternalControlNavGroup({
   location, onNavigate,
 }: { location: string; onNavigate: () => void }) {
   const { user } = useAuth();
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!icAllowed(user, "internal_control")) return null;
   const labels: Record<string, string> = {
     "nav.icDashboard": "لوحة الرقابة الداخلية", "nav.icCases": "العمليات التي تحتاج مراجعة",
@@ -1840,7 +1917,24 @@ function InternalControlNavGroup({
     "nav.icInventory": "تنبيهات المخزون", "nav.icFinance": "تنبيهات المالية",
     "nav.icLog": "سجل الرقابة الداخلية", "nav.icRules": "قواعد الرقابة",
   };
-  const items = internalControlSubNav.filter(i => icAllowed(user, i.permKey!));
+  const internalReportPaths = new Set([
+    "/internal-control/permissions",
+    "/internal-control/documents",
+    "/internal-control/anomalies",
+    "/internal-control/projects",
+    "/internal-control/inventory",
+    "/internal-control/finance",
+    "/internal-control/log",
+    "/internal-control/rules",
+  ]);
+  const allowedItems = internalControlSubNav.filter(i => icAllowed(user, i.permKey!));
+  const allowedReportItems = allowedItems.filter(item => internalReportPaths.has(item.href));
+  const items = moduleReportsUnified && allowedReportItems.length > 0
+    ? [
+        ...allowedItems.filter(item => !internalReportPaths.has(item.href)),
+        unifiedModuleReportsNav("internal-control", "internal_control"),
+      ]
+    : allowedItems;
   return (
     <div className="space-y-0.5">
       <HubGroupButton
@@ -2006,8 +2100,14 @@ function InstallmentsNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, INSTALLMENTS_GROUP_PERMS)) return null;
-  const isOnSub = installmentsSubNav.some(i => location.startsWith(i.href));
+  const navItems = moduleReportsUnified
+    ? installmentsSubNav.map(item => item.href === "/installments/reports"
+      ? { ...item, href: "/module-reports/installments" }
+      : item)
+    : installmentsSubNav;
+  const isOnSub = navItems.some(i => location.startsWith(i.href));
   return (
     <div>
       <HubGroupButton
@@ -2022,7 +2122,7 @@ function InstallmentsNavGroup({
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
-          {installmentsSubNav.map(item => (
+          {navItems.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -2106,8 +2206,14 @@ function FixedAssetsNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, FIXED_ASSETS_GROUP_PERMS)) return null;
-  const isOnSub = fixedAssetsSubNav.some(i => location.startsWith(i.href));
+  const navItems = moduleReportsUnified
+    ? fixedAssetsSubNav.map(item => item.href === "/fixed-assets/reports"
+      ? { ...item, href: "/module-reports/fixed-assets" }
+      : item)
+    : fixedAssetsSubNav;
+  const isOnSub = navItems.some(i => location.startsWith(i.href));
   return (
     <div>
       <HubGroupButton
@@ -2122,7 +2228,7 @@ function FixedAssetsNavGroup({
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
-          {fixedAssetsSubNav.map(item => (
+          {navItems.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -2423,8 +2529,14 @@ function SecurityNavGroup({
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   if (!groupVisible(user, SECURITY_GROUP_PERMS)) return null;
-  const isOnSub = location === "/security" || securitySubNav.some(i => location.startsWith(i.href));
+  const navItems = moduleReportsUnified
+    ? securitySubNav.map(item => item.href === "/security/reports"
+      ? { ...item, href: "/module-reports/security" }
+      : item)
+    : securitySubNav;
+  const isOnSub = location === "/security" || navItems.some(i => location.startsWith(i.href));
   return (
     <div>
       <HubGroupButton
@@ -2439,7 +2551,7 @@ function SecurityNavGroup({
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
-          {securitySubNav.map(item => (
+          {navItems.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -2521,7 +2633,13 @@ function TopNavBar(props: any) {
     );
   }
 
-  const filteredBusiness = useMemo(() => companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
+  const filteredBusiness = useMemo(() => {
+    const items = moduleReportsUnified
+      ? [...companyBusinessNav, fieldServiceUnifiedReportsNav]
+      : companyBusinessNav;
+    return items.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
+  }, [menuPerms, moduleReportsUnified]);
   const filteredSystem = useMemo(() => companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
 
   const groups: { key: string; label: string; node: (close: () => void) => React.ReactNode }[] = [
@@ -2904,10 +3022,16 @@ function SidebarInner({
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
+  const moduleReportsUnified = useUnifiedModuleReports() === true;
   // Agent-domain brand (e.g. «طفرة») replaces the default app name.
   const agentBrand = useAgentBrandName();
   const localSuperadminScreens = useLocalSuperadminScreens();
-  const filteredBusiness = useMemo(() => companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
+  const filteredBusiness = useMemo(() => {
+    const items = moduleReportsUnified
+      ? [...companyBusinessNav, fieldServiceUnifiedReportsNav]
+      : companyBusinessNav;
+    return items.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
+  }, [menuPerms, moduleReportsUnified]);
   const filteredSystem   = useMemo(() => companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
 
   const planColor =

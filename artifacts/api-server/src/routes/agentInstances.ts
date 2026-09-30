@@ -238,6 +238,7 @@ type AgentHostHit = {
   id: number; domain: string; status: string; dbStatus: string; dbUrlEnc: string | null;
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
   contactPhone: string | null; inventoryReportsUnified: boolean; moduleShortcutIcons: boolean;
+  moduleReportsUnified: boolean;
   proxyToken: string | null; // decrypted per-agent proxy secret (null = not issued)
   accelerationMode: InvoiceAccelerationMode; // snapshotted per request
   // Trial start boundary — the invoiceAccelerationUpdatedAt value when mode=trial.
@@ -293,6 +294,7 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
       brandColor: agentInstancesTable.brandColor, contactPhone: agentInstancesTable.contactPhone,
       inventoryReportsUnified: agentInstancesTable.inventoryReportsUnified,
       moduleShortcutIcons: agentInstancesTable.moduleShortcutIcons,
+      moduleReportsUnified: agentInstancesTable.moduleReportsUnified,
       proxySecretEnc: agentInstancesTable.proxySecretEnc,
       invoiceAccelerationMode: agentInstancesTable.invoiceAccelerationMode,
       invoiceAccelerationUpdatedAt: agentInstancesTable.invoiceAccelerationUpdatedAt,
@@ -306,6 +308,7 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
           brandName: r.brandName, brandLogoUrl: r.brandLogoUrl, brandColor: r.brandColor,
           contactPhone: r.contactPhone, inventoryReportsUnified: r.inventoryReportsUnified === true,
           moduleShortcutIcons: r.moduleShortcutIcons === true,
+          moduleReportsUnified: r.moduleReportsUnified === true,
           proxyToken: r.proxySecretEnc ? decryptSecret(r.proxySecretEnc) : null,
           accelerationMode: mode,
           trialStartAt: mode === "trial" ? (r.invoiceAccelerationUpdatedAt ?? null) : null,
@@ -619,6 +622,7 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
     invoiceAccelerationUpdatedAt: r.invoiceAccelerationUpdatedAt ?? null,
     inventoryReportsUnified: r.inventoryReportsUnified === true,
     moduleShortcutIcons: r.moduleShortcutIcons === true,
+    moduleReportsUnified: r.moduleReportsUnified === true,
   };
 }
 
@@ -1074,6 +1078,7 @@ const upsertSchema = z.object({
   brandColor: z.string().max(20).nullish(),
   inventoryReportsUnified: z.boolean().optional(),
   moduleShortcutIcons: z.boolean().optional(),
+  moduleReportsUnified: z.boolean().optional(),
   notes: z.string().max(2000).nullish(),
   // بيانات دخول السوبر أدمن للنسخة الكاملة — تُزرع في قاعدة الوكيل عند التسطيب.
   saUsername: z.string().max(64).nullish(),
@@ -1146,6 +1151,7 @@ router.post("/", async (req, res) => {
     brandColor: d.brandColor ?? null,
     inventoryReportsUnified: d.inventoryReportsUnified ?? false,
     moduleShortcutIcons: d.moduleShortcutIcons ?? false,
+    moduleReportsUnified: d.moduleReportsUnified ?? false,
     notes: d.notes ?? null,
     saUsername: localSuperadminEnabled ? ((d.saUsername ?? "").trim().toLowerCase() || null) : null,
     saEmail: localSuperadminEnabled ? ((d.saEmail ?? "").trim().toLowerCase() || null) : null,
@@ -1250,6 +1256,7 @@ router.put("/:id", async (req, res) => {
   if (d.autoDomainProxyEnabled !== undefined) patch.autoDomainProxyEnabled = d.autoDomainProxyEnabled;
   if (d.inventoryReportsUnified !== undefined) patch.inventoryReportsUnified = d.inventoryReportsUnified;
   if (d.moduleShortcutIcons !== undefined) patch.moduleShortcutIcons = d.moduleShortcutIcons;
+  if (d.moduleReportsUnified !== undefined) patch.moduleReportsUnified = d.moduleReportsUnified;
   if (d.extraDomains !== undefined) {
     const main = (patch.domain as string) ?? existing.domain;
     const extras = (d.extraDomains ?? []).map(x => normalizeHost(x)).filter((x): x is string => !!x && x !== main);
@@ -7257,6 +7264,7 @@ agentPublicRouter.get("/branding", async (req, res) => {
       localSuperadminScreens: local.localSuperadminScreens,
       inventoryReportsUnified: false,
       moduleShortcutIcons: false,
+      moduleReportsUnified: false,
     });
     return;
   }
@@ -7269,6 +7277,7 @@ agentPublicRouter.get("/branding", async (req, res) => {
       localSuperadminScreens: [...LOCAL_SUPERADMIN_SCREEN_IDS],
       inventoryReportsUnified: false,
       moduleShortcutIcons: false,
+      moduleReportsUnified: false,
     });
     return;
   }

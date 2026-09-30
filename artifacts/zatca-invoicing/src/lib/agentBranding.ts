@@ -14,6 +14,7 @@ type AgentBranding = {
   localSuperadminScreens: string[] | null;
   inventoryReportsUnified: boolean;
   moduleShortcutIcons: boolean;
+  moduleReportsUnified: boolean;
 };
 
 let cache: AgentBranding | null = null;
@@ -33,10 +34,12 @@ function fetchBranding(): Promise<AgentBranding> {
           : null,
         inventoryReportsUnified: j?.isAgentDomain === true && j?.inventoryReportsUnified === true,
         moduleShortcutIcons: j?.isAgentDomain === true && j?.moduleShortcutIcons === true,
+        moduleReportsUnified: j?.isAgentDomain === true && j?.moduleReportsUnified === true,
       }))
       .catch(() => (cache = {
         isAgentDomain: false, brandName: null, brandLogoUrl: null,
         localSuperadminScreens: null, inventoryReportsUnified: false, moduleShortcutIcons: false,
+        moduleReportsUnified: false,
       }))
       .then(b => { try { applyDocumentBranding(b); } catch { /* cosmetic only */ } return b; });
   }
@@ -126,6 +129,17 @@ export function useUnifiedInventoryReports(): boolean | null {
   );
   useEffect(() => {
     fetchBranding().then(b => setV(b.isAgentDomain && b.inventoryReportsUnified));
+  }, []);
+  return v;
+}
+
+/** Null while the public agent policy is loading; true only for an enabled agent domain. */
+export function useUnifiedModuleReports(): boolean | null {
+  const [v, setV] = useState<boolean | null>(
+    cache == null ? null : cache.isAgentDomain && cache.moduleReportsUnified,
+  );
+  useEffect(() => {
+    fetchBranding().then(b => setV(b.isAgentDomain && b.moduleReportsUnified));
   }, []);
   return v;
 }
