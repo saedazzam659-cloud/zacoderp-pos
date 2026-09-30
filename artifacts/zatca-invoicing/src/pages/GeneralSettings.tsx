@@ -37,6 +37,48 @@ import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+const AGENT_GENERAL_SETTINGS_SECTIONS = [
+  {
+    id: "document-options",
+    label: "خيارات شاشات المستندات",
+    description: "طريقة إدخال الأصناف في نماذج المستندات",
+    icon: LayoutTemplate,
+  },
+  {
+    id: "company-logo",
+    label: "شعار الشركة",
+    description: "الشعار الذي يظهر على مستندات الشركة",
+    icon: ImageIcon,
+  },
+  {
+    id: "brand-mark",
+    label: "العلامة التجارية",
+    description: "صورة إضافية لمطبوعات القيود المحاسبية",
+    icon: Sparkles,
+  },
+  {
+    id: "zatca-auto-send",
+    label: "إرسال ZATCA",
+    description: "اختيار الإرسال التلقائي أو اليدوي بعد الترحيل",
+    icon: Send,
+  },
+  {
+    id: "posting-mode",
+    label: "وضع الترحيل المحاسبي",
+    description: "تحديد طريقة الترحيل لكل نوع مستند",
+    icon: Repeat,
+  },
+  {
+    id: "sales-draft-policy",
+    label: "سياسة حفظ فواتير المبيعات",
+    description: "التحكم في اشتراط تحديد المستودع",
+    icon: Calculator,
+  },
+] as const;
+
+type AgentGeneralSettingsSectionId =
+  typeof AGENT_GENERAL_SETTINGS_SECTIONS[number]["id"];
+
 const DECIMAL_OPTIONS = [
   { value: 0, label: "0",    example: "1,234" },
   { value: 1, label: "0.0",  example: "1,234.5" },
@@ -137,7 +179,9 @@ function splitDataUrl(dataUrl: string): { b64: string; mime: string } | null {
 
 export default function GeneralSettings() {
   const agentShortcutIcons = useAgentModuleShortcutIcons() === true;
-    const gate = useDemoActionGate();
+  const [activeAgentGeneralSection, setActiveAgentGeneralSection] =
+    useState<AgentGeneralSettingsSectionId>("document-options");
+  const gate = useDemoActionGate();
   const { t } = useTranslation();
   const { user, token, setUser } = useAuth() as any;
   const { toast } = useToast();
@@ -1200,19 +1244,37 @@ export default function GeneralSettings() {
   return (
     <div className="space-y-6 w-full" dir="rtl">
 
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Settings2 className="h-6 w-6 text-primary" />
-          {t("pages.generalSettings.title")}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {t("pages.generalSettings.description")}
-        </p>
+      {/* Header and compact agent company context */}
+      <div
+        className={agentShortcutIcons
+          ? "flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+          : undefined}
+      >
+        <div className={agentShortcutIcons ? "min-w-0" : undefined}>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Settings2 className="h-6 w-6 text-primary" />
+            {t("pages.generalSettings.title")}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {t("pages.generalSettings.description")}
+          </p>
+        </div>
+        {agentShortcutIcons && user?.company && (
+          <div
+            className="flex w-fit max-w-full shrink-0 items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 md:max-w-sm"
+            data-testid="agent-general-settings-company-context-compact"
+          >
+            <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">{user.company.nameAr}</p>
+              <p className="truncate text-xs font-mono text-muted-foreground">{user.company.vatNumber}</p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Company context */}
-      {user?.company && (
+      {/* Keep the original company context for the default and central layouts. */}
+      {!agentShortcutIcons && user?.company && (
         <div className="rounded-xl border bg-muted/30 px-4 py-3 flex items-center gap-3">
           <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
           <div className="min-w-0">
@@ -1408,7 +1470,41 @@ export default function GeneralSettings() {
         {/* ═══ TAB 1: General (Logo + Decimals + Save) ═══════════════════════ */}
         <TabsContent value="general" className="mt-5 space-y-6">
 
+      {agentShortcutIcons && (
+        <div
+          className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6"
+          aria-label="أقسام الإعدادات العامة"
+          data-testid="agent-general-settings-section-tiles"
+        >
+          {AGENT_GENERAL_SETTINGS_SECTIONS.map((section) => {
+            const SectionIcon = section.icon;
+            const active = activeAgentGeneralSection === section.id;
+            return (
+              <button
+                key={section.id}
+                type="button"
+                aria-pressed={active}
+                aria-controls={`agent-general-settings-panel-${section.id}`}
+                onClick={() => setActiveAgentGeneralSection(section.id)}
+                className={cn(
+                  "group flex min-h-[112px] flex-col items-center justify-center gap-2 rounded-xl border bg-card px-3 py-3 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md",
+                  active && "border-primary bg-primary/5 text-primary shadow-md ring-1 ring-primary/15",
+                )}
+                data-testid={`agent-general-settings-tile-${section.id}`}
+              >
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+                  <SectionIcon className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <span className="text-xs font-semibold leading-tight">{section.label}</span>
+                <span className="text-[10px] leading-snug text-muted-foreground">{section.description}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* ─── Document entry preferences (شاشات المستندات) ─────────────────── */}
+      {(!agentShortcutIcons || activeAgentGeneralSection === "document-options") && (
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Settings2 className="h-4 w-4 text-muted-foreground" />
@@ -1447,8 +1543,10 @@ export default function GeneralSettings() {
           </span>
         </label>
       </div>
+      )}
 
       {/* ─── Logo Section ──────────────────────────────────────────────────── */}
+      {(!agentShortcutIcons || activeAgentGeneralSection === "company-logo") && (
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <ImageIcon className="h-4 w-4 text-muted-foreground" />
@@ -1520,8 +1618,10 @@ export default function GeneralSettings() {
           <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{logoError}</p>
         )}
       </div>
+      )}
 
       {/* ─── Brand Mark Section (علامة تجارية) — mirrors the logo UX ─────── */}
+      {(!agentShortcutIcons || activeAgentGeneralSection === "brand-mark") && (
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <ImageIcon className="h-4 w-4 text-muted-foreground" />
@@ -1592,8 +1692,10 @@ export default function GeneralSettings() {
           <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{brandLogoError}</p>
         )}
       </div>
+      )}
 
       {/* ─── Optional ZATCA auto-send (default/manual remains unchanged) ─── */}
+      {(!agentShortcutIcons || activeAgentGeneralSection === "zatca-auto-send") && (
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Send className="h-4 w-4 text-emerald-600" />
@@ -1637,8 +1739,10 @@ export default function GeneralSettings() {
           فشل الإرسال أو رفض ZATCA لا يلغي ترحيل الفاتورة محاسبيًا، ويمكن مراجعة السبب وإعادة الإرسال يدويًا من شاشة جسر ZATCA.
         </p>
       </div>
+      )}
 
       {/* ─── Posting Mode Section (per-doc-type toggles) ──────────────────── */}
+      {(!agentShortcutIcons || activeAgentGeneralSection === "posting-mode") && (
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Repeat className="h-4 w-4 text-muted-foreground" />
@@ -1745,8 +1849,10 @@ export default function GeneralSettings() {
           </p>
         )}
       </div>
+      )}
 
       {/* ── سياسة حفظ فواتير المبيعات (السماح بالحفظ كمسودة بدون مستودع) ── */}
+      {(!agentShortcutIcons || activeAgentGeneralSection === "sales-draft-policy") && (
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Calculator className="h-4 w-4 text-muted-foreground" />
@@ -1774,6 +1880,7 @@ export default function GeneralSettings() {
           />
         </div>
       </div>
+      )}
 
       {/* ─── Save Button (inside General tab — saves logo + decimals together) ─ */}
       <div className="flex items-center justify-between gap-4">
