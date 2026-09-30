@@ -564,8 +564,8 @@ export default function ActiveCompaniesTab(_props?: { token?: string | null }) {
             <p className="text-xs text-muted-foreground">{formatNumber(companies.length)} نتيجة</p>
           </div>
 
-          {/* Use the same responsive pattern as the active-sessions table:
-              stacked rows on mobile, a sortable-looking data table on desktop. */}
+          {/* Match the active-sessions responsive pattern: cards on mobile,
+              a table with one company per row on desktop. */}
           <div className="grid grid-cols-1 gap-3 md:hidden">
             {companies.map((company) => (
               <CompanyRow
