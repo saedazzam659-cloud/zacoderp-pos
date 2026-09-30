@@ -7,14 +7,25 @@ import {
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
-import { MenuHub, type HubTile } from "@/components/MenuHub";
-import { ClipboardList } from "lucide-react";
+import { MenuHub, type HubTile, type HubTone } from "@/components/MenuHub";
+import { companyAllowsScreen } from "@/lib/companyModuleGate";
+import { useAgentModuleScreensAsTiles, useIsAgentDomain } from "@/lib/agentBranding";
+import { productionSubNav } from "@/lib/productionNavigation";
 
-const productionHubTiles: HubTile[] = [
-  { nameKey: "nav.productionDashboard", href: "/production",           icon: BarChart3,     tone: "violet",  permKey: "production" },
-  { nameKey: "nav.productionOrders",    href: "/production/orders",    icon: ClipboardList, tone: "indigo",  permKey: "production" },
-  { nameKey: "nav.productionResources", href: "/production/resources", icon: Cog,           tone: "amber",   permKey: "production" },
+const productionTileTones: HubTone[] = [
+  "violet", "indigo", "amber", "blue", "teal", "cyan", "sky",
+  "emerald", "fuchsia", "rose", "orange", "pink",
 ];
+const allProductionHubTiles: HubTile[] = productionSubNav.map((item, index) => ({
+  ...item,
+  tone: productionTileTones[index % productionTileTones.length],
+}));
+const coreProductionHrefs = new Set([
+  "/production",
+  "/production/orders",
+  "/production/resources",
+]);
+const coreProductionHubTiles = allProductionHubTiles.filter(tile => coreProductionHrefs.has(tile.href));
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -43,10 +54,16 @@ const ALL_STATUSES = [
 
 export default function ProductionDashboard() {
   const { t } = useTranslation();
-  const { token } = useAuth() as any;
+  const { token, user } = useAuth() as any;
+  const isAgentDomain = useIsAgentDomain();
+  const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
   const { toast } = useToast();
   const [data, setData] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(false);
+  const showAllProductionScreens = isAgentDomain && moduleScreensAsTiles.includes("production");
+  const productionHubTiles = (showAllProductionScreens
+    ? allProductionHubTiles.filter(tile => companyAllowsScreen(user, tile.href))
+    : coreProductionHubTiles);
 
   const load = useCallback(async () => {
     if (!token) return;

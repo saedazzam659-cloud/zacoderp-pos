@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
   useAgentBrandName,
+  useAgentModuleShortcutIcons,
   useAgentModuleScreensAsTiles,
   useIsAgentDomain,
   useLocalSuperadminScreens,
@@ -55,6 +56,7 @@ import {
 import { cn } from "@/lib/utils";
 import { companyAllowsModule, companyAllowsScreen } from "@/lib/companyModuleGate";
 import { LEGACY_DEFAULT_ON_MENU_KEYS } from "@/lib/menuItems";
+import { productionSubNav } from "@/lib/productionNavigation";
 import {
   companyAllowsPermissionGroup,
   GROUP_COMPANY_MENU_KEYS,
@@ -272,47 +274,6 @@ const hrSubNav: NavDef[] = [
 const HR_GROUP_PERMS = [
   "hr_employees", "hr_attendance", "hr_face_attendance", "hr_loans", "hr_payroll",
   "hr_eos", "hr_calculators", "hr_settings",
-];
-// ── Production / Manufacturing submenu ──────────────────────────────────
-// Sub-items live under the "نظام الإنتاج والتصنيع" collapsible group. The
-// group uses a single `production` permission key — admins/superadmins
-// always see it; tenant users need permissions.production.view = true.
-// Sub-nav is ordered to mirror the operational lifecycle so a new user can
-// scroll top-to-bottom and set up + run the module correctly. See
-// /production/guide for the step-by-step walkthrough that matches this order.
-//   ① Guide & dashboard
-//   ② Initial setup (one-time master data)
-//   ③ Planning
-//   ④ Daily execution
-//   ⑤ Reports & analytics
-const productionSubNav: NavDef[] = [
-  // ① Guide & dashboard
-  { nameKey: "nav.productionGuide",     href: "/production/guide",             icon: BookOpen,      permKey: "production" },
-  { nameKey: "nav.productionDashboard", href: "/production",                   icon: BarChart3,     permKey: "production", exact: true },
-  // ② Initial setup (one-time)
-  { nameKey: "nav.manufacturingSettings", href: "/production/settings",        icon: Settings2,     permKey: "production" },
-  { nameKey: "nav.workCenters",         href: "/production/work-centers",      icon: Factory,       permKey: "production" },
-  { nameKey: "nav.productionResources", href: "/production/resources",         icon: Cog,           permKey: "production" },
-  { nameKey: "nav.shiftCalendar",       href: "/production/shifts",            icon: CalendarClock, permKey: "production" },
-  { nameKey: "nav.qualityTemplates",    href: "/production/quality-templates", icon: FileText,      permKey: "production" },
-  { nameKey: "nav.productionRoutings",  href: "/production/routings",          icon: GitBranch,     permKey: "production" },
-  { nameKey: "nav.bomTemplates",        href: "/production/bom-templates",     icon: ListTree,      permKey: "production" },
-  // ③ Planning
-  { nameKey: "nav.mrpPlanning",         href: "/production/mrp",               icon: Calculator,    permKey: "production" },
-  // ④ Daily execution
-  { nameKey: "nav.productionOrders",    href: "/production/orders",            icon: ClipboardList, permKey: "production" },
-  { nameKey: "nav.pendingApprovals",    href: "/production/approvals",         icon: ShieldCheck,   permKey: "production" },
-  { nameKey: "nav.productionBoard",     href: "/production/board",             icon: Activity,      permKey: "production" },
-  { nameKey: "nav.productionQuality",   href: "/production/quality",           icon: ShieldCheck,   permKey: "production" },
-  { nameKey: "nav.downtimeOee",         href: "/production/downtime",          icon: Activity,      permKey: "production" },
-  // ⑤ Reports & analytics
-  { nameKey: "nav.manufacturingKpis",   href: "/production/kpis",              icon: Gauge,         permKey: "production" },
-  { nameKey: "nav.costRollup",          href: "/production/cost-rollup",       icon: DollarSign,    permKey: "production" },
-  { nameKey: "nav.productionQualityReport", href: "/production/quality-report", icon: ShieldCheck,  permKey: "production" },
-  { nameKey: "nav.productionWasteReport", href: "/production/waste-report",    icon: Trash2,        permKey: "production" },
-  { nameKey: "nav.operatorPerformance", href: "/production/operator-performance", icon: Users,      permKey: "production" },
-  { nameKey: "nav.myPerformance",       href: "/production/my-performance",    icon: Trophy,        permKey: "production" },
-  { nameKey: "nav.productionTraceability", href: "/production/traceability",   icon: GitBranch,     permKey: "production" },
 ];
 const PRODUCTION_GROUP_PERMS = ["production"];
 const SIMPLE_MANUFACTURING_GROUP_PERMS = ["simple_manufacturing"];
@@ -996,12 +957,13 @@ const PLAN_KEYS: Record<string, string> = {
 
 // ─── NavItem (stable, top-level component) ─────────────────────────────────────
 const NavItem = React.memo(function NavItem({
-  item, location, onClick, indent = false,
+  item, location, onClick, indent = false, iconOnlyLabels = false,
 }: {
   item: NavDef;
   location: string;
   onClick?: () => void;
   indent?: boolean;
+  iconOnlyLabels?: boolean;
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
@@ -1023,13 +985,19 @@ const NavItem = React.memo(function NavItem({
         ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
         : "text-purple-700 hover:bg-purple-50 hover:text-purple-900 dark:text-purple-300 dark:hover:bg-purple-950/40 dark:hover:text-purple-100"
     )}>
-      <Link href={item.href} className="block flex-1 min-w-0" onClick={onClick}>
+      <Link
+        href={item.href}
+        className="block flex-1 min-w-0"
+        onClick={onClick}
+        aria-label={iconOnlyLabels ? t(item.nameKey) : undefined}
+        title={iconOnlyLabels ? t(item.nameKey) : undefined}
+      >
         <span className={cn(
           "flex items-center gap-3 px-3 py-2 text-sm font-medium",
-          indent && "ps-8",
+          indent && !iconOnlyLabels && "ps-8",
         )}>
-          <item.icon className="h-4 w-4 shrink-0" />
-          {t(item.nameKey)}
+          <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className={iconOnlyLabels ? "sr-only" : undefined}>{t(item.nameKey)}</span>
         </span>
       </Link>
       <a
@@ -1586,6 +1554,7 @@ function DashboardNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const iconOnlyLabels = useAgentModuleShortcutIcons() === true;
   // Hide the entire "لوحة التحكم" group when none of its children would be
   // visible to this user (e.g. a sales rep who has no admin/settings perms).
   // Mirrors the pattern used by AIToolsNavGroup.
@@ -1607,7 +1576,14 @@ function DashboardNavGroup({
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           {visibleChildren.map(item => (
-            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+            <NavItem
+              key={item.href}
+              item={item}
+              location={location}
+              onClick={onNavigate}
+              indent
+              iconOnlyLabels={iconOnlyLabels}
+            />
           ))}
         </div>
       )}

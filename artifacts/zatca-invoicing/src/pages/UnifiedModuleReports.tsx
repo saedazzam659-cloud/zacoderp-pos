@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BarChart3, ChevronLeft, Search, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -76,6 +76,7 @@ export default function UnifiedModuleReports({
   const { t, i18n } = useTranslation();
   const { user } = useAuth() as any;
   const [search, setSearch] = useState("");
+  const selectedReportContainerRef = useRef<HTMLDivElement>(null);
   const module = getUnifiedReportModule(moduleId);
   const isRtl = i18n.language.startsWith("ar");
 
@@ -91,6 +92,18 @@ export default function UnifiedModuleReports({
     moduleId,
     module?.reports ?? EMPTY_REPORTS,
   );
+
+  useEffect(() => {
+    const container = selectedReportContainerRef.current;
+    if (!selectedReport || !container) return;
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "start",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedReport]);
 
   if (!module) {
     return (
@@ -190,7 +203,9 @@ export default function UnifiedModuleReports({
         </div>
       )}
       {selectedReport && (
-        <UnifiedReportEmbed report={selectedReport} onClose={clearReport} />
+        <div ref={selectedReportContainerRef} data-testid="container-selected-unified-report">
+          <UnifiedReportEmbed report={selectedReport} onClose={clearReport} />
+        </div>
       )}
     </div>
   );
