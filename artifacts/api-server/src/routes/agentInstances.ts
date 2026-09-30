@@ -237,7 +237,7 @@ async function logAgentEvent(agentId: number | null, eventType: string, detail: 
 type AgentHostHit = {
   id: number; domain: string; status: string; dbStatus: string; dbUrlEnc: string | null;
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
-  contactPhone: string | null;
+  contactPhone: string | null; inventoryReportsUnified: boolean;
   proxyToken: string | null; // decrypted per-agent proxy secret (null = not issued)
   accelerationMode: InvoiceAccelerationMode; // snapshotted per request
   // Trial start boundary — the invoiceAccelerationUpdatedAt value when mode=trial.
@@ -291,6 +291,7 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
       dbStatus: agentInstancesTable.dbStatus, dbUrlEnc: agentInstancesTable.dbUrlEnc,
       brandName: agentInstancesTable.brandName, brandLogoUrl: agentInstancesTable.brandLogoUrl,
       brandColor: agentInstancesTable.brandColor, contactPhone: agentInstancesTable.contactPhone,
+      inventoryReportsUnified: agentInstancesTable.inventoryReportsUnified,
       proxySecretEnc: agentInstancesTable.proxySecretEnc,
       invoiceAccelerationMode: agentInstancesTable.invoiceAccelerationMode,
       invoiceAccelerationUpdatedAt: agentInstancesTable.invoiceAccelerationUpdatedAt,
@@ -302,7 +303,7 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
         hit = {
           id: r.id, domain: r.domain, status: r.status, dbStatus: r.dbStatus, dbUrlEnc: r.dbUrlEnc,
           brandName: r.brandName, brandLogoUrl: r.brandLogoUrl, brandColor: r.brandColor,
-           contactPhone: r.contactPhone,
+          contactPhone: r.contactPhone, inventoryReportsUnified: r.inventoryReportsUnified === true,
           proxyToken: r.proxySecretEnc ? decryptSecret(r.proxySecretEnc) : null,
           accelerationMode: mode,
           trialStartAt: mode === "trial" ? (r.invoiceAccelerationUpdatedAt ?? null) : null,
@@ -614,6 +615,7 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
     invoiceAccelerationLastError: r.invoiceAccelerationLastError ?? null,
     invoiceAccelerationReason:    r.invoiceAccelerationReason ?? null,
     invoiceAccelerationUpdatedAt: r.invoiceAccelerationUpdatedAt ?? null,
+    inventoryReportsUnified: r.inventoryReportsUnified === true,
   };
 }
 
@@ -1067,6 +1069,7 @@ const upsertSchema = z.object({
   brandLogoB64: z.string().regex(/^[A-Za-z0-9+/=]+$/).max(800_000).nullish(),
   brandLogoMime: z.enum(["image/png", "image/jpeg", "image/webp"]).nullish(),
   brandColor: z.string().max(20).nullish(),
+  inventoryReportsUnified: z.boolean().optional(),
   notes: z.string().max(2000).nullish(),
   // بيانات دخول السوبر أدمن للنسخة الكاملة — تُزرع في قاعدة الوكيل عند التسطيب.
   saUsername: z.string().max(64).nullish(),
@@ -1137,6 +1140,7 @@ router.post("/", async (req, res) => {
       ? `data:${d.brandLogoMime};base64,${d.brandLogoB64}`
       : (d.brandLogoUrl ?? null),
     brandColor: d.brandColor ?? null,
+    inventoryReportsUnified: d.inventoryReportsUnified ?? false,
     notes: d.notes ?? null,
     saUsername: localSuperadminEnabled ? ((d.saUsername ?? "").trim().toLowerCase() || null) : null,
     saEmail: localSuperadminEnabled ? ((d.saEmail ?? "").trim().toLowerCase() || null) : null,
@@ -1239,6 +1243,7 @@ router.put("/:id", async (req, res) => {
   }
   if (d.autoDomainSetup !== undefined) patch.autoDomainSetup = d.autoDomainSetup;
   if (d.autoDomainProxyEnabled !== undefined) patch.autoDomainProxyEnabled = d.autoDomainProxyEnabled;
+  if (d.inventoryReportsUnified !== undefined) patch.inventoryReportsUnified = d.inventoryReportsUnified;
   if (d.extraDomains !== undefined) {
     const main = (patch.domain as string) ?? existing.domain;
     const extras = (d.extraDomains ?? []).map(x => normalizeHost(x)).filter((x): x is string => !!x && x !== main);
@@ -7244,13 +7249,19 @@ agentPublicRouter.get("/branding", async (req, res) => {
       isAgentDomain: true,
       localSuperadminEnabled: local.localSuperadminEnabled,
       localSuperadminScreens: local.localSuperadminScreens,
+      inventoryReportsUnified: false,
     });
     return;
   }
   const host = typeof req.query.host === "string" ? normalizeHost(req.query.host) : await resolveAgentRequestHost(req);
   const hit = await lookupAgentByHost(host);
   if (!hit) {
-    res.json({ isAgentDomain: false, localSuperadminEnabled: true, localSuperadminScreens: [...LOCAL_SUPERADMIN_SCREEN_IDS] });
+    res.json({
+      isAgentDomain: false,
+      localSuperadminEnabled: true,
+      localSuperadminScreens: [...LOCAL_SUPERADMIN_SCREEN_IDS],
+      inventoryReportsUnified: false,
+    });
     return;
   }
   // Explicit allow-list: contact phone is public for the resolved agent, while

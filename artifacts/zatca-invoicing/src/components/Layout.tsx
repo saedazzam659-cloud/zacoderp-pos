@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { useAgentBrandName, useIsAgentDomain, useLocalSuperadminScreens } from "@/lib/agentBranding";
+import { useAgentBrandName, useIsAgentDomain, useLocalSuperadminScreens, useUnifiedInventoryReports } from "@/lib/agentBranding";
 import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import AgentServerUpdateDialog from "@/components/AgentServerUpdateDialog";
 import {
@@ -156,6 +156,12 @@ const DELIVERY_DOCS_GROUP_PERMS = ["delivery_receipt_docs"];
 // entry gated by the `training_room` permission key.
 const TRAINING_ROOM_GROUP_PERMS = ["training_room"];
 const INVENTORY_REPORTS_PERMS   = ["inventory_reports"];
+const inventoryReportsUnifiedNav: NavDef = {
+  nameKey: "nav.inventoryReports",
+  href: "/inventory/reports/unified",
+  icon: BarChart2,
+  permKey: "inventory_reports",
+};
 // Includes "accounting_reports" so users who only have the reports
 // permission still see the (now-parent) Accounting menu, since the
 // accounting reports section is nested INSIDE this group.
@@ -1307,7 +1313,11 @@ function InventoryReportsNavGroup({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
+  const showUnifiedReports = useUnifiedInventoryReports() === true;
   if (!groupVisible(user, INVENTORY_REPORTS_PERMS)) return null;
+  if (showUnifiedReports) {
+    return <NavItem item={inventoryReportsUnifiedNav} location={location} onClick={onNavigate} indent />;
+  }
   const isOnReports = location.startsWith("/inventory/reports");
   return (
     <div>

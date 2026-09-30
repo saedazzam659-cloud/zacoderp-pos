@@ -286,7 +286,7 @@ UPDATE journal_entry_lines jel
 // These columns are platform control state. The shared Drizzle schema must
 // expose them to central routes, but external-agent schema healing must never
 // materialize them in an agent business database.
-const CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS = [
+const CENTRAL_ONLY_AGENT_CONTROL_COLUMNS = [
   "agent_instances.invoice_acceleration_mode",
   "agent_instances.invoice_trial_remaining",
   "agent_instances.invoice_acceleration_last_error",
@@ -294,6 +294,7 @@ const CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS = [
   "agent_instances.invoice_acceleration_updated_at",
   "agent_instances.invoice_acceleration_generation",
   "agent_instances.invoice_acceleration_baseline",
+  "agent_instances.inventory_reports_unified",
 ] as const;
 
 // These control-plane records contain an encrypted, one-time registration
@@ -4328,8 +4329,10 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
  * Keep this out of ensureTenantIdentityIndexes(): that function also runs
  * during full external-agent schema setup inside runWithExternalDb().
  */
-async function ensureCentralAgentInvoiceAccelerationSchema(): Promise<void> {
+async function ensureCentralAgentControlSchema(): Promise<void> {
   const stmts: { label: string; sql: string }[] = [
+    { label: "agent_instances.inventory_reports_unified column",
+      sql: `ALTER TABLE agent_instances ADD COLUMN IF NOT EXISTS inventory_reports_unified BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "agent_instances.invoice_acceleration_mode column",
       sql: `ALTER TABLE agent_instances ADD COLUMN IF NOT EXISTS invoice_acceleration_mode TEXT NOT NULL DEFAULT 'off'` },
     { label: "agent_instances.invoice_trial_remaining column",
@@ -4835,7 +4838,7 @@ export function ensureSchemaUpToDate(): Promise<void> {
         await ensureCentralDemoAnalyticsSchema();
         await ensureCentralZatcaRegistrationTransferSchema();
         await runHeal();
-        await ensureCentralAgentInvoiceAccelerationSchema();
+        await ensureCentralAgentControlSchema();
         schemaReconciliationState = { state: "ready", completedAt: new Date().toISOString() };
       } catch (error) {
         schemaReconciliationState = {
@@ -4858,7 +4861,7 @@ export function ensureSchemaUpToDate(): Promise<void> {
 export async function runSchemaHealOnActiveDb(): Promise<void> {
   await runHeal({
     optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts", ...CENTRAL_ONLY_ZATCA_TRANSFER_TABLES],
-    excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS,
+    excludedColumns: CENTRAL_ONLY_AGENT_CONTROL_COLUMNS,
   });
   // Sequence reconciliation takes table locks while comparing MAX(id) with an
   // owned sequence. Keep all of those locks in one external-agent transaction.
@@ -4885,8 +4888,8 @@ export function runAgentRequestSchemaHealOnActiveDb(): Promise<void> {
     // is unrelated to the shell-agent request path.
     // Both are intentionally lazy/control-plane-only and must not block an
     // external agent request. agent_invoice_samples is created only on the
-    // central DB by ensureCentralAgentInvoiceAccelerationSchema().
+    // central DB by ensureCentralAgentControlSchema().
     optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts", ...CENTRAL_ONLY_ZATCA_TRANSFER_TABLES],
-    excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS,
+    excludedColumns: CENTRAL_ONLY_AGENT_CONTROL_COLUMNS,
   });
 }

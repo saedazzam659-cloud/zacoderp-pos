@@ -9,6 +9,7 @@ export type PublicBrandingAgent = {
   brandLogoUrl: string | null;
   brandColor: string | null;
   contactPhone: string | null;
+  inventoryReportsUnified: boolean;
 };
 
 /** Match only an agent's normalized primary or explicitly registered domains. */
@@ -33,10 +34,11 @@ export function resolvedAgentBranding(agent: PublicBrandingAgent) {
     brandLogoUrl: agent.brandLogoUrl,
     brandColor: agent.brandColor,
     contactPhone: agent.contactPhone,
+    inventoryReportsUnified: agent.inventoryReportsUnified === true,
   };
 }
 
-type BrandFields = Pick<PublicBrandingAgent, "brandName" | "brandLogoUrl" | "brandColor" | "contactPhone">;
+type BrandFields = Pick<PublicBrandingAgent, "brandName" | "brandLogoUrl" | "brandColor" | "contactPhone" | "inventoryReportsUnified">;
 const brandCache = new Map<string, { fields: BrandFields | null; expires: number }>();
 const brandPending = new Map<string, Promise<BrandFields | null>>();
 const BRAND_TTL_MS = 60_000;
@@ -145,6 +147,7 @@ async function fetchLocalBranding(
       brandLogoUrl: brandField(remote.brandLogoUrl, 800_030),
       brandColor: brandField(remote.brandColor, 80),
       contactPhone: brandField(remote.contactPhone, 240),
+      inventoryReportsUnified: remote.inventoryReportsUnified === true,
     };
     brandCache.set(key, { fields, expires: Date.now() + BRAND_TTL_MS });
     return fields;

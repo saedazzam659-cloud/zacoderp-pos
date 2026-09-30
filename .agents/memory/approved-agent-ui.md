@@ -7,4 +7,4 @@ Treat the current agent-facing web UI and its design as approved. Do not replace
 
 **Why:** The user is fully satisfied with the current design and explicitly requires that the new feature not break or alter it.
 
-**How to apply:** New views and report navigation must be independently enabled per agent, default off, and reversible. Agents without the feature enabled must keep the existing layout, routes, reports, permissions, and workflows unchanged. Keep UI preferences separate from business data and server-side authorization.
+**How to apply:** New views and report navigation must be independently enabled per agent, default off, and reversible. Agents without the feature enabled must keep the existing layout, routes, reports, permissions, and workflows unchanged. Keep UI preferences separate from business data and server-side authorization. Persist agent controls in the central registry, exclude their columns from external-agent schema healing and fresh schema dumps, and expose only allow-listed display policy.

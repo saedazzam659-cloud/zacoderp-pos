@@ -91,6 +91,9 @@ export const agentInstancesTable = pgTable("agent_instances", {
   brandName:    text("brand_name"),
   brandLogoUrl: text("brand_logo_url"),
   brandColor:   text("brand_color"),
+  // Central per-agent presentation option. Off by default; external agent
+  // schema reconciliation and package export deliberately exclude this field.
+  inventoryReportsUnified: boolean("inventory_reports_unified").notNull().default(false),
 
   // Runtime health
   lastHeartbeatAt: timestamp("last_heartbeat_at"),

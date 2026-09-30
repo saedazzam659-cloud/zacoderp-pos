@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { usePermission } from "@/hooks/usePermission";
 
-const REPORTS = [
+export const INVENTORY_REPORTS = [
   {
     href: "/inventory/reports/batches",
     key: "batches",
@@ -85,7 +85,7 @@ export default function InventoryReportsHub() {
   const { t, i18n } = useTranslation();
   const canViewSmartAlerts = usePermission("items", "view");
   const isRtl = i18n.language === "ar";
-  const visibleReports = REPORTS.filter(
+  const visibleReports = INVENTORY_REPORTS.filter(
     report => report.href !== "/inventory/alerts" || canViewSmartAlerts,
   );
   return (

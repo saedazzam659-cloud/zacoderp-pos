@@ -1,4 +1,4 @@
-const EXTERNAL_AGENT_FORBIDDEN_ACCELERATION_COLUMNS = [
+const EXTERNAL_AGENT_FORBIDDEN_CONTROL_COLUMNS = [
   "invoice_acceleration_mode",
   "invoice_trial_remaining",
   "invoice_acceleration_last_error",
@@ -6,10 +6,11 @@ const EXTERNAL_AGENT_FORBIDDEN_ACCELERATION_COLUMNS = [
   "invoice_acceleration_updated_at",
   "invoice_acceleration_generation",
   "invoice_acceleration_baseline",
+  "inventory_reports_unified",
 ] as const;
 
 const forbiddenColumn = new RegExp(
-  `\\b(?:${EXTERNAL_AGENT_FORBIDDEN_ACCELERATION_COLUMNS.join("|")})\\b`,
+  `\\b(?:${EXTERNAL_AGENT_FORBIDDEN_CONTROL_COLUMNS.join("|")})\\b`,
   "i",
 );
 
@@ -108,7 +109,7 @@ export function sanitizeSchemaDumpForExternalAgent(dumpSql: string): string {
       const kept = entries.filter(entry => {
         if (!forbiddenColumn.test(entry)) return true;
         const name = /^\s*(?:"([^"]+)"|([a-zA-Z_][\w]*))\s+/.exec(entry)?.slice(1).find(Boolean);
-        if (!name || !EXTERNAL_AGENT_FORBIDDEN_ACCELERATION_COLUMNS.some(column => column === name.toLowerCase())) {
+        if (!name || !EXTERNAL_AGENT_FORBIDDEN_CONTROL_COLUMNS.some(column => column === name.toLowerCase())) {
           throw new Error("رفض تهيئة قاعدة الوكيل: مرجع غير متوقع لعمود تحكم مركزي داخل جدول");
         }
         return false;

@@ -12,6 +12,7 @@ import Layout from "@/components/Layout";
 import { useAutoCheckinOnLogin } from "@/hooks/useAutoCheckinOnLogin";
 import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import PermRoute from "@/components/PermRoute";
+import { useUnifiedInventoryReports } from "@/lib/agentBranding";
 import Dashboard from "@/pages/Dashboard";
 import UserTracking from "@/pages/admin/UserTracking";
 import UserTrackingLive from "@/pages/admin/UserTrackingLive";
@@ -306,6 +307,7 @@ import StockLedger from "@/pages/inventory/StockLedger";
 import StockBalance from "@/pages/inventory/StockBalance";
 // Inventory Reports
 import InventoryReportsHub  from "@/pages/inventory/reports/InventoryReportsHub";
+import UnifiedInventoryReports from "@/pages/inventory/reports/UnifiedInventoryReports";
 import BatchExpiryReport from "@/pages/inventory/reports/BatchExpiryReport";
 import ItemCard              from "@/pages/inventory/reports/ItemCard";
 import LowStockReport        from "@/pages/inventory/reports/LowStockReport";
@@ -517,6 +519,18 @@ function safeRedirectTarget(raw: string | null | undefined): string | null {
   if (v.startsWith("//")) return null;
   if (v.includes("://")) return null;
   return v;
+}
+
+function AgentUnifiedInventoryReportsRoute() {
+  const enabled = useUnifiedInventoryReports();
+  if (enabled === null) {
+    return (
+      <div className="p-6 text-sm text-muted-foreground" role="status">
+        جارٍ تحميل إعدادات الوكيل…
+      </div>
+    );
+  }
+  return enabled ? <UnifiedInventoryReports /> : <Redirect to="/inventory/reports" />;
 }
 
 // سياسة نطاق/لوحة الوكيل — كاش على مستوى الموديول حتى لا يُستعلم
@@ -1085,6 +1099,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/ledger"  module="items" component={StockLedger} />}
             {!isSuperAdmin && <PermRoute path="/inventory/balance" module="items" component={StockBalance} />}
             {/* Inventory Reports */}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/unified" module="inventory_reports" component={AgentUnifiedInventoryReportsRoute} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports"                  module="inventory_reports" component={InventoryReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/batches"          module="inventory_reports" component={BatchExpiryReport} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/expiry"           module="inventory_reports" component={BatchExpiryReport} />}

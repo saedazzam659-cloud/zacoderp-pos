@@ -75,6 +75,7 @@ type Agent = {
   dbUrlSet: boolean; dbStatus: string; dbLastCheckAt: string | null; dbLastError: string | null;
   sshHost: string | null; sshPort: number | null; sshUser: string | null; sshSecretSet: boolean; sshStatus: string; sshLastCheckAt: string | null;
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
+  inventoryReportsUnified?: boolean;
   lastHeartbeatAt: string | null; lastSeenIp: string | null; deployedVersion: string | null;
   deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
   operationKind?: "schema" | "provision" | null;
@@ -173,6 +174,7 @@ const emptyForm = {
   mode: "frontend_only", packageSource: "central", localSuperadminEnabled: false, localSuperadminScreens: [...DEFAULT_LOCAL_SUPERADMIN_SCREENS], maxCompanies: "", licenseExpiresAt: "",
   dbUrl: "", sshHost: "", sshPort: "22", sshUser: "", sshSecret: "",
   brandName: "", brandLogoUrl: "", brandColor: "", notes: "",
+  inventoryReportsUnified: false,
   saUsername: "", saEmail: "", saPassword: "",
   autoDomainSetup: false, autoDomainProxyEnabled: false,
 };
@@ -513,6 +515,7 @@ export default function AgentServers() {
         autoDomainSetup: form.autoDomainSetup,
         autoDomainProxyEnabled: form.autoDomainProxyEnabled,
       };
+      if (!wasEdit) payload.inventoryReportsUnified = form.inventoryReportsUnified;
       // Existing agents save their Super Admin policy through its dedicated
       // button. The general/package save must never submit password fields:
       // browser password managers can autofill hidden tabs unexpectedly.
@@ -735,6 +738,29 @@ export default function AgentServers() {
       });
     } catch (e: any) {
       toast({ title: "فشل حفظ إعدادات Super Admin", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveAgentUiSettings() {
+    if (!form.id) return;
+    setBusy(`save-agent-ui-${form.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${form.id}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ inventoryReportsUnified: form.inventoryReportsUnified }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "فشل حفظ تخصيص الواجهة");
+      invalidate();
+      toast({
+        title: "تم حفظ تخصيص واجهة الوكيل",
+        description: "قد يحتاج مستخدمو الوكيل إلى تحديث الصفحة لتطبيق التغيير.",
+      });
+    } catch (e: any) {
+      toast({ title: "فشل حفظ تخصيص الواجهة", description: String(e?.message ?? e), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -1101,6 +1127,7 @@ export default function AgentServers() {
       dbUrl: "", sshHost: a.sshHost ?? "", sshPort: a.sshPort != null ? String(a.sshPort) : "22",
       sshUser: a.sshUser ?? "", sshSecret: "",
       brandName: a.brandName ?? "", brandLogoUrl: a.brandLogoUrl ?? "", brandColor: a.brandColor ?? "",
+      inventoryReportsUnified: a.inventoryReportsUnified === true,
       notes: a.notes ?? "",
       saUsername: a.saUsername ?? "", saEmail: a.saEmail ?? "", saPassword: "",
       autoDomainSetup: a.autoDomainSetup ?? false,
@@ -2281,9 +2308,50 @@ export default function AgentServers() {
               <TabsTrigger value="db">قاعدة البيانات</TabsTrigger>
               <TabsTrigger value="server">السيرفر</TabsTrigger>
               <TabsTrigger value="brand">الهوية</TabsTrigger>
+              <TabsTrigger value="ui">تخصيص الواجهة</TabsTrigger>
               {form.mode === "full" && form.packageSource === "external" && <TabsTrigger value="packages">الحزمة الخارجية</TabsTrigger>}
                {form.mode === "full" && form.packageSource === "external" && <TabsTrigger value="generate">تجهيز نسخة من المنصة</TabsTrigger>}
             </TabsList>
+
+            <TabsContent value="ui" className="mt-3 space-y-3">
+              <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+                <div>
+                  <h3 className="text-sm font-semibold">عرض تقارير المخازن الموحد</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    عند التفعيل، يستبدل قائمة روابط تقارير المخازن برابط واحد يفتح شاشة بحث واختيار للتقارير الحالية.
+                    لا يغيّر تصميم الوكلاء الآخرين أو بيانات التقارير أو حساباتها أو صلاحياتها.
+                    حفظ هذا الخيار لوكيل موجود مستقل عن زر حفظ بيانات الوكيل.
+                  </p>
+                </div>
+                <label className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-primary"
+                    checked={form.inventoryReportsUnified}
+                    disabled={busy === `save-agent-ui-${form.id}`}
+                    onChange={event => set("inventoryReportsUnified", event.target.checked)}
+                    data-testid="checkbox-agent-unified-inventory-reports"
+                  />
+                  <span>تفعيل شاشة تقارير المخازن الموحدة لهذا الوكيل فقط</span>
+                </label>
+                {isEdit ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy === `save-agent-ui-${form.id}`}
+                    onClick={saveAgentUiSettings}
+                    data-testid="button-save-agent-ui-settings"
+                  >
+                    {busy === `save-agent-ui-${form.id}` && <Loader2 className="h-4 w-4 ms-1 animate-spin" />}
+                    حفظ تخصيص الواجهة فقط
+                  </Button>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    سيُحفظ هذا الخيار مع إنشاء الوكيل، وهو متوقف افتراضيًا.
+                  </p>
+                )}
+              </div>
+            </TabsContent>
 
             <TabsContent value="basic" className="mt-3 grid grid-cols-2 gap-3">
               <div><label className="text-xs text-muted-foreground block mb-1">اسم الوكيل *</label><Input value={form.name} onChange={e => set("name", e.target.value)} data-testid="input-agent-name" /></div>
