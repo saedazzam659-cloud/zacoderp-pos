@@ -49,6 +49,7 @@ import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { DateField } from "@/components/ui/date-field";
 import SalesDocumentDetails from "@/pages/sales/SalesDocumentDetails";
+import { SalesBatchAllocationControl, type SalesBatchAllocation } from "./SalesBatchAllocationControl";
 import {
   catalogUnitsWithHistoricalSelection,
   isActiveItemUnit,
@@ -112,6 +113,9 @@ interface DocLine {
   // Empty ⇒ falls back to the HEADER costCenter at JE time. JE/reporting
   // only — NEVER enters the ZATCA UBL XML, hash, QR, or ICV/PIH chain.
   costCenter: string;
+  // Inventory-only manual lot override; null leaves allocation to automatic
+  // server-side FIFO/FEFO. Never used by fiscal document mapping.
+  batchAllocations: SalesBatchAllocation[] | null;
 }
 
 function newLine(): DocLine {
@@ -125,6 +129,7 @@ function newLine(): DocLine {
     baseUnitPrice: "0",
     brandId: null, brandName: "",
     costCenter: "",
+    batchAllocations: null,
   };
 }
 
@@ -271,6 +276,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [matchEdit, params]   = useRoute(`${basePath}/:id`);
   const isNew  = !!matchNew;
   const canCreateInvoice = usePermission("sales_invoices", "create");
+  const canManuallyPickBatches = usePermission("sales_invoices", "edit");
   const newArchiveKeyRef = useRef(`SI-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   // /new matches the /:id route too (id="new") → Number("new")=NaN, and JSX
   // renders `{NaN && <Tab/>}` as a literal "NaN" chip. Only accept numeric ids.
@@ -541,6 +547,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         lineTotal:   String(l.lineTotal),
         notes:       l.notes ?? "",
         costCenter:  "",
+        batchAllocations: null,
         // Quotations don't carry offer-engine state — start with a clean
         // slate and let the invoice's own match cycle re-evaluate.
         appliedOfferId:   null,
@@ -712,7 +719,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   function applyHeaderWarehouse(v: string) {
     setHeaderWarehouseId(v);
     if (!v) return;
-    setLines(prev => prev.map(l => isServiceLine(l) ? l : { ...l, warehouseId: v }));
+    setLines(prev => prev.map(l => isServiceLine(l) ? l : {
+      ...l,
+      warehouseId: v,
+      batchAllocations: null,
+    }));
   }
   // Header-level tax picker — dynamic tax catalog (الضرائب). Selecting a
   // percent tax broadcasts its rate to every line's editable vatRate (which
@@ -907,6 +918,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       lineTotal:   String(l.lineTotal),
       notes:       l.notes ?? "",
       costCenter:  l.costCenter ?? "",
+      batchAllocations: Array.isArray(l.batchAllocations) ? l.batchAllocations : null,
       // Carry forward the historical offer link so the badge shows on edit.
       // The auto-match effect may overwrite this with a fresh decision when
       // the cart still qualifies, or clear it when conditions changed.
@@ -993,6 +1005,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           lineTotal:   String(l.lineTotal),
           notes:       l.notes ?? "",
           costCenter:  l.costCenter ?? "",
+          batchAllocations: null,
           // Don't carry the historical offer onto a duplicate — the new
           // invoice will get a fresh match cycle.
           appliedOfferId:   null,
@@ -1037,6 +1050,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setLines(prev => prev.map(l => {
       if (l._id !== id) return l;
       const updated: DocLine = { ...l, [field]: value };
+      if (field === "qty" || field === "freeQty" || field === "warehouseId") {
+        updated.batchAllocations = null;
+      }
       // User typing into unitPrice or discount means they're taking over
       // that field. Drop the engine-owned snapshot for it so the matcher's
       // next "no match" pass won't silently revert their value to 0 / the
@@ -1065,6 +1081,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
     }));
+  }
+
+  function updateBatchAllocations(lineId: string, allocations: SalesBatchAllocation[] | null) {
+    setLines(previous => previous.map(line =>
+      line._id === lineId ? { ...line, batchAllocations: allocations } : line,
+    ));
   }
 
   // Recompute every line's lineTotal whenever the inclusive/exclusive flag changes
@@ -1166,6 +1188,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         // can't ride along on the new item's line.
         brandId: null,
         brandName: "",
+        batchAllocations: null,
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
@@ -1226,6 +1249,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         appliedOfferId:  null,
         appliedOfferName: null,
         discount:  "0",
+        batchAllocations: null,
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
@@ -2464,6 +2488,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         onPick={(bid, bname, ib) => pickLineBrand(l._id, bid, bname, ib)}
                       />
                     )}
+                    {isInvoice && l.itemId && l.warehouseId && (
+                      <SalesBatchAllocationControl
+                        kind="sale"
+                        companyId={cid ?? ""}
+                        itemId={l.itemId}
+                        warehouseId={l.warehouseId}
+                        requestedQty={(Number(l.qty || 0) + Number(l.freeQty || 0)) * (Number(l.conversionFactor || 1) || 1)}
+                        value={l.batchAllocations}
+                        onChange={(allocations) => updateBatchAllocations(l._id, allocations)}
+                        canManuallyPick={canManuallyPickBatches && !Boolean((existing as any)?.sourceGdnId)}
+                        headers={authH}
+                        rowId={l._id}
+                      />
+                    )}
                   </div>
                 ))}
                 </div>
@@ -2603,6 +2641,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         lineTotal: "0",
         notes: "",
         costCenter: "",
+        batchAllocations: null,
         appliedOfferId: null,
         appliedOfferName: null,
         engineUnitPrice: null,

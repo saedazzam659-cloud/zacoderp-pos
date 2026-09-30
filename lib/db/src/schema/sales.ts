@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, timestamp, numeric, pgEnum, boolean,
+  pgTable, serial, text, integer, timestamp, numeric, pgEnum, boolean, jsonb,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { customersTable } from "./customers";
@@ -136,6 +136,14 @@ export const salesInvoiceLinesTable = pgTable("sales_invoice_lines", {
   // NEITHER field enters the ZATCA UBL XML, invoice hash, QR, or ICV/PIH chain.
   brandId:     integer("brand_id"),
   brandName:   text("brand_name"),
+  // Optional user-selected inventory lots for draft sales invoices. Posting
+  // validates this against the locked live batch plan; it is not fiscal data
+  // and is deliberately excluded from ZATCA invoice mapping.
+  batchAllocations: jsonb("batch_allocations").$type<Array<{
+    batchNumber: string | null;
+    expiryDate: string | null;
+    qty: number;
+  }> | null>(),
 });
 
 // ─── Sales Returns ───────────────────────────────────────────────────────────

@@ -17,6 +17,12 @@ export interface BatchPick {
   costPrice: number;          // weighted-avg of the original receipts for this batch
 }
 
+export interface BatchAllocationInput {
+  batchNumber: string | null;
+  expiryDate: string | null;
+  qty: number;
+}
+
 export interface BatchRemaining {
   batchNumber: string | null;
   expiryDate: string | null;
@@ -216,6 +222,69 @@ export function allocateBatchPicks(
     throw new Error(
       `الكمية المتاحة عبر التشغيلات لا تكفي. مطلوب ${requestedQty}، متاح ${requestedQty - remaining}.`,
     );
+  }
+  return picks;
+}
+
+// Apply an explicitly selected allocation against the same mutable plan used
+// by automatic FIFO/FEFO. Posting callers must load the plan inside their
+// stock transaction after acquiring the relevant locks.
+export function allocateSelectedBatchPicks(
+  batches: BatchRemaining[],
+  input: unknown,
+  requestedQty: number,
+): BatchPick[] {
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new Error("يجب تحديد كمية لكل تشغيلة");
+  }
+  if (input.length > 100) {
+    throw new Error("عدد التشغيلات المحددة يتجاوز الحد المسموح");
+  }
+  const merged = new Map<string, BatchAllocationInput>();
+  for (const raw of input as any[]) {
+    const batchNumber = raw?.batchNumber == null || raw.batchNumber === ""
+      ? null
+      : String(raw.batchNumber);
+    const expiryDate = raw?.expiryDate == null || raw.expiryDate === ""
+      ? null
+      : String(raw.expiryDate);
+    const qty = Number(raw?.qty);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new Error("كمية التشغيلة يجب أن تكون أكبر من صفر");
+    }
+    const key = JSON.stringify([batchNumber, expiryDate]);
+    const existing = merged.get(key);
+    if (existing) existing.qty += qty;
+    else merged.set(key, { batchNumber, expiryDate, qty });
+  }
+
+  const allocations = [...merged.values()];
+  const requestedTotal = allocations.reduce((sum, allocation) => sum + allocation.qty, 0);
+  if (Math.abs(requestedTotal - requestedQty) > 0.0001) {
+    throw new Error(
+      `مجموع كميات التشغيلات (${requestedTotal.toFixed(4)}) لا يساوي الكمية المطلوبة (${requestedQty.toFixed(4)})`,
+    );
+  }
+
+  const picks: BatchPick[] = [];
+  for (const allocation of allocations) {
+    const batch = batches.find((candidate) =>
+      candidate.batchNumber === allocation.batchNumber
+      && candidate.expiryDate === allocation.expiryDate,
+    );
+    if (!batch || allocation.qty > batch.remaining + 0.0001) {
+      throw new Error(`التشغيلة "${allocation.batchNumber ?? "غير مرمّز"}" لم تعد متاحة بالكمية المحددة`);
+    }
+    const before = batch.remaining;
+    const costPrice = batch.inboundQty > 0 ? batch.inboundCost / batch.inboundQty : 0;
+    picks.push({
+      batchNumber: batch.batchNumber,
+      expiryDate: batch.expiryDate,
+      remaining: before,
+      takeQty: allocation.qty,
+      costPrice,
+    });
+    batch.remaining = Math.max(0, batch.remaining - allocation.qty);
   }
   return picks;
 }

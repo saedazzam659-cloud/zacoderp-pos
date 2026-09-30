@@ -41,6 +41,7 @@ import {
   getBalance,
   addStockLedgerEntry,
   allocateBatchPicks,
+  allocateSelectedBatchPicks,
   lockStockBalances,
   readBatchRemainingBulk,
   type BatchPick,
@@ -1532,6 +1533,68 @@ router.get("/sales-invoices/quota", async (req, res) => {
   res.json(q);
 });
 
+router.get("/sales-invoices/batch-options", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const itemId = Number(req.query.itemId);
+    const warehouseId = Number(req.query.warehouseId);
+    const requestedQty = Number(req.query.qty);
+    if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(warehouseId) || warehouseId <= 0
+      || !Number.isFinite(requestedQty) || requestedQty < 0) {
+      res.status(400).json({ error: "بيانات الصنف أو المستودع أو الكمية غير صحيحة" });
+      return;
+    }
+    const [[item], [warehouse]] = await Promise.all([
+      db.select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType })
+        .from(itemsTable)
+        .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid))),
+      db.select({ id: warehousesTable.id }).from(warehousesTable)
+        .where(and(
+          eq(warehousesTable.id, warehouseId),
+          eq(warehousesTable.companyId, cid),
+          ...branchScopeSpread(req, warehousesTable.branchId, undefined),
+        )),
+    ]);
+    if (!item || !warehouse) {
+      res.status(404).json({ error: "الصنف أو المستودع غير موجود" });
+      return;
+    }
+    const mode = item.type === "service" || item.type === "prepaid_expense"
+      ? "none"
+      : item.mode === "fifo" || item.mode === "fefo" ? item.mode : "none";
+    if (mode === "none") {
+      res.json({ mode, batches: [], suggestedPicks: [], totalAvailable: 0, sufficient: true });
+      return;
+    }
+    const plan = (await readBatchRemainingBulk(cid, [{ itemId, warehouseId, mode }]))
+      .get(`${itemId}:${warehouseId}`) ?? [];
+    const totalAvailable = plan.reduce((sum, batch) => sum + batch.remaining, 0);
+    const previewQty = Math.min(requestedQty, totalAvailable);
+    const suggestedPicks = previewQty > 0
+      ? allocateBatchPicks(plan.map((batch) => ({ ...batch })), previewQty)
+          .map((pick) => ({
+            batchNumber: pick.batchNumber,
+            expiryDate: pick.expiryDate,
+            qty: pick.takeQty,
+          }))
+      : [];
+    res.json({
+      mode,
+      batches: plan.map((batch) => ({
+        batchNumber: batch.batchNumber,
+        expiryDate: batch.expiryDate,
+        availableQty: batch.remaining,
+        earliestInDate: batch.earliestInDate,
+      })),
+      suggestedPicks,
+      totalAvailable,
+      sufficient: totalAvailable + 0.0001 >= requestedQty,
+    });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e?.message ?? "تعذر تحميل التشغيلات" });
+  }
+});
+
 router.get("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = getCid(req);
@@ -1688,6 +1751,9 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number, fallbackRate = "
     // ICV/PIH chain (the XML builder simply ignores these columns).
     brandId:   l.brandId ? Number(l.brandId) : null,
     brandName: l.brandName || null,
+    // Inventory-only override; the posting handler rechecks each lot against
+    // its transaction-locked remaining plan before writing stock movements.
+    batchAllocations: Array.isArray(l.batchAllocations) ? l.batchAllocations : null,
   };
 }
 
@@ -3165,6 +3231,14 @@ async function postSalesInvoiceHandler(
     // CREDIT Delivery Clearing (instead of revenue/inventory) so it nets
     // out against the GDN's debit to that same clearing account.
     const gdnSourced = !!(inv as any).sourceGdnId;
+    if (gdnSourced && lines.some((line: any) =>
+      Array.isArray(line.batchAllocations) && line.batchAllocations.length > 0,
+    )) {
+      res.status(400).json({
+        error: "هذه الفاتورة مرتبطة بإذن تسليم؛ اختر التشغيلات من الإذن حتى لا يتكرر صرف المخزون.",
+      });
+      return;
+    }
 
     // Load per-item metadata once: batch mode (stock costing), item TYPE
     // (service vs stock) and the per-item revenue account. SERVICE items (خدمي)
@@ -3369,6 +3443,18 @@ async function postSalesInvoiceHandler(
         // *increase* stock on a sale via the `-op.qty` upsertBalance below.
         if (qty <= 0) continue;
         const mode = modeById.get(line.itemId) ?? "none";
+        const hasManualBatchAllocation =
+          Array.isArray(line.batchAllocations) && line.batchAllocations.length > 0;
+        if (hasManualBatchAllocation && mode === "none") {
+          res.status(400).json({
+            error: `الصنف "${line.itemName ?? "صنف"}" لا يستخدم تتبّع التشغيلات؛ أزل التخصيص اليدوي أو غيّر إعداد الصنف.`,
+          });
+          return;
+        }
+        if (hasManualBatchAllocation && !canAccessModule(req.authUser, "sales_invoices", "edit")) {
+          res.status(403).json({ error: "ليست لديك صلاحية الاختيار اليدوي للتشغيلات" });
+          return;
+        }
         let avgCost: number;
         let picks: BatchPick[] | null;
         if (mode === "none") {
@@ -3378,10 +3464,10 @@ async function postSalesInvoiceHandler(
           // Consume the preloaded plan in line order. The allocator mutates the
           // pair plan so repeated lines never re-use the same lot.
           try {
-            picks = allocateBatchPicks(
-              batchPlans.get(`${line.itemId}:${line.warehouseId}`) ?? [],
-              qty,
-            );
+            const batchPlan = batchPlans.get(`${line.itemId}:${line.warehouseId}`) ?? [];
+            picks = hasManualBatchAllocation
+              ? allocateSelectedBatchPicks(batchPlan, line.batchAllocations, qty)
+              : allocateBatchPicks(batchPlan, qty);
           } catch (e: any) {
             res.status(400).json({ error: `${line.itemName ?? "صنف"}: ${e?.message ?? "كمية غير متاحة"}` });
             return;
@@ -4224,6 +4310,146 @@ router.get("/sales-returns", async (req, res) => {
     }
     res.json(rows.map(r => ({ ...r, warehouseIds: Array.from(whByReturn.get(r.id) ?? []) })));
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.get("/sales-returns/:invoiceId/batch-options", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const invoiceId = Number(req.params.invoiceId);
+    const itemId = Number(req.query.itemId);
+    const warehouseId = Number(req.query.warehouseId);
+    const requestedQty = Number(req.query.qty);
+    const priorQty = Number(req.query.priorQty ?? 0);
+    if (!Number.isInteger(invoiceId) || invoiceId <= 0 || !Number.isInteger(itemId) || itemId <= 0
+      || !Number.isInteger(warehouseId) || warehouseId <= 0
+      || !Number.isFinite(requestedQty) || requestedQty < 0
+      || !Number.isFinite(priorQty) || priorQty < 0) {
+      res.status(400).json({ error: "بيانات الفاتورة أو الصنف أو المستودع أو الكمية غير صحيحة" });
+      return;
+    }
+    const [[invoice], [item], [warehouse]] = await Promise.all([
+      db.select({ id: salesInvoicesTable.id, status: salesInvoicesTable.status })
+        .from(salesInvoicesTable)
+        .where(and(
+          eq(salesInvoicesTable.id, invoiceId),
+          eq(salesInvoicesTable.companyId, cid),
+          ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
+        )),
+      db.select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType })
+        .from(itemsTable)
+        .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid))),
+      db.select({ id: warehousesTable.id }).from(warehousesTable)
+        .where(and(eq(warehousesTable.id, warehouseId), eq(warehousesTable.companyId, cid))),
+    ]);
+    if (!invoice || invoice.status !== "posted") {
+      res.status(404).json({ error: "الفاتورة المرحّلة غير موجودة" });
+      return;
+    }
+    if (!item || !warehouse) {
+      res.status(404).json({ error: "الصنف أو المستودع غير موجود" });
+      return;
+    }
+    const mode = item.type === "service" || item.type === "prepaid_expense"
+      ? "none"
+      : item.mode === "fifo" || item.mode === "fefo" ? item.mode : "none";
+    if (mode === "none") {
+      res.json({ mode, batches: [], suggestedPicks: [], totalAvailable: 0, sufficient: true });
+      return;
+    }
+
+    // Mirror the posting rule: only batches stamped on this posted source
+    // invoice are eligible, less quantities already restored by posted
+    // returns. Old untagged source rows remain an explicit unbatched bucket.
+    const [sourceResult, returnedResult] = await Promise.all([
+      db.execute(sql`
+        SELECT
+          batch_number AS "batchNumber",
+          expiry_date AS "expiryDate",
+          SUM(ABS(qty))::text AS "soldQty",
+          MIN(id) AS "firstId"
+        FROM stock_ledger
+        WHERE company_id = ${cid}
+          AND ref_type = 'sales_invoice'
+          AND ref_id = ${invoiceId}
+          AND item_id = ${itemId}
+          AND warehouse_id = ${warehouseId}
+          AND qty < 0
+        GROUP BY batch_number, expiry_date
+        ORDER BY MIN(id) ASC
+      `),
+      db.execute(sql`
+        SELECT
+          stock_ledger.batch_number AS "batchNumber",
+          stock_ledger.expiry_date AS "expiryDate",
+          SUM(stock_ledger.qty)::text AS "returnedQty"
+        FROM stock_ledger
+        INNER JOIN sales_returns
+          ON sales_returns.id = stock_ledger.ref_id
+         AND sales_returns.company_id = stock_ledger.company_id
+        WHERE stock_ledger.company_id = ${cid}
+          AND stock_ledger.ref_type = 'sales_return'
+          AND sales_returns.invoice_id = ${invoiceId}
+          AND sales_returns.status = 'posted'
+          AND stock_ledger.item_id = ${itemId}
+          AND stock_ledger.warehouse_id = ${warehouseId}
+          AND stock_ledger.qty > 0
+        GROUP BY stock_ledger.batch_number, stock_ledger.expiry_date
+      `),
+    ]);
+    const sourceRows = ((sourceResult as any).rows ?? sourceResult) as any[];
+    const returnedRows = ((returnedResult as any).rows ?? returnedResult) as any[];
+    const keyOf = (batchNumber: string | null, expiryDate: string | null) =>
+      `${batchNumber ?? "__unbatched__"}|${expiryDate ?? ""}`;
+    const returnedByBatch = new Map<string, number>();
+    for (const row of returnedRows) {
+      returnedByBatch.set(
+        keyOf(row.batchNumber ?? null, row.expiryDate ?? null),
+        Number(row.returnedQty ?? 0),
+      );
+    }
+    const batches = sourceRows.map((row) => {
+      const batchNumber = row.batchNumber ?? null;
+      const expiryDate = row.expiryDate ?? null;
+      const soldQty = Number(row.soldQty ?? 0);
+      const availableQty = Math.max(0, soldQty - (returnedByBatch.get(keyOf(batchNumber, expiryDate)) ?? 0));
+      return {
+        batchNumber,
+        expiryDate,
+        availableQty,
+        earliestInDate: null,
+      };
+    });
+    // Match posting's cross-line consumption: an earlier line in this same
+    // draft consumes the original return buckets before this line is previewed.
+    let priorRemaining = priorQty;
+    for (const batch of batches) {
+      if (priorRemaining <= 0.0001) break;
+      const consumed = Math.min(batch.availableQty, priorRemaining);
+      batch.availableQty -= consumed;
+      priorRemaining -= consumed;
+    }
+    const availableBatches = batches.filter((row) => row.availableQty > 0.0001);
+    let remaining = requestedQty;
+    const suggestedPicks: Array<{ batchNumber: string | null; expiryDate: string | null; qty: number }> = [];
+    for (const batch of availableBatches) {
+      if (remaining <= 0.0001) break;
+      const take = Math.min(remaining, batch.availableQty);
+      if (take > 0.0001) {
+        suggestedPicks.push({ batchNumber: batch.batchNumber, expiryDate: batch.expiryDate, qty: take });
+        remaining -= take;
+      }
+    }
+    const totalAvailable = availableBatches.reduce((sum, batch) => sum + batch.availableQty, 0);
+    res.json({
+      mode,
+      batches: availableBatches,
+      suggestedPicks,
+      totalAvailable,
+      sufficient: totalAvailable + 0.0001 >= requestedQty,
+    });
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e?.message ?? "تعذر تحميل تشغيلات المرتجع" });
+  }
 });
 
 router.get("/sales-returns/:id", async (req, res) => {

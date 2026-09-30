@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   allocateBatchPicks,
+  allocateSelectedBatchPicks,
   type BatchRemaining,
 } from "../src/lib/stockHelpers.ts";
 
@@ -50,5 +51,34 @@ test("aggregate batch plan rejects demand left after prior lines", () => {
   assert.throws(
     () => allocateBatchPicks(plan, 5),
     /مطلوب 5، متاح 4/,
+  );
+});
+
+test("manual allocation honors the selected lot and mutates the shared plan", () => {
+  const plan = batches();
+
+  const picks = allocateSelectedBatchPicks(plan, [
+    { batchNumber: "B", expiryDate: "2026-10-01", qty: 6 },
+  ], 6);
+
+  assert.deepEqual(picks.map((pick) => [pick.batchNumber, pick.takeQty, pick.costPrice]), [
+    ["B", 6, 12],
+  ]);
+  assert.equal(plan[0].remaining, 5);
+  assert.equal(plan[1].remaining, 2);
+});
+
+test("manual allocations reject totals or lot quantities that no longer match stock", () => {
+  assert.throws(
+    () => allocateSelectedBatchPicks(batches(), [
+      { batchNumber: "B", expiryDate: "2026-10-01", qty: 3 },
+    ], 4),
+    /مجموع كميات التشغيلات/,
+  );
+  assert.throws(
+    () => allocateSelectedBatchPicks(batches(), [
+      { batchNumber: "B", expiryDate: "2026-10-01", qty: 9 },
+    ], 9),
+    /لم تعد متاحة/,
   );
 });

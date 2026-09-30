@@ -41,6 +41,7 @@ import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import SalesPrintModal from "./SalesPrintModal";
+import { SalesBatchAllocationControl } from "./SalesBatchAllocationControl";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -2614,6 +2615,25 @@ ${sections}
                         onChange={e => updateLine(l._id, "notes", e.target.value)}
                       />
                     </div>
+                  )}
+                  {form.invoiceId && l.itemId && l.warehouseId && (
+                    <SalesBatchAllocationControl
+                      kind="return"
+                      companyId={cid ?? ""}
+                      itemId={l.itemId}
+                      warehouseId={l.warehouseId}
+                      sourceInvoiceId={String(form.invoiceId)}
+                      priorQty={lines.slice(0, idx)
+                        .filter((previous) => previous.itemId === l.itemId && previous.warehouseId === l.warehouseId)
+                        .reduce((sum, previous) =>
+                          sum + (Number(previous.qty || 0) + Number(previous.freeQty || 0))
+                            * (Number(previous.conversionFactor || 1) || 1),
+                        0)}
+                      requestedQty={(Number(l.qty || 0) + Number(l.freeQty || 0)) * (Number(l.conversionFactor || 1) || 1)}
+                      value={null}
+                      headers={authH}
+                      rowId={l._id}
+                    />
                   )}
                 </div>
               ))}
