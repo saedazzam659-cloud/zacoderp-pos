@@ -298,6 +298,7 @@ const CENTRAL_ONLY_AGENT_CONTROL_COLUMNS = [
   "agent_instances.module_shortcut_icons",
   "agent_instances.module_reports_unified",
   "agent_instances.module_reports_unified_modules",
+  "agent_instances.agent_ui_settings",
 ] as const;
 
 // These control-plane records contain an encrypted, one-time registration

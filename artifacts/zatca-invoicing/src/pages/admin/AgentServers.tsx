@@ -24,6 +24,11 @@ import {
 } from "lucide-react";
 import { DEFAULT_LOCAL_SUPERADMIN_SCREENS, LOCAL_SUPERADMIN_SCREENS } from "@/lib/localSuperadminScreens";
 import { UNIFIED_REPORT_MODULE_OPTIONS } from "@/lib/unifiedModuleReports";
+import {
+  AGENT_MODULE_SCREEN_TILE_OPTIONS,
+  normalizeAgentUiSettings,
+  type AgentUiSettings,
+} from "@/lib/agentUiSettings";
 import { PlatformLinksTopLevel } from "./platform-links/PlatformLinksManagement";
 import { LocalAgentLinks } from "./platform-links/LocalAgentLinks";
 import { ImportedAgentsList } from "./platform-links/ImportedAgentsList";
@@ -81,6 +86,7 @@ type Agent = {
   moduleShortcutIcons?: boolean;
   moduleReportsUnified?: boolean;
   moduleReportsUnifiedModules?: string[];
+  agentUiSettings?: AgentUiSettings;
   lastHeartbeatAt: string | null; lastSeenIp: string | null; deployedVersion: string | null;
   deployStatus: string; deployLog: string | null; lastDeployAt: string | null;
   operationKind?: "schema" | "provision" | null;
@@ -183,6 +189,7 @@ const emptyForm = {
   moduleShortcutIcons: false,
   moduleReportsUnified: false,
   moduleReportsUnifiedModules: [] as string[],
+  agentUiSettings: normalizeAgentUiSettings(null),
   saUsername: "", saEmail: "", saPassword: "",
   autoDomainSetup: false, autoDomainProxyEnabled: false,
 };
@@ -528,6 +535,7 @@ export default function AgentServers() {
         payload.moduleShortcutIcons = form.moduleShortcutIcons;
         payload.moduleReportsUnified = form.moduleReportsUnified;
         payload.moduleReportsUnifiedModules = form.moduleReportsUnifiedModules;
+        payload.agentUiSettings = form.agentUiSettings;
       }
       // Existing agents save their Super Admin policy through its dedicated
       // button. The general/package save must never submit password fields:
@@ -768,6 +776,7 @@ export default function AgentServers() {
           moduleShortcutIcons: form.moduleShortcutIcons,
           moduleReportsUnified: form.moduleReportsUnified,
           moduleReportsUnifiedModules: form.moduleReportsUnifiedModules,
+          agentUiSettings: form.agentUiSettings,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -1153,6 +1162,7 @@ export default function AgentServers() {
           ? a.moduleReportsUnifiedModules
           : ALL_UNIFIED_REPORT_MODULE_IDS)
         : [],
+      agentUiSettings: normalizeAgentUiSettings(a.agentUiSettings),
       notes: a.notes ?? "",
       saUsername: a.saUsername ?? "", saEmail: a.saEmail ?? "", saPassword: "",
       autoDomainSetup: a.autoDomainSetup ?? false,
@@ -2433,6 +2443,136 @@ export default function AgentServers() {
                     <span>تفعيل أيقونات اختصارات الوحدات لهذا الوكيل فقط</span>
                   </label>
                 </div>
+                </div>
+                <div className="border-t pt-4 space-y-4">
+                  <section className="space-y-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">فتح الوحدات بشاشة أيقونات</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        اختر الوحدات التي يفتحها شريط التنقل على شاشة بطاقات بأسماء الشاشات بدل القائمة المنسدلة.
+                        نستخدم شاشة الوحدة الحالية وبطاقاتها وصلاحياتها؛ اترك الاختيارات فارغة للإبقاء على القائمة الحالية.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {AGENT_MODULE_SCREEN_TILE_OPTIONS.map(({ id, label }) => (
+                        <label key={id} className="flex cursor-pointer items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-primary"
+                            checked={form.agentUiSettings.moduleScreensAsTiles.includes(id)}
+                            disabled={busy === `save-agent-ui-${form.id}`}
+                            onChange={event => {
+                              const selected = new Set(form.agentUiSettings.moduleScreensAsTiles);
+                              if (event.target.checked) selected.add(id);
+                              else selected.delete(id);
+                              set("agentUiSettings", normalizeAgentUiSettings({
+                                ...form.agentUiSettings,
+                                moduleScreensAsTiles: [...selected],
+                              }));
+                            }}
+                            data-testid={`checkbox-agent-module-screen-tiles-${id}`}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="border-t pt-4 space-y-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">صفحة دخول هذا الوكيل</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        هذه الإعدادات تخص دومين هذا الوكيل فقط. تظل حقول الدخول الأساسية ظاهرة، ولا تتغير صفحة الدخول المركزية.
+                        روابط إنشاء الحساب والأسعار تبقى مخفية على دومين الوكيل وفق سياسة الأمان الحالية.
+                        لإظهار محتوى التعريف، عيّن اسم العرض في تبويب الهوية.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="flex cursor-pointer items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-primary"
+                          checked={form.agentUiSettings.loginPage.showMarketingContent}
+                          disabled={busy === `save-agent-ui-${form.id}`}
+                          onChange={event => set("agentUiSettings", normalizeAgentUiSettings({
+                            ...form.agentUiSettings,
+                            loginPage: { ...form.agentUiSettings.loginPage, showMarketingContent: event.target.checked },
+                          }))}
+                          data-testid="checkbox-agent-login-marketing"
+                        />
+                        <span>إظهار محتوى التعريف وبطاقات الوحدات في صفحة دخول الوكيل</span>
+                      </label>
+                      <label className="flex cursor-pointer items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-primary"
+                          checked={form.agentUiSettings.loginPage.hideLoginSubtitle}
+                          disabled={busy === `save-agent-ui-${form.id}`}
+                          onChange={event => set("agentUiSettings", normalizeAgentUiSettings({
+                            ...form.agentUiSettings,
+                            loginPage: { ...form.agentUiSettings.loginPage, hideLoginSubtitle: event.target.checked },
+                          }))}
+                          data-testid="checkbox-agent-login-subtitle"
+                        />
+                        <span>إخفاء الوصف أسفل عنوان تسجيل الدخول</span>
+                      </label>
+                      <label className="flex cursor-pointer items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-primary"
+                          checked={form.agentUiSettings.loginPage.hideLoginModeSwitch}
+                          disabled={busy === `save-agent-ui-${form.id}`}
+                          onChange={event => set("agentUiSettings", normalizeAgentUiSettings({
+                            ...form.agentUiSettings,
+                            loginPage: { ...form.agentUiSettings.loginPage, hideLoginModeSwitch: event.target.checked },
+                          }))}
+                          data-testid="checkbox-agent-login-mode-switch"
+                        />
+                        <span>إخفاء الاختيار بين حساب الشركة والتدريب</span>
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      {([
+                        { key: "backgroundColor", label: "خلفية صفحة الدخول", sample: "#f8fafc" },
+                        { key: "cardColor", label: "خلفية بطاقة الدخول", sample: "#ffffff" },
+                        { key: "accentColor", label: "اللون الأساسي والأزرار", sample: "#0f766e" },
+                      ] as const).map(({ key, label, sample }) => (
+                        <div key={key} className="rounded-md border p-3">
+                          <label className="mb-2 block text-xs font-medium">{label}</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              className="h-9 w-10 cursor-pointer rounded border bg-white p-0.5"
+                              value={form.agentUiSettings.loginPage[key] ?? sample}
+                              disabled={busy === `save-agent-ui-${form.id}`}
+                              onChange={event => set("agentUiSettings", normalizeAgentUiSettings({
+                                ...form.agentUiSettings,
+                                loginPage: { ...form.agentUiSettings.loginPage, [key]: event.target.value },
+                              }))}
+                              data-testid={`input-agent-login-color-${key}`}
+                            />
+                            <span dir="ltr" className="text-xs text-muted-foreground">
+                              {form.agentUiSettings.loginPage[key] ?? "الافتراضي"}
+                            </span>
+                            {form.agentUiSettings.loginPage[key] && (
+                              <button
+                                type="button"
+                                className="ms-auto text-xs text-primary hover:underline"
+                                disabled={busy === `save-agent-ui-${form.id}`}
+                                onClick={() => set("agentUiSettings", normalizeAgentUiSettings({
+                                  ...form.agentUiSettings,
+                                  loginPage: { ...form.agentUiSettings.loginPage, [key]: null },
+                                }))}
+                                data-testid={`button-reset-agent-login-color-${key}`}
+                              >
+                                افتراضي
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
                 </div>
                 {isEdit ? (
                   <Button

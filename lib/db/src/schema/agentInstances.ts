@@ -101,6 +101,9 @@ export const agentInstancesTable = pgTable("agent_instances", {
   // Empty preserves the historical "all modules" meaning when the master
   // report chooser is enabled; otherwise this is the explicit module allowlist.
   moduleReportsUnifiedModules: jsonb("module_reports_unified_modules").$type<string[]>().notNull().default([]),
+  // Per-agent navigation/login presentation preferences; never copied into an
+  // agent's independent business database or allowed to affect central login.
+  agentUiSettings: jsonb("agent_ui_settings").$type<Record<string, unknown>>().notNull().default({}),
 
   // Runtime health
   lastHeartbeatAt: timestamp("last_heartbeat_at"),

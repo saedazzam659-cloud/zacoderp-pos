@@ -14,3 +14,9 @@ For module shortcut icon styling, the approved scope is shortcut grids across mo
 **Why:** The user explicitly chose all module shortcut grids while keeping the treatment optional per agent; expanding the visual change to other controls would exceed that scope.
 
 **How to apply:** Gate any future shortcut-grid styling with the agent's central preference and preserve existing hrefs, filtering, permissions, and screen logic.
+
+Agent login customization is presentation-only. Keep required credential inputs and existing authentication, host restrictions, and signup/pricing policy intact. Do not render central-platform marketing on an agent domain; optional marketing must use that agent's display identity.
+
+**Why:** The user wants independent login-page controls and colors for each agent without changing the central platform or weakening the login flow.
+
+**How to apply:** Resolve settings only for a verified agent domain, sanitize style values, and require an agent display name before showing optional branded marketing content.

@@ -2,6 +2,7 @@ import { logger } from "./logger.js";
 import type { LocalAgentRuntimeState } from "./localAgentSuperadmin.js";
 import { isIP } from "node:net";
 import { isPublicControllerAddress } from "./controllerHandoff.js";
+import { sanitizeAgentUiSettings } from "./agentUiSettings.js";
 
 export type PublicBrandingAgent = {
   status: string;
@@ -13,6 +14,7 @@ export type PublicBrandingAgent = {
   moduleShortcutIcons: boolean;
   moduleReportsUnified: boolean;
   moduleReportsUnifiedModules?: string[];
+  agentUiSettings?: unknown;
 };
 
 const REPORT_MODULE_IDS = new Set([
@@ -54,11 +56,12 @@ export function resolvedAgentBranding(agent: PublicBrandingAgent) {
     moduleShortcutIcons: agent.moduleShortcutIcons === true,
     moduleReportsUnified: agent.moduleReportsUnified === true,
     moduleReportsUnifiedModules: safeReportModuleIds(agent.moduleReportsUnifiedModules),
+    agentUiSettings: sanitizeAgentUiSettings(agent.agentUiSettings),
   };
 }
 
 type BrandFields = Pick<PublicBrandingAgent,
-  "brandName" | "brandLogoUrl" | "brandColor" | "contactPhone" | "inventoryReportsUnified" | "moduleShortcutIcons" | "moduleReportsUnified" | "moduleReportsUnifiedModules">;
+  "brandName" | "brandLogoUrl" | "brandColor" | "contactPhone" | "inventoryReportsUnified" | "moduleShortcutIcons" | "moduleReportsUnified" | "moduleReportsUnifiedModules" | "agentUiSettings">;
 const brandCache = new Map<string, { fields: BrandFields | null; expires: number }>();
 const brandPending = new Map<string, Promise<BrandFields | null>>();
 const BRAND_TTL_MS = 60_000;
@@ -146,6 +149,7 @@ export async function localAgentPublicBranding(
     suspended: false,
     ...fields,
     moduleReportsUnifiedModules: safeReportModuleIds(fields.moduleReportsUnifiedModules),
+    agentUiSettings: sanitizeAgentUiSettings(fields.agentUiSettings),
     localSuperadminEnabled: state.localSuperadminEnabled, localSuperadminScreens: state.localSuperadminScreens } : null;
 }
 
@@ -175,6 +179,7 @@ async function fetchLocalBranding(
       moduleShortcutIcons: remote.moduleShortcutIcons === true,
       moduleReportsUnified: remote.moduleReportsUnified === true,
       moduleReportsUnifiedModules: safeReportModuleIds(remote.moduleReportsUnifiedModules),
+      agentUiSettings: sanitizeAgentUiSettings(remote.agentUiSettings),
     };
     brandCache.set(key, { fields, expires: Date.now() + BRAND_TTL_MS });
     return fields;

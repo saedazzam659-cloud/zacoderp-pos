@@ -1,7 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
-import { useAgentBrandName, useIsAgentDomain, useLocalSuperadminScreens, useUnifiedInventoryReports, useUnifiedModuleReports } from "@/lib/agentBranding";
+import {
+  useAgentBrandName,
+  useAgentModuleScreensAsTiles,
+  useIsAgentDomain,
+  useLocalSuperadminScreens,
+  useUnifiedInventoryReports,
+  useUnifiedModuleReports,
+} from "@/lib/agentBranding";
+import { AGENT_MODULE_SCREEN_TILE_OPTIONS } from "@/lib/agentUiSettings";
 import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import AgentServerUpdateDialog from "@/components/AgentServerUpdateDialog";
 import {
@@ -2612,6 +2620,7 @@ function TopNavBar(props: any) {
   const { t } = useTranslation();
   const { location, isSuperAdmin, user, menuPerms, onNavigate } = props;
   const localSuperadminScreens = useLocalSuperadminScreens();
+  const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
   const NOOP = () => {};
   const nav = (close: () => void) => () => {
     close();
@@ -2836,11 +2845,36 @@ function TopNavBar(props: any) {
           isSuperAdmin,
           user,
         ))
-        .map(g => (
-          <TopNavDropdown key={g.key} label={g.label}>
-            {close => <div className="space-y-0.5">{g.node(close)}</div>}
-          </TopNavDropdown>
-        ))}
+        .map(g => {
+          const tileHub = moduleScreensAsTiles.includes(g.key)
+            ? AGENT_MODULE_SCREEN_TILE_OPTIONS.find(option => option.id === g.key)
+            : undefined;
+          if (tileHub) {
+            const active = location === tileHub.href || location.startsWith(`${tileHub.href}/`);
+            return (
+              <Link
+                key={g.key}
+                href={tileHub.href}
+                onClick={onNavigate}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "inline-flex shrink-0 items-center rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+                  active
+                    ? "bg-sidebar-accent text-sidebar-foreground"
+                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                )}
+                data-testid={`topnav-module-tiles-${g.key}`}
+              >
+                {g.label}
+              </Link>
+            );
+          }
+          return (
+            <TopNavDropdown key={g.key} label={g.label}>
+              {close => <div className="space-y-0.5">{g.node(close)}</div>}
+            </TopNavDropdown>
+          );
+        })}
       {filteredBusiness.map(item => (
         <div key={item.href} className="shrink-0">
           <NavItem item={item} location={location} onClick={onNavigate} />

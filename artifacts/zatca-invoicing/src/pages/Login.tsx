@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type SyntheticEvent } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -27,8 +27,41 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useVisitorCountry } from "@/lib/useVisitorCountry";
 import { getCountryByCode } from "@/lib/countries";
+import { normalizeAgentUiSettings, type AgentUiSettings } from "@/lib/agentUiSettings";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function hexToHsl(hex: string): string | null {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return null;
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const delta = max - min;
+    s = l > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+    switch (max) {
+      case r: h = (g - b) / delta + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / delta + 2; break;
+      default: h = (r - g) / delta + 4; break;
+    }
+    h *= 60;
+  }
+  return `${Math.round(h)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
+}
+
+function readableTextForHex(hex: string): string {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return "0 0% 100%";
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  return brightness >= 150 ? "222.2 47.4% 11.2%" : "0 0% 100%";
+}
 
 declare global {
   interface Window {
@@ -75,7 +108,13 @@ export default function Login() {
   // domain, we show the AGENT's system name + logo instead of the Zacode
   // brand, and we hide self-signup entirely (server also blocks /register
   // for agent hosts). Best-effort — any failure falls back to default brand.
-  const [agentBrand, setAgentBrand] = useState<{ isAgentDomain: boolean; brandName?: string | null; brandLogoUrl?: string | null; brandColor?: string | null } | null>(null);
+  const [agentBrand, setAgentBrand] = useState<{
+    isAgentDomain: boolean;
+    brandName?: string | null;
+    brandLogoUrl?: string | null;
+    brandColor?: string | null;
+    agentUiSettings?: AgentUiSettings;
+  } | null>(null);
   // Tracks whether the branding probe finished (either way). App-download
   // badges must NOT render until we KNOW the host is not an agent domain —
   // otherwise they'd flash on reseller login pages while /api/branding is
@@ -85,12 +124,35 @@ export default function Login() {
     let alive = true;
     fetch(`${API_BASE}/api/branding?host=${encodeURIComponent(window.location.hostname)}`)
       .then(r => (r.ok ? r.json() : null))
-      .then(j => { if (alive && j?.isAgentDomain) setAgentBrand(j); })
+      .then(j => {
+        if (alive && j?.isAgentDomain) {
+          setAgentBrand({ ...j, agentUiSettings: normalizeAgentUiSettings(j.agentUiSettings) });
+        }
+      })
       .catch(() => {})
       .finally(() => { if (alive) setBrandingResolved(true); });
     return () => { alive = false; };
   }, []);
   const isAgentDomain = !!agentBrand?.isAgentDomain;
+  const loginPageSettings = isAgentDomain ? agentBrand?.agentUiSettings?.loginPage : undefined;
+  const loginAccentHsl = loginPageSettings?.accentColor ? hexToHsl(loginPageSettings.accentColor) : null;
+  const loginPageStyle = {
+    ...(loginAccentHsl ? {
+      "--primary": loginAccentHsl,
+      "--ring": loginAccentHsl,
+      "--primary-foreground": readableTextForHex(loginPageSettings!.accentColor!),
+    } : {}),
+    ...(loginPageSettings?.backgroundColor
+      ? { backgroundColor: loginPageSettings.backgroundColor, backgroundImage: "none" }
+      : {}),
+  } as CSSProperties;
+  const loginCardStyle = loginPageSettings?.cardColor
+    ? { backgroundColor: loginPageSettings.cardColor }
+    : undefined;
+  const showLoginMarketingContent = brandingResolved && (
+    !isAgentDomain
+    || (loginPageSettings?.showMarketingContent === true && !!agentBrand?.brandName?.trim())
+  );
   const defaultLogo = `${import.meta.env.BASE_URL}favicon.svg`;
   const loginLogo = isAgentDomain && agentBrand?.brandLogoUrl ? agentBrand.brandLogoUrl : defaultLogo;
   const fallbackLogo = (event: SyntheticEvent<HTMLImageElement>) => {
@@ -694,7 +756,7 @@ export default function Login() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4 py-8">
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4 py-8" style={loginPageStyle}>
       <DemoProvisioningOverlay
         isVisible={showDemoPreparation}
         progress={demoPreparationProgress}
@@ -866,12 +928,12 @@ export default function Login() {
             {/* Marketing cards — hidden entirely on agent (white-label) domains.
                 Also hidden until the branding probe resolves, so reseller
                 pages never flash the Zacode marketing content. */}
-            {brandingResolved && !isAgentDomain && (<>
+            {showLoginMarketingContent && (<>
             {/* Tagline / parent product intro */}
             <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
                 <Sparkles className="h-4 w-4 text-primary" />
-                <span className="text-xs font-bold tracking-wide text-primary uppercase">ZacodERP</span>
+                <span className="text-xs font-bold tracking-wide text-primary uppercase">{brandize("ZacodERP")}</span>
               </div>
               <p className="text-sm text-foreground leading-relaxed">
                 {brandize(t("auth.intro.lead"))}
@@ -982,7 +1044,7 @@ export default function Login() {
               </div>
             </div>
 
-            <div className="bg-card border border-border rounded-2xl shadow-xl p-6 sm:p-8 space-y-6">
+            <div className="bg-card border border-border rounded-2xl shadow-xl p-6 sm:p-8 space-y-6" style={loginCardStyle}>
           {/* Step header */}
           <div>
             <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
@@ -993,6 +1055,7 @@ export default function Login() {
               {step === "recovery-code" && t("auth.sa.recoveryTitle", "استخدام رمز استرجاع")}
               {step === "blocked" && t("auth.sa.blockedTitle", "تم الحظر")}
             </h2>
+            {(step !== "creds" || isSuperAdminFlow || loginPageSettings?.hideLoginSubtitle !== true) && (
             <p className="text-sm text-muted-foreground mt-1">
               {step === "creds" && (isSuperAdminFlow
                 ? t("auth.sa.subtitle", "هذا حساب صلاحياته عالية، نطبق تحققًا متعدد الطبقات.")
@@ -1002,6 +1065,7 @@ export default function Login() {
               {step === "recovery-code" && t("auth.sa.recoverySubtitle", "أدخل أحد رموز الاسترجاع المخزنة لديك.")}
               {step === "blocked" && t("auth.sa.blockedSubtitle", "تواصل مع المسؤول.")}
             </p>
+            )}
           </div>
 
           {/* ── STEP: creds ─────────────────────────────────────────── */}
@@ -1009,7 +1073,7 @@ export default function Login() {
             <form onSubmit={submitCreds} className="space-y-4">
               {/* Login-mode switch: شركة vs تدريب. Trainees authenticate by
                   email + password only (no company code). Hidden in SA flow. */}
-              {!isSuperAdminFlow && (
+              {!isSuperAdminFlow && loginPageSettings?.hideLoginModeSwitch !== true && (
                 <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" data-testid="login-mode-switch">
                   <button
                     type="button"

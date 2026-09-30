@@ -1,4 +1,8 @@
 import { useEffect, useState } from "react";
+import {
+  normalizeAgentUiSettings,
+  type AgentUiSettings,
+} from "@/lib/agentUiSettings";
 
 /**
  * Agent-domain branding for the LOGGED-IN app (App.tsx keeps its own boolean
@@ -16,6 +20,7 @@ type AgentBranding = {
   moduleShortcutIcons: boolean;
   moduleReportsUnified: boolean;
   moduleReportsUnifiedModules: string[];
+  agentUiSettings: AgentUiSettings;
 };
 
 let cache: AgentBranding | null = null;
@@ -39,11 +44,13 @@ function fetchBranding(): Promise<AgentBranding> {
         moduleReportsUnifiedModules: Array.isArray(j?.moduleReportsUnifiedModules)
           ? j.moduleReportsUnifiedModules.filter((id: unknown): id is string => typeof id === "string")
           : [],
+        agentUiSettings: normalizeAgentUiSettings(j?.agentUiSettings),
       }))
       .catch(() => (cache = {
         isAgentDomain: false, brandName: null, brandLogoUrl: null,
         localSuperadminScreens: null, inventoryReportsUnified: false, moduleShortcutIcons: false,
         moduleReportsUnified: false, moduleReportsUnifiedModules: [],
+        agentUiSettings: normalizeAgentUiSettings(null),
       }))
       .then(b => { try { applyDocumentBranding(b); } catch { /* cosmetic only */ } return b; });
   }
@@ -162,6 +169,17 @@ export function useAgentModuleShortcutIcons(): boolean | null {
   );
   useEffect(() => {
     fetchBranding().then(b => setV(b.isAgentDomain && b.moduleShortcutIcons));
+  }, []);
+  return v;
+}
+
+/** Modules whose top-level navigation opens the existing permission-aware tile hub. */
+export function useAgentModuleScreensAsTiles(): string[] {
+  const [v, setV] = useState<string[]>(cache?.isAgentDomain
+    ? cache.agentUiSettings.moduleScreensAsTiles
+    : []);
+  useEffect(() => {
+    fetchBranding().then(b => setV(b.isAgentDomain ? b.agentUiSettings.moduleScreensAsTiles : []));
   }, []);
   return v;
 }

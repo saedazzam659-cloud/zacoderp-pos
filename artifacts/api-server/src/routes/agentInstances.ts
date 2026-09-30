@@ -54,6 +54,7 @@ import {
   buildCustomAgentReleaseUrl,
 } from "../lib/agentReleasePolicy.js";
 import { agentOwnsHost, resolvedAgentBranding, localAgentPublicBranding } from "../lib/agentPublicBranding.js";
+import { AGENT_MODULE_SCREEN_TILE_IDS, sanitizeAgentUiSettings } from "../lib/agentUiSettings.js";
 import {
   EXTERNAL_PACKAGE_KINDS,
   type ExternalPackageEntry,
@@ -239,6 +240,7 @@ type AgentHostHit = {
   brandName: string | null; brandLogoUrl: string | null; brandColor: string | null;
   contactPhone: string | null; inventoryReportsUnified: boolean; moduleShortcutIcons: boolean;
   moduleReportsUnified: boolean; moduleReportsUnifiedModules: string[];
+  agentUiSettings: unknown;
   proxyToken: string | null; // decrypted per-agent proxy secret (null = not issued)
   accelerationMode: InvoiceAccelerationMode; // snapshotted per request
   // Trial start boundary — the invoiceAccelerationUpdatedAt value when mode=trial.
@@ -296,6 +298,7 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
       moduleShortcutIcons: agentInstancesTable.moduleShortcutIcons,
       moduleReportsUnified: agentInstancesTable.moduleReportsUnified,
       moduleReportsUnifiedModules: agentInstancesTable.moduleReportsUnifiedModules,
+      agentUiSettings: agentInstancesTable.agentUiSettings,
       proxySecretEnc: agentInstancesTable.proxySecretEnc,
       invoiceAccelerationMode: agentInstancesTable.invoiceAccelerationMode,
       invoiceAccelerationUpdatedAt: agentInstancesTable.invoiceAccelerationUpdatedAt,
@@ -313,6 +316,7 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
           moduleReportsUnifiedModules: Array.isArray(r.moduleReportsUnifiedModules)
             ? r.moduleReportsUnifiedModules.filter((moduleId): moduleId is string => typeof moduleId === "string")
             : [],
+          agentUiSettings: r.agentUiSettings,
           proxyToken: r.proxySecretEnc ? decryptSecret(r.proxySecretEnc) : null,
           accelerationMode: mode,
           trialStartAt: mode === "trial" ? (r.invoiceAccelerationUpdatedAt ?? null) : null,
@@ -630,6 +634,7 @@ function publicRow(r: typeof agentInstancesTable.$inferSelect) {
     moduleReportsUnifiedModules: Array.isArray(r.moduleReportsUnifiedModules)
       ? r.moduleReportsUnifiedModules.filter((moduleId: unknown): moduleId is string => typeof moduleId === "string")
       : [],
+    agentUiSettings: sanitizeAgentUiSettings(r.agentUiSettings),
   };
 }
 
@@ -1094,6 +1099,18 @@ const upsertSchema = z.object({
   moduleReportsUnified: z.boolean().optional(),
   moduleReportsUnifiedModules: z.array(z.enum(AGENT_REPORT_MODULE_IDS))
     .max(AGENT_REPORT_MODULE_IDS.length).optional(),
+  agentUiSettings: z.object({
+    moduleScreensAsTiles: z.array(z.enum(AGENT_MODULE_SCREEN_TILE_IDS))
+      .max(AGENT_MODULE_SCREEN_TILE_IDS.length).optional(),
+    loginPage: z.object({
+      showMarketingContent: z.boolean().optional(),
+      hideLoginSubtitle: z.boolean().optional(),
+      hideLoginModeSwitch: z.boolean().optional(),
+      backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+      cardColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+      accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+    }).strict().optional(),
+  }).strict().optional(),
   notes: z.string().max(2000).nullish(),
   // بيانات دخول السوبر أدمن للنسخة الكاملة — تُزرع في قاعدة الوكيل عند التسطيب.
   saUsername: z.string().max(64).nullish(),
@@ -1168,6 +1185,7 @@ router.post("/", async (req, res) => {
     moduleShortcutIcons: d.moduleShortcutIcons ?? false,
     moduleReportsUnified: d.moduleReportsUnified ?? false,
     moduleReportsUnifiedModules: d.moduleReportsUnifiedModules ?? [],
+    agentUiSettings: sanitizeAgentUiSettings(d.agentUiSettings),
     notes: d.notes ?? null,
     saUsername: localSuperadminEnabled ? ((d.saUsername ?? "").trim().toLowerCase() || null) : null,
     saEmail: localSuperadminEnabled ? ((d.saEmail ?? "").trim().toLowerCase() || null) : null,
@@ -1274,6 +1292,7 @@ router.put("/:id", async (req, res) => {
   if (d.moduleShortcutIcons !== undefined) patch.moduleShortcutIcons = d.moduleShortcutIcons;
   if (d.moduleReportsUnified !== undefined) patch.moduleReportsUnified = d.moduleReportsUnified;
   if (d.moduleReportsUnifiedModules !== undefined) patch.moduleReportsUnifiedModules = d.moduleReportsUnifiedModules;
+  if (d.agentUiSettings !== undefined) patch.agentUiSettings = sanitizeAgentUiSettings(d.agentUiSettings);
   if (d.extraDomains !== undefined) {
     const main = (patch.domain as string) ?? existing.domain;
     const extras = (d.extraDomains ?? []).map(x => normalizeHost(x)).filter((x): x is string => !!x && x !== main);
@@ -7282,6 +7301,7 @@ agentPublicRouter.get("/branding", async (req, res) => {
       inventoryReportsUnified: false,
       moduleShortcutIcons: false,
       moduleReportsUnified: false,
+      agentUiSettings: sanitizeAgentUiSettings(null),
     });
     return;
   }
@@ -7295,6 +7315,7 @@ agentPublicRouter.get("/branding", async (req, res) => {
       inventoryReportsUnified: false,
       moduleShortcutIcons: false,
       moduleReportsUnified: false,
+      agentUiSettings: sanitizeAgentUiSettings(null),
     });
     return;
   }
