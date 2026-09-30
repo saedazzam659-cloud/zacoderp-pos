@@ -13,6 +13,7 @@
 - [Operational report rendering boundary](operational-report-rendering-boundary.md) — reuse the journal grid and branded exports; suppress monetary totals for mixed or unknown currencies.
 - [Platform and security index](platform-ops-index.md) — tenant isolation, permissions, agents, mobile/HR, storage, infrastructure, and operational safeguards.
 - [Web and shared UI index](web-shared-index.md) — browser forms, shared UI, dates, catalog, reports, and cross-cutting web behavior.
+- [Approved agent UI](approved-agent-ui.md) — current agent-facing web UI is approved; custom views must be opt-in and leave the default unchanged.
 - [Invoice save retries](invoice-save-retry-safety.md) — stable per-form keys, immediate persisted-ID capture, and atomic finalized replay prevent repeated-save duplicates.
 - [Web sale unpost provenance](web-sales-unpost-provenance.md) — preserve immutable costing references with compensating stock movements and shared balance locks.
 - [OpenAPI generator compatibility](openapi-generator-compatibility.md) — external path-item references can fail bundling; use inline path items in the canonical spec.
