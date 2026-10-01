@@ -54,7 +54,7 @@ test("linked return cap counts free quantities and is rechecked under source-inv
     source.indexOf('router.patch("/sales-returns/:id/unpost"'),
   );
   assert.match(validation, /freeQty/);
-  assert.match(validation, /\(Number\(l\.qty \|\| 0\) \+ Number\(l\.freeQty \|\| 0\)\)/);
+  assert.match(validation, /multiplyQuantity\(String\(l\.qty[\s\S]*?multiplyQuantity\(String\(l\.freeQty/);
   assert.match(posting, /salesInvoicesTable[\s\S]*?\.for\("update"\)/);
   assert.match(posting, /postedReturnRows/);
   assert.match(posting, /sourceInvoice[\s\S]*?remainingQty/);
