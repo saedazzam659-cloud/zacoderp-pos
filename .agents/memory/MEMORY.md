@@ -23,3 +23,4 @@
 - [Party classification](party-classification-boundaries.md) — unset means ordinary customer/supplier; filter new choices only and preserve historical links.
 - [Mobile server sessions](mobile-server-session-boundary.md) — changing domains requires fresh authentication; preserve queued operations and central-only legacy sessions.
 - [Expo source archives](expo-source-archive-contract.md) — direct build uploads require a project/ wrapper; finalize changes before taking the build snapshot.
+- [External DB routing and schema healing](external-db-storage-routing.md) — create required agent tables before strict readiness and keep DDL caches scoped to the active database.

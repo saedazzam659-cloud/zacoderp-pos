@@ -64,6 +64,25 @@ test("agent schema upgrade shares the existing central and remote operation fenc
   assert.match(recovery, /withAgentSchemaUpgradeLock[\s\S]*revokeRemoteOperationFence[\s\S]*resumeAgentServiceAfterSchemaUpgrade/);
 });
 
+test("agent initialization verifies the strict schema before planting its fingerprint", () => {
+  const start = agentRoute.indexOf("async function initAgentDatabaseCore(");
+  const end = agentRoute.indexOf("/** Fail-closed bookkeeping shared by init-db + provision. */", start);
+  const worker = agentRoute.slice(start, end);
+  const heal = worker.indexOf("runAgentInitializationSchemaHealOnActiveDb");
+  const fingerprint = worker.indexOf("INSERT INTO zacod_installation");
+  assert.ok(heal >= 0 && fingerprint > heal);
+  assert.match(worker, /runWithExternalDb\([\s\S]*runAgentInitializationSchemaHealOnActiveDb/);
+  assert.doesNotMatch(worker, /runSchemaHealOnActiveDb/);
+
+  const ensureSchema = readFileSync(resolve(here, "../src/lib/ensureSchema.ts"), "utf8");
+  const strictHeal = ensureSchema.slice(
+    ensureSchema.indexOf("export async function runAgentInitializationSchemaHealOnActiveDb"),
+    ensureSchema.indexOf("/**\n * Fast request-readiness pass", ensureSchema.indexOf("export async function runAgentInitializationSchemaHealOnActiveDb")),
+  );
+  assert.match(strictHeal, /runHeal\(\{[\s\S]*strictSchema: true/);
+  assert.match(strictHeal, /reconcilePostgresSequences/);
+});
+
 test("all full-company restore paths reconcile the active schema before reporting success", () => {
   const portableRestore = backupRoute.slice(
     backupRoute.indexOf('router.post("/portable/restore"'),

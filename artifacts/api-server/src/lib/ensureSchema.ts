@@ -4892,13 +4892,41 @@ export function ensureSchemaUpToDate(): Promise<void> {
  * point at the agent's PostgreSQL. Never touches the boot-time single-flight
  * promise (which is bound to the central DB).
  */
+const EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS = {
+  optionalMissingTables: [
+    "integration_invoice_queue",
+    "agent_invoice_samples",
+    "demo_analytics_profiles",
+    "demo_analytics_policies",
+    "demo_analytics_sessions",
+    "demo_analytics_events",
+    "demo_action_reservations",
+    "demo_action_ledger",
+    "demo_agent_batch_receipts",
+    ...CENTRAL_ONLY_ZATCA_TRANSFER_TABLES,
+  ],
+  excludedColumns: CENTRAL_ONLY_AGENT_CONTROL_COLUMNS,
+} as const;
+
 export async function runSchemaHealOnActiveDb(): Promise<void> {
-  await runHeal({
-    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts", ...CENTRAL_ONLY_ZATCA_TRANSFER_TABLES],
-    excludedColumns: CENTRAL_ONLY_AGENT_CONTROL_COLUMNS,
-  });
+  await runHeal(EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS);
   // Sequence reconciliation takes table locks while comparing MAX(id) with an
   // owned sequence. Keep all of those locks in one external-agent transaction.
+  await db.transaction(async (tx) => {
+    await reconcilePostgresSequences(tx);
+  });
+}
+
+/**
+ * Full external-agent initialization heal. Unlike central startup's best-effort
+ * pass, initialization must not plant a fingerprint or report success until
+ * every required application table is ready.
+ */
+export async function runAgentInitializationSchemaHealOnActiveDb(): Promise<void> {
+  await runHeal({
+    ...EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS,
+    strictSchema: true,
+  });
   await db.transaction(async (tx) => {
     await reconcilePostgresSequences(tx);
   });
@@ -4916,14 +4944,8 @@ export async function runSchemaHealOnActiveDb(): Promise<void> {
  */
 export function runAgentRequestSchemaHealOnActiveDb(): Promise<void> {
   return runHeal({
+    ...EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS,
     includeIdentitySteps: false,
     strictSchema: true,
-    // This queue is intentionally lazy-created by its integration module and
-    // is unrelated to the shell-agent request path.
-    // Both are intentionally lazy/control-plane-only and must not block an
-    // external agent request. agent_invoice_samples is created only on the
-    // central DB by ensureCentralAgentControlSchema().
-    optionalMissingTables: ["integration_invoice_queue", "agent_invoice_samples", "demo_analytics_profiles", "demo_analytics_policies", "demo_analytics_sessions", "demo_analytics_events", "demo_action_reservations", "demo_action_ledger", "demo_agent_batch_receipts", ...CENTRAL_ONLY_ZATCA_TRANSFER_TABLES],
-    excludedColumns: CENTRAL_ONLY_AGENT_CONTROL_COLUMNS,
   });
 }

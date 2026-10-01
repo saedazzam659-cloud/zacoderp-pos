@@ -1801,8 +1801,11 @@ async function initAgentDatabaseCore(inst: typeof agentInstancesTable.$inferSele
       const { drizzle } = await import("drizzle-orm/node-postgres");
       const schemaMod = await import("@workspace/db/schema");
       const agentDrizzle = drizzle(pool as any, { schema: schemaMod as any });
-      const { runSchemaHealOnActiveDb } = await import("../lib/ensureSchema.js");
-      await runWithExternalDb({ db: agentDrizzle as any, pool: pool as any }, () => runSchemaHealOnActiveDb());
+      const { runAgentInitializationSchemaHealOnActiveDb } = await import("../lib/ensureSchema.js");
+      await runWithExternalDb(
+        { db: agentDrizzle as any, pool: pool as any },
+        () => runAgentInitializationSchemaHealOnActiveDb(),
+      );
       // Refuse to overwrite a foreign installation's fingerprint.
       try {
         const fp = await pool.query("SELECT installation_id FROM zacod_installation WHERE id = 1");
