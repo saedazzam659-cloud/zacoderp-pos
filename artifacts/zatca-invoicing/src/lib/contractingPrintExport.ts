@@ -27,6 +27,7 @@ export interface ContractingProjectSnapshot {
   code?: string | null;
   nameAr?: string | null;
   nameEn?: string | null;
+  currencyCode?: string | null;
   branchName?: string | null;
   clientName?: string | null;
   location?: string | null;
@@ -66,6 +67,7 @@ export interface ContractingContractSnapshot {
 
 export interface ContractingBillSnapshot {
   id: number;
+  currencyCode?: string | null;
   projectId?: number;
   projectCode?: string | null;
   projectName?: string | null;
@@ -423,7 +425,7 @@ export function buildContractingModel14Html(snapshot: ContractingBillPrintSnapsh
     invoiceDate: bill.billDate,
     createdAt: bill.billDate,
     priceIncludesVat: false,
-    currencyCode: "SAR",
+    currencyCode: snapshot.project?.currencyCode ?? "XXX",
     paymentType: "credit",
     notes: bill.notes,
     buyerName: partyName(snapshot),

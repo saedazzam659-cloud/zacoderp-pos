@@ -13,3 +13,9 @@ JoFotara's documented invoice URL (`backend.jofotara.gov.jo/core/invoices/`) is 
 **Why:** The official user guide shows the production invoice POST route, while the candidate sandbox hostname found during research did not resolve. A mistaken probe could create a legal invoice.
 
 **How to apply:** Keep Jordan connection and submission checks in the local-mock-only state until an official sandbox URL and credentials are available. Never treat a successful mock response as provider verification.
+
+Owner progress bills are not sales invoices: their local-provider submissions need a separate record with a real contracting-bill foreign key. Keep provider item, unit, and tax-category mappings explicit and fail closed on missing mappings; an HTTP receipt is not final tax acceptance. Legacy Egypt/Jordan project amounts retain a NULL currency until a user explicitly assigns the local currency once; never convert or relabel their values automatically.
+
+**Why:** Progress bills have different source lines, cumulative/current-period math, retention, and advance-recovery semantics from sales invoices. The user chose explicit currency assignment for historical projects to avoid changing the meaning of existing amounts.
+
+**How to apply:** Build ETA/JoFotara progress-bill documents from scoped contracting data, not fabricated sales-invoice snapshots or ZATCA storage. Require reviewed country-specific tax treatment and immutable source hashes before enabling provider submission.

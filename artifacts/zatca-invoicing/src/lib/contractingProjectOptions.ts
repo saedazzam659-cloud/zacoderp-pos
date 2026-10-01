@@ -2,6 +2,7 @@ export type ContractingProjectOptions = {
   branches: { id: number; code: string; nameAr: string; nameEn: string | null }[];
   projects: { id: number; code: string; nameAr: string; nameEn: string | null; parentId: number | null; branchId: number | null }[];
   integrityDiagnostics?: { deferredValidation: boolean; offendingIds: Record<string, number[]> };
+  companyCountry?: string | null;
 };
 
 const API = import.meta.env.VITE_API_URL || "";

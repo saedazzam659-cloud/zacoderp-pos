@@ -8,9 +8,11 @@ export type AdvanceRecoveryPolicy = {
   advanceRecoveryFixedAmount?: string;
 };
 
-export default function ContractingAdvanceRecoveryFields({ value, onChange, disabled }: {
+export default function ContractingAdvanceRecoveryFields({ value, onChange, disabled, currencyCode }: {
   value: AdvanceRecoveryPolicy; onChange: (value: AdvanceRecoveryPolicy) => void; disabled?: boolean;
+  currencyCode?: string | null;
 }) {
+  const currencyLabel = currencyCode || "عملة غير محددة";
   return <div className="col-span-full space-y-3 rounded border border-amber-200 bg-amber-50/40 p-3 dark:bg-amber-950/20">
     <label className="flex items-center gap-2 text-sm font-semibold">
       <input type="checkbox" checked={value.advanceRecoveryEnabled === true} disabled={disabled}
@@ -26,7 +28,7 @@ export default function ContractingAdvanceRecoveryFields({ value, onChange, disa
           <option value="fixed">مبلغ ثابت لكل مستخلص</option>
         </select>
       </label>
-      {value.advanceRecoveryMethod === "fixed" ? <label className="space-y-1 text-xs">مبلغ الاسترداد لكل مستخلص (ر.س)
+      {value.advanceRecoveryMethod === "fixed" ? <label className="space-y-1 text-xs">مبلغ الاسترداد لكل مستخلص ({currencyLabel})
         <Input type="number" min="0" step="0.01" value={value.advanceRecoveryFixedAmount ?? "0"}
           disabled={disabled || !value.advanceRecoveryEnabled}
           onChange={e => onChange({ advanceRecoveryFixedAmount: e.target.value })} />

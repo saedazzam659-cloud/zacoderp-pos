@@ -20,8 +20,9 @@ import { CONTRACTING_COMPOSITE_SCOPE_FKS_ENABLED } from "./contractingPublishSta
 // cascade-delete with the company so a company hard-delete cleans up
 // without orphans.
 //
-// Currency: SAR everywhere (matches platform default). Prices stored as
-// numeric(14,2) to be consistent with the rest of the schema.
+// Project amounts use one project-level currency. Legacy projects may remain
+// NULL until a company explicitly confirms their existing amount semantics.
+// Prices are still stored as numeric(14,2), independently of currency.
 // ─────────────────────────────────────────────────────────────────────
 
 export const contractingProjectsTable = pgTable(
@@ -51,6 +52,7 @@ export const contractingProjectsTable = pgTable(
     // intentionally nullable; projects without a cost centre remain valid.
     costCenterId: integer("cost_center_id")
       .references(() => costCentersTable.id, { onDelete: "set null" }),
+    currencyCode: text("currency_code"),
     clientName: text("client_name"),
     location: text("location"),
     // building / road / infrastructure / renovation / other

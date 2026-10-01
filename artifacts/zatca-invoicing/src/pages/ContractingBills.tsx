@@ -33,6 +33,7 @@ type BillRow = {
   projectId: number;
   projectCode: string | null;
   projectName: string | null;
+  currencyCode: string | null;
   direction: "outgoing" | "incoming";
   contractorId: number | null;
   contractorName: string | null;
@@ -93,6 +94,14 @@ const EMPTY_TOTALS: ReportTotals = {
 
 const fmt = (n: number | string) =>
   Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const uniformCurrencyCode = (items: BillRow[]): string | null => {
+  if (items.length === 0) return null;
+  const codes = items.map(row => String(row.currencyCode ?? "").trim().toUpperCase());
+  if (codes.some(code => !code)) return null;
+  const distinct = new Set(codes);
+  return distinct.size === 1 ? codes[0] : null;
+};
 
 const parseDirection = (search: string): "" | "outgoing" | "incoming" => {
   const value = new URLSearchParams(search).get("direction");
@@ -202,6 +211,10 @@ export default function ContractingBills() {
   // Cumulative values are calculated server-side from the selected report
   // scope. Re-summing each visible row would count earlier periods repeatedly.
   const totals = reportTotals;
+  // The server totals span the complete filter scope, not the client-side
+  // search. Hide them unless every report row has the same assigned currency.
+  const reportCurrencyCode = uniformCurrencyCode(rows);
+  const draftCurrencyCode = uniformCurrencyCode(rows.filter(row => row.status === "draft"));
 
   const hasFilters = !!(direction || status || projectId || contractorId || dateFrom || dateTo || search);
   const clearFilters = () => {
@@ -232,6 +245,7 @@ export default function ContractingBills() {
 
   const exportRows: ContractingBillSnapshot[] = visible.map((row) => ({
     id: row.id,
+    currencyCode: row.currencyCode,
     projectId: row.projectId,
     projectCode: row.projectCode,
     projectName: row.projectName,
@@ -344,25 +358,29 @@ export default function ContractingBills() {
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-8 gap-3">
         <KpiCard label="عدد المستخلصات" value={visible.length.toLocaleString("en-US")} tone="slate" />
-        <KpiCard label="إجمالي الأعمال" value={fmt(totals.grossWorks)} tone="slate" suffix="ر.س" />
-        <KpiCard label="الأعمال التراكمية" value={fmt(totals.cumulativeWorks)} tone="slate" suffix="ر.س" />
-        <KpiCard label="المحتجز" value={fmt(totals.retentions)} tone="amber" suffix="ر.س" />
-        <KpiCard label="الإضافات" value={fmt(totals.additions)} tone="emerald" suffix="ر.س" />
-        <KpiCard label="أثر التسوية الصافي" value={fmt(totals.signedAdjustments)} tone="slate" suffix="ر.س" />
-        <KpiCard label="الاستقطاعات" value={fmt(totals.deductions)} tone="amber" suffix="ر.س" />
-        <KpiCard label="الغرامات" value={fmt(totals.penalties)} tone="rose" suffix="ر.س" />
-        <KpiCard label="المدفوعات" value={fmt(totals.payments)} tone="emerald" suffix="ر.س" />
-        <KpiCard label="المتبقي للسداد" value={fmt(totals.outstanding)} tone="rose" suffix="ر.س" />
+        <KpiCard label="إجمالي الأعمال" value={reportCurrencyCode ? fmt(totals.grossWorks) : "—"} tone="slate" suffix={reportCurrencyCode ?? undefined} />
+        <KpiCard label="الأعمال التراكمية" value={reportCurrencyCode ? fmt(totals.cumulativeWorks) : "—"} tone="slate" suffix={reportCurrencyCode ?? undefined} />
+        <KpiCard label="المحتجز" value={reportCurrencyCode ? fmt(totals.retentions) : "—"} tone="amber" suffix={reportCurrencyCode ?? undefined} />
+        <KpiCard label="الإضافات" value={reportCurrencyCode ? fmt(totals.additions) : "—"} tone="emerald" suffix={reportCurrencyCode ?? undefined} />
+        <KpiCard label="أثر التسوية الصافي" value={reportCurrencyCode ? fmt(totals.signedAdjustments) : "—"} tone="slate" suffix={reportCurrencyCode ?? undefined} />
+        <KpiCard label="الاستقطاعات" value={reportCurrencyCode ? fmt(totals.deductions) : "—"} tone="amber" suffix={reportCurrencyCode ?? undefined} />
+        <KpiCard label="الغرامات" value={reportCurrencyCode ? fmt(totals.penalties) : "—"} tone="rose" suffix={reportCurrencyCode ?? undefined} />
+        <KpiCard label="المدفوعات" value={reportCurrencyCode ? fmt(totals.payments) : "—"} tone="emerald" suffix={reportCurrencyCode ?? undefined} />
+        <KpiCard label="المتبقي للسداد" value={reportCurrencyCode ? fmt(totals.outstanding) : "—"} tone="rose" suffix={reportCurrencyCode ?? undefined} />
       </div>
       <div className="text-xs text-muted-foreground">
-        قيمة العقود: {fmt(totals.contractValue)} ر.س · المتبقي من العقود: {fmt(totals.remainingContract)} ر.س ·
+        {reportCurrencyCode
+          ? <>قيمة العقود: {fmt(totals.contractValue)} {reportCurrencyCode} · المتبقي من العقود: {fmt(totals.remainingContract)} {reportCurrencyCode} · </>
+          : <>الإجماليات المالية مخفية لأن عملة مشروع واحد أو أكثر غير محددة أو مختلفة. عيّن العملات صراحةً قبل عرض الإجمالي. · </>}
         نسبة الاعتماد المالي التراكمية: {Number(totals.completionPercent || 0).toFixed(2)}%
         {search.trim() ? " · الإجماليات مبنية على فلاتر التقرير، بينما البحث يضيّق العرض فقط" : ""}
       </div>
       {(draftTotals.grossWorks || draftTotals.cumulativeWorks || draftTotals.outstanding) > 0 && (
         <div className="text-xs text-amber-700 dark:text-amber-300">
-          المسودات غير المعتمدة (مستثناة من الإجماليات المالية): أعمال {fmt(draftTotals.grossWorks)} ر.س ·
-          تراكمي {fmt(draftTotals.cumulativeWorks)} ر.س · متبقي {fmt(draftTotals.outstanding)} ر.س
+          {draftCurrencyCode
+            ? <>المسودات غير المعتمدة (مستثناة من الإجماليات المالية): أعمال {fmt(draftTotals.grossWorks)} {draftCurrencyCode} ·
+              تراكمي {fmt(draftTotals.cumulativeWorks)} {draftCurrencyCode} · متبقي {fmt(draftTotals.outstanding)} {draftCurrencyCode}</>
+            : "قيم المسودات مخفية لأن عملة مشروع واحد أو أكثر غير محددة أو مختلفة."}
         </div>
       )}
 
@@ -494,6 +512,7 @@ export default function ContractingBills() {
                 <TableCell>
                   <div className="font-medium text-slate-900 dark:text-slate-100">{r.projectName || "—"}</div>
                   {r.projectCode && <div className="text-[10px] text-slate-500 font-mono mt-0.5">{r.projectCode}</div>}
+                  <div className="text-[10px] text-slate-500 mt-0.5">{r.currencyCode || "عملة غير محددة"}</div>
                 </TableCell>
                  <TableCell>
                    <div className="font-mono text-sm text-slate-900 dark:text-slate-100">{r.billNumber}</div>
@@ -542,6 +561,7 @@ export default function ContractingBills() {
                        snapshot={{
                          bill: {
                            id: r.id,
+                         currencyCode: r.currencyCode,
                            projectId: r.projectId,
                            projectCode: r.projectCode,
                            projectName: r.projectName,
@@ -573,6 +593,7 @@ export default function ContractingBills() {
                            id: r.projectId,
                            code: r.projectCode,
                            nameAr: r.projectName,
+                           currencyCode: r.currencyCode,
                          },
                        }}
                      />

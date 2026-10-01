@@ -8,6 +8,7 @@
 import { Router } from "express";
 import { db, getActiveExternalDb } from "@workspace/db";
 import {
+  companiesTable,
   contractingProjectsTable,
   contractingContractorsTable,
   contractingWorkItemsTable,
@@ -675,6 +676,11 @@ const RESOURCE_TYPES = new Set(["labor", "equipment", "material", "subcontractor
 const RESOURCE_STATUSES = new Set(["planned", "in_use", "consumed", "returned"]);
 const PROJECT_TYPES = new Set(["building", "road", "infrastructure", "renovation", "maintenance", "other"]);
 const PROJECT_STATUSES = new Set(["draft", "study", "contract", "planning", "in_progress", "on_hold", "completed", "cancelled"]);
+const PROJECT_CURRENCY_BY_COUNTRY: Record<string, string> = { SA: "SAR", EG: "EGP", JO: "JOD" };
+function projectLocalCurrency(country: unknown): string {
+  const code = String(country ?? "SA").trim().toUpperCase();
+  return PROJECT_CURRENCY_BY_COUNTRY[code] ?? "SAR";
+}
 const WORK_CATEGORIES = new Set(["earthworks", "excavation", "concrete", "steel", "masonry", "electrical", "plumbing", "mep", "finishing", "other"]);
 const WORK_STATUSES = new Set(["pending", "in_progress", "completed", "done", "blocked"]);
 const PROJECT_STATUS_AR: Record<string, string> = {
@@ -1047,10 +1053,13 @@ router.get("/projects/options", async (req, res) => {
       cid,
       projects.map((project) => project.id),
     );
+    const [company] = await db.select({ country: companiesTable.country })
+      .from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
     res.json({
       branches,
       projects,
       integrityDiagnostics,
+      companyCountry: company?.country ?? null,
     });
   } catch (e: any) {
     console.error("[contracting] project options read failed", e);
@@ -1078,7 +1087,17 @@ router.get("/projects/:id", async (req, res) => {
 router.post("/projects", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
-    const b = req.body as any;
+    const b = (req.body ?? {}) as any;
+    const [company] = await db.select({ country: companiesTable.country })
+      .from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
+    const localCurrency = projectLocalCurrency(company?.country);
+    const requestedCurrency = b.currencyCode == null || String(b.currencyCode).trim() === ""
+      ? localCurrency
+      : String(b.currencyCode).trim().toUpperCase();
+    if (requestedCurrency !== localCurrency) {
+      res.status(400).json({ error: `عملة المشروع يجب أن تطابق العملة المحلية للشركة (${localCurrency})` });
+      return;
+    }
     if (!b?.nameAr) { res.status(400).json({ error: "اسم المشروع مطلوب" }); return; }
     if (b.branchId == null || b.branchId === "") {
       res.status(400).json({ error: "فرع المشروع مطلوب" }); return;
@@ -1174,6 +1193,7 @@ router.post("/projects", async (req, res) => {
         nameEn: b.nameEn ?? null,
         customerId: customerId ?? null,
         costCenterId: costCenterId ?? null,
+        currencyCode: localCurrency,
         clientName,
         location:   b.location   ?? null,
         projectType,
@@ -1202,7 +1222,7 @@ router.put("/projects/:id", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const b = req.body as any;
+    const b = (req.body ?? {}) as any;
     const [prev] = await db.select().from(contractingProjectsTable)
       .where(and(eq(contractingProjectsTable.id, id), eq(contractingProjectsTable.companyId, cid)));
     if (!prev) { res.status(404).json({ error: "غير موجود" }); return; }
@@ -1210,6 +1230,23 @@ router.put("/projects/:id", async (req, res) => {
       res.status(403).json({ error: "ليس لديك صلاحية هذا الفرع" }); return;
     }
     const updates: any = { updatedAt: new Date() };
+    if (b.currencyCode !== undefined) {
+      const requestedCurrency = b.currencyCode == null || String(b.currencyCode).trim() === ""
+        ? null
+        : String(b.currencyCode).trim().toUpperCase();
+      const [company] = await db.select({ country: companiesTable.country })
+        .from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
+      const localCurrency = projectLocalCurrency(company?.country);
+      if (requestedCurrency !== null && requestedCurrency !== localCurrency) {
+        res.status(400).json({ error: `عملة المشروع يجب أن تطابق العملة المحلية للشركة (${localCurrency})` });
+        return;
+      }
+      if (prev.currencyCode != null && requestedCurrency !== prev.currencyCode) {
+        res.status(409).json({ error: "لا يمكن تغيير عملة مشروع سبق تحديدها؛ راجع المبالغ في المشروع قبل تعيين العملة مرة واحدة" });
+        return;
+      }
+      if (requestedCurrency !== null) updates.currencyCode = requestedCurrency;
+    }
     if (b.projectType !== undefined && !PROJECT_TYPES.has(String(b.projectType))) {
       res.status(400).json({ error: "نوع المشروع غير صالح" }); return;
     }
@@ -5039,13 +5076,26 @@ router.get("/dashboard", async (req, res) => {
       avgProgress: projects.length === 0 ? 0
         : projects.reduce((s, p) => s + Number(p.progressPercent), 0) / projects.length,
     };
+    const currencyCodes = new Set(
+      projects
+        .map((project) => String(project.currencyCode ?? "").trim().toUpperCase())
+        .filter(Boolean),
+    );
+    const hasUnknownCurrency = projects.length === 0 || projects.some(
+      (project) => !String(project.currencyCode ?? "").trim(),
+    );
+    const financialCurrency = hasUnknownCurrency
+      ? { status: "unknown" as const, currencyCode: null }
+      : currencyCodes.size === 1
+        ? { status: "uniform" as const, currencyCode: Array.from(currencyCodes)[0] }
+        : { status: "mixed" as const, currencyCode: null };
     const risksByStatus = {
       open:       risks.filter(r => r.status === "open").length,
       mitigating: risks.filter(r => r.status === "mitigating").length,
       resolved:   risks.filter(r => r.status === "resolved").length,
       highScore:  risks.filter(r => r.score >= 6 && r.status !== "resolved").length,
     };
-    res.json({ totals, risksByStatus, recentEvents, topRisks: risks.slice(0, 5) });
+    res.json({ totals, financialCurrency, risksByStatus, recentEvents, topRisks: risks.slice(0, 5) });
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
 });
 

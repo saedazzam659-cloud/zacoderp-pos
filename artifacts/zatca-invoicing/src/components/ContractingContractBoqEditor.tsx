@@ -100,6 +100,7 @@ export default function ContractingContractBoqEditor({
   projectId,
   projectName,
   projectCode,
+  currencyCode,
   direction,
   active,
   contractId,
@@ -112,6 +113,7 @@ export default function ContractingContractBoqEditor({
   projectId: number;
   projectName: string;
   projectCode: string;
+  currencyCode?: string | null;
   direction: Direction;
   active: boolean;
   contractId: number | null;
@@ -121,6 +123,7 @@ export default function ContractingContractBoqEditor({
   pendingLines?: PendingContractBoqLine[] | null;
   onPendingLinesChange?: Dispatch<SetStateAction<PendingContractBoqLine[] | null>>;
 }) {
+  const currencyLabel = currencyCode || "عملة غير محددة";
   const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<BoqLine[]>([]);
@@ -458,7 +461,7 @@ export default function ContractingContractBoqEditor({
                       <div className="rounded border bg-white p-2 dark:bg-slate-900">
                         <div className="font-semibold">آخر سعر معتمد</div>
                         <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
-                          <strong className="tabular-nums">{referenceMoney(priceReference.latest.unitPrice)} ر.س / {priceReference.unit}</strong>
+                          <strong className="tabular-nums">{referenceMoney(priceReference.latest.unitPrice)} {currencyLabel} / {priceReference.unit}</strong>
                           <Button type="button" size="sm" variant="outline"
                             onClick={() => setDraft(current => current ? { ...current, unitPrice: String(priceReference.latest!.unitPrice) } : current)}>
                             استخدم آخر سعر
@@ -471,7 +474,7 @@ export default function ContractingContractBoqEditor({
                       <div className="rounded border bg-white p-2 dark:bg-slate-900">
                         <div className="font-semibold">وسيط الأسعار ({priceReference.comparableCount} بندًا)</div>
                         <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
-                          <strong className="tabular-nums">{referenceMoney(priceReference.medianUnitPrice)} ر.س / {priceReference.unit}</strong>
+                          <strong className="tabular-nums">{referenceMoney(priceReference.medianUnitPrice)} {currencyLabel} / {priceReference.unit}</strong>
                           <Button type="button" size="sm" variant="outline"
                             onClick={() => setDraft(current => current ? { ...current, unitPrice: String(priceReference.medianUnitPrice) } : current)}>
                             استخدم الوسيط
@@ -491,7 +494,7 @@ export default function ContractingContractBoqEditor({
                       <ul className="mt-1 space-y-1">
                         {priceReference.recentSources.map((source, index) => (
                           <li key={`${source.contractNumber ?? "contract"}-${source.contractDate ?? "date"}-${index}`}>
-                            <span className="font-semibold tabular-nums">{referenceMoney(source.unitPrice)} ر.س</span>
+                            <span className="font-semibold tabular-nums">{referenceMoney(source.unitPrice)} {currencyLabel}</span>
                             {" — "}{referenceSourceLabel(source)}
                           </li>
                         ))}
@@ -552,7 +555,7 @@ export default function ContractingContractBoqEditor({
                  : "هذا سعر التعاقد مع المقاول الباطن، مستقل عن تكلفة التخطيط وعن سعر عقد المالك. أدخل السعر المتفق عليه هنا."}
              </p>
            </div>
-          <div><label className="text-[11px] text-slate-600">الإجمالي</label><div className="rounded border bg-slate-50 px-3 py-2 text-sm tabular-nums">{total(draft).toLocaleString("en-US", { maximumFractionDigits: 2 })} ر.س</div></div>
+          <div><label className="text-[11px] text-slate-600">الإجمالي</label><div className="rounded border bg-slate-50 px-3 py-2 text-sm tabular-nums">{total(draft).toLocaleString("en-US", { maximumFractionDigits: 2 })} {currencyLabel}</div></div>
           <div className="col-span-2"><label className="text-[11px] text-slate-600">الوصف</label><Input value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} /></div>
           <div className="col-span-2 flex items-end justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setDraft(null)}><X className="mx-1 h-3 w-3" />إلغاء</Button>
@@ -594,7 +597,7 @@ export default function ContractingContractBoqEditor({
                 <TableCell>{row.unit}</TableCell>
                 <TableCell className="tabular-nums">{Number(row.quantity).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums">{Number(row.unitPrice).toLocaleString("en-US")}</TableCell>
-                <TableCell className="tabular-nums font-semibold">{Number(row.totalAmount).toLocaleString("en-US")} ر.س</TableCell>
+                <TableCell className="tabular-nums font-semibold">{Number(row.totalAmount).toLocaleString("en-US")} {currencyLabel}</TableCell>
                 <TableCell className="text-end">
                    <ContractingArchiveAction
                      entityType="boqLine"

@@ -346,6 +346,7 @@ export default function ContractingBillDetailEditor({
   onLinesLoaded?: (count: number) => void;
   onSaved?: () => void;
 }) {
+  const currencyLabel = project?.currencyCode || "عملة غير محددة";
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -747,7 +748,7 @@ export default function ContractingBillDetailEditor({
     { value: "__none__", label: "بدون مرجع تغيير" },
     ...(detail.approvedVariations ?? []).map((variation) => ({
       value: String(variation.id),
-      label: `#${variation.contractNumber} · ${money(Number(variation.value))} ر.س · موقع ومعتمد`,
+      label: `#${variation.contractNumber} · ${money(Number(variation.value))} ${currencyLabel} · موقع ومعتمد`,
     })),
   ];
   const persistentSummary = [
@@ -768,7 +769,7 @@ export default function ContractingBillDetailEditor({
           <div key={label} className={`rounded-lg px-3 py-2 ${index === persistentSummary.length - 1 ? "bg-sky-50 dark:bg-sky-950/40" : "bg-muted/40"}`}>
             <div className="text-[11px] text-muted-foreground">{label}</div>
             <div className={`mt-0.5 truncate font-mono tabular-nums ${index === persistentSummary.length - 1 ? "font-bold text-sky-800 dark:text-sky-200" : "font-semibold"}`}>
-              {value} <span className="font-sans text-[10px] font-normal">ر.س</span>
+              {value} <span className="font-sans text-[10px] font-normal">{currencyLabel}</span>
             </div>
           </div>
         ))}
@@ -789,7 +790,7 @@ export default function ContractingBillDetailEditor({
                 <span className="flex items-center gap-1.5"><span className="font-medium text-foreground">العميل:</span> {project.clientName || '—'}</span>
               ) : null}
               <span className="flex items-center gap-1.5">
-                <span className="font-medium text-foreground">قيمة العقد المعدلة:</span> {money(detail.summary.adjustedContractValue)} ر.س
+                <span className="font-medium text-foreground">قيمة العقد المعدلة:</span> {money(detail.summary.adjustedContractValue)} {currencyLabel}
               </span>
             </div>
           )}
@@ -896,7 +897,7 @@ export default function ContractingBillDetailEditor({
            ) : (
              <div key={row.id} className="flex flex-wrap items-center gap-2 rounded border bg-white px-2 py-1 dark:bg-slate-900" data-testid={`row-addition-${row.id}`}>
                <span>{row.calculationType === "rate" ? `${row.rate}% من ${row.baseType}` : "مبلغ ثابت"} · {row.reason} · {row.referenceType}: {row.reference} · حساب: {row.accountMappingKey}</span>
-               <b>{money(Number(row.amount))} ر.س</b>
+               <b>{money(Number(row.amount))} {currencyLabel}</b>
                <span className="text-slate-500">غير خاضعة — لا تخفيض VAT</span>
                {!locked && <><Button size="sm" variant="ghost" onClick={() => setEditingAddition({
                  id: row.id,
@@ -964,7 +965,7 @@ export default function ContractingBillDetailEditor({
             </div>
           ) : (
             <div key={row.id} className="flex items-center gap-2 rounded border bg-white px-2 py-1 dark:bg-slate-900" data-testid={`row-deduction-${row.id}`}>
-               <span>{row.kind === "retention" ? "ضمان محسوب" : row.kind === "advance" ? "استرداد سلفة محسوب" : row.kind} · {row.reason}</span><b>{money(Number(row.amount))} ر.س</b>
+               <span>{row.kind === "retention" ? "ضمان محسوب" : row.kind === "advance" ? "استرداد سلفة محسوب" : row.kind} · {row.reason}</span><b>{money(Number(row.amount))} {currencyLabel}</b>
                {["retention", "advance"].includes(row.kind) && <span className="text-slate-500">سطر للعرض فقط — يُدار من المسار المحاسبي</span>}
                {!locked && !["retention", "advance"].includes(row.kind) && (
                 <>
@@ -1016,7 +1017,7 @@ export default function ContractingBillDetailEditor({
             </div>
           ) : (
             <div key={row.id} className="flex items-center gap-2 rounded border bg-white px-2 py-1 dark:bg-slate-900" data-testid={`row-penalty-${row.id}`}>
-              <span>{row.penaltyType} · {row.reason} · {row.penaltyDate}</span><b>{money(Number(row.amount))} ر.س</b>
+              <span>{row.penaltyType} · {row.reason} · {row.penaltyDate}</span><b>{money(Number(row.amount))} {currencyLabel}</b>
               {!locked && (
                 <>
                   <Button size="sm" variant="ghost" onClick={() => setEditingPenalty({
@@ -1103,13 +1104,14 @@ export default function ContractingBillDetailEditor({
             ].map(([label, value]) => (
               <div key={label} className="rounded-lg bg-background/80 p-2">
                 <dt className="text-[11px] text-muted-foreground">{label}</dt>
-                <dd className="mt-1 font-mono text-sm font-semibold tabular-nums">{value} ر.س</dd>
+                <dd className="mt-1 font-mono text-sm font-semibold tabular-nums">{value} {currencyLabel}</dd>
               </div>
             ))}
           </dl>
         </section>
         <ContractingAdvanceRecoverySummary
           projectId={projectId} billId={billId} direction={detail.bill.direction}
+          currencyCode={project?.currencyCode}
           contractId={detail.bill.direction === "incoming" ? detail.bill.subcontractorContractId : detail.bill.ownerContractId}
           billDate={bill?.billDate ?? ""} locked={locked} refreshKey={detail}
           retentionPercent={bill?.retentionPercent}
@@ -1144,7 +1146,7 @@ export default function ContractingBillDetailEditor({
             <span>صافي المستخلص الحالي</span>
             <span className="font-mono text-primary">{money(detail.summary.adjustedNetAmount)}</span>
           </div>
-          <div className="flex justify-between text-xs"><span className="text-muted-foreground">مدفوع / متبقي</span><span className="font-mono">{money(detail.summary.paidAmount)} / {money(detail.summary.remainingAmount)} ر.س</span></div>
+          <div className="flex justify-between text-xs"><span className="text-muted-foreground">مدفوع / متبقي</span><span className="font-mono">{money(detail.summary.paidAmount)} / {money(detail.summary.remainingAmount)} {currencyLabel}</span></div>
         </div>
       </div>
 

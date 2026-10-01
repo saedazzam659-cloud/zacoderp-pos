@@ -2846,6 +2846,7 @@ export async function contractingBillsReport(
       code: contractingProjectsTable.code,
       nameAr: contractingProjectsTable.nameAr,
       contractValue: contractingProjectsTable.contractValue,
+      currencyCode: contractingProjectsTable.currencyCode,
     })
       .from(contractingProjectsTable).where(and(
         eq(contractingProjectsTable.companyId, companyId),
@@ -2936,6 +2937,7 @@ export async function contractingBillsReport(
       projectId: bill.projectId,
       projectCode: projectInfo.get(bill.projectId)?.code ?? null,
       projectName: projectInfo.get(bill.projectId)?.nameAr ?? null,
+      currencyCode: projectInfo.get(bill.projectId)?.currencyCode ?? null,
       contractorId: bill.contractorId,
       contractorName: bill.contractorId == null ? null : contractorNames.get(bill.contractorId) ?? null,
       contractId: bill.direction === "incoming" ? bill.subcontractorContractId : bill.ownerContractId,

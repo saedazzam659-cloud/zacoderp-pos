@@ -75,6 +75,7 @@ type Project = {
   branchId: number | null;
   clientName: string | null; location: string | null; projectType: string;
   costCenterId: number | null;
+  currencyCode?: string | null;
   status: string; contractValue: string; plannedBudget: string; actualCost: string;
   plannedStartDate: string | null; plannedEndDate: string | null;
   progressPercent: string; description: string | null;
@@ -248,6 +249,7 @@ export default function ContractingProjectDetail() {
   const overrunPct = Number(project.plannedBudget) > 0
     ? ((Number(project.actualCost) - Number(project.plannedBudget)) / Number(project.plannedBudget)) * 100
     : 0;
+  const currencyLabel = project.currencyCode || "عملة غير محددة";
 
   return (
     <div className="space-y-4">
@@ -351,9 +353,9 @@ export default function ContractingProjectDetail() {
 
         <TabsContent value="overview" className="space-y-4 mt-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Kpi icon={<Wallet />} label={t("contracting.projects.contractValue", "قيمة العقد")} value={fmt(project.contractValue) + " ر.س"} tone="violet" />
-            <Kpi icon={<TrendingUp />} label={t("contracting.projects.plannedBudget", "الميزانية المخططة")} value={fmt(project.plannedBudget) + " ر.س"} tone="emerald" />
-            <Kpi icon={<Wallet />} label={t("contracting.projects.actualCost", "التكلفة الفعلية")} value={projectFetching ? "…" : fmt(project.actualCost) + " ر.س"}
+            <Kpi icon={<Wallet />} label={t("contracting.projects.contractValue", "قيمة العقد")} value={fmt(project.contractValue) + " " + currencyLabel} tone="violet" />
+            <Kpi icon={<TrendingUp />} label={t("contracting.projects.plannedBudget", "الميزانية المخططة")} value={fmt(project.plannedBudget) + " " + currencyLabel} tone="emerald" />
+            <Kpi icon={<Wallet />} label={t("contracting.projects.actualCost", "التكلفة الفعلية")} value={projectFetching ? "…" : fmt(project.actualCost) + " " + currencyLabel}
                  tone={overrunPct > 0 ? "amber" : "indigo"} subtitle={overrunPct !== 0 ? `${overrunPct > 0 ? "+" : ""}${overrunPct.toFixed(1)}%` : ""} />
             <Kpi icon={<Activity />} label={t("contracting.projects.progress", "نسبة الإنجاز")} value={`${Number(project.progressPercent).toFixed(1)}%`} tone="indigo" />
           </div>
@@ -413,7 +415,7 @@ export default function ContractingProjectDetail() {
         <TabsContent value="reports" className="mt-4"><ContractingProjectReports projectId={projectId} mode="hub" /></TabsContent>
         <TabsContent value="risks" forceMount className="mt-4 data-[state=inactive]:hidden" hidden={tab !== "risks"}>{mountedForms.includes("risks") && <RisksTab key={projectId} projectId={projectId} active={tab === "risks"} />}</TabsContent>
         <TabsContent value="events"     className="mt-4"><EventsTab    projectId={projectId} /></TabsContent>
-        <TabsContent value="ai"         className="mt-4"><AITab        projectId={projectId} /></TabsContent>
+        <TabsContent value="ai"         className="mt-4"><AITab        projectId={projectId} currencyCode={project.currencyCode} /></TabsContent>
       </Tabs>
     </div>
   );
@@ -541,6 +543,7 @@ function BillsTab({
   autoOpen?: boolean;
   active: boolean;
 }) {
+  const currencyLabel = project.currencyCode || "عملة غير محددة";
   const { t } = useTranslation();
   const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
@@ -1020,10 +1023,10 @@ function BillsTab({
       </Tabs>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalGross", "إجمالي")}</div><div className="font-bold tabular-nums">{rowsCurrent ? totals.gross.toLocaleString("en-US") + " ر.س" : "…"}</div></div>
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalDue", "مستحق")}</div><div className="font-bold tabular-nums">{rowsCurrent ? totals.due.toLocaleString("en-US") + " ر.س" : "…"}</div></div>
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalNet", "صافي")}</div><div className="font-bold tabular-nums">{rowsCurrent ? totals.net.toLocaleString("en-US") + " ر.س" : "…"}</div></div>
-        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalPaid", "مدفوع")}</div><div className="font-bold tabular-nums text-emerald-600">{rowsCurrent ? totals.paid.toLocaleString("en-US") + " ر.س" : "…"}</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalGross", "إجمالي")}</div><div className="font-bold tabular-nums">{rowsCurrent ? totals.gross.toLocaleString("en-US") + " " + currencyLabel : "…"}</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalDue", "مستحق")}</div><div className="font-bold tabular-nums">{rowsCurrent ? totals.due.toLocaleString("en-US") + " " + currencyLabel : "…"}</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalNet", "صافي")}</div><div className="font-bold tabular-nums">{rowsCurrent ? totals.net.toLocaleString("en-US") + " " + currencyLabel : "…"}</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalPaid", "مدفوع")}</div><div className="font-bold tabular-nums text-emerald-600">{rowsCurrent ? totals.paid.toLocaleString("en-US") + " " + currencyLabel : "…"}</div></div>
       </div>
 
       <div className="flex justify-between items-center">
@@ -1132,7 +1135,7 @@ function BillsTab({
                 <div key={label} className={`rounded-lg px-3 py-2 ${index === 3 ? "bg-sky-50 dark:bg-sky-950/40" : "bg-muted/40"}`}>
                   <div className="text-[11px] text-muted-foreground">{label}</div>
                   <div className={`mt-0.5 truncate font-mono tabular-nums ${index === 3 ? "font-bold text-sky-800 dark:text-sky-200" : "font-semibold"}`}>
-                    {value} <span className="font-sans text-[10px] font-normal">ر.س</span>
+                    {value} <span className="font-sans text-[10px] font-normal">{currencyLabel}</span>
                   </div>
                 </div>
               ))}
@@ -1294,7 +1297,7 @@ function BillsTab({
               />
             </Field>
             {aggregateContractSelected && (
-              <Field label="أساس العقد المعدل قبل الضريبة (ر.س)">
+              <Field label={`أساس العقد المعدل قبل الضريبة (${currencyLabel})`}>
                 <Input value={aggregateMoney(adjustedContractValue)} readOnly disabled data-testid="input-bill-contract-base" />
               </Field>
             )}
@@ -1361,7 +1364,7 @@ function BillsTab({
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-lg bg-background/80 p-3">
                     <dt className="text-[11px] text-muted-foreground">{label}</dt>
-                    <dd className="mt-1 font-mono text-sm font-semibold tabular-nums">{value} ر.س</dd>
+                    <dd className="mt-1 font-mono text-sm font-semibold tabular-nums">{value} {currencyLabel}</dd>
                   </div>
                 ))}
               </dl>
@@ -1370,7 +1373,7 @@ function BillsTab({
           )}
           {!editingBillId && <ContractingAdvanceRecoverySummary
             key={expectedExecutionScope}
-            projectId={projectId} direction={direction}
+            projectId={projectId} currencyCode={project.currencyCode} direction={direction}
             contractId={direction === "incoming" ? editing.subcontractorContractId ?? null : editing.ownerContractId ?? null}
             billDate={editing.billDate ?? ""} currentValue={currentPeriodGross}
             retentionPercent={editing.retentionPercent}
@@ -1416,7 +1419,7 @@ function BillsTab({
               <h5 className="font-semibold text-sky-800 dark:text-sky-200 mb-4">القيم المالية المحسوبة</h5>
               <p className="text-xs text-muted-foreground mb-3">معاينة حسب العقد والسابق المعتمد؛ يُثبّت الخادم الحساب عند الحفظ. الإضافات والاستقطاعات واسترداد المقدم تظهر في تفاصيل المسودة المحفوظة.</p>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 bg-muted/10 border p-4 rounded-xl">
-                <Field label={t("contracting.bills.gross", "الإجمالي التراكمي قبل الضريبة (ر.س)")} required>
+                <Field label={`الإجمالي التراكمي قبل الضريبة (${currencyLabel})`} required>
                   <Input type="number" value={aggregateMoney(cumulativeGross)} readOnly disabled />
                 </Field>
                 <Field label="محتجز الفترة">
@@ -1662,7 +1665,8 @@ function EventsTab({ projectId }: { projectId: number }) {
 }
 
 // ─────────────────── AI TAB ───────────────────
-function AITab({ projectId }: { projectId: number }) {
+function AITab({ projectId, currencyCode }: { projectId: number; currencyCode?: string | null }) {
+  const currencyLabel = currencyCode || "عملة غير محددة";
   const gate = useDemoActionGate();
   const { t } = useTranslation();
   const { token } = useAuth() as any;
@@ -1758,9 +1762,9 @@ function AITab({ projectId }: { projectId: number }) {
                       <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${RISK_TONE[costLvl]}`}>{RISK_LABEL[costLvl]}</span>
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      {t("contracting.ai.costOverrun", "تجاوز التكلفة")}: {Number(ind.costOverrun ?? 0).toLocaleString("en-US")} ر.س
+                      {t("contracting.ai.costOverrun", "تجاوز التكلفة")}: {Number(ind.costOverrun ?? 0).toLocaleString("en-US")} {currencyLabel}
                       {ind.projectedFinalCost != null && (
-                        <> • {t("contracting.ai.projectedFinalCost", "متوقع عند الإكمال")}: {Number(ind.projectedFinalCost).toLocaleString("en-US")} ر.س</>
+                        <> • {t("contracting.ai.projectedFinalCost", "متوقع عند الإكمال")}: {Number(ind.projectedFinalCost).toLocaleString("en-US")} {currencyLabel}</>
                       )}
                     </div>
                   </div>
@@ -1816,6 +1820,7 @@ function AITab({ projectId }: { projectId: number }) {
 
 // ─────────────────── OWNER CONTRACT TAB ───────────────────
 function OwnerContractTab({ projectId, project, active }: { projectId: number; project: Project; active: boolean }) {
+  const currencyLabel = project.currencyCode || "عملة غير محددة";
   const { t } = useTranslation();
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
@@ -2082,8 +2087,8 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
               </Field>
             )}
             <Field label={t("contracting.ownerContract.client", "اسم العميل")}><Input value={editing.clientName ?? ""} onChange={e => setEditing({ ...editing, clientName: e.target.value })} /></Field>
-            <Field label={t("contracting.ownerContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing(current => current ? { ...current, value: e.target.value, advancePayment: calculateAdvancePayment(e.target.value, current.advancePercent) } : current)} /></Field>
-            <Field label={t("contracting.ownerContract.advance", "دفعة مقدمة (ر.س)")}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
+            <Field label={`قيمة العقد (${currencyLabel})`}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing(current => current ? { ...current, value: e.target.value, advancePayment: calculateAdvancePayment(e.target.value, current.advancePercent) } : current)} /></Field>
+            <Field label={`دفعة مقدمة (${currencyLabel})`}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.advancePercent", "% دفعة مقدمة")}><Input type="number" min="0" max="100" step="0.01" value={editing.advancePercent ?? "0"} onChange={e => setEditing(current => current ? { ...current, advancePercent: e.target.value, advancePayment: calculateAdvancePayment(current.value, e.target.value) } : current)} /></Field>
             <Field label={t("contracting.ownerContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "5"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
@@ -2125,9 +2130,9 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
               </Field>
             </div>
           </div>
-          <ContractingAdvanceRecoveryFields value={editing} disabled={saving}
+          <ContractingAdvanceRecoveryFields value={editing} disabled={saving} currencyCode={project.currencyCode}
             onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
-          <ContractingContractBoqEditor key={`${projectId}:owner:${editing.id ?? "new"}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="owner"
+          <ContractingContractBoqEditor key={`${projectId}:owner:${editing.id ?? "new"}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} currencyCode={project.currencyCode} direction="owner"
             active={active}
             contractId={editing.id ?? null} contractType={editing.contractType}
             parentContractId={editing.parentContractId ?? null}
@@ -2159,6 +2164,7 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
 
 // ─────────────────── SUB CONTRACTS TAB ───────────────────
 function SubContractsTab({ projectId, project, active }: { projectId: number; project: Project; active: boolean }) {
+  const currencyLabel = project.currencyCode || "عملة غير محددة";
   const { t } = useTranslation();
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
@@ -2323,8 +2329,8 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
             <Field label={t("contracting.subContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.date", "تاريخ العقد")} required><DateField value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.signedAt", "تاريخ التوقيع")}><DateField value={editing.signedAt ?? ""} onChange={e => setEditing({ ...editing, signedAt: e.target.value })} /></Field>
-            <Field label={t("contracting.subContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing(current => current ? { ...current, value: e.target.value, advancePayment: calculateAdvancePayment(e.target.value, current.advancePercent) } : current)} /></Field>
-            <Field label={t("contracting.subContract.advance", "دفعة مقدمة (ر.س)")}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
+            <Field label={`قيمة العقد (${currencyLabel})`}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing(current => current ? { ...current, value: e.target.value, advancePayment: calculateAdvancePayment(e.target.value, current.advancePercent) } : current)} /></Field>
+            <Field label={`دفعة مقدمة (${currencyLabel})`}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.advancePercent", "% دفعة مقدمة")}><Input type="number" min="0" max="100" step="0.01" value={editing.advancePercent ?? "0"} onChange={e => setEditing(current => current ? { ...current, advancePercent: e.target.value, advancePayment: calculateAdvancePayment(current.value, e.target.value) } : current)} /></Field>
             <Field label={t("contracting.subContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "10"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.subContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
@@ -2365,10 +2371,10 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
               </Field>
             </div>
           </div>
-          <ContractingAdvanceRecoveryFields value={editing} disabled={saving}
+          <ContractingAdvanceRecoveryFields value={editing} disabled={saving} currencyCode={project.currencyCode}
             onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
           {editing.id != null ? (
-            <ContractingContractBoqEditor key={`${projectId}:subcontract:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="subcontract" active={active} contractId={editing.id} />
+            <ContractingContractBoqEditor key={`${projectId}:subcontract:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} currencyCode={project.currencyCode} direction="subcontract" active={active} contractId={editing.id} />
           ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنود الباطن بأسعارها المستقلة وربطها ببنود التنفيذ أو مصدرها في عقد المالك.</p>}
           {editing.id != null && (
             <details className="rounded-lg border bg-background">

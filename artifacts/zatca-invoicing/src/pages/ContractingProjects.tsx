@@ -38,6 +38,7 @@ type Project = {
   branchId: number | null;
   customerId: number | null;
   costCenterId: number | null;
+  currencyCode?: string | null;
   clientName: string | null; location: string | null; projectType: string;
   status: string; contractValue: string; plannedBudget: string; actualCost: string;
   plannedStartDate: string | null; plannedEndDate: string | null;
@@ -58,8 +59,9 @@ const STATUS_TONE: Record<string, "default" | "secondary" | "destructive" | "out
   completed: "secondary", cancelled: "destructive",
 };
 
-const empty = (): Partial<Project> => ({
+const empty = (currencyCode: string | null = null): Partial<Project> => ({
   code: "", nameAr: "", nameEn: "", parentId: null, branchId: null, customerId: null, costCenterId: null, clientName: "", location: "",
+  currencyCode,
   projectType: "building", status: "draft", contractValue: "0",
   plannedBudget: "0", actualCost: "0", plannedStartDate: "", plannedEndDate: "",
   progressPercent: "0", description: "",
@@ -91,6 +93,10 @@ export default function ContractingProjects() {
   });
   const [branches, setBranches] = useState<ProjectBranch[]>([]);
   const [projectOptions, setProjectOptions] = useState<ContractingProjectOptions["projects"]>([]);
+  const [companyCountry, setCompanyCountry] = useState<string | null>(null);
+  const countryCode = String(companyCountry ?? "").trim().toUpperCase();
+  const localCurrencyCode = countryCode === "SA" ? "SAR" : countryCode === "EG" ? "EGP" : countryCode === "JO" ? "JOD" : "";
+  const editingCurrencyLabel = editing?.currencyCode || "عملة غير محددة";
   const [integrityDiagnostics, setIntegrityDiagnostics] = useState<IntegrityDiagnostics | null>(null);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [branchesError, setBranchesError] = useState<string | null>(null);
@@ -107,6 +113,7 @@ export default function ContractingProjects() {
     // Never show a previous authorization scope while this scope resolves.
     setBranches([]);
     setProjectOptions([]);
+    setCompanyCountry(null);
     setIntegrityDiagnostics(null);
     try {
       const payload = await queryClient.fetchQuery({
@@ -116,12 +123,14 @@ export default function ContractingProjects() {
       });
       setBranches(payload.branches);
       setProjectOptions(payload.projects);
+      setCompanyCountry(payload.companyCountry ?? null);
       setIntegrityDiagnostics(payload?.integrityDiagnostics?.deferredValidation
         ? payload.integrityDiagnostics
         : null);
     } catch (error: any) {
       setBranches([]);
       setProjectOptions([]);
+      setCompanyCountry(null);
       setIntegrityDiagnostics(null);
       setBranchesError(error?.message || t("contracting.projects.branchesLoadError", "تعذر تحميل الفروع"));
     } finally {
@@ -412,7 +421,7 @@ export default function ContractingProjects() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ContractingProjectsReportExportActions rows={exportProjects} />
-          <Button onClick={() => setEditing(empty())}>
+          <Button onClick={() => setEditing(empty(localCurrencyCode || null))}>
             <Plus className="h-4 w-4 mx-1" />
             {t("contracting.projects.new", "مشروع جديد")}
           </Button>
@@ -678,11 +687,31 @@ export default function ContractingProjects() {
                 openOnFocus={false}
               />
             </Field>
-            <Field label={t("contracting.projects.contractValue", "قيمة العقد (ر.س)")}>
+            <Field label="عملة المشروع">
+              <select
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                value={editing.currencyCode ?? ""}
+                disabled={!isCreating && editing.currencyCode != null}
+                onChange={e => setEditing({ ...editing, currencyCode: e.target.value || null })}
+                aria-label="عملة المشروع"
+              >
+                <option value="">غير محددة — مطلوبة قبل الفوترة المحلية</option>
+                {editing.currencyCode && editing.currencyCode !== localCurrencyCode && (
+                  <option value={editing.currencyCode}>{editing.currencyCode} (محفوظة)</option>
+                )}
+                {localCurrencyCode && (
+                  <option value={localCurrencyCode}>{localCurrencyCode} — العملة المحلية</option>
+                )}
+              </select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                لا تُحوّل المبالغ القديمة. اختر العملة بعد مراجعة قيم هذا المشروع؛ لا يمكن تغييرها بعد حفظها.
+              </p>
+            </Field>
+            <Field label={`قيمة العقد (${editingCurrencyLabel})`}>
               <Input type="number" value={editing.contractValue ?? "0"}
                 onChange={e => setEditing({ ...editing, contractValue: e.target.value })} />
             </Field>
-            <Field label={t("contracting.projects.plannedBudget", "الميزانية المخططة (ر.س)")}>
+            <Field label={`الميزانية المخططة (${editingCurrencyLabel})`}>
               <Input type="number" value={editing.plannedBudget ?? "0"}
                 onChange={e => setEditing({ ...editing, plannedBudget: e.target.value })} />
             </Field>
@@ -755,7 +784,7 @@ export default function ContractingProjects() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                <div className="bg-amber-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة العقد</div><div className="font-mono font-bold text-amber-800">{Number(p.contractValue).toLocaleString("en-US")}</div></div>
+                <div className="bg-amber-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">قيمة العقد ({p.currencyCode ?? "عملة غير محددة"})</div><div className="font-mono font-bold text-amber-800">{Number(p.contractValue).toLocaleString("en-US")}</div></div>
                 <div className="bg-rose-50 rounded-lg p-1.5"><div className="text-[10px] text-muted-foreground">التكلفة الفعلية</div><div className="font-mono font-bold text-rose-800">{Number(p.actualCost).toLocaleString("en-US")}</div></div>
               </div>
               <div>
@@ -778,7 +807,7 @@ export default function ContractingProjects() {
       </div>
 
       {/* Mobile FAB */}
-      <button onClick={() => setEditing(empty())} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label="مشروع جديد">
+      <button onClick={() => setEditing(empty(localCurrencyCode || null))} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label="مشروع جديد">
         <span className="absolute inset-0 rounded-full bg-amber-400/40 animate-ping" />
         <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-amber-500 to-amber-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
           <Plus className="h-7 w-7" />
@@ -822,7 +851,7 @@ export default function ContractingProjects() {
                  <TableCell>{p.branchId == null ? "—" : branches.find(branch => branch.id === p.branchId)?.nameAr || `#${p.branchId}`}</TableCell>
                  <TableCell>{p.clientName || "—"}</TableCell>
                 <TableCell><Badge variant={STATUS_TONE[p.status] ?? "default"}>{labelEnum(STATUS_LABEL, p.status)}</Badge></TableCell>
-                <TableCell className="tabular-nums">{Number(p.contractValue).toLocaleString("en-US")}</TableCell>
+                <TableCell className="tabular-nums">{Number(p.contractValue).toLocaleString("en-US")} {p.currencyCode ?? "—"}</TableCell>
                 <TableCell className="tabular-nums">{Number(p.actualCost).toLocaleString("en-US")}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">

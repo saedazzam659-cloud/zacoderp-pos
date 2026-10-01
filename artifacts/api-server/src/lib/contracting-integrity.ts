@@ -61,6 +61,13 @@ async function runContractingProjectIntegrityMigration(): Promise<ContractingInt
     await tx.execute(sql`SELECT pg_advisory_xact_lock(20831, 1)`);
     await tx.execute(sql`
       ALTER TABLE contracting_projects ADD COLUMN IF NOT EXISTS parent_id INTEGER;
+      ALTER TABLE contracting_projects ADD COLUMN IF NOT EXISTS currency_code TEXT;
+      UPDATE contracting_projects p
+         SET currency_code = 'SAR'
+        FROM companies c
+       WHERE c.id = p.company_id
+         AND (c.country IS NULL OR upper(trim(c.country)) = 'SA')
+         AND p.currency_code IS NULL;
       CREATE INDEX IF NOT EXISTS ctg_proj_parent_idx
         ON contracting_projects(company_id, parent_id);
       CREATE UNIQUE INDEX IF NOT EXISTS ctg_proj_company_id_id_uq

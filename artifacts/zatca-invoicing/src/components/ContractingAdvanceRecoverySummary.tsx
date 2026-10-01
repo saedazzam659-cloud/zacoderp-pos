@@ -18,13 +18,15 @@ const money = (value: string | number) => Number(value).toLocaleString("en-US", 
 /** One read-only server calculator for both new and existing certificates. */
 export default function ContractingAdvanceRecoverySummary({
   projectId, direction, contractId, billDate, billId, currentValue, locked = false,
-  override, onOverrideChange, onSaved, refreshKey, retentionPercent,
+  override, onOverrideChange, onSaved, refreshKey, retentionPercent, currencyCode,
 }: {
   projectId: number; direction: "outgoing" | "incoming"; contractId: number | null; billDate: string;
   billId?: number; currentValue?: number; locked?: boolean; override?: RecoveryOverride;
   onOverrideChange?: (value: RecoveryOverride) => void; onSaved?: () => void; refreshKey?: unknown;
   retentionPercent?: string | number | null;
+  currencyCode?: string | null;
 }) {
+  const currencyLabel = currencyCode || "عملة غير محددة";
   const { token } = useAuth() as any;
   const [result, setResult] = useState<AdvanceRecoverySummary | null>(null);
   const [error, setError] = useState("");
@@ -97,14 +99,14 @@ export default function ContractingAdvanceRecoverySummary({
   }
   if (!contractId || !billDate) return <p className="text-xs text-muted-foreground">اختر العقد والتاريخ لعرض استرداد المقدم تلقائيًا.</p>;
   const fields = result ? [
-    ["الدفعة المقدمة المحددة في العقد", `${money(result.contractAdvanceAmount)} ر.س`],
+    ["الدفعة المقدمة المحددة في العقد", `${money(result.contractAdvanceAmount)} ${currencyLabel}`],
     ["طريقة الاسترداد من العقد", result.method === "fixed" ? "مبلغ ثابت لكل مستخلص" : "نسبة من الأعمال المعتمدة الحالية"],
-    ["النسبة / القيمة المحددة في العقد", result.method === "fixed" ? `${money(result.fixedAmount)} ر.س` : `${money(result.advanceRecoveryPercent)}%`],
-    ["إجمالي الاسترداد السابق", `${money(result.totalPreviouslyRecovered)} ر.س`],
-    ["المتبقي من مبلغ العقد قبل المستخلص", `${money(Math.max(0, Number(result.contractAdvanceAmount) - Number(result.totalPreviouslyRecovered)))} ر.س`],
-    ["رصيد المقدم المرحّل المتاح", `${money(result.actualAdvanceRemaining)} ر.س`],
-    ["استرداد المستخلص الحالي", `${money(result.recoveryAmount)} ر.س`],
-    ["الرصيد المرحّل بعد الاسترداد", `${money(result.remainingAdvanceAfter)} ر.س`],
+    ["النسبة / القيمة المحددة في العقد", result.method === "fixed" ? `${money(result.fixedAmount)} ${currencyLabel}` : `${money(result.advanceRecoveryPercent)}%`],
+    ["إجمالي الاسترداد السابق", `${money(result.totalPreviouslyRecovered)} ${currencyLabel}`],
+    ["المتبقي من مبلغ العقد قبل المستخلص", `${money(Math.max(0, Number(result.contractAdvanceAmount) - Number(result.totalPreviouslyRecovered)))} ${currencyLabel}`],
+    ["رصيد المقدم المرحّل المتاح", `${money(result.actualAdvanceRemaining)} ${currencyLabel}`],
+    ["استرداد المستخلص الحالي", `${money(result.recoveryAmount)} ${currencyLabel}`],
+    ["الرصيد المرحّل بعد الاسترداد", `${money(result.remainingAdvanceAfter)} ${currencyLabel}`],
   ] : [];
   return <section className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/30 p-3 dark:bg-amber-950/20" aria-label="استرداد الدفعة المقدمة تلقائيًا">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -118,7 +120,7 @@ export default function ContractingAdvanceRecoverySummary({
           <dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 text-sm font-semibold">{value}</dd>
         </div>)}
       </dl>
-      {!locked && <p className="text-sm font-semibold">المستحق بعد استرداد المقدم (معاينة): {money(Math.max(0, Number(result.netDue) - Number(result.recoveryAmount)))} ر.س</p>}
+      {!locked && <p className="text-sm font-semibold">المستحق بعد استرداد المقدم (معاينة): {money(Math.max(0, Number(result.netDue) - Number(result.recoveryAmount)))} {currencyLabel}</p>}
       {!result.enabled && <p className="text-xs text-amber-800 dark:text-amber-200">الاسترداد غير مفعّل في العقد.</p>}
       {result.enabled && Number(result.contractAdvanceAmount) > 0 && Number(result.totalPreviouslyRecovered) >= Number(result.contractAdvanceAmount) && <p className="text-xs text-emerald-700">اكتمل استرداد الدفعة المقدمة؛ الاسترداد الحالي صفر تلقائيًا.</p>}
       {result.enabled && Number(result.actualAdvanceRemaining) <= 0 && <p className="text-xs text-muted-foreground">لا يوجد رصيد مقدم مرحّل متاح لهذا العقد. قيمة العقد التخطيطية لا تنشئ دفعة مالية.</p>}
@@ -126,7 +128,7 @@ export default function ContractingAdvanceRecoverySummary({
       <p className="text-xs leading-5 text-muted-foreground">{locked
         ? "هذه قيم المستخلص المحفوظة؛ تعديل العقد لا يعيد حساب المستخلصات المعتمدة."
         : "معاينة تلقائية؛ يعاد التحقق عند الاعتماد المالي. إعدادات العقد هي المصدر ولا تُعدّل من المستخلص. لن يتجاوز الاسترداد الرصيد المتاح أو المستحق، ولا يكرر استردادًا سابقًا."}</p>
-      {result.overrideAmount != null && <p className="text-xs font-semibold">استثناء: {money(result.overrideAmount)} ر.س — {result.overrideReason}</p>}
+      {result.overrideAmount != null && <p className="text-xs font-semibold">استثناء: {money(result.overrideAmount)} {currencyLabel} — {result.overrideReason}</p>}
       {result.canOverride && !locked && <div className="space-y-2 border-t pt-2">
         {!exception ? <div className="flex gap-2">
           <Button size="sm" variant="outline" disabled={saving || busy} onClick={() => { setAmount(result.overrideAmount ?? ""); setReason(result.overrideReason ?? ""); setException(true); }}>استثناء بصلاحية خاصة</Button>

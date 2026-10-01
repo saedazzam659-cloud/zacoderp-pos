@@ -25,6 +25,10 @@ type DashboardData = {
     delayed: number; contractValueSum: number; plannedBudgetSum: number;
     actualCostSum: number; avgProgress: number;
   };
+  financialCurrency: {
+    status: "uniform" | "mixed" | "unknown";
+    currencyCode: string | null;
+  };
   risksByStatus: { open: number; mitigating: number; resolved: number; highScore: number };
   recentEvents: Array<{
     id: number; eventType: string; title: string; description: string | null;
@@ -42,6 +46,9 @@ export default function ContractingDashboard() {
   const { toast } = useToast();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(false);
+  const financialCurrencyCode = data?.financialCurrency.status === "uniform"
+    ? data.financialCurrency.currencyCode
+    : null;
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -93,14 +100,19 @@ export default function ContractingDashboard() {
                  value={data?.totals.completed ?? 0} tone="indigo" loading={loading && !data} />
 
             <Kpi icon={<Wallet className="h-5 w-5" />} label={t("contracting.dashboard.contractValueSum", "إجمالي قيمة العقود")}
-                 value={fmt(data?.totals.contractValueSum ?? 0) + " ر.س"} tone="violet" loading={loading && !data} />
+                 value={financialCurrencyCode ? `${fmt(data?.totals.contractValueSum ?? 0)} ${financialCurrencyCode}` : "—"} tone="violet" loading={loading && !data} />
             <Kpi icon={<TrendingUp className="h-5 w-5" />} label={t("contracting.dashboard.plannedBudgetSum", "الميزانية المخططة")}
-                 value={fmt(data?.totals.plannedBudgetSum ?? 0) + " ر.س"} tone="emerald" loading={loading && !data} />
+                 value={financialCurrencyCode ? `${fmt(data?.totals.plannedBudgetSum ?? 0)} ${financialCurrencyCode}` : "—"} tone="emerald" loading={loading && !data} />
             <Kpi icon={<Wallet className="h-5 w-5" />} label={t("contracting.dashboard.actualCostSum", "التكلفة الفعلية")}
-                 value={fmt(data?.totals.actualCostSum ?? 0) + " ر.س"} tone="amber" loading={loading && !data} />
+                 value={financialCurrencyCode ? `${fmt(data?.totals.actualCostSum ?? 0)} ${financialCurrencyCode}` : "—"} tone="amber" loading={loading && !data} />
             <Kpi icon={<TrendingUp className="h-5 w-5" />} label={t("contracting.dashboard.avgProgress", "متوسط الإنجاز")}
                  value={fmtPct(data?.totals.avgProgress ?? 0)} tone="indigo" loading={loading && !data} />
           </div>
+          {data && !financialCurrencyCode && (
+            <p className="text-xs text-amber-700 dark:text-amber-300" role="status">
+              لا تُعرض الإجماليات المالية حتى تكون عملة جميع المشاريع الظاهرة محددة ومتطابقة.
+            </p>
+          )}
 
           {/* Risks summary band */}
           <div className="rounded-lg border bg-white dark:bg-slate-900 p-4">
