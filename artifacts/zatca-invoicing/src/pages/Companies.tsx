@@ -81,7 +81,7 @@ export default function Companies() {
   const [sequenceSaving, setSequenceSaving] = useState(false);
   const [invoiceRepairTarget, setInvoiceRepairTarget] = useState<{ id: number; name: string; agent?: number } | null>(null);
   const [invoiceRepairScan, setInvoiceRepairScan] = useState<any>(null);
-  const [invoiceRepairKind, setInvoiceRepairKind] = useState<"all" | "sales" | "purchase">("all");
+  const [invoiceRepairKind, setInvoiceRepairKind] = useState<"all_documents" | "sales" | "purchase" | "sales_return" | "purchase_return">("all_documents");
   const [invoiceRepairBranch, setInvoiceRepairBranch] = useState("");
   const [invoiceRepairFrom, setInvoiceRepairFrom] = useState("");
   const [invoiceRepairTo, setInvoiceRepairTo] = useState("");
@@ -97,9 +97,16 @@ export default function Companies() {
   const [invoiceRepairResetNext, setInvoiceRepairResetNext] = useState(true);
   const [invoiceRepairLegacyOverride, setInvoiceRepairLegacyOverride] = useState(false);
   const [invoiceRepairLegacyReason, setInvoiceRepairLegacyReason] = useState("");
-  const invoiceRepairLegacyActive = invoiceRepairMode === "correct_draft" && invoiceRepairResetNext && invoiceRepairLegacyOverride;
+  const invoiceRepairLegacyActive = invoiceRepairMode === "correct_draft" && invoiceRepairResetNext
+    && invoiceRepairLegacyOverride && !String(invoiceRepairDoc?.kind ?? "").endsWith("_return");
   const [invoiceRepairPreview, setInvoiceRepairPreview] = useState<{ key: string; nextNumber: string; newNumber?: string; warnings: string[] } | null>(null);
   const [invoiceRepairError, setInvoiceRepairError] = useState("");
+  const invoiceRepairKindLabel = (kind: string) => ({
+    sales: "فاتورة مبيعات",
+    purchase: "فاتورة مشتريات",
+    sales_return: "مرتجع مبيعات",
+    purchase_return: "مرتجع مشتريات",
+  } as Record<string, string>)[kind] ?? kind;
   const invoiceRepairRequest = {
     mode: invoiceRepairMode,
     kind: invoiceRepairMode === "correct_draft" ? invoiceRepairDoc?.kind : invoiceRepairKind,
@@ -243,7 +250,11 @@ export default function Companies() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body?.error || "تعذر فحص أرقام الفواتير");
+      if (!r.ok) throw new Error(body?.error || "تعذر فحص أرقام المستندات");
+      if ((invoiceRepairKind === "all_documents" || invoiceRepairKind.endsWith("_return"))
+        && body?.supportsReturnNumberRepair !== true) {
+        throw new Error("الخادم لا يدعم فحص المرتجعات بعد. حدّث الخادم ثم أعد الفحص؛ لم يُرسل طلب تعديل.");
+      }
       setInvoiceRepairScan(body);
     } catch (e: any) {
       toast({ title: "فشل الفحص", description: e?.message ?? "", variant: "destructive" });
@@ -253,6 +264,7 @@ export default function Companies() {
   const openInvoiceRepair = (company: any) => {
     const target = { id: Number(company.id), name: String(company.nameAr ?? ""), agent: company.agentInstanceId ? Number(company.agentInstanceId) : undefined };
     setInvoiceRepairTarget(target); setInvoiceRepairScan(null); setInvoiceRepairDoc(null);
+    setInvoiceRepairKind("all_documents");
     setInvoiceRepairNumber(""); setInvoiceRepairConfirm(""); setInvoiceRepairDate(""); setInvoiceRepairPayment("credit");
     setInvoiceRepairForeign(false);
     setInvoiceRepairPreview(null); setInvoiceRepairError(""); setInvoiceRepairResetNext(true);
@@ -269,6 +281,11 @@ export default function Companies() {
   };
 
   const applyInvoiceRepair = async (dryRun = false) => {
+    const repairKind = invoiceRepairMode === "correct_draft" ? String(invoiceRepairDoc?.kind ?? "") : invoiceRepairKind;
+    if (repairKind.endsWith("_return") && invoiceRepairScan?.supportsReturnNumberRepair !== true) {
+      setInvoiceRepairError("الخادم لا يدعم إصلاح المرتجعات بعد. أعد الفحص بعد تحديث الخادم؛ لم يُرسل طلب تعديل.");
+      return;
+    }
     if (invoiceRepairLegacyActive && invoiceRepairScan?.supportsLegacyReservationOverride !== true) {
       setInvoiceRepairError("الخادم لا يدعم الاستثناء اليدوي بعد. حدّث الخادم ثم أعد الفحص؛ لم يُرسل طلب تعديل.");
       return;
@@ -284,8 +301,8 @@ export default function Companies() {
     if (!invoiceRepairTarget || !invoiceRepairNumber.trim() || invoiceRepairSaving
       || (!dryRun && (invoiceRepairConfirm.trim() !== invoiceRepairTarget.name.trim() || !invoiceRepairPreviewValid))) return;
     if (invoiceRepairMode === "correct_draft" && !invoiceRepairDoc) return;
-    if (invoiceRepairMode === "repair_next" && invoiceRepairKind === "all") {
-      toast({ title: "اختر نوع فاتورة محددًا", description: "لا يمكن إصلاح عداد المبيعات والمشتريات معًا.", variant: "destructive" });
+    if (invoiceRepairMode === "repair_next" && invoiceRepairKind === "all_documents") {
+      toast({ title: "اختر نوع مستند محددًا", description: "لا يمكن إصلاح عدادات الأنواع الأربعة معًا.", variant: "destructive" });
       return;
     }
     setInvoiceRepairSaving(true);
@@ -294,12 +311,13 @@ export default function Companies() {
     try {
       const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
       const qs = invoiceRepairTarget.agent ? `?agent=${invoiceRepairTarget.agent}` : "";
-      const kind = invoiceRepairMode === "correct_draft" ? invoiceRepairDoc.kind : (invoiceRepairKind === "purchase" ? "purchase" : "sales");
+      const kind = invoiceRepairMode === "correct_draft" ? invoiceRepairDoc.kind : invoiceRepairKind;
       const r = await fetch(`${BASE}/api/admin/companies/${invoiceRepairTarget.id}/invoice-numbering-repair${qs}`, {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: invoiceRepairMode, kind, number: invoiceRepairNumber.trim(),
-          invoiceId: invoiceRepairDoc?.id, branchId: invoiceRepairBranch ? Number(invoiceRepairBranch) : 0,
+          documentId: invoiceRepairDoc?.id, invoiceId: invoiceRepairDoc?.id,
+          branchId: invoiceRepairBranch ? Number(invoiceRepairBranch) : 0,
           invoiceDate: invoiceRepairDate, paymentType: invoiceRepairPayment, isForeign: invoiceRepairForeign,
           resetNext: invoiceRepairMode === "correct_draft" && invoiceRepairResetNext,
           legacyReservationOverride: invoiceRepairLegacyActive,
@@ -311,6 +329,9 @@ export default function Companies() {
       if (!r.ok) throw new Error(body?.error || "تعذر تنفيذ الإصلاح");
       if (dryRun) {
         if (body.canApply !== true) throw new Error("لم يؤكد الخادم صلاحية التنفيذ. حدّث الخادم قبل استخدام معاينة الإصلاح.");
+        if (repairKind.endsWith("_return") && body.supportsReturnNumberRepair !== true) {
+          throw new Error("الخادم لا يؤكد دعم إصلاح المرتجعات؛ لم يُنفّذ أي تعديل.");
+        }
         setInvoiceRepairPreview({ key: invoiceRepairKey, nextNumber: body.nextNumber, newNumber: body.newNumber, warnings: Array.isArray(body.legacyReservationWarnings) ? body.legacyReservationWarnings : [] });
         return;
       }
@@ -889,24 +910,28 @@ export default function Companies() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ── Sales/purchase invoice numbering repair (SuperAdmin) ── */}
+      {/* ── Sales/purchase invoice and return numbering repair (SuperAdmin) ── */}
       <AlertDialog open={!!invoiceRepairTarget} onOpenChange={open => !open && !invoiceRepairSaving && setInvoiceRepairTarget(null)}>
         <AlertDialogContent dir="rtl" className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <ScanSearch className="h-5 w-5 text-primary" />فحص وإصلاح ترقيم فواتير المبيعات والمشتريات
+              <ScanSearch className="h-5 w-5 text-primary" />فحص وإصلاح ترقيم الفواتير والمرتجعات
             </AlertDialogTitle>
             <AlertDialogDescription className="text-right">
-              شركة <strong className="text-foreground">"{invoiceRepairTarget?.name}"</strong>. الفحص للقراءة فقط؛ لا يُعاد ترقيم التاريخ تلقائياً.
+              شركة <strong className="text-foreground">"{invoiceRepairTarget?.name}"</strong>. الفحص للقراءة فقط؛ لا يُعاد ترقيم المستندات تلقائياً.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 flex gap-2">
             <ShieldAlert className="h-4 w-4 shrink-0" />
-            لا تُعدّل الأداة الفواتير المرحّلة أو الملغاة أو الموقعة/المرسلة إلى ZATCA، ولا تمس UUID أو ICV أو hash أو سلسلة الفواتير. المشتريات المرحّلة غير مدعومة.
+            لا تُعدّل الأداة المستندات المرحّلة أو الملغاة أو ذات آثار ZATCA، ولا تمسّ القيود أو حركات المخزون. تظل الحجوزات القديمة مجهولة المرجع محمية ما لم يُفعّل استثناء يدوي مقيّد.
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
             <div><label className="text-xs">النوع</label><select className="w-full h-9 border rounded px-2 text-sm" value={invoiceRepairKind} onChange={e => { setInvoiceRepairKind(e.target.value as any); setInvoiceRepairScan(null); }}>
-              <option value="all">الكل</option><option value="sales">مبيعات</option><option value="purchase">مشتريات</option>
+              <option value="all_documents">الكل: الفواتير والمرتجعات</option>
+              <option value="sales">فواتير المبيعات</option>
+              <option value="purchase">فواتير المشتريات</option>
+              <option value="sales_return">مرتجعات المبيعات</option>
+              <option value="purchase_return">مرتجعات المشتريات</option>
             </select></div>
             <div><label className="text-xs">الفرع (اختياري)</label><Input value={invoiceRepairBranch} onChange={e => { setInvoiceRepairBranch(e.target.value); setInvoiceRepairScan(null); }} type="number" /></div>
             <div><label className="text-xs">من تاريخ</label><Input value={invoiceRepairFrom} onChange={e => { setInvoiceRepairFrom(e.target.value); setInvoiceRepairScan(null); }} type="date" /></div>
@@ -927,7 +952,7 @@ export default function Companies() {
                   {[...(invoiceRepairScan.exactDuplicates ?? []).map((x: any) => ({ ...x, type: "تطابق تام" })), ...(invoiceRepairScan.numericEquivalentDuplicates ?? []).map((x: any) => ({ ...x, type: "تكافؤ رقمي" }))].map((g: any, i: number) => (
                     <div className="border-b p-2" key={`${g.type}-${g.key}-${i}`}>
                       <strong>{g.type}: </strong><span className="font-mono" dir="ltr">{g.key}</span>
-                      <span className="mr-2">{g.docs.map((d: any) => `${d.kind === "sales" ? "مبيعات" : "مشتريات"} #${d.id}: ${d.docNumber}`).join(" · ")}</span>
+                       <span className="mr-2">{g.docs.map((d: any) => `${invoiceRepairKindLabel(d.kind)} #${d.id}: ${d.docNumber}`).join(" · ")}</span>
                     </div>
                   ))}
                 </div>
@@ -935,7 +960,7 @@ export default function Companies() {
               <div className="border rounded max-h-52 overflow-auto">
                 {(invoiceRepairScan.documents ?? []).map((doc: any) => (
                   <div key={`${doc.kind}-${doc.id}`} className="p-2 border-b flex justify-between items-center gap-2 text-xs">
-                    <span><strong>{doc.kind === "sales" ? "مبيعات" : "مشتريات"} #{doc.id}</strong> <span className="font-mono" dir="ltr">{doc.docNumber}</span> · {doc.status} {doc.conflictReason ? `— ${doc.conflictReason}` : ""}</span>
+                   <span><strong>{invoiceRepairKindLabel(doc.kind)} #{doc.id}</strong> <span className="font-mono" dir="ltr">{doc.docNumber}</span> · {doc.status} {doc.conflictReason ? `— ${doc.conflictReason}` : ""}</span>
                     {doc.correctionAllowed && <Button size="sm" variant="outline" onClick={() => selectInvoiceRepairDoc(doc)}>تصحيح هذه المسودة</Button>}
                   </div>
                 ))}
@@ -952,20 +977,24 @@ export default function Companies() {
               <p>المسودة المختارة: <strong dir="ltr">{invoiceRepairDoc.docNumber}</strong> — #{invoiceRepairDoc.id}</p>
               <label className="flex items-center gap-2"><input type="checkbox" checked={invoiceRepairResetNext} onChange={e => setInvoiceRepairResetNext(e.target.checked)} />ضبط العداد ليستكمل بعد الرقم المصحح مباشرةً، في العملية نفسها</label>
               <p className="text-xs text-muted-foreground">مثال: تصحيح 00004 إلى 00002، ثم التالية 00003. يُفحص المسلسل كاملًا؛ الأرقام المحجوزة دون دليل آمن لا تُحرّر تلقائيًا.</p>
-               {invoiceRepairResetNext && <div className="rounded border border-amber-300 bg-amber-50 p-3 space-y-2 text-amber-950">
+               {invoiceRepairResetNext && (String(invoiceRepairDoc.kind).endsWith("_return")
+                 ? <div className="rounded border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+                     لا يمكن استثناء حجوزات المرتجعات المجهولة: حذف المرتجع لا يوفّر حاليًا إثباتًا كافيًا لإعادة استخدام رقمه. سيبقى العداد محميًا إذا وُجد حجز غير موثّق.
+                   </div>
+                 : <div className="rounded border border-amber-300 bg-amber-50 p-3 space-y-2 text-amber-950">
                  <label className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={invoiceRepairLegacyOverride} onChange={e => setInvoiceRepairLegacyOverride(e.target.checked)} />أوافق على استثناء يدوي لحجوزات قديمة مجهولة المصدر، مع تسجيل مسؤوليتي وسبب الاستثناء</label>
-                 <p className="text-xs">غياب الفاتورة لا يثبت أن الرقم لم يُستخدم سابقًا. هذا الاستثناء ليس إثباتًا بأن السجل القديم كان مسودة غير موقعة. لا يسمح بتجاوز فاتورة قائمة أو دليل توقيع أو إصدار سابق مثبت، ولا يحذف تاريخ الحجز.</p>
+                 <p className="text-xs">غياب المستند لا يثبت أن الرقم لم يُستخدم سابقًا. هذا الاستثناء ليس إثباتًا بأن السجل القديم كان مسودة غير موقعة. لا يسمح بتجاوز مستند قائم أو دليل توقيع أو إصدار سابق مثبت، ولا يحذف تاريخ الحجز.</p>
                  {invoiceRepairLegacyOverride && <div><label className="text-xs" htmlFor="invoice-repair-legacy-reason">سبب الاستثناء (إلزامي، 10 أحرف على الأقل)</label><Input id="invoice-repair-legacy-reason" value={invoiceRepairLegacyReason} maxLength={1000} onChange={e => setInvoiceRepairLegacyReason(e.target.value)} placeholder="اشرح سبب اعتماد إعادة استخدام الحجوزات القديمة" /></div>}
-               </div>}
+               </div>)}
             </div>}
             <div className="grid md:grid-cols-3 gap-2">
               <div><label className="text-xs">الرقم المطلوب (مطابق لإعداد المسلسل)</label><Input value={invoiceRepairNumber} onChange={e => setInvoiceRepairNumber(e.target.value)} dir="ltr" className="font-mono" placeholder="INV-0012" /></div>
-              {invoiceRepairMode === "repair_next" && <><div><label className="text-xs">تاريخ/دلو الفاتورة</label><Input value={invoiceRepairDate} onChange={e => setInvoiceRepairDate(e.target.value)} type="date" /></div><div><label className="text-xs">الدفع</label><select className="w-full h-10 border rounded px-2" value={invoiceRepairPayment} onChange={e => setInvoiceRepairPayment(e.target.value)}><option value="credit">آجل</option><option value="cash">نقدي</option><option value="bank">بنكي</option></select></div></>}
+              {invoiceRepairMode === "repair_next" && <><div><label className="text-xs">تاريخ/دلو المستند</label><Input value={invoiceRepairDate} onChange={e => setInvoiceRepairDate(e.target.value)} type="date" /></div><div><label className="text-xs">الدفع</label><select className="w-full h-10 border rounded px-2" value={invoiceRepairPayment} onChange={e => setInvoiceRepairPayment(e.target.value)}><option value="credit">آجل</option><option value="cash">نقدي</option><option value="bank">بنكي</option></select></div></>}
             </div>
-            {invoiceRepairMode === "repair_next" && invoiceRepairKind === "sales" && <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={invoiceRepairForeign} onChange={e => setInvoiceRepairForeign(e.target.checked)} />مسلسل عميل أجنبي (غير سعودي)</label>}
+            {invoiceRepairMode === "repair_next" && (invoiceRepairKind === "sales" || invoiceRepairKind === "sales_return") && <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={invoiceRepairForeign} onChange={e => setInvoiceRepairForeign(e.target.checked)} />مسلسل عميل أجنبي (غير سعودي)</label>}
             <div><label className="text-xs">للتأكيد اكتب اسم الشركة: <strong>{invoiceRepairTarget?.name}</strong></label><Input value={invoiceRepairConfirm} onChange={e => setInvoiceRepairConfirm(e.target.value)} /></div>
             <Button variant="outline" disabled={invoiceRepairSaving || !invoiceRepairNumber.trim() || (invoiceRepairMode === "correct_draft" && !invoiceRepairDoc)} onClick={() => applyInvoiceRepair(true)}>فحص الرقم ومعاينة النتيجة دون تعديل</Button>
-            {invoiceRepairPreviewValid && <p role="status" className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">الفحص ناجح. {invoiceRepairMode === "correct_draft" && <>رقم المسودة بعد التصحيح: <b dir="ltr">{invoiceRepairPreview?.newNumber ?? invoiceRepairNumber}</b> — </>}رقم الفاتورة التالية: <b dir="ltr">{invoiceRepairPreview?.nextNumber}</b>. يعاد التحقق عند التأكيد.</p>}
+            {invoiceRepairPreviewValid && <p role="status" className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">الفحص ناجح. {invoiceRepairMode === "correct_draft" && <>رقم المسودة بعد التصحيح: <b dir="ltr">{invoiceRepairPreview?.newNumber ?? invoiceRepairNumber}</b> — </>}الرقم التالي: <b dir="ltr">{invoiceRepairPreview?.nextNumber}</b>. يعاد التحقق عند التأكيد.</p>}
              {invoiceRepairPreviewValid && !!invoiceRepairPreview?.warnings.length && <div role="alert" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><strong>الاستثناءات التي ستُسجل عند التأكيد:</strong><ul className="list-disc ps-5">{invoiceRepairPreview.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
             {invoiceRepairError && <p role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{invoiceRepairError}<br />إذا انقطع الاتصال أثناء التأكيد، أعد فحص القائمة قبل المحاولة مرة أخرى للتحقق من النتيجة.</p>}
           </div>

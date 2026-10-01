@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 const source = readFileSync(resolve(import.meta.dirname, "../src/routes/admin.ts"), "utf8");
+const uiSource = readFileSync(resolve(import.meta.dirname, "../../zatca-invoicing/src/pages/Companies.tsx"), "utf8");
 
 test("invoice repair is a SA-only, read-first API contract", () => {
   assert.match(source, /router\.get\("\/companies\/:id\/invoice-numbering-repair", requireSuperAdmin/);
@@ -22,7 +23,7 @@ test("invoice repair never permits legal ZATCA or posted purchase changes", () =
   assert.match(source, /zatca_uuid.*xml_content.*invoice_hash/s);
   assert.match(source, /invoice\.status !== "draft"/);
   assert.match(source, /if \(signed\)/);
-  assert.match(source, /الفاتورة موقعة أو لها آثار ZATCA/);
+  assert.match(source, /المستند له آثار ZATCA ولا يمكن تعديله/);
   const repairBlock = source.slice(source.indexOf('router.post("/companies/:id/invoice-numbering-repair"'));
   assert.doesNotMatch(repairBlock.slice(0, repairBlock.indexOf('// PUT /api/admin/companies/:id/journal-sequence-control')),
     /SET (?:[^;]*)(?:zatca_uuid|zatca_icv|zatca_pih|invoice_hash|xml_content)\s*=/);
@@ -71,4 +72,23 @@ test("legacy reservation exception is explicit, scoped, uncertain, and separatel
   assert.match(source, /metadata->>'kind'/);
   assert.match(source, /KNOWN_ISSUED_LEGACY_CLAIM/);
   assert.doesNotMatch(source, /op: "manualLegacyReservationOverride"[\s\S]{0,1000}noZatcaArtifactsVerified/);
+});
+
+test("return numbering uses the correct tables, dates, series, and side-effect guards", () => {
+  assert.match(source, /sales_return:\s*\{\s*table: "sales_returns", dateColumn: "return_date", sequenceBase: "sales_return"/s);
+  assert.match(source, /purchase_return:\s*\{\s*table: "purchase_returns", dateColumn: "return_date", sequenceBase: "purchase_return"/s);
+  assert.match(source, /supportsReturnNumberRepair: true/);
+  assert.match(source, /companyWideUnique: true/);
+  assert.match(source, /ACTIVE_RETURN_NUMBER/);
+  assert.match(source, /meta\.isReturn && invoice\.journal_entry_id != null/);
+  assert.match(source, /FROM stock_ledger[\s\S]*ref_type = \$\{refType\} AND ref_id = \$\{id\}/);
+  assert.match(source, /const signed = meta\.hasZatca && hasKnownInvoiceFiscalEvidence\(invoice\)/);
+  assert.match(source, /legacyReservationOverride && INVOICE_REPAIR_META\[kind\]\.isReturn/);
+});
+
+test("Companies repair UI exposes both return kinds and checks server capability", () => {
+  assert.match(uiSource, /option value="sales_return">مرتجعات المبيعات/);
+  assert.match(uiSource, /option value="purchase_return">مرتجعات المشتريات/);
+  assert.match(uiSource, /supportsReturnNumberRepair !== true/);
+  assert.match(uiSource, /invoiceRepairKind === "sales_return"/);
 });
