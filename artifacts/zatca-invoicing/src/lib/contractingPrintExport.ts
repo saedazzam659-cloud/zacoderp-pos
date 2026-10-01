@@ -842,6 +842,7 @@ export function buildContractingReportColumns(): ExportColumn[] {
 
 export type ContractingProjectReportKey =
   | "boqStatement"
+  | "historicalOwnerPrices"
   | "executedQuantities"
   | "bills"
   | "cumulative"
@@ -885,6 +886,21 @@ const PROJECT_REPORT_COLUMNS: Record<ContractingProjectReportKey, ExportColumn[]
     { key: "expectedMappedCost", header: "تكلفة الباطن المرتبطة", width: 20, numFmt: "#,##0.00" },
     { key: "expectedProfit", header: "الربح المتوقع", width: 18, numFmt: "#,##0.00" },
     { key: "expectedMarginPercent", header: "الهامش المتوقع %", width: 18, numFmt: "0.00" },
+  ],
+  historicalOwnerPrices: [
+    { key: "targetProjectCode", header: "كود المشروع", width: 18 },
+    { key: "targetProjectName", header: "المشروع", width: 28 },
+    { key: "itemCode", header: "كود البند", width: 16 },
+    { key: "itemName", header: "اسم البند", width: 30 },
+    { key: "unit", header: "الوحدة", width: 12 },
+    { key: "latestUnitPrice", header: "آخر سعر معتمد", width: 18, numFmt: "#,##0.00" },
+    { key: "latestContractNumber", header: "رقم آخر عقد", width: 18 },
+    { key: "latestContractDate", header: "تاريخ آخر عقد", width: 16 },
+    { key: "latestProjectCode", header: "كود مشروع المصدر", width: 18 },
+    { key: "latestProjectName", header: "مشروع المصدر", width: 28 },
+    { key: "medianUnitPrice", header: "وسيط الأسعار", width: 18, numFmt: "#,##0.00" },
+    { key: "comparableCount", header: "عدد الأسعار المقارنة", width: 18, numFmt: "0" },
+    { key: "medianSourceReferences", header: "مصادر الوسيط", width: 42 },
   ],
   executedQuantities: [],
   bills: [
@@ -1000,6 +1016,7 @@ PROJECT_REPORT_COLUMNS.executedQuantities = PROJECT_REPORT_COLUMNS.boqStatement;
 
 const PROJECT_REPORT_TITLES: Record<ContractingProjectReportKey, string> = {
   boqStatement: "كشف بنود العقد",
+  historicalOwnerPrices: "مرجع أسعار بنود المالك المعتمدة",
   executedQuantities: "كشف الكميات المنفذة",
   bills: "كشف المستخلصات",
   cumulative: "المستخلص التراكمي",

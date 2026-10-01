@@ -1,7 +1,15 @@
 import { Router } from "express";
+import {
+  ListHistoricalOwnerBoqPriceReferencesParams,
+  ListHistoricalOwnerBoqPriceReferencesQueryParams,
+  ListHistoricalOwnerBoqPriceReferencesResponse,
+} from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
-import { getContractingProjectReports } from "../lib/contracting-project-reports-service.js";
+import {
+  getContractingProjectReports,
+  getHistoricalOwnerBoqPriceReferences,
+} from "../lib/contracting-project-reports-service.js";
 import { consolidatedOperationTypes } from "../lib/project-financial-sources.js";
 
 const router = Router();
@@ -15,6 +23,36 @@ router.use((req, res, next) => {
   next();
 });
 router.use(requirePermission("contracting", "view"));
+
+router.get("/projects/:projectId/boq-price-references", async (req, res): Promise<void> => {
+  const companyId = await resolveCompanyId(req, undefined);
+  if (!companyId) {
+    res.status(400).json({ error: "لا توجد شركة فعالة" });
+    return;
+  }
+  const params = ListHistoricalOwnerBoqPriceReferencesParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const query = ListHistoricalOwnerBoqPriceReferencesQueryParams.safeParse(req.query);
+  if (!query.success) {
+    res.status(400).json({ error: query.error.message });
+    return;
+  }
+  try {
+    const result = await getHistoricalOwnerBoqPriceReferences(
+      companyId,
+      params.data.projectId,
+      req.authUser,
+      query.data.workItemId,
+    );
+    res.json(ListHistoricalOwnerBoqPriceReferencesResponse.parse(result));
+  } catch (caught: any) {
+    const status = Number(caught?.status) || 500;
+    res.status(status).json({ error: caught?.message ?? "تعذر تحميل مرجع الأسعار التاريخية" });
+  }
+});
 
 router.get("/projects/:projectId/reports", async (req, res) => {
   const companyId = await resolveCompanyId(req, undefined);

@@ -5,6 +5,55 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export interface HistoricalOwnerBoqPriceSource {
+  unitPrice: number;
+  /** @nullable */
+  contractNumber: string | null;
+  /** @nullable */
+  contractDate: string | null;
+  projectCode: string;
+  projectName: string;
+  /** @nullable */
+  contractType: string | null;
+}
+
+export interface HistoricalOwnerBoqPriceReference {
+  targetWorkItemId: number;
+  /** @nullable */
+  itemCode: string | null;
+  itemName: string;
+  unit: string;
+  /** @nullable */
+  medianUnitPrice: number | null;
+  comparableCount: number;
+  latest: HistoricalOwnerBoqPriceSource | null;
+  medianSources: HistoricalOwnerBoqPriceSource[];
+  recentSources: HistoricalOwnerBoqPriceSource[];
+}
+
+export interface HistoricalOwnerBoqPriceReportRow {
+  targetProjectCode: string;
+  targetProjectName: string;
+  /** @nullable */
+  itemCode: string | null;
+  itemName: string;
+  unit: string;
+  /** @nullable */
+  medianUnitPrice: number | null;
+  comparableCount: number;
+  /** @nullable */
+  latestUnitPrice: number | null;
+  /** @nullable */
+  latestContractNumber: string | null;
+  /** @nullable */
+  latestContractDate: string | null;
+  /** @nullable */
+  latestProjectCode: string | null;
+  /** @nullable */
+  latestProjectName: string | null;
+  medianSourceReferences: string;
+}
+
 export interface ErrorResponse {
   error: string;
 }
@@ -1250,6 +1299,13 @@ export type ListCustomersParams = {
 
 export type ListSuppliersParams = {
   companyId?: number;
+};
+
+export type ListHistoricalOwnerBoqPriceReferencesParams = {
+  /**
+   * @minimum 1
+   */
+  workItemId?: number;
 };
 
 export type ListInvoicesParams = {

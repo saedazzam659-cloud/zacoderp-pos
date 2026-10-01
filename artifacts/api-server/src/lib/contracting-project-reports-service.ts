@@ -192,7 +192,7 @@ function aggregateSide(rows: any[]) {
 export function aggregateProjectReportRollup(entries: Array<{ projectId: number; report: any }>) {
   const owner = aggregateSide(entries.map(entry => entry.report.dashboard.ownerRevenue));
   const subcontract = aggregateSide(entries.map(entry => entry.report.dashboard.subcontractCost));
-  const detailNames = ["boqStatement", "executedQuantities", "bills", "cumulative", "advance", "retention", "deductions", "variations", "pricingProfitability", "costSources", "financialSources", "consolidatedMovements"];
+  const detailNames = ["boqStatement", "executedQuantities", "bills", "cumulative", "advance", "retention", "deductions", "variations", "pricingProfitability", "historicalOwnerPrices", "costSources", "financialSources", "consolidatedMovements"];
   const reports: Record<string, any> = {};
   for (const name of detailNames) {
     reports[name] = entries.flatMap(entry =>
@@ -286,6 +286,170 @@ export function buildBoqPricingProfitability(boqLines: any[]) {
   });
 }
 
+type HistoricalOwnerPriceSource = {
+  unitPrice: number;
+  contractNumber: string | null;
+  contractDate: string | null;
+  projectCode: string;
+  projectName: string;
+  contractType: string | null;
+};
+
+function normalizedMatchText(value: unknown): string {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * Build the editor-facing references from explicit, tenant-scoped source rows.
+ * A branch check is applied before any source project or contract provenance
+ * can make it into the returned data.
+ */
+export function buildHistoricalOwnerPriceReferences(
+  companyId: number,
+  targetProjectId: number,
+  targets: any[],
+  sourceRows: any[],
+  branchAllowed: (branchId: number | null) => boolean,
+) {
+  return targets.map(target => {
+    const targetDescription = normalizedMatchText(target.description || target.nameAr);
+    const targetUnit = normalizedMatchText(target.unit);
+    const matches: Array<HistoricalOwnerPriceSource & { sourceLineId: number }> = [];
+    for (const row of sourceRows) {
+      if (Number(row.companyId) !== companyId
+        || Number(row.projectId) === targetProjectId
+        || String(row.contractStatus) !== "approved"
+        || String(row.direction) !== "owner"
+        || Number(row.unitPrice) <= 0
+        || !branchAllowed(row.branchId == null ? null : Number(row.branchId))) continue;
+      const sourceDescription = normalizedMatchText(row.description || row.workItemDescription || row.workItemName);
+      if (!targetDescription || sourceDescription !== targetDescription
+        || normalizedMatchText(row.unit) !== targetUnit) continue;
+      matches.push({
+        sourceLineId: Number(row.sourceLineId),
+        unitPrice: rounded(Number(row.unitPrice)),
+        contractNumber: row.contractNumber == null ? null : String(row.contractNumber),
+        contractDate: row.contractDate == null ? null : String(row.contractDate).slice(0, 10),
+        projectCode: String(row.projectCode ?? ""),
+        projectName: String(row.projectName ?? ""),
+        contractType: row.contractType == null ? null : String(row.contractType),
+      });
+    }
+    const byPrice = matches.slice().sort((left, right) =>
+      left.unitPrice - right.unitPrice || left.sourceLineId - right.sourceLineId);
+    const middleStart = Math.floor((byPrice.length - 1) / 2);
+    const medianRows = byPrice.length === 0 ? [] : byPrice.slice(middleStart, middleStart + (byPrice.length % 2 === 0 ? 2 : 1));
+    const median = medianRows.length === 0 ? null
+      : rounded(medianRows.reduce((sum, row) => sum + row.unitPrice, 0) / medianRows.length);
+    const recentRows = matches.slice().sort((left, right) =>
+      String(right.contractDate ?? "").localeCompare(String(left.contractDate ?? ""))
+      || right.sourceLineId - left.sourceLineId).slice(0, 5);
+    const sourceShape = ({ sourceLineId: _sourceLineId, ...source }: typeof matches[number]) => source;
+    return {
+      targetWorkItemId: Number(target.id),
+      itemCode: target.code == null ? null : String(target.code),
+      itemName: String(target.nameAr ?? ""),
+      unit: String(target.unit ?? ""),
+      medianUnitPrice: median,
+      comparableCount: matches.length,
+      latest: recentRows.length > 0 ? sourceShape(recentRows[0]) : null,
+      medianSources: medianRows.map(sourceShape),
+      recentSources: recentRows.map(sourceShape),
+    };
+  });
+}
+
+export function buildHistoricalOwnerPriceReportRows(references: any[]) {
+  return references.map(reference => {
+    const latest = reference.latest;
+    const medianSourceReferences = reference.medianSources.map((source: HistoricalOwnerPriceSource) => {
+      const price = Number(source.unitPrice).toFixed(2);
+      const contract = source.contractNumber ?? "رقم العقد غير متاح";
+      return `${price} — ${contract} (${source.projectCode})`;
+    }).join(" | ");
+    return {
+      itemCode: reference.itemCode,
+      itemName: reference.itemName,
+      unit: reference.unit,
+      medianUnitPrice: reference.medianUnitPrice,
+      comparableCount: reference.comparableCount,
+      latestUnitPrice: latest?.unitPrice ?? null,
+      latestContractNumber: latest?.contractNumber ?? null,
+      latestContractDate: latest?.contractDate ?? null,
+      latestProjectCode: latest?.projectCode ?? null,
+      latestProjectName: latest?.projectName ?? null,
+      medianSourceReferences,
+    };
+  });
+}
+
+async function historicalOwnerPriceReferences(
+  companyId: number,
+  projectId: number,
+  user: BranchUser,
+  workItemId?: number,
+) {
+  const targets = await db.select({
+    id: contractingWorkItemsTable.id,
+    code: contractingWorkItemsTable.code,
+    nameAr: contractingWorkItemsTable.nameAr,
+    description: contractingWorkItemsTable.description,
+    unit: contractingWorkItemsTable.unit,
+  }).from(contractingWorkItemsTable).where(and(
+    eq(contractingWorkItemsTable.companyId, companyId),
+    eq(contractingWorkItemsTable.projectId, projectId),
+    ...(workItemId == null ? [] : [eq(contractingWorkItemsTable.id, workItemId)]),
+  )).orderBy(asc(contractingWorkItemsTable.id));
+  if (workItemId != null && targets.length === 0) throw error("بند التنفيذ غير صالح لهذا المشروع");
+
+  const sourceRows = await db.select({
+    companyId: contractingContractBoqLinesTable.companyId,
+    sourceLineId: contractingContractBoqLinesTable.id,
+    projectId: contractingProjectsTable.id,
+    branchId: contractingProjectsTable.branchId,
+    projectCode: contractingProjectsTable.code,
+    projectName: contractingProjectsTable.nameAr,
+    direction: contractingContractBoqLinesTable.direction,
+    description: contractingContractBoqLinesTable.description,
+    unit: contractingContractBoqLinesTable.unit,
+    unitPrice: contractingContractBoqLinesTable.unitPrice,
+    workItemDescription: contractingWorkItemsTable.description,
+    workItemName: contractingWorkItemsTable.nameAr,
+    contractStatus: contractingOwnerContractsTable.status,
+    contractNumber: contractingOwnerContractsTable.contractNumber,
+    contractDate: contractingOwnerContractsTable.contractDate,
+    contractType: contractingOwnerContractsTable.contractType,
+  }).from(contractingContractBoqLinesTable)
+    .innerJoin(contractingOwnerContractsTable, and(
+      eq(contractingOwnerContractsTable.id, contractingContractBoqLinesTable.ownerContractId),
+      eq(contractingOwnerContractsTable.companyId, companyId),
+      eq(contractingOwnerContractsTable.projectId, contractingContractBoqLinesTable.projectId),
+    ))
+    .innerJoin(contractingProjectsTable, and(
+      eq(contractingProjectsTable.id, contractingContractBoqLinesTable.projectId),
+      eq(contractingProjectsTable.companyId, companyId),
+    ))
+    .innerJoin(contractingWorkItemsTable, and(
+      eq(contractingWorkItemsTable.id, contractingContractBoqLinesTable.workItemId),
+      eq(contractingWorkItemsTable.companyId, companyId),
+      eq(contractingWorkItemsTable.projectId, contractingContractBoqLinesTable.projectId),
+    ))
+    .where(and(
+      eq(contractingContractBoqLinesTable.companyId, companyId),
+      eq(contractingContractBoqLinesTable.direction, "owner"),
+      eq(contractingOwnerContractsTable.status, "approved"),
+      sql`${contractingContractBoqLinesTable.unitPrice} > 0`,
+      sql`${contractingContractBoqLinesTable.projectId} <> ${projectId}`,
+    ));
+  return buildHistoricalOwnerPriceReferences(
+    companyId,
+    projectId,
+    targets,
+    sourceRows,
+    branchId => contractingBranchAllowed(user, branchId),
+  );
+}
+
 /**
  * Read-only project reporting facade.
  *
@@ -310,6 +474,13 @@ async function getLocalContractingProjectReports(
     ensureContractingBillDetailsTables(),
     ensureContractingAccountingTables(),
   ]);
+  const historicalOwnerPrices = buildHistoricalOwnerPriceReportRows(
+    await historicalOwnerPriceReferences(companyId, projectId, user),
+  ).map(row => ({
+    ...row,
+    targetProjectCode: project.code,
+    targetProjectName: project.nameAr,
+  }));
   const financialSources = await projectFinancialSources(companyId, projectId);
 
   const [ownerContracts, subContracts, contractors, boqLines, billLineRows, deductionRows, penaltyRows, additionRows, workItemCostRows, materialResult] =
@@ -860,6 +1031,7 @@ async function getLocalContractingProjectReports(
     variations,
     profitability,
     pricingProfitability,
+    historicalOwnerPrices,
     costSources,
     financialSources,
     consolidatedMovements,
@@ -934,4 +1106,20 @@ export async function getContractingProjectReports(
       summary: rollup.dashboard,
     },
   };
+}
+
+export async function getHistoricalOwnerBoqPriceReferences(
+  companyId: number,
+  projectId: number,
+  user: BranchUser | undefined,
+  workItemId?: number,
+) {
+  if (!user) throw error("غير مصرح", 401);
+  if (!Number.isInteger(projectId) || projectId <= 0) throw error("المشروع غير صالح");
+  if (workItemId != null && (!Number.isInteger(workItemId) || workItemId <= 0)) {
+    throw error("بند التنفيذ غير صالح");
+  }
+  await readableProject(companyId, projectId, user);
+  await ensureContractingBoqTables();
+  return historicalOwnerPriceReferences(companyId, projectId, user, workItemId);
 }

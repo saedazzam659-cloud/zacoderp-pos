@@ -1137,6 +1137,61 @@ export const GetContractingGuaranteeOptionsResponse = zod.object({
 });
 
 /**
+ * @summary Compare project work items with visible approved owner-contract BOQ prices
+ */
+
+export const ListHistoricalOwnerBoqPriceReferencesParams = zod.object({
+  projectId: zod.coerce.number().min(1),
+});
+
+export const ListHistoricalOwnerBoqPriceReferencesQueryParams = zod.object({
+  workItemId: zod.coerce.number().min(1).optional(),
+});
+
+export const ListHistoricalOwnerBoqPriceReferencesResponseItem = zod.object({
+  targetWorkItemId: zod.number(),
+  itemCode: zod.string().nullable(),
+  itemName: zod.string(),
+  unit: zod.string(),
+  medianUnitPrice: zod.number().nullable(),
+  comparableCount: zod.number(),
+  latest: zod.union([
+    zod.object({
+      unitPrice: zod.number(),
+      contractNumber: zod.string().nullable(),
+      contractDate: zod.string().nullable(),
+      projectCode: zod.string(),
+      projectName: zod.string(),
+      contractType: zod.string().nullable(),
+    }),
+    zod.null(),
+  ]),
+  medianSources: zod.array(
+    zod.object({
+      unitPrice: zod.number(),
+      contractNumber: zod.string().nullable(),
+      contractDate: zod.string().nullable(),
+      projectCode: zod.string(),
+      projectName: zod.string(),
+      contractType: zod.string().nullable(),
+    }),
+  ),
+  recentSources: zod.array(
+    zod.object({
+      unitPrice: zod.number(),
+      contractNumber: zod.string().nullable(),
+      contractDate: zod.string().nullable(),
+      projectCode: zod.string(),
+      projectName: zod.string(),
+      contractType: zod.string().nullable(),
+    }),
+  ),
+});
+export const ListHistoricalOwnerBoqPriceReferencesResponse = zod.array(
+  ListHistoricalOwnerBoqPriceReferencesResponseItem,
+);
+
+/**
  * @summary List all invoices
  */
 export const ListInvoicesQueryParams = zod.object({

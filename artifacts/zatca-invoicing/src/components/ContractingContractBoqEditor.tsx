@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  listHistoricalOwnerBoqPriceReferences,
+  type HistoricalOwnerBoqPriceReference,
+} from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -59,6 +63,19 @@ type Draft = {
 
 export type PendingContractBoqLine = Draft;
 
+function referenceSourceLabel(source: HistoricalOwnerBoqPriceReference["latest"]): string {
+  if (!source) return "—";
+  return [
+    `${source.projectName}${source.projectCode ? ` (${source.projectCode})` : ""}`,
+    source.contractNumber ? `عقد ${source.contractNumber}` : null,
+    source.contractDate || null,
+  ].filter(Boolean).join(" · ");
+}
+
+function referenceMoney(value: number): string {
+  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function emptyDraft(): Draft {
   return {
     workItemId: "",
@@ -104,7 +121,7 @@ export default function ContractingContractBoqEditor({
   pendingLines?: PendingContractBoqLine[] | null;
   onPendingLinesChange?: Dispatch<SetStateAction<PendingContractBoqLine[] | null>>;
 }) {
-  const { token, user } = useAuth() as any;
+  const { token, user, actingCompanyId } = useAuth() as any;
   const { toast } = useToast();
   const [rows, setRows] = useState<BoqLine[]>([]);
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
@@ -115,6 +132,10 @@ export default function ContractingContractBoqEditor({
   const [editingPendingIndex, setEditingPendingIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [priceReference, setPriceReference] = useState<HistoricalOwnerBoqPriceReference | null>(null);
+  const [priceReferenceLoading, setPriceReferenceLoading] = useState(false);
+  const [priceReferenceError, setPriceReferenceError] = useState<string | null>(null);
+  const [priceReferenceRetry, setPriceReferenceRetry] = useState(0);
 
   const contractQuery = direction === "owner"
     ? `ownerContractId=${contractId}`
@@ -168,6 +189,37 @@ export default function ContractingContractBoqEditor({
   useEffect(() => {
     if (active) void load();
   }, [active, load]);
+
+  useEffect(() => {
+    const workItemId = Number(draft?.workItemId);
+    if (!active || direction !== "owner" || !token || !Number.isInteger(workItemId) || workItemId <= 0) {
+      setPriceReference(null);
+      setPriceReferenceLoading(false);
+      setPriceReferenceError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setPriceReference(null);
+    setPriceReferenceError(null);
+    setPriceReferenceLoading(true);
+    void listHistoricalOwnerBoqPriceReferences(projectId, { workItemId }, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+      },
+      signal: controller.signal,
+    }).then(references => {
+      if (!controller.signal.aborted) setPriceReference(references[0] ?? null);
+    }).catch((caught: unknown) => {
+      if (!controller.signal.aborted) {
+        setPriceReferenceError(caught instanceof Error ? caught.message : "تعذر تحميل مرجع الأسعار");
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setPriceReferenceLoading(false);
+    });
+    return () => controller.abort();
+  }, [active, actingCompanyId, direction, draft?.workItemId, priceReferenceRetry, projectId, token]);
 
   const workItemOptions = useMemo<ComboboxItem[]>(
     () => workItems.map(item => ({
@@ -376,6 +428,79 @@ export default function ContractingContractBoqEditor({
               {" "}تُقترح عند اختيار البند؛ عدّل كمية هذا العقد وأدخل سعره المتفق عليه. لا يُنقل سعر المالك أو التكلفة التخطيطية تلقائيًا.
               {" "}بعد حفظ السطر يظهر البند في مستخلصات هذا العقد لإدخال التنفيذ ونسبة الاعتماد.
             </p>
+          )}
+          {direction === "owner" && draft.workItemId && (
+            <section className="col-span-2 space-y-2 rounded border border-emerald-200 bg-emerald-50/60 p-3 text-xs md:col-span-4 dark:border-emerald-900 dark:bg-emerald-950/20"
+              aria-label="مرجع أسعار بنود المالك" data-testid="owner-boq-price-reference">
+              <div>
+                <h4 className="font-semibold text-emerald-950 dark:text-emerald-100">مرجع أسعار عقود المالك المعتمدة</h4>
+                <p className="mt-1 text-slate-600 dark:text-slate-300">
+                  مطابقة دقيقة لاسم بند المشروع ووحدته من عقود المالك المعتمدة في المشاريع الأخرى؛ لا تشمل عقود الباطن أو التكلفة التقديرية.
+                  اختر السعر لإدخاله في هذا العقد، أو عدّل السعر يدويًا.
+                </p>
+              </div>
+              {priceReferenceLoading && <p role="status" className="text-slate-500">جارٍ تحميل الأسعار المقارنة…</p>}
+              {priceReferenceError && (
+                <div role="alert" className="flex flex-wrap items-center gap-2 text-red-700">
+                  <span>{priceReferenceError}</span>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setPriceReferenceRetry(value => value + 1)}>
+                    إعادة المحاولة
+                  </Button>
+                </div>
+              )}
+              {!priceReferenceLoading && !priceReferenceError && priceReference && priceReference.comparableCount === 0 && (
+                <p className="text-slate-500">لا توجد أسعار معتمدة مطابقة لهذا البند والوحدة.</p>
+              )}
+              {priceReference && priceReference.comparableCount > 0 && (
+                <>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {priceReference.latest && (
+                      <div className="rounded border bg-white p-2 dark:bg-slate-900">
+                        <div className="font-semibold">آخر سعر معتمد</div>
+                        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                          <strong className="tabular-nums">{referenceMoney(priceReference.latest.unitPrice)} ر.س / {priceReference.unit}</strong>
+                          <Button type="button" size="sm" variant="outline"
+                            onClick={() => setDraft(current => current ? { ...current, unitPrice: String(priceReference.latest!.unitPrice) } : current)}>
+                            استخدام آخر سعر
+                          </Button>
+                        </div>
+                        <div className="mt-1 text-slate-500">{referenceSourceLabel(priceReference.latest)}</div>
+                      </div>
+                    )}
+                    {priceReference.medianUnitPrice != null && (
+                      <div className="rounded border bg-white p-2 dark:bg-slate-900">
+                        <div className="font-semibold">وسيط الأسعار ({priceReference.comparableCount} بندًا)</div>
+                        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                          <strong className="tabular-nums">{referenceMoney(priceReference.medianUnitPrice)} ر.س / {priceReference.unit}</strong>
+                          <Button type="button" size="sm" variant="outline"
+                            onClick={() => setDraft(current => current ? { ...current, unitPrice: String(priceReference.medianUnitPrice) } : current)}>
+                            استخدام الوسيط
+                          </Button>
+                        </div>
+                        {priceReference.medianSources.length > 0 && (
+                          <div className="mt-1 text-slate-500">
+                            {priceReference.medianSources.map(referenceSourceLabel).join(" ؛ ")}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {priceReference.recentSources.length > 1 && (
+                    <details className="rounded border bg-white px-2 py-1 dark:bg-slate-900">
+                      <summary className="cursor-pointer">عرض أسعار العقود المقارنة الحديثة</summary>
+                      <ul className="mt-1 space-y-1">
+                        {priceReference.recentSources.map((source, index) => (
+                          <li key={`${source.contractNumber ?? "contract"}-${source.contractDate ?? "date"}-${index}`}>
+                            <span className="font-semibold tabular-nums">{referenceMoney(source.unitPrice)} ر.س</span>
+                            {" — "}{referenceSourceLabel(source)}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </>
+              )}
+            </section>
           )}
           {direction === "subcontract" && (
             <div className="col-span-2">

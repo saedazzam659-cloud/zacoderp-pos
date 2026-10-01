@@ -43,6 +43,7 @@ import type {
   GetSafetyKpisParams,
   GetSecurityActiveCompanySessionsParams,
   HealthStatus,
+  HistoricalOwnerBoqPriceReference,
   Incident,
   IncidentAction,
   InternalDeliveryLinkResult,
@@ -52,6 +53,7 @@ import type {
   InternalStockTransferInput,
   Invoice,
   ListCustomersParams,
+  ListHistoricalOwnerBoqPriceReferencesParams,
   ListIncidentsParams,
   ListInvoicesParams,
   ListRiskAssessmentsParams,
@@ -2824,6 +2826,131 @@ export function useGetContractingGuaranteeOptions<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetContractingGuaranteeOptionsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Compare project work items with visible approved owner-contract BOQ prices
+ */
+export const getListHistoricalOwnerBoqPriceReferencesUrl = (
+  projectId: number,
+  params?: ListHistoricalOwnerBoqPriceReferencesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/contracting/projects/${projectId}/boq-price-references?${stringifiedParams}`
+    : `/api/contracting/projects/${projectId}/boq-price-references`;
+};
+
+export const listHistoricalOwnerBoqPriceReferences = async (
+  projectId: number,
+  params?: ListHistoricalOwnerBoqPriceReferencesParams,
+  options?: RequestInit,
+): Promise<HistoricalOwnerBoqPriceReference[]> => {
+  return customFetch<HistoricalOwnerBoqPriceReference[]>(
+    getListHistoricalOwnerBoqPriceReferencesUrl(projectId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListHistoricalOwnerBoqPriceReferencesQueryKey = (
+  projectId: number,
+  params?: ListHistoricalOwnerBoqPriceReferencesParams,
+) => {
+  return [
+    `/api/contracting/projects/${projectId}/boq-price-references`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListHistoricalOwnerBoqPriceReferencesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listHistoricalOwnerBoqPriceReferences>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  projectId: number,
+  params?: ListHistoricalOwnerBoqPriceReferencesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listHistoricalOwnerBoqPriceReferences>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getListHistoricalOwnerBoqPriceReferencesQueryKey(projectId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listHistoricalOwnerBoqPriceReferences>>
+  > = ({ signal }) =>
+    listHistoricalOwnerBoqPriceReferences(projectId, params, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!projectId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listHistoricalOwnerBoqPriceReferences>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListHistoricalOwnerBoqPriceReferencesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listHistoricalOwnerBoqPriceReferences>>
+>;
+export type ListHistoricalOwnerBoqPriceReferencesQueryError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary Compare project work items with visible approved owner-contract BOQ prices
+ */
+
+export function useListHistoricalOwnerBoqPriceReferences<
+  TData = Awaited<ReturnType<typeof listHistoricalOwnerBoqPriceReferences>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  projectId: number,
+  params?: ListHistoricalOwnerBoqPriceReferencesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listHistoricalOwnerBoqPriceReferences>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListHistoricalOwnerBoqPriceReferencesQueryOptions(
+    projectId,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

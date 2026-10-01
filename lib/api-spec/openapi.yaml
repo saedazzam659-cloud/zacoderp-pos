@@ -605,6 +605,48 @@ paths:
               schema:
                 $ref: "#/components/schemas/ContractingGuaranteeOptions"
 
+  /contracting/projects/{projectId}/boq-price-references:
+    get:
+      operationId: listHistoricalOwnerBoqPriceReferences
+      tags: [contracting]
+      summary: Compare project work items with visible approved owner-contract BOQ prices
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: workItemId
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Historical owner-contract price references
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HistoricalOwnerBoqPriceReference"
+        "400":
+          description: Invalid project or work item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Project or source branch is not accessible
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /invoices:
     get:
       operationId: listInvoices
@@ -1482,6 +1524,55 @@ paths:
 
 components:
   schemas:
+    HistoricalOwnerBoqPriceSource:
+      type: object
+      required: [unitPrice, contractNumber, contractDate, projectCode, projectName, contractType]
+      properties:
+        unitPrice: { type: number }
+        contractNumber: { type: ["string", "null"] }
+        contractDate: { type: ["string", "null"] }
+        projectCode: { type: string }
+        projectName: { type: string }
+        contractType: { type: ["string", "null"] }
+    HistoricalOwnerBoqPriceReference:
+      type: object
+      required: [targetWorkItemId, itemCode, itemName, unit, medianUnitPrice, comparableCount, latest, medianSources, recentSources]
+      properties:
+        targetWorkItemId: { type: integer }
+        itemCode: { type: ["string", "null"] }
+        itemName: { type: string }
+        unit: { type: string }
+        medianUnitPrice: { type: ["number", "null"] }
+        comparableCount: { type: integer }
+        latest:
+          anyOf:
+            - $ref: "#/components/schemas/HistoricalOwnerBoqPriceSource"
+            - type: "null"
+        medianSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/HistoricalOwnerBoqPriceSource"
+        recentSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/HistoricalOwnerBoqPriceSource"
+    HistoricalOwnerBoqPriceReportRow:
+      type: object
+      required: [targetProjectCode, targetProjectName, itemCode, itemName, unit, medianUnitPrice, comparableCount, latestUnitPrice, latestContractNumber, latestContractDate, latestProjectCode, latestProjectName, medianSourceReferences]
+      properties:
+        targetProjectCode: { type: string }
+        targetProjectName: { type: string }
+        itemCode: { type: ["string", "null"] }
+        itemName: { type: string }
+        unit: { type: string }
+        medianUnitPrice: { type: ["number", "null"] }
+        comparableCount: { type: integer }
+        latestUnitPrice: { type: ["number", "null"] }
+        latestContractNumber: { type: ["string", "null"] }
+        latestContractDate: { type: ["string", "null"] }
+        latestProjectCode: { type: ["string", "null"] }
+        latestProjectName: { type: ["string", "null"] }
+        medianSourceReferences: { type: string }
     ErrorResponse:
       type: object
       required: [error]

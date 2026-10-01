@@ -70,6 +70,7 @@ type ProjectReportsPayload = ContractingProjectReportsSnapshot & {
 
 const REPORT_OPTIONS: Array<{ value: ContractingProjectReportKey; label: string }> = [
   { value: "boqStatement", label: "كشف بنود العقد" },
+  { value: "historicalOwnerPrices", label: "مرجع أسعار بنود المالك" },
   { value: "executedQuantities", label: "كشف الكميات المنفذة" },
   { value: "bills", label: "كشف المستخلصات" },
   { value: "cumulative", label: "المستخلص التراكمي" },
@@ -101,6 +102,18 @@ const LABELS: Record<string, string> = {
   lineCode: "كود البند",
   description: "الوصف",
   unit: "الوحدة",
+  itemCode: "كود البند",
+  itemName: "اسم البند",
+  targetProjectCode: "كود المشروع",
+  targetProjectName: "المشروع",
+  latestUnitPrice: "آخر سعر معتمد",
+  latestContractNumber: "رقم آخر عقد",
+  latestContractDate: "تاريخ آخر عقد",
+  latestProjectCode: "كود مشروع المصدر",
+  latestProjectName: "مشروع المصدر",
+  medianUnitPrice: "وسيط الأسعار",
+  comparableCount: "عدد الأسعار المقارنة",
+  medianSourceReferences: "مصادر الوسيط",
   contractQuantity: "كمية العقد",
   priorQuantity: "السابق",
   currentQuantity: "الحالي",
@@ -489,6 +502,12 @@ export function ContractingProjectReports({
             <ScopeSummary title="المشروع مع جميع الفروع" side={hierarchy.summary} tone="rollup" />
           </div>
           <p className="text-xs text-muted-foreground">صفوف التقرير أدناه مقدمة من نطاق الخادم المختار ولا يتم دمجها مع الصفوف المحلية في الواجهة.</p>
+        </div>
+      )}
+      {selected === "historicalOwnerPrices" && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-100">
+          يعرض هذا المرجع آخر سعر ووسيط الأسعار من بنود عقود المالك المعتمدة ذات اسم البند والوحدة المطابقين، ضمن المشاريع التي يحق لك الاطلاع عليها.
+          لا يشمل عقود الباطن أو التكاليف التقديرية، والسعر المرجعي لا يغيّر العقد.
         </div>
       )}
        {selected === "consolidatedMovements" && !loading && <div className="rounded-lg border bg-emerald-50 p-3 text-sm flex flex-wrap gap-5" data-testid="consolidated-summary">
