@@ -4,6 +4,7 @@ import {
   db,
   bankAccountsTable,
   cashBoxesTable,
+  companiesTable,
   contractingOwnerContractsTable,
   contractingProjectsTable,
   contractingSubContractsTable,
@@ -140,6 +141,10 @@ router.get("/projects/:projectId/accounting/options", async (req, res) => {
       ));
     if (!project) return res.status(404).json({ error: "المشروع غير موجود" });
     assertProjectBranchAccess(req, project.branchId);
+    const [company] = await db.select({ country: companiesTable.country })
+      .from(companiesTable)
+      .where(eq(companiesTable.id, cid))
+      .limit(1);
     const options = await inventoryOptions(cid, projectId);
     const cashBoxes = await db.select({
       id: cashBoxesTable.id, code: cashBoxesTable.code,
@@ -173,7 +178,15 @@ router.get("/projects/:projectId/accounting/options", async (req, res) => {
         eq(contractingSubContractsTable.projectId, projectId),
       )),
     ]);
-    return res.json({ ...options, cashBoxes, banks, projectCustomerId: project.customerId, ownerContracts, subcontractorContracts });
+    return res.json({
+      ...options,
+      cashBoxes,
+      banks,
+      projectCustomerId: project.customerId,
+      ownerContracts,
+      subcontractorContracts,
+      companyCountry: company?.country ?? null,
+    });
   } catch (error) {
     return fail(res, error);
   }

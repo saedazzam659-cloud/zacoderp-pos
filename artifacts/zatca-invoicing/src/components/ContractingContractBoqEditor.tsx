@@ -461,7 +461,7 @@ export default function ContractingContractBoqEditor({
                           <strong className="tabular-nums">{referenceMoney(priceReference.latest.unitPrice)} ر.س / {priceReference.unit}</strong>
                           <Button type="button" size="sm" variant="outline"
                             onClick={() => setDraft(current => current ? { ...current, unitPrice: String(priceReference.latest!.unitPrice) } : current)}>
-                            استخدام آخر سعر
+                            استخدم آخر سعر
                           </Button>
                         </div>
                         <div className="mt-1 text-slate-500">{referenceSourceLabel(priceReference.latest)}</div>
@@ -474,7 +474,7 @@ export default function ContractingContractBoqEditor({
                           <strong className="tabular-nums">{referenceMoney(priceReference.medianUnitPrice)} ر.س / {priceReference.unit}</strong>
                           <Button type="button" size="sm" variant="outline"
                             onClick={() => setDraft(current => current ? { ...current, unitPrice: String(priceReference.medianUnitPrice) } : current)}>
-                            استخدام الوسيط
+                            استخدم الوسيط
                           </Button>
                         </div>
                         {priceReference.medianSources.length > 0 && (

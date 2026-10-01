@@ -18,6 +18,16 @@ const positiveId=(v:number) => {
   if (!Number.isSafeInteger(v) || v<1) fail("معرّف الشركة أو المشروع أو العقد أو الفاتورة غير صالح");
   return v;
 };
+async function requireSaudiCompanyForZatca(companyId: number) {
+  const [company] = await db.select({ country: companiesTable.country })
+    .from(companiesTable)
+    .where(eq(companiesTable.id, companyId))
+    .limit(1);
+  if (!company) fail("الشركة غير موجودة", 404);
+  if (String(company.country).trim().toUpperCase() !== "SA") {
+    fail("مسار فواتير المقاولات الحالي مخصص لزاتكا السعودية فقط؛ استخدم مسار الجهة الضريبية المطابق لدولة الشركة", 409);
+  }
+}
 const cents = (v: any): bigint => {
   const s = String(v ?? "").trim();
   if (!/^\d+(?:\.\d{1,2})?$/.test(s)) return fail("مبلغ الضريبة غير صالح");
@@ -61,6 +71,7 @@ export async function createTaxableAdvance(input: {
   taxableAmount: string; priceIncludesVat?: boolean; invoiceDate: string; userId: number | null; req: any;
 }) {
   positiveId(input.companyId); positiveId(input.projectId); positiveId(input.contractId);
+  await requireSaudiCompanyForZatca(input.companyId);
   await ensureContractingAccountingTables();
   if (!/^[\w:.-]{8,128}$/.test(input.intentKey)) fail("مفتاح نية سلفة ثابت (8–128 حرفاً) مطلوب");
   if (input.priceIncludesVat !== undefined && typeof input.priceIncludesVat !== "boolean")
@@ -199,6 +210,7 @@ async function finalizeAcceptedAdvance(f:any, companyId:number, req?:any) {
  * prepayment, references or tax values are used to build the fiscal document. */
 export async function issueOwnerBillInvoice(input: {companyId: number; projectId: number; billId: number; req: any; userId: number | null}) {
   positiveId(input.companyId); positiveId(input.projectId); positiveId(input.billId);
+  await requireSaudiCompanyForZatca(input.companyId);
   await ensureContractingAccountingTables();
   return db.transaction(async (tx) => {
     const bill = rows(await tx.execute(sql`SELECT b.*,j.status AS journal_status
@@ -283,6 +295,7 @@ export async function issueOwnerBillInvoice(input: {companyId: number; projectId
  * journal or sales invoice. Persist signed payload before sending for safe retries. */
 export async function submitContractingFiscalInvoice(companyId: number, id: number, req?: any) {
   positiveId(companyId);positiveId(id);
+  await requireSaudiCompanyForZatca(companyId);
   await ensureContractingAccountingTables();
   return withZatcaChainLock(companyId, async () => {
     await assertZatcaSubmissionAllowed(companyId);

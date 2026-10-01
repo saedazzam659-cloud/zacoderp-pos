@@ -41,6 +41,7 @@ type MaterialMovement = {
 };
 type Options = {
   projectCustomerId?: number | null;
+  companyCountry?: string | null;
   items: Array<{ id: number; code: string; nameAr: string; unitId: number | null; batchTrackingMode?: string | null }>;
   units: Array<{ id: number; code: string; nameAr: string }>;
   warehouses: Array<{ id: number; code: string; nameAr: string }>;
@@ -127,6 +128,9 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   const [applyBillId, setApplyBillId] = useState("");
   const [applyAmount, setApplyAmount] = useState("");
   const operationKeys = useRef(new Map<string, string>());
+  const companyCountry = String(options.companyCountry ?? "").trim().toUpperCase();
+  const isSaudiCompany = companyCountry === "SA";
+  const isNonSaudiCompany = companyCountry.length > 0 && !isSaudiCompany;
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const reload = useCallback(async () => {
@@ -607,6 +611,11 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
     <div dir="rtl" className="space-y-5">
       <div className="rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
         <h3 className="mb-3 text-base font-bold">اعتماد المستخلصات والدفتر العام</h3>
+        {isNonSaudiCompany && (
+          <p role="status" className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100">
+            إرسال فواتير المقاولات إلى زاتكا غير متاح لهذه الشركة. لا تستخدم مسار زاتكا السعودي؛ إصدار مستخلصات المالك عبر الجهة المحلية يحتاج استكمال بياناتها الضريبية أولًا.
+          </p>
+        )}
         {fiscalError && <p role="alert" className="mb-2 text-sm text-destructive">{fiscalError}</p>}
         <ContractingOperationsLedger title="سجل اعتماد المستخلصات" filename={`contracting-bills-${projectId}`}
           rows={billLedger} action={id => {
@@ -620,9 +629,9 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
                 const recoveries = settlements.filter(s => s.bill_id === bill.id && s.kind === "advance_application" && s.status === "posted" && s.taxable_advance_invoice_id);
                 return <>
                   {invoice ? <span className="text-xs">فاتورة 388: {invoice.invoiceNumber} • {invoice.zatcaStatus === "issued" ? "معدة — بانتظار ZATCA" : invoice.zatcaStatus}{invoice.prepaymentAdjustments?.length ? ` • تسوية ${invoice.prepaymentAdjustments.map(a => `${a.invoiceNumber} (${a.taxableAmount} + ${a.taxAmount} ضريبة)`).join("، ")}` : ""}</span>
-                    : fiscalReady && bill.journalEntryId && ["approved", "posted", "partially_paid", "paid"].includes(bill.status) &&
+                    : isSaudiCompany && fiscalReady && bill.journalEntryId && ["approved", "posted", "partially_paid", "paid"].includes(bill.status) &&
                       <Button size="sm" disabled={busy} onClick={() => void issueBillInvoice(bill)}>إعداد فاتورة المستخلص 388 لإرسالها</Button>}
-                  {invoice && !["cleared", "reported"].includes(invoice.zatcaStatus) &&
+                  {invoice && isSaudiCompany && !["cleared", "reported"].includes(invoice.zatcaStatus) &&
                     <Button size="sm" disabled={busy} onClick={() => void post(`/api/contracting/fiscal-invoices/${invoice.id}/zatca-submit`, {}, undefined, "تم تحديث حالة تقديم ZATCA")}>إرسال الفاتورة إلى ZATCA</Button>}
                   {invoice?.xmlDownloadUrl && <Button size="sm" variant="outline" disabled={busy} onClick={() => void downloadFiscalXml(invoice)}>تنزيل XML الموقّع</Button>}
                   {recoveries.map(s => <span key={s.id} className="text-xs">استرداد #{s.id}: فاتورة 386 {fiscalInvoices.find(f => f.id === s.taxable_advance_invoice_id)?.invoiceNumber ?? `#${s.taxable_advance_invoice_id}`} • أساس {s.amount} • ضريبة مسددة سابقاً {s.taxable_vat_amount}</span>)}
@@ -685,7 +694,7 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
             <Button variant="outline" disabled={busy || !amount || !treasuryId || (requiresBill && !billId) || (!requiresBill && kind === "advance_receipt" && !ownerContractId) || (!requiresBill && kind === "advance_payment" && !subcontractorContractId)} onClick={() => void saveSettlement()}>ترحيل مباشر (النظام القديم)</Button>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">اختر مساراً واحداً للعملية: السند المتعدد أو الترحيل المباشر. لا تستخدم الاثنين لنفس التحصيل أو السداد.</p>
-          {kind === "advance_receipt" && ownerContractId && <div className="mt-4 rounded-md border p-3 space-y-2">
+          {isSaudiCompany && kind === "advance_receipt" && ownerContractId && <div className="mt-4 rounded-md border p-3 space-y-2">
             <h4 className="font-semibold">فاتورة سلفة المالك الضريبية (386)</h4>
             <p className="text-xs">إعداد السجل لا يسجل قبضاً أو قبولاً من ZATCA. عند قبول فاتورة 386 يُرحّل قيد الاستحقاق، وعند القبض يُنشأ قيد النقد المستقل. اربط حساب ذمة فاتورة السلفة المستقل عن حساب العميل، والتزام السلفة وضريبة المخرجات صراحةً؛ لا تُنشأ حسابات تلقائياً.</p>
             <div className="grid gap-2 sm:grid-cols-2">
