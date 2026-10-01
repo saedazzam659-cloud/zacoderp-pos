@@ -6,6 +6,7 @@ import { contractWorkItemDefaults } from "../src/lib/contractingWorkItemDefaults
 const detail = readFileSync(new URL("../src/pages/ContractingProjectDetail.tsx", import.meta.url), "utf8");
 const editor = readFileSync(new URL("../src/components/ContractingContractBoqEditor.tsx", import.meta.url), "utf8");
 const projects = readFileSync(new URL("../src/pages/ContractingProjects.tsx", import.meta.url), "utf8");
+const options = readFileSync(new URL("../src/lib/contractingProjectOptions.ts", import.meta.url), "utf8");
 const planning = readFileSync(new URL("../src/components/ExecutionPlanningPanel.tsx", import.meta.url), "utf8");
 const guarantees = readFileSync(new URL("../src/components/ContractingGuaranteesPanel.tsx", import.meta.url), "utf8");
 
@@ -31,8 +32,9 @@ test("saving a new agreement attaches each proposed BOQ line to its persisted co
 });
 
 test("project parent choices come from tenant-scoped options and refresh after mutations", () => {
-  assert.match(projects, /projects\/options/);
-  assert.match(projects, /Array\.isArray\(payload\?\.projects\) \? payload\.projects : \[\]/);
+  assert.match(projects, /fetchContractingProjectOptions/);
+  assert.match(options, /\/api\/contracting\/projects\/options/);
+  assert.match(options, /!Array\.isArray\(payload\?\.branches\) \|\| !Array\.isArray\(payload\?\.projects\)/);
   assert.match(projects, /!descendants\.has\(project\.id\)/);
   assert.match(projects, /project\.branchId === editing\.branchId/);
   assert.match(projects, /Promise\.all\(\[load\(\), loadBranches\(\)\]\)/);
@@ -69,7 +71,7 @@ test("saved owner BOQ rows are fetched by this contract and appear after reopeni
   assert.match(editor, /rows\.map\(row => \(/);
   assert.match(editor, /editingId == null \? "POST" : "PUT"/);
   assert.match(editor, /ownerContractId: direction === "owner" \? contractId : null/);
-  assert.match(detail, /setEditing\(null\);\s+void load\(\)/);
+  assert.match(detail, /setEditing\(null\);\s+void queryClient\.invalidateQueries\(\{ queryKey: \["contracting-project-options"\] \}\);\s+void load\(\)/);
   assert.match(detail, /setEditing\(c\)/);
   assert.match(detail, /key=\{`\$\{projectId\}:owner:\$\{editing\.id \?\? "new"\}`\}/);
   assert.match(detail, /persistedContractId\.current = null;\s+setEditing\(null\)/);

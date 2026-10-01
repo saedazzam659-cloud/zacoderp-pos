@@ -84,6 +84,7 @@ export default function ContractingContractBoqEditor({
   projectName,
   projectCode,
   direction,
+  active,
   contractId,
   contractType = "main",
   parentContractId = null,
@@ -95,6 +96,7 @@ export default function ContractingContractBoqEditor({
   projectName: string;
   projectCode: string;
   direction: Direction;
+  active: boolean;
   contractId: number | null;
   contractType?: string;
   parentContractId?: number | null;
@@ -163,7 +165,9 @@ export default function ContractingContractBoqEditor({
     }
   }, [contractId, contractType, direction, parentContractId, path, projectId, toast, token]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (active) void load();
+  }, [active, load]);
 
   const workItemOptions = useMemo<ComboboxItem[]>(
     () => workItems.map(item => ({

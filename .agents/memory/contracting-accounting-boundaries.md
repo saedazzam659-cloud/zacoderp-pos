@@ -201,6 +201,12 @@ For progress-certificate UI, follow the user's latest explicit layout request wh
 
 **How to apply:** Move existing sections without changing their authoritative values or calculations, and keep tab contents mounted so switching tabs cannot discard in-progress state.
 
+In force-mounted contracting tabs, preserve form drafts but refresh child lookup data when the owning tab becomes active; do not remount the full contract form just to refresh WBS/BOQ choices.
+
+**Why:** Adding execution items in one tab left mounted owner/subcontract BOQ editors with stale project work-item lists until a full page refresh, which also discarded unsaved contract input.
+
+**How to apply:** Pass the parent tab's active state to dependent editors and refetch their project-scoped lists on reactivation. Invalidate local lookup freshness when leaving forms that consume contract choices.
+
 Execution and certification must remain separate ledgers of progress. Executed work not yet certified may be certified in a later period with zero new execution.
 
 **Why:** The user confirmed that partial consultant certification must leave the uncertified portion pending, rather than consume contract quantity again or treat it as financial retention.

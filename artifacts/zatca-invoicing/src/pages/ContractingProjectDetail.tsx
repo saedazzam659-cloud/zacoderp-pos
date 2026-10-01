@@ -639,7 +639,11 @@ function BillsTab({
   // The list does not need three form lookups. Fetch them only for a form or
   // the explicit create shortcut, never for a read-only bills visit.
   useEffect(() => {
-    if (!token || !active || (!editing && !autoOpen && !pendingNewBill)) return;
+    if (!active) {
+      billOptionsLoadedAt.current = 0;
+      return;
+    }
+    if (!token || (!editing && !autoOpen && !pendingNewBill)) return;
     if (billOptionsLoaded && Date.now() - billOptionsLoadedAt.current < 30_000) return;
     setBillOptionsLoaded(false);
     void (async () => {
@@ -2124,6 +2128,7 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
           <ContractingAdvanceRecoveryFields value={editing} disabled={saving}
             onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
           <ContractingContractBoqEditor key={`${projectId}:owner:${editing.id ?? "new"}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="owner"
+            active={active}
             contractId={editing.id ?? null} contractType={editing.contractType}
             parentContractId={editing.parentContractId ?? null}
             pendingLines={pendingBoqLines} onPendingLinesChange={setPendingBoqLines} />
@@ -2363,7 +2368,7 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
           <ContractingAdvanceRecoveryFields value={editing} disabled={saving}
             onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
           {editing.id != null ? (
-            <ContractingContractBoqEditor key={`${projectId}:subcontract:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="subcontract" contractId={editing.id} />
+            <ContractingContractBoqEditor key={`${projectId}:subcontract:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} direction="subcontract" active={active} contractId={editing.id} />
           ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنود الباطن بأسعارها المستقلة وربطها ببنود التنفيذ أو مصدرها في عقد المالك.</p>}
           {editing.id != null && (
             <details className="rounded-lg border bg-background">
