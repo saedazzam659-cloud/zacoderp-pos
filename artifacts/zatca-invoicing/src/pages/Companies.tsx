@@ -110,12 +110,14 @@ export default function Companies() {
   const invoiceRepairRequest = {
     mode: invoiceRepairMode,
     kind: invoiceRepairMode === "correct_draft" ? invoiceRepairDoc?.kind : invoiceRepairKind,
-    number: invoiceRepairNumber.trim(), invoiceId: invoiceRepairDoc?.id,
+    number: invoiceRepairNumber.trim(), documentId: invoiceRepairDoc?.id, invoiceId: invoiceRepairDoc?.id,
     branchId: invoiceRepairBranch ? Number(invoiceRepairBranch) : 0,
     invoiceDate: invoiceRepairDate, paymentType: invoiceRepairPayment, isForeign: invoiceRepairForeign,
     resetNext: invoiceRepairMode === "correct_draft" && invoiceRepairResetNext,
-    legacyReservationOverride: invoiceRepairLegacyActive,
-    legacyReservationReason: invoiceRepairLegacyActive ? invoiceRepairLegacyReason.trim() : "",
+    ...(invoiceRepairLegacyActive ? {
+      legacyReservationOverride: true,
+      legacyReservationReason: invoiceRepairLegacyReason.trim(),
+    } : {}),
   };
   const invoiceRepairKey = JSON.stringify({ target: invoiceRepairTarget, ...invoiceRepairRequest });
   const invoiceRepairPreviewValid = invoiceRepairPreview?.key === invoiceRepairKey;
@@ -314,16 +316,7 @@ export default function Companies() {
       const kind = invoiceRepairMode === "correct_draft" ? invoiceRepairDoc.kind : invoiceRepairKind;
       const r = await fetch(`${BASE}/api/admin/companies/${invoiceRepairTarget.id}/invoice-numbering-repair${qs}`, {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: invoiceRepairMode, kind, number: invoiceRepairNumber.trim(),
-          documentId: invoiceRepairDoc?.id, invoiceId: invoiceRepairDoc?.id,
-          branchId: invoiceRepairBranch ? Number(invoiceRepairBranch) : 0,
-          invoiceDate: invoiceRepairDate, paymentType: invoiceRepairPayment, isForeign: invoiceRepairForeign,
-          resetNext: invoiceRepairMode === "correct_draft" && invoiceRepairResetNext,
-          legacyReservationOverride: invoiceRepairLegacyActive,
-          legacyReservationReason: invoiceRepairLegacyActive ? invoiceRepairLegacyReason.trim() : "",
-          dryRun,
-        }),
+        body: JSON.stringify({ ...invoiceRepairRequest, kind, dryRun }),
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body?.error || "تعذر تنفيذ الإصلاح");

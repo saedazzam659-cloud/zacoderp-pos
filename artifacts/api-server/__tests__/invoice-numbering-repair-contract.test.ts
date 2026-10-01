@@ -113,3 +113,14 @@ test("Companies repair UI exposes both return kinds and checks server capability
   assert.match(uiSource, /supportsReturnNumberRepair !== true/);
   assert.match(uiSource, /invoiceRepairKind === "sales_return"/);
 });
+
+test("repair UI sends legacy reservation fields only when the explicit exception is active", () => {
+  const requestStart = uiSource.indexOf("const invoiceRepairRequest = {");
+  const requestEnd = uiSource.indexOf("const invoiceRepairKey", requestStart);
+  const request = uiSource.slice(requestStart, requestEnd);
+  assert.match(request, /\.\.\.\(invoiceRepairLegacyActive \? \{/);
+  assert.match(request, /legacyReservationOverride: true/);
+  assert.match(request, /legacyReservationReason: invoiceRepairLegacyReason\.trim\(\)/);
+  assert.doesNotMatch(request, /legacyReservationOverride:\s*invoiceRepairLegacyActive/);
+  assert.match(uiSource, /body: JSON\.stringify\(\{ \.\.\.invoiceRepairRequest, kind, dryRun \}\)/);
+});
