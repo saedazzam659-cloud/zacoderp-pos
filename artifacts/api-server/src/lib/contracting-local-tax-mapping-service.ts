@@ -1,6 +1,8 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import {
+  centralDb,
   db,
+  getActiveExternalDb,
   companiesTable,
   contractingOwnerBillTaxMappingsTable,
 } from "@workspace/db";
@@ -18,7 +20,7 @@ type CleanMapping = {
   providerTaxCategoryCode: string;
 };
 
-let ensureTablesPromise: Promise<void> | null = null;
+const ensureTablesPromises = new WeakMap<object, Promise<void>>();
 
 function error(message: string, status = 400): Error & { status: number } {
   return Object.assign(new Error(message), { status });
@@ -54,8 +56,10 @@ export function validateOwnerBillTaxMappingInput(input: unknown): CleanMapping {
 }
 
 export async function ensureContractingLocalTaxMappingTables(): Promise<void> {
-  if (!ensureTablesPromise) {
-    ensureTablesPromise = (async () => {
+  const dbScope = getActiveExternalDb() ?? centralDb;
+  let ensurePromise = ensureTablesPromises.get(dbScope);
+  if (!ensurePromise) {
+    ensurePromise = (async () => {
       await db.execute(sql`
         CREATE TABLE IF NOT EXISTS contracting_owner_bill_tax_mappings (
           id SERIAL PRIMARY KEY,
@@ -84,12 +88,17 @@ export async function ensureContractingLocalTaxMappingTables(): Promise<void> {
         CREATE INDEX IF NOT EXISTS ctg_owner_bill_tax_map_contract_idx
           ON contracting_owner_bill_tax_mappings(company_id, project_id, owner_contract_id)
       `);
-    })().catch((caught) => {
-      ensureTablesPromise = null;
-      throw caught;
-    });
+    })();
+    ensureTablesPromises.set(dbScope, ensurePromise);
   }
-  await ensureTablesPromise;
+  try {
+    await ensurePromise;
+  } catch (caught) {
+    if (ensureTablesPromises.get(dbScope) === ensurePromise) {
+      ensureTablesPromises.delete(dbScope);
+    }
+    throw caught;
+  }
 }
 
 async function requireMappingAdmin(

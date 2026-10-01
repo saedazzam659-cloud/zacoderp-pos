@@ -22,6 +22,7 @@ import { ensureContractingExecutionSchema } from "./contracting-execution-storag
 import { ensureContractingGuaranteeTables } from "./contracting-guarantees-storage.js";
 import { ensureInternalControlSchema } from "./internalControlStorage.js";
 import { ensureDocumentExpenseSchema } from "./documentExpenses.js";
+import { ensureContractingLocalTaxMappingTables } from "./contracting-local-tax-mapping-service.js";
 
 async function ensureTaxIntegrationSchema(): Promise<void> {
   await db.execute(sql.raw(`
@@ -4680,6 +4681,10 @@ async function runHeal(options: {
   await ensureContractingAdvanceRecoveryCompatibility();
   await ensureContractingSettingsTable();
   if (getActiveExternalDb()) await ensureContractingBoqTables();
+  // Owner-bill tax mappings are required application data. Agent databases
+  // need their complete DDL before strict table validation; central schema
+  // changes remain Publish-managed.
+  if (getActiveExternalDb()) await ensureContractingLocalTaxMappingTables();
   // Required application tables must exist on the active database BEFORE
   // generic validation. Keep this in the shared pass: startup, manual agent
   // upgrades and strict request readiness all use it (without a central-only

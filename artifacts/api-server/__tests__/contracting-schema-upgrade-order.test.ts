@@ -33,6 +33,19 @@ test("agent BOQ creation precedes bill/accounting dependencies and strict valida
   assert.match(earlierPass, /if \(getActiveExternalDb\(\)\) await ensureContractingBoqTables\(\)/);
 });
 
+test("external owner-bill tax mapping DDL runs before strict validation and is scoped per database", () => {
+  const boq = shared.indexOf("if (getActiveExternalDb()) await ensureContractingBoqTables()");
+  const mapping = shared.indexOf("if (getActiveExternalDb()) await ensureContractingLocalTaxMappingTables()");
+  const validate = shared.indexOf("const r = await ensureColumns(");
+  assert.ok(boq > 0 && mapping > boq && validate > mapping);
+
+  const service = readFileSync(new URL("../src/lib/contracting-local-tax-mapping-service.ts", import.meta.url), "utf8");
+  assert.match(service, /new WeakMap<object, Promise<void>>\(\)/);
+  assert.match(service, /getActiveExternalDb\(\) \?\? centralDb/);
+  assert.doesNotMatch(service, /\bensureTablesPromise\b/);
+  assert.match(service, /CREATE TABLE IF NOT EXISTS contracting_owner_bill_tax_mappings/);
+});
+
 test("contracting integrity prerequisites precede column heal and validation follows it", () => {
   const prerequisite = shared.indexOf("await ensureContractingProjectIntegrityPrerequisites()");
   const columnHeal = shared.indexOf("const r = await ensureColumns(");
