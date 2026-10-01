@@ -1159,6 +1159,163 @@ export async function reverseSalesInvoiceStockForUnpost(input: {
   await tx.insert(stockLedgerTable).values(reversalRows);
 }
 
+/**
+ * Reverse a posted sales return without deleting its original stock-in rows.
+ * Later costing snapshots may point at those ledger identities with
+ * ON DELETE RESTRICT. The caller locks the return header in the same
+ * transaction before invoking this helper.
+ */
+export async function reverseSalesReturnStockForUnpost(input: {
+  executor: any;
+  companyId: number;
+  returnId: number;
+  reversalDate: string;
+  docNumber: string | null;
+}): Promise<void> {
+  const { executor: tx, companyId: cid, returnId } = input;
+  const ledger: Array<typeof stockLedgerTable.$inferSelect> = await tx.select().from(stockLedgerTable)
+    .where(and(
+      eq(stockLedgerTable.companyId, cid),
+      eq(stockLedgerTable.refType, "sales_return"),
+      eq(stockLedgerTable.refId, returnId),
+    ))
+    .orderBy(asc(stockLedgerTable.id));
+  if (!ledger.length) return;
+  if (ledger.some((row) => Number(row.qty) <= 0)) {
+    throw Object.assign(
+      new Error("تعذر فك الترحيل بسبب حركة مخزون غير موجبة مرتبطة بالمرتجع؛ راجع سلامة المخزون."),
+      { status: 409 },
+    );
+  }
+
+  const stockKeys = ledger.map((row) => ({
+    companyId: cid,
+    itemId: row.itemId,
+    warehouseId: row.warehouseId,
+  }));
+  await lockStockBalances(stockKeys, tx);
+  const snapshots = await loadStockSnapshots(cid, stockKeys, tx, true);
+  const missingBalance = ledger.find((row) => !snapshots.has(`${row.itemId}:${row.warehouseId}`));
+  if (missingBalance) {
+    throw Object.assign(
+      new Error(`تعذر فك الترحيل لأن رصيد الصنف ${missingBalance.itemId} في المخزن ${missingBalance.warehouseId} مفقود. راجع سلامة المخزون ثم أعد المحاولة.`),
+      { status: 409 },
+    );
+  }
+
+  const deltas = new Map<string, StockBalanceDelta>();
+  const batchReversals = new Map<string, {
+    itemId: number;
+    warehouseId: number;
+    batchNumber: string;
+    expiryDate: string | null;
+    qty: number;
+  }>();
+  for (const row of ledger) {
+    const key = `${row.itemId}:${row.warehouseId}`;
+    const deltaQty = -Number(row.qty);
+    const current = deltas.get(key);
+    if (current) current.deltaQty += deltaQty;
+    else deltas.set(key, {
+      itemId: row.itemId,
+      warehouseId: row.warehouseId,
+      deltaQty,
+      costPrice: Number(row.costPrice),
+    });
+
+    if (row.batchNumber) {
+      const batchKey = `${row.itemId}:${row.warehouseId}:${row.batchNumber}:${row.expiryDate ?? ""}`;
+      const prior = batchReversals.get(batchKey);
+      if (prior) prior.qty += Number(row.qty);
+      else batchReversals.set(batchKey, {
+        itemId: row.itemId,
+        warehouseId: row.warehouseId,
+        batchNumber: row.batchNumber,
+        expiryDate: row.expiryDate,
+        qty: Number(row.qty),
+      });
+    }
+  }
+
+  for (const [key, delta] of deltas) {
+    const currentQty = snapshots.get(key)?.qty;
+    if (currentQty == null || currentQty + delta.deltaQty < -0.0001) {
+      throw Object.assign(
+        new Error(`لا يمكن فك الترحيل: الرصيد الحالي لا يكفي لعكس مرتجع المبيعات للصنف ${delta.itemId} في المخزن ${delta.warehouseId}. قد تكون البضاعة قد صُرفت بعد المرتجع.`),
+        { status: 409 },
+      );
+    }
+  }
+
+  // Batch-tracked stock has a stricter guard than the aggregate balance: do not
+  // remove a returned batch if a later issue has already consumed it.
+  for (const batch of batchReversals.values()) {
+    const result = await tx.execute(sql`
+      SELECT COALESCE(SUM(qty), 0)::text AS qty
+        FROM stock_ledger
+       WHERE company_id = ${cid}
+         AND item_id = ${batch.itemId}
+         AND warehouse_id = ${batch.warehouseId}
+         AND batch_number = ${batch.batchNumber}
+         AND expiry_date IS NOT DISTINCT FROM ${batch.expiryDate}::date
+    `);
+    const batchRows = Array.isArray(result) ? result as any[] : (result as any)?.rows ?? [];
+    const available = Number(batchRows[0]?.qty ?? 0);
+    if (available + 0.0001 < batch.qty) {
+      throw Object.assign(
+        new Error(`لا يمكن فك الترحيل: الدفعة ${batch.batchNumber} للصنف ${batch.itemId} صُرف منها ${batch.qty - Math.max(0, available)} وحدة على الأقل. عالج الحركات اللاحقة أولاً.`),
+        { status: 409 },
+      );
+    }
+  }
+
+  const endingBalances = await applyStockBalanceDeltasBulk(
+    cid,
+    [...deltas.values()],
+    snapshots,
+    tx,
+  );
+  const cursors = new Map<string, number>();
+  for (const [key, delta] of deltas) {
+    const ending = endingBalances.get(key);
+    if (ending === undefined) throw new Error(`تعذر عكس رصيد المخزون ${key}`);
+    cursors.set(key, ending - delta.deltaQty);
+  }
+
+  const reversalRows: Array<typeof stockLedgerTable.$inferInsert> = [];
+  for (const row of ledger) {
+    const key = `${row.itemId}:${row.warehouseId}`;
+    const reverseQty = -Number(row.qty);
+    const cursor = (cursors.get(key) ?? 0) + reverseQty;
+    cursors.set(key, cursor);
+    reversalRows.push({
+      companyId: cid,
+      itemId: row.itemId,
+      warehouseId: row.warehouseId,
+      txDate: input.reversalDate,
+      txType: "adjustment",
+      qty: String(reverseQty),
+      costPrice: String(row.costPrice),
+      totalCost: String(-Number(row.totalCost)),
+      balanceQty: String(cursor),
+      refId: returnId,
+      refType: "sales_return_unpost",
+      sourceLineId: row.sourceLineId,
+      batchNumber: row.batchNumber,
+      expiryDate: row.expiryDate,
+      notes: `عكس فك ترحيل مرتجع مبيعات ${input.docNumber || returnId} — حركة أصلية #${row.id}`,
+    });
+  }
+
+  await tx.update(stockLedgerTable)
+    .set({ refType: "sales_return_unposted" })
+    .where(and(
+      eq(stockLedgerTable.companyId, cid),
+      inArray(stockLedgerTable.id, ledger.map((row) => row.id)),
+    ));
+  await tx.insert(stockLedgerTable).values(reversalRows);
+}
+
 const router = Router();
 router.use(extractAuth);
 router.use(async (_req, res, next) => {
@@ -5625,63 +5782,73 @@ router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (re
     const cid = guard(req, res); if (!cid) return;
     if (!(await requireMobilePerm(req, res, cid, "return_unpost", "ليست لديك صلاحية فك ترحيل مرتجعات المبيعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
-
-    // Branch-scope guard (mirrors /post above).
-    const [ret] = await db.select().from(salesReturnsTable)
-      .where(and(
-        eq(salesReturnsTable.id, id),
-        eq(salesReturnsTable.companyId, cid),
-        ...branchScopeSpread(req, salesReturnsTable.branchId, undefined),
-      ));
-    if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
-    if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
-    if (ret.zatcaStatus === "cleared" || ret.zatcaStatus === "reported") {
-      res.status(400).json({ error: "لا يمكن فك ترحيل مرتجع تم اعتماده لدى ZATCA." }); return;
-    }
-
-    const ledger = await db.select().from(stockLedgerTable)
-      .where(and(
-        eq(stockLedgerTable.companyId, cid),
-        eq(stockLedgerTable.refType, "sales_return"),
-        eq(stockLedgerTable.refId, id),
-      ));
-    for (const row of ledger) {
-      const qty = Number(row.qty); // positive on return; subtracting removes the addition
-      const [bal] = await db.select().from(stockBalanceTable)
+    const updated = await db.transaction(async (tx) => {
+      // Keep the same return → source-invoice lock order as posting. This
+      // serializes date corrections with another return or an invoice unpost.
+      const [ret] = await tx.select().from(salesReturnsTable)
         .where(and(
-          eq(stockBalanceTable.companyId, cid),
-          eq(stockBalanceTable.itemId, row.itemId),
-          eq(stockBalanceTable.warehouseId, row.warehouseId),
-        ));
-      if (bal) {
-        await db.update(stockBalanceTable)
-          .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
-          .where(eq(stockBalanceTable.id, bal.id));
+          eq(salesReturnsTable.id, id),
+          eq(salesReturnsTable.companyId, cid),
+          ...branchScopeSpread(req, salesReturnsTable.branchId, undefined),
+        ))
+        .for("update");
+      if (!ret) throw Object.assign(new Error("المرتجع غير موجود"), { status: 404 });
+      if (ret.status !== "posted") {
+        throw Object.assign(new Error("المرتجع ليس مُرحَّلاً"), { status: 400 });
       }
-    }
-    await db.delete(stockLedgerTable)
-      .where(and(
-        eq(stockLedgerTable.companyId, cid),
-        eq(stockLedgerTable.refType, "sales_return"),
-        eq(stockLedgerTable.refId, id),
-      ));
+      const zatcaStatus = String(ret.zatcaStatus ?? "").toLowerCase();
+      if (zatcaStatus === "approved" || zatcaStatus === "cleared" || zatcaStatus === "reported") {
+        throw Object.assign(new Error("لا يمكن فك ترحيل مرتجع تم اعتماده لدى ZATCA."), { status: 409 });
+      }
 
-    if (ret.journalEntryId) {
-      // Stash this JE's number so the next re-post reuses it (no gap).
-      await reserveJeNumberFromEntry(cid, "sales_return", id, ret.journalEntryId);
-      await db.update(journalEntryLinesTable)
-        .set({ debit: "0", credit: "0" })
-        .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
-      await db.delete(journalEntryLinesTable)
-        .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
-      await db.delete(journalEntriesTable)
-        .where(and(eq(journalEntriesTable.id, ret.journalEntryId), eq(journalEntriesTable.companyId, cid)));
-    }
+      if (ret.invoiceId) {
+        const [sourceInvoice] = await tx.select({
+          id: salesInvoicesTable.id,
+          status: salesInvoicesTable.status,
+        }).from(salesInvoicesTable).where(and(
+          eq(salesInvoicesTable.id, ret.invoiceId),
+          eq(salesInvoicesTable.companyId, cid),
+        )).for("update");
+        if (!sourceInvoice || sourceInvoice.status !== "posted") {
+          throw Object.assign(
+            new Error("تعذر فك الترحيل لأن الفاتورة المصدر غير موجودة أو لم تعد مُرحَّلة."),
+            { status: 409 },
+          );
+        }
+      }
 
-    const [updated] = await db.update(salesReturnsTable)
-      .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
-      .where(eq(salesReturnsTable.id, id))
-      .returning();
+      await reverseSalesReturnStockForUnpost({
+        executor: tx,
+        companyId: cid,
+        returnId: id,
+        reversalDate: new Date().toISOString().slice(0, 10),
+        docNumber: ret.docNumber,
+      });
+
+      if (ret.journalEntryId) {
+        // Stash the JE number before deletion so re-post reuses it.
+        await reserveJeNumberFromEntry(cid, "sales_return", id, ret.journalEntryId, tx as any);
+        await tx.update(journalEntryLinesTable)
+          .set({ debit: "0", credit: "0" })
+          .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+        await tx.delete(journalEntryLinesTable)
+          .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+        await tx.delete(journalEntriesTable)
+          .where(and(
+            eq(journalEntriesTable.id, ret.journalEntryId),
+            eq(journalEntriesTable.companyId, cid),
+          ));
+      }
+
+      const [draft] = await tx.update(salesReturnsTable)
+        .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+        .where(and(
+          eq(salesReturnsTable.id, id),
+          eq(salesReturnsTable.companyId, cid),
+        ))
+        .returning();
+      return draft;
+    });
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }

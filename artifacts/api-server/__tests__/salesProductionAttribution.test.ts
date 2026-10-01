@@ -61,3 +61,25 @@ test("linked return cap counts free quantities and is rechecked under source-inv
   assert.match(posting, /Never hide a cap\/provenance failure/);
   assert.doesNotMatch(posting, /parts\.push\(\{ takeQty: remaining, costPrice: costUnit/);
 });
+
+test("sales-return unpost preserves original stock provenance and records a compensating movement", async () => {
+  const source = await readFile(new URL("../src/routes/sales.ts", import.meta.url), "utf8");
+  const helperStart = source.indexOf("export async function reverseSalesReturnStockForUnpost(");
+  const helperEnd = source.indexOf("\nconst router =", helperStart);
+  assert.ok(helperStart > 0 && helperEnd > helperStart);
+  const helper = source.slice(helperStart, helperEnd);
+  assert.match(helper, /await lockStockBalances/);
+  assert.match(helper, /available \+ 0\.0001 < batch\.qty/);
+  assert.match(helper, /sales_return_unposted/);
+  assert.match(helper, /txType: "adjustment"/);
+  assert.match(helper, /refType: "sales_return_unpost"/);
+  assert.match(helper, /tx\.insert\(stockLedgerTable\)\.values\(reversalRows\)/);
+  assert.doesNotMatch(helper, /tx\.delete\(stockLedgerTable\)/);
+
+  const routeStart = source.indexOf('router.patch("/sales-returns/:id/unpost"');
+  const routeEnd = source.indexOf('router.delete("/sales-returns/:id"', routeStart);
+  const route = source.slice(routeStart, routeEnd);
+  assert.match(route, /db\.transaction\(async \(tx\)/);
+  assert.match(route, /reverseSalesReturnStockForUnpost/);
+  assert.doesNotMatch(route, /db\.delete\(stockLedgerTable\)/);
+});
