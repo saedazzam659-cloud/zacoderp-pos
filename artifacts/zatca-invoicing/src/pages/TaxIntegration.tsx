@@ -445,7 +445,7 @@ export default function TaxIntegration() {
                   آخر تحديث: <span className="font-medium text-foreground">{formatDate(setup?.updatedAt)}</span>
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" disabled={!setup?.hasCredentials || saving || testingConnection} onClick={() => void testConnection()} className="gap-2">
+                  <Button type="button" variant="outline" disabled={companyCountry === "JO" || !setup?.hasCredentials || saving || testingConnection} onClick={() => void testConnection()} className="gap-2">
                     {testingConnection ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
                     {testingConnection ? "جارٍ الاختبار..." : "اختبار الاتصال"}
                   </Button>
@@ -455,6 +455,11 @@ export default function TaxIntegration() {
                   </Button>
                 </div>
               </div>
+              {companyCountry === "JO" && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900" role="status">
+                  تم إيقاف اختبارات وإرسال JoFotara عبر الشبكة لعدم توفر بيئة اختبار رسمية مؤكدة. يمكن إنشاء معاينة XML محلية فقط؛ لن يُرسل أي طلب.
+                </p>
+              )}
               {connectionMessage && (
                 <div className={cn(
                   "rounded-xl border px-4 py-3 text-sm leading-6",

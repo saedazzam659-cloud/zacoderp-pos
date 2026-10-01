@@ -132,6 +132,8 @@ export function ensureContractingBillDetailsTables(): Promise<void> {
         quoted_vat_percent_snapshot NUMERIC(5,2),
         quoted_price_includes_vat_snapshot BOOLEAN,
         quoted_price_components_snapshot JSONB,
+        local_tax_snapshot JSONB,
+        local_tax_snapshot_error TEXT,
         change_order_subcontract_id INTEGER REFERENCES contracting_sub_contracts(id) ON DELETE SET NULL,
         previous_qty NUMERIC(14,4) NOT NULL DEFAULT 0 CHECK (previous_qty >= 0),
         current_qty NUMERIC(14,4) NOT NULL DEFAULT 0 CHECK (current_qty >= 0),
@@ -174,6 +176,9 @@ export function ensureContractingBillDetailsTables(): Promise<void> {
       ADD COLUMN IF NOT EXISTS quoted_price_includes_vat_snapshot BOOLEAN`);
     await db.execute(sql`ALTER TABLE contracting_bill_lines
       ADD COLUMN IF NOT EXISTS quoted_price_components_snapshot JSONB`);
+    await db.execute(sql`ALTER TABLE contracting_bill_lines
+      ADD COLUMN IF NOT EXISTS local_tax_snapshot JSONB,
+      ADD COLUMN IF NOT EXISTS local_tax_snapshot_error TEXT`);
     await db.execute(sql`
       ALTER TABLE contracting_bill_lines
         ADD COLUMN IF NOT EXISTS change_order_subcontract_id INTEGER

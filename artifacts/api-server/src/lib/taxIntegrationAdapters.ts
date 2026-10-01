@@ -9,7 +9,7 @@ export type TaxEnvironment = "sandbox" | "production";
 
 export interface TaxProviderRequest {
   url: string;
-  method: "POST" | "HEAD";
+  method: "GET" | "POST" | "HEAD";
   headers: Record<string, string>;
   body?: string;
 }
@@ -42,6 +42,13 @@ export type EtaAuthenticationResult =
 export type SubmissionResult =
   | { ok: true; httpStatus: number; providerSubmissionId?: string }
   | { ok: false; reason: "provider_rejected" | "provider_unavailable"; httpStatus?: number };
+
+export type EtaSubmissionStatusResult = {
+  ok: boolean;
+  httpStatus?: number;
+  status: "processing" | "accepted" | "rejected" | "unknown";
+  errorCode?: string;
+};
 
 const ETA_PREPROD_IDENTITY_URL = "https://id.preprod.eta.gov.eg/connect/token";
 const ETA_PROD_IDENTITY_URL = "https://id.eta.gov.eg/connect/token";
@@ -181,6 +188,80 @@ export async function submitEtaDocuments(
   return response.status >= 200 && response.status < 300
     ? { ok: true, httpStatus: response.status, providerSubmissionId }
     : { ok: false, reason: "provider_rejected", httpStatus: response.status };
+}
+
+/**
+ * Reads ETA's documented submission lookup and matches the single posted bill
+ * by its internal ID. A successful HTTP response is not treated as acceptance
+ * unless ETA returns a final `valid` document status.
+ */
+export async function getEtaSubmissionStatus(
+  input: {
+    environment: TaxEnvironment;
+    accessToken: string;
+    providerSubmissionId: string;
+    internalId: string;
+  },
+  transport: TaxProviderTransport,
+): Promise<EtaSubmissionStatusResult> {
+  const accessToken = requiredText(input.accessToken, "accessToken");
+  const submissionId = requiredText(input.providerSubmissionId, "providerSubmissionId");
+  const internalId = requiredText(input.internalId, "internalId");
+  const baseUrl = input.environment === "sandbox"
+    ? ETA_PREPROD_INVOICING_BASE_URL
+    : ETA_PROD_INVOICING_BASE_URL;
+  let response: TaxProviderResponse;
+  try {
+    response = await transport({
+      url: `${baseUrl}/api/v1.0/documentsubmissions/${encodeURIComponent(submissionId)}?pageNo=1&pageSize=20`,
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+  } catch {
+    return { ok: false, status: "unknown", errorCode: "ETA_LOOKUP_UNAVAILABLE" };
+  }
+  if (response.status < 200 || response.status >= 300) {
+    return {
+      ok: false,
+      httpStatus: response.status,
+      status: "unknown",
+      errorCode: `ETA_LOOKUP_HTTP_${response.status}`,
+    };
+  }
+  if (!isRecord(response.body)) {
+    return { ok: false, httpStatus: response.status, status: "unknown", errorCode: "ETA_LOOKUP_INVALID_RESPONSE" };
+  }
+
+  const body = response.body;
+  const summaries = Array.isArray(body.documentSummary) ? body.documentSummary : [];
+  const document = summaries.find((row) =>
+    isRecord(row) && String(row.internalId ?? "") === internalId,
+  );
+  if (!isRecord(document)) {
+    return { ok: false, httpStatus: response.status, status: "unknown", errorCode: "ETA_DOCUMENT_NOT_FOUND_IN_SUBMISSION" };
+  }
+  const documentStatus = String(document.status ?? "").toLowerCase();
+  if (documentStatus === "valid") return { ok: true, httpStatus: response.status, status: "accepted" };
+  if (documentStatus === "invalid" || documentStatus === "rejected" || documentStatus === "cancelled") {
+    return {
+      ok: true,
+      httpStatus: response.status,
+      status: "rejected",
+      errorCode: `ETA_DOCUMENT_${documentStatus.toUpperCase()}`,
+    };
+  }
+  if (documentStatus === "submitted" || String(body.overallStatus ?? "").toLowerCase() === "in progress") {
+    return { ok: true, httpStatus: response.status, status: "processing" };
+  }
+  return {
+    ok: false,
+    httpStatus: response.status,
+    status: "unknown",
+    errorCode: "ETA_STATUS_NOT_FINAL",
+  };
 }
 
 function validateJordanSandboxEndpoint(endpointValue: string): string {

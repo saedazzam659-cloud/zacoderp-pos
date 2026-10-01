@@ -23,6 +23,11 @@ import type {
   Company,
   ContractingContractorOption,
   ContractingGuaranteeOptions,
+  ContractingTaxBillPreview,
+  ContractingTaxBillReadiness,
+  ContractingTaxBillStatusResult,
+  ContractingTaxBillSubmissionResult,
+  ContractingTaxSubmissionsResponse,
   CreateCompanyBody,
   CreateCustomerBody,
   CreateIncidentActionBody,
@@ -52,6 +57,7 @@ import type {
   InternalStockTransfer,
   InternalStockTransferInput,
   Invoice,
+  ListContractingTaxSubmissionsParams,
   ListCustomersParams,
   ListHistoricalOwnerBoqPriceReferencesParams,
   ListIncidentsParams,
@@ -6010,6 +6016,451 @@ export const useSubmitTaxIntegrationInvoice = <
   TContext
 > => {
   return useMutation(getSubmitTaxIntegrationInvoiceMutationOptions(options));
+};
+
+export const getListContractingTaxSubmissionsUrl = (
+  params: ListContractingTaxSubmissionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/tax-integrations/contracting-bills/submissions?${stringifiedParams}`
+    : `/api/tax-integrations/contracting-bills/submissions`;
+};
+
+export const listContractingTaxSubmissions = async (
+  params: ListContractingTaxSubmissionsParams,
+  options?: RequestInit,
+): Promise<ContractingTaxSubmissionsResponse> => {
+  return customFetch<ContractingTaxSubmissionsResponse>(
+    getListContractingTaxSubmissionsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListContractingTaxSubmissionsQueryKey = (
+  params?: ListContractingTaxSubmissionsParams,
+) => {
+  return [
+    `/api/tax-integrations/contracting-bills/submissions`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListContractingTaxSubmissionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listContractingTaxSubmissions>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: ListContractingTaxSubmissionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listContractingTaxSubmissions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListContractingTaxSubmissionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listContractingTaxSubmissions>>
+  > = ({ signal }) =>
+    listContractingTaxSubmissions(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listContractingTaxSubmissions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListContractingTaxSubmissionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listContractingTaxSubmissions>>
+>;
+export type ListContractingTaxSubmissionsQueryError = ErrorType<ErrorResponse>;
+
+export function useListContractingTaxSubmissions<
+  TData = Awaited<ReturnType<typeof listContractingTaxSubmissions>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: ListContractingTaxSubmissionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listContractingTaxSubmissions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListContractingTaxSubmissionsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getGetContractingTaxBillReadinessUrl = (billId: number) => {
+  return `/api/tax-integrations/contracting-bills/${billId}/readiness`;
+};
+
+export const getContractingTaxBillReadiness = async (
+  billId: number,
+  options?: RequestInit,
+): Promise<ContractingTaxBillReadiness> => {
+  return customFetch<ContractingTaxBillReadiness>(
+    getGetContractingTaxBillReadinessUrl(billId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetContractingTaxBillReadinessQueryKey = (billId: number) => {
+  return [
+    `/api/tax-integrations/contracting-bills/${billId}/readiness`,
+  ] as const;
+};
+
+export const getGetContractingTaxBillReadinessQueryOptions = <
+  TData = Awaited<ReturnType<typeof getContractingTaxBillReadiness>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  billId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getContractingTaxBillReadiness>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetContractingTaxBillReadinessQueryKey(billId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getContractingTaxBillReadiness>>
+  > = ({ signal }) =>
+    getContractingTaxBillReadiness(billId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!billId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getContractingTaxBillReadiness>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetContractingTaxBillReadinessQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getContractingTaxBillReadiness>>
+>;
+export type GetContractingTaxBillReadinessQueryError = ErrorType<ErrorResponse>;
+
+export function useGetContractingTaxBillReadiness<
+  TData = Awaited<ReturnType<typeof getContractingTaxBillReadiness>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  billId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getContractingTaxBillReadiness>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetContractingTaxBillReadinessQueryOptions(
+    billId,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getRefreshContractingTaxBillStatusUrl = (billId: number) => {
+  return `/api/tax-integrations/contracting-bills/${billId}/refresh-status`;
+};
+
+export const refreshContractingTaxBillStatus = async (
+  billId: number,
+  options?: RequestInit,
+): Promise<ContractingTaxBillStatusResult> => {
+  return customFetch<ContractingTaxBillStatusResult>(
+    getRefreshContractingTaxBillStatusUrl(billId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getRefreshContractingTaxBillStatusMutationOptions = <
+  TError = ErrorType<ErrorResponse | ContractingTaxBillStatusResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof refreshContractingTaxBillStatus>>,
+    TError,
+    { billId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof refreshContractingTaxBillStatus>>,
+  TError,
+  { billId: number },
+  TContext
+> => {
+  const mutationKey = ["refreshContractingTaxBillStatus"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof refreshContractingTaxBillStatus>>,
+    { billId: number }
+  > = (props) => {
+    const { billId } = props ?? {};
+
+    return refreshContractingTaxBillStatus(billId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RefreshContractingTaxBillStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof refreshContractingTaxBillStatus>>
+>;
+
+export type RefreshContractingTaxBillStatusMutationError = ErrorType<
+  ErrorResponse | ContractingTaxBillStatusResult
+>;
+
+export const useRefreshContractingTaxBillStatus = <
+  TError = ErrorType<ErrorResponse | ContractingTaxBillStatusResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof refreshContractingTaxBillStatus>>,
+    TError,
+    { billId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof refreshContractingTaxBillStatus>>,
+  TError,
+  { billId: number },
+  TContext
+> => {
+  return useMutation(
+    getRefreshContractingTaxBillStatusMutationOptions(options),
+  );
+};
+
+export const getPreviewContractingTaxBillUrl = (billId: number) => {
+  return `/api/tax-integrations/contracting-bills/${billId}/preview`;
+};
+
+export const previewContractingTaxBill = async (
+  billId: number,
+  options?: RequestInit,
+): Promise<ContractingTaxBillPreview> => {
+  return customFetch<ContractingTaxBillPreview>(
+    getPreviewContractingTaxBillUrl(billId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getPreviewContractingTaxBillMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewContractingTaxBill>>,
+    TError,
+    { billId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof previewContractingTaxBill>>,
+  TError,
+  { billId: number },
+  TContext
+> => {
+  const mutationKey = ["previewContractingTaxBill"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof previewContractingTaxBill>>,
+    { billId: number }
+  > = (props) => {
+    const { billId } = props ?? {};
+
+    return previewContractingTaxBill(billId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PreviewContractingTaxBillMutationResult = NonNullable<
+  Awaited<ReturnType<typeof previewContractingTaxBill>>
+>;
+
+export type PreviewContractingTaxBillMutationError = ErrorType<ErrorResponse>;
+
+export const usePreviewContractingTaxBill = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewContractingTaxBill>>,
+    TError,
+    { billId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof previewContractingTaxBill>>,
+  TError,
+  { billId: number },
+  TContext
+> => {
+  return useMutation(getPreviewContractingTaxBillMutationOptions(options));
+};
+
+export const getSubmitContractingTaxBillUrl = (billId: number) => {
+  return `/api/tax-integrations/contracting-bills/${billId}/submit`;
+};
+
+export const submitContractingTaxBill = async (
+  billId: number,
+  taxIntegrationSubmissionInput: TaxIntegrationSubmissionInput,
+  options?: RequestInit,
+): Promise<ContractingTaxBillSubmissionResult> => {
+  return customFetch<ContractingTaxBillSubmissionResult>(
+    getSubmitContractingTaxBillUrl(billId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(taxIntegrationSubmissionInput),
+    },
+  );
+};
+
+export const getSubmitContractingTaxBillMutationOptions = <
+  TError = ErrorType<ErrorResponse | ContractingTaxBillSubmissionResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitContractingTaxBill>>,
+    TError,
+    { billId: number; data: BodyType<TaxIntegrationSubmissionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof submitContractingTaxBill>>,
+  TError,
+  { billId: number; data: BodyType<TaxIntegrationSubmissionInput> },
+  TContext
+> => {
+  const mutationKey = ["submitContractingTaxBill"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof submitContractingTaxBill>>,
+    { billId: number; data: BodyType<TaxIntegrationSubmissionInput> }
+  > = (props) => {
+    const { billId, data } = props ?? {};
+
+    return submitContractingTaxBill(billId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SubmitContractingTaxBillMutationResult = NonNullable<
+  Awaited<ReturnType<typeof submitContractingTaxBill>>
+>;
+export type SubmitContractingTaxBillMutationBody =
+  BodyType<TaxIntegrationSubmissionInput>;
+export type SubmitContractingTaxBillMutationError = ErrorType<
+  ErrorResponse | ContractingTaxBillSubmissionResult
+>;
+
+export const useSubmitContractingTaxBill = <
+  TError = ErrorType<ErrorResponse | ContractingTaxBillSubmissionResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitContractingTaxBill>>,
+    TError,
+    { billId: number; data: BodyType<TaxIntegrationSubmissionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof submitContractingTaxBill>>,
+  TError,
+  { billId: number; data: BodyType<TaxIntegrationSubmissionInput> },
+  TContext
+> => {
+  return useMutation(getSubmitContractingTaxBillMutationOptions(options));
 };
 
 export const getListTaxIntegrationLogsUrl = () => {

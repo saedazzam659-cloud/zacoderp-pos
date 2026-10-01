@@ -52,6 +52,17 @@ export const contractingBillLinesTable = pgTable(
     quotedVatPercentSnapshot: numeric("quoted_vat_percent_snapshot", { precision: 5, scale: 2 }),
     quotedPriceIncludesVatSnapshot: boolean("quoted_price_includes_vat_snapshot"),
     quotedPriceComponentsSnapshot: jsonb("quoted_price_components_snapshot"),
+    // Country-local tax evidence is frozen only when an owner bill is approved.
+    // NULL deliberately represents legacy, ambiguous, or unreconciled lines.
+    localTaxSnapshot: jsonb("local_tax_snapshot").$type<{
+      version: 1;
+      countryCode: "EG" | "JO";
+      currencyCode: "EGP" | "JOD";
+      taxBase: string;
+      taxRatePercent: string;
+      taxAmount: string;
+    }>(),
+    localTaxSnapshotError: text("local_tax_snapshot_error"),
     // Optional per-line relation to an approved owner-contract change order.
     // NULL deliberately preserves legacy work-item-only lines.
     changeOrderId: integer("change_order_id")

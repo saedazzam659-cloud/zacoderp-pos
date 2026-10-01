@@ -2779,6 +2779,108 @@ export const SubmitTaxIntegrationInvoiceBody = zod.object({
     .default(submitTaxIntegrationInvoiceBodyConfirmProductionDefault),
 });
 
+export const ListContractingTaxSubmissionsQueryParams = zod.object({
+  projectId: zod.coerce.number().min(1),
+});
+
+export const ListContractingTaxSubmissionsResponse = zod.object({
+  setup: zod.union([
+    zod.object({
+      provider: zod.enum(["egypt_eta", "jordan_national"]),
+      environment: zod.enum(["sandbox", "production"]),
+      status: zod.enum([
+        "configured_unverified",
+        "connection_verified",
+        "endpoint_reachable_unverified",
+      ]),
+    }),
+    zod.null(),
+  ]),
+  submissions: zod.array(
+    zod.object({
+      billId: zod.number(),
+      provider: zod.enum(["egypt_eta", "jordan_national"]),
+      environment: zod.enum(["sandbox", "production"]),
+      status: zod.enum([
+        "submitting",
+        "processing",
+        "accepted",
+        "rejected",
+        "unknown",
+      ]),
+      attemptCount: zod.number(),
+      providerSubmissionId: zod.string().nullable(),
+      responseCode: zod.string().nullable(),
+      errorCode: zod.string().nullable(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+export const GetContractingTaxBillReadinessParams = zod.object({
+  billId: zod.coerce.number().min(1),
+});
+
+export const GetContractingTaxBillReadinessResponse = zod.object({
+  billId: zod.number(),
+  countryCode: zod.enum(["EG", "JO"]),
+  provider: zod.enum(["egypt_eta", "jordan_national"]),
+  ready: zod.boolean(),
+  canSubmit: zod.boolean(),
+  canPreview: zod.boolean(),
+  previewOnly: zod.boolean(),
+  environment: zod
+    .union([
+      zod.literal("sandbox"),
+      zod.literal("production"),
+      zod.literal(null),
+    ])
+    .nullable(),
+  blockers: zod.array(zod.string()),
+});
+
+export const RefreshContractingTaxBillStatusParams = zod.object({
+  billId: zod.coerce.number().min(1),
+});
+
+export const RefreshContractingTaxBillStatusResponse = zod.object({
+  ok: zod.boolean(),
+  billId: zod.number(),
+  status: zod.enum(["processing", "accepted", "rejected", "unknown"]),
+  responseCode: zod.string().nullable(),
+  errorCode: zod.string().nullable(),
+  message: zod.string(),
+});
+
+export const PreviewContractingTaxBillParams = zod.object({
+  billId: zod.coerce.number().min(1),
+});
+
+export const PreviewContractingTaxBillResponse = zod.object({
+  ok: zod.boolean(),
+  sent: zod.boolean(),
+  status: zod.enum(["local_preview_only"]),
+  billId: zod.number(),
+  billNumber: zod.string(),
+  documentUuid: zod.string(),
+  xml: zod.string(),
+  message: zod.string(),
+});
+
+export const SubmitContractingTaxBillParams = zod.object({
+  billId: zod.coerce.number().min(1),
+});
+
+export const submitContractingTaxBillBodyRetryDefault = false;
+export const submitContractingTaxBillBodyConfirmProductionDefault = false;
+
+export const SubmitContractingTaxBillBody = zod.object({
+  retry: zod.boolean().default(submitContractingTaxBillBodyRetryDefault),
+  confirmProduction: zod
+    .boolean()
+    .default(submitContractingTaxBillBodyConfirmProductionDefault),
+});
+
 export const ListTaxIntegrationLogsResponseItem = zod.object({
   id: zod.number(),
   provider: zod.string(),

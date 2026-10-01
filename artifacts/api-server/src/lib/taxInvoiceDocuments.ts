@@ -10,6 +10,12 @@ export interface TaxInvoiceLineSnapshot {
   discount: string | number | null;
   discountAmount: string | number | null;
   vatRate: string | number | null;
+  /** Present only for explicitly mapped contracting owner-bill lines. */
+  providerMapping?: {
+    providerItemCode: string;
+    providerUnitCode: string;
+    providerTaxCategoryCode: string;
+  };
 }
 
 export interface TaxInvoiceSnapshot {
@@ -290,12 +296,15 @@ export function buildEtaSignedInvoice(
       terms: snapshot.invoice.paymentType?.trim() || "غير محدد",
     },
     invoiceLines: totals.lines.map((line) => {
-      const itemCode = text(line.source.itemCode, "كود ETA للصنف");
+      const mapping = line.source.providerMapping;
+      const itemCode = text(mapping?.providerItemCode ?? line.source.itemCode, "كود ETA للصنف");
       return {
         description: text(line.source.itemName, "وصف البند"),
         itemType: /^\d{8,14}$/.test(itemCode) ? "GS1" : "EGS",
         itemCode,
-        unitType: etaUnit(line.source.unit),
+        unitType: mapping
+          ? text(mapping.providerUnitCode, "وحدة ETA المرتبطة ببند BOQ")
+          : etaUnit(line.source.unit),
         quantity: decimal(line.qty, 4),
         internalCode: itemCode,
         salesTotal: decimal(line.salesTotal),
@@ -313,7 +322,9 @@ export function buildEtaSignedInvoice(
         taxableItems: [{
           taxType: "T1",
           amount: decimal(line.tax),
-          subType: taxSubtype(line.rate),
+          subType: mapping
+            ? text(mapping.providerTaxCategoryCode, "الفئة الضريبية المرتبطة ببند BOQ")
+            : taxSubtype(line.rate),
           rate: decimal(line.rate),
         }],
       };
@@ -355,7 +366,8 @@ export function buildJordanUblInvoiceXml(snapshot: TaxInvoiceSnapshot, uuid: str
   if (snapshot.invoice.status !== "posted") throw new Error("يجب ترحيل الفاتورة قبل إرسالها إلى نظام الأردن.");
   if (snapshot.company.country.toUpperCase() !== "JO") throw new Error("فاتورة الشركة ليست أردنية.");
   const totals = calculateLines(snapshot, "JOD");
-  if (totals.lines.some(line => Math.abs(line.rate - 16) > 0.001)) {
+  const explicitlyMapped = totals.lines.every(line => line.source.providerMapping != null);
+  if (!explicitlyMapped && totals.lines.some(line => Math.abs(line.rate - 16) > 0.001)) {
     throw new Error("إرسال الأردن يتطلب حالياً ضريبة مبيعات 16% لكل البنود؛ لا ترسل بنداً معفياً أو بنسبة أخرى.");
   }
   const companyName = text(snapshot.company.nameEn || snapshot.company.nameAr, "اسم الشركة");
@@ -371,15 +383,35 @@ export function buildJordanUblInvoiceXml(snapshot: TaxInvoiceSnapshot, uuid: str
   const paymentCode = snapshot.invoice.paymentType === "cash" ? "10"
     : snapshot.invoice.paymentType === "card" ? "48" : "30";
   const lines = totals.lines.map((line, index) => {
-    const code = etaUnit(line.source.unit);
-    const category = "S";
+    const mapping = line.source.providerMapping;
+    const code = mapping
+      ? text(mapping.providerUnitCode, "وحدة JoFotara المرتبطة ببند BOQ")
+      : etaUnit(line.source.unit);
+    const category = mapping
+      ? text(mapping.providerTaxCategoryCode, "الفئة الضريبية المرتبطة ببند BOQ")
+      : "S";
     const discount = Math.max(0, line.salesTotal - line.net);
-    return `<cac:InvoiceLine><cbc:ID>${index + 1}</cbc:ID><cbc:InvoicedQuantity unitCode="${xml(code)}">${line.qty}</cbc:InvoicedQuantity><cbc:LineExtensionAmount currencyID="${currency}">${jodAmount(line.net)}</cbc:LineExtensionAmount>${discount > 0 ? `<cac:AllowanceCharge><cbc:ChargeIndicator>false</cbc:ChargeIndicator><cbc:AllowanceChargeReason>Discount</cbc:AllowanceChargeReason><cbc:Amount currencyID="${currency}">${jodAmount(discount)}</cbc:Amount></cac:AllowanceCharge>` : ""}<cac:TaxTotal><cbc:TaxAmount currencyID="${currency}">${jodAmount(line.tax)}</cbc:TaxAmount><cac:TaxSubtotal><cbc:TaxableAmount currencyID="${currency}">${jodAmount(line.net)}</cbc:TaxableAmount><cbc:TaxAmount currencyID="${currency}">${jodAmount(line.tax)}</cbc:TaxAmount><cac:TaxCategory><cbc:ID>${category}</cbc:ID><cbc:Percent>${line.rate}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory></cac:TaxSubtotal></cac:TaxTotal><cac:Item><cbc:Name>${xml(line.source.itemName)}</cbc:Name><cac:ClassifiedTaxCategory><cbc:ID>${category}</cbc:ID><cbc:Percent>${line.rate}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:ClassifiedTaxCategory></cac:Item><cac:Price><cbc:PriceAmount currencyID="${currency}">${jodAmount(line.unitPriceExcl)}</cbc:PriceAmount><cbc:BaseQuantity unitCode="${xml(code)}">1</cbc:BaseQuantity></cac:Price></cac:InvoiceLine>`;
+    const itemIdentifier = mapping
+      ? `<cac:SellersItemIdentification><cbc:ID>${xml(mapping.providerItemCode)}</cbc:ID></cac:SellersItemIdentification>`
+      : "";
+    return `<cac:InvoiceLine><cbc:ID>${index + 1}</cbc:ID><cbc:InvoicedQuantity unitCode="${xml(code)}">${line.qty}</cbc:InvoicedQuantity><cbc:LineExtensionAmount currencyID="${currency}">${jodAmount(line.net)}</cbc:LineExtensionAmount>${discount > 0 ? `<cac:AllowanceCharge><cbc:ChargeIndicator>false</cbc:ChargeIndicator><cbc:AllowanceChargeReason>Discount</cbc:AllowanceChargeReason><cbc:Amount currencyID="${currency}">${jodAmount(discount)}</cbc:Amount></cac:AllowanceCharge>` : ""}<cac:TaxTotal><cbc:TaxAmount currencyID="${currency}">${jodAmount(line.tax)}</cbc:TaxAmount><cac:TaxSubtotal><cbc:TaxableAmount currencyID="${currency}">${jodAmount(line.net)}</cbc:TaxableAmount><cbc:TaxAmount currencyID="${currency}">${jodAmount(line.tax)}</cbc:TaxAmount><cac:TaxCategory><cbc:ID>${xml(category)}</cbc:ID><cbc:Percent>${line.rate}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory></cac:TaxSubtotal></cac:TaxTotal><cac:Item><cbc:Name>${xml(line.source.itemName)}</cbc:Name>${itemIdentifier}<cac:ClassifiedTaxCategory><cbc:ID>${xml(category)}</cbc:ID><cbc:Percent>${line.rate}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:ClassifiedTaxCategory></cac:Item><cac:Price><cbc:PriceAmount currencyID="${currency}">${jodAmount(line.unitPriceExcl)}</cbc:PriceAmount><cbc:BaseQuantity unitCode="${xml(code)}">1</cbc:BaseQuantity></cac:Price></cac:InvoiceLine>`;
   }).join("");
+  const taxGroups = new Map<string, { category: string; rate: number; taxable: number; tax: number }>();
+  for (const line of totals.lines) {
+    const category = line.source.providerMapping?.providerTaxCategoryCode ?? "S";
+    const key = `${category}\u0000${line.rate}`;
+    const group = taxGroups.get(key) ?? { category, rate: line.rate, taxable: 0, tax: 0 };
+    group.taxable = round(group.taxable + line.net);
+    group.tax = round(group.tax + line.tax);
+    taxGroups.set(key, group);
+  }
+  const taxSubtotals = [...taxGroups.values()].map(group =>
+    `<cac:TaxSubtotal><cbc:TaxableAmount currencyID="${currency}">${jodAmount(group.taxable)}</cbc:TaxableAmount><cbc:TaxAmount currencyID="${currency}">${jodAmount(group.tax)}</cbc:TaxAmount><cac:TaxCategory><cbc:ID>${xml(group.category)}</cbc:ID><cbc:Percent>${group.rate}</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory></cac:TaxSubtotal>`,
+  ).join("");
   const customerTax = customer.vatNumber?.trim() || customer.crNumber?.trim();
   const sellerCountry = "JO";
   const buyerCountry = (customer.country || "JO").toUpperCase();
-  return `<?xml version="1.0" encoding="UTF-8"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"><cbc:UBLVersionID>2.1</cbc:UBLVersionID><cbc:ID>${xml(docNumber)}</cbc:ID><cbc:UUID>${xml(uuid)}</cbc:UUID><cbc:IssueDate>${issueDate}</cbc:IssueDate><cbc:IssueTime>${issueTime}</cbc:IssueTime><cbc:InvoiceTypeCode>388</cbc:InvoiceTypeCode><cbc:DocumentCurrencyCode>${currency}</cbc:DocumentCurrencyCode><cac:AccountingSupplierParty><cac:Party><cac:PartyIdentification><cbc:ID schemeID="TN">${xml(text(snapshot.company.vatNumber, "الرقم الضريبي للشركة"))}</cbc:ID></cac:PartyIdentification><cac:PostalAddress><cbc:CityName>${xml(text(snapshot.company.city, "مدينة الشركة"))}</cbc:CityName><cbc:StreetName>${xml(text(snapshot.company.street, "شارع الشركة"))}</cbc:StreetName><cbc:BuildingNumber>${xml(text(snapshot.company.buildingNumber, "رقم مبنى الشركة"))}</cbc:BuildingNumber><cac:Country><cbc:IdentificationCode>${sellerCountry}</cbc:IdentificationCode></cac:Country></cac:PostalAddress><cac:PartyTaxScheme><cbc:CompanyID>${xml(snapshot.company.vatNumber)}</cbc:CompanyID><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme><cac:PartyLegalEntity><cbc:RegistrationName>${xml(companyName)}</cbc:RegistrationName><cbc:CompanyID>${xml(snapshot.company.crNumber || snapshot.company.vatNumber)}</cbc:CompanyID></cac:PartyLegalEntity></cac:Party></cac:AccountingSupplierParty><cac:AccountingCustomerParty><cac:Party>${customerTax ? `<cac:PartyIdentification><cbc:ID schemeID="TN">${xml(customerTax)}</cbc:ID></cac:PartyIdentification>` : ""}<cac:PostalAddress><cbc:CityName>${xml(customer.city || snapshot.company.city)}</cbc:CityName>${customer.street ? `<cbc:StreetName>${xml(customer.street)}</cbc:StreetName>` : ""}${customer.buildingNumber ? `<cbc:BuildingNumber>${xml(customer.buildingNumber)}</cbc:BuildingNumber>` : ""}<cac:Country><cbc:IdentificationCode>${xml(buyerCountry)}</cbc:IdentificationCode></cac:Country></cac:PostalAddress>${customerTax ? `<cac:PartyTaxScheme><cbc:CompanyID>${xml(customerTax)}</cbc:CompanyID><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>` : ""}<cac:PartyLegalEntity><cbc:RegistrationName>${xml(customerName)}</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party></cac:AccountingCustomerParty><cac:PaymentMeans><cbc:PaymentMeansCode>${paymentCode}</cbc:PaymentMeansCode></cac:PaymentMeans><cac:TaxTotal><cbc:TaxAmount currencyID="${currency}">${jodAmount(totals.tax)}</cbc:TaxAmount><cac:TaxSubtotal><cbc:TaxableAmount currencyID="${currency}">${jodAmount(totals.net)}</cbc:TaxableAmount><cbc:TaxAmount currencyID="${currency}">${jodAmount(totals.tax)}</cbc:TaxAmount><cac:TaxCategory><cbc:ID>S</cbc:ID><cbc:Percent>16</cbc:Percent><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory></cac:TaxSubtotal></cac:TaxTotal><cac:LegalMonetaryTotal><cbc:LineExtensionAmount currencyID="${currency}">${jodAmount(totals.net)}</cbc:LineExtensionAmount><cbc:TaxExclusiveAmount currencyID="${currency}">${jodAmount(totals.net)}</cbc:TaxExclusiveAmount><cbc:TaxInclusiveAmount currencyID="${currency}">${jodAmount(totals.total)}</cbc:TaxInclusiveAmount><cbc:PayableAmount currencyID="${currency}">${jodAmount(totals.total)}</cbc:PayableAmount></cac:LegalMonetaryTotal>${lines}</Invoice>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"><cbc:UBLVersionID>2.1</cbc:UBLVersionID><cbc:ID>${xml(docNumber)}</cbc:ID><cbc:UUID>${xml(uuid)}</cbc:UUID><cbc:IssueDate>${issueDate}</cbc:IssueDate><cbc:IssueTime>${issueTime}</cbc:IssueTime><cbc:InvoiceTypeCode>388</cbc:InvoiceTypeCode><cbc:DocumentCurrencyCode>${currency}</cbc:DocumentCurrencyCode><cac:AccountingSupplierParty><cac:Party><cac:PartyIdentification><cbc:ID schemeID="TN">${xml(text(snapshot.company.vatNumber, "الرقم الضريبي للشركة"))}</cbc:ID></cac:PartyIdentification><cac:PostalAddress><cbc:CityName>${xml(text(snapshot.company.city, "مدينة الشركة"))}</cbc:CityName><cbc:StreetName>${xml(text(snapshot.company.street, "شارع الشركة"))}</cbc:StreetName><cbc:BuildingNumber>${xml(text(snapshot.company.buildingNumber, "رقم مبنى الشركة"))}</cbc:BuildingNumber><cac:Country><cbc:IdentificationCode>${sellerCountry}</cbc:IdentificationCode></cac:Country></cac:PostalAddress><cac:PartyTaxScheme><cbc:CompanyID>${xml(snapshot.company.vatNumber)}</cbc:CompanyID><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme><cac:PartyLegalEntity><cbc:RegistrationName>${xml(companyName)}</cbc:RegistrationName><cbc:CompanyID>${xml(snapshot.company.crNumber || snapshot.company.vatNumber)}</cbc:CompanyID></cac:PartyLegalEntity></cac:Party></cac:AccountingSupplierParty><cac:AccountingCustomerParty><cac:Party>${customerTax ? `<cac:PartyIdentification><cbc:ID schemeID="TN">${xml(customerTax)}</cbc:ID></cac:PartyIdentification>` : ""}<cac:PostalAddress><cbc:CityName>${xml(customer.city || snapshot.company.city)}</cbc:CityName>${customer.street ? `<cbc:StreetName>${xml(customer.street)}</cbc:StreetName>` : ""}${customer.buildingNumber ? `<cbc:BuildingNumber>${xml(customer.buildingNumber)}</cbc:BuildingNumber>` : ""}<cac:Country><cbc:IdentificationCode>${xml(buyerCountry)}</cbc:IdentificationCode></cac:Country></cac:PostalAddress>${customerTax ? `<cac:PartyTaxScheme><cbc:CompanyID>${xml(customerTax)}</cbc:CompanyID><cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>` : ""}<cac:PartyLegalEntity><cbc:RegistrationName>${xml(customerName)}</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party></cac:AccountingCustomerParty><cac:PaymentMeans><cbc:PaymentMeansCode>${paymentCode}</cbc:PaymentMeansCode></cac:PaymentMeans><cac:TaxTotal><cbc:TaxAmount currencyID="${currency}">${jodAmount(totals.tax)}</cbc:TaxAmount>${taxSubtotals}</cac:TaxTotal><cac:LegalMonetaryTotal><cbc:LineExtensionAmount currencyID="${currency}">${jodAmount(totals.net)}</cbc:LineExtensionAmount><cbc:TaxExclusiveAmount currencyID="${currency}">${jodAmount(totals.net)}</cbc:TaxExclusiveAmount><cbc:TaxInclusiveAmount currencyID="${currency}">${jodAmount(totals.total)}</cbc:TaxInclusiveAmount><cbc:PayableAmount currencyID="${currency}">${jodAmount(totals.total)}</cbc:PayableAmount></cac:LegalMonetaryTotal>${lines}</Invoice>`;
 }
 
 export function newJordanDocumentUuid(): string {

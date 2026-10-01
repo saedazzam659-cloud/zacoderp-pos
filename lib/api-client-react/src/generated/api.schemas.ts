@@ -375,6 +375,184 @@ export interface TaxIntegrationSubmissionResult {
   message: string;
 }
 
+export type ContractingTaxSetupMetadataProvider =
+  (typeof ContractingTaxSetupMetadataProvider)[keyof typeof ContractingTaxSetupMetadataProvider];
+
+export const ContractingTaxSetupMetadataProvider = {
+  egypt_eta: "egypt_eta",
+  jordan_national: "jordan_national",
+} as const;
+
+export type ContractingTaxSetupMetadataEnvironment =
+  (typeof ContractingTaxSetupMetadataEnvironment)[keyof typeof ContractingTaxSetupMetadataEnvironment];
+
+export const ContractingTaxSetupMetadataEnvironment = {
+  sandbox: "sandbox",
+  production: "production",
+} as const;
+
+export type ContractingTaxSetupMetadataStatus =
+  (typeof ContractingTaxSetupMetadataStatus)[keyof typeof ContractingTaxSetupMetadataStatus];
+
+export const ContractingTaxSetupMetadataStatus = {
+  configured_unverified: "configured_unverified",
+  connection_verified: "connection_verified",
+  endpoint_reachable_unverified: "endpoint_reachable_unverified",
+} as const;
+
+export interface ContractingTaxSetupMetadata {
+  provider: ContractingTaxSetupMetadataProvider;
+  environment: ContractingTaxSetupMetadataEnvironment;
+  status: ContractingTaxSetupMetadataStatus;
+}
+
+export type ContractingTaxSubmissionProvider =
+  (typeof ContractingTaxSubmissionProvider)[keyof typeof ContractingTaxSubmissionProvider];
+
+export const ContractingTaxSubmissionProvider = {
+  egypt_eta: "egypt_eta",
+  jordan_national: "jordan_national",
+} as const;
+
+export type ContractingTaxSubmissionEnvironment =
+  (typeof ContractingTaxSubmissionEnvironment)[keyof typeof ContractingTaxSubmissionEnvironment];
+
+export const ContractingTaxSubmissionEnvironment = {
+  sandbox: "sandbox",
+  production: "production",
+} as const;
+
+export type ContractingTaxSubmissionStatus =
+  (typeof ContractingTaxSubmissionStatus)[keyof typeof ContractingTaxSubmissionStatus];
+
+export const ContractingTaxSubmissionStatus = {
+  submitting: "submitting",
+  processing: "processing",
+  accepted: "accepted",
+  rejected: "rejected",
+  unknown: "unknown",
+} as const;
+
+export interface ContractingTaxSubmission {
+  billId: number;
+  provider: ContractingTaxSubmissionProvider;
+  environment: ContractingTaxSubmissionEnvironment;
+  status: ContractingTaxSubmissionStatus;
+  attemptCount: number;
+  /** @nullable */
+  providerSubmissionId: string | null;
+  /** @nullable */
+  responseCode: string | null;
+  /** @nullable */
+  errorCode: string | null;
+  updatedAt: string;
+}
+
+export interface ContractingTaxSubmissionsResponse {
+  setup: ContractingTaxSetupMetadata | null;
+  submissions: ContractingTaxSubmission[];
+}
+
+export type ContractingTaxBillReadinessCountryCode =
+  (typeof ContractingTaxBillReadinessCountryCode)[keyof typeof ContractingTaxBillReadinessCountryCode];
+
+export const ContractingTaxBillReadinessCountryCode = {
+  EG: "EG",
+  JO: "JO",
+} as const;
+
+export type ContractingTaxBillReadinessProvider =
+  (typeof ContractingTaxBillReadinessProvider)[keyof typeof ContractingTaxBillReadinessProvider];
+
+export const ContractingTaxBillReadinessProvider = {
+  egypt_eta: "egypt_eta",
+  jordan_national: "jordan_national",
+} as const;
+
+/**
+ * @nullable
+ */
+export type ContractingTaxBillReadinessEnvironment =
+  | (typeof ContractingTaxBillReadinessEnvironment)[keyof typeof ContractingTaxBillReadinessEnvironment]
+  | null;
+
+export const ContractingTaxBillReadinessEnvironment = {
+  sandbox: "sandbox",
+  production: "production",
+} as const;
+
+export interface ContractingTaxBillReadiness {
+  billId: number;
+  countryCode: ContractingTaxBillReadinessCountryCode;
+  provider: ContractingTaxBillReadinessProvider;
+  ready: boolean;
+  canSubmit: boolean;
+  canPreview: boolean;
+  previewOnly: boolean;
+  /** @nullable */
+  environment: ContractingTaxBillReadinessEnvironment;
+  blockers: string[];
+}
+
+export type ContractingTaxBillPreviewStatus =
+  (typeof ContractingTaxBillPreviewStatus)[keyof typeof ContractingTaxBillPreviewStatus];
+
+export const ContractingTaxBillPreviewStatus = {
+  local_preview_only: "local_preview_only",
+} as const;
+
+export interface ContractingTaxBillPreview {
+  ok: boolean;
+  sent: false;
+  status: ContractingTaxBillPreviewStatus;
+  billId: number;
+  billNumber: string;
+  documentUuid: string;
+  xml: string;
+  message: string;
+}
+
+export type ContractingTaxBillSubmissionResultStatus =
+  (typeof ContractingTaxBillSubmissionResultStatus)[keyof typeof ContractingTaxBillSubmissionResultStatus];
+
+export const ContractingTaxBillSubmissionResultStatus = {
+  processing: "processing",
+  rejected: "rejected",
+  unknown: "unknown",
+} as const;
+
+export interface ContractingTaxBillSubmissionResult {
+  ok: boolean;
+  sent: boolean;
+  billId: number;
+  billNumber: string;
+  status: ContractingTaxBillSubmissionResultStatus;
+  /** @nullable */
+  providerSubmissionId: string | null;
+  message: string;
+}
+
+export type ContractingTaxBillStatusResultStatus =
+  (typeof ContractingTaxBillStatusResultStatus)[keyof typeof ContractingTaxBillStatusResultStatus];
+
+export const ContractingTaxBillStatusResultStatus = {
+  processing: "processing",
+  accepted: "accepted",
+  rejected: "rejected",
+  unknown: "unknown",
+} as const;
+
+export interface ContractingTaxBillStatusResult {
+  ok: boolean;
+  billId: number;
+  status: ContractingTaxBillStatusResultStatus;
+  /** @nullable */
+  responseCode: string | null;
+  /** @nullable */
+  errorCode: string | null;
+  message: string;
+}
+
 export type TaxIntegrationAuditMetadata = { [key: string]: unknown };
 
 export interface TaxIntegrationAudit {
@@ -1466,6 +1644,13 @@ export type ListTaxIntegrationSubmissionsParams = {
    * Comma-separated sales invoice IDs, up to 100
    */
   invoiceIds: string;
+};
+
+export type ListContractingTaxSubmissionsParams = {
+  /**
+   * @minimum 1
+   */
+  projectId: number;
 };
 
 export type GetAdditionalAccountingReportParams = {

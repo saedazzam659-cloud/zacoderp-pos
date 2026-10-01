@@ -82,6 +82,31 @@ async function ensureTaxIntegrationSchema(): Promise<void> {
     )
   `));
   await db.execute(sql.raw(`
+    CREATE TABLE IF NOT EXISTS contracting_tax_submissions (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      bill_id INTEGER NOT NULL REFERENCES contracting_progress_bills(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      environment TEXT NOT NULL,
+      status TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 1,
+      document_uuid TEXT,
+      provider_submission_id TEXT,
+      response_code TEXT,
+      error_code TEXT,
+      request_hash TEXT,
+      last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT ctg_tax_submission_company_provider_bill_env_uniq
+        UNIQUE(company_id, provider, bill_id, environment)
+    )
+  `));
+  await db.execute(sql.raw(`
+    CREATE INDEX IF NOT EXISTS ctg_tax_submission_company_status_idx
+      ON contracting_tax_submissions(company_id, provider, status)
+  `));
+  await db.execute(sql.raw(`
     DO $$
     DECLARE existing_index text;
     BEGIN

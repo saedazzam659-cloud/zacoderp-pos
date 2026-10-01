@@ -5,6 +5,7 @@ import {
   accountingMappingsTable,
   bankAccountsTable,
   cashBoxesTable,
+  companiesTable,
   costCentersTable,
   contractingEventsTable,
   contractingContractBoqLinesTable,
@@ -77,6 +78,7 @@ import {
   assertNoBoqCertificationDependents,
   recertifyBoqBill,
 } from "./contracting-boq-recertification.js";
+import { snapshotApprovedOwnerBillTaxLines } from "./contracting-local-tax-snapshot.js";
 
 type Executor = any;
 type RequestLike = any;
@@ -1703,6 +1705,7 @@ export async function approveBill(input: {
     }
     await recertifyBoqBill(tx, input.companyId, locked);
     Object.assign(locked, await certifyBillAmounts(tx, input.companyId, locked));
+    await snapshotApprovedOwnerBillTaxLines(tx, input.companyId, locked);
     // Unapproved drafts follow the live contract. Approval is the boundary:
     // lock/read the current policy and persist the exact snapshot used by the
     // settlement flow below. Contract edits after this point cannot rewrite
@@ -1915,6 +1918,16 @@ export async function unapproveBill(input: {
   const out = await db.transaction(async (tx) => {
     const bill = await lockBill(tx, input.companyId, input.billId);
     if (!bill) throw failure("المستخلص غير موجود", 404);
+    const unresolvedTaxSubmission = resultRows(await tx.execute(sql`
+      SELECT id FROM contracting_tax_submissions
+       WHERE company_id = ${input.companyId}
+         AND bill_id = ${input.billId}
+         AND status <> 'rejected'
+       LIMIT 1
+    `));
+    if (unresolvedTaxSubmission.length) {
+      throw failure("لا يمكن فك اعتماد أو تصحيح مستخلص له إرسال ضريبي غير مرفوض أو غير محسوم؛ عالج الحالة الضريبية أولاً", 409);
+    }
     const project = await projectFor(tx, input.companyId, bill.projectId);
     if (!project) throw failure("المشروع غير موجود", 404);
     assertProjectBranchAccess(input.req, project.branchId);

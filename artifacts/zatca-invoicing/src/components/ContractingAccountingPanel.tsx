@@ -20,6 +20,29 @@ type Bill = {
   paidAmount?: string | number;
   remainingAmount?: string | number;
 };
+type ContractingTaxSubmission = {
+  billId: number;
+  provider: string;
+  environment: "sandbox" | "production";
+  status: "submitting" | "processing" | "accepted" | "rejected" | "unknown";
+  attemptCount: number;
+  providerSubmissionId: string | null;
+  responseCode: string | null;
+  errorCode: string | null;
+  updatedAt: string;
+};
+type ContractingTaxSetup = {
+  provider: string;
+  environment: "sandbox" | "production";
+  status: "configured_unverified" | "connection_verified" | "endpoint_reachable_unverified";
+};
+type ContractingTaxReadiness = {
+  ready: boolean;
+  canSubmit: boolean;
+  canPreview: boolean;
+  previewOnly: boolean;
+  blockers: string[];
+};
 type Settlement = {
   id: number; kind: string; direction: string; amount: string | number;
   applied_amount?: string | number; journal_entry_id?: number | null;
@@ -91,6 +114,11 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   const [fiscalInvoices, setFiscalInvoices] = useState<TaxableAdvanceInvoice[]>([]);
   const [fiscalReady, setFiscalReady] = useState(false);
   const [fiscalError, setFiscalError] = useState("");
+  const [contractingTaxSetup, setContractingTaxSetup] = useState<ContractingTaxSetup | null>(null);
+  const [contractingTaxSubmissions, setContractingTaxSubmissions] = useState<ContractingTaxSubmission[]>([]);
+  const [contractingTaxReadiness, setContractingTaxReadiness] = useState<Record<number, ContractingTaxReadiness>>({});
+  const [contractingTaxLoading, setContractingTaxLoading] = useState(false);
+  const [contractingTaxRefreshKey, setContractingTaxRefreshKey] = useState(0);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [taxableAmount, setTaxableAmount] = useState("");
   const [advancePriceIncludesVat, setAdvancePriceIncludesVat] = useState(false);
@@ -131,6 +159,7 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
   const companyCountry = String(options.companyCountry ?? "").trim().toUpperCase();
   const isSaudiCompany = companyCountry === "SA";
   const isNonSaudiCompany = companyCountry.length > 0 && !isSaudiCompany;
+  const isLocalTaxCompany = companyCountry === "EG" || companyCountry === "JO";
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const reload = useCallback(async () => {
@@ -171,6 +200,36 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
       .catch((error: Error) => { if (active) { setFiscalReady(false); setFiscalError(error.message); } });
     return () => { active = false; };
   }, [projectId, token, ownerContracts]);
+  useEffect(() => {
+    setContractingTaxSetup(null);
+    setContractingTaxSubmissions([]);
+    setContractingTaxReadiness({});
+    if (!token || !projectId || !isLocalTaxCompany || user?.role !== "admin") {
+      setContractingTaxLoading(false);
+      return;
+    }
+    let active = true;
+    setContractingTaxLoading(true);
+    fetch(`${API}/api/tax-integrations/contracting-bills/submissions?projectId=${projectId}`, { headers })
+      .then(async response => {
+        if (!response.ok) return null;
+        return await response.json();
+      })
+      .then(data => {
+        if (!active || !data) return;
+        setContractingTaxSetup(data.setup ?? null);
+        setContractingTaxSubmissions(Array.isArray(data.submissions) ? data.submissions : []);
+      })
+      .catch(() => {
+        if (active) {
+          setContractingTaxSetup(null);
+          setContractingTaxSubmissions([]);
+          setContractingTaxReadiness({});
+        }
+      })
+      .finally(() => { if (active) setContractingTaxLoading(false); });
+    return () => { active = false; };
+  }, [headers, isLocalTaxCompany, projectId, token, user?.role, contractingTaxRefreshKey]);
   useEffect(() => {
     if (!token) return;
     const linked = settlements.filter(row => row.source_voucher_id &&
@@ -300,6 +359,102 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
     } catch (error: any) {
       setFiscalError(error?.message || "تعذر تنزيل ملف XML الموقّع");
       toast({ title: error?.message || "تعذر تنزيل ملف XML الموقّع", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function localTaxSubmissionForBill(id: number) {
+    const rows = contractingTaxSubmissions
+      .filter(row => row.billId === id)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return rows.find(row => row.environment === contractingTaxSetup?.environment) ?? rows[0] ?? null;
+  }
+
+  async function checkOwnerBillTaxReadiness(bill: Bill) {
+    if (!token) return;
+    try {
+      const response = await fetch(`${API}/api/tax-integrations/contracting-bills/${bill.id}/readiness`, { headers });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      const readiness: ContractingTaxReadiness = {
+        ready: Boolean(data.ready),
+        canSubmit: Boolean(data.canSubmit),
+        canPreview: Boolean(data.canPreview),
+        previewOnly: Boolean(data.previewOnly),
+        blockers: Array.isArray(data.blockers) ? data.blockers : [],
+      };
+      setContractingTaxReadiness(current => ({ ...current, [bill.id]: readiness }));
+      toast({
+        title: readiness.ready
+          ? readiness.previewOnly ? "المستخلص جاهز لمعاينة محلية فقط" : "المستخلص جاهز لإرسال ETA"
+          : readiness.blockers[0] || "المستخلص غير جاهز للإرسال",
+        variant: readiness.ready ? undefined : "destructive",
+      });
+    } catch (error: any) {
+      toast({ title: error?.message || "تعذر فحص جاهزية المستخلص", variant: "destructive" });
+    }
+  }
+
+  async function submitOwnerBillToEta(bill: Bill) {
+    const setup = contractingTaxSetup;
+    if (!setup || setup.provider !== "egypt_eta" || setup.status !== "connection_verified") {
+      toast({ title: "تحقق من إعداد ETA قبل الإرسال", variant: "destructive" });
+      return;
+    }
+    const confirmProduction = setup.environment === "production";
+    if (confirmProduction && !window.confirm(
+      `سيُرسل المستخلص ${bill.billNumber} إلى بيئة ETA الإنتاجية. بعد الإرسال، لا يمكن فك اعتماده قبل حسم حالة الجهة الضريبية. هل تريد المتابعة؟`,
+    )) return;
+    const previous = localTaxSubmissionForBill(bill.id);
+    const result = await post(
+      `/api/tax-integrations/contracting-bills/${bill.id}/submit`,
+      { confirmProduction, retry: previous?.status === "rejected" },
+      undefined,
+      "استلم ETA مستند المستخلص؛ الحالة قيد المعالجة وليست قبولاً نهائياً",
+    );
+    if (result) setContractingTaxRefreshKey(value => value + 1);
+  }
+
+  async function refreshOwnerBillEtaStatus(bill: Bill) {
+    const result = await post(
+      `/api/tax-integrations/contracting-bills/${bill.id}/refresh-status`,
+      {},
+      undefined,
+      "تم تحديث حالة مستند المستخلص من ETA",
+    );
+    if (result) setContractingTaxRefreshKey(value => value + 1);
+  }
+
+  async function downloadJordanOwnerBillPreview(bill: Bill) {
+    if (!token) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${API}/api/tax-integrations/contracting-bills/${bill.id}/preview`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      if (data.sent !== false || typeof data.xml !== "string") {
+        throw new Error("استجابة المعاينة غير صالحة؛ لم يتم تنزيل مستند");
+      }
+      const blob = new Blob([data.xml], { type: "application/xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      try {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `jofotara-local-preview-${bill.id}.xml`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      } finally {
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      toast({ title: "تم تنزيل معاينة محلية فقط؛ لم يتم إرسالها إلى JoFotara" });
+    } catch (error: any) {
+      toast({ title: error?.message || "تعذر إنشاء المعاينة المحلية", variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -613,7 +768,17 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
         <h3 className="mb-3 text-base font-bold">اعتماد المستخلصات والدفتر العام</h3>
         {isNonSaudiCompany && (
           <p role="status" className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100">
-            إرسال فواتير المقاولات إلى زاتكا غير متاح لهذه الشركة. لا تستخدم مسار زاتكا السعودي؛ إصدار مستخلصات المالك عبر الجهة المحلية يحتاج استكمال بياناتها الضريبية أولًا.
+            {companyCountry === "EG"
+              ? "مستخلصات المالك المصرية تُرسل إلى ETA بعد اكتمال بيانات الربط والتحقق من الإعداد؛ لا تستخدم مسار زاتكا السعودي."
+              : companyCountry === "JO"
+                ? "مستخلصات المالك الأردنية متاحة كمعاينة XML محلية فقط. لا يوجد إرسال شبكي إلى JoFotara حتى تأكيد بيئة اختبار رسمية."
+                : "إرسال مستخلصات المقاولات إلى زاتكا غير متاح لهذه الشركة؛ لا تستخدم مسار زاتكا السعودي."}
+          </p>
+        )}
+        {isLocalTaxCompany && user?.role === "admin" && contractingTaxSetup?.status !== "connection_verified"
+          && companyCountry === "EG" && (
+          <p role="status" className="mb-2 text-sm text-amber-700">
+            {contractingTaxLoading ? "جارٍ تحميل حالة إعداد ETA…" : "تحقق من إعداد ETA قبل إرسال مستخلصات المالك."}
           </p>
         )}
         {fiscalError && <p role="alert" className="mb-2 text-sm text-destructive">{fiscalError}</p>}
@@ -627,6 +792,17 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
               {bill.direction === "outgoing" && (() => {
                 const invoice = fiscalInvoices.find(f => f.kind === "bill" && f.billId === bill.id);
                 const recoveries = settlements.filter(s => s.bill_id === bill.id && s.kind === "advance_application" && s.status === "posted" && s.taxable_advance_invoice_id);
+                const localSubmission = localTaxSubmissionForBill(bill.id);
+                const readiness = contractingTaxReadiness[bill.id];
+                const finalOrUncertain = localSubmission != null && localSubmission.status !== "rejected";
+                const canSubmitEta = companyCountry === "EG"
+                  && user?.role === "admin"
+                  && contractingTaxSetup?.provider === "egypt_eta"
+                  && contractingTaxSetup.status === "connection_verified"
+                  && bill.journalEntryId != null
+                  && ["approved", "posted", "partially_paid", "paid"].includes(bill.status)
+                  && readiness?.canSubmit === true
+                  && !finalOrUncertain;
                 return <>
                   {invoice ? <span className="text-xs">فاتورة 388: {invoice.invoiceNumber} • {invoice.zatcaStatus === "issued" ? "معدة — بانتظار ZATCA" : invoice.zatcaStatus}{invoice.prepaymentAdjustments?.length ? ` • تسوية ${invoice.prepaymentAdjustments.map(a => `${a.invoiceNumber} (${a.taxableAmount} + ${a.taxAmount} ضريبة)`).join("، ")}` : ""}</span>
                     : isSaudiCompany && fiscalReady && bill.journalEntryId && ["approved", "posted", "partially_paid", "paid"].includes(bill.status) &&
@@ -634,6 +810,46 @@ export default function ContractingAccountingPanel({ projectId, onOpenBill }: Pr
                   {invoice && isSaudiCompany && !["cleared", "reported"].includes(invoice.zatcaStatus) &&
                     <Button size="sm" disabled={busy} onClick={() => void post(`/api/contracting/fiscal-invoices/${invoice.id}/zatca-submit`, {}, undefined, "تم تحديث حالة تقديم ZATCA")}>إرسال الفاتورة إلى ZATCA</Button>}
                   {invoice?.xmlDownloadUrl && <Button size="sm" variant="outline" disabled={busy} onClick={() => void downloadFiscalXml(invoice)}>تنزيل XML الموقّع</Button>}
+                  {isLocalTaxCompany && user?.role === "admin" && bill.journalEntryId != null
+                    && ["approved", "posted", "partially_paid", "paid"].includes(bill.status) && (
+                    <>
+                      {localSubmission && (
+                        <span className="text-xs" role="status">
+                          حالة الضريبة المحلية: {localSubmission.status === "submitting" ? "جارٍ الإرسال"
+                            : localSubmission.status === "processing" ? "قيد المعالجة لدى ETA"
+                              : localSubmission.status === "accepted" ? "مقبول نهائياً من ETA"
+                              : localSubmission.status === "rejected" ? "مرفوض من ETA"
+                                : "نتيجة الإرسال غير مؤكدة؛ أوقف النظام التكرار"}
+                          {localSubmission.attemptCount > 1 ? ` • محاولة ${localSubmission.attemptCount}` : ""}
+                        </span>
+                      )}
+                      <Button size="sm" variant="outline" disabled={busy}
+                        onClick={() => void checkOwnerBillTaxReadiness(bill)}>
+                        فحص الجاهزية الضريبية
+                      </Button>
+                      {readiness && !readiness.ready && (
+                        <span className="text-xs text-destructive">{readiness.blockers.join(" • ")}</span>
+                      )}
+                      {readiness?.ready && (
+                        <span className="text-xs text-emerald-700">
+                          {readiness.previewOnly ? "جاهز للمعاينة المحلية فقط" : "جاهز لإرسال ETA"}
+                        </span>
+                      )}
+                      {companyCountry === "EG" && localSubmission?.providerSubmissionId
+                        && ["processing", "unknown"].includes(localSubmission.status)
+                        && <Button size="sm" variant="outline" disabled={busy}
+                          onClick={() => void refreshOwnerBillEtaStatus(bill)}>
+                          تحديث الحالة من ETA
+                        </Button>}
+                      {canSubmitEta && <Button size="sm" disabled={busy} onClick={() => void submitOwnerBillToEta(bill)}>
+                        {localSubmission?.status === "rejected" ? "إعادة إرسال المستخلص إلى ETA بعد الرفض" : "إرسال مستخلص المالك إلى ETA"}
+                      </Button>}
+                      {companyCountry === "JO" && readiness?.canPreview === true && <Button size="sm" variant="outline" disabled={busy}
+                        onClick={() => void downloadJordanOwnerBillPreview(bill)}>
+                        تنزيل معاينة JoFotara محلية — لا ترسل
+                      </Button>}
+                    </>
+                  )}
                   {recoveries.map(s => <span key={s.id} className="text-xs">استرداد #{s.id}: فاتورة 386 {fiscalInvoices.find(f => f.id === s.taxable_advance_invoice_id)?.invoiceNumber ?? `#${s.taxable_advance_invoice_id}`} • أساس {s.amount} • ضريبة مسددة سابقاً {s.taxable_vat_amount}</span>)}
                 </>;
               })()}

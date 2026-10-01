@@ -1444,6 +1444,147 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaxIntegrationSubmissionResult"
+  /tax-integrations/contracting-bills/submissions:
+    get:
+      operationId: listContractingTaxSubmissions
+      parameters:
+        - name: projectId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Redacted local-tax setup and submission states for project owner bills
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractingTaxSubmissionsResponse"
+        "403":
+          description: Company, country, role, or tax module is not allowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /tax-integrations/contracting-bills/{billId}/readiness:
+    get:
+      operationId: getContractingTaxBillReadiness
+      parameters:
+        - name: billId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Bill-specific mapping, source-state, and environment readiness; Jordan remains preview-only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractingTaxBillReadiness"
+        "404":
+          description: Bill does not exist in the active company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Company, country, role, or tax module is not allowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /tax-integrations/contracting-bills/{billId}/refresh-status:
+    post:
+      operationId: refreshContractingTaxBillStatus
+      parameters:
+        - name: billId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: ETA submission lookup result, including processing and final status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractingTaxBillStatusResult"
+        "409":
+          description: No provider submission identifier or environment mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: ETA status could not be confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractingTaxBillStatusResult"
+  /tax-integrations/contracting-bills/{billId}/preview:
+    post:
+      operationId: previewContractingTaxBill
+      parameters:
+        - name: billId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: JoFotara UBL document generated locally only; no provider request was made
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractingTaxBillPreview"
+        "409":
+          description: Preview is unavailable for the provider or bill state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Bill tax evidence, mapping, party, or currency is incomplete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /tax-integrations/contracting-bills/{billId}/submit:
+    post:
+      operationId: submitContractingTaxBill
+      parameters:
+        - name: billId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxIntegrationSubmissionInput"
+      responses:
+        "202":
+          description: ETA received the owner-bill document; final tax acceptance is not asserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractingTaxBillSubmissionResult"
+        "409":
+          description: Bill is not posted, production was not confirmed, or duplicate submission is blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Bill lines, local mappings, party, currency, or tax totals cannot be safely mapped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: ETA rejected the request or the submission result could not be confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractingTaxBillSubmissionResult"
   /tax-integrations/logs:
     get:
       operationId: listTaxIntegrationLogs
@@ -1950,6 +2091,86 @@ components:
         invoiceId: { type: integer }
         status: { type: string, enum: [processing, submitted, rejected, unknown] }
         providerSubmissionId: { type: ["string", "null"] }
+        message: { type: string }
+    ContractingTaxSetupMetadata:
+      type: object
+      required: [provider, environment, status]
+      properties:
+        provider: { type: string, enum: [egypt_eta, jordan_national] }
+        environment: { type: string, enum: [sandbox, production] }
+        status: { type: string, enum: [configured_unverified, connection_verified, endpoint_reachable_unverified] }
+    ContractingTaxSubmission:
+      type: object
+      required: [billId, provider, environment, status, attemptCount, providerSubmissionId, responseCode, errorCode, updatedAt]
+      properties:
+        billId: { type: integer }
+        provider: { type: string, enum: [egypt_eta, jordan_national] }
+        environment: { type: string, enum: [sandbox, production] }
+        status: { type: string, enum: [submitting, processing, accepted, rejected, unknown] }
+        attemptCount: { type: integer }
+        providerSubmissionId: { type: ["string", "null"] }
+        responseCode: { type: ["string", "null"] }
+        errorCode: { type: ["string", "null"] }
+        updatedAt: { type: string, format: date-time }
+    ContractingTaxSubmissionsResponse:
+      type: object
+      required: [setup, submissions]
+      properties:
+        setup:
+          anyOf:
+            - $ref: "#/components/schemas/ContractingTaxSetupMetadata"
+            - type: "null"
+        submissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContractingTaxSubmission"
+    ContractingTaxBillReadiness:
+      type: object
+      required: [billId, countryCode, provider, ready, canSubmit, canPreview, previewOnly, environment, blockers]
+      properties:
+        billId: { type: integer }
+        countryCode: { type: string, enum: [EG, JO] }
+        provider: { type: string, enum: [egypt_eta, jordan_national] }
+        ready: { type: boolean }
+        canSubmit: { type: boolean }
+        canPreview: { type: boolean }
+        previewOnly: { type: boolean }
+        environment: { type: ["string", "null"], enum: [sandbox, production, null] }
+        blockers:
+          type: array
+          items: { type: string }
+    ContractingTaxBillPreview:
+      type: object
+      required: [ok, sent, status, billId, billNumber, documentUuid, xml, message]
+      properties:
+        ok: { type: boolean }
+        sent: { type: boolean, const: false }
+        status: { type: string, enum: [local_preview_only] }
+        billId: { type: integer }
+        billNumber: { type: string }
+        documentUuid: { type: string }
+        xml: { type: string }
+        message: { type: string }
+    ContractingTaxBillSubmissionResult:
+      type: object
+      required: [ok, sent, billId, billNumber, status, providerSubmissionId, message]
+      properties:
+        ok: { type: boolean }
+        sent: { type: boolean }
+        billId: { type: integer }
+        billNumber: { type: string }
+        status: { type: string, enum: [processing, rejected, unknown] }
+        providerSubmissionId: { type: ["string", "null"] }
+        message: { type: string }
+    ContractingTaxBillStatusResult:
+      type: object
+      required: [ok, billId, status, responseCode, errorCode, message]
+      properties:
+        ok: { type: boolean }
+        billId: { type: integer }
+        status: { type: string, enum: [processing, accepted, rejected, unknown] }
+        responseCode: { type: ["string", "null"] }
+        errorCode: { type: ["string", "null"] }
         message: { type: string }
     TaxIntegrationAudit:
       type: object
