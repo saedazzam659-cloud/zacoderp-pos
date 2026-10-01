@@ -17,6 +17,13 @@ import ContractingAdvanceRecoverySummary from "./ContractingAdvanceRecoverySumma
 
 const API = import.meta.env.VITE_API_URL || "";
 
+export type ContractingBillEditorTab =
+  | "metadata"
+  | "execution"
+  | "adjustments"
+  | "payments"
+  | "summary";
+
 type WorkItem = {
   id: number;
   code: string | null;
@@ -325,6 +332,7 @@ export default function ContractingBillDetailEditor({
   projectId,
   bill,
   project,
+  activeTab,
   initialExecutionValues,
   onLinesLoaded,
   onSaved,
@@ -333,6 +341,7 @@ export default function ContractingBillDetailEditor({
   projectId: number;
   bill?: Partial<ContractingBillSnapshot>;
   project?: ContractingProjectSnapshot;
+  activeTab: ContractingBillEditorTab;
   initialExecutionValues?: ExecutionInputs;
   onLinesLoaded?: (count: number) => void;
   onSaved?: () => void;
@@ -741,11 +750,31 @@ export default function ContractingBillDetailEditor({
       label: `#${variation.contractNumber} · ${money(Number(variation.value))} ر.س · موقع ومعتمد`,
     })),
   ];
+  const persistentSummary = [
+    ["أعمال الفترة", money(detail.summary.currentWorks)],
+    ["المحتجز", money(detail.summary.retentionAmount)],
+    ["الاستقطاعات", money(detail.summary.deductionsTotal)],
+    ["الضريبة", money(detail.summary.vatAmount)],
+    ["صافي المستخلص", money(detail.summary.adjustedNetAmount)],
+  ];
 
   return (
     <div className="mt-4 space-y-4" dir="rtl">
+      <div
+        className="sticky top-1 z-20 grid grid-cols-2 gap-2 rounded-xl border border-sky-100 bg-background/95 p-2 shadow-sm backdrop-blur sm:grid-cols-3 xl:grid-cols-5 dark:border-sky-900/50"
+        data-testid="bill-detail-live-summary"
+      >
+        {persistentSummary.map(([label, value], index) => (
+          <div key={label} className={`rounded-lg px-3 py-2 ${index === persistentSummary.length - 1 ? "bg-sky-50 dark:bg-sky-950/40" : "bg-muted/40"}`}>
+            <div className="text-[11px] text-muted-foreground">{label}</div>
+            <div className={`mt-0.5 truncate font-mono tabular-nums ${index === persistentSummary.length - 1 ? "font-bold text-sky-800 dark:text-sky-200" : "font-semibold"}`}>
+              {value} <span className="font-sans text-[10px] font-normal">ر.س</span>
+            </div>
+          </div>
+        ))}
+      </div>
       {/* 1. TOP: Metadata / Project context */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
+      <div hidden={activeTab !== "metadata"} className="flex flex-wrap items-center justify-between gap-2 pb-3">
         <div>
           <h4 className="font-bold text-lg flex items-center gap-2">
             تفاصيل المستخلص والرقابة
@@ -769,7 +798,7 @@ export default function ContractingBillDetailEditor({
           <Badge variant={locked ? "secondary" : "default"} className="text-sm px-3 py-1">{STATUS_LABEL[detail.state] || detail.state}</Badge>
         </div>
       </div>
-<section className="space-y-2">
+<section hidden={activeTab !== "execution"} className="space-y-2">
         <div className="flex items-center justify-between">
           <h5 className="font-semibold">بنود المستخلص ({detail.lines.length})</h5>
           {!locked && (
@@ -793,7 +822,7 @@ export default function ContractingBillDetailEditor({
           />}
         />
       </section>
-<section className="space-y-2">
+<section hidden={activeTab !== "adjustments"} className="space-y-2">
          <div className="flex items-center justify-between">
            <h5 className="font-semibold">الإضافات المالية المعتمدة ({detail.additions.length})</h5>
            <span className="text-[11px] text-slate-500">لا تغيّر VAT؛ التسوية غير الخاضعة مدعومة فقط</span>
@@ -889,7 +918,7 @@ export default function ContractingBillDetailEditor({
            )
          ))}</div>
        </section>
-<section className="space-y-2">
+<section hidden={activeTab !== "adjustments"} className="space-y-2">
         <h5 className="font-semibold">الاستقطاعات ({detail.deductions.length})</h5>
         {!locked && (
           <div className="grid grid-cols-2 gap-2 rounded border bg-white p-3 md:grid-cols-6 dark:bg-slate-900">
@@ -957,7 +986,7 @@ export default function ContractingBillDetailEditor({
           )
         ))}</div>
       </section>
-<section className="space-y-2">
+<section hidden={activeTab !== "adjustments"} className="space-y-2">
         <h5 className="font-semibold">الغرامات المستقلة ({detail.penalties.length})</h5>
         {!locked && (
           <div className="grid grid-cols-2 gap-2 rounded border bg-white p-3 md:grid-cols-7 dark:bg-slate-900">
@@ -1009,7 +1038,7 @@ export default function ContractingBillDetailEditor({
           )
         ))}</div>
       </section>
-<section className="space-y-2">
+<section hidden={activeTab !== "summary"} className="space-y-2">
         <div className="flex items-center justify-between"><h5 className="font-semibold"><FileText className="ml-1 inline h-4 w-4" />المرفقات ({detail.attachments.length})</h5></div>
         {!locked && (
           <div className="flex flex-wrap items-end gap-2 rounded border bg-white p-3 dark:bg-slate-900">
@@ -1062,19 +1091,37 @@ export default function ContractingBillDetailEditor({
         ))}</div>
       </section>
 
-      <ContractingAdvanceRecoverySummary
-        projectId={projectId} billId={billId} direction={detail.bill.direction}
-        contractId={detail.bill.direction === "incoming" ? detail.bill.subcontractorContractId : detail.bill.ownerContractId}
-        billDate={bill?.billDate ?? ""} locked={locked} refreshKey={detail}
-        retentionPercent={bill?.retentionPercent}
-        currentValue={detail.lines.length > 0 ? detail.lines.reduce((total, row) => total + (
-          row.boqLineId == null ? Number(row.currentValue) :
-            executionEstimate(row, executionValues[row.boqLineId] ?? executionInput(row)).certifiedTotal
-        ), 0) : undefined}
-        onSaved={onSaved}
-      />
+      <div hidden={activeTab !== "payments"}>
+        <section className="mb-3 space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 dark:border-indigo-900/50 dark:bg-indigo-950/20">
+          <h5 className="text-sm font-semibold">أرصدة الدفعات والاستقطاعات</h5>
+          <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              ["المحتجز", money(detail.summary.retentionAmount)],
+              ["إجمالي الاستقطاعات", money(detail.summary.deductionsTotal)],
+              ["المدفوع", money(detail.summary.paidAmount)],
+              ["الرصيد المتبقي", money(detail.summary.remainingAmount)],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-lg bg-background/80 p-2">
+                <dt className="text-[11px] text-muted-foreground">{label}</dt>
+                <dd className="mt-1 font-mono text-sm font-semibold tabular-nums">{value} ر.س</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+        <ContractingAdvanceRecoverySummary
+          projectId={projectId} billId={billId} direction={detail.bill.direction}
+          contractId={detail.bill.direction === "incoming" ? detail.bill.subcontractorContractId : detail.bill.ownerContractId}
+          billDate={bill?.billDate ?? ""} locked={locked} refreshKey={detail}
+          retentionPercent={bill?.retentionPercent}
+          currentValue={detail.lines.length > 0 ? detail.lines.reduce((total, row) => total + (
+            row.boqLineId == null ? Number(row.currentValue) :
+              executionEstimate(row, executionValues[row.boqLineId] ?? executionInput(row)).certifiedTotal
+          ), 0) : undefined}
+          onSaved={onSaved}
+        />
+      </div>
       {/* 3. BOTTOM: Financial values and adjustments summary */}
-      <div className="flex flex-wrap items-start justify-end gap-4 mt-8 pt-4 border-t">
+      <div hidden={activeTab !== "summary"} className="flex flex-wrap items-start justify-end gap-4 mt-8 pt-4 border-t">
         <div className="w-80 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
           <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1 mb-3">
             <span>الملخص المالي للمستخلص</span>
@@ -1089,6 +1136,7 @@ export default function ContractingBillDetailEditor({
           
           <div className="flex justify-between border-t pt-2 mt-2"><span className="text-muted-foreground">الإضافات المالية</span><span className="font-mono text-emerald-600">{money(detail.summary.additionsTotal)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">إجمالي الاستقطاعات</span><span className="font-mono text-amber-700">−{money(detail.summary.deductionsTotal)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">المحتجز</span><span className="font-mono text-amber-700">{money(detail.summary.retentionAmount)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">الغرامات المستقلة</span><span className="font-mono text-rose-700">−{money(detail.summary.penaltyTotal)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">الضريبة (VAT)</span><span className="font-mono">{money(detail.summary.vatAmount)}</span></div>
           
@@ -1096,6 +1144,7 @@ export default function ContractingBillDetailEditor({
             <span>صافي المستخلص الحالي</span>
             <span className="font-mono text-primary">{money(detail.summary.adjustedNetAmount)}</span>
           </div>
+          <div className="flex justify-between text-xs"><span className="text-muted-foreground">مدفوع / متبقي</span><span className="font-mono">{money(detail.summary.paidAmount)} / {money(detail.summary.remainingAmount)} ر.س</span></div>
         </div>
       </div>
 

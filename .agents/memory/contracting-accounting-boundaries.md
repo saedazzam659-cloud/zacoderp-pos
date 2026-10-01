@@ -195,11 +195,11 @@ Contract BOQ is the commercial source of truth, while project work items are sha
 
 **How to apply:** Never infer a contract when several exist or copy owner pricing to a subcontract implicitly. Validate certified quantities again inside approval, not just at draft save; several valid drafts can otherwise exceed the same remaining quantity.
 
-Keep the progress-certificate form in the invoice-style reading order: metadata and calculation settings above line items, financial totals below, without internal form tabs.
+For progress-certificate UI, follow the user's latest explicit layout request while preserving accounting, tax, save, permission, and approval behavior.
 
-**Why:** The user explicitly requested the familiar invoice arrangement and field scale to make certificate entry and review easier.
+**Why:** The user replaced an earlier single-screen preference with a five-tab redesign while limiting changes to presentation and existing bill fields.
 
-**How to apply:** Preserve project navigation separately. Visually distinguish current editable quantities from prior/cumulative read-only values without removing aggregate-progress behavior during cosmetic changes.
+**How to apply:** Move existing sections without changing their authoritative values or calculations, and keep tab contents mounted so switching tabs cannot discard in-progress state.
 
 Execution and certification must remain separate ledgers of progress. Executed work not yet certified may be certified in a later period with zero new execution.
 

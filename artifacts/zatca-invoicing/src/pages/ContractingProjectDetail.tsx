@@ -27,7 +27,7 @@ import ContractingAccountingPanel from "@/components/ContractingAccountingPanel"
 import ContractingCostAllocations from "@/components/ContractingCostAllocations";
 import ContractingGuaranteesPanel from "@/components/ContractingGuaranteesPanel";
 import ExecutionPlanningPanel from "@/components/ExecutionPlanningPanel";
-import ContractingBillDetailEditor from "@/components/ContractingBillDetailEditor";
+import ContractingBillDetailEditor, { type ContractingBillEditorTab } from "@/components/ContractingBillDetailEditor";
 import ContractingContractBoqEditor, { type PendingContractBoqLine } from "@/components/ContractingContractBoqEditor";
 import { ContractingArchiveAction } from "@/components/ContractingArchiveAction";
 import ContractingProjectScope from "@/components/ContractingProjectScope";
@@ -561,6 +561,7 @@ function BillsTab({
   const [rowsCurrent, setRowsCurrent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Bill> | null>(null);
+  const [billEditorTab, setBillEditorTab] = useState<ContractingBillEditorTab>("metadata");
   const [saving, setSaving] = useState(false);
   const [unapproving, setUnapproving] = useState(false);
   const saveLock = useRef(false);
@@ -612,6 +613,7 @@ function BillsTab({
     const bill = rows.find(row => row.id === initialBillId);
     if (bill) {
       openedAccountingBill.current = initialBillId;
+      setBillEditorTab("metadata");
       setEditing(bill);
     }
   }, [active, initialBillId, rows, rowsCurrent, loading]);
@@ -812,6 +814,7 @@ function BillsTab({
   // common case where retention% is identical across all bills).
   function openNew() {
     if (saveLock.current) return;
+    setBillEditorTab("metadata");
     setDraftExecution(emptyDraftExecution);
     setRecoveredExecution(null);
     createAttempt.current = null;
@@ -1000,6 +1003,7 @@ function BillsTab({
     <div className="space-y-3">
       <Tabs value={direction} onValueChange={v => {
         setDirection(v as BillDirection);
+        setBillEditorTab("metadata");
         setEditing(null);
         setDraftExecution(emptyDraftExecution);
         setRecoveredExecution(null);
@@ -1084,7 +1088,7 @@ function BillsTab({
                          project,
                        }}
                      />
-                    <Button size="sm" variant="ghost" onClick={() => setEditing(b)}><Pencil className="h-4 w-4" /></Button>
+                     <Button size="sm" variant="ghost" onClick={() => { setBillEditorTab("metadata"); setEditing(b); }}><Pencil className="h-4 w-4" /></Button>
                     <Button size="sm" variant="ghost" onClick={() => del(b.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                   </TableCell>
                 </TableRow>
@@ -1110,7 +1114,52 @@ function BillsTab({
             </div>
           </div>
 
-          {/* TOP METADATA GRID */}
+          {!editingBillId && (
+            <div
+              className="sticky top-1 z-20 grid grid-cols-2 gap-2 rounded-xl border border-sky-100 bg-background/95 p-2 shadow-sm backdrop-blur sm:grid-cols-4 dark:border-sky-900/50"
+              data-testid="bill-draft-live-summary"
+            >
+              {[
+                ["أعمال الفترة", aggregateMoney(currentPeriodGross)],
+                ["المحتجز", aggregateMoney(previewRetention)],
+                ["الضريبة", aggregateMoney(previewVat)],
+                ["صافي تقديري قبل التسويات", aggregateMoney(previewDue + previewVat)],
+              ].map(([label, value], index) => (
+                <div key={label} className={`rounded-lg px-3 py-2 ${index === 3 ? "bg-sky-50 dark:bg-sky-950/40" : "bg-muted/40"}`}>
+                  <div className="text-[11px] text-muted-foreground">{label}</div>
+                  <div className={`mt-0.5 truncate font-mono tabular-nums ${index === 3 ? "font-bold text-sky-800 dark:text-sky-200" : "font-semibold"}`}>
+                    {value} <span className="font-sans text-[10px] font-normal">ر.س</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Tabs
+            value={billEditorTab}
+            onValueChange={value => setBillEditorTab(value as ContractingBillEditorTab)}
+            className="space-y-4"
+          >
+            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl bg-muted/60 p-1 sm:grid-cols-3 xl:grid-cols-5">
+              <TabsTrigger value="metadata" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+                <Briefcase className="h-4 w-4 shrink-0" /><span>بيانات المستخلص</span>
+              </TabsTrigger>
+              <TabsTrigger value="execution" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+                <FileSpreadsheet className="h-4 w-4 shrink-0" /><span>بنود التنفيذ</span>
+              </TabsTrigger>
+              <TabsTrigger value="adjustments" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+                <Plus className="h-4 w-4 shrink-0" /><span>الإضافات والخصومات</span>
+              </TabsTrigger>
+              <TabsTrigger value="payments" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+                <Wallet className="h-4 w-4 shrink-0" /><span>الدفعات والاستقطاعات</span>
+              </TabsTrigger>
+              <TabsTrigger value="summary" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+                <TrendingUp className="h-4 w-4 shrink-0" /><span>الملخص النهائي</span>
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value={billEditorTab} forceMount className="mt-0 space-y-4 outline-none">
+            <div hidden={billEditorTab !== "metadata"} className="space-y-4">
+          {/* بيانات المستخلص والعقد والفترة */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 bg-muted/20 p-3 rounded-lg border">
              <Field label="اسم المشروع">
                <Input value={project.nameAr ?? ""} readOnly disabled data-testid="input-bill-project-name" />
@@ -1187,6 +1236,18 @@ function BillsTab({
               />
             </Field>
             <Field label={t("contracting.bills.date", "التاريخ")} required><DateField value={editing.billDate ?? ""} onChange={e => setEditing({ ...editing, billDate: e.target.value })} /></Field>
+            <Field label="بداية الفترة">
+              <DateField
+                value={editing.fromDate ? String(editing.fromDate).slice(0, 10) : ""}
+                onChange={event => setEditing({ ...editing, fromDate: event.target.value || null })}
+              />
+            </Field>
+            <Field label="نهاية الفترة">
+              <DateField
+                value={editing.toDate ? String(editing.toDate).slice(0, 10) : ""}
+                onChange={event => setEditing({ ...editing, toDate: event.target.value || null })}
+              />
+            </Field>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={editing.priceIncludesVat === true}
                 disabled={financiallyLocked || detailMode}
@@ -1251,7 +1312,7 @@ function BillsTab({
                 </p>
               )}
             </Field>}
-            {!editingBillId && (
+            {!editingBillId ? (
               <Field label={t("contracting.bills.retentionPercent", "% محتجز")}>
                 <Input
                   type="number" min="0" max="100"
@@ -1259,6 +1320,10 @@ function BillsTab({
                   onChange={event => setEditing({ ...editing, retentionPercent: event.target.value })}
                   disabled={financiallyLocked || selectedContract?.retentionEnabled === false}
                 />
+              </Field>
+            ) : (
+              <Field label={t("contracting.bills.retentionPercent", "% محتجز")}>
+                <Input value={editing.retentionPercent ?? "—"} readOnly disabled />
               </Field>
             )}
 
@@ -1279,6 +1344,26 @@ function BillsTab({
             </Field>
           </div>
 
+          </div>
+          <div hidden={billEditorTab !== "payments"} className="space-y-3">
+          {!editingBillId && (
+            <section className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 dark:border-indigo-900/50 dark:bg-indigo-950/20">
+              <h5 className="text-sm font-semibold">أرصدة الدفعات والاستقطاعات</h5>
+              <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {[
+                  ["المدفوع المسجل", aggregateMoney(Number(editing.paidAmount ?? 0))],
+                  ["محتجز الفترة", aggregateMoney(previewRetention)],
+                  ["المستحق قبل الضريبة", aggregateMoney(previewDue)],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-lg bg-background/80 p-3">
+                    <dt className="text-[11px] text-muted-foreground">{label}</dt>
+                    <dd className="mt-1 font-mono text-sm font-semibold tabular-nums">{value} ر.س</dd>
+                  </div>
+                ))}
+              </dl>
+              <p className="text-xs text-muted-foreground">تعرض المسودة الجديدة هذه القيم للمتابعة فقط؛ تبقى التسويات النقدية في مسار السداد الحالي.</p>
+            </section>
+          )}
           {!editingBillId && <ContractingAdvanceRecoverySummary
             key={expectedExecutionScope}
             projectId={projectId} direction={direction}
@@ -1291,10 +1376,13 @@ function BillsTab({
             } : undefined}
             onOverrideChange={values => setEditing(current => current ? { ...current, ...values } : current)}
           />}
+          </div>
+          <div hidden={billEditorTab !== "execution"} className="space-y-3">
           <p className="rounded border bg-muted/20 p-3 text-xs leading-5">
             «السابق» و«الرصيد المعلّق السابق» يُحمّلان من المستخلصات المعتمدة ماليًا لنفس العقد فقط.
             المسودة والمرسل وتحت المراجعة لا تُضاف إلى السابق؛ احفظ البنود ثم أكمل الاعتماد المالي للمستخلص السابق أولًا.
           </p>
+          </div>
           {(editing as any)?.id != null ? (
             <ContractingBillDetailEditor
               key={`${(editing as any).id}:${detailsRevision}`}
@@ -1302,18 +1390,25 @@ function BillsTab({
               projectId={projectId}
               bill={editing as any}
               project={project}
+              activeTab={billEditorTab}
               initialExecutionValues={recoveredExecution?.billId === Number((editing as any).id) ? recoveredExecution.values : undefined}
               onLinesLoaded={setDetailLineCount}
               onSaved={load}
             />
           ) : (
             <>
-            {newExecutionMode && <ContractingDraftExecution
-              projectId={projectId} direction={direction} contractId={draftContractId}
-              date={editing.billDate ?? ""} state={draftExecution}
-              onChange={setDraftExecution} disabled={saving}
-            />}
-            <div className="mt-8 pt-4">
+            <div hidden={billEditorTab !== "execution"} className="space-y-3">
+              {newExecutionMode ? <ContractingDraftExecution
+                projectId={projectId} direction={direction} contractId={draftContractId}
+                date={editing.billDate ?? ""} state={draftExecution}
+                onChange={setDraftExecution} disabled={saving}
+              /> : (
+                <div className="rounded-xl border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground">
+                  سجّل نسبة الإنجاز التراكمي من تبويب بيانات المستخلص لهذا النوع من المستخلصات.
+                </div>
+              )}
+            </div>
+            <div hidden={billEditorTab !== "summary"} className="mt-8 pt-4">
               <h5 className="font-semibold text-sky-800 dark:text-sky-200 mb-4">القيم المالية المحسوبة</h5>
               <p className="text-xs text-muted-foreground mb-3">معاينة حسب العقد والسابق المعتمد؛ يُثبّت الخادم الحساب عند الحفظ. الإضافات والاستقطاعات واسترداد المقدم تظهر في تفاصيل المسودة المحفوظة.</p>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 bg-muted/10 border p-4 rounded-xl">
@@ -1343,7 +1438,15 @@ function BillsTab({
             </>
           )}
 
-          <div className="flex items-center justify-end gap-2 mt-4 pt-4 border-t bg-muted/20 p-4 rounded-xl">
+          {!editingBillId && (
+            <div hidden={billEditorTab !== "adjustments"} className="rounded-xl border border-dashed bg-muted/20 p-5 text-sm text-muted-foreground">
+              تظهر أدوات الإضافات والاستقطاعات بعد حفظ بيانات المسودة الأساسية.
+            </div>
+          )}
+            </TabsContent>
+          </Tabs>
+
+          <div className="sticky bottom-0 z-30 flex flex-wrap items-center justify-end gap-2 mt-4 border-t bg-background/95 p-3 shadow-lg backdrop-blur sm:p-4 rounded-xl">
             <Button variant="outline" disabled={saving} onClick={() => { createAttempt.current = null; setEditing(null); }}>{t("common.cancel", "إلغاء")}</Button>
             {editingBillId && ["approved", "posted", "partially_paid", "paid"].includes(String(editing.status))
               && !editing.reversalJournalEntryId && canUnapprove && (
