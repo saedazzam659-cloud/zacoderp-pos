@@ -8,6 +8,9 @@ import test from "node:test";
 
 const source = readFileSync(resolve(import.meta.dirname, "../src/routes/admin.ts"), "utf8");
 const uiSource = readFileSync(resolve(import.meta.dirname, "../../zatca-invoicing/src/pages/Companies.tsx"), "utf8");
+const salesSource = readFileSync(resolve(import.meta.dirname, "../src/routes/sales.ts"), "utf8");
+const purchasingSource = readFileSync(resolve(import.meta.dirname, "../src/routes/purchasing.ts"), "utf8");
+const sequenceSource = readFileSync(resolve(import.meta.dirname, "../src/lib/sequences.ts"), "utf8");
 
 test("invoice repair is a SA-only, read-first API contract", () => {
   assert.match(source, /router\.get\("\/companies\/:id\/invoice-numbering-repair", requireSuperAdmin/);
@@ -84,6 +87,24 @@ test("return numbering uses the correct tables, dates, series, and side-effect g
   assert.match(source, /FROM stock_ledger[\s\S]*ref_type = \$\{refType\} AND ref_id = \$\{id\}/);
   assert.match(source, /const signed = meta\.hasZatca && hasKnownInvoiceFiscalEvidence\(invoice\)/);
   assert.match(source, /legacyReservationOverride && INVOICE_REPAIR_META\[kind\]\.isReturn/);
+  assert.match(source, /invoiceRepairSequenceIsShared\(seq, kind\)/);
+  assert.match(source, /current_number, monthly_reset, code, transaction_types/);
+});
+
+test("failed sales and purchase return creation rolls back its number reservation", () => {
+  const salesCreate = salesSource.slice(
+    salesSource.indexOf('router.post("/sales-returns"'),
+    salesSource.indexOf('router.put("/sales-returns/:id"'),
+  );
+  const purchaseCreate = purchasingSource.slice(
+    purchasingSource.indexOf('router.post("/purchase-returns"'),
+    purchasingSource.indexOf('router.put("/purchase-returns/:id"'),
+  );
+  assert.match(sequenceSource, /nextSequenceNumber\(companyId, foreignSub, ctx, dx\)/);
+  assert.match(sequenceSource, /nextSequenceNumber\(companyId, sub, ctx, dx\)/);
+  assert.match(sequenceSource, /nextSequenceNumber\(companyId, baseType, ctx, dx\)/);
+  assert.match(salesCreate, /db\.transaction\(async \(tx: any\) => \{[\s\S]*nextSequenceForPayment\(cid, "sales_return"[\s\S]*buyerIsForeign, tx\)[\s\S]*tx\.insert\(salesReturnLinesTable\)/);
+  assert.match(purchaseCreate, /db\.transaction\(async \(tx: any\) => \{[\s\S]*nextSequenceForPayment\(cid, "purchase_return"[\s\S]*false, tx\)[\s\S]*insertPurchaseReturnWithSerialRepair\([\s\S]*?, tx\)[\s\S]*tx\.insert\(purchaseReturnLinesTable\)/);
 });
 
 test("Companies repair UI exposes both return kinds and checks server capability", () => {

@@ -4996,44 +4996,16 @@ router.post("/sales-returns", async (req, res) => {
     const grossR    = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
     const discR     = Math.max(0, Math.min(grossR, Number(discountAmount) || 0));
     const totalR    = grossR - discR;
-    // Central sequence engine is authoritative when an active sequence
-    // exists for "sales_return"; otherwise fall back to client-supplied
-    // value or null. Server allocation is atomic so concurrent submits
-    // can never persist the same number.
     // Foreign-customer numbering: a non-SA buyer draws from the separate
     // "sales_return_foreign" series (if configured). ZATCA chain stays unified.
+    // The actual reservation is made with the return row and lines below so a
+    // failed draft create rolls back its number as well.
     let buyerIsForeign = false;
     if (resolvedCustomerId) {
       const [cc] = await db.select({ country: customersTable.country })
         .from(customersTable)
         .where(and(eq(customersTable.id, resolvedCustomerId), eq(customersTable.companyId, cid)));
       buyerIsForeign = !!cc && String(cc.country ?? "SA").toUpperCase() !== "SA";
-    }
-    let resolvedDocNumber: string | null;
-    try {
-      const allocateReturnNumber = () => nextSequenceForPayment(cid, "sales_return", pType, {
-        userId: (req as any).authUser?.id ?? null,
-        refTable: "sales_returns",
-        branchId: resolvedBranchId,
-        docDate: returnDate,
-      }, buyerIsForeign);
-      let fromSeq = await allocateReturnNumber();
-      for (let skipped = 0; fromSeq != null; skipped += 1) {
-        const duplicate = await db.select({ id: salesReturnsTable.id })
-          .from(salesReturnsTable)
-          .where(and(
-            eq(salesReturnsTable.companyId, cid),
-            eq(salesReturnsTable.docNumber, fromSeq),
-          ))
-          .limit(1);
-        if (!duplicate.length) break;
-        if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم مرتجع غير مستخدم بعد الاستعادة");
-        fromSeq = await allocateReturnNumber();
-      }
-      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
-    } catch (seqErr: any) {
-      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم المرتجع" });
-      return;
     }
     const requestedReturnAccountIds = [
       cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
@@ -5058,7 +5030,7 @@ router.post("/sales-returns", async (req, res) => {
           throw Object.assign(new Error("مشروع المرتجع المرتبط يجب أن يطابق الفاتورة الأصلية"), { status: 422 });
         return selected;
       })(),
-      docNumber: resolvedDocNumber, returnDate,
+      docNumber: null, returnDate,
       customerId: resolvedCustomerId,
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,
@@ -5085,55 +5057,98 @@ router.post("/sales-returns", async (req, res) => {
       taxId:              taxId ? Number(taxId) : null,
       createdById: (req as any).authUser?.id ?? null,
     };
-    let ret: typeof salesReturnsTable.$inferSelect;
-    try {
-      [ret] = await db.insert(salesReturnsTable).values(returnValues).returning();
-    } catch (insertError: any) {
-      const code = String(postgresErrorField(insertError, "code") ?? "");
-      const constraint = String(
-        postgresErrorField(insertError, "constraint_name")
-          ?? postgresErrorField(insertError, "constraint")
-          ?? "",
-      );
-      if (code !== "23505" || !constraint.includes("pkey")) throw insertError;
-      await db.execute(sql`
-        SELECT setval(
-          pg_get_serial_sequence('sales_returns', 'id'),
-          GREATEST(COALESCE((SELECT MAX(id) FROM sales_returns), 0) + 1, 1),
-          false
-        )
-      `);
-      [ret] = await db.insert(salesReturnsTable).values(returnValues).returning();
-    }
-    if (lines?.length) {
-      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-      const mappedLines = await resolveSalesLineUnits(
-        cid,
-        lines.map((l: any) => ({
-          returnId: ret.id, companyId: cid,
-          itemId: l.itemId ? Number(l.itemId) : null,
-          itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
-          unitId: l.unitId ? Number(l.unitId) : null,
-          conversionFactor: String(l.conversionFactor || "1"),
-          warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
-          unitPrice: String(l.unitPrice || "0"),
-          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-          discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-          vatRate: String(l.vatRate || resolvedRate),
-          lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
-        })),
-        lines,
-        [],
-        sourceReturnLines,
-      );
-      await db.insert(salesReturnLinesTable).values(
-        mappedLines
-      );
-    }
+    const ret = await db.transaction(async (tx: any) => {
+      let resolvedDocNumber: string | null;
+      try {
+        const allocateReturnNumber = () => nextSequenceForPayment(cid, "sales_return", pType, {
+          userId: (req as any).authUser?.id ?? null,
+          refTable: "sales_returns",
+          branchId: resolvedBranchId,
+          docDate: returnDate,
+        }, buyerIsForeign, tx);
+        let fromSeq = await allocateReturnNumber();
+        for (let skipped = 0; fromSeq != null; skipped += 1) {
+          const duplicate = await tx.select({ id: salesReturnsTable.id })
+            .from(salesReturnsTable)
+            .where(and(
+              eq(salesReturnsTable.companyId, cid),
+              eq(salesReturnsTable.docNumber, fromSeq),
+            ))
+            .limit(1);
+          if (!duplicate.length) break;
+          if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم مرتجع غير مستخدم بعد الاستعادة");
+          fromSeq = await allocateReturnNumber();
+        }
+        resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+      } catch (seqErr: any) {
+        throw Object.assign(new Error(seqErr?.message ?? "تعذر توليد رقم المرتجع"), {
+          status: 400, code: "RETURN_SEQUENCE_ALLOCATION_FAILED",
+        });
+      }
+
+      const values = { ...returnValues, docNumber: resolvedDocNumber };
+      let created: typeof salesReturnsTable.$inferSelect | undefined;
+      try {
+        created = await tx.transaction(async (insertTx: any) => {
+          const [row] = await insertTx.insert(salesReturnsTable).values(values).returning();
+          return row;
+        });
+      } catch (insertError: any) {
+        const code = String(postgresErrorField(insertError, "code") ?? "");
+        const constraint = String(
+          postgresErrorField(insertError, "constraint_name")
+            ?? postgresErrorField(insertError, "constraint")
+            ?? "",
+        );
+        if (code !== "23505" || !constraint.includes("pkey")) throw insertError;
+        await tx.execute(sql`
+          SELECT setval(
+            pg_get_serial_sequence('sales_returns', 'id'),
+            GREATEST(COALESCE((SELECT MAX(id) FROM sales_returns), 0) + 1, 1),
+            false
+          )
+        `);
+        created = await tx.transaction(async (insertTx: any) => {
+          const [row] = await insertTx.insert(salesReturnsTable).values(values).returning();
+          return row;
+        });
+      }
+      if (!created) throw new Error("تعذر حفظ المرتجع");
+
+      if (lines?.length) {
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
+        const mappedLines = await resolveSalesLineUnits(
+          cid,
+          lines.map((l: any) => ({
+            returnId: created.id, companyId: cid,
+            itemId: l.itemId ? Number(l.itemId) : null,
+            itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
+            unitId: l.unitId ? Number(l.unitId) : null,
+            conversionFactor: String(l.conversionFactor || "1"),
+            warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+            qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
+            unitPrice: String(l.unitPrice || "0"),
+            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+            discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
+            vatRate: String(l.vatRate || resolvedRate),
+            lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
+          })),
+          lines,
+          [],
+          sourceReturnLines,
+          tx,
+        );
+        await tx.insert(salesReturnLinesTable).values(mappedLines);
+      }
+      return created;
+    });
     res.status(201).json(ret);
   } catch (e: any) {
     logger.error({ err: e }, "sales return create failed");
+    if (e?.code === "RETURN_SEQUENCE_ALLOCATION_FAILED") {
+      res.status(400).json({ error: e.message });
+      return;
+    }
     const friendly = salesReturnWriteError(e);
     res.status(friendly.status).json({ error: friendly.message, ...(friendly.code ? { code: friendly.code } : {}) });
   }

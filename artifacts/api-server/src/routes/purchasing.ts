@@ -3508,36 +3508,8 @@ router.post("/purchase-returns", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
     await assertIndustrialReturnSourceLinks(db, cid, invoiceId, lines);
-    // Central sequence engine is authoritative when an active sequence
-    // exists for "purchase_return"; otherwise fall back to client-supplied
-    // value or null. Server allocation is atomic so concurrent submits
-    // can never persist the same number.
-    let resolvedDocNumber: string | null;
-    try {
-      const allocateReturnNumber = () => nextSequenceForPayment(cid, "purchase_return", pType, {
-        userId:   (req as any).authUser?.id ?? null,
-        refTable: "purchase_returns",
-        branchId: branchId ? Number(branchId) : null,
-        docDate:  returnDate,
-      });
-      let fromSeq = await allocateReturnNumber();
-      for (let skipped = 0; fromSeq != null; skipped += 1) {
-        const duplicate = await db.select({ id: purchaseReturnsTable.id })
-          .from(purchaseReturnsTable)
-          .where(and(
-            eq(purchaseReturnsTable.companyId, cid),
-            eq(purchaseReturnsTable.docNumber, fromSeq),
-          ))
-          .limit(1);
-        if (!duplicate.length) break;
-        if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم مرتجع شراء غير مستخدم بعد الاستعادة");
-        fromSeq = await allocateReturnNumber();
-      }
-      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
-    } catch (seqErr: any) {
-      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم المرتجع" });
-      return;
-    }
+    // Reserve the number in the same transaction as the draft and its lines:
+    // a failed create must not leave a committed return-number reservation.
     const requestedReturnAccountIds = [
       inventoryAccountId, taxAccountId, discountAccountId,
     ].map(Number).filter((accountId) => Number.isInteger(accountId) && accountId > 0);
@@ -3551,73 +3523,108 @@ router.post("/purchase-returns", async (req, res) => {
       const accountId = Number(value);
       return Number.isInteger(accountId) && validReturnAccountIds.has(accountId) ? accountId : null;
     };
-    const ret = await insertPurchaseReturnWithSerialRepair({
-      companyId: cid, branchId: branchId ? Number(branchId) : null,
-      projectId: await (async () => {
-        const [origin] = invoiceId ? await db.select({ projectId: purchaseInvoicesTable.projectId })
-          .from(purchaseInvoicesTable).where(and(eq(purchaseInvoicesTable.id, Number(invoiceId)), eq(purchaseInvoicesTable.companyId, cid))) : [];
-        const selected = await resolveProjectLink(cid, req.body.projectId === undefined ? origin?.projectId : req.body.projectId, branchId, req.authUser);
-        if (origin && origin.projectId !== selected)
-          throw Object.assign(new Error("مشروع المرتجع المرتبط يجب أن يطابق الفاتورة الأصلية"), { status: 422 });
-        return selected;
-      })(),
-      docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
-      supplierId: supplierId ? Number(supplierId) : null,
-      invoiceId: invoiceId ? Number(invoiceId) : null,
-      paymentType: pType,
-      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
-      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
-      currencyCode: currencyCode || "SAR",
-      exchangeRate: String(exchangeRate || "1"),
-      totalAmount: String(totalAmount || "0"),
-      vatAmount: String(vatAmount || "0"),
-      discountAmount: String(discountAmount || "0"),
-      priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
-      inventoryAccountId: validReturnAccount(inventoryAccountId),
-      taxAccountId:       validReturnAccount(taxAccountId),
-      discountAccountId:  validReturnAccount(discountAccountId),
-      taxId:              taxId ? Number(taxId) : null,
-      postVariance: postVariance === true || postVariance === "true",
-      status: "draft", notes: notes || null,
-    });
-    if (lines?.length) {
-      const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
-      const sourceReturnLines = invoiceId
-        ? await db.select().from(purchaseInvoiceLinesTable)
+    const ret = await db.transaction(async (tx: any) => {
+      let resolvedDocNumber: string | null;
+      try {
+        const allocateReturnNumber = () => nextSequenceForPayment(cid, "purchase_return", pType, {
+          userId:   (req as any).authUser?.id ?? null,
+          refTable: "purchase_returns",
+          branchId: branchId ? Number(branchId) : null,
+          docDate:  returnDate,
+        }, false, tx);
+        let fromSeq = await allocateReturnNumber();
+        for (let skipped = 0; fromSeq != null; skipped += 1) {
+          const duplicate = await tx.select({ id: purchaseReturnsTable.id })
+            .from(purchaseReturnsTable)
+            .where(and(
+              eq(purchaseReturnsTable.companyId, cid),
+              eq(purchaseReturnsTable.docNumber, fromSeq),
+            ))
+            .limit(1);
+          if (!duplicate.length) break;
+          if (skipped >= 999) throw new Error("تعذر الوصول إلى رقم مرتجع شراء غير مستخدم بعد الاستعادة");
+          fromSeq = await allocateReturnNumber();
+        }
+        resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+      } catch (seqErr: any) {
+        throw Object.assign(new Error(seqErr?.message ?? "تعذر توليد رقم المرتجع"), {
+          status: 400, code: "RETURN_SEQUENCE_ALLOCATION_FAILED",
+        });
+      }
+
+      const created = await insertPurchaseReturnWithSerialRepair({
+        companyId: cid, branchId: branchId ? Number(branchId) : null,
+        projectId: await (async () => {
+          const [origin] = invoiceId ? await tx.select({ projectId: purchaseInvoicesTable.projectId })
+            .from(purchaseInvoicesTable)
+            .where(and(eq(purchaseInvoicesTable.id, Number(invoiceId)), eq(purchaseInvoicesTable.companyId, cid))) : [];
+          const selected = await resolveProjectLink(cid, req.body.projectId === undefined ? origin?.projectId : req.body.projectId, branchId, req.authUser);
+          if (origin && origin.projectId !== selected)
+            throw Object.assign(new Error("مشروع المرتجع المرتبط يجب أن يطابق الفاتورة الأصلية"), { status: 422 });
+          return selected;
+        })(),
+        docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
+        supplierId: supplierId ? Number(supplierId) : null,
+        invoiceId: invoiceId ? Number(invoiceId) : null,
+        paymentType: pType,
+        cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+        bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
+        currencyCode: currencyCode || "SAR",
+        exchangeRate: String(exchangeRate || "1"),
+        totalAmount: String(totalAmount || "0"),
+        vatAmount: String(vatAmount || "0"),
+        discountAmount: String(discountAmount || "0"),
+        priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
+        inventoryAccountId: validReturnAccount(inventoryAccountId),
+        taxAccountId:       validReturnAccount(taxAccountId),
+        discountAccountId:  validReturnAccount(discountAccountId),
+        taxId:              taxId ? Number(taxId) : null,
+        postVariance: postVariance === true || postVariance === "true",
+        status: "draft", notes: notes || null,
+      }, tx);
+      if (lines?.length) {
+        const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
+        const sourceReturnLines = invoiceId
+          ? await tx.select().from(purchaseInvoiceLinesTable)
             .where(and(
               eq(purchaseInvoiceLinesTable.invoiceId, Number(invoiceId)),
               eq(purchaseInvoiceLinesTable.companyId, cid),
             ))
             .orderBy(asc(purchaseInvoiceLinesTable.id))
-        : [];
-      const mappedLines = await resolvePurchaseLineUnits(
-        cid,
-        lines.map((l: any) => ({
-          returnId: ret.id, companyId: cid,
-          itemId: l.itemId ? Number(l.itemId) : null,
-          itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
-          unitId: l.unitId ? Number(l.unitId) : null,
-          conversionFactor: String(l.conversionFactor || "1"),
-          warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
-          qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
-          unitPrice: String(l.unitPrice || "0"),
-          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
-          vatRate: String(l.vatRate || resolvedRate), lineTotal: String(l.lineTotal || "0"),
-          costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
-          industrialCost: normalizeIndustrialCostTag(l.industrialCost),
-          notes: l.notes || null,
-        })),
-        lines,
-        [],
-        sourceReturnLines,
-      );
-      await db.insert(purchaseReturnLinesTable).values(
-        mappedLines
-      );
-    }
+          : [];
+        const mappedLines = await resolvePurchaseLineUnits(
+          cid,
+          lines.map((l: any) => ({
+            returnId: created.id, companyId: cid,
+            itemId: l.itemId ? Number(l.itemId) : null,
+            itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
+            unitId: l.unitId ? Number(l.unitId) : null,
+            conversionFactor: String(l.conversionFactor || "1"),
+            warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+            qty: String(l.qty || "1"), freeQty: String(l.freeQty || "0"),
+            unitPrice: String(l.unitPrice || "0"),
+            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+            vatRate: String(l.vatRate || resolvedRate), lineTotal: String(l.lineTotal || "0"),
+            costCenter: l.costCenter ? String(l.costCenter).trim() || null : null,
+            industrialCost: normalizeIndustrialCostTag(l.industrialCost),
+            notes: l.notes || null,
+          })),
+          lines,
+          [],
+          sourceReturnLines,
+          tx,
+        );
+        await tx.insert(purchaseReturnLinesTable).values(mappedLines);
+      }
+      return created;
+    });
     res.status(201).json(ret);
   } catch (e: any) {
     logger.error({ err: e }, "purchase return create failed");
+    if (e?.code === "RETURN_SEQUENCE_ALLOCATION_FAILED") {
+      res.status(400).json({ error: e.message });
+      return;
+    }
     const friendly = purchasingWriteError(e, "مرتجع الشراء");
     res.status(friendly.status).json({ error: friendly.message, ...(friendly.code ? { code: friendly.code } : {}) });
   }

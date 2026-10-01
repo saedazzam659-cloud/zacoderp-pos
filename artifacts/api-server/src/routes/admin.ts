@@ -1766,7 +1766,7 @@ async function resolveInvoiceRepairSequence(
   for (const transactionType of candidates) {
     const rows = await tx.execute(sql`
       SELECT id, prefix, month_pattern, start_number, end_number, pad_length,
-             current_number, monthly_reset, code
+             current_number, monthly_reset, code, transaction_types
       FROM sequences
       WHERE company_id = ${companyId} AND is_active = TRUE
         AND transaction_types ? ${transactionType}
@@ -1777,6 +1777,26 @@ async function resolveInvoiceRepairSequence(
     if (rows.rows?.[0]) return { ...(rows.rows[0] as any), transactionType };
   }
   return null;
+}
+
+/** Repairs only understand one logical document stream. A sequence may list
+ * aliases/subtypes for that same stream (payment, foreign, or mobile), but
+ * sharing its counter with another transaction type makes a scoped repair
+ * unsafe because the other stream's live documents and reservations cannot be
+ * reconciled here. */
+function invoiceRepairSequenceIsShared(seq: any, kind: InvoiceKind) {
+  const rawTypes = seq?.transaction_types;
+  if (!Array.isArray(rawTypes) || rawTypes.length === 0) return true;
+  const base = INVOICE_REPAIR_META[kind].sequenceBase;
+  const allowedTypes = new Set([
+    base,
+    `${base}_cash`,
+    `${base}_credit`,
+    `${base}_bank`,
+    ...(INVOICE_REPAIR_META[kind].sales ? [`${base}_foreign`] : []),
+    ...(kind === "sales" ? [`${base}_mobile`] : []),
+  ]);
+  return rawTypes.some((value: unknown) => typeof value !== "string" || !allowedTypes.has(value));
 }
 
 /** A log may be reclaimed only when it points at a still-deleted DRAFT
@@ -2206,6 +2226,11 @@ router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async 
         const isForeign = !!(invoice?.is_foreign ?? req.body?.isForeign);
         const seq = await resolveInvoiceRepairSequence(tx, companyId, kind, paymentType, isForeign, docDate);
         if (!seq) throw Object.assign(new Error("لا يوجد مسلسل نشط يطابق نوع المستند/الدفع/الفترة"), { status: 409 });
+        if (invoiceRepairSequenceIsShared(seq, kind)) {
+          throw Object.assign(new Error(
+            "المسلسل مرتبط بأنواع معاملات أخرى؛ افصل المسلسلات أو راجع الأنواع المرتبطة قبل إصلاح الترقيم",
+          ), { status: 409, code: "SHARED_SEQUENCE_REPAIR_UNSUPPORTED" });
+        }
         const cfg = await tx.execute(sql`SELECT sequence_date_source FROM companies WHERE id = ${companyId} FOR UPDATE`);
         const effectiveDate = cfg.rows?.[0]?.sequence_date_source === "document" ? docDate : new Date();
         const parts = invoiceNumberParts(requestedNumber);

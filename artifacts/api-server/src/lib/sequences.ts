@@ -38,10 +38,10 @@
 // the rollout non-breaking — until an admin creates a sequence the system
 // behaves exactly as before.
 //
-// The whole operation runs in its own short transaction. We deliberately do
-// NOT join the caller's transaction: a failed downstream insert should not
-// rewind a sequence — gaps in business numbering are acceptable and far
-// safer than reusing a previously-issued number.
+// By default, allocation commits in its own short transaction so numbers
+// already issued to a caller are never silently reused. A creator may pass
+// its transaction explicitly when the number is not exposed until a new
+// document and its lines commit together.
 
 import { db, sequencesTable, sequenceLogsTable, sequenceCountersTable, journalEntriesTable, jeNumberReservationsTable } from "@workspace/db";
 import { sql, and, eq } from "drizzle-orm";
@@ -627,9 +627,10 @@ export function foreignSubTypeFor(
 /**
  * Generate the next document number honouring OPTIONAL split series. Resolution
  * order is: foreign-customer sub-type (when the buyer is non-SA) → per-payment
- * sub-type → unified base type. Each attempt is its own short transaction and
- * consumes nothing when it returns null — so there is no number/sequence gap on
- * fallback. The foreign series takes PRECEDENCE over the payment-method split.
+ * sub-type → unified base type. By default each attempt is its own short
+ * transaction and consumes nothing when it returns null. When `dx` is supplied,
+ * every attempted allocation joins that caller-owned transaction. The foreign
+ * series takes PRECEDENCE over the payment-method split.
  *
  * Returns null only when NONE of the candidate series has an active sequence
  * (i.e. the caller's legacy "no sequence configured" path).
@@ -640,18 +641,19 @@ export async function nextSequenceForPayment(
   paymentType: string | null | undefined,
   ctx: NextSequenceCtx = {},
   isForeign: boolean | null | undefined = false,
+  dx?: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0],
 ): Promise<string | null> {
   const foreignSub = foreignSubTypeFor(baseType, isForeign);
   if (foreignSub) {
-    const fromForeign = await nextSequenceNumber(companyId, foreignSub, ctx);
+    const fromForeign = await nextSequenceNumber(companyId, foreignSub, ctx, dx);
     if (fromForeign != null) return fromForeign;
   }
   const sub = subTypeFor(baseType, paymentType);
   if (sub) {
-    const fromSub = await nextSequenceNumber(companyId, sub, ctx);
+    const fromSub = await nextSequenceNumber(companyId, sub, ctx, dx);
     if (fromSub != null) return fromSub;
   }
-  return await nextSequenceNumber(companyId, baseType, ctx);
+  return await nextSequenceNumber(companyId, baseType, ctx, dx);
 }
 
 /**

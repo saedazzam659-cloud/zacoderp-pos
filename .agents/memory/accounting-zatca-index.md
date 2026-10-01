@@ -58,3 +58,4 @@
 - [Sales invoice stock overdraft](sales-invoice-stock-overdraft.md) — negative stock requires invoice opt-in + user grant + warehouse policy; enforce the warehouse limit under the posting transaction.
 - [SuperAdmin JE sequence repair](superadmin-je-sequence-repair.md) — repair one bad existing JE only to actual high-water+1; all future JE allocations and gap-fill share a permanent unique number claim.
 - [Invoice number reclamation](invoice-number-reclamation.md) — reuse requires proof of deleted unsigned draft; stream-scoped repair shares issuance locks and never guesses specialized allocators.
+- [Return numbering boundaries](return-number-atomicity.md) — return allocations commit with draft rows/lines; scoped repairs fail closed when a sequence feeds other transaction types.
