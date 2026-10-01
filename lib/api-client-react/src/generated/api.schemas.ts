@@ -1301,6 +1301,107 @@ export type ListSuppliersParams = {
   companyId?: number;
 };
 
+export type ListOwnerBillTaxMappingsParams = {
+  /**
+   * @minimum 1
+   */
+  ownerContractId?: number;
+};
+
+export type ListOwnerBillTaxMappings200CountryCode =
+  (typeof ListOwnerBillTaxMappings200CountryCode)[keyof typeof ListOwnerBillTaxMappings200CountryCode];
+
+export const ListOwnerBillTaxMappings200CountryCode = {
+  EG: "EG",
+  JO: "JO",
+} as const;
+
+export type ListOwnerBillTaxMappings200Provider =
+  (typeof ListOwnerBillTaxMappings200Provider)[keyof typeof ListOwnerBillTaxMappings200Provider];
+
+export const ListOwnerBillTaxMappings200Provider = {
+  egypt_eta: "egypt_eta",
+  jordan_national: "jordan_national",
+} as const;
+
+export type ListOwnerBillTaxMappings200MappingsItemCountryCode =
+  (typeof ListOwnerBillTaxMappings200MappingsItemCountryCode)[keyof typeof ListOwnerBillTaxMappings200MappingsItemCountryCode];
+
+export const ListOwnerBillTaxMappings200MappingsItemCountryCode = {
+  EG: "EG",
+  JO: "JO",
+} as const;
+
+export type ListOwnerBillTaxMappings200MappingsItemProvider =
+  (typeof ListOwnerBillTaxMappings200MappingsItemProvider)[keyof typeof ListOwnerBillTaxMappings200MappingsItemProvider];
+
+export const ListOwnerBillTaxMappings200MappingsItemProvider = {
+  egypt_eta: "egypt_eta",
+  jordan_national: "jordan_national",
+} as const;
+
+export type ListOwnerBillTaxMappings200MappingsItem = {
+  boqLineId: number;
+  ownerContractId: number;
+  countryCode: ListOwnerBillTaxMappings200MappingsItemCountryCode;
+  provider: ListOwnerBillTaxMappings200MappingsItemProvider;
+  providerItemCode: string;
+  providerUnitCode: string;
+  providerTaxCategoryCode: string;
+  updatedAt?: string | null;
+};
+
+export type ListOwnerBillTaxMappings200 = {
+  countryCode: ListOwnerBillTaxMappings200CountryCode;
+  provider: ListOwnerBillTaxMappings200Provider;
+  mappings: ListOwnerBillTaxMappings200MappingsItem[];
+};
+
+export type SaveOwnerBillTaxMappingBody = {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  providerItemCode: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  providerUnitCode: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  providerTaxCategoryCode: string;
+};
+
+export type SaveOwnerBillTaxMapping200CountryCode =
+  (typeof SaveOwnerBillTaxMapping200CountryCode)[keyof typeof SaveOwnerBillTaxMapping200CountryCode];
+
+export const SaveOwnerBillTaxMapping200CountryCode = {
+  EG: "EG",
+  JO: "JO",
+} as const;
+
+export type SaveOwnerBillTaxMapping200Provider =
+  (typeof SaveOwnerBillTaxMapping200Provider)[keyof typeof SaveOwnerBillTaxMapping200Provider];
+
+export const SaveOwnerBillTaxMapping200Provider = {
+  egypt_eta: "egypt_eta",
+  jordan_national: "jordan_national",
+} as const;
+
+export type SaveOwnerBillTaxMapping200 = {
+  boqLineId: number;
+  ownerContractId: number;
+  countryCode: SaveOwnerBillTaxMapping200CountryCode;
+  provider: SaveOwnerBillTaxMapping200Provider;
+  providerItemCode: string;
+  providerUnitCode: string;
+  providerTaxCategoryCode: string;
+  updatedAt?: string | null;
+};
+
 export type ListHistoricalOwnerBoqPriceReferencesParams = {
   /**
    * @minimum 1

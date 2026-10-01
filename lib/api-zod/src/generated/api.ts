@@ -1137,6 +1137,76 @@ export const GetContractingGuaranteeOptionsResponse = zod.object({
 });
 
 /**
+ * @summary List country-provider tax codes configured for owner progress-bill BOQ lines
+ */
+
+export const ListOwnerBillTaxMappingsParams = zod.object({
+  projectId: zod.coerce.number().min(1),
+});
+
+export const ListOwnerBillTaxMappingsQueryParams = zod.object({
+  ownerContractId: zod.coerce.number().min(1).optional(),
+});
+
+export const ListOwnerBillTaxMappingsResponse = zod.object({
+  countryCode: zod.enum(["EG", "JO"]),
+  provider: zod.enum(["egypt_eta", "jordan_national"]),
+  mappings: zod.array(
+    zod.object({
+      boqLineId: zod.number(),
+      ownerContractId: zod.number(),
+      countryCode: zod.enum(["EG", "JO"]),
+      provider: zod.enum(["egypt_eta", "jordan_national"]),
+      providerItemCode: zod.string(),
+      providerUnitCode: zod.string(),
+      providerTaxCategoryCode: zod.string(),
+      updatedAt: zod.string().nullish(),
+    }),
+  ),
+});
+
+/**
+ * @summary Save explicit provider codes for an owner-contract BOQ line
+ */
+
+export const SaveOwnerBillTaxMappingParams = zod.object({
+  projectId: zod.coerce.number().min(1),
+  id: zod.coerce.number().min(1),
+});
+
+export const saveOwnerBillTaxMappingBodyProviderItemCodeMax = 128;
+
+export const saveOwnerBillTaxMappingBodyProviderUnitCodeMax = 128;
+
+export const saveOwnerBillTaxMappingBodyProviderTaxCategoryCodeMax = 128;
+
+export const SaveOwnerBillTaxMappingBody = zod.object({
+  providerItemCode: zod
+    .string()
+    .min(1)
+    .max(saveOwnerBillTaxMappingBodyProviderItemCodeMax),
+  providerUnitCode: zod
+    .string()
+    .min(1)
+    .max(saveOwnerBillTaxMappingBodyProviderUnitCodeMax),
+  providerTaxCategoryCode: zod
+    .string()
+    .min(1)
+    .max(saveOwnerBillTaxMappingBodyProviderTaxCategoryCodeMax),
+});
+
+export const SaveOwnerBillTaxMappingResponse = zod.object({
+  boqLineId: zod.number(),
+  ownerContractId: zod.number(),
+  countryCode: zod.enum(["EG", "JO"]),
+  provider: zod.enum(["egypt_eta", "jordan_national"]),
+  providerItemCode: zod.string(),
+  providerUnitCode: zod.string(),
+  providerTaxCategoryCode: zod.string(),
+  updatedAt: zod.string().nullish(),
+});
+
+/**
  * @summary Compare project work items with visible approved owner-contract BOQ prices
  */
 

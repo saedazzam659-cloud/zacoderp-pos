@@ -64,6 +64,7 @@ export * from "./contractingSettings";
 export * from "./contractingAccounting";
 export * from "./contractingCostAllocations";
 export * from "./contractingGuarantees";
+export * from "./contractingLocalTax";
 export * from "./kioskTokens";
 export * from "./maintenance";
 export * from "./hotel";

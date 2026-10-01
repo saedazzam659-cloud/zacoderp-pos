@@ -10,6 +10,11 @@ import {
 } from "../lib/contracting-boq-service.js";
 import { ensureContractingProjectIntegrity } from "../lib/contracting-integrity.js";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
+import {
+  ensureContractingLocalTaxMappingTables,
+  listOwnerBillTaxMappings,
+  saveOwnerBillTaxMapping,
+} from "../lib/contracting-local-tax-mapping-service.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -25,6 +30,7 @@ router.use(async (_req, _res, next) => {
   try {
     await ensureContractingAccountingTables();
     await ensureContractingBoqTables();
+      await ensureContractingLocalTaxMappingTables();
     await ensureContractingProjectIntegrity();
     next();
   } catch (caught) {
@@ -92,10 +98,47 @@ async function deleteLine(req: any, res: any) {
   }
 }
 
+async function getOwnerBillTaxMappings(req: any, res: any) {
+  const cid = await companyId(req, res);
+  if (!cid) return;
+  try {
+    res.json(await listOwnerBillTaxMappings(
+      cid,
+      req.params.projectId,
+      req.query.ownerContractId,
+      req.authUser,
+    ));
+  } catch (caught) {
+    fail(res, caught);
+  }
+}
+
+async function putOwnerBillTaxMapping(req: any, res: any) {
+  const cid = await companyId(req, res);
+  if (!cid) return;
+  try {
+    res.json(await saveOwnerBillTaxMapping(
+      cid,
+      req.params.projectId,
+      req.params.id,
+      req.body,
+      req.authUser,
+    ));
+  } catch (caught) {
+    fail(res, caught);
+  }
+}
+
 router.get("/projects/:projectId/boq-lines", getLines);
 router.post("/projects/:projectId/boq-lines", requirePermission("contracting", "edit"), createLine);
 router.put("/boq-lines/:id", requirePermission("contracting", "edit"), updateLine);
 router.delete("/boq-lines/:id", requirePermission("contracting", "edit"), deleteLine);
+router.get("/projects/:projectId/owner-bill-tax-mappings", getOwnerBillTaxMappings);
+router.put(
+  "/projects/:projectId/boq-lines/:id/owner-bill-tax-mapping",
+  requirePermission("contracting", "edit"),
+  putOwnerBillTaxMapping,
+);
 
 router.get("/projects/:projectId/contract-boq-lines", getLines);
 router.post("/projects/:projectId/contract-boq-lines", requirePermission("contracting", "edit"), createLine);

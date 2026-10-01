@@ -605,6 +605,136 @@ paths:
               schema:
                 $ref: "#/components/schemas/ContractingGuaranteeOptions"
 
+  /contracting/projects/{projectId}/owner-bill-tax-mappings:
+    get:
+      operationId: listOwnerBillTaxMappings
+      tags: [contracting]
+      summary: List country-provider tax codes configured for owner progress-bill BOQ lines
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: ownerContractId
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Explicit mappings for accessible owner-contract BOQ lines
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [countryCode, provider, mappings]
+                properties:
+                  countryCode:
+                    type: string
+                    enum: [EG, JO]
+                  provider:
+                    type: string
+                    enum: [egypt_eta, jordan_national]
+                  mappings:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - boqLineId
+                        - ownerContractId
+                        - countryCode
+                        - provider
+                        - providerItemCode
+                        - providerUnitCode
+                        - providerTaxCategoryCode
+                      properties:
+                        boqLineId: { type: integer }
+                        ownerContractId: { type: integer }
+                        countryCode: { type: string, enum: [EG, JO] }
+                        provider: { type: string, enum: [egypt_eta, jordan_national] }
+                        providerItemCode: { type: string }
+                        providerUnitCode: { type: string }
+                        providerTaxCategoryCode: { type: string }
+                        updatedAt: { type: string, nullable: true }
+        "400":
+          description: Invalid project or owner contract
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Company, tax module, role, or project access is not allowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /contracting/projects/{projectId}/boq-lines/{id}/owner-bill-tax-mapping:
+    put:
+      operationId: saveOwnerBillTaxMapping
+      tags: [contracting]
+      summary: Save explicit provider codes for an owner-contract BOQ line
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [providerItemCode, providerUnitCode, providerTaxCategoryCode]
+              properties:
+                providerItemCode: { type: string, minLength: 1, maxLength: 128 }
+                providerUnitCode: { type: string, minLength: 1, maxLength: 128 }
+                providerTaxCategoryCode: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        "200":
+          description: Saved owner progress-bill mapping
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - boqLineId
+                  - ownerContractId
+                  - countryCode
+                  - provider
+                  - providerItemCode
+                  - providerUnitCode
+                  - providerTaxCategoryCode
+                properties:
+                  boqLineId: { type: integer }
+                  ownerContractId: { type: integer }
+                  countryCode: { type: string, enum: [EG, JO] }
+                  provider: { type: string, enum: [egypt_eta, jordan_national] }
+                  providerItemCode: { type: string }
+                  providerUnitCode: { type: string }
+                  providerTaxCategoryCode: { type: string }
+                  updatedAt: { type: string, nullable: true }
+        "400":
+          description: Invalid mapping codes or scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Company admin, tax module, or project permission is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Owner BOQ line not found in project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /contracting/projects/{projectId}/boq-price-references:
     get:
       operationId: listHistoricalOwnerBoqPriceReferences

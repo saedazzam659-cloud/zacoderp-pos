@@ -56,6 +56,8 @@ import type {
   ListHistoricalOwnerBoqPriceReferencesParams,
   ListIncidentsParams,
   ListInvoicesParams,
+  ListOwnerBillTaxMappings200,
+  ListOwnerBillTaxMappingsParams,
   ListRiskAssessmentsParams,
   ListSecurityActiveCompaniesParams,
   ListSuppliersParams,
@@ -66,6 +68,8 @@ import type {
   RiskAssessment,
   RiskControl,
   SafetyKpis,
+  SaveOwnerBillTaxMapping200,
+  SaveOwnerBillTaxMappingBody,
   SecurityActiveCompaniesResponse,
   SecurityActiveCompanyEndInput,
   SecurityActiveCompanyEndResult,
@@ -2833,6 +2837,242 @@ export function useGetContractingGuaranteeOptions<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List country-provider tax codes configured for owner progress-bill BOQ lines
+ */
+export const getListOwnerBillTaxMappingsUrl = (
+  projectId: number,
+  params?: ListOwnerBillTaxMappingsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/contracting/projects/${projectId}/owner-bill-tax-mappings?${stringifiedParams}`
+    : `/api/contracting/projects/${projectId}/owner-bill-tax-mappings`;
+};
+
+export const listOwnerBillTaxMappings = async (
+  projectId: number,
+  params?: ListOwnerBillTaxMappingsParams,
+  options?: RequestInit,
+): Promise<ListOwnerBillTaxMappings200> => {
+  return customFetch<ListOwnerBillTaxMappings200>(
+    getListOwnerBillTaxMappingsUrl(projectId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListOwnerBillTaxMappingsQueryKey = (
+  projectId: number,
+  params?: ListOwnerBillTaxMappingsParams,
+) => {
+  return [
+    `/api/contracting/projects/${projectId}/owner-bill-tax-mappings`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListOwnerBillTaxMappingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listOwnerBillTaxMappings>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  projectId: number,
+  params?: ListOwnerBillTaxMappingsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOwnerBillTaxMappings>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getListOwnerBillTaxMappingsQueryKey(projectId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listOwnerBillTaxMappings>>
+  > = ({ signal }) =>
+    listOwnerBillTaxMappings(projectId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!projectId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listOwnerBillTaxMappings>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListOwnerBillTaxMappingsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listOwnerBillTaxMappings>>
+>;
+export type ListOwnerBillTaxMappingsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List country-provider tax codes configured for owner progress-bill BOQ lines
+ */
+
+export function useListOwnerBillTaxMappings<
+  TData = Awaited<ReturnType<typeof listOwnerBillTaxMappings>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  projectId: number,
+  params?: ListOwnerBillTaxMappingsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOwnerBillTaxMappings>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListOwnerBillTaxMappingsQueryOptions(
+    projectId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Save explicit provider codes for an owner-contract BOQ line
+ */
+export const getSaveOwnerBillTaxMappingUrl = (
+  projectId: number,
+  id: number,
+) => {
+  return `/api/contracting/projects/${projectId}/boq-lines/${id}/owner-bill-tax-mapping`;
+};
+
+export const saveOwnerBillTaxMapping = async (
+  projectId: number,
+  id: number,
+  saveOwnerBillTaxMappingBody: SaveOwnerBillTaxMappingBody,
+  options?: RequestInit,
+): Promise<SaveOwnerBillTaxMapping200> => {
+  return customFetch<SaveOwnerBillTaxMapping200>(
+    getSaveOwnerBillTaxMappingUrl(projectId, id),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(saveOwnerBillTaxMappingBody),
+    },
+  );
+};
+
+export const getSaveOwnerBillTaxMappingMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveOwnerBillTaxMapping>>,
+    TError,
+    {
+      projectId: number;
+      id: number;
+      data: BodyType<SaveOwnerBillTaxMappingBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveOwnerBillTaxMapping>>,
+  TError,
+  {
+    projectId: number;
+    id: number;
+    data: BodyType<SaveOwnerBillTaxMappingBody>;
+  },
+  TContext
+> => {
+  const mutationKey = ["saveOwnerBillTaxMapping"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveOwnerBillTaxMapping>>,
+    {
+      projectId: number;
+      id: number;
+      data: BodyType<SaveOwnerBillTaxMappingBody>;
+    }
+  > = (props) => {
+    const { projectId, id, data } = props ?? {};
+
+    return saveOwnerBillTaxMapping(projectId, id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveOwnerBillTaxMappingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveOwnerBillTaxMapping>>
+>;
+export type SaveOwnerBillTaxMappingMutationBody =
+  BodyType<SaveOwnerBillTaxMappingBody>;
+export type SaveOwnerBillTaxMappingMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Save explicit provider codes for an owner-contract BOQ line
+ */
+export const useSaveOwnerBillTaxMapping = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveOwnerBillTaxMapping>>,
+    TError,
+    {
+      projectId: number;
+      id: number;
+      data: BodyType<SaveOwnerBillTaxMappingBody>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof saveOwnerBillTaxMapping>>,
+  TError,
+  {
+    projectId: number;
+    id: number;
+    data: BodyType<SaveOwnerBillTaxMappingBody>;
+  },
+  TContext
+> => {
+  return useMutation(getSaveOwnerBillTaxMappingMutationOptions(options));
+};
 
 /**
  * @summary Compare project work items with visible approved owner-contract BOQ prices

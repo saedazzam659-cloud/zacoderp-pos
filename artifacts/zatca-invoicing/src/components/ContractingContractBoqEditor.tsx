@@ -4,6 +4,7 @@ import {
   type HistoricalOwnerBoqPriceReference,
 } from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermission } from "@/hooks/usePermission";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +16,11 @@ import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { contractWorkItemDefaults } from "@/lib/contractingWorkItemDefaults";
 import ContractingProjectScope from "./ContractingProjectScope";
 import { ContractingArchiveAction } from "./ContractingArchiveAction";
+import {
+  ContractingOwnerBillTaxMappingDialog,
+  type OwnerBillTaxMapping,
+} from "./ContractingOwnerBillTaxMappingDialog";
+import { companyTaxPermissionForCountry } from "@/lib/companyModuleGate";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -125,6 +131,14 @@ export default function ContractingContractBoqEditor({
 }) {
   const currencyLabel = currencyCode || "عملة غير محددة";
   const { token, user, actingCompanyId } = useAuth() as any;
+  const companyCountry = String(user?.company?.country ?? "").toUpperCase();
+  const taxPermissionKey = companyTaxPermissionForCountry(companyCountry);
+  const hasTaxModuleAccess = usePermission(taxPermissionKey ?? "egypt_tax");
+  const canManageTaxMappings = direction === "owner"
+    && (companyCountry === "EG" || companyCountry === "JO")
+    && user?.role === "admin"
+    && !!taxPermissionKey
+    && hasTaxModuleAccess;
   const { toast } = useToast();
   const [rows, setRows] = useState<BoqLine[]>([]);
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
@@ -139,11 +153,45 @@ export default function ContractingContractBoqEditor({
   const [priceReferenceLoading, setPriceReferenceLoading] = useState(false);
   const [priceReferenceError, setPriceReferenceError] = useState<string | null>(null);
   const [priceReferenceRetry, setPriceReferenceRetry] = useState(0);
+  const [taxMappings, setTaxMappings] = useState<Record<number, OwnerBillTaxMapping>>({});
+  const [taxMappingLoadError, setTaxMappingLoadError] = useState<string | null>(null);
 
   const contractQuery = direction === "owner"
     ? `ownerContractId=${contractId}`
     : `subcontractorContractId=${contractId}`;
   const path = `/api/contracting/projects/${projectId}/boq-lines?direction=${direction}&${contractQuery}`;
+
+  const loadOwnerBillTaxMappings = useCallback(async () => {
+    if (!active || !canManageTaxMappings || contractId == null || !token) {
+      setTaxMappings({});
+      setTaxMappingLoadError(null);
+      return;
+    }
+    setTaxMappingLoadError(null);
+    try {
+      const response = await fetch(
+        `${API}/api/contracting/projects/${projectId}/owner-bill-tax-mappings?ownerContractId=${contractId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+          },
+        },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+      if (!Array.isArray(result?.mappings)) throw new Error("استجابة ربط البنود غير صالحة");
+      setTaxMappings(Object.fromEntries(
+        result.mappings.map((mapping: OwnerBillTaxMapping) => [mapping.boqLineId, mapping]),
+      ));
+    } catch (caught: any) {
+      setTaxMappingLoadError(caught?.message || "تعذر تحميل روابط الفوترة الإلكترونية");
+    }
+  }, [active, actingCompanyId, canManageTaxMappings, contractId, projectId, token]);
+
+  useEffect(() => {
+    void loadOwnerBillTaxMappings();
+  }, [loadOwnerBillTaxMappings]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -390,6 +438,21 @@ export default function ContractingContractBoqEditor({
         </div>
       </div>
       {loadError && <p role="alert" className="text-sm text-destructive">{loadError}</p>}
+      {canManageTaxMappings && (
+        <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+          <p>
+            إعداد الرموز منفصل عن الأسعار التجارية، ولا يرسل أي مستخلص. سيظل الإرسال محجوبًا حتى يعتمد المحاسب قاعدة تاريخ الاستحقاق ومعالجة الاستقطاع واسترداد الدفعات المقدمة.
+          </p>
+          {taxMappingLoadError && (
+            <div className="mt-1 flex flex-wrap items-center gap-2" role="alert">
+              <span>تعذر تحميل الرموز المحفوظة: {taxMappingLoadError}</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => void loadOwnerBillTaxMappings()}>
+                إعادة تحميل الرموز
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
       {contractId != null && direction === "owner" && contractType === "main" && !loadError && !loading && (
         <div className="rounded border border-sky-200 bg-white p-3 text-xs leading-5 dark:bg-slate-900">
           <p>بنود التنفيذ في المشروع ليست أسطر جدول كميات محفوظة في هذا العقد. البنود الموجودة مسبقًا في العقد تبقى بأسعارها وكمياتها.</p>
@@ -599,6 +662,22 @@ export default function ContractingContractBoqEditor({
                 <TableCell className="tabular-nums">{Number(row.unitPrice).toLocaleString("en-US")}</TableCell>
                 <TableCell className="tabular-nums font-semibold">{Number(row.totalAmount).toLocaleString("en-US")} {currencyLabel}</TableCell>
                 <TableCell className="text-end">
+                    {canManageTaxMappings && row.direction === "owner" && (
+                      <ContractingOwnerBillTaxMappingDialog
+                        projectId={projectId}
+                        boqLineId={row.id}
+                        lineLabel={`${row.workItemCode ? `${row.workItemCode} — ` : ""}${row.workItemName || "بند"} · ${row.unit}`}
+                        countryCode={companyCountry as "EG" | "JO"}
+                        token={token}
+                        actingCompanyId={actingCompanyId}
+                        mapping={taxMappings[row.id]}
+                        disabled={!!taxMappingLoadError}
+                        onSaved={(mapping) => setTaxMappings(current => ({
+                          ...current,
+                          [mapping.boqLineId]: mapping,
+                        }))}
+                      />
+                    )}
                    <ContractingArchiveAction
                      entityType="boqLine"
                      entityId={row.id}
