@@ -3043,7 +3043,10 @@ router.delete("/purchase-invoices/:id", async (req, res) => {
       });
     });
     res.json({ ok: true, restoredPurchaseOrderIds: sourcePOs.map(p => p.id) });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // One-shot self-heal endpoint: scans for purchase orders stuck in
@@ -3523,7 +3526,10 @@ router.delete("/purchase-orders/:id", async (req, res) => {
       eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid),
     ));
     res.json({ ok: true });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════
@@ -4607,7 +4613,10 @@ router.delete("/purchase-returns/:id", async (req, res) => {
       }
     });
     res.json({ ok: true });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════
@@ -4954,7 +4963,10 @@ router.delete("/supplier-settlements/:id", requirePermission("supplier_settlemen
     }
     await db.delete(supplierSettlementsTable).where(and(eq(supplierSettlementsTable.id, id), eq(supplierSettlementsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // ── AI-generated journal entry for a Letter of Credit ───────────────────

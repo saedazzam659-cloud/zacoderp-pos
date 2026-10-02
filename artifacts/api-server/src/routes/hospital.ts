@@ -414,7 +414,10 @@ router.delete("/appointments/:id", async (req, res) => {
     if (!await assertOwn(res, hospitalAppointmentsTable, id, cid, "الموعد")) return;
     await db.delete(hospitalAppointmentsTable).where(and(eq(hospitalAppointmentsTable.id, id), eq(hospitalAppointmentsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════
@@ -560,7 +563,10 @@ router.delete("/invoices/:id", async (req, res) => {
     if (!await assertOwn(res, hospitalInvoicesTable, id, cid, "الفاتورة")) return;
     await db.delete(hospitalInvoicesTable).where(and(eq(hospitalInvoicesTable.id, id), eq(hospitalInvoicesTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════
@@ -634,7 +640,10 @@ router.delete("/claims/:id", async (req, res) => {
     if (!await assertOwn(res, hospitalClaimsTable, id, cid, "المطالبة")) return;
     await db.delete(hospitalClaimsTable).where(and(eq(hospitalClaimsTable.id, id), eq(hospitalClaimsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════

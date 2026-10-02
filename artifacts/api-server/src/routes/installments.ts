@@ -488,7 +488,10 @@ router.delete("/contracts/:id", async (req, res) => {
     await db.delete(installmentContractsTable)
       .where(and(eq(installmentContractsTable.id, id), eq(installmentContractsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════

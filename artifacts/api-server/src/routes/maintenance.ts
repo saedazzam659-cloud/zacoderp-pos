@@ -392,7 +392,10 @@ router.delete("/orders/:id", async (req, res) => {
     await db.delete(maintenanceOrdersTable)
       .where(and(eq(maintenanceOrdersTable.id, id), eq(maintenanceOrdersTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Order parts (sub-resource) ─────────────────────────────────────────

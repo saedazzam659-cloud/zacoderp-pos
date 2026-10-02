@@ -7,6 +7,7 @@ import { eq, asc, desc } from "drizzle-orm";
 import { db, planConfigsTable, seoGeneratedArticlesTable } from "@workspace/db";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { sequenceProtectionErrorResponse } from "./lib/sequenceProtectionErrors";
 import { visitorCountryMiddleware, visitorCountryHandler } from "./middleware/visitorCountry.js";
 import { runAuthContext } from "./lib/requestContext.js";
 import { robotsText, robotsHeader, frontendSourceMap } from "./lib/crawlPolicy.js";
@@ -467,19 +468,33 @@ app.get("/api/robots.txt", robotsHandler);
 // with its UI default.
 app.get("/api/visitor-country", visitorCountryHandler);
 
-app.use("/api", router);
+app.use("/api", (req, res, next) => {
+  res.locals.respondSequenceProtectionError = (error: unknown) => {
+    const body = sequenceProtectionErrorResponse(
+      error,
+      req.get("x-app-language") ?? req.get("accept-language"),
+    );
+    if (!body) return false;
+    res.status(409).json(body);
+    return true;
+  };
+  next();
+}, router);
 
 // JSON error handler — must be the LAST middleware so async errors return JSON
 // (not Express's default HTML "Internal Server Error" page).
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error({ err, url: req.url, method: req.method }, "unhandled API error");
   if (res.headersSent) return;
-  const protectedSequenceError =
-    err?.code === "P0001" &&
-    ["SEQUENCE_PROTECTED_DELETE", "SEQUENCE_PROTECTED_NUMBER_CHANGE"].includes(String(err?.detail ?? ""));
-  const status = protectedSequenceError
-    ? 409
-    : typeof err?.status === "number" ? err.status : 500;
+  const sequenceError = sequenceProtectionErrorResponse(
+    err,
+    req.get("x-app-language") ?? req.get("accept-language"),
+  );
+  if (sequenceError) {
+    res.status(409).json(sequenceError);
+    return;
+  }
+  const status = typeof err?.status === "number" ? err.status : 500;
   // NEVER leak raw internal error text to the client. Driver/ORM errors can
   // embed the full SQL statement (including huge inline permission-key
   // defaults) — that blob was rendered verbatim in the login screen's error
@@ -491,11 +506,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   const looksInternal =
     raw.length > 300 ||
     /select |insert |update |delete |syntax error|column |relation |sql|violates|constraint/i.test(raw);
-  const message = protectedSequenceError
-    ? err.detail === "SEQUENCE_PROTECTED_DELETE"
-      ? "هذا المستند المرقم محمي ولا يمكن حذفه. استخدم مسار الإلغاء بدلاً من الحذف."
-      : "لا يمكن تغيير رقم مستند محمي بعد إصداره."
-    : (status < 500 && raw && !looksInternal)
+  const message = (status < 500 && raw && !looksInternal)
     ? raw
     : "حدث خطأ غير متوقع في الخادم. حاول مرة أخرى أو تواصل مع الدعم.";
   res.status(status).json({ error: message });

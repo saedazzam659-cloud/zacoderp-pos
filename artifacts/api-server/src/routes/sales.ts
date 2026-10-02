@@ -4594,7 +4594,10 @@ router.delete("/sales-invoices/:id", async (req, res) => {
       await tx.delete(documentExpensesTable).where(expenseWhere(cid, "sales_invoice", id));
     });
     res.json({ ok: true });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // فك ربط عرض/عروض الأسعار المحوَّلة إلى هذه الفاتورة — يعيد عرض السعر إلى
@@ -6036,7 +6039,10 @@ router.delete("/sales-returns/:id", async (req, res) => {
       }
     });
     res.json({ ok: true });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════
@@ -6352,7 +6358,10 @@ router.delete("/sales-quotations/:id", async (req, res) => {
     if (!target) { res.status(404).json({ error: "العرض غير موجود" }); return; }
     await db.delete(salesQuotationsTable).where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════
@@ -6690,7 +6699,10 @@ router.delete("/sales-orders/:id", async (req, res) => {
     }
     await db.delete(salesOrdersTable).where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════
@@ -6774,7 +6786,10 @@ router.delete("/customer-settlements/:id", async (req, res) => {
     }
     await db.delete(customerSettlementsTable).where(and(eq(customerSettlementsTable.id, id), eq(customerSettlementsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════

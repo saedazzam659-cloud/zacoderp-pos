@@ -949,7 +949,10 @@ router.delete("/:id/contracts/:contractId", async (req, res) => {
     await db.delete(employeeContractsTable)
       .where(and(eq(employeeContractsTable.id, cnId), eq(employeeContractsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── LEAVES ──────────────────────────────────────────────────
@@ -2226,7 +2229,10 @@ router.delete("/payroll/runs/:id", async (req, res) => {
       await tx.delete(payrollRunsTable).where(eq(payrollRunsTable.id, id));
     });
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── HR CALCULATORS (Saudi Labor Law) ─────────────────────────

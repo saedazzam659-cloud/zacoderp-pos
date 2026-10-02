@@ -2436,7 +2436,10 @@ router.delete("/owner-contracts/:id", async (req, res) => {
     await db.delete(contractingOwnerContractsTable)
       .where(and(eq(contractingOwnerContractsTable.id, id), eq(contractingOwnerContractsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e?.message ?? "خطأ" });
+  }
 });
 
 // ─────────────────── SUB-CONTRACTS (عقود المقاولين الباطنين) ───────────────────
@@ -2871,7 +2874,10 @@ router.delete("/sub-contracts/:id", async (req, res) => {
     await db.delete(contractingSubContractsTable)
       .where(and(eq(contractingSubContractsTable.id, id), eq(contractingSubContractsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e?.message ?? "خطأ" });
+  }
 });
 
 // ─────────────────── TENDERS + BANK GUARANTEES ───────────────────
@@ -4908,7 +4914,10 @@ router.delete("/bills/:id", async (req, res) => {
     await db.delete(contractingProgressBillsTable)
       .where(and(eq(contractingProgressBillsTable.id, id), eq(contractingProgressBillsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e?.message ?? "خطأ" });
+  }
 });
 
 // ─────────────────── EVENTS ───────────────────

@@ -521,7 +521,10 @@ router.delete("/bookings/:id", async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(hotelBookingsTable).where(and(eq(hotelBookingsTable.id, id), eq(hotelBookingsTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Check-in / check-out workflow actions.
@@ -623,7 +626,10 @@ router.delete("/payments/:id", async (req, res) => {
     await db.delete(hotelPaymentsTable).where(and(eq(hotelPaymentsTable.id, id), eq(hotelPaymentsTable.companyId, cid)));
     await refreshBookingPaid(cid, existing.bookingId);
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 async function refreshBookingPaid(cid: number, bookingId: number) {
@@ -723,7 +729,10 @@ router.delete("/housekeeping/:id", async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(hotelHousekeepingTable).where(and(eq(hotelHousekeepingTable.id, id), eq(hotelHousekeepingTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════

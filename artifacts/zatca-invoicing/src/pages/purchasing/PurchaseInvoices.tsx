@@ -133,10 +133,21 @@ export default function PurchaseInvoices() {
   const deleteMut = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API}/api/purchasing/purchase-invoices/${id}`, { method: "DELETE", headers });
-      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "خطأ"); }
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const error: any = new Error(j.error || "خطأ");
+        error.code = j.code;
+        error.errorTitle = j.errorTitle;
+        error.errorDescription = j.errorDescription;
+        throw error;
+      }
     },
     onSuccess: () => { invalidate(); toast({ title: t("purchasingPages.purchaseInvoices.toasts.deleted") }); },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({
+      title: e.errorTitle || e.message,
+      description: e.errorDescription,
+      variant: "destructive",
+    }),
   });
 
   async function bulkRun(

@@ -579,7 +579,10 @@ router.delete("/:id", async (req, res) => {
       eq(goodsReceiptsTable.id, id), eq(goodsReceiptsTable.companyId, cid),
     ));
     res.json({ ok: true });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════

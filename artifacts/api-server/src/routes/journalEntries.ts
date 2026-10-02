@@ -2333,7 +2333,10 @@ router.delete("/:id", async (req, res) => {
     await db.delete(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── GET /:id/audit — manager-only forensic audit dialog ──────────────────

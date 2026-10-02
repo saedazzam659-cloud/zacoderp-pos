@@ -2645,6 +2645,7 @@ router.delete("/stock-transfers/:id", async (req, res) => {
     });
     res.json({ ok: true });
   } catch (e: any) {
+    if (res.locals.respondSequenceProtectionError?.(e)) return;
     res.status(e.status ?? 500).json({ error: e.message });
   }
 });
