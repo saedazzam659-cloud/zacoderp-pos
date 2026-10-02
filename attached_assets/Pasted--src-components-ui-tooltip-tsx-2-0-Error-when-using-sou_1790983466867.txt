@@ -1,0 +1,122 @@
+
+src/components/ui/tooltip.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/label.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/avatar.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/select.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+✓ 2681 modules transformed.
+
+rendering chunks...
+
+computing gzip size...
+
+dist/public/index.html                     1.23 kB │ gzip:   0.60 kB
+dist/public/assets/index-jsHWtykp.css    104.02 kB │ gzip:  17.07 kB
+dist/public/assets/index-CvuXnV0y.js   1,881.50 kB │ gzip: 509.20 kB
+✓ built in 6.98s
+
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+
+
+> @workspace/zatca-invoicing@0.0.0 build /home/runner/workspace/artifacts/zatca-invoicing
+> NODE_OPTIONS=--max-old-space-size=4096 vite build --config vite.config.ts
+
+
+vite v7.3.2 building client environment for production...
+
+transforming...
+
+src/components/ui/tooltip.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/label.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/select.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/avatar.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/search-combobox.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/progress.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/sheet.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/dropdown-menu.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/command.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/components/ui/calendar.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+
+src/lib/export.ts (1817:92): "default" is not exported by "../mobile/lib/statementHtml.ts", imported by "src/lib/export.ts".
+
+✓ 6127 modules transformed.
+
+Generated an empty chunk: "react-vendor".
+
+rendering chunks...
+
+[plugin vite:reporter] 
+(!) /home/runner/workspace/artifacts/zatca-invoicing/src/lib/userTrackingApi.ts is dynamically imported by /home/runner/workspace/artifacts/zatca-invoicing/src/contexts/AuthContext.tsx but also statically imported by /home/runner/workspace/artifacts/zatca-invoicing/src/components/CheckInWidget.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/hooks/useAutoCheckinOnLogin.ts, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/admin/UserAttendanceReport.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/admin/UserMovementReport.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/admin/UserTracking.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/admin/UserTrackingLive.tsx, dynamic import will not move module into another chunk.
+
+
+[plugin vite:reporter] 
+(!) /home/runner/workspace/node_modules/.pnpm/xlsx@0.18.5/node_modules/xlsx/xlsx.mjs is dynamically imported by /home/runner/workspace/artifacts/zatca-invoicing/src/pages/office/ExcelEditor.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/office/ExcelEditor.tsx but also statically imported by /home/runner/workspace/artifacts/zatca-invoicing/src/components/AccountsImportPanel.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/lib/export.ts, /home/runner/workspace/artifacts/zatca-invoicing/src/lib/saveFile.ts, /home/runner/workspace/artifacts/zatca-invoicing/src/lib/stockAdjustmentWorkbook.ts, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/GeneralSettings.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/Suppliers.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/accounting/JournalEntries.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/accounting/JournalEntryForm.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/accounting/OpeningBalances.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/accounting/TrialBalanceDetail.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/accounting/TrialBalanceImportDialog.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/accounting/reports/TaxDeclaration.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/admin/Industries.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/cash/reports/BankReconciliation.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/integrations/ZatcaScanPreview.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/inventory/GoodsDeliveries.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/inventory/GoodsReceipts.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/inventory/StockCounting.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/purchasing/PurchaseInvoices.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/purchasing/PurchaseOrders.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/purchasing/PurchaseReturns.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/purchasing/reports/PurchasesVatRegister.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/sales/CustomerSettlement.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/sales/SalesOrders.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/sales/SalesQuotations.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/sales/SalesReturns.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/settings/AccountingMappings.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/settings/DataImportExport.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/settings/HistoricalMigration.tsx, dynamic import will not move module into another chunk.
+
+
+[plugin vite:reporter] 
+(!) /home/runner/workspace/node_modules/.pnpm/jspdf@4.2.1/node_modules/jspdf/dist/jspdf.es.min.js is dynamically imported by /home/runner/workspace/artifacts/zatca-invoicing/src/lib/custodyVoucherPrint.ts, /home/runner/workspace/artifacts/zatca-invoicing/src/lib/deliveryReceiptPrint.ts, /home/runner/workspace/artifacts/zatca-invoicing/src/lib/export.ts, /home/runner/workspace/artifacts/zatca-invoicing/src/lib/loanVoucherPrint.ts but also statically imported by /home/runner/workspace/artifacts/zatca-invoicing/src/components/JournalScanArchive.tsx, /home/runner/workspace/artifacts/zatca-invoicing/src/pages/admin/GatewayInvoiceView.tsx, dynamic import will not move module into another chunk.
+
+
+dist/public/index.html                                        11.46 kB
+dist/public/assets/pdf.worker.min-CrMmvqMo.mjs             1,245.45 kB
+
+dist/public/assets/index-CxTWGMvh.css                        561.42 kB
+dist/public/assets/react-vendor-l0sNRNKZ.js                    0.00 kB
+dist/public/assets/pdf.worker.min-CFOIyuof.js                  0.07 kB
+dist/public/assets/_commonjs-dynamic-modules-TDtrdbi3.js       0.24 kB
+dist/public/assets/router-DT5lvAuF.js                         14.01 kB
+dist/public/assets/query-tUVZe236.js                          40.13 kB
+dist/public/assets/icons-DNIR4ERc.js                          95.13 kB
+dist/public/assets/radix-CEKLFYN-.js                         127.47 kB
+dist/public/assets/index.es-shVMaIEL.js                      158.94 kB
+dist/public/assets/html2canvas.esm-DXEQVQnt.js               201.04 kB
+dist/public/assets/index-DnJpQ_yJ.js                         410.62 kB
+dist/public/assets/pdf-CkIk37Ba.js                           427.58 kB
+dist/public/assets/charts-CFl8p2il.js                        443.79 kB
+dist/public/assets/index-DleUgeE1.js                         501.94 kB
+dist/public/assets/exceljs.min-CHsGJY5I.js                   936.82 kB
+dist/public/assets/index-Bpy2V6LE.js                      15,649.45 kB
+
+
+(!) Some chunks are larger than 1500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+
+✓ built in 39.74s
+
+Removed all cached metadata files
+
+Removed 92996 files
+
+Removed 1878 packages
+
+2026-10-02T23:04:47Z info: Pushing pid1 binary layer...
+2026-10-02T23:04:50Z info: Created pid1 binary layer
+2026-10-02T23:04:50Z info: Pushing Repl layer...
+2026-10-02T23:04:50Z info: Pushing hosting layer...
+2026-10-02T23:04:50Z info: Retrieved cached nix layer
+2026-10-02T23:04:51Z info: Created hosting layer
+2026-10-02T23:05:44Z info: Created Repl layer
+2026-10-02T23:05:46Z info: Pushed image manifest
+2026-10-02T23:05:48Z info: Pushed soci index manifest
+2026-10-02T23:05:49Z info: Pushed referrer manifest
+2026-10-02T23:05:54Z info: Creating virtual machine
+2026-10-02T23:06:16Z info: Virtual machine created
+2026-10-02T23:06:16Z info: Waiting for deployment to be ready
