@@ -6,7 +6,7 @@ import {
   CONTRACTING_ACCOUNTS, CONTRACTING_ROLES, CONTRACTING_SHARED_ACCOUNT_SOURCES,
   MANUFACTURING_ACCOUNTS,
   MANUFACTURING_FIELDS, OPTIONAL_MODULE_ACCOUNT_CODES, accountingModulesFromMenu,
-  isCompatibleMappedModuleAccount, isOptionalModuleTemplateMapping,
+  canRepairMappedSupplierPayable, isCompatibleMappedModuleAccount, isOptionalModuleTemplateMapping,
   missingContractingRoles, missingManufacturingFields, canRollbackFreshCompany,
   resolveMappedCoreAccounts,
 } from "../src/lib/optionalModuleAccounting.js";
@@ -82,6 +82,25 @@ test("contracting reuses explicitly mapped, compatible commercial accounts", () 
     { documentType: "purchase_invoice", roleKey: "payable", accountId: 903 },
   ], [{ id: 903, code: "11031", accountType: "asset" as const, isPosting: true, isActive: true }]),
   /must be an active posting liability account/);
+});
+
+test("21011 is repaired only when it is an unused mapped supplier payable", () => {
+  const account = {
+    code: "21011",
+    parentId: 2101,
+  };
+  const safeChecks = {
+    hasChildAccounts: false,
+    hasJournalLines: false,
+    parentAccount: { accountType: "liability" as const, isActive: true },
+  };
+  assert.equal(canRepairMappedSupplierPayable(account, safeChecks), true);
+  assert.equal(canRepairMappedSupplierPayable(account, { ...safeChecks, hasChildAccounts: true }), false);
+  assert.equal(canRepairMappedSupplierPayable(account, { ...safeChecks, hasJournalLines: true }), false);
+  assert.equal(canRepairMappedSupplierPayable(account, {
+    ...safeChecks, parentAccount: { accountType: "asset", isActive: true },
+  }), false);
+  assert.equal(canRepairMappedSupplierPayable({ ...account, code: "21910" }, safeChecks), false);
 });
 
 test("repeated activation preserves existing mapping rows and filled manufacturing settings", () => {
