@@ -342,8 +342,17 @@ export default function AuditLog() {
   };
   const moduleLabel = (value: string | null | undefined) => {
     if (!value) return "—";
-    const translated = t(`adminPages.auditLog.modules.${value}`, { defaultValue: "" }) as string;
-    return translated || (isRtl ? "وحدة أخرى" : value.replace(/_/g, " "));
+    const translationKeys = [
+      `adminPages.auditLog.modules.${value}`,
+      `perms.modules.${value}`,
+      `perms.groups.${value}`,
+      `adminPages.auditLog.entityTypes.${value}`,
+    ];
+    for (const key of translationKeys) {
+      const translated = t(key, { defaultValue: "" }) as string;
+      if (translated) return translated;
+    }
+    return value.replace(/_/g, " ");
   };
   const roleLabel = (value: string) => {
     const translated = t(`adminPages.auditLog.roles.${value}`, { defaultValue: "" }) as string;
@@ -2211,6 +2220,7 @@ function AuditDetailsDialog({
               isRtl={isRtl}
               tr={tr}
               trAction={trAction}
+              moduleLabel={moduleLabel}
               isSuperAdmin={isSuperAdmin}
               token={token}
             />
@@ -2328,6 +2338,7 @@ function ShareSection({
   isRtl,
   tr,
   trAction,
+  moduleLabel,
   isSuperAdmin,
   token,
 }: {
@@ -2337,6 +2348,7 @@ function ShareSection({
   isRtl: boolean;
   tr: (k: string, opts?: any) => string;
   trAction: (a: string) => string;
+  moduleLabel: (value: string | null | undefined) => string;
   isSuperAdmin: boolean;
   token: string;
 }) {
@@ -2349,13 +2361,13 @@ function ShareSection({
   const friendly = friendlyPath(row.method, row.path);
   const subject = tr("shareEmailSubject", {
     action: trAction(row.action),
-    module: tr(`modules.${row.module}`, { defaultValue: row.module }),
+    module: moduleLabel(row.module),
     id: row.id,
   });
   const summary = [
     `${tr("shareIntro")}:`,
     `• ${tr("sharePreviewAction")}: ${trAction(row.action)}`,
-    `• ${tr("sharePreviewModule")}: ${tr(`modules.${row.module}`, { defaultValue: row.module })}`,
+    `• ${tr("sharePreviewModule")}: ${moduleLabel(row.module)}`,
     friendly ? `• ${tr("detailsPath")}: ${friendly.label}` : null,
     row.username ? `• ${tr("detailsUser")}: ${row.username}` : null,
     `• ${tr("sharePreviewTime")}: ${new Date(row.createdAt).toLocaleString(locale, { hour12: false })}`,
