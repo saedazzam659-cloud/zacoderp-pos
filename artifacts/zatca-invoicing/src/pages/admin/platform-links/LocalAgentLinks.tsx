@@ -18,15 +18,39 @@ const LINK_ERROR_LABELS: Record<string, string> = {
   controller_pairing_already_present: "وجدت المنصة الهدف رابطاً مستورداً؛ لم يتم حذف أي صف.",
   TARGET_CONTROLLER_LINK_ALREADY_EXISTS: "وجدت المنصة الهدف رابطاً مستورداً؛ لم يتم حذف أي صف.",
   renewal_attestation_not_proven: "تعذر إثبات عدم الاستيراد عبر الدعوة الجديدة؛ لم تتغير أي صفوف.",
-  renewal_source_state_not_supported: "تغيرت حالة الرابط أو لم تعد في Epoch 0؛ أعد تحميل الصفحة، ولم تتغير أي صفوف.",
+  renewal_source_state_not_supported: "لم تتحقق شروط حالة المصدر الآمنة؛ لم تتغير أي صفوف.",
   renewal_stale_source_state: "تغيرت حالة الرابط أثناء التجديد؛ لم تتغير أي صفوف.",
   RENEWAL_ALREADY_IN_PROGRESS: "توجد عملية تجديد أخرى قيد التنفيذ؛ أعد المحاولة بعد انتهائها.",
-  TARGET_RENEWAL_ATTESTATION_UNAVAILABLE: "تعذر الاتصال الموثق بالمنصة الهدف؛ أعد المحاولة، ولم تتغير أي صفوف.",
+  TARGET_RENEWAL_ATTESTATION_DENIED: "رفضت المنصة الهدف الدعوة الجديدة؛ أنشئ دعوة جديدة على الهدف وارفعها مجددًا. لم تتغير أي صفوف.",
+  TARGET_RENEWAL_ATTESTATION_UNAVAILABLE: "تعذر الوصول إلى المنصة الهدف للتحقق؛ أعد المحاولة عند عودة الاتصال. لم تتغير أي صفوف.",
+};
+
+const RENEWAL_SOURCE_CHECK_LABELS: Record<string, string> = {
+  target_origin_mismatch: "نطاق الهدف في الدعوة لا يطابق الرابط المسجل",
+  source_platform_mismatch: "معرّف المنصة المصدر لا يطابق الرابط المسجل",
+  source_origin_mismatch: "نطاق المصدر الحالي لا يطابق الرابط المسجل",
+  controller_epoch_not_zero: "الرابط لم يعد في Epoch 0",
+  active_controller_mismatch: "المتحكم النشط ليس المنصة المصدر",
+  installation_mismatch: "معرّف التثبيت لا يطابق الوكيل المسجل",
+  agent_domain_mismatch: "نطاق الوكيل لا يطابق السجل",
+  database_fingerprint_mismatch: "بصمة قاعدة البيانات لا تطابق السجل",
+  candidate_set_changed: "تغيرت مجموعة الروابط أثناء التجديد",
 };
 
 function linkErrorLabel(value: unknown, fallback: string): string {
   const raw = String(value ?? "");
   return LINK_ERROR_LABELS[raw] ?? (raw || fallback);
+}
+
+function renewalErrorDescription(data: any, fallback: string): string {
+  const message = linkErrorLabel(data?.code || data?.error, fallback);
+  const checks = Array.isArray(data?.failedChecks)
+    ? [...new Set(data.failedChecks)]
+      .filter((check: unknown): check is string => typeof check === "string")
+      .map((check: string) => RENEWAL_SOURCE_CHECK_LABELS[check])
+      .filter(Boolean)
+    : [];
+  return checks.length ? `${message} السبب: ${checks.join("؛ ")}.` : message;
 }
 
 function downloadPortableFile(file: any, agentId: number): void {
@@ -105,7 +129,7 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
         method: "POST", headers, body: JSON.stringify({ invite }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw Object.assign(new Error(linkErrorLabel(data.code || data.error, "تعذر تجديد الرابط بأمان")), { serverData: data });
+      if (!res.ok) throw Object.assign(new Error(renewalErrorDescription(data, "تعذر تجديد الرابط بأمان")), { serverData: data });
       if (data.shellSynced !== true || !data.file) throw new Error("لم تتم مزامنة إعدادات السيرفر؛ لم يتم تنزيل رابط صالح");
       return data;
     },
@@ -115,7 +139,7 @@ export function LocalAgentLinks({ agentId }: { agentId: number }) {
       toast({ title: "تم تجديد الرابط بأمان", description: "أرسل الملف الجديد للمنصة الهدف ثم أكمل نقل القيادة." });
       qc.invalidateQueries({ queryKey: ["agent-platform-links", agentId] });
     },
-    onError: (err: any) => toast({ title: "تعذر تجديد الرابط", description: linkErrorLabel(err.serverData?.code || err.serverData?.error, err.message), variant: "destructive" }),
+    onError: (err: any) => toast({ title: "تعذر تجديد الرابط", description: renewalErrorDescription(err.serverData, err.message), variant: "destructive" }),
   });
 
   const reconcileMut = useMutation({

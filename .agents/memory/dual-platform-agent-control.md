@@ -32,3 +32,9 @@ Renewing expired unimported links requires fresh target-authenticated proof of a
 **Why:** Failed exports can leave duplicate pending links, while ordinary reconciliation needs a paired winner. Blind deletion or credential rotation can invalidate a real pairing; unauthenticated presence queries expose registry information.
 
 **How to apply:** Authenticate the caller's fresh invite secret before checking target records, fail closed on uncertainty, and fence renewal with prior credential generation as well as leadership epoch. Keep renewed signed files intact and re-download locally rather than exporting again.
+
+Renewal diagnostics may identify failed source-side predicates, but must not return compared values. Keep target refusal generic; never reveal whether an invite was expired, consumed, invalid, or mismatched. Distinguish a generic target refusal from transport unavailability and a confirmed existing pairing.
+
+**Why:** Source-side names help operators fix stale registry state without exposing identifiers or fingerprints. Detailed target errors would turn the proof endpoint into an invitation-state oracle.
+
+**How to apply:** Preserve every Epoch 0, active-controller, installation, domain, and database-fingerprint check. Return only fixed failure codes for source checks; keep target proof and acceptance criteria unchanged.

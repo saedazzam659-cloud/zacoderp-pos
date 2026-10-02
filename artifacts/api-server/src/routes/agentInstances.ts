@@ -132,6 +132,8 @@ import {
   verifyControllerLinkRenewalAttestation,
   verifyControllerLinkFile,
   verifyControllerCommit,
+  controllerLinkRenewalSourceFailures,
+  classifyControllerLinkRenewalAttestationResponse,
 } from "../lib/agentControllerLinks.js";
 import {
   handoffEligibility,
@@ -6205,17 +6207,26 @@ router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
     if (!candidates.some(row => row.linkId === selected.linkId)) {
       throw Object.assign(new Error("renewal_link_target_mismatch"), { httpStatus: 409 });
     }
-    if (!candidates.length || candidates.some(row =>
-      row.targetOrigin !== invite.targetOrigin ||
-      row.sourcePlatformId !== source.platformId ||
-      row.sourceOrigin !== source.origin ||
-      row.controllerEpoch !== 0 ||
-      row.activeControllerId !== source.platformId ||
-      row.installationId !== inst.installationId ||
-      row.domain !== inst.domain ||
-      (row.dbFingerprint ?? null) !== (inst.dbFingerprint ?? null),
-    )) {
-      throw Object.assign(new Error("renewal_source_state_not_supported"), { httpStatus: 409 });
+    const expectedSourceState = {
+      targetOrigin: invite.targetOrigin,
+      platformId: source.platformId,
+      origin: source.origin,
+      installationId: inst.installationId,
+      domain: inst.domain,
+      dbFingerprint: inst.dbFingerprint,
+    };
+    const failedSourceChecks = [...new Set(candidates.flatMap(row =>
+      controllerLinkRenewalSourceFailures(row, expectedSourceState),
+    ))];
+    if (!candidates.length || failedSourceChecks.length) {
+      res.status(409).json({
+        error: "renewal_source_state_not_supported",
+        code: "renewal_source_state_not_supported",
+        failedChecks: failedSourceChecks,
+        serverMessage: "renewal_source_state_not_supported; no rows changed",
+        inDoubt: false,
+      });
+      return;
     }
     const candidateLinkIds = candidates.map(row => row.linkId);
     let remote: { status: number; body: any; nonce: string };
@@ -6232,11 +6243,21 @@ router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
       });
       return;
     }
-    if (remote.status === 409 && remote.body?.error === "controller_pairing_already_present") {
+    const targetFailure = classifyControllerLinkRenewalAttestationResponse(remote.status, remote.body?.error);
+    if (targetFailure === "pairing_present") {
       res.status(409).json({
         error: "controller_pairing_already_present",
         code: "TARGET_CONTROLLER_LINK_ALREADY_EXISTS",
         serverMessage: "target_already_has_a_link_for_this_installation; no rows changed",
+        inDoubt: false,
+      });
+      return;
+    }
+    if (targetFailure === "invite_denied") {
+      res.status(409).json({
+        error: "renewal_attestation_denied",
+        code: "TARGET_RENEWAL_ATTESTATION_DENIED",
+        serverMessage: "target_rejected_renewal_invite; no rows changed",
         inDoubt: false,
       });
       return;
@@ -6310,19 +6331,19 @@ router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
         eq(agentControllerLinksTable.direction, "outbound"),
       ));
       const currentCandidates = current.filter(row => row.targetPlatformId === invite.targetPlatformId);
-      if (currentCandidates.length !== candidates.length ||
-          currentCandidates.some(row => !candidateLinkIds.includes(row.linkId)) ||
-          currentCandidates.some(row =>
-            row.targetOrigin !== selected.targetOrigin ||
-            row.sourcePlatformId !== source.platformId ||
-            row.sourceOrigin !== source.origin ||
-            row.controllerEpoch !== 0 ||
-            row.activeControllerId !== source.platformId ||
-            row.installationId !== inst.installationId ||
-            row.domain !== inst.domain ||
-            (row.dbFingerprint ?? null) !== (inst.dbFingerprint ?? null),
-          )) {
-        throw new Error("renewal_stale_source_state");
+      const failedCurrentChecks = [...new Set(currentCandidates.flatMap(row =>
+        controllerLinkRenewalSourceFailures(row, expectedSourceState),
+      ))];
+      const candidateSetChanged = currentCandidates.length !== candidates.length ||
+        currentCandidates.some(row => !candidateLinkIds.includes(row.linkId));
+      if (candidateSetChanged || failedCurrentChecks.length) {
+        throw Object.assign(new Error("renewal_stale_source_state"), {
+          httpStatus: 409,
+          failedChecks: [
+            ...failedCurrentChecks,
+            ...(candidateSetChanged ? ["candidate_set_changed"] : []),
+          ],
+        });
       }
       const duplicateIds = candidates.filter(row => row.linkId !== selected.linkId).map(row => row.linkId);
       if (duplicateIds.length) {
@@ -6402,8 +6423,15 @@ router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
     }, req);
     res.status(201).json({ file, shellSynced: true, renewed: true, linkId: selected.linkId });
   } catch (error: any) {
+    const failedChecks = Array.isArray(error?.failedChecks)
+      ? [...new Set(error.failedChecks.filter((value: unknown): value is string => typeof value === "string"))]
+      : [];
     res.status(Number(error?.httpStatus) || 409).json({
       error: String(error?.message ?? error).slice(0, 200),
+      ...(failedChecks.length ? { failedChecks } : {}),
+      ...(String(error?.message ?? error) === "renewal_stale_source_state"
+        ? { code: "renewal_stale_source_state" }
+        : {}),
       serverMessage: String(error?.message ?? error).slice(0, 200),
       inDoubt: false,
     });

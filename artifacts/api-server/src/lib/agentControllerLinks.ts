@@ -66,6 +66,64 @@ export type ControllerLinkRenewalAttestation = {
   authentication: { algorithm: "HMAC-SHA256"; mac: string };
 };
 
+export type ControllerLinkRenewalSourceFailure =
+  | "target_origin_mismatch"
+  | "source_platform_mismatch"
+  | "source_origin_mismatch"
+  | "controller_epoch_not_zero"
+  | "active_controller_mismatch"
+  | "installation_mismatch"
+  | "agent_domain_mismatch"
+  | "database_fingerprint_mismatch";
+
+export function controllerLinkRenewalSourceFailures(
+  link: {
+    targetOrigin: string;
+    sourcePlatformId: string;
+    sourceOrigin: string;
+    controllerEpoch: number;
+    activeControllerId: string;
+    installationId: string;
+    domain: string;
+    dbFingerprint?: string | null;
+  },
+  expected: {
+    targetOrigin: string;
+    platformId: string;
+    origin: string;
+    installationId: string;
+    domain: string;
+    dbFingerprint?: string | null;
+  },
+): ControllerLinkRenewalSourceFailure[] {
+  const failures: ControllerLinkRenewalSourceFailure[] = [];
+  if (link.targetOrigin !== expected.targetOrigin) failures.push("target_origin_mismatch");
+  if (link.sourcePlatformId !== expected.platformId) failures.push("source_platform_mismatch");
+  if (link.sourceOrigin !== expected.origin) failures.push("source_origin_mismatch");
+  if (link.controllerEpoch !== 0) failures.push("controller_epoch_not_zero");
+  if (link.activeControllerId !== expected.platformId) failures.push("active_controller_mismatch");
+  if (link.installationId !== expected.installationId) failures.push("installation_mismatch");
+  if (link.domain !== expected.domain) failures.push("agent_domain_mismatch");
+  if ((link.dbFingerprint ?? null) !== (expected.dbFingerprint ?? null)) {
+    failures.push("database_fingerprint_mismatch");
+  }
+  return failures;
+}
+
+export type ControllerLinkRenewalAttestationFailure =
+  | "pairing_present"
+  | "invite_denied"
+  | "unavailable";
+
+export function classifyControllerLinkRenewalAttestationResponse(
+  status: number,
+  error: unknown,
+): ControllerLinkRenewalAttestationFailure {
+  if (status === 409 && error === "controller_pairing_already_present") return "pairing_present";
+  if (status === 403 && error === "renewal_attestation_denied") return "invite_denied";
+  return "unavailable";
+}
+
 export function normalizeHttpsOrigin(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
