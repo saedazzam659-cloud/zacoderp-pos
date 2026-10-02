@@ -24,3 +24,4 @@
 - [Mobile server sessions](mobile-server-session-boundary.md) — changing domains requires fresh authentication; preserve queued operations and central-only legacy sessions.
 - [Expo source archives](expo-source-archive-contract.md) — direct build uploads require a project/ wrapper; finalize changes before taking the build snapshot.
 - [External DB routing and schema healing](external-db-storage-routing.md) — create required agent tables before strict readiness and keep DDL caches scoped to the active database.
+- [Test runtime boundary](api-server-ensureschema-lock-hang.md) — do not run the slow/full admin suite without explicit approval; use focused checks.
