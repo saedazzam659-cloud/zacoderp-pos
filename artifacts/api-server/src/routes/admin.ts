@@ -2110,6 +2110,7 @@ router.get("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async (
     res.json({
       companyId, scanned: rows.length,
       supportsAtomicDraftRepair: true,
+      supportsBatchDraftRenumber: true,
       supportsLegacyReservationOverride: true,
       supportsReturnNumberRepair: true,
       exactDuplicates: group(r => `${r.kind}|${r.docNumber}`),
@@ -2440,6 +2441,304 @@ router.post("/companies/:id/invoice-numbering-repair", requireSuperAdmin, async 
     } catch (e: any) {
       res.status(Number(e?.status) || 500).json({
         error: Number(e?.status) ? String(e.message) : "تعذر إصلاح ترقيم الفواتير",
+        ...(e?.code ? { code: String(e.code) } : {}),
+      });
+    }
+  });
+});
+
+// POST .../invoice-numbering-repair/batch
+// Atomically compacts a consecutive run of unsigned return drafts. A target
+// number with a historical sequence log is reusable only when the existing
+// deleted-draft proof verifies it; this endpoint has no attestation override.
+router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const companyId = Number(req.params.id);
+    const kind = String(req.body?.kind ?? "") as InvoiceKind;
+    const startNumber = String(req.body?.number ?? "").trim();
+    const documentIds = req.body?.documentIds;
+    const dryRun = req.body?.dryRun === true;
+    if (!Number.isInteger(companyId) || companyId <= 0
+      || !["sales_return", "purchase_return"].includes(kind)
+      || !Array.isArray(documentIds) || documentIds.length < 2 || documentIds.length > 50
+      || documentIds.some((id: unknown) => !Number.isInteger(Number(id)) || Number(id) <= 0)
+      || new Set(documentIds.map(Number)).size !== documentIds.length
+      || !startNumber
+      || (req.body?.dryRun != null && typeof req.body.dryRun !== "boolean")) {
+      res.status(400).json({ error: "بيانات إعادة ترتيب المسودات غير صحيحة" });
+      return;
+    }
+
+    const ids = documentIds.map(Number);
+    const meta = INVOICE_REPAIR_META[kind];
+    try {
+      const result = await db.transaction(async (tx) => {
+        const docsQuery = await tx.execute(sql`
+          SELECT i.*, i.${sql.raw(meta.dateColumn)} AS invoice_date,
+            ${meta.sales ? sql`COALESCE(c.country, 'SA') <> 'SA' AS is_foreign` : sql`FALSE AS is_foreign`}
+          FROM ${sql.raw(meta.table)} i
+          ${meta.sales ? sql`LEFT JOIN customers c ON c.id = i.customer_id AND c.company_id = i.company_id` : sql``}
+          WHERE i.company_id = ${companyId} AND i.id = ANY(${ids}::int[])
+          FOR UPDATE OF i
+        `);
+        const docs = (docsQuery.rows ?? []) as any[];
+        if (docs.length !== ids.length) {
+          throw Object.assign(new Error("إحدى المسودات لم تعد موجودة ضمن الشركة المحددة"), { status: 404 });
+        }
+
+        for (const doc of docs) {
+          if (doc.status !== "draft") {
+            throw Object.assign(new Error(`المستند ${doc.doc_number}: ليس مسودة نشطة`), { status: 409, code: "ACTIVE_NON_DRAFT" });
+          }
+          if (meta.hasZatca && hasKnownInvoiceFiscalEvidence(doc)) {
+            throw Object.assign(new Error(`المستند ${doc.doc_number}: له آثار ZATCA ولا يمكن تعديله`), { status: 409, code: "SIGNED_INVOICE" });
+          }
+          if ((kind === "sales_return" && String(doc.source_channel ?? "").toLowerCase() === "mobile")
+            || doc.journal_entry_id != null) {
+            throw Object.assign(new Error(`المستند ${doc.doc_number}: مسار خاص أو مرتبط بقيد ولا يمكن تعديله هنا`), { status: 409, code: "RETURN_HAS_POSTING_EFFECTS" });
+          }
+        }
+
+        const branchId = Number(docs[0].branch_id) || 0;
+        const paymentType = String(docs[0].payment_type ?? "");
+        const isForeign = !!docs[0].is_foreign;
+        if (docs.some((doc) => (Number(doc.branch_id) || 0) !== branchId
+          || String(doc.payment_type ?? "") !== paymentType
+          || !!doc.is_foreign !== isForeign)) {
+          throw Object.assign(new Error("يجب أن تكون كل المسودات من نفس الفرع ونوع الدفع والمسلسل"), { status: 409, code: "MIXED_RETURN_STREAM" });
+        }
+
+        const sortedDocs = docs.map((doc) => {
+          const parts = invoiceNumberParts(String(doc.doc_number ?? ""));
+          if (!parts) {
+            throw Object.assign(new Error(`رقم المسودة ${doc.doc_number} لا يحتوي تسلسلاً رقمياً صالحاً`), { status: 409 });
+          }
+          return { ...doc, numberParts: parts };
+        }).sort((a, b) => a.numberParts.suffix - b.numberParts.suffix);
+        const sourcePrefix = sortedDocs[0].numberParts.prefix;
+        const sourceWidth = sortedDocs[0].numberParts.width;
+        for (let index = 0; index < sortedDocs.length; index += 1) {
+          const item = sortedDocs[index];
+          if (item.numberParts.prefix !== sourcePrefix || item.numberParts.width !== sourceWidth
+            || item.numberParts.suffix !== sortedDocs[0].numberParts.suffix + index) {
+            throw Object.assign(new Error("اختر مسودات متتابعة بلا فجوات ومن نفس شكل الرقم؛ لم يُجر أي تعديل"), { status: 409, code: "DRAFTS_NOT_CONSECUTIVE" });
+          }
+        }
+
+        const selectedIds = new Set(ids);
+        for (const doc of sortedDocs) {
+          const docDate = asDocDate(doc.invoice_date);
+          if (!docDate) throw Object.assign(new Error(`تاريخ المسودة ${doc.doc_number} غير صالح`), { status: 409 });
+          const resolved = await resolveInvoiceRepairSequence(tx, companyId, kind, paymentType, isForeign, docDate);
+          if (!resolved) throw Object.assign(new Error(`لا يوجد مسلسل نشط يطابق المسودة ${doc.doc_number}`), { status: 409 });
+          if (invoiceRepairSequenceIsShared(resolved, kind)) {
+            throw Object.assign(new Error("المسلسل مرتبط بأنواع معاملات أخرى؛ لا يمكن إعادة ترتيب هذه المسودات بأمان"), { status: 409, code: "SHARED_SEQUENCE_REPAIR_UNSUPPORTED" });
+          }
+          if (doc === sortedDocs[0]) (doc as any).__resolvedSequence = resolved;
+          else if (Number(resolved.id) !== Number((sortedDocs[0] as any).__resolvedSequence.id)
+            || resolved.transactionType !== (sortedDocs[0] as any).__resolvedSequence.transactionType) {
+            throw Object.assign(new Error("المسودات لا تنتمي إلى نفس المسلسل"), { status: 409, code: "MIXED_RETURN_STREAM" });
+          }
+        }
+
+        const seq = (sortedDocs[0] as any).__resolvedSequence;
+        const cfg = await tx.execute(sql`SELECT sequence_date_source FROM companies WHERE id = ${companyId} FOR UPDATE`);
+        const useDocumentDate = cfg.rows?.[0]?.sequence_date_source === "document";
+        const firstDocDate = asDocDate(sortedDocs[0].invoice_date)!;
+        const effectiveDate = useDocumentDate ? firstDocDate : new Date();
+        const startParts = invoiceNumberParts(startNumber);
+        if (!startParts || startParts.suffix < Number(seq.start_number)
+          || startParts.suffix + sortedDocs.length - 1 > Number(seq.end_number)
+          || startNumber !== invoiceFormattedNumber(seq, startParts.suffix, effectiveDate)
+          || startParts.suffix >= sortedDocs[0].numberParts.suffix) {
+          throw Object.assign(new Error("رقم البداية غير صالح لهذا المسلسل أو لا يقدّم ترتيب المسودات"), { status: 409, code: "INVALID_BATCH_START" });
+        }
+        const bucket = seq.monthly_reset ? invoicePeriod(effectiveDate) : "";
+        if (useDocumentDate && sortedDocs.some((doc) => {
+          const date = asDocDate(doc.invoice_date);
+          return !date || (seq.monthly_reset && invoicePeriod(date) !== bucket);
+        })) {
+          throw Object.assign(new Error("المسودات لا تقع ضمن نفس فترة المسلسل"), { status: 409, code: "MIXED_RETURN_PERIOD" });
+        }
+
+        const stock = await tx.execute(sql`
+          SELECT ref_id FROM stock_ledger
+          WHERE company_id = ${companyId}
+            AND ref_type = ${kind === "sales_return" ? "sales_return" : "purchase_return"}
+            AND ref_id = ANY(${ids}::int[])
+          LIMIT 1
+        `);
+        if (stock.rows?.[0]) {
+          throw Object.assign(new Error("إحدى المسودات لها حركة مخزون ولا يمكن إعادة ترقيمها"), { status: 409, code: "RETURN_HAS_POSTING_EFFECTS" });
+        }
+
+        const newNumbers = sortedDocs.map((_, index) =>
+          invoiceFormattedNumber(seq, startParts.suffix + index, effectiveDate));
+        const nextSuffix = startParts.suffix + sortedDocs.length;
+        const nextNumber = invoiceFormattedNumber(seq, nextSuffix, effectiveDate);
+        const prefix = `${seq.prefix ?? ""}${invoiceMonthPattern(seq.month_pattern, effectiveDate)}`;
+        const targetParts = newNumbers.map((number) => invoiceNumberParts(number)!);
+        const isTarget = (value: unknown) => {
+          const parts = invoiceNumberParts(String(value ?? ""));
+          return targetParts.some((target) => String(value ?? "") === newNumbers[targetParts.indexOf(target)]
+            || (!!parts && target.equivalent === parts.equivalent));
+        };
+
+        const streamDocs = await invoiceStreamDocuments(tx, companyId, {
+          kind, branchId, bucket, seq, paymentType, isForeign,
+        });
+        const liveInScope = (streamDocs.rows ?? []).find((row: any) =>
+          !selectedIds.has(Number(row.id)) && isTarget(row.doc_number));
+        if (liveInScope) {
+          throw Object.assign(new Error(`الرقم ${liveInScope.doc_number} مستخدم بمستند نشط خارج المجموعة`), { status: 409, code: "ACTIVE_INVOICE_NUMBER" });
+        }
+
+        // Return numbers are company-wide unique even when their counters are
+        // branch/month scoped, so preflight every destination at company scope.
+        const companyRows = await tx.execute(sql`
+          SELECT id, status, doc_number FROM ${sql.raw(meta.table)}
+          WHERE company_id = ${companyId} AND doc_number IS NOT NULL
+        `);
+        const globalCollision = (companyRows.rows ?? []).find((row: any) =>
+          !selectedIds.has(Number(row.id)) && isTarget(row.doc_number));
+        if (globalCollision) {
+          throw Object.assign(new Error(`الرقم ${globalCollision.doc_number} مستخدم بالفعل في مرتجع آخر بالشركة`), { status: 409, code: "ACTIVE_RETURN_NUMBER" });
+        }
+
+        const logsQuery = await tx.execute(sql`
+          SELECT id, ref_table, ref_id, generated_number FROM sequence_logs
+          WHERE company_id = ${companyId} AND sequence_id = ${seq.id}
+        `);
+        const sequenceLogs = (logsQuery.rows ?? []) as any[];
+        const releasedByDocument = new Map<number, number[]>();
+        for (let index = 0; index < sortedDocs.length; index += 1) {
+          const doc = sortedDocs[index];
+          const plannedNumber = newNumbers[index];
+          const oldNumber = String(doc.doc_number);
+          for (const log of sequenceLogs) {
+            const logParts = invoiceNumberParts(String(log.generated_number ?? ""));
+            const matchesTarget = String(log.generated_number) === plannedNumber
+              || (!!logParts && targetParts.some((target) => target.equivalent === logParts.equivalent));
+            if (!matchesTarget || String(log.ref_table ?? "") !== meta.table) continue;
+
+            const logRefId = String(log.ref_id ?? "");
+            const selectedOwner = /^\d+$/.test(logRefId)
+              ? sortedDocs.find((candidate) => Number(candidate.id) === Number(logRefId))
+              : undefined;
+            if (selectedOwner) {
+              const ownerOldNumber = String(selectedOwner.doc_number);
+              const ownerNewNumber = newNumbers[sortedDocs.indexOf(selectedOwner)];
+              if (logRefId === String(selectedOwner.id)
+                && String(log.generated_number) === ownerOldNumber
+                && ownerNewNumber !== ownerOldNumber) {
+                const idsForDoc = releasedByDocument.get(Number(selectedOwner.id)) ?? [];
+                idsForDoc.push(Number(log.id));
+                releasedByDocument.set(Number(selectedOwner.id), idsForDoc);
+                continue;
+              }
+              if (logRefId === String(selectedOwner.id)
+                && String(log.generated_number) === ownerNewNumber) continue;
+            }
+
+            if (!await reclaimableInvoiceLog(tx, companyId, log, {
+              kind, branchId, bucket, seq, paymentType, isForeign,
+            })) {
+              throw Object.assign(new Error(
+                `الرقم ${plannedNumber} محجوز بسجل تاريخي #${Number(log.id)} (${String(log.ref_table)}:${String(log.ref_id ?? "بلا مرجع")}) ولا يوجد إثبات حذف صالح لمسودة غير موقعة`,
+              ), { status: 409, code: "MISSING_DELETED_DRAFT_PROOF" });
+            }
+          }
+        }
+
+        const counter = await tx.execute(sql`
+          SELECT id FROM sequence_counters
+          WHERE sequence_id = ${seq.id} AND branch_id = ${branchId} AND period = ${bucket}
+          FOR UPDATE
+        `);
+        const protectedLiveRows = meta.companyWideUnique
+          ? (companyRows.rows ?? [])
+          : (streamDocs.rows ?? []);
+        const protectedLive = protectedLiveRows.find((row: any) => {
+          if (selectedIds.has(Number(row.id))) return false;
+          const parts = invoiceNumberParts(String(row.doc_number ?? ""));
+          return parts?.prefix === prefix && parts.suffix >= nextSuffix;
+        });
+        if (protectedLive) {
+          throw Object.assign(new Error(`الرقم ${protectedLive.doc_number} يمنع ضبط العداد التالي على ${nextNumber}`), { status: 409, code: "ACTIVE_HIGH_WATER" });
+        }
+        const releasedIds = new Set([...releasedByDocument.values()].flat());
+        for (const log of sequenceLogs) {
+          const parts = invoiceNumberParts(String(log.generated_number ?? ""));
+          if (String(log.ref_table ?? "") !== meta.table || !parts || parts.prefix !== prefix || parts.suffix < nextSuffix) continue;
+          if (releasedIds.has(Number(log.id))) continue;
+          if (!await reclaimableInvoiceLog(tx, companyId, log, {
+            kind, branchId, bucket, seq, paymentType, isForeign,
+          })) {
+            throw Object.assign(new Error(`الحجز التاريخي للرقم ${log.generated_number} يمنع ضبط العداد على ${nextNumber}؛ لا يوجد إثبات حذف صالح`), { status: 409, code: "PROTECTED_HIGH_WATER" });
+          }
+        }
+
+        const changedDocuments = sortedDocs.map((doc, index) => ({
+          documentId: Number(doc.id), oldNumber: String(doc.doc_number), newNumber: newNumbers[index],
+          releasedSequenceLogIds: releasedByDocument.get(Number(doc.id)) ?? [],
+        }));
+        const result = {
+          kind, sequenceCode: seq.code, branchId, bucket, nextNumber,
+          changedDocuments, supportsBatchDraftRenumber: true,
+        };
+        if (dryRun) return { ...result, canApply: true };
+
+        if (counter.rows?.[0]) {
+          await tx.execute(sql`
+            UPDATE sequence_counters SET current_number = ${nextSuffix}, updated_at = NOW()
+            WHERE id = ${(counter.rows[0] as any).id}
+          `);
+        } else {
+          await tx.execute(sql`
+            INSERT INTO sequence_counters (sequence_id, branch_id, period, current_number, last_period, created_at, updated_at)
+            VALUES (${seq.id}, ${branchId}, ${bucket}, ${nextSuffix}, ${bucket || null}, NOW(), NOW())
+          `);
+        }
+
+        // Descending source order frees each old number before the preceding
+        // draft moves into it (for example 00003→00002, then 00002→00001).
+        for (const doc of [...sortedDocs].reverse()) {
+          const index = sortedDocs.indexOf(doc);
+          await tx.execute(sql`
+            UPDATE ${sql.raw(meta.table)} SET doc_number = ${newNumbers[index]}, updated_at = NOW()
+            WHERE id = ${Number(doc.id)} AND company_id = ${companyId} AND status = 'draft'
+          `);
+          await tx.insert(auditLogTable).values({
+            userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,
+            role: "superadmin", companyId, module: "invoice_numbering",
+            action: "superadmin_sequence_repair", method: req.method, path: req.originalUrl,
+            entityType: meta.sequenceBase, entityId: String(doc.id), statusCode: 200,
+            metadata: {
+              op: "draft_renumber_release", kind, sequenceId: Number(seq.id), sequenceCode: seq.code,
+              branchId, bucket, documentId: Number(doc.id), oldNumber: String(doc.doc_number),
+              newNumber: newNumbers[index], releasedSequenceLogIds: releasedByDocument.get(Number(doc.id)) ?? [],
+              noZatcaArtifactsVerified: true,
+            },
+          });
+        }
+        await tx.insert(auditLogTable).values({
+          userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,
+          role: "superadmin", companyId, module: "invoice_numbering",
+          action: "superadmin_sequence_repair", method: req.method, path: req.originalUrl,
+          entityType: meta.sequenceBase, entityId: null, statusCode: 200,
+          metadata: {
+            op: "draft_batch_renumber", kind, sequenceId: Number(seq.id), sequenceCode: seq.code,
+            branchId, bucket, startNumber, nextNumber, changedDocuments,
+            noZatcaArtifactsVerified: true,
+          },
+        });
+        return result;
+      });
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(Number(e?.status) || 500).json({
+        error: Number(e?.status) ? String(e.message) : "تعذر إعادة ترتيب المسودات",
         ...(e?.code ? { code: String(e.code) } : {}),
       });
     }
