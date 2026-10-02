@@ -1574,6 +1574,48 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
   });
 });
 
+// PUT /api/admin/companies/:id/sequence-protection
+// The package switch is SuperAdmin-only. Existing protected records retain
+// their row marker when disabled; only numbers issued afterward use legacy
+// deletion behavior.
+router.put("/companies/:id/sequence-protection", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const companyId = Number(rawId);
+    if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+      res.status(400).json({ error: "معرّف الشركة غير صحيح" });
+      return;
+    }
+    if (typeof req.body?.enabled !== "boolean") {
+      res.status(400).json({ error: "قيمة التفعيل يجب أن تكون true أو false" });
+      return;
+    }
+
+    const [company] = await db.select({
+      id: companiesTable.id,
+    }).from(companiesTable).where(and(
+      eq(companiesTable.id, companyId),
+      eq(companiesTable.isInternalDemoWorkspace, false),
+    )).limit(1);
+    if (!company) {
+      res.status(404).json({ error: "الشركة غير موجودة" });
+      return;
+    }
+
+    const [updated] = await db.update(companiesTable)
+      .set({ sequenceProtectionEnabled: req.body.enabled })
+      .where(eq(companiesTable.id, companyId))
+      .returning({ sequenceProtectionEnabled: companiesTable.sequenceProtectionEnabled });
+
+    req.log?.info?.(
+      { companyId, enabled: updated.sequenceProtectionEnabled },
+      "company sequence protection package updated",
+    );
+    res.json({ ok: true, sequenceProtectionEnabled: updated.sequenceProtectionEnabled });
+  });
+});
+
 // GET /api/admin/companies/:id/journal-sequence-control
 // SuperAdmin-only summary used by the Companies screen. This is intentionally
 // separate from the tenant sequence-settings routes: it operates on the real

@@ -86,6 +86,10 @@ export const companiesTable = pgTable("companies", {
   // below. When a per-doc-type flag is NULL (legacy rows) the form falls back to
   // this global value so existing tenants keep their current behavior.
   autoPostingEnabled: boolean("auto_posting_enabled").notNull().default(true),
+  // Protect issued business-document numbers from hard deletion/reuse. Existing
+  // companies stay opted out; genuinely new companies explicitly enable this at
+  // creation. Per-document protection markers survive later package disablement.
+  sequenceProtectionEnabled: boolean("sequence_protection_enabled").notNull().default(false),
   // Opening-balance work may span several days. When enabled, the dedicated
   // opening-balances screen may persist an unbalanced draft; it still cannot
   // be posted or included in reports until it balances.

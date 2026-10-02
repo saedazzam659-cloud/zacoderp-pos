@@ -23,6 +23,7 @@ import { ensureContractingGuaranteeTables } from "./contracting-guarantees-stora
 import { ensureInternalControlSchema } from "./internalControlStorage.js";
 import { ensureDocumentExpenseSchema } from "./documentExpenses.js";
 import { ensureContractingLocalTaxMappingTables } from "./contracting-local-tax-mapping-service.js";
+import { ensureSequenceProtectionSchema } from "./sequenceProtection.js";
 
 async function ensureTaxIntegrationSchema(): Promise<void> {
   await db.execute(sql.raw(`
@@ -4872,6 +4873,7 @@ export function ensureSchemaUpToDate(): Promise<void> {
         await ensureCentralDemoAnalyticsSchema();
         await ensureCentralZatcaRegistrationTransferSchema();
         await runHeal();
+        await ensureSequenceProtectionSchema();
         await ensureCentralAgentControlSchema();
         schemaReconciliationState = { state: "ready", completedAt: new Date().toISOString() };
       } catch (error) {
@@ -4910,6 +4912,7 @@ const EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS = {
 
 export async function runSchemaHealOnActiveDb(): Promise<void> {
   await runHeal(EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS);
+  await ensureSequenceProtectionSchema();
   // Sequence reconciliation takes table locks while comparing MAX(id) with an
   // owned sequence. Keep all of those locks in one external-agent transaction.
   await db.transaction(async (tx) => {
@@ -4927,6 +4930,7 @@ export async function runAgentInitializationSchemaHealOnActiveDb(): Promise<void
     ...EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS,
     strictSchema: true,
   });
+  await ensureSequenceProtectionSchema();
   await db.transaction(async (tx) => {
     await reconcilePostgresSequences(tx);
   });
@@ -4942,10 +4946,11 @@ export async function runAgentInitializationSchemaHealOnActiveDb(): Promise<void
  * full structural setup remains the responsibility of init-db / release
  * preflight, which continues to call runSchemaHealOnActiveDb().
  */
-export function runAgentRequestSchemaHealOnActiveDb(): Promise<void> {
-  return runHeal({
+export async function runAgentRequestSchemaHealOnActiveDb(): Promise<void> {
+  await runHeal({
     ...EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS,
     includeIdentitySteps: false,
     strictSchema: true,
   });
+  await ensureSequenceProtectionSchema();
 }

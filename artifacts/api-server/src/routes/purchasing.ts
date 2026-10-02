@@ -406,6 +406,10 @@ async function createJournalEntry(opts: {
   // omitted, the JE simply draws the next number with no reuse.
   sourceType?: string;
   sourceId?: number;
+  // Protected source documents retain the same linked journal entry row when
+  // they are unposted and posted again.
+  reuseEntryId?: number;
+  sequenceProtected?: boolean;
   // A linked commercial settlement posts inside the settlement transaction and
   // must explicitly create a posted clearing JE. Existing callers omit these.
   status?: string;
@@ -449,16 +453,33 @@ async function createJournalEntry(opts: {
   // RE-POSTED after an unpost→edit cycle (a reservation was stashed at unpost
   // time). Otherwise draw the next continuous "journal_entry" number. Reuse
   // NEVER consumes the counter, so unpost→repost leaves no sequence gap.
-  const seqDocNumber = await resolveJeNumber({
+  const [reusedEntry] = opts.reuseEntryId
+    ? await executor.select().from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.id, opts.reuseEntryId),
+        eq(journalEntriesTable.companyId, opts.companyId),
+      )).limit(1)
+    : [];
+  if (opts.reuseEntryId && (
+    !reusedEntry
+    || reusedEntry.entryType !== (opts.entryType ?? "general")
+    || reusedEntry.status !== "draft"
+  )) {
+    throw Object.assign(
+      new Error("تعذر إعادة استخدام القيد المرتبط بالمستند المحمي؛ راجع ارتباط القيد وحالته."),
+      { status: 409 },
+    );
+  }
+  const seqDocNumber = reusedEntry ? null : await resolveJeNumber({
     companyId:  opts.companyId,
     sourceType: opts.sourceType,
     sourceId:   opts.sourceId,
     branchId:   opts.branchId ?? null,
     docDate:    opts.date,
     userId:     (opts.audit?.req as any)?.authUser?.id ?? null,
+    dx:         executor,
   });
-  const jeDocNumber = seqDocNumber ?? (opts.docNumber ?? null);
-  const [entry] = await executor.insert(journalEntriesTable).values({
+  const jeDocNumber = reusedEntry?.docNumber ?? seqDocNumber ?? (opts.docNumber ?? null);
+  const headerValues = {
     companyId:    opts.companyId,
     branchId:     opts.branchId ?? null,
     docNumber:    jeDocNumber,
@@ -469,12 +490,36 @@ async function createJournalEntry(opts: {
     entryType:    opts.entryType ?? "general",
     status:       jeStatus,
     periodId:     writability.period?.id ?? null,
-    ...auditFields,
-  }).returning();
+    isSequenceProtected: !!opts.sequenceProtected || !!reusedEntry?.isSequenceProtected,
+  };
+  let entryId: number;
+  if (reusedEntry) {
+    const reuseAuditFields = Object.fromEntries(
+      Object.entries(auditFields).filter(([key]) => !key.startsWith("created")),
+    );
+    await executor.update(journalEntriesTable).set({
+      ...headerValues,
+      docNumber: reusedEntry.docNumber,
+      ...reuseAuditFields,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(journalEntriesTable.id, reusedEntry.id),
+      eq(journalEntriesTable.companyId, opts.companyId),
+    ));
+    await executor.delete(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, reusedEntry.id));
+    entryId = reusedEntry.id;
+  } else {
+    const [entry] = await executor.insert(journalEntriesTable).values({
+      ...headerValues,
+      ...auditFields,
+    }).returning();
+    entryId = entry.id;
+  }
 
   await executor.insert(journalEntryLinesTable).values(
     cleanLines.map((l, i) => ({
-      entryId:     entry.id,
+      entryId,
       accountId:   l.accountId!,
       debit:       String((l.debit  ?? 0).toFixed(2)),
       credit:      String((l.credit ?? 0).toFixed(2)),
@@ -487,7 +532,7 @@ async function createJournalEntry(opts: {
       costCenter:  l.costCenter !== undefined ? (l.costCenter || null) : (opts.costCenter ?? null),
     }))
   );
-  return entry.id;
+  return entryId;
 }
 
 async function validateLinkedSettlementAccount(

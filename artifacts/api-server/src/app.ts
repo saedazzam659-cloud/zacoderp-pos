@@ -474,7 +474,12 @@ app.use("/api", router);
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error({ err, url: req.url, method: req.method }, "unhandled API error");
   if (res.headersSent) return;
-  const status = typeof err?.status === "number" ? err.status : 500;
+  const protectedSequenceError =
+    err?.code === "P0001" &&
+    ["SEQUENCE_PROTECTED_DELETE", "SEQUENCE_PROTECTED_NUMBER_CHANGE"].includes(String(err?.detail ?? ""));
+  const status = protectedSequenceError
+    ? 409
+    : typeof err?.status === "number" ? err.status : 500;
   // NEVER leak raw internal error text to the client. Driver/ORM errors can
   // embed the full SQL statement (including huge inline permission-key
   // defaults) — that blob was rendered verbatim in the login screen's error
@@ -486,7 +491,11 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   const looksInternal =
     raw.length > 300 ||
     /select |insert |update |delete |syntax error|column |relation |sql|violates|constraint/i.test(raw);
-  const message = (status < 500 && raw && !looksInternal)
+  const message = protectedSequenceError
+    ? err.detail === "SEQUENCE_PROTECTED_DELETE"
+      ? "هذا المستند المرقم محمي ولا يمكن حذفه. استخدم مسار الإلغاء بدلاً من الحذف."
+      : "لا يمكن تغيير رقم مستند محمي بعد إصداره."
+    : (status < 500 && raw && !looksInternal)
     ? raw
     : "حدث خطأ غير متوقع في الخادم. حاول مرة أخرى أو تواصل مع الدعم.";
   res.status(status).json({ error: message });

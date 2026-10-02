@@ -210,6 +210,7 @@ router.post("/clients", requireResellerPermission("add_companies"), async (req, 
     invoiceType: "both",
     isSandbox: false,
     status: "active",
+    sequenceProtectionEnabled: true,
     journalEntryFormMode: "manual",
   }).returning();
 

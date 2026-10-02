@@ -140,6 +140,29 @@ export default function CompanyDetails() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  const sequenceProtectionMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await fetch(`${API}/api/admin/companies/${id}/sequence-protection${agentQS}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ enabled }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "تعذّر تحديث حزمة حماية التسلسلات");
+      return json;
+    },
+    onSuccess: async (_result, enabled) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admin-company", id, agentId] }),
+        qc.invalidateQueries({ queryKey: ["companies"] }),
+      ]);
+      toast({
+        title: enabled ? "تم تفعيل حماية التسلسلات" : "تم إيقاف الحماية للمستندات الجديدة",
+      });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   const addUserMutation = useMutation({
     mutationFn: async (body: any) => {
       const res = await fetch(`${API}/api/admin/companies/${id}/users${agentQS}`, {
@@ -344,6 +367,9 @@ export default function CompanyDetails() {
         </TabBtn>
         <TabBtn active={tab === "subscription"} onClick={() => setTab("subscription")}>
           <Package className="h-4 w-4" />الاشتراك
+        </TabBtn>
+        <TabBtn active={tab === "packages"} onClick={() => setTab("packages")}>
+          <ShieldCheck className="h-4 w-4" />الحزم
         </TabBtn>
         {/* ZATCA onboarding endpoints are not agent-DB-scoped — hiding the
             tab for agent companies avoids touching a colliding central ID. */}
@@ -759,6 +785,40 @@ export default function CompanyDetails() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* ─── Packages Tab ─── */}
+      {tab === "packages" && (
+        <div className="space-y-4">
+          <section className="rounded-xl border bg-card p-5">
+            <div className="flex items-start justify-between gap-6">
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="h-5 w-5 text-primary" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="font-semibold">حماية التسلسلات</h3>
+                  <p className="text-sm text-muted-foreground leading-6">
+                    تمنع الحذف النهائي أو تغيير الرقم بعد إصداره للمستندات التي تُرقّم أثناء تفعيل الحزمة.
+                    تظل السجلات المحمية كذلك حتى بعد إيقاف الحزمة.
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={!!company.sequenceProtectionEnabled}
+                disabled={sequenceProtectionMutation.isPending}
+                onCheckedChange={(enabled) => sequenceProtectionMutation.mutate(enabled)}
+                aria-label="تفعيل حماية التسلسلات"
+                data-testid="switch-sequence-protection"
+              />
+            </div>
+            <div className="mt-4 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground leading-5">
+              {company.sequenceProtectionEnabled
+                ? "الحزمة فعّالة. الأرقام الجديدة ستُحمى من الحذف وإعادة الاستخدام."
+                : "الحزمة متوقفة. إيقافها لا يرفع الحماية عن أي مستند حُمي سابقاً؛ يؤثر فقط على الأرقام التي ستصدر بعده."}
+            </div>
+          </section>
         </div>
       )}
 

@@ -258,6 +258,7 @@ router.post("/:id/approve", async (req, res) => {
           invoiceType: "both",
           isSandbox: true,
           status: "active",
+          sequenceProtectionEnabled: true,
           journalEntryFormMode: "manual",
           menuPermissions,
         }).returning();

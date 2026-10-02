@@ -17,6 +17,7 @@ export const journalEntriesTable = pgTable("journal_entries", {
   // remain valid until backfilled; new rows are auto-resolved at write time.
   periodId:     integer("period_id"),
   status:       text("status").notNull().default("draft"),
+  isSequenceProtected: boolean("is_sequence_protected").notNull().default(false),
   // ── Audit trail (who/where/when created the entry & posted it) ────────
   // All nullable: legacy rows + system-generated rows that pre-date this
   // column will read as NULL and the UI shows a dash. The fields are

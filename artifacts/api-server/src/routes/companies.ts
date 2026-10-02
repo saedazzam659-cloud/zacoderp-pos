@@ -111,6 +111,7 @@ router.post("/", async (req, res) => {
     industryName: data.industryName,
     invoiceType: data.invoiceType ?? "both",
     isSandbox: data.isSandbox ?? false,
+    sequenceProtectionEnabled: true,
     serialNumber: data.serialNumber,
     deviceSerial1: data.deviceSerial1,
     deviceSerial2: data.deviceSerial2,

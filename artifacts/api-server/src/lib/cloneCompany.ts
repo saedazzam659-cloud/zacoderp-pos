@@ -161,6 +161,7 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       menuPermissions:           normalizeCompanyMenuPermissions(source.menuPermissions),
       windowsModulePermissions:  source.windowsModulePermissions,
       autoPostingEnabled:        source.autoPostingEnabled,
+      sequenceProtectionEnabled: source.sequenceProtectionEnabled ?? false,
       allowUnbalancedOpeningBalances: source.allowUnbalancedOpeningBalances,
       openingBalanceReminderMessage: source.openingBalanceReminderMessage,
       openingBalanceReminderStartTime: source.openingBalanceReminderStartTime,
