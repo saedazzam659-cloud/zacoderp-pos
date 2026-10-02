@@ -20,6 +20,7 @@ import { assertWritableForDate } from "./periodGuard.js";
 import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
 import { isHrPostingBranchBackfill, resolveHrPostingBranch } from "./hrPostingBranch.js";
 import { allocateComponentBySnapshots } from "./payrollAllocation.js";
+import { getLinkedSourceJournalEntry, replaceLinkedSourceJournalEntry } from "./sourceJournalEntryLifecycle.js";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -186,7 +187,12 @@ export async function resolveCashAccount(
 }
 
 // ─── PAYROLL POSTING JOURNAL ─────────────────────────────────────────────────
-export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx = db): Promise<number> {
+export async function buildPayrollJournal(
+  cid: number,
+  runId: number,
+  dx: DbOrTx = db,
+  retainedEntryId?: number | null,
+): Promise<number> {
   const [run] = await dx.select().from(payrollRunsTable)
     .where(and(eq(payrollRunsTable.id, runId), eq(payrollRunsTable.companyId, cid)));
   if (!run) throw new Error("مسير الرواتب غير موجود");
@@ -240,21 +246,25 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
   // description + source link. Falls back to the run code.
   // Reuses a stashed number on unpost→repost (keyed payroll_run:runId) so
   // re-approving a payroll run keeps its original JE number (no gaps).
-  const jeDocNumber = (await resolveJeNumber({
-    companyId: cid, sourceType: "payroll_run", sourceId: runId, subType: "hr_payroll",
-    branchId: run.branchId ?? null, docDate: payrollDate, userId: null, dx: dx as any,
-  })) ?? run.code;
-  const [entry] = await dx.insert(journalEntriesTable).values({
+  const retainedEntry = retainedEntryId
+    ? await getLinkedSourceJournalEntry(dx, cid, retainedEntryId, "payroll_run")
+    : null;
+  const jeStatus = await resolvePostingStatus(cid, "payroll");
+  const header = {
     companyId: cid,
     branchId: run.branchId ?? null,
-    docNumber: jeDocNumber,
+    docNumber: retainedEntry ? retainedEntry.docNumber : (await resolveJeNumber({
+      companyId: cid, sourceType: "payroll_run", sourceId: runId, subType: "hr_payroll",
+      branchId: run.branchId ?? null, docDate: payrollDate, userId: null, dx: dx as any,
+    })) ?? run.code,
     entryDate: payrollDate,
     currency: "SAR",
     exchangeRate: "1",
     description: desc,
     entryType: "payroll_run",
-    status: await resolvePostingStatus(cid, "payroll"),
-  }).returning();
+    status: jeStatus,
+  };
+  const [entry] = retainedEntry ? [{ id: retainedEntry.id }] : await dx.insert(journalEntriesTable).values(header).returning();
 
   const drLines: any[] = [];
   // New runs have immutable daily snapshots. Split EACH expense class by the
@@ -308,7 +318,18 @@ export async function buildPayrollJournal(cid: number, runId: number, dx: DbOrTx
     crLines.push({ entryId: entry.id, accountId: accounts.otherDeductions, debit: "0.00", credit: fix(otherDeduction),
        description: `استقطاعات أخرى ${period}`, sortOrder: debitOrder++ });
 
-  await dx.insert(journalEntryLinesTable).values([...drLines, ...crLines]);
+  const journalLines = [...drLines, ...crLines];
+  if (retainedEntry) {
+    return replaceLinkedSourceJournalEntry(dx, {
+      companyId: cid,
+      entryId: retainedEntry.id,
+      entryType: "payroll_run",
+      header,
+      lines: journalLines,
+      sequenceProtected: !!(run as any).isSequenceProtected,
+    });
+  }
+  await dx.insert(journalEntryLinesTable).values(journalLines);
   return entry.id;
 }
 
@@ -320,7 +341,8 @@ export async function buildPayrollPaymentJournal(
   runId: number,
   payDate: string,
   source: { cashBoxId?: number | null; bankAccountId?: number | null },
-  dx: DbOrTx = db
+  dx: DbOrTx = db,
+  retainedEntryId?: number | null,
 ): Promise<number> {
   const [run] = await dx.select().from(payrollRunsTable)
     .where(and(eq(payrollRunsTable.id, runId), eq(payrollRunsTable.companyId, cid)));
@@ -339,30 +361,44 @@ export async function buildPayrollPaymentJournal(
 
   const w = await assertWritableForDate(cid, payDate);
   if (!w.ok) throw new Error(w.reason);
-  // Reuses a stashed number on unpay→re-pay (keyed payroll_pay:runId) so the
-  // payment JE keeps its original number (no gaps).
-  const jeDocNumber = (await resolveJeNumber({
-    companyId: cid, sourceType: "payroll_pay", sourceId: runId, subType: "hr_payroll",
-    branchId: postingBranchId, docDate: payDate, userId: null, dx: dx as any,
-  })) ?? `PAY-${run.code}`;
-  const [entry] = await dx.insert(journalEntriesTable).values({
+  // Reuses the retained row for protected payroll sources; legacy entries
+  // continue to use the keyed reservation after unpay.
+  const retainedEntry = retainedEntryId
+    ? await getLinkedSourceJournalEntry(dx, cid, retainedEntryId, "payroll_payment")
+    : null;
+  const header = {
     companyId: cid,
     branchId: postingBranchId,
-    docNumber: jeDocNumber,
+    docNumber: retainedEntry ? retainedEntry.docNumber : (await resolveJeNumber({
+      companyId: cid, sourceType: "payroll_pay", sourceId: runId, subType: "hr_payroll",
+      branchId: postingBranchId, docDate: payDate, userId: null, dx: dx as any,
+    })) ?? `PAY-${run.code}`,
     entryDate: payDate,
     currency: "SAR",
     exchangeRate: "1",
     description: desc,
     entryType: "payroll_payment",
     status: await resolvePostingStatus(cid, "payroll"),
-  }).returning();
+    isSequenceProtected: !!(run as any).isSequenceProtected || !!retainedEntry?.isSequenceProtected,
+  };
+  const [entry] = retainedEntry ? [{ id: retainedEntry.id }] : await dx.insert(journalEntriesTable).values(header).returning();
 
-  await dx.insert(journalEntryLinesTable).values([
+  const lines = [
     { entryId: entry.id, accountId: accounts.salariesPayable, debit: fix(amount), credit: "0.00",
       description: `سداد صافي رواتب الفترة ${period}`, sortOrder: 0 },
     { entryId: entry.id, accountId: cash.accountId, debit: "0.00", credit: fix(amount),
       description: cash.label, sortOrder: 1 },
-  ]);
+  ];
+  if (retainedEntry) {
+    return replaceLinkedSourceJournalEntry(dx, {
+      companyId: cid,
+      entryId: retainedEntry.id,
+      entryType: "payroll_payment",
+      header,
+      lines,
+    });
+  }
+  await dx.insert(journalEntryLinesTable).values(lines);
   return entry.id;
 }
 

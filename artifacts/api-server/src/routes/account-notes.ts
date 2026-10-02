@@ -35,6 +35,10 @@ import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { loadMappings } from "../lib/accountingMappings.js";
 import { contractingProjectsTable } from "@workspace/db";
+import {
+  draftLinkedSourceJournalEntry,
+  replaceLinkedSourceJournalEntry,
+} from "../lib/sourceJournalEntryLifecycle.js";
 
 /**
  * Resolve & validate a `projectId` belongs to the current company.
@@ -465,13 +469,13 @@ router.post("/:id/post", requirePostRight("financial"), async (req, res) => {
       // JE number: reuse the number reserved at unpost time (edit→repost
       // keeps the SAME journal-entry number), else draw the next continuous
       // "journal_entry" number. Falls back to the note number.
-      const jeDocNumber = (await resolveJeNumber({
+      const jeDocNumber = n.journalEntryId ? null : (await resolveJeNumber({
         companyId: cid, sourceType: "account_note", sourceId: n.id,
         userId: (req as any).authUser?.id ?? null,
         branchId: (n as any).branchId ?? null, docDate: n.noteDate as any,
-        dx: tx,
+        dx: tx as any,
       })) ?? n.noteNumber;
-      const [entry] = await tx.insert(journalEntriesTable).values({
+      const header = {
         companyId: cid,
         docNumber: jeDocNumber,
         entryDate: n.noteDate as any,
@@ -482,18 +486,32 @@ router.post("/:id/post", requirePostRight("financial"), async (req, res) => {
         status: jeStatus,
         periodId: writability.period?.id ?? null,
         ...fullAuditFor(req, jeStatus),
-      }).returning();
+      };
 
-      await tx.insert(journalEntryLinesTable).values(
-        lines.map(l => ({ entryId: entry.id, ...l }))
-      );
+      let entryId: number;
+      if (n.journalEntryId) {
+        entryId = await replaceLinkedSourceJournalEntry(tx, {
+          companyId: cid,
+          entryId: n.journalEntryId,
+          entryType: `account_note_${n.partyType}_${n.noteType}`,
+          header,
+          lines,
+          sequenceProtected: !!(n as any).isSequenceProtected,
+        });
+      } else {
+        const [entry] = await tx.insert(journalEntriesTable).values(header).returning();
+        entryId = entry.id;
+        await tx.insert(journalEntryLinesTable).values(
+          lines.map(l => ({ entryId: entry.id, ...l }))
+        );
+      }
 
       await tx.update(accountNotesTable).set({
-        journalEntryId: entry.id,
+        journalEntryId: entryId,
         updatedAt: new Date(),
       }).where(eq(accountNotesTable.id, id));
 
-      return { entryId: entry.id, jeStatus };
+      return { entryId, jeStatus };
     });
   } catch (e: any) {
     if (e?.message === "ALREADY_CLAIMED") {
@@ -519,16 +537,43 @@ router.post("/:id/unpost", requireUnpostRight("financial"), async (req, res) => 
   if (n.status !== "posted") { res.status(400).json({ error: "الإشعار ليس مُرحَّلاً" }); return; }
   const writability = await assertWritableForDate(cid, n.noteDate as any);
   if (!writability.ok) { res.status(423).json({ error: writability.reason }); return; }
-  if (n.journalEntryId) {
-    // Stash the JE number BEFORE deleting so the next post (after an edit)
-    // reuses the SAME journal-entry number instead of burning a fresh one.
-    await reserveJeNumberFromEntry(cid, "account_note", id, n.journalEntryId);
-    await db.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, n.journalEntryId));
-    await db.delete(journalEntriesTable).where(eq(journalEntriesTable.id, n.journalEntryId));
-  }
-  await db.update(accountNotesTable).set({
-    status: "draft", journalEntryId: null, updatedAt: new Date(),
-  }).where(eq(accountNotesTable.id, id));
+  await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(accountNotesTable)
+      .where(and(
+        eq(accountNotesTable.id, id),
+        eq(accountNotesTable.companyId, cid),
+      ))
+      .for("update");
+    if (!current || current.status !== "posted") {
+      throw Object.assign(new Error("الإشعار ليس مُرحَّلاً"), { status: 409 });
+    }
+    let retainLinkedEntry = false;
+    if (current.journalEntryId) {
+      const [linked] = await tx.select().from(journalEntriesTable)
+        .where(and(
+          eq(journalEntriesTable.id, current.journalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+        ));
+      retainLinkedEntry = !!(current as any).isSequenceProtected || !!(linked as any)?.isSequenceProtected;
+      if (retainLinkedEntry) {
+        await draftLinkedSourceJournalEntry(
+          tx, cid, current.journalEntryId, `account_note_${current.partyType}_${current.noteType}`,
+        );
+      } else {
+        // Legacy unprotected behavior: reserve the number and remove the JE.
+        await reserveJeNumberFromEntry(cid, "account_note", id, current.journalEntryId, tx as any);
+        await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, current.journalEntryId));
+        await tx.delete(journalEntriesTable).where(eq(journalEntriesTable.id, current.journalEntryId));
+      }
+    } else if ((current as any).isSequenceProtected) {
+      throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المحمي غير مرتبط بالمستند."), { status: 409 });
+    }
+    await tx.update(accountNotesTable).set({
+      status: "draft",
+      ...(!retainLinkedEntry ? { journalEntryId: null } : {}),
+      updatedAt: new Date(),
+    }).where(eq(accountNotesTable.id, id));
+  });
   res.json({ ok: true });
 });
 

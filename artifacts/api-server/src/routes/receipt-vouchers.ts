@@ -29,6 +29,7 @@ import { ensureContractingAccountingTables } from "../lib/contracting-accounting
 import { exactCents } from "../lib/contracting-bill-adjustment-math.js";
 import { taxableAdvanceReceiptSlice } from "../lib/contracting-taxable-advance.js";
 import { refreshBillPaymentState } from "../lib/contracting-accounting-service.js";
+import { draftLinkedSourceJournalEntry, getLinkedSourceJournalEntry, replaceLinkedSourceJournalEntry } from "../lib/sourceJournalEntryLifecycle.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -204,6 +205,26 @@ async function buildReceiptJournal(cid: number, v: any, req: any, outerTx?: any)
   // Atomic: header + all lines commit together, so a mid-way failure never
   // strands an orphan (zero-balance) journal entry.
   const insert = async (tx: any) => {
+    const header = {
+      companyId: cid, branchId: v.branchId ?? null,
+      entryDate: v.date,
+      currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
+      description: desc, entryType: "receipt",
+      status: jeStatus,
+      periodId: writability.period?.id ?? null,
+      isSequenceProtected: !!v.isSequenceProtected,
+      ...fullAuditFor(req, jeStatus),
+    };
+    if (v.journalEntryId) {
+      return replaceLinkedSourceJournalEntry(tx, {
+        companyId: cid,
+        entryId: v.journalEntryId,
+        entryType: "receipt",
+        sequenceProtected: !!v.isSequenceProtected,
+        header,
+        lines: jeLines,
+      });
+    }
     // JE number: reuse the number reserved at unpost time (edit→repost keeps
     // the SAME journal-entry number), else draw the next continuous
     // "journal_entry" number. Falls back to the voucher code.
@@ -215,13 +236,8 @@ async function buildReceiptJournal(cid: number, v: any, req: any, outerTx?: any)
       dx: tx,
     })) ?? v.code;
     const [entry] = await tx.insert(journalEntriesTable).values({
-      companyId: cid, branchId: v.branchId ?? null,
-      docNumber: jeDocNumber, entryDate: v.date,
-      currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
-      description: desc, entryType: "receipt",
-      status: jeStatus,
-      periodId: writability.period?.id ?? null,
-      ...fullAuditFor(req, jeStatus),
+      ...header,
+      docNumber: jeDocNumber,
     }).returning();
     await tx.insert(journalEntryLinesTable).values(
       jeLines.map((jl) => ({ entryId: entry.id, ...jl })),
@@ -1176,10 +1192,16 @@ router.post("/:id/post", requirePostRight("receipt"), async (req, res) => {
         return posted;
       });
     } else {
-      const journalId = await buildReceiptJournal(existing.companyId, existing, req);
-      [row] = await db.update(receiptVouchersTable)
-        .set({ status: "posted", journalEntryId: journalId })
-        .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
+      row = await db.transaction(async (tx) => {
+        const [locked] = await tx.select().from(receiptVouchersTable)
+          .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "draft"))).for("update");
+        if (!locked) throw new Error("مرحّل مسبقاً");
+        const journalId = await buildReceiptJournal(cid, locked, req, tx);
+        const [posted] = await tx.update(receiptVouchersTable)
+          .set({ status: "posted", journalEntryId: journalId })
+          .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
+        return posted;
+      });
     }
     res.json(row);
   } catch (e: any) {
@@ -1216,9 +1238,20 @@ router.post("/:id/unpost", requireUnpostRight("receipt"), async (req, res) => {
           WHERE company_id = ${cid} AND source_voucher_type = 'receipt' AND source_voucher_id = ${id} AND status = 'posted'`);
         for (const billId of new Set(links.map((x: any) => x.bill_id).filter(Boolean)))
           await refreshBillPaymentState(tx, cid, Number(billId), (req as any).authUser?.id ?? null);
-        if (v.journalEntryId) await tx.update(journalEntriesTable).set({ status: "draft" })
-          .where(and(eq(journalEntriesTable.id, v.journalEntryId), eq(journalEntriesTable.companyId, cid)));
-        const [draft] = await tx.update(receiptVouchersTable).set({ status: "draft", journalEntryId: null })
+        const linkedEntry = v.journalEntryId
+          ? await getLinkedSourceJournalEntry(tx, cid, v.journalEntryId, "receipt")
+          : null;
+        const retainJournal = !!v.isSequenceProtected || !!linkedEntry?.isSequenceProtected;
+        if (v.journalEntryId) {
+          if (retainJournal) {
+            await draftLinkedSourceJournalEntry(tx, cid, v.journalEntryId, "receipt");
+          } else {
+            await tx.update(journalEntriesTable).set({ status: "draft" })
+              .where(and(eq(journalEntriesTable.id, v.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+          }
+        }
+        const [draft] = await tx.update(receiptVouchersTable)
+          .set(retainJournal ? { status: "draft" } : { status: "draft", journalEntryId: null })
           .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
         return draft;
       });
@@ -1226,14 +1259,35 @@ router.post("/:id/unpost", requireUnpostRight("receipt"), async (req, res) => {
     } catch (e: any) { res.status(e.status ?? 409).json({ error: e.message }); }
     return;
   }
-  if (existing.journalEntryId) {
-    // Stash the JE number BEFORE deleting so the next post (after an edit)
-    // reuses the SAME journal-entry number instead of burning a fresh one.
-    await reserveJeNumberFromEntry(cid, "receipt_voucher", id, existing.journalEntryId);
-    await db.delete(journalEntriesTable).where(and(
-      eq(journalEntriesTable.id, existing.journalEntryId),
-      eq(journalEntriesTable.companyId, cid),
-    ));
+  if (existing.isSequenceProtected || existing.journalEntryId) {
+    const row = await db.transaction(async (tx) => {
+      const [v] = await tx.select().from(receiptVouchersTable)
+        .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).for("update");
+      if (!v || v.status !== "posted") throw new Error("السند ليس مرحّلاً");
+      const linkedEntry = v.journalEntryId
+        ? await getLinkedSourceJournalEntry(tx, cid, v.journalEntryId, "receipt")
+        : null;
+      const retainJournal = !!v.isSequenceProtected || !!linkedEntry?.isSequenceProtected;
+      if (v.journalEntryId) {
+        if (retainJournal) {
+          await draftLinkedSourceJournalEntry(tx, cid, v.journalEntryId, "receipt");
+        } else {
+          // Legacy unprotected path: reserve the number before deleting the
+          // JE so edit→repost still gets the same number.
+          await reserveJeNumberFromEntry(cid, "receipt_voucher", id, v.journalEntryId, tx as any);
+          await tx.delete(journalEntriesTable).where(and(
+            eq(journalEntriesTable.id, v.journalEntryId),
+            eq(journalEntriesTable.companyId, cid),
+          ));
+        }
+      }
+      const [draft] = await tx.update(receiptVouchersTable)
+        .set(retainJournal ? { status: "draft" } : { status: "draft", journalEntryId: null })
+        .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
+      return draft;
+    });
+    res.json(row);
+    return;
   }
   const [row] = await db.update(receiptVouchersTable)
     .set({ status: "draft", journalEntryId: null })

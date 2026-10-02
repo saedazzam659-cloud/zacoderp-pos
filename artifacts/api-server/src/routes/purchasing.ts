@@ -449,10 +449,8 @@ async function createJournalEntry(opts: {
   // stays in the description + the source.jeId link, so traceability and
   // unposting are unaffected. Falls back to the source docNumber when no active
   // "journal_entry" sequence is configured (back-compat).
-  // Reuse the SAME journal-entry number when this source document is being
-  // RE-POSTED after an unpost→edit cycle (a reservation was stashed at unpost
-  // time). Otherwise draw the next continuous "journal_entry" number. Reuse
-  // NEVER consumes the counter, so unpost→repost leaves no sequence gap.
+  // Protected sources reuse their retained JE row and number. Legacy sources
+  // keep the existing reservation/recreate behavior after unposting.
   const [reusedEntry] = opts.reuseEntryId
     ? await executor.select().from(journalEntriesTable).where(and(
         eq(journalEntriesTable.id, opts.reuseEntryId),
@@ -2589,36 +2587,46 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
       );
     }
 
-    const journalId = await createJournalEntry({
-      companyId:    cid,
-      audit:        { req },
-      branchId:     inv.branchId,
-      date:         inv.invoiceDate,
-      docNumber:    inv.docNumber,
-      description:  desc,
-      entryType:    "purchase_invoice",
-      sourceType:   "purchase_invoice",
-      sourceId:     inv.id,
-      exchangeRate: inv.exchangeRate,
-      // Header-level cost center tags every JE line for cost-center reports.
-      costCenter:   (inv as any).costCenter ?? null,
-      lines: [
-        ...debitLines,
-        { accountId: taxAccId, debit: vatAmount, description: "ضريبة القيمة المضافة", costCenter: null },
-        ...creditLines,
-      ],
-    });
+    const updated = await db.transaction(async (tx) => {
+      const journalId = await createJournalEntry({
+        companyId:    cid,
+        audit:        { req },
+        branchId:     inv.branchId,
+        date:         inv.invoiceDate,
+        docNumber:    inv.docNumber,
+        description:  desc,
+        entryType:    "purchase_invoice",
+        sourceType:   "purchase_invoice",
+        sourceId:     inv.id,
+        reuseEntryId: inv.journalEntryId ?? undefined,
+        sequenceProtected: inv.isSequenceProtected,
+        exchangeRate: inv.exchangeRate,
+        dx:           tx,
+        // Header-level cost center tags every JE line for cost-center reports.
+        costCenter:   (inv as any).costCenter ?? null,
+        lines: [
+          ...debitLines,
+          { accountId: taxAccId, debit: vatAmount, description: "ضريبة القيمة المضافة", costCenter: null },
+          ...creditLines,
+        ],
+      });
 
-    const [updated] = await db.update(purchaseInvoicesTable)
-      .set({
-        status: "posted",
-        journalEntryId: journalId,
-        postedById: (req as any).authUser?.id ?? null,
-        postedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(purchaseInvoicesTable.id, id))
-      .returning();
+      const [updated] = await tx.update(purchaseInvoicesTable)
+        .set({
+          status: "posted",
+          journalEntryId: journalId,
+          postedById: (req as any).authUser?.id ?? null,
+          postedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(purchaseInvoicesTable.id, id),
+          eq(purchaseInvoicesTable.companyId, cid),
+        ))
+        .returning();
+      if (!updated) throw Object.assign(new Error("تعذر حفظ ترحيل فاتورة المشتريات."), { status: 409 });
+      return updated;
+    });
 
     // Auto-update LC usedAmount + status based on this newly-posted invoice
     if (inv.lcId) await recomputeLcUsage(cid, inv.lcId);
@@ -2743,8 +2751,8 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
 });
 
 // ─── UNPOST purchase invoice (فك الترحيل) ───────────────────────────────────
-// Reverses stock movements, zeroes-out the journal entry lines (audit trail),
-// then deletes the JE and sets the invoice back to draft.
+// Reverses stock movements and returns the invoice to draft. Protected linked
+// JEs are retained as drafts; legacy JEs keep the reservation/delete workflow.
 router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -2754,6 +2762,9 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
+    if (inv.isSequenceProtected && !inv.journalEntryId) {
+      throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بالفاتورة المحمية غير موجود."), { status: 409 });
+    }
     const industrialLines = await db.select().from(purchaseInvoiceLinesTable)
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
     await assertIndustrialCostPeriodsWritable(cid, industrialLines);
@@ -2805,7 +2816,11 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
         const runJeIds = allRuns.map(r => r.jeId).filter((x): x is number => typeof x === "number");
         if (runJeIds.length) {
           await db.update(journalEntriesTable)
-            .set({ status: "draft", updatedAt: new Date() })
+            .set({
+              status: "draft",
+              ...(inv.isSequenceProtected ? { isSequenceProtected: true } : {}),
+              updatedAt: new Date(),
+            })
             .where(and(
               eq(journalEntriesTable.companyId, cid),
               inArray(journalEntriesTable.id, runJeIds),
@@ -2880,23 +2895,63 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
         ));
     }
 
-    // ── Zero-out the JE lines, then delete the JE ──
-    if (inv.journalEntryId) {
-      // Stash this JE's number so the next re-post reuses it (no gap).
-      await reserveJeNumberFromEntry(cid, "purchase_invoice", id, inv.journalEntryId);
-      await db.update(journalEntryLinesTable)
-        .set({ debit: "0", credit: "0" })
-        .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
-      await db.delete(journalEntryLinesTable)
-        .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
-      await db.delete(journalEntriesTable)
-        .where(and(eq(journalEntriesTable.id, inv.journalEntryId), eq(journalEntriesTable.companyId, cid)));
-    }
+    const updated = await db.transaction(async (tx) => {
+      let retainLinkedJournalEntry = false;
+      if (inv.journalEntryId) {
+        const [linkedEntry] = await tx.select({
+          id: journalEntriesTable.id,
+          entryType: journalEntriesTable.entryType,
+          isSequenceProtected: journalEntriesTable.isSequenceProtected,
+        }).from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, inv.journalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1);
+        if (linkedEntry && linkedEntry.entryType !== "purchase_invoice") {
+          throw Object.assign(new Error("القيد المرتبط لا يطابق نوع فاتورة المشتريات."), { status: 409 });
+        }
+        if (inv.isSequenceProtected && !linkedEntry) {
+          throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بالفاتورة المحمية غير موجود."), { status: 409 });
+        }
+        retainLinkedJournalEntry = !!linkedEntry
+          && (inv.isSequenceProtected || linkedEntry.isSequenceProtected);
+        if (retainLinkedJournalEntry) {
+          await tx.update(journalEntriesTable).set({
+            status: "draft",
+            isSequenceProtected: true,
+            updatedAt: new Date(),
+          }).where(and(
+            eq(journalEntriesTable.id, linkedEntry.id),
+            eq(journalEntriesTable.companyId, cid),
+          ));
+        } else {
+          // Legacy records keep the established delete/recreate workflow and
+          // reserve their JE number for the next source-document post.
+          await reserveJeNumberFromEntry(cid, "purchase_invoice", id, inv.journalEntryId, tx as any);
+          await tx.update(journalEntryLinesTable)
+            .set({ debit: "0", credit: "0" })
+            .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
+          await tx.delete(journalEntryLinesTable)
+            .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
+          await tx.delete(journalEntriesTable)
+            .where(and(eq(journalEntriesTable.id, inv.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        }
+      }
 
-    const [updated] = await db.update(purchaseInvoicesTable)
-      .set({ status: "draft", journalEntryId: null, postedById: null, postedAt: null, updatedAt: new Date() })
-      .where(eq(purchaseInvoicesTable.id, id))
-      .returning();
+      const [draft] = await tx.update(purchaseInvoicesTable)
+        .set({
+          status: "draft",
+          ...(retainLinkedJournalEntry ? {} : { journalEntryId: null }),
+          postedById: null,
+          postedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(purchaseInvoicesTable.id, id),
+          eq(purchaseInvoicesTable.companyId, cid),
+        ))
+        .returning();
+      return draft;
+    });
 
     // Reverse LC consumption when an LC-linked invoice is unposted
     if (inv.lcId) await recomputeLcUsage(cid, inv.lcId);
@@ -4308,21 +4363,25 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
     }
 
     const desc = `قيد مرتجع مشتريات رقم ${ret.docNumber || ret.id}`;
-    const journalId = await createJournalEntry({
-      companyId:    cid,
-      audit:        { req },
-      branchId:     ret.branchId,
-      date:         ret.returnDate,
-      docNumber:    ret.docNumber,
-      description:  desc,
-      entryType:    "purchase_return",
-      sourceType:   "purchase_return",
-      sourceId:     ret.id,
-      exchangeRate: ret.exchangeRate,
-      // Inherit cost center from the original invoice when set so the
-      // return tags the same CC as the purchase it reverses.
-      costCenter:   (ret as any).costCenter ?? null,
-      lines: [
+    const updated = await db.transaction(async (tx) => {
+      const journalId = await createJournalEntry({
+        companyId:    cid,
+        audit:        { req },
+        branchId:     ret.branchId,
+        date:         ret.returnDate,
+        docNumber:    ret.docNumber,
+        description:  desc,
+        entryType:    "purchase_return",
+        sourceType:   "purchase_return",
+        sourceId:     ret.id,
+        reuseEntryId: ret.journalEntryId ?? undefined,
+        sequenceProtected: ret.isSequenceProtected,
+        exchangeRate: ret.exchangeRate,
+        dx:           tx,
+        // Inherit cost center from the original invoice when set so the
+        // return tags the same CC as the purchase it reverses.
+        costCenter:   (ret as any).costCenter ?? null,
+        lines: [
         // CASH/BANK returns pass through the supplier's AP account so كشف حساب
         // المورد shows BOTH legs (تخفيض الرصيد بالمرتجع ثم الاسترداد) — mirrors
         // the cash/bank purchase-invoice pass-through. The two AP legs net to
@@ -4381,13 +4440,19 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
                 : `فرق سعر مرتجع — قيمة الاسترداد أعلى من تكلفة المخزون بمقدار ${varianceDelta.toFixed(2)}`,
             }]
           : []),
-      ],
-    });
+        ],
+      });
 
-    const [updated] = await db.update(purchaseReturnsTable)
-      .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
-      .where(eq(purchaseReturnsTable.id, id))
-      .returning();
+      const [updated] = await tx.update(purchaseReturnsTable)
+        .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
+        .where(and(
+          eq(purchaseReturnsTable.id, id),
+          eq(purchaseReturnsTable.companyId, cid),
+        ))
+        .returning();
+      if (!updated) throw Object.assign(new Error("تعذر حفظ ترحيل مرتجع المشتريات."), { status: 409 });
+      return updated;
+    });
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
@@ -4408,6 +4473,9 @@ router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), asy
       ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
+    if (ret.isSequenceProtected && !ret.journalEntryId) {
+      throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بمرتجع المشتريات المحمي غير موجود."), { status: 409 });
+    }
     const industrialLines = await db.select().from(purchaseReturnLinesTable)
       .where(eq(purchaseReturnLinesTable.returnId, id));
     await assertIndustrialCostPeriodsWritable(cid, industrialLines);
@@ -4448,22 +4516,59 @@ router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), asy
         eq(stockLedgerTable.refId, id),
       ));
 
-    if (ret.journalEntryId) {
-      // Stash this JE's number so the next re-post reuses it (no gap).
-      await reserveJeNumberFromEntry(cid, "purchase_return", id, ret.journalEntryId);
-      await db.update(journalEntryLinesTable)
-        .set({ debit: "0", credit: "0" })
-        .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
-      await db.delete(journalEntryLinesTable)
-        .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
-      await db.delete(journalEntriesTable)
-        .where(and(eq(journalEntriesTable.id, ret.journalEntryId), eq(journalEntriesTable.companyId, cid)));
-    }
+    const updated = await db.transaction(async (tx) => {
+      let retainLinkedJournalEntry = false;
+      if (ret.journalEntryId) {
+        const [linkedEntry] = await tx.select({
+          id: journalEntriesTable.id,
+          entryType: journalEntriesTable.entryType,
+          isSequenceProtected: journalEntriesTable.isSequenceProtected,
+        }).from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, ret.journalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1);
+        if (linkedEntry && linkedEntry.entryType !== "purchase_return") {
+          throw Object.assign(new Error("القيد المرتبط لا يطابق نوع مرتجع المشتريات."), { status: 409 });
+        }
+        if (ret.isSequenceProtected && !linkedEntry) {
+          throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بالمرتجع المحمي غير موجود."), { status: 409 });
+        }
+        retainLinkedJournalEntry = !!linkedEntry
+          && (ret.isSequenceProtected || linkedEntry.isSequenceProtected);
+        if (retainLinkedJournalEntry) {
+          await tx.update(journalEntriesTable).set({
+            status: "draft",
+            isSequenceProtected: true,
+            updatedAt: new Date(),
+          }).where(and(
+            eq(journalEntriesTable.id, linkedEntry.id),
+            eq(journalEntriesTable.companyId, cid),
+          ));
+        } else {
+          await reserveJeNumberFromEntry(cid, "purchase_return", id, ret.journalEntryId, tx as any);
+          await tx.update(journalEntryLinesTable)
+            .set({ debit: "0", credit: "0" })
+            .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+          await tx.delete(journalEntryLinesTable)
+            .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+          await tx.delete(journalEntriesTable)
+            .where(and(eq(journalEntriesTable.id, ret.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        }
+      }
 
-    const [updated] = await db.update(purchaseReturnsTable)
-      .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
-      .where(eq(purchaseReturnsTable.id, id))
-      .returning();
+      const [draft] = await tx.update(purchaseReturnsTable)
+        .set({
+          status: "draft",
+          ...(retainLinkedJournalEntry ? {} : { journalEntryId: null }),
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(purchaseReturnsTable.id, id),
+          eq(purchaseReturnsTable.companyId, cid),
+        ))
+        .returning();
+      return draft;
+    });
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }

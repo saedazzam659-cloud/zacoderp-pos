@@ -29,6 +29,7 @@ export const goodsReceiptsTable = pgTable("goods_receipts", {
   priceIncludesVat:            boolean("price_includes_vat").notNull().default(false),
   taxId:                       integer("tax_id"),
   status:                      goodsReceiptStatusEnum("status").notNull().default("draft"),
+  isSequenceProtected:         boolean("is_sequence_protected").notNull().default(false),
   inventoryAccountId:          integer("inventory_account_id"),
   receivingClearingAccountId:  integer("receiving_clearing_account_id").references(() => accountsTable.id),
   journalEntryId:              integer("journal_entry_id"),

@@ -490,15 +490,30 @@ router.delete("/:id/settlements/:sid", async (req, res) => {
     const id = Number(req.params.id);
     const sid = Number(req.params.sid);
     await db.transaction(async (tx) => {
-      const [stl] = await tx.select().from(employeeCustodySettlementsTable)
-        .where(and(eq(employeeCustodySettlementsTable.id, sid),
-                   eq(employeeCustodySettlementsTable.custodyId, id),
-                   eq(employeeCustodySettlementsTable.companyId, cid)));
-      if (!stl) throw Object.assign(new Error("سطر التسوية غير موجود"), { status: 404 });
       const [cust] = await tx.select().from(employeeCustodiesTable)
         .where(and(eq(employeeCustodiesTable.id, id), eq(employeeCustodiesTable.companyId, cid)))
         .for("update");
       if (!cust) throw Object.assign(new Error("العهدة غير موجودة"), { status: 404 });
+      const [stl] = await tx.select().from(employeeCustodySettlementsTable)
+        .where(and(eq(employeeCustodySettlementsTable.id, sid),
+                   eq(employeeCustodySettlementsTable.custodyId, id),
+                   eq(employeeCustodySettlementsTable.companyId, cid)))
+        .for("update");
+      if (!stl) throw Object.assign(new Error("سطر التسوية غير موجود"), { status: 404 });
+      if (stl.journalId) {
+        const [linkedEntry] = await tx.select({ isSequenceProtected: journalEntriesTable.isSequenceProtected })
+          .from(journalEntriesTable)
+          .where(and(
+            eq(journalEntriesTable.id, stl.journalId),
+            eq(journalEntriesTable.companyId, cid),
+          ));
+        if ((linkedEntry as any)?.isSequenceProtected) {
+          throw Object.assign(
+            new Error("لا يمكن حذف التسوية لأن القيد المحاسبي المرتبط محمي برقم تسلسلي."),
+            { status: 409 },
+          );
+        }
+      }
 
       // Remove the settlement row first, then erase its journal entry.
       await tx.delete(employeeCustodySettlementsTable)

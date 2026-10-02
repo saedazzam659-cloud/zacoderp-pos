@@ -90,19 +90,11 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
       END IF;
 
       current_row := to_jsonb(NEW);
-      IF COALESCE((current_row->>'is_sequence_protected')::BOOLEAN, FALSE) THEN
-        RETURN NEW;
-      END IF;
-
-      company_id_value := NULLIF(current_row->>'company_id', '')::INTEGER;
-      issued_number := NULLIF(BTRIM(current_row->>TG_ARGV[0]), '');
-      IF company_id_value IS NULL OR issued_number IS NULL THEN
-        RETURN NEW;
-      END IF;
-
       IF TG_OP = 'UPDATE' THEN
         previous_row := to_jsonb(OLD);
         IF COALESCE((previous_row->>'is_sequence_protected')::BOOLEAN, FALSE) THEN
+          company_id_value := NULLIF(current_row->>'company_id', '')::INTEGER;
+          issued_number := NULLIF(BTRIM(current_row->>TG_ARGV[0]), '');
           previous_number := NULLIF(BTRIM(previous_row->>TG_ARGV[0]), '');
           previous_company_id := NULLIF(previous_row->>'company_id', '')::INTEGER;
           IF issued_number IS DISTINCT FROM previous_number
@@ -115,10 +107,23 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
           NEW.is_sequence_protected := TRUE;
           RETURN NEW;
         END IF;
+      END IF;
 
+      IF COALESCE((current_row->>'is_sequence_protected')::BOOLEAN, FALSE) THEN
+        RETURN NEW;
+      END IF;
+
+      company_id_value := NULLIF(current_row->>'company_id', '')::INTEGER;
+      issued_number := NULLIF(BTRIM(current_row->>TG_ARGV[0]), '');
+      IF company_id_value IS NULL OR issued_number IS NULL THEN
+        RETURN NEW;
+      END IF;
+
+      IF TG_OP = 'UPDATE' THEN
         -- Do not retroactively protect a legacy document just because an
         -- unrelated field is edited after package activation. A genuinely
         -- changed/new number, however, is an issuance under the current policy.
+        previous_row := to_jsonb(OLD);
         previous_number := NULLIF(BTRIM(previous_row->>TG_ARGV[0]), '');
         IF issued_number IS NOT DISTINCT FROM previous_number THEN
           RETURN NEW;

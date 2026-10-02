@@ -35,6 +35,7 @@ export async function draftLinkedSourceJournalEntry(
   const entry = await getLinkedSourceJournalEntry(executor, companyId, entryId, entryType);
   await executor.update(journalEntriesTable).set({
     status: "draft",
+    isSequenceProtected: true,
     updatedAt: new Date(),
   }).where(and(
     eq(journalEntriesTable.id, entryId),

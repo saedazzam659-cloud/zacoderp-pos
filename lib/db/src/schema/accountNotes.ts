@@ -60,6 +60,7 @@ export const accountNotesTable = pgTable("account_notes", {
   costCenter:       text("cost_center"),
   projectId:        integer("project_id"),
   status:           accountNoteStatusEnum("status").notNull().default("draft"),
+  isSequenceProtected: boolean("is_sequence_protected").notNull().default(false),
   journalEntryId:   integer("journal_entry_id"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
   updatedAt:        timestamp("updated_at").defaultNow().notNull(),

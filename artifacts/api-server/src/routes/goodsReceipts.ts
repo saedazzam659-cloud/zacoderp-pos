@@ -32,6 +32,11 @@ import {
 import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
 import { insertGoodsDocumentLines } from "../lib/goodsDocumentLines.js";
 import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
+import {
+  getLinkedSourceJournalEntry,
+  draftLinkedSourceJournalEntry,
+  replaceLinkedSourceJournalEntry,
+} from "../lib/sourceJournalEntryLifecycle.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -807,19 +812,9 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
         throw err;
       }
       const grStatus = await resolvePostingStatus(cid, "goodsReceipt");
-      // JE number: reuse the number reserved at unpost time (edit→repost
-      // keeps the SAME journal-entry number), else draw the next continuous
-      // "journal_entry" number. Falls back to the GRN number.
-      const jeDocNumber = (await resolveJeNumber({
-        companyId: cid, sourceType: "goods_receipt", sourceId: gr.id,
-        userId: (req as any).authUser?.id ?? null,
-        branchId: gr.branchId ?? null, docDate: gr.receiptDate as any,
-        dx: tx,
-      })) ?? (gr.docNumber ?? null);
-      const [entry] = await tx.insert(journalEntriesTable).values({
+      const jeHeader = {
         companyId:    cid,
         branchId:     gr.branchId ?? null,
-        docNumber:    jeDocNumber,
         entryDate:    gr.receiptDate,
         currency:     "SAR",
         exchangeRate: gr.exchangeRate ?? "1",
@@ -828,24 +823,50 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
         status:       grStatus,
         periodId:     writability.period?.id ?? null,
         ...fullAuditFor(req, grStatus),
-      }).returning();
-      await tx.insert(journalEntryLinesTable).values(
-        cleanJeLines.map((l, i) => ({
-          entryId:     entry.id,
-          accountId:   l.accountId!,
-          debit:       String((l.debit  ?? 0).toFixed(2)),
-          credit:      String((l.credit ?? 0).toFixed(2)),
-          description: l.description ?? description,
-          sortOrder:   i,
-          costCenter: l.costCenter ?? null,
-        }))
-      );
+      };
+      const jeLines = cleanJeLines.map((l, i) => ({
+        accountId:   l.accountId!,
+        debit:       String((l.debit  ?? 0).toFixed(2)),
+        credit:      String((l.credit ?? 0).toFixed(2)),
+        description: l.description ?? description,
+        sortOrder:   i,
+        costCenter: l.costCenter ?? null,
+      }));
+      let entryId: number;
+      if (gr.journalEntryId) {
+        entryId = await replaceLinkedSourceJournalEntry(tx, {
+          companyId: cid,
+          entryId: gr.journalEntryId,
+          entryType: "goods_receipt",
+          header: jeHeader,
+          lines: jeLines,
+          sequenceProtected: gr.isSequenceProtected,
+        });
+      } else {
+        // Preserve legacy fresh creation / reserved-number behavior when the
+        // source has no retained JE link.
+        const jeDocNumber = (await resolveJeNumber({
+          companyId: cid, sourceType: "goods_receipt", sourceId: gr.id,
+          userId: (req as any).authUser?.id ?? null,
+          branchId: gr.branchId ?? null, docDate: gr.receiptDate as any,
+          dx: tx as any,
+        })) ?? (gr.docNumber ?? null);
+        const [entry] = await tx.insert(journalEntriesTable).values({
+          ...jeHeader,
+          docNumber: jeDocNumber,
+          isSequenceProtected: !!gr.isSequenceProtected,
+        }).returning();
+        entryId = entry.id;
+        await tx.insert(journalEntryLinesTable).values(
+          jeLines.map((line) => ({ ...line, entryId })),
+        );
+      }
 
       // 2c. Mark GRN as posted and link the JE.
       const [row] = await tx.update(goodsReceiptsTable)
         .set({
           status: "posted",
-          journalEntryId: entry.id,
+          journalEntryId: entryId,
           receivingClearingAccountId: clearingAccId,
           updatedAt: new Date(),
         })
@@ -885,8 +906,18 @@ router.patch("/:id/unpost", requireUnpostRight("goodsReceipt"), async (req, res)
     const updated = await db.transaction(async (tx) => {
       // 1. Race-safe claim: only one concurrent /unpost can flip posted→draft
       // AND it must still be unlinked from any invoice.
+      const linkedEntry = gr.journalEntryId
+        ? await getLinkedSourceJournalEntry(tx, cid, gr.journalEntryId, "goods_receipt")
+        : null;
+      const retainLinkedEntry = !!gr.isSequenceProtected || !!linkedEntry?.isSequenceProtected;
       const claimed = await tx.update(goodsReceiptsTable)
-        .set({ status: "draft", journalEntryId: null, postedById: null, postedAt: null, updatedAt: new Date() })
+        .set({
+          status: "draft",
+          journalEntryId: retainLinkedEntry ? gr.journalEntryId : null,
+          postedById: null,
+          postedAt: null,
+          updatedAt: new Date(),
+        })
         .where(and(
           eq(goodsReceiptsTable.id, id),
           eq(goodsReceiptsTable.companyId, cid),
@@ -927,10 +958,12 @@ router.patch("/:id/unpost", requireUnpostRight("goodsReceipt"), async (req, res)
         ));
 
       // 3. Reverse JE.
-      if (gr.journalEntryId) {
+      if (gr.journalEntryId && retainLinkedEntry) {
+        await draftLinkedSourceJournalEntry(tx, cid, gr.journalEntryId, "goods_receipt");
+      } else if (gr.journalEntryId) {
         // Stash the JE number BEFORE deleting so a later repost reuses the
         // SAME journal-entry number instead of burning a fresh one.
-        await reserveJeNumberFromEntry(cid, "goods_receipt", id, gr.journalEntryId, tx);
+        await reserveJeNumberFromEntry(cid, "goods_receipt", id, gr.journalEntryId, tx as any);
         await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, gr.journalEntryId));
         await tx.delete(journalEntriesTable).where(and(
           eq(journalEntriesTable.id, gr.journalEntryId),

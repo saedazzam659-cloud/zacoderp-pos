@@ -30,6 +30,11 @@ import {
 import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
 import { insertGoodsDocumentLines } from "../lib/goodsDocumentLines.js";
 import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
+import {
+  getLinkedSourceJournalEntry,
+  draftLinkedSourceJournalEntry,
+  replaceLinkedSourceJournalEntry,
+} from "../lib/sourceJournalEntryLifecycle.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -764,9 +769,9 @@ router.patch("/:id/post", requirePostRight("goodsDelivery"), async (req, res) =>
         });
       }
 
-      // 2b. Insert journal entry + lines inside the same tx (only if cost > 0).
+      // 2b. Create or rebuild the JE inside the same tx (new JEs require cost > 0).
       let entryId: number | null = null;
-      if (cleanJeLines.length >= 2 && totalCost > 0) {
+      if (gd.journalEntryId || (cleanJeLines.length >= 2 && totalCost > 0)) {
         // Period guard: block GD posting into a closed fiscal period.
         const writability = await assertWritableForDate(cid, gd.deliveryDate);
         if (!writability.ok) {
@@ -775,19 +780,9 @@ router.patch("/:id/post", requirePostRight("goodsDelivery"), async (req, res) =>
           throw err;
         }
         const gdStatus = await resolvePostingStatus(cid, "goodsDelivery");
-        // JE number: reuse the number reserved at unpost time (edit→repost
-        // keeps the SAME journal-entry number), else draw the next continuous
-        // "journal_entry" number. Falls back to the GD number.
-        const jeDocNumber = (await resolveJeNumber({
-          companyId: cid, sourceType: "goods_delivery", sourceId: gd.id,
-          userId: (req as any).authUser?.id ?? null,
-          branchId: gd.branchId ?? null, docDate: gd.deliveryDate as any,
-          dx: tx,
-        })) ?? (gd.docNumber ?? null);
-        const [entry] = await tx.insert(journalEntriesTable).values({
+        const jeHeader = {
           companyId:    cid,
           branchId:     gd.branchId ?? null,
-          docNumber:    jeDocNumber,
           entryDate:    gd.deliveryDate,
           currency:     "SAR",
           exchangeRate: gd.exchangeRate ?? "1",
@@ -796,19 +791,43 @@ router.patch("/:id/post", requirePostRight("goodsDelivery"), async (req, res) =>
           status:       gdStatus,
           periodId:     writability.period?.id ?? null,
           ...fullAuditFor(req, gdStatus),
-        }).returning();
-        entryId = entry.id;
-        await tx.insert(journalEntryLinesTable).values(
-          cleanJeLines.map((l, i) => ({
-            entryId:     entry.id,
-            accountId:   l.accountId!,
-            debit:       String((l.debit  ?? 0).toFixed(2)),
-            credit:      String((l.credit ?? 0).toFixed(2)),
-            description: l.description ?? description,
-            sortOrder:   i,
-            costCenter: l.costCenter ?? null,
-          }))
-        );
+        };
+        const jeLines = cleanJeLines.map((l, i) => ({
+          accountId:   l.accountId!,
+          debit:       String((l.debit  ?? 0).toFixed(2)),
+          credit:      String((l.credit ?? 0).toFixed(2)),
+          description: l.description ?? description,
+          sortOrder:   i,
+          costCenter: l.costCenter ?? null,
+        }));
+        if (gd.journalEntryId) {
+          entryId = await replaceLinkedSourceJournalEntry(tx, {
+            companyId: cid,
+            entryId: gd.journalEntryId,
+            entryType: "goods_delivery",
+            header: jeHeader,
+            lines: jeLines,
+            sequenceProtected: gd.isSequenceProtected,
+          });
+        } else {
+          // Retain the old reserved-number/fresh-entry path when no linked JE
+          // survived unposting.
+          const jeDocNumber = (await resolveJeNumber({
+            companyId: cid, sourceType: "goods_delivery", sourceId: gd.id,
+            userId: (req as any).authUser?.id ?? null,
+            branchId: gd.branchId ?? null, docDate: gd.deliveryDate as any,
+            dx: tx as any,
+          })) ?? (gd.docNumber ?? null);
+          const [entry] = await tx.insert(journalEntriesTable).values({
+            ...jeHeader,
+            docNumber: jeDocNumber,
+            isSequenceProtected: !!gd.isSequenceProtected,
+          }).returning();
+          entryId = entry.id;
+          await tx.insert(journalEntryLinesTable).values(
+            jeLines.map((line) => ({ ...line, entryId: entry.id })),
+          );
+        }
       }
 
       const [row] = await tx.update(goodsDeliveriesTable)
@@ -851,8 +870,18 @@ router.patch("/:id/unpost", requireUnpostRight("goodsDelivery"), async (req, res
     }
 
     const updated = await db.transaction(async (tx) => {
+      const linkedEntry = gd.journalEntryId
+        ? await getLinkedSourceJournalEntry(tx, cid, gd.journalEntryId, "goods_delivery")
+        : null;
+      const retainLinkedEntry = !!gd.isSequenceProtected || !!linkedEntry?.isSequenceProtected;
       const claimed = await tx.update(goodsDeliveriesTable)
-        .set({ status: "draft", journalEntryId: null, postedById: null, postedAt: null, updatedAt: new Date() })
+        .set({
+          status: "draft",
+          journalEntryId: retainLinkedEntry ? gd.journalEntryId : null,
+          postedById: null,
+          postedAt: null,
+          updatedAt: new Date(),
+        })
         .where(and(
           eq(goodsDeliveriesTable.id, id),
           eq(goodsDeliveriesTable.companyId, cid),
@@ -894,10 +923,12 @@ router.patch("/:id/unpost", requireUnpostRight("goodsDelivery"), async (req, res
           eq(stockLedgerTable.refId, id),
         ));
 
-      if (gd.journalEntryId) {
+      if (gd.journalEntryId && retainLinkedEntry) {
+        await draftLinkedSourceJournalEntry(tx, cid, gd.journalEntryId, "goods_delivery");
+      } else if (gd.journalEntryId) {
         // Stash the JE number BEFORE deleting so a later repost reuses the
         // SAME journal-entry number instead of burning a fresh one.
-        await reserveJeNumberFromEntry(cid, "goods_delivery", id, gd.journalEntryId, tx);
+        await reserveJeNumberFromEntry(cid, "goods_delivery", id, gd.journalEntryId, tx as any);
         await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, gd.journalEntryId));
         await tx.delete(journalEntriesTable).where(and(
           eq(journalEntriesTable.id, gd.journalEntryId),

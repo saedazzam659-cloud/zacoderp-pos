@@ -52,6 +52,7 @@ export const sisterTransfersTable = pgTable("sister_transfers", {
   totalSupply:       numeric("total_supply", { precision: 18, scale: 4 }).default("0").notNull(),
   journalEntryId:    integer("journal_entry_id"),
   status:            sisterDocStatusEnum("status").default("draft").notNull(),
+  isSequenceProtected: boolean("is_sequence_protected").notNull().default(false),
   notes:             text("notes"),
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
@@ -85,6 +86,7 @@ export const sisterReturnsTable = pgTable("sister_returns", {
   totalSupply:       numeric("total_supply", { precision: 18, scale: 4 }).default("0").notNull(),
   journalEntryId:    integer("journal_entry_id"),
   status:            sisterDocStatusEnum("status").default("draft").notNull(),
+  isSequenceProtected: boolean("is_sequence_protected").notNull().default(false),
   notes:             text("notes"),
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
@@ -125,6 +127,7 @@ export const sisterSettlementsTable = pgTable("sister_settlements", {
   description:       text("description"),
   journalEntryId:    integer("journal_entry_id"),
   status:            sisterDocStatusEnum("status").default("draft").notNull(),
+  isSequenceProtected: boolean("is_sequence_protected").notNull().default(false),
   createdAt:         timestamp("created_at").defaultNow().notNull(),
   updatedAt:         timestamp("updated_at").defaultNow().notNull(),
 });

@@ -38,6 +38,7 @@ import { parseContractingAllocation, resolveContractingLine, contractingVoucherO
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 import { refreshBillPaymentState } from "../lib/contracting-accounting-service.js";
 import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
+import { draftLinkedSourceJournalEntry, getLinkedSourceJournalEntry, replaceLinkedSourceJournalEntry } from "../lib/sourceJournalEntryLifecycle.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -230,6 +231,26 @@ async function buildPaymentJournal(cid: number, v: any, req: any, outerTx?: any)
   // Atomic: header + all lines commit together, so a mid-way failure never
   // strands an orphan (zero-balance) journal entry.
   const insert = async (tx: any) => {
+    const header = {
+      companyId: cid, branchId: v.branchId ?? null,
+      entryDate: v.date,
+      currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
+      description: desc, entryType: "payment",
+      status: jeStatus,
+      periodId: writability.period?.id ?? null,
+      isSequenceProtected: !!v.isSequenceProtected,
+      ...fullAuditFor(req, jeStatus),
+    };
+    if (v.journalEntryId) {
+      return replaceLinkedSourceJournalEntry(tx, {
+        companyId: cid,
+        entryId: v.journalEntryId,
+        entryType: "payment",
+        sequenceProtected: !!v.isSequenceProtected,
+        header,
+        lines: jeLines,
+      });
+    }
     // JE number: reuse the number reserved at unpost time (edit→repost keeps
     // the SAME journal-entry number, e.g. 1727 stays 1727), else draw the next
     // continuous "journal_entry" number. Falls back to the voucher code.
@@ -241,13 +262,8 @@ async function buildPaymentJournal(cid: number, v: any, req: any, outerTx?: any)
       dx: tx,
     })) ?? v.code;
     const [entry] = await tx.insert(journalEntriesTable).values({
-      companyId: cid, branchId: v.branchId ?? null,
-      docNumber: jeDocNumber, entryDate: v.date,
-      currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
-      description: desc, entryType: "payment",
-      status: jeStatus,
-      periodId: writability.period?.id ?? null,
-      ...fullAuditFor(req, jeStatus),
+      ...header,
+      docNumber: jeDocNumber,
     }).returning();
     await tx.insert(journalEntryLinesTable).values(
       jeLines.map((jl) => ({ entryId: entry.id, ...jl })),
@@ -1737,7 +1753,9 @@ router.post("/:id/post", requirePostRight("payment"), async (req, res) => {
     // JE build (or adjustment wiring) failed — release the claim so the
     // voucher returns to an editable draft instead of a posted-without-JE limbo.
     await db.update(paymentVouchersTable)
-      .set({ status: "draft", journalEntryId: null })
+      .set(existing.journalEntryId
+        ? { status: "draft" }
+        : { status: "draft", journalEntryId: null })
       .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)))
       .catch(() => { /* best-effort rollback */ });
     res.status(e?.status ?? 400).json({ error: e?.message || "تعذّر إنشاء القيد المحاسبي" });
@@ -1772,9 +1790,20 @@ router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
           WHERE company_id = ${cid} AND source_voucher_type = 'payment' AND source_voucher_id = ${id} AND status = 'posted'`);
         for (const billId of new Set(links.map((x: any) => x.bill_id).filter(Boolean)))
           await refreshBillPaymentState(tx, cid, Number(billId), (req as any).authUser?.id ?? null);
-        if (v.journalEntryId) await tx.update(journalEntriesTable).set({ status: "draft" })
-          .where(and(eq(journalEntriesTable.id, v.journalEntryId), eq(journalEntriesTable.companyId, cid)));
-        const [draft] = await tx.update(paymentVouchersTable).set({ status: "draft", journalEntryId: null })
+        const linkedEntry = v.journalEntryId
+          ? await getLinkedSourceJournalEntry(tx, cid, v.journalEntryId, "payment")
+          : null;
+        const retainJournal = !!v.isSequenceProtected || !!linkedEntry?.isSequenceProtected;
+        if (v.journalEntryId) {
+          if (retainJournal) {
+            await draftLinkedSourceJournalEntry(tx, cid, v.journalEntryId, "payment");
+          } else {
+            await tx.update(journalEntriesTable).set({ status: "draft" })
+              .where(and(eq(journalEntriesTable.id, v.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+          }
+        }
+        const [draft] = await tx.update(paymentVouchersTable)
+          .set(retainJournal ? { status: "draft" } : { status: "draft", journalEntryId: null })
           .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
         return draft;
       });
@@ -1853,15 +1882,6 @@ router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
         .where(and(eq(employeeCustodiesTable.companyId, cid), inArray(employeeCustodiesTable.id, custIds)));
     }
   }
-  if (existing.journalEntryId) {
-    // Stash the JE number BEFORE deleting so the next post (after an edit)
-    // reuses the SAME journal-entry number instead of burning a fresh one.
-    await reserveJeNumberFromEntry(cid, "payment_voucher", id, existing.journalEntryId);
-    await db.delete(journalEntriesTable).where(and(
-      eq(journalEntriesTable.id, existing.journalEntryId),
-      eq(journalEntriesTable.companyId, cid),
-    ));
-  }
   // ── مصروف مقدم: freeze the linked amortization plans while the voucher is
   // a draft (mirrors purchase invoices). Adjustments WITH generated runs are
   // kept (their run JEs flip to DRAFT, docNumbers preserved) + autoGenerate
@@ -1921,9 +1941,43 @@ router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
     }
   }
 
-  const [row] = await db.update(paymentVouchersTable)
-    .set({ status: "draft", journalEntryId: null })
-    .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+  const [linkedEntry] = existing.journalEntryId
+    ? await db.select({ isSequenceProtected: journalEntriesTable.isSequenceProtected })
+      .from(journalEntriesTable)
+      .where(and(
+        eq(journalEntriesTable.id, existing.journalEntryId),
+        eq(journalEntriesTable.companyId, cid),
+      ))
+    : [];
+  const retainJournal = !!existing.isSequenceProtected || !!linkedEntry?.isSequenceProtected;
+  let row;
+  if (retainJournal) {
+    row = await db.transaction(async (tx) => {
+      const [v] = await tx.select().from(paymentVouchersTable)
+        .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).for("update");
+      if (!v || v.status !== "posted") throw new Error("السند ليس مرحّلاً");
+      if (v.journalEntryId) {
+        await draftLinkedSourceJournalEntry(tx, cid, v.journalEntryId, "payment");
+      }
+      const [draft] = await tx.update(paymentVouchersTable)
+        .set({ status: "draft" })
+        .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+      return draft;
+    });
+  } else {
+    // Legacy unprotected lifecycle: reserve the JE number and delete its
+    // header before clearing the voucher FK.
+    if (existing.journalEntryId) {
+      await reserveJeNumberFromEntry(cid, "payment_voucher", id, existing.journalEntryId);
+      await db.delete(journalEntriesTable).where(and(
+        eq(journalEntriesTable.id, existing.journalEntryId),
+        eq(journalEntriesTable.companyId, cid),
+      ));
+    }
+    [row] = await db.update(paymentVouchersTable)
+      .set({ status: "draft", journalEntryId: null })
+      .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+  }
   res.json(row);
 });
 

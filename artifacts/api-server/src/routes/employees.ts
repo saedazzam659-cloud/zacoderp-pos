@@ -17,6 +17,10 @@ import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { allocationBuckets, addPayrollDays, isoPayrollDate, assignmentRepresentedBySnapshot, assignmentCloseConflictsWithSnapshot } from "../lib/payrollAllocation.js";
 import { subscriptionsTable, usersTable } from "@workspace/db";
 import bcrypt from "bcryptjs";
+import {
+  draftLinkedSourceJournalEntry,
+  getLinkedSourceJournalEntry,
+} from "../lib/sourceJournalEntryLifecycle.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -2021,7 +2025,7 @@ router.post("/payroll/runs/:id/post", requirePostRight("payroll"), async (req, r
       }
 
       // Build the accounting journal entry — any error rolls back loan updates too
-      const journalId = await buildPayrollJournal(cid, id, tx);
+      const journalId = await buildPayrollJournal(cid, id, tx, run.postedJournalId);
       const [upd] = await tx.update(payrollRunsTable)
         .set({ status: "posted", postedJournalId: journalId, updatedAt: new Date() })
         .where(eq(payrollRunsTable.id, id)).returning();
@@ -2087,13 +2091,30 @@ router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), async (re
           }
         }
       }
+      let retainLinkedEntry = false;
       if (run.postedJournalId) {
-        // Stash the JE number so re-approving the run reuses it (no sequence gap).
-        await reserveJeNumberFromEntry(cid, "payroll_run", id, run.postedJournalId, tx as any);
-        await tx.delete(journalEntriesTable).where(eq(journalEntriesTable.id, run.postedJournalId));
+        const [linked] = await tx.select().from(journalEntriesTable)
+          .where(and(
+            eq(journalEntriesTable.id, run.postedJournalId),
+            eq(journalEntriesTable.companyId, cid),
+          ));
+        retainLinkedEntry = !!(run as any).isSequenceProtected || !!(linked as any)?.isSequenceProtected;
+        if (retainLinkedEntry) {
+          await draftLinkedSourceJournalEntry(tx, cid, run.postedJournalId, "payroll_run");
+        } else {
+          // Preserve the legacy number-reservation + delete flow for unprotected runs.
+          await reserveJeNumberFromEntry(cid, "payroll_run", id, run.postedJournalId, tx as any);
+          await tx.delete(journalEntriesTable).where(eq(journalEntriesTable.id, run.postedJournalId));
+        }
+      } else if ((run as any).isSequenceProtected) {
+        throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المحمي غير مرتبط بالمسير."), { status: 409 });
       }
       const [row] = await tx.update(payrollRunsTable)
-        .set({ status: "draft", postedJournalId: null, updatedAt: new Date() })
+        .set({
+          status: "draft",
+          ...(!retainLinkedEntry ? { postedJournalId: null } : {}),
+          updatedAt: new Date(),
+        })
         .where(eq(payrollRunsTable.id, id)).returning();
       return row;
     });
@@ -2114,7 +2135,12 @@ router.post("/payroll/runs/:id/pay", requirePostRight("payroll"), async (req, re
         .for("update");
       if (!run) throw Object.assign(new Error("غير موجود"), { status: 404 });
       if (run.status !== "posted") throw Object.assign(new Error("يجب اعتماد المسير أولاً"), { status: 400 });
-      if (run.paymentJournalId) throw Object.assign(new Error("تم صرف رواتب هذا المسير بالفعل"), { status: 409 });
+      if (run.paymentJournalId) {
+        const retained = await getLinkedSourceJournalEntry(tx, cid, run.paymentJournalId, "payroll_payment");
+        if (!(retained as any).isSequenceProtected || retained.status !== "draft") {
+          throw Object.assign(new Error("يوجد قيد صرف مرتبط لا يمكن إعادة استخدامه بأمان"), { status: 409 });
+        }
+      }
 
       // Payment source: explicit body wins, else the HR default cash box/bank.
       let source = {
@@ -2132,7 +2158,7 @@ router.post("/payroll/runs/:id/pay", requirePostRight("payroll"), async (req, re
         ? b.payDate
         : new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10); // KSA today
 
-      const journalId = await buildPayrollPaymentJournal(cid, id, payDate, source, tx);
+      const journalId = await buildPayrollPaymentJournal(cid, id, payDate, source, tx, run.paymentJournalId);
       const [upd] = await tx.update(payrollRunsTable)
         .set({ paymentJournalId: journalId, payDate, updatedAt: new Date() })
         .where(eq(payrollRunsTable.id, id)).returning();
@@ -2155,14 +2181,23 @@ router.post("/payroll/runs/:id/unpay", requireUnpostRight("payroll"), async (req
         .for("update");
       if (!run) throw Object.assign(new Error("غير موجود"), { status: 404 });
       if (!run.paymentJournalId) throw Object.assign(new Error("لا يوجد قيد صرف لهذا المسير"), { status: 400 });
-      // Stash the JE number so re-paying reuses it (no sequence gap).
-      await reserveJeNumberFromEntry(cid, "payroll_pay", id, run.paymentJournalId, tx as any);
-      await tx.delete(journalEntriesTable).where(and(
-        eq(journalEntriesTable.id, run.paymentJournalId),
-        eq(journalEntriesTable.companyId, cid),
-      ));
+      const linked = await getLinkedSourceJournalEntry(tx, cid, run.paymentJournalId, "payroll_payment");
+      const retainLinkedEntry = !!(run as any).isSequenceProtected || !!linked.isSequenceProtected;
+      if (retainLinkedEntry) {
+        await draftLinkedSourceJournalEntry(tx, cid, run.paymentJournalId, "payroll_payment");
+      } else {
+        // Preserve legacy behavior for unprotected payment entries.
+        await reserveJeNumberFromEntry(cid, "payroll_pay", id, run.paymentJournalId, tx as any);
+        await tx.delete(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, run.paymentJournalId),
+          eq(journalEntriesTable.companyId, cid),
+        ));
+      }
       const [upd] = await tx.update(payrollRunsTable)
-        .set({ paymentJournalId: null, updatedAt: new Date() })
+        .set({
+          ...(!retainLinkedEntry ? { paymentJournalId: null } : {}),
+          updatedAt: new Date(),
+        })
         .where(eq(payrollRunsTable.id, id)).returning();
       return upd;
     });

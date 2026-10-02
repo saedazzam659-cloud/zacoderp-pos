@@ -25,6 +25,11 @@ import { nextSequenceNumber, resolveJeNumber, reserveJeNumberFromEntry } from ".
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import {
+  getLinkedSourceJournalEntry,
+  draftLinkedSourceJournalEntry,
+  replaceLinkedSourceJournalEntry,
+} from "../lib/sourceJournalEntryLifecycle.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -388,31 +393,53 @@ router.post("/transfers/:id/post", requirePostRight("stockMovement"), async (req
 
   const desc = `تحويل لشركة شقيقة ${tr.transferNumber} - ${sister.nameAr}`;
   const jeStatus = await resolvePostingStatus(cid, "stockMovement");
-  const jeDocNumber = (await resolveJeNumber({
-    companyId: cid, sourceType: "sister_transfer", sourceId: tr.id,
-    userId: (req as any).authUser?.id ?? null,
-    branchId: tr.branchId ?? null, docDate: tr.transferDate as any,
-  })) ?? tr.transferNumber;
-  const [entry] = await db.insert(journalEntriesTable).values({
+  const jeDocNumber = tr.journalEntryId == null
+    ? (await resolveJeNumber({
+        companyId: cid, sourceType: "sister_transfer", sourceId: tr.id,
+        userId: (req as any).authUser?.id ?? null,
+        branchId: tr.branchId ?? null, docDate: tr.transferDate as any,
+      })) ?? tr.transferNumber
+    : null;
+  const header = {
     companyId: cid, branchId: tr.branchId ?? null, docNumber: jeDocNumber, entryDate: tr.transferDate as any,
     currency: "SAR", exchangeRate: "1",
     description: desc, entryType: "sister_transfer",
     status: jeStatus, periodId: writability.period?.id ?? null,
+    isSequenceProtected: !!tr.isSequenceProtected,
     ...fullAuditFor(req, jeStatus),
-  }).returning();
-  await db.insert(journalEntryLinesTable).values([
-    { entryId: entry.id, accountId: accs.cogs!,      debit: totalCost.toFixed(2),   credit: "0.00", description: `تكلفة البضاعة - ${tr.transferNumber}`, sortOrder: 0 },
-    { entryId: entry.id, accountId: accs.ar!,        debit: totalSupply.toFixed(2), credit: "0.00", description: `ذمم ${sister.nameAr}`, sortOrder: 1 },
-    { entryId: entry.id, accountId: accs.inventory!, debit: "0.00", credit: totalCost.toFixed(2),   description: `تخفيض المخزون - ${tr.transferNumber}`, sortOrder: 2 },
-    { entryId: entry.id, accountId: accs.revenue!,   debit: "0.00", credit: totalSupply.toFixed(2), description: `إيراد توريد داخلي - ${tr.transferNumber}`, sortOrder: 3 },
-  ]);
-
-  await db.update(sisterTransfersTable).set({
-    status: "posted", journalEntryId: entry.id,
-    totalCost: totalCost.toFixed(4), totalSupply: totalSupply.toFixed(4),
-    updatedAt: new Date(),
-  }).where(eq(sisterTransfersTable.id, id));
-  res.json({ ok: true, journalEntryId: entry.id });
+  };
+  const entryLines = [
+    { accountId: accs.cogs!,      debit: totalCost.toFixed(2),   credit: "0.00", description: `تكلفة البضاعة - ${tr.transferNumber}`, sortOrder: 0 },
+    { accountId: accs.ar!,        debit: totalSupply.toFixed(2), credit: "0.00", description: `ذمم ${sister.nameAr}`, sortOrder: 1 },
+    { accountId: accs.inventory!, debit: "0.00", credit: totalCost.toFixed(2),   description: `تخفيض المخزون - ${tr.transferNumber}`, sortOrder: 2 },
+    { accountId: accs.revenue!,   debit: "0.00", credit: totalSupply.toFixed(2), description: `إيراد توريد داخلي - ${tr.transferNumber}`, sortOrder: 3 },
+  ];
+  let entryId: number;
+  if (tr.journalEntryId != null) {
+    entryId = await db.transaction(async (tx) => {
+      await getLinkedSourceJournalEntry(tx, cid, tr.journalEntryId!, "sister_transfer");
+      const retainedEntryId = await replaceLinkedSourceJournalEntry(tx, {
+        companyId: cid, entryId: tr.journalEntryId!, entryType: "sister_transfer",
+        header, lines: entryLines, sequenceProtected: tr.isSequenceProtected,
+      });
+      await tx.update(sisterTransfersTable).set({
+        status: "posted", journalEntryId: retainedEntryId,
+        totalCost: totalCost.toFixed(4), totalSupply: totalSupply.toFixed(4),
+        updatedAt: new Date(),
+      }).where(eq(sisterTransfersTable.id, id));
+      return retainedEntryId;
+    });
+  } else {
+    const [entry] = await db.insert(journalEntriesTable).values(header as any).returning();
+    entryId = entry.id;
+    await db.insert(journalEntryLinesTable).values(entryLines.map(line => ({ ...line, entryId })));
+    await db.update(sisterTransfersTable).set({
+      status: "posted", journalEntryId: entryId,
+      totalCost: totalCost.toFixed(4), totalSupply: totalSupply.toFixed(4),
+      updatedAt: new Date(),
+    }).where(eq(sisterTransfersTable.id, id));
+  }
+  res.json({ ok: true, journalEntryId: entryId });
 });
 
 // POST /transfers/:id/unpost — reverse stock-out + JE, flip posted→draft.
@@ -436,8 +463,16 @@ router.post("/transfers/:id/unpost", requireUnpostRight("stockMovement"), async 
       // Claiming first (and re-checking referencing returns INSIDE the same
       // transaction afterwards) closes the TOCTOU window where a return could
       // be created between an out-of-transaction pre-check and the claim.
+      const [current] = await tx.select().from(sisterTransfersTable)
+        .where(and(eq(sisterTransfersTable.id, id), eq(sisterTransfersTable.companyId, cid), eq(sisterTransfersTable.status, "posted")))
+        .limit(1);
+      if (!current) throw new Error("تم تغيير حالة التحويل بواسطة عملية أخرى");
+      const linkedEntry = current.journalEntryId
+        ? await getLinkedSourceJournalEntry(tx, cid, current.journalEntryId, "sister_transfer")
+        : null;
+      const retainLink = !!current.isSequenceProtected || !!linkedEntry?.isSequenceProtected;
       const claimed = await tx.update(sisterTransfersTable)
-        .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+        .set({ status: "draft", journalEntryId: retainLink ? current.journalEntryId : null, updatedAt: new Date() })
         .where(and(
           eq(sisterTransfersTable.id, id),
           eq(sisterTransfersTable.companyId, cid),
@@ -477,17 +512,21 @@ router.post("/transfers/:id/unpost", requireUnpostRight("stockMovement"), async 
         .where(and(eq(stockLedgerTable.companyId, cid), eq(stockLedgerTable.refType, "sister_transfer"), eq(stockLedgerTable.refId, id)));
 
       // Reverse JE.
-      if (tr.journalEntryId) {
-        // Stash the JE number BEFORE deleting so a later repost reuses it.
-        await reserveJeNumberFromEntry(cid, "sister_transfer", id, tr.journalEntryId, tx);
-        await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, tr.journalEntryId));
-        await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, tr.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+      if (current.journalEntryId) {
+        if (retainLink) {
+          await draftLinkedSourceJournalEntry(tx, cid, current.journalEntryId, "sister_transfer");
+        } else {
+          // Stash the JE number BEFORE deleting so a later repost reuses it.
+          await reserveJeNumberFromEntry(cid, "sister_transfer", id, current.journalEntryId, tx as any);
+          await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, current.journalEntryId));
+          await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, current.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        }
       }
     });
     res.json({ ok: true });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "sister-transfers: unpost failed");
-    res.status(e?.httpStatus ?? 500).json({ error: e.message });
+    res.status(e?.httpStatus ?? e?.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -746,31 +785,53 @@ router.post("/returns/:id/post", requirePostRight("stockMovement"), async (req, 
 
   const desc = `مرتجع تحويل شركة شقيقة ${ret.returnNumber} - ${sister.nameAr}`;
   const jeStatus = await resolvePostingStatus(cid, "stockMovement");
-  const jeDocNumber = (await resolveJeNumber({
-    companyId: cid, sourceType: "sister_return", sourceId: ret.id,
-    userId: (req as any).authUser?.id ?? null,
-    branchId: ret.branchId ?? null, docDate: ret.returnDate as any,
-  })) ?? ret.returnNumber;
-  const [entry] = await db.insert(journalEntriesTable).values({
+  const jeDocNumber = ret.journalEntryId == null
+    ? (await resolveJeNumber({
+        companyId: cid, sourceType: "sister_return", sourceId: ret.id,
+        userId: (req as any).authUser?.id ?? null,
+        branchId: ret.branchId ?? null, docDate: ret.returnDate as any,
+      })) ?? ret.returnNumber
+    : null;
+  const header = {
     companyId: cid, branchId: ret.branchId ?? null, docNumber: jeDocNumber, entryDate: ret.returnDate as any,
     currency: "SAR", exchangeRate: "1",
     description: desc, entryType: "sister_transfer_return",
     status: jeStatus, periodId: writability.period?.id ?? null,
+    isSequenceProtected: !!ret.isSequenceProtected,
     ...fullAuditFor(req, jeStatus),
-  }).returning();
-  await db.insert(journalEntryLinesTable).values([
-    { entryId: entry.id, accountId: accs.inventory!, debit: totalCost.toFixed(2),   credit: "0.00", description: `استرجاع المخزون - ${ret.returnNumber}`, sortOrder: 0 },
-    { entryId: entry.id, accountId: accs.revenue!,   debit: totalSupply.toFixed(2), credit: "0.00", description: `عكس إيراد توريد - ${ret.returnNumber}`, sortOrder: 1 },
-    { entryId: entry.id, accountId: accs.cogs!,      debit: "0.00", credit: totalCost.toFixed(2),   description: `عكس تكلفة بضاعة - ${ret.returnNumber}`, sortOrder: 2 },
-    { entryId: entry.id, accountId: accs.ar!,        debit: "0.00", credit: totalSupply.toFixed(2), description: `تخفيض ذمم ${sister.nameAr}`, sortOrder: 3 },
-  ]);
-
-  await db.update(sisterReturnsTable).set({
-    status: "posted", journalEntryId: entry.id,
-    totalCost: totalCost.toFixed(4), totalSupply: totalSupply.toFixed(4),
-    updatedAt: new Date(),
-  }).where(eq(sisterReturnsTable.id, id));
-  res.json({ ok: true, journalEntryId: entry.id });
+  };
+  const entryLines = [
+    { accountId: accs.inventory!, debit: totalCost.toFixed(2),   credit: "0.00", description: `استرجاع المخزون - ${ret.returnNumber}`, sortOrder: 0 },
+    { accountId: accs.revenue!,   debit: totalSupply.toFixed(2), credit: "0.00", description: `عكس إيراد توريد - ${ret.returnNumber}`, sortOrder: 1 },
+    { accountId: accs.cogs!,      debit: "0.00", credit: totalCost.toFixed(2),   description: `عكس تكلفة بضاعة - ${ret.returnNumber}`, sortOrder: 2 },
+    { accountId: accs.ar!,        debit: "0.00", credit: totalSupply.toFixed(2), description: `تخفيض ذمم ${sister.nameAr}`, sortOrder: 3 },
+  ];
+  let entryId: number;
+  if (ret.journalEntryId != null) {
+    entryId = await db.transaction(async (tx) => {
+      await getLinkedSourceJournalEntry(tx, cid, ret.journalEntryId!, "sister_transfer_return");
+      const retainedEntryId = await replaceLinkedSourceJournalEntry(tx, {
+        companyId: cid, entryId: ret.journalEntryId!, entryType: "sister_transfer_return",
+        header, lines: entryLines, sequenceProtected: ret.isSequenceProtected,
+      });
+      await tx.update(sisterReturnsTable).set({
+        status: "posted", journalEntryId: retainedEntryId,
+        totalCost: totalCost.toFixed(4), totalSupply: totalSupply.toFixed(4),
+        updatedAt: new Date(),
+      }).where(eq(sisterReturnsTable.id, id));
+      return retainedEntryId;
+    });
+  } else {
+    const [entry] = await db.insert(journalEntriesTable).values(header as any).returning();
+    entryId = entry.id;
+    await db.insert(journalEntryLinesTable).values(entryLines.map(line => ({ ...line, entryId })));
+    await db.update(sisterReturnsTable).set({
+      status: "posted", journalEntryId: entryId,
+      totalCost: totalCost.toFixed(4), totalSupply: totalSupply.toFixed(4),
+      updatedAt: new Date(),
+    }).where(eq(sisterReturnsTable.id, id));
+  }
+  res.json({ ok: true, journalEntryId: entryId });
 });
 
 // POST /returns/:id/unpost — reverse stock-in + JE + returnedQty, posted→draft.
@@ -787,8 +848,16 @@ router.post("/returns/:id/unpost", requireUnpostRight("stockMovement"), async (r
 
   try {
     await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(sisterReturnsTable)
+        .where(and(eq(sisterReturnsTable.id, id), eq(sisterReturnsTable.companyId, cid), eq(sisterReturnsTable.status, "posted")))
+        .limit(1);
+      if (!current) throw new Error("تم تغيير حالة المرتجع بواسطة عملية أخرى");
+      const linkedEntry = current.journalEntryId
+        ? await getLinkedSourceJournalEntry(tx, cid, current.journalEntryId, "sister_transfer_return")
+        : null;
+      const retainLink = !!current.isSequenceProtected || !!linkedEntry?.isSequenceProtected;
       const claimed = await tx.update(sisterReturnsTable)
-        .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+        .set({ status: "draft", journalEntryId: retainLink ? current.journalEntryId : null, updatedAt: new Date() })
         .where(and(
           eq(sisterReturnsTable.id, id),
           eq(sisterReturnsTable.companyId, cid),
@@ -823,17 +892,21 @@ router.post("/returns/:id/unpost", requireUnpostRight("stockMovement"), async (r
         }).where(eq(sisterTransferItemsTable.id, line.transferItemId));
       }
 
-      if (ret.journalEntryId) {
-        // Stash the JE number BEFORE deleting so a later repost reuses it.
-        await reserveJeNumberFromEntry(cid, "sister_return", id, ret.journalEntryId, tx);
-        await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
-        await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, ret.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+      if (current.journalEntryId) {
+        if (retainLink) {
+          await draftLinkedSourceJournalEntry(tx, cid, current.journalEntryId, "sister_transfer_return");
+        } else {
+          // Stash the JE number BEFORE deleting so a later repost reuses it.
+          await reserveJeNumberFromEntry(cid, "sister_return", id, current.journalEntryId, tx as any);
+          await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, current.journalEntryId));
+          await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, current.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        }
       }
     });
     res.json({ ok: true });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "sister-returns: unpost failed");
-    res.status(500).json({ error: e.message });
+    res.status(e?.httpStatus ?? e?.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -1000,33 +1073,52 @@ router.post("/settlements/:id/post", requirePostRight("receipt"), async (req, re
   const isReceive = v.direction === "receive";
   const desc = `${isReceive ? "تحصيل من" : "سداد إلى"} ${sister.nameAr} - ${v.code}`;
   const jeStatus = await resolvePostingStatus(cid, "receipt");
-  const jeDocNumber = (await resolveJeNumber({
-    companyId: cid, sourceType: "sister_settlement", sourceId: v.id,
-    userId: (req as any).authUser?.id ?? null,
-    branchId: v.branchId ?? null, docDate: v.date as any,
-  })) ?? v.code;
-  const [entry] = await db.insert(journalEntriesTable).values({
+  const jeDocNumber = v.journalEntryId == null
+    ? (await resolveJeNumber({
+        companyId: cid, sourceType: "sister_settlement", sourceId: v.id,
+        userId: (req as any).authUser?.id ?? null,
+        branchId: v.branchId ?? null, docDate: v.date as any,
+      })) ?? v.code
+    : null;
+  const header = {
     companyId: cid, branchId: v.branchId ?? null, docNumber: jeDocNumber, entryDate: v.date as any,
     currency: "SAR", exchangeRate: "1",
     description: desc, entryType: "sister_settlement",
     status: jeStatus, periodId: writability.period?.id ?? null,
+    isSequenceProtected: !!v.isSequenceProtected,
     ...fullAuditFor(req, jeStatus),
-  }).returning();
-  await db.insert(journalEntryLinesTable).values(
-    isReceive
-      ? [
-          { entryId: entry.id, accountId: cashAccId!,       debit: amt, credit: "0.00", description: cashLabel || desc, sortOrder: 0 },
-          { entryId: entry.id, accountId: sister.accountId!, debit: "0.00", credit: amt, description: `ذمم ${sister.nameAr}`, sortOrder: 1 },
-        ]
-      : [
-          { entryId: entry.id, accountId: sister.accountId!, debit: amt, credit: "0.00", description: `ذمم ${sister.nameAr}`, sortOrder: 0 },
-          { entryId: entry.id, accountId: cashAccId!,       debit: "0.00", credit: amt, description: cashLabel || desc, sortOrder: 1 },
-        ]
-  );
-  await db.update(sisterSettlementsTable).set({
-    status: "posted", journalEntryId: entry.id, updatedAt: new Date(),
-  }).where(eq(sisterSettlementsTable.id, id));
-  res.json({ ok: true, journalEntryId: entry.id });
+  };
+  const entryLines = isReceive
+    ? [
+        { accountId: cashAccId!,        debit: amt, credit: "0.00", description: cashLabel || desc, sortOrder: 0 },
+        { accountId: sister.accountId!, debit: "0.00", credit: amt, description: `ذمم ${sister.nameAr}`, sortOrder: 1 },
+      ]
+    : [
+        { accountId: sister.accountId!, debit: amt, credit: "0.00", description: `ذمم ${sister.nameAr}`, sortOrder: 0 },
+        { accountId: cashAccId!,        debit: "0.00", credit: amt, description: cashLabel || desc, sortOrder: 1 },
+      ];
+  let entryId: number;
+  if (v.journalEntryId != null) {
+    entryId = await db.transaction(async (tx) => {
+      await getLinkedSourceJournalEntry(tx, cid, v.journalEntryId!, "sister_settlement");
+      const retainedEntryId = await replaceLinkedSourceJournalEntry(tx, {
+        companyId: cid, entryId: v.journalEntryId!, entryType: "sister_settlement",
+        header, lines: entryLines, sequenceProtected: v.isSequenceProtected,
+      });
+      await tx.update(sisterSettlementsTable).set({
+        status: "posted", journalEntryId: retainedEntryId, updatedAt: new Date(),
+      }).where(eq(sisterSettlementsTable.id, id));
+      return retainedEntryId;
+    });
+  } else {
+    const [entry] = await db.insert(journalEntriesTable).values(header as any).returning();
+    entryId = entry.id;
+    await db.insert(journalEntryLinesTable).values(entryLines.map(line => ({ ...line, entryId })));
+    await db.update(sisterSettlementsTable).set({
+      status: "posted", journalEntryId: entryId, updatedAt: new Date(),
+    }).where(eq(sisterSettlementsTable.id, id));
+  }
+  res.json({ ok: true, journalEntryId: entryId });
 });
 
 // POST /settlements/:id/unpost — reverse the cash/bank↔AR JE, posted→draft.
@@ -1043,8 +1135,16 @@ router.post("/settlements/:id/unpost", requireUnpostRight("receipt"), async (req
 
   try {
     await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(sisterSettlementsTable)
+        .where(and(eq(sisterSettlementsTable.id, id), eq(sisterSettlementsTable.companyId, cid), eq(sisterSettlementsTable.status, "posted")))
+        .limit(1);
+      if (!current) throw new Error("تم تغيير حالة السند بواسطة عملية أخرى");
+      const linkedEntry = current.journalEntryId
+        ? await getLinkedSourceJournalEntry(tx, cid, current.journalEntryId, "sister_settlement")
+        : null;
+      const retainLink = !!current.isSequenceProtected || !!linkedEntry?.isSequenceProtected;
       const claimed = await tx.update(sisterSettlementsTable)
-        .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+        .set({ status: "draft", journalEntryId: retainLink ? current.journalEntryId : null, updatedAt: new Date() })
         .where(and(
           eq(sisterSettlementsTable.id, id),
           eq(sisterSettlementsTable.companyId, cid),
@@ -1053,17 +1153,21 @@ router.post("/settlements/:id/unpost", requireUnpostRight("receipt"), async (req
         .returning();
       if (!claimed.length) throw new Error("تم تغيير حالة السند بواسطة عملية أخرى");
 
-      if (v.journalEntryId) {
-        // Stash the JE number BEFORE deleting so a later repost reuses it.
-        await reserveJeNumberFromEntry(cid, "sister_settlement", id, v.journalEntryId, tx);
-        await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, v.journalEntryId));
-        await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, v.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+      if (current.journalEntryId) {
+        if (retainLink) {
+          await draftLinkedSourceJournalEntry(tx, cid, current.journalEntryId, "sister_settlement");
+        } else {
+          // Stash the JE number BEFORE deleting so a later repost reuses it.
+          await reserveJeNumberFromEntry(cid, "sister_settlement", id, current.journalEntryId, tx as any);
+          await tx.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, current.journalEntryId));
+          await tx.delete(journalEntriesTable).where(and(eq(journalEntriesTable.id, current.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        }
       }
     });
     res.json({ ok: true });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "sister-settlements: unpost failed");
-    res.status(500).json({ error: e.message });
+    res.status(e?.httpStatus ?? e?.status ?? 500).json({ error: e.message });
   }
 });
 

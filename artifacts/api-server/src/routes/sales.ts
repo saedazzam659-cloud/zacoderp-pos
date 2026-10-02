@@ -734,10 +734,8 @@ export async function createJournalEntry(opts: {
   // stays in the description + the source.jeId link, so traceability and
   // unposting are unaffected. Falls back to the source docNumber when no active
   // "journal_entry" sequence is configured (back-compat).
-  // Reuse the SAME journal-entry number when this source document is being
-  // RE-POSTED after an unpost→edit cycle (a reservation was stashed at unpost
-  // time). Otherwise draw the next continuous "journal_entry" number. Reuse
-  // NEVER consumes the counter, so unpost→repost leaves no sequence gap.
+  // Protected sources reuse their retained JE row and number. Legacy sources
+  // keep the existing reservation/recreate behavior after unposting.
   const [reusedEntry] = opts.reuseEntryId
     ? await executor.select().from(journalEntriesTable).where(and(
         eq(journalEntriesTable.id, opts.reuseEntryId),
@@ -4124,7 +4122,7 @@ async function postSalesInvoiceHandler(
       entryType: "sales_invoice",
       sourceType: "sales_invoice",
       sourceId: inv.id,
-      reuseEntryId: inv.isSequenceProtected ? inv.journalEntryId ?? undefined : undefined,
+      reuseEntryId: inv.journalEntryId ?? undefined,
       sequenceProtected: inv.isSequenceProtected,
       exchangeRate: inv.exchangeRate,
       executor: tx,
@@ -4389,6 +4387,9 @@ router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (r
       if (lockedInv.status !== "posted") {
         throw Object.assign(new Error("تم تغيير حالة الفاتورة بواسطة عملية أخرى"), { status: 409 });
       }
+      if (lockedInv.isSequenceProtected && !lockedInv.journalEntryId) {
+        throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بالفاتورة المحمية غير موجود."), { status: 409 });
+      }
 
       // ZATCA-approved invoices are sealed fiscal documents: once cleared /
       // reported by the authority they can NEVER be unposted (doing so would
@@ -4426,20 +4427,59 @@ router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (r
         sourceGdnId: (lockedInv as any).sourceGdnId,
       });
 
+      let retainLinkedJournalEntry = false;
       if (lockedInv.journalEntryId) {
-        // Stash this JE's number so the next re-post reuses it (no gap).
-        await reserveJeNumberFromEntry(cid, "sales_invoice", id, lockedInv.journalEntryId, tx as any);
-        await tx.update(journalEntryLinesTable)
-          .set({ debit: "0", credit: "0" })
-          .where(eq(journalEntryLinesTable.entryId, lockedInv.journalEntryId));
-        await tx.delete(journalEntryLinesTable)
-          .where(eq(journalEntryLinesTable.entryId, lockedInv.journalEntryId));
-        await tx.delete(journalEntriesTable)
-          .where(and(eq(journalEntriesTable.id, lockedInv.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        const [linkedEntry] = await tx.select({
+          id: journalEntriesTable.id,
+          entryType: journalEntriesTable.entryType,
+          status: journalEntriesTable.status,
+          isSequenceProtected: journalEntriesTable.isSequenceProtected,
+        }).from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, lockedInv.journalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1);
+        if (linkedEntry && linkedEntry.entryType !== "sales_invoice") {
+          throw Object.assign(new Error("القيد المرتبط لا يطابق نوع فاتورة المبيعات."), { status: 409 });
+        }
+        if (lockedInv.isSequenceProtected && !linkedEntry) {
+          throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بالفاتورة المحمية غير موجود."), { status: 409 });
+        }
+        if (linkedEntry && !["draft", "posted"].includes(linkedEntry.status)) {
+          throw Object.assign(new Error("لا يمكن فك ترحيل الفاتورة لأن القيد المرتبط ليس مسودة أو مُرحّلاً."), { status: 409 });
+        }
+        retainLinkedJournalEntry = !!linkedEntry
+          && (lockedInv.isSequenceProtected || linkedEntry.isSequenceProtected);
+        if (retainLinkedJournalEntry) {
+          await tx.update(journalEntriesTable).set({
+            status: "draft",
+            isSequenceProtected: true,
+            updatedAt: new Date(),
+          }).where(and(
+            eq(journalEntriesTable.id, linkedEntry.id),
+            eq(journalEntriesTable.companyId, cid),
+          ));
+        } else {
+          // Legacy records keep the established delete/recreate workflow and
+          // reserve their JE number for the next source-document post.
+          await reserveJeNumberFromEntry(cid, "sales_invoice", id, lockedInv.journalEntryId, tx as any);
+          await tx.update(journalEntryLinesTable)
+            .set({ debit: "0", credit: "0" })
+            .where(eq(journalEntryLinesTable.entryId, lockedInv.journalEntryId));
+          await tx.delete(journalEntryLinesTable)
+            .where(eq(journalEntryLinesTable.entryId, lockedInv.journalEntryId));
+          await tx.delete(journalEntriesTable)
+            .where(and(eq(journalEntriesTable.id, lockedInv.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+        }
       }
 
       const [draft] = await tx.update(salesInvoicesTable)
-        .set({ status: "draft", journalEntryId: null, postedById: null, postedAt: null, updatedAt: new Date() })
+        .set({
+          status: "draft",
+          ...(retainLinkedJournalEntry ? {} : { journalEntryId: null }),
+          postedById: null,
+          postedAt: null,
+          updatedAt: new Date(),
+        })
         .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)))
         .returning();
       return draft;
@@ -5769,7 +5809,7 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
       entryType: "sales_return",
       sourceType: "sales_return",
       sourceId: ret.id,
-      reuseEntryId: ret.isSequenceProtected ? ret.journalEntryId ?? undefined : undefined,
+      reuseEntryId: ret.journalEntryId ?? undefined,
       sequenceProtected: ret.isSequenceProtected,
       exchangeRate: ret.exchangeRate,
       // Inherit cost center from the original invoice when set so the
@@ -5858,6 +5898,9 @@ router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (re
       if (ret.status !== "posted") {
         throw Object.assign(new Error("المرتجع ليس مُرحَّلاً"), { status: 400 });
       }
+      if (ret.isSequenceProtected && !ret.journalEntryId) {
+        throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بمرتجع المبيعات المحمي غير موجود."), { status: 409 });
+      }
       const zatcaStatus = String(ret.zatcaStatus ?? "").toLowerCase();
       if (zatcaStatus === "approved" || zatcaStatus === "cleared" || zatcaStatus === "reported") {
         throw Object.assign(new Error("لا يمكن فك ترحيل مرتجع تم اعتماده لدى ZATCA."), { status: 409 });
@@ -5887,23 +5930,58 @@ router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (re
         docNumber: ret.docNumber,
       });
 
+      let retainLinkedJournalEntry = false;
       if (ret.journalEntryId) {
-        // Stash the JE number before deletion so re-post reuses it.
-        await reserveJeNumberFromEntry(cid, "sales_return", id, ret.journalEntryId, tx as any);
-        await tx.update(journalEntryLinesTable)
-          .set({ debit: "0", credit: "0" })
-          .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
-        await tx.delete(journalEntryLinesTable)
-          .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
-        await tx.delete(journalEntriesTable)
-          .where(and(
-            eq(journalEntriesTable.id, ret.journalEntryId),
+        const [linkedEntry] = await tx.select({
+          id: journalEntriesTable.id,
+          entryType: journalEntriesTable.entryType,
+          status: journalEntriesTable.status,
+          isSequenceProtected: journalEntriesTable.isSequenceProtected,
+        }).from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, ret.journalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1);
+        if (linkedEntry && linkedEntry.entryType !== "sales_return") {
+          throw Object.assign(new Error("القيد المرتبط لا يطابق نوع مرتجع المبيعات."), { status: 409 });
+        }
+        if (ret.isSequenceProtected && !linkedEntry) {
+          throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بمرتجع المبيعات المحمي غير موجود."), { status: 409 });
+        }
+        if (linkedEntry && !["draft", "posted"].includes(linkedEntry.status)) {
+          throw Object.assign(new Error("لا يمكن فك ترحيل المرتجع لأن القيد المرتبط ليس مسودة أو مُرحّلاً."), { status: 409 });
+        }
+        retainLinkedJournalEntry = !!linkedEntry
+          && (ret.isSequenceProtected || linkedEntry.isSequenceProtected);
+        if (retainLinkedJournalEntry) {
+          await tx.update(journalEntriesTable).set({
+            status: "draft",
+            isSequenceProtected: true,
+            updatedAt: new Date(),
+          }).where(and(
+            eq(journalEntriesTable.id, linkedEntry.id),
             eq(journalEntriesTable.companyId, cid),
           ));
+        } else {
+          await reserveJeNumberFromEntry(cid, "sales_return", id, ret.journalEntryId, tx as any);
+          await tx.update(journalEntryLinesTable)
+            .set({ debit: "0", credit: "0" })
+            .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+          await tx.delete(journalEntryLinesTable)
+            .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+          await tx.delete(journalEntriesTable)
+            .where(and(
+              eq(journalEntriesTable.id, ret.journalEntryId),
+              eq(journalEntriesTable.companyId, cid),
+            ));
+        }
       }
 
       const [draft] = await tx.update(salesReturnsTable)
-        .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+        .set({
+          status: "draft",
+          ...(retainLinkedJournalEntry ? {} : { journalEntryId: null }),
+          updatedAt: new Date(),
+        })
         .where(and(
           eq(salesReturnsTable.id, id),
           eq(salesReturnsTable.companyId, cid),

@@ -3235,6 +3235,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS posted_by_id INTEGER` },
     { label: "alter goods_receipts add postedAt",
       sql:   `ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP` },
+    { label: "alter goods_receipts add isSequenceProtected",
+      sql:   `ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS is_sequence_protected BOOLEAN NOT NULL DEFAULT FALSE` },
 
     { label: "alter goods_deliveries add createdById",
       sql:   `ALTER TABLE goods_deliveries ADD COLUMN IF NOT EXISTS created_by_id INTEGER` },
@@ -3242,6 +3244,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE goods_deliveries ADD COLUMN IF NOT EXISTS posted_by_id INTEGER` },
     { label: "alter goods_deliveries add postedAt",
       sql:   `ALTER TABLE goods_deliveries ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP` },
+    { label: "alter goods_deliveries add isSequenceProtected",
+      sql:   `ALTER TABLE goods_deliveries ADD COLUMN IF NOT EXISTS is_sequence_protected BOOLEAN NOT NULL DEFAULT FALSE` },
 
     // ─── Windows Desktop POS (Task #174) — additive only ──────────────
     // Five new tables for offline POS + sync + licensing + per-device

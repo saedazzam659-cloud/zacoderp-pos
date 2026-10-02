@@ -1,13 +1,15 @@
 ---
-name: JE number reuse on unpost→edit→repost
-description: How a source document keeps the SAME journal-entry number across an unpost→repost cycle instead of leaving a permanent gap in the journal_entry sequence.
+name: protected source JE identity on unpost→repost
+description: Preserve the exact linked JE row and number for protected sources; legacy unprotected entries retain reservation-based reuse.
 ---
 
-# Reuse the same JE number on unpost → edit → repost
+# Retain the same linked JE on unpost → edit → repost
 
-**Rule:** Unposting a source document (invoice/return/…) DELETES its journal
-entry; re-posting must reuse the SAME `journal_entry` number, not mint a fresh
-one. Mechanism: stash the number at unpost time, consume it at repost time.
+**Rule:** If either a source document or its linked journal entry is sequence
+protected, unposting must keep the same JE row, number, lines, and source FK,
+changing only its status to draft in the same transaction as the source update.
+Reposting rebuilds that retained row in place and preserves its `docNumber`.
+Unprotected legacy records keep the reservation/delete/recreate path.
 
 - A dedicated `je_number_reservations` table keyed UNIQUE by
   `(company_id, source_type, source_id)` holds one live reservation per source
@@ -21,11 +23,10 @@ one. Mechanism: stash the number at unpost time, consume it at repost time.
   present, else draws the next number, else null (caller falls back to source
   docNumber, legacy behavior).
 
-**Why:** Before this, unpost→repost burned a new number every cycle, leaving
-permanent gaps in the continuous JE series (financial reports filter
-`status='posted'`, so deleting the draft-on-unpost is safe — the gap was the
-only damage). Reuse never touches the sequence counter, so it can never roll the
-counter back or mint a duplicate.
+**Why:** A protected document and its linked JE are one audit identity; keeping
+only the number while replacing the row loses that identity and risks duplicate
+or detached accounting history. Legacy reservations still prevent sequence gaps
+without changing the counter.
 
 **How to apply / gotchas:**
 - `takeReservedJeNumber` MUST be a single atomic `DELETE … RETURNING` — a
@@ -35,20 +36,22 @@ counter back or mint a duplicate.
   down: `resolveJeNumber({…, dx})` → `takeReservedJeNumber(…, dx)`, so the
   reservation DELETE participates in the outer tx. Otherwise a rollback LOSES the
   reservation (it committed on global `db`) and the retry mints a fresh number —
-  breaking reuse. The fresh-draw fallback (`nextSequenceNumber`) opens its OWN tx
-  by design; a rollback there only leaves an acceptable sequence gap, never a
-  duplicate — don't try to nest it into the caller tx.
+  breaking legacy reuse. The fresh-draw fallback (`nextSequenceNumber`) opens its
+  OWN tx by design; a rollback there only leaves an acceptable sequence gap,
+  never a duplicate — don't try to nest it into the caller tx.
 - Reservations are polymorphic (no FK to source docs). Safe because SERIAL ids
   are not reused within a table; the only residual risk is id reset/import where
   an orphaned reservation could be consumed by a different logical doc — low
   frequency, accepted.
-- Wired for `purchase_invoice`, `purchase_return`, `sales_invoice`,
-  `sales_return` (via the shared `createJournalEntry` in purchasing.ts/sales.ts),
-  `fa_depreciation`, and inline-mint paths: `payment_voucher`, `receipt_voucher`,
-  `account_note`, `goods_receipt`, `goods_delivery`, `sister_transfer`,
-  `sister_return`, `sister_settlement`. Remaining fresh-minters: HR (payroll/
-  loans/EOS) and production multi-JE (needs DISTINCT source_type keys per JE:
-  issue/receipt/complete).
+- Protected same-row lifecycle handling covers sales and purchase invoices and
+  returns, receipt/payment vouchers, goods receipts/deliveries, sister transfers,
+  returns and settlements, account notes, payroll runs and payroll payments.
+  Manual posting of a linked source JE remains status-only; it must not repost
+  the source document or repeat its stock/tax effects.
+- The shared retention helper validates company, JE type, and draft state before
+  rebuilding. If adding another source-linked type, preserve the FK and row in
+  its unpost transaction whenever either side is protected; keep reservations
+  only for legacy unprotected paths.
 - When the builder already runs inside a tx (or opens one for JE insert),
   resolveJeNumber must be called INSIDE with `dx: tx` so a rollback restores
   the reservation (vouchers were initially resolved pre-tx — wrong).
