@@ -1,5 +1,5 @@
-import { sql } from "drizzle-orm";
-import { db } from "@workspace/db";
+import { and, eq, sql } from "drizzle-orm";
+import { companiesTable, db } from "@workspace/db";
 
 /**
  * Tenant-owned records whose identifiers are issued by a document sequence.
@@ -52,6 +52,62 @@ const NUMBERED_DOCUMENT_TABLES = [
 const targetValues = NUMBERED_DOCUMENT_TABLES
   .map(([tableName, numberColumn]) => `('${tableName}', '${numberColumn}')`)
   .join(",\n");
+
+const SEQUENCE_PROTECTION_LOCK_NAMESPACE = 8_164_027;
+
+/**
+ * Change the package flag and, when enabling it, protect every already-issued
+ * number in one transaction. The advisory lock serializes this backfill with
+ * number-bearing writes in the trigger, so no legacy row can slip between the
+ * setting change and the sweep.
+ */
+export async function setCompanySequenceProtectionEnabled(
+  companyId: number,
+  enabled: boolean,
+): Promise<{ sequenceProtectionEnabled: boolean; protectedExistingRecords: number } | null> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`
+      SELECT pg_advisory_xact_lock(${SEQUENCE_PROTECTION_LOCK_NAMESPACE}, ${companyId})
+    `);
+
+    const [company] = await tx.select({ id: companiesTable.id })
+      .from(companiesTable)
+      .where(and(
+        eq(companiesTable.id, companyId),
+        eq(companiesTable.isInternalDemoWorkspace, false),
+      ))
+      .for("update")
+      .limit(1);
+    if (!company) return null;
+
+    const [updated] = await tx.update(companiesTable)
+      .set({ sequenceProtectionEnabled: enabled })
+      .where(eq(companiesTable.id, companyId))
+      .returning({ sequenceProtectionEnabled: companiesTable.sequenceProtectionEnabled });
+    if (!updated) return null;
+
+    let protectedExistingRecords = 0;
+    if (enabled) {
+      const result = await tx.execute(sql`
+        SELECT public.zacode_backfill_sequence_protection(${companyId}) AS protected_count
+      `);
+      const rows = Array.isArray(result)
+        ? result
+        : Array.isArray((result as any)?.rows)
+          ? (result as any).rows
+          : [];
+      protectedExistingRecords = Number(rows[0]?.protected_count ?? 0);
+      if (!Number.isFinite(protectedExistingRecords)) {
+        throw new Error("تعذر التحقق من عدد المستندات التي شملتها حماية التسلسلات.");
+      }
+    }
+
+    return {
+      sequenceProtectionEnabled: updated.sequenceProtectionEnabled,
+      protectedExistingRecords,
+    };
+  });
+}
 
 /**
  * Install an additive marker + database guard on each existing numbered
