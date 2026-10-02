@@ -59,6 +59,7 @@ const ENTRY_TYPES = [
   { value: "closing",      label: "قيد إقفال" },
   { value: "adjustment",   label: "قيد تسوية" },
   { value: "depreciation", label: "قيد إهلاك" },
+  { value: "journal_reversal", label: "قيد عكسي" },
 ];
 
 // ── القيود الخاصة (نوع القيد) ──────────────────────────────────────
@@ -2379,8 +2380,15 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                       النوع
                       {fp.isRequired("entryType") && <span className="text-destructive"> *</span>}
                     </Label>
-                    <Select value={entryType} onValueChange={setEntryType} disabled={fp.isReadOnly("entryType")}>
-                      <SelectTrigger className={cn("h-9 text-sm", fp.isReadOnly("entryType") && "bg-muted/40")}>
+                    <Select
+                      value={entryType}
+                      onValueChange={setEntryType}
+                      disabled={fp.isReadOnly("entryType") || existing?.reversalOfId != null}
+                    >
+                      <SelectTrigger className={cn(
+                        "h-9 text-sm",
+                        (fp.isReadOnly("entryType") || existing?.reversalOfId != null) && "bg-muted/40",
+                      )}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>

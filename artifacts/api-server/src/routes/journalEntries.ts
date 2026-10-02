@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { ReverseJournalEntryBody } from "@workspace/api-zod";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db, pool } from "@workspace/db";
 import {
@@ -47,6 +48,7 @@ import {
   isManagedInventoryOpeningLine,
 } from "../lib/openingBalances.js";
 import { documentMutationLock } from "../lib/document-mutation-lock.js";
+import { reverseJournalEntryLines } from "../lib/journalEntryReversal.js";
 
 async function unbalancedOpeningAllowed(companyId: number): Promise<boolean> {
   const [company] = await db.select({
@@ -132,7 +134,8 @@ router.use(async (_req, res, next) => {
   catch (error: any) { res.status(500).json({ error: error?.message ?? "تعذر تجهيز روابط المشاريع" }); }
 });
 
-const MANUAL_PROJECT_ENTRY_TYPES = new Set(["general", "opening", "closing", "adjustment", "depreciation"]);
+const MANUAL_PROJECT_ENTRY_TYPES = new Set(["general", "opening", "closing", "adjustment", "depreciation", "journal_reversal"]);
+const REVERSIBLE_MANUAL_ENTRY_TYPES = new Set(["general", "opening", "closing", "adjustment", "depreciation"]);
 async function contractingEnabledForCompany(companyId: number, user: any): Promise<boolean> {
   // Optional attribution is opt-in even for legacy companies whose general
   // contracting menu gate defaults on when no explicit key is saved.
@@ -551,6 +554,35 @@ router.get("/", async (req, res) => {
       for (const u of us) userMap.set(u.id, u.username);
     }
 
+    const reversalRows = await db.select({
+      id: journalEntriesTable.id,
+      reversalOfId: journalEntriesTable.reversalOfId,
+    }).from(journalEntriesTable)
+      .where(inArray(journalEntriesTable.reversalOfId, rows.map(r => r.id)));
+    const reversedById = new Map<number, number>();
+    for (const reversal of reversalRows) {
+      if (reversal.reversalOfId != null) reversedById.set(reversal.reversalOfId, reversal.id);
+    }
+    const assetLinks = await db.select({
+      sourceType: fixedAssetsTable.sourceType,
+      sourceDocumentId: fixedAssetsTable.sourceDocumentId,
+      journalEntryId: fixedAssetsTable.journalEntryId,
+    }).from(fixedAssetsTable)
+      .where(or(
+        and(
+          eq(fixedAssetsTable.sourceType, "journal_entry"),
+          inArray(fixedAssetsTable.sourceDocumentId, rows.map(r => r.id)),
+        ),
+        inArray(fixedAssetsTable.journalEntryId, rows.map(r => r.id)),
+      ));
+    const fixedAssetEntryIds = new Set<number>();
+    for (const asset of assetLinks) {
+      if (asset.sourceType === "journal_entry" && asset.sourceDocumentId != null) {
+        fixedAssetEntryIds.add(asset.sourceDocumentId);
+      }
+      if (asset.journalEntryId != null) fixedAssetEntryIds.add(asset.journalEntryId);
+    }
+
     const items = rows.map(r => {
       const s = sumByEntry.get(r.id);
       // Strip the audit IP/user-agent columns from the LIST payload — no
@@ -563,6 +595,8 @@ router.get("/", async (req, res) => {
         totalDebit:    s?.totalDebit  ?? "0",
         totalCredit:   s?.totalCredit ?? "0",
         sourceId:      sourceIdByEntry.get(r.id) ?? null,
+        reversedById:  reversedById.get(r.id) ?? null,
+        hasFixedAssetLink: fixedAssetEntryIds.has(r.id),
         // A locked-type JE whose source document no longer exists (checked via
         // reverse FK above) is an ORPHAN — stuck locked with nothing to unwind.
         // The frontend shows a "تحويل إلى قيد عام (مسودة)" action only for these.
@@ -1234,6 +1268,208 @@ router.get("/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Create a separate, reviewable reversal draft. The posted source entry is
+// never edited; only manual entries without document or settlement ownership
+// may use this path.
+router.post("/:id/reverse", documentMutationLock("journal_entry", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف القيد غير صالح" });
+      return;
+    }
+
+    const parsed = ReverseJournalEntryBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.message });
+      return;
+    }
+    const entryDate = parsed.data.entryDate.toISOString().slice(0, 10);
+    if (String(req.body?.entryDate ?? "") !== entryDate) {
+      res.status(400).json({ error: "تاريخ القيد العكسي غير صالح" });
+      return;
+    }
+
+    const [original] = await db.select().from(journalEntriesTable)
+      .where(and(
+        eq(journalEntriesTable.id, id),
+        eq(journalEntriesTable.companyId, cid),
+      ));
+    if (!original) {
+      res.status(404).json({ error: "القيد غير موجود" });
+      return;
+    }
+    if (
+      original.status !== "posted" ||
+      !REVERSIBLE_MANUAL_ENTRY_TYPES.has(original.entryType ?? "") ||
+      original.reversalOfId != null ||
+      LOCKED_ENTRY_TYPES.includes(original.entryType ?? "") ||
+      original.salesInvoiceId != null ||
+      original.purchaseInvoiceId != null ||
+      original.settlementAmount != null ||
+      await sourceDocExists(original.entryType ?? "", original.docNumber, original.id, cid)
+    ) {
+      res.status(400).json({ error: "العكس متاح فقط لقيد يدوي مرحّل وغير مرتبط بمستند مصدر أو تسوية" });
+      return;
+    }
+
+    if (await findDepreciationRunForJe(id, cid)) {
+      res.status(400).json({ error: "قيد الإهلاك مرتبط بسجل إهلاك أصول ولا يمكن عكسه من شاشة القيود" });
+      return;
+    }
+    const [adjustmentRun] = await db.select({ id: accountingAdjustmentRunsTable.id })
+      .from(accountingAdjustmentRunsTable)
+      .where(and(
+        eq(accountingAdjustmentRunsTable.companyId, cid),
+        eq(accountingAdjustmentRunsTable.journalEntryId, id),
+      )).limit(1);
+    if (adjustmentRun) {
+      res.status(400).json({ error: "قيد التسوية مرتبط بجدول التسويات الشهرية؛ اعكسه من شاشة التسويات" });
+      return;
+    }
+    const [partialSettlement] = await db.select({ id: settlementLinksTable.id })
+      .from(settlementLinksTable)
+      .where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, "je"),
+        eq(settlementLinksTable.sourceId, id),
+      )).limit(1);
+    if (partialSettlement) {
+      res.status(400).json({ error: "القيد مرتبط بتسوية فواتير؛ اعكس التسوية من مسارها المخصص" });
+      return;
+    }
+    const [fixedAssetLink] = await db.select({ id: fixedAssetsTable.id })
+      .from(fixedAssetsTable)
+      .where(and(
+        eq(fixedAssetsTable.companyId, cid),
+        or(
+          and(
+            eq(fixedAssetsTable.sourceType, "journal_entry"),
+            eq(fixedAssetsTable.sourceDocumentId, id),
+          ),
+          eq(fixedAssetsTable.journalEntryId, id),
+        ),
+      )).limit(1);
+    if (fixedAssetLink) {
+      res.status(400).json({ error: "القيد مرتبط بأصل ثابت؛ نفّذ العكس من مسار الأصول الثابتة" });
+      return;
+    }
+
+    const [existingReversal] = await db.select({ id: journalEntriesTable.id })
+      .from(journalEntriesTable)
+      .where(and(
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.reversalOfId, id),
+      )).limit(1);
+    if (existingReversal) {
+      res.status(409).json({ error: "يوجد قيد عكسي لهذا القيد بالفعل" });
+      return;
+    }
+
+    const originalLines = await db.select().from(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, id))
+      .orderBy(journalEntryLinesTable.sortOrder);
+    const validLineCount = originalLines.filter((line) =>
+      line.accountId != null && ((Number(line.debit) || 0) > 0 || (Number(line.credit) || 0) > 0)
+    ).length;
+    if (validLineCount < 2 || !lineTotals(originalLines).balanced) {
+      res.status(409).json({ error: "لا يمكن إنشاء عكس: بنود القيد الأصلي غير متوازنة أو غير مكتملة" });
+      return;
+    }
+
+    const resolvedBranchId = await resolveBranchForWrite(req, res, cid, original.branchId);
+    if (resolvedBranchId === "DENY") return;
+    let lineProjects: (number | null)[] | null;
+    try {
+      lineProjects = await resolveManualLineProjects(
+        originalLines, "general", cid, resolvedBranchId, req.authUser, "create",
+      );
+    } catch (error: any) {
+      res.status(error?.status ?? 422).json({ error: error.message });
+      return;
+    }
+    const writability = await assertWritableForDate(cid, entryDate);
+    if (!writability.ok) {
+      res.status(423).json({ error: writability.reason });
+      return;
+    }
+
+    let resolvedDocNumber = await nextSequenceNumber(cid, "journal_entry", {
+      userId: req.authUser?.id ?? null,
+      refTable: "journal_entries",
+      branchId: resolvedBranchId,
+      docDate: entryDate,
+    });
+    const description = `عكس القيد ${original.docNumber ?? `#${original.id}`}${original.description ? ` — ${original.description}` : ""}`;
+    const reversedLines = reverseJournalEntryLines(originalLines);
+    const created = await db.transaction(async (tx) => {
+      if (!resolvedDocNumber) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, 1001)`);
+        const result = await tx.execute<{ next: number }>(sql`
+          SELECT COALESCE(MAX(
+            CASE
+              WHEN doc_number ~ '^QYD-[0-9]+$'
+              THEN (regexp_replace(doc_number, '^QYD-', ''))::int
+              ELSE 0
+            END
+          ), 0) + 1 AS next
+          FROM journal_entries
+          WHERE company_id = ${cid}
+        `);
+        const next = Number((result as any).rows?.[0]?.next ?? 1);
+        resolvedDocNumber = `QYD-${String(next).padStart(4, "0")}`;
+      }
+
+      const [reversal] = await tx.insert(journalEntriesTable).values({
+        companyId: cid,
+        docNumber: resolvedDocNumber,
+        entryDate,
+        currency: original.currency || "SAR",
+        exchangeRate: original.exchangeRate ?? "1",
+        description,
+        entryType: "journal_reversal",
+        branchId: resolvedBranchId,
+        periodId: writability.period?.id ?? null,
+        status: "draft",
+        reversalOfId: original.id,
+        ...createdAuditFor(req),
+      }).returning();
+
+      await tx.insert(journalEntryLinesTable).values(reversedLines.map((line, index) => ({
+        entryId: reversal.id,
+        accountId: line.accountId,
+        costCenter: line.costCenter,
+        projectId: lineProjects?.[index] ?? null,
+        debit: line.debit,
+        credit: line.credit,
+        description: line.description,
+        supplierName: line.supplierName ?? null,
+        supplierVatNumber: line.supplierVatNumber ?? null,
+        supplierInvoiceNumber: line.supplierInvoiceNumber ?? null,
+        supplierInvoiceDate: line.supplierInvoiceDate ?? null,
+        sortOrder: line.sortOrder ?? index,
+      })));
+      return reversal;
+    });
+
+    res.status(201).json({
+      id: created.id,
+      docNumber: created.docNumber,
+      entryDate: created.entryDate,
+      entryType: created.entryType,
+      status: created.status,
+      reversalOfId: created.reversalOfId,
+    });
+  } catch (e: any) {
+    if (e?.code === "23505") {
+      res.status(409).json({ error: "يوجد قيد عكسي لهذا القيد بالفعل" });
+      return;
+    }
+    res.status(e?.httpStatus ?? 500).json({ error: e?.message ?? "تعذر إنشاء القيد العكسي" });
+  }
+}));
+
 // (Reservation endpoint REMOVED in favour of explicit-save. The form now
 // only consumes a sequence number when the user actually clicks Save —
 // closing the form without saving leaves no row and no number gap by
@@ -1616,6 +1852,7 @@ router.put("/:id", async (req, res) => {
       entryType: journalEntriesTable.entryType,
       docNumber: journalEntriesTable.docNumber,
       description: journalEntriesTable.description,
+      reversalOfId: journalEntriesTable.reversalOfId,
     })
       .from(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
@@ -1629,6 +1866,7 @@ router.put("/:id", async (req, res) => {
         entryType: journalEntriesTable.entryType,
         docNumber: journalEntriesTable.docNumber,
         description: journalEntriesTable.description,
+        reversalOfId: journalEntriesTable.reversalOfId,
       })
         .from(journalEntriesTable)
         .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
@@ -1646,6 +1884,10 @@ router.put("/:id", async (req, res) => {
 
     // docNumber is intentionally not destructured — immutable on edit.
     const { entryDate, currency, exchangeRate, description, entryType, branchId } = req.body;
+    if (statusRow?.reversalOfId != null && entryType !== "journal_reversal") {
+      res.status(400).json({ error: "لا يمكن تغيير نوع القيد العكسي" });
+      return;
+    }
     const submittedLines = Array.isArray(req.body?.lines)
       ? req.body.lines.filter((line: any) => !isManagedInventoryOpeningLine(line))
       : req.body?.lines;
@@ -1967,7 +2209,7 @@ router.post("/:id/post", requirePostRight("journalEntry"), documentMutationLock(
 }));
 
 // ─── POST /:id/unpost — flip status from posted → draft ─────────────────────
-router.post("/:id/unpost", requireUnpostRight("journalEntry"), async (req, res) => {
+router.post("/:id/unpost", requireUnpostRight("journalEntry"), documentMutationLock("journal_entry", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
@@ -1975,6 +2217,17 @@ router.post("/:id/unpost", requireUnpostRight("journalEntry"), async (req, res) 
     const [existing] = await db.select().from(journalEntriesTable)
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+
+    const [linkedReversal] = await db.select({ id: journalEntriesTable.id })
+      .from(journalEntriesTable)
+      .where(and(
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.reversalOfId, id),
+      )).limit(1);
+    if (linkedReversal) {
+      res.status(409).json({ error: "لا يمكن فك ترحيل القيد الأصلي ما دام له قيد عكسي مرتبط" });
+      return;
+    }
 
     // ── employee_custody cascade (عُهد الموظفين) ────────────────────────────
     // Unposting a custody DISBURSEMENT JE must undo the disbursement itself:
@@ -2220,7 +2473,7 @@ router.post("/:id/unpost", requireUnpostRight("journalEntry"), async (req, res) 
       .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
-});
+}));
 
 // ─── POST /:id/convert-to-general — rescue an ORPHANED locked entry ─────────
 // A JE auto-generated by a source document (invoice/voucher/…) is locked from

@@ -175,6 +175,11 @@ export const journalEntriesApi = {
   // auto-lock and period guards — a non-2xx surfaces a friendly Arabic error.
   post:   (id: number) => post<{ ok: true; alreadyPosted?: boolean }>(`/journal-entries/${id}/post`, {}),
   unpost: (id: number) => post<{ ok: true; alreadyUnposted?: boolean }>(`/journal-entries/${id}/unpost`, {}),
+  reverse: (id: number, entryDate: string) =>
+    post<{ id: number; docNumber: string | null; entryDate: string; entryType: string; status: "draft"; reversalOfId: number }>(
+      `/journal-entries/${id}/reverse`,
+      { entryDate },
+    ),
   // Rescue an ORPHANED locked entry (source document gone): converts it to a
   // general DRAFT while KEEPING its document number so the numbering sequence
   // stays gap-free. Server refuses if the source still exists (409).

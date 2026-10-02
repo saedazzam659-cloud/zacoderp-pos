@@ -27,7 +27,7 @@ import {
 import {
   Plus, Pencil, Trash2, BookOpen, ArrowUpDown, ArrowUp, ArrowDown, CheckCircle2, FileText, Printer, Copy,
   FileSpreadsheet, FileDown, X, Calendar, Loader2, ChevronDown, Receipt, LayoutGrid, Award, Eye,
-  ShieldAlert, Globe2, Monitor, MapPin, User as UserIcon, Clock, RotateCcw,
+  ShieldAlert, Globe2, Monitor, MapPin, User as UserIcon, Clock, RotateCcw, ArrowLeftRight,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -82,12 +82,19 @@ export default function JournalEntries() {
   const [, navigate] = useLocation();
   const qc = useQueryClient();
 
+  const localizedEntryTypes = t("journalEntries.typeLabels", { returnObjects: true }) as Record<string, string>;
   const ENTRY_TYPES: Record<string, string> = {
+    ...localizedEntryTypes,
     general:      t("journalEntries.typeGeneral"),
     opening:      t("journalEntries.typeOpening"),
     closing:      t("journalEntries.typeClosing"),
     adjustment:   t("journalEntries.typeAdjustment"),
     depreciation: t("journalEntries.typeDepreciation"),
+  };
+  const entryTypeLabel = (entry: any) => {
+    if (entry?.reversalOfId != null) return t("journalEntries.typeJournalReversal");
+    const key = String(entry?.entryType ?? "");
+    return key ? ENTRY_TYPES[key] ?? t("journalEntries.typeOther") : "—";
   };
   const STATUS_MAP: Record<string, { label: string; cls: string }> = {
     draft:  { label: t("journalEntries.statusDraft"),  cls: "bg-amber-100 text-amber-800 border-amber-300" },
@@ -403,6 +410,7 @@ export default function JournalEntries() {
 
   /* ── Bulk-action helpers ─────────────────────────────────────────────── */
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [reverseBusy, setReverseBusy] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Entry deletes are subject to multiple server-side guards (already-posted,
@@ -428,6 +436,43 @@ export default function JournalEntries() {
     () => Array.from(layout.selected).map((x) => Number(x)).filter((n) => Number.isFinite(n)),
     [layout.selected],
   );
+  const selectedEntry = selectedIds.length === 1
+    ? (entries as any[]).find((entry: any) => Number(entry.id) === selectedIds[0])
+    : null;
+  const canReverseSelectedEntry = !!selectedEntry
+    && selectedEntry.status === "posted"
+    && ["general", "opening", "closing", "adjustment", "depreciation"].includes(String(selectedEntry.entryType))
+    && selectedEntry.reversalOfId == null
+    && selectedEntry.reversedById == null
+    && selectedEntry.salesInvoiceId == null
+    && selectedEntry.purchaseInvoiceId == null
+    && selectedEntry.settlementAmount == null
+    && !selectedEntry.sourceId
+    && selectedEntry.hasFixedAssetLink !== true
+    && !sourceDocumentUrl(selectedEntry.entryType, null);
+
+  async function handleReverseSelected() {
+    if (!canReverseSelectedEntry || !selectedEntry) return;
+    const sourceLabel = selectedEntry.docNumber ?? `#${selectedEntry.id}`;
+    if (!window.confirm(
+      `سيُنشأ قيد عكسي جديد للقيد ${sourceLabel} كمسودة بتاريخ اليوم، مع تبديل المدين والدائن.\n` +
+      `لن يتغير القيد الأصلي. هل تريد المتابعة؟`
+    )) return;
+
+    setReverseBusy(true);
+    const now = new Date();
+    const entryDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    try {
+      const reversal = await journalEntriesApi.reverse(Number(selectedEntry.id), entryDate);
+      await qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
+      layout.clearSelection();
+      navigate(`/accounting/journals/${reversal.id}`);
+    } catch (error: any) {
+      window.alert(error?.message ?? "تعذر إنشاء القيد العكسي");
+    } finally {
+      setReverseBusy(false);
+    }
+  }
 
   // Subset of selectedIds whose status is currently "draft" — only those rows
   // can actually be posted. We compute it here so the bulk-post button shows
@@ -634,7 +679,7 @@ export default function JournalEntries() {
   const buildRows = (source: any[] = filtered) => source.map((e: any) => ({
     [COL_DOC_L]:    e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`,
     [COL_DATE_L]:   e.entryDate ?? "",
-    [COL_TYPE_L]:   ENTRY_TYPES[e.entryType] ?? e.entryType ?? "",
+    [COL_TYPE_L]:   entryTypeLabel(e),
     [COL_DESC_L]:   e.description ?? "",
     [COL_DEBIT_L]:  Number(e.totalDebit  ?? 0).toFixed(2),
     [COL_CREDIT_L]: Number(e.totalCredit ?? 0).toFixed(2),
@@ -769,7 +814,7 @@ ${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEnt
     const printEntries: JournalPrintEntry[] = entriesWithLines.map((e: any) => ({
       docNo:       e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`,
       entryDate:   e.entryDate ?? "",
-      typeLabel:   ENTRY_TYPES[e.entryType] ?? e.entryType ?? "",
+      typeLabel:   entryTypeLabel(e),
       statusLabel: (STATUS_MAP[e.status] ?? STATUS_MAP.posted).label,
       description: e.description ?? null,
       contractingRecoverySummaries: e.contractingRecoverySummaries,
@@ -883,7 +928,7 @@ ${wrapWithLetterhead(letterhead, `<table><thead><tr>${cols.map(c => `<th>${escap
         <div class="hr"></div>
         <div class="row"><span>رقم القيد</span><b>${escapeHtml(docNo)}</b></div>
         <div class="row"><span>التاريخ</span><b>${escapeHtml(e.entryDate ?? "")}</b></div>
-        <div class="row"><span>النوع</span><b>${escapeHtml(ENTRY_TYPES[e.entryType] ?? e.entryType ?? "")}</b></div>
+        <div class="row"><span>النوع</span><b>${escapeHtml(entryTypeLabel(e))}</b></div>
         <div class="row"><span>الحالة</span><b>${escapeHtml((STATUS_MAP[e.status] ?? STATUS_MAP.posted).label)}</b></div>
         ${e.description ? `<div class="desc">${escapeHtml(e.description)}</div>` : ""}
         <div class="hr"></div>
@@ -968,7 +1013,7 @@ ${sections}
         <div class="banner">
           <div class="banner-l">
             <div class="docno">قيد رقم: <b>${escapeHtml(docNo)}</b></div>
-            <div class="docmeta">التاريخ: ${escapeHtml(e.entryDate ?? "")} • النوع: ${escapeHtml(ENTRY_TYPES[e.entryType] ?? e.entryType ?? "")}</div>
+            <div class="docmeta">التاريخ: ${escapeHtml(e.entryDate ?? "")} • النوع: ${escapeHtml(entryTypeLabel(e))}</div>
           </div>
           <div class="banner-r">
             <div class="status status-${escapeHtml(e.status)}">${escapeHtml((STATUS_MAP[e.status] ?? STATUS_MAP.posted).label)}</div>
@@ -1538,6 +1583,21 @@ ${wrapWithLetterhead(letterhead, sections)}
           </Button>
           <Button
             type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-violet-700 hover:bg-violet-600 text-white"
+            onClick={handleReverseSelected}
+            disabled={!canReverseSelectedEntry || reverseBusy || bulkBusy}
+            title={
+              canReverseSelectedEntry
+                ? "إنشاء قيد عكسي كمسودة دون تعديل القيد الأصلي"
+                : "يتاح لقيد يدوي مرحّل واحد غير مرتبط بمستند أو تسوية أو أصل ثابت ولم يسبق عكسه"
+            }
+            data-testid="bulk-reverse"
+          >
+            {reverseBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowLeftRight className="h-3.5 w-3.5" />}
+            إنشاء قيد عكسي
+          </Button>
+          <Button
+            type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
             onClick={() => setBulkDeleteOpen(true)}
             disabled={bulkBusy || selectedIds.length === 0}
@@ -1696,7 +1756,7 @@ ${wrapWithLetterhead(letterhead, sections)}
                           </td>
                         );
                       case "type":
-                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{ENTRY_TYPES[entry.entryType] ?? entry.entryType}</td>;
+                        return <td key={col.key} title={ENTRY_TYPES[entry.entryType] ? undefined : String(entry.entryType ?? "")} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{entryTypeLabel(entry)}</td>;
                       case "desc":
                         return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 truncate text-slate-600", colWidths.desc ? "" : "max-w-[260px]")} title={entry.description ?? ""}>{entry.description ?? "—"}</td>;
                       case "debit":

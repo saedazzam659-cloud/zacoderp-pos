@@ -3787,6 +3787,7 @@
       "production_issue": "Production Issue",
       "production_issue_reversal": "Production Issue Reversal",
       "production_overhead_closure": "Production Overhead Closure",
+      "production_overhead_closure_reversal": "Production Overhead Closure Reversal",
       "production_pending_utility_settlement": "Pending Production Utility Settlement",
       "production_pending_utility_settlement_reversal": "Pending Production Utility Settlement Reversal",
       "production_receipt": "Production Receipt",

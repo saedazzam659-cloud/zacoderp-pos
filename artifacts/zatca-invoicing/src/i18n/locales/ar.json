@@ -3789,6 +3789,7 @@
       "production_issue": "صرف للإنتاج",
       "production_issue_reversal": "عكس صرف الإنتاج",
       "production_overhead_closure": "إقفال تكاليف الإنتاج غير المباشرة",
+      "production_overhead_closure_reversal": "عكس إقفال تكاليف الإنتاج غير المباشرة",
       "production_pending_utility_settlement": "تسوية مرافق إنتاج معلقة",
       "production_pending_utility_settlement_reversal": "عكس تسوية مرافق الإنتاج المعلقة",
       "production_receipt": "استلام إنتاج",
