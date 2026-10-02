@@ -67,7 +67,7 @@ type ModuleKey =
   | "stock_transfers"   | "stock_adjustments" | "stock_counts"
   | "sister_transfers"  | "sister_returns"    | "sister_settlements"
   | "fixed_asset_depreciation"
-  | "hr_payroll";
+  | "hr_payroll" | "contracting_journals" | "manufacturing_journals";
 
 type ModuleDef = {
   key: ModuleKey;
@@ -112,6 +112,10 @@ const MODULES: ModuleDef[] = [
   // contains «مصروف يوزع على فترات» lines. Row id = JE id → same
   // journal-entries post/unpost endpoints (unpost cascades to the run).
   { key: "deferred_expenses", label: "المصروفات المرحلة (من الفواتير)", group: "المحاسبة", endpoint: (id, a) => `/api/journal-entries/${id}/${a}`, method: "POST", supportsUnpost: true },
+  // Source-generated contracting and manufacturing JEs can be posted from
+  // this center, but remain locked to their source workflows for unposting.
+  { key: "contracting_journals", label: "قيود المقاولات", group: "المقاولات", endpoint: (id, a) => `/api/journal-entries/${id}/${a}`, method: "POST", supportsUnpost: false },
+  { key: "manufacturing_journals", label: "قيود التصنيع", group: "التصنيع", endpoint: (id, a) => `/api/journal-entries/${id}/${a}`, method: "POST", supportsUnpost: false },
   // ── Inventory documents ──
   { key: "goods_receipts",    label: "إيصالات الاستلام",   group: "المخازن",   endpoint: (id, a) => `/api/goods-receipts/${id}/${a}`,             method: "PATCH", supportsUnpost: true, supportsCancel: true },
   { key: "goods_deliveries",  label: "إذونات التسليم",     group: "المخازن",   endpoint: (id, a) => `/api/goods-deliveries/${id}/${a}`,           method: "PATCH", supportsUnpost: true, supportsCancel: true },
@@ -179,6 +183,8 @@ const SOURCE_ROUTE: Record<ModuleKey, (id: number) => string> = {
   sister_settlements: (id) => `/inventory/sister-settlements/${id}`,
   fixed_asset_depreciation: ()   => `/fixed-assets/depreciation`,
   hr_payroll:         ()   => `/hr/payroll`,
+  contracting_journals:   (id) => `/accounting/journals/${id}`,
+  manufacturing_journals: (id) => `/accounting/journals/${id}`,
 };
 
 type StatusFilter = "all" | "posted" | "unposted" | "cancelled";

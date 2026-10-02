@@ -6,7 +6,7 @@ import {
   CONTRACTING_ACCOUNTS, CONTRACTING_ROLES, CONTRACTING_SHARED_ACCOUNT_SOURCES,
   MANUFACTURING_ACCOUNTS,
   MANUFACTURING_FIELDS, OPTIONAL_MODULE_ACCOUNT_CODES, accountingModulesFromMenu,
-  canRepairMappedSupplierPayable, isCompatibleMappedModuleAccount, isOptionalModuleTemplateMapping,
+  isCompatibleMappedModuleAccount, isOptionalModuleTemplateMapping,
   missingContractingRoles, missingManufacturingFields, canRollbackFreshCompany,
   resolveMappedCoreAccounts,
 } from "../src/lib/optionalModuleAccounting.js";
@@ -62,12 +62,16 @@ test("contracting reuses explicitly mapped, compatible commercial accounts", () 
     ), `${source.documentType}/${source.roleKey} must remain linked to ${code}`);
   }
 
-  // An explicit payable mapping may use a customized label or code; its
-  // accounting type and posting state, not its display name, establish safety.
+  // An explicit payable mapping may use a customized label or code. Payable
+  // and receivable are control-parent roles, so an active non-posting parent is
+  // valid and must not be rewritten into a posting leaf.
   const mappedPayable = { accountType: "liability" as const, isPosting: true, isActive: true };
   assert.equal(isCompatibleMappedModuleAccount(mappedPayable, "liability", true), true);
   assert.equal(isCompatibleMappedModuleAccount({ ...mappedPayable, accountType: "asset" }, "liability", true), false);
   assert.equal(isCompatibleMappedModuleAccount({ ...mappedPayable, isPosting: false }, "liability", true), false);
+  assert.equal(isCompatibleMappedModuleAccount(
+    { ...mappedPayable, isPosting: false }, "liability", true, true,
+  ), true);
   assert.equal(isCompatibleMappedModuleAccount({ ...mappedPayable, isActive: false }, "liability", true), false);
 
   const customPayable = { id: 902, code: "21910", ...mappedPayable };
@@ -81,26 +85,22 @@ test("contracting reuses explicitly mapped, compatible commercial accounts", () 
   assert.throws(() => resolveMappedCoreAccounts([
     { documentType: "purchase_invoice", roleKey: "payable", accountId: 903 },
   ], [{ id: 903, code: "11031", accountType: "asset" as const, isPosting: true, isActive: true }]),
-  /must be an active posting liability account/);
-});
+  /must be an active posting or control-parent liability account/);
 
-test("21011 is repaired only when it is an unused mapped supplier payable", () => {
-  const account = {
-    code: "21011",
-    parentId: 2101,
+  const supplierParent = {
+    id: 904, code: "21011", accountType: "liability" as const,
+    isPosting: false, isActive: true,
   };
-  const safeChecks = {
-    hasChildAccounts: false,
-    hasJournalLines: false,
-    parentAccount: { accountType: "liability" as const, isActive: true },
-  };
-  assert.equal(canRepairMappedSupplierPayable(account, safeChecks), true);
-  assert.equal(canRepairMappedSupplierPayable(account, { ...safeChecks, hasChildAccounts: true }), false);
-  assert.equal(canRepairMappedSupplierPayable(account, { ...safeChecks, hasJournalLines: true }), false);
-  assert.equal(canRepairMappedSupplierPayable(account, {
-    ...safeChecks, parentAccount: { accountType: "asset", isActive: true },
-  }), false);
-  assert.equal(canRepairMappedSupplierPayable({ ...account, code: "21910" }, safeChecks), false);
+  const resolvedParent = resolveMappedCoreAccounts([
+    { documentType: "purchase_invoice", roleKey: "payable", accountId: supplierParent.id },
+  ], [supplierParent]);
+  assert.equal(resolvedParent.get("21011"), supplierParent);
+  assert.equal(isCompatibleMappedModuleAccount(
+    { ...supplierParent, accountType: "asset" }, "liability", true, true,
+  ), false);
+  assert.equal(isCompatibleMappedModuleAccount(
+    { ...supplierParent, isActive: false }, "liability", true, true,
+  ), false);
 });
 
 test("repeated activation preserves existing mapping rows and filled manufacturing settings", () => {

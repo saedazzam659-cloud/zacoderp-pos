@@ -71,6 +71,12 @@ Missing contracting advance account mappings require explicit accountant setup, 
 
 **How to apply:** Expose the correct roles in mapping settings and direct failed saves to that setup, preserving existing tenant mappings and chart of accounts.
 
+An explicitly mapped, active receivable/payable control parent remains compatible with optional-module activation. Preserve the mapped account; do not require it to be a posting leaf or silently convert, replace, or reparent it.
+
+**Why:** Contracting activation previously depended on an ordinary payable mapping whose account was a non-posting parent with supplier subaccounts. Rejecting that established mapping caused an activation regression; automatic chart repair could also alter tenant accounting data.
+
+**How to apply:** Validate receivable/payable control parents by active state and account type, then seed optional roles from the explicit mapping. Keep stricter posting-leaf validation for non-control roles.
+
 **Why:** Selecting an inventory item or marking a resource allocated must not silently consume stock or create costs.
 
 **How to apply:** Use real item-owned conversion snapshots and warehouse scope. Unsupported lot/costing paths must fail clearly rather than silently substitute weighted-average costing.

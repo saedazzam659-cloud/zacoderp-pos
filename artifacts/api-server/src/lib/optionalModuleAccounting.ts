@@ -1,4 +1,4 @@
-import { db, accountsTable, accountingMappingsTable, companiesTable, manufacturingSettingsTable, journalEntriesTable, journalEntryLinesTable, invoicesTable } from "@workspace/db";
+import { db, accountsTable, accountingMappingsTable, companiesTable, manufacturingSettingsTable, invoicesTable, journalEntriesTable } from "@workspace/db";
 import { and, eq, isNull } from "drizzle-orm";
 import { DEFAULT_CHART_OF_ACCOUNTS } from "./defaultChartOfAccounts.js";
 
@@ -97,28 +97,12 @@ export function isCompatibleMappedModuleAccount(
   account: Pick<AccountRow, "accountType" | "isPosting" | "isActive"> | undefined,
   expectedType: AccountRow["accountType"],
   expectedPosting: boolean,
+  allowControlParent = false,
 ): boolean {
   return !!account &&
     account.accountType === expectedType &&
-    account.isPosting === expectedPosting &&
+    (account.isPosting === expectedPosting || (allowControlParent && !account.isPosting)) &&
     account.isActive;
-}
-
-export function canRepairMappedSupplierPayable(
-  account: Pick<AccountRow, "code" | "parentId"> | undefined,
-  checks: {
-    hasChildAccounts: boolean;
-    hasJournalLines: boolean;
-    parentAccount?: Pick<AccountRow, "accountType" | "isActive">;
-  },
-): boolean {
-  if (!account || account.code !== "21011" || checks.hasChildAccounts || checks.hasJournalLines) return false;
-  if (account.parentId != null &&
-      (!checks.parentAccount ||
-       checks.parentAccount.accountType !== "liability" ||
-       !checks.parentAccount.isActive)) return false;
-
-  return true;
 }
 
 type SharedRoleMapping = { documentType: string; roleKey: string; accountId: number | null };
@@ -145,76 +129,19 @@ export function resolveMappedCoreAccounts<T extends SharedRoleAccount>(
     }
     const definition = DEFAULT_CHART_OF_ACCOUNTS.find((row) => row.code === code);
     if (!definition) throw new Error(`No accounting default for ${code}`);
-    if (!isCompatibleMappedModuleAccount(account, definition.accountType, definition.isPosting)) {
+    // Payable and receivable mappings are control-parent roles throughout the
+    // accounting UI: supplier/customer subaccounts are created under them.
+    // Preserve that convention during optional-module activation rather than
+    // changing an established parent account into a posting leaf.
+    const allowControlParent = source.roleKey === "payable" || source.roleKey === "receivable";
+    if (!isCompatibleMappedModuleAccount(account, definition.accountType, definition.isPosting, allowControlParent)) {
       throw new Error(
-        `Configured ${source.documentType}/${source.roleKey} account ${account.code} must be an active posting ${definition.accountType} account before module activation`,
+        `Configured ${source.documentType}/${source.roleKey} account ${account.code} must be an active ${allowControlParent ? "posting or control-parent" : "posting"} ${definition.accountType} account before module activation`,
       );
     }
     resolved.set(code, account);
   }
   return resolved;
-}
-
-async function repairCanonicalSupplierPayableIfSafe(
-  tx: any,
-  companyId: number,
-  mapping: SharedRoleMapping | undefined,
-  accounts: AccountRow[],
-): Promise<AccountRow[]> {
-  if (mapping?.accountId == null) return accounts;
-  const accountIndex = accounts.findIndex((row) => row.id === mapping.accountId);
-  if (accountIndex < 0) return accounts;
-  const account = accounts[accountIndex];
-  if (account.code !== "21011" || isCompatibleMappedModuleAccount(account, "liability", true)) return accounts;
-
-  const [child] = await tx.select({ id: accountsTable.id }).from(accountsTable)
-    .where(and(eq(accountsTable.companyId, companyId), eq(accountsTable.parentId, account.id))).limit(1);
-  const [journalLine] = await tx.select({ id: journalEntryLinesTable.id })
-    .from(journalEntryLinesTable)
-    .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
-    .where(and(
-      eq(journalEntriesTable.companyId, companyId),
-      eq(journalEntryLinesTable.accountId, account.id),
-    )).limit(1);
-
-  let parentAccount: Pick<AccountRow, "accountType" | "isActive"> | undefined;
-  if (account.parentId != null) {
-    const [parent] = await tx.select({
-      accountType: accountsTable.accountType,
-      isActive: accountsTable.isActive,
-    }).from(accountsTable).where(and(
-      eq(accountsTable.companyId, companyId),
-      eq(accountsTable.id, account.parentId),
-    )).limit(1);
-    parentAccount = parent;
-  }
-
-  if (!canRepairMappedSupplierPayable(account, {
-    hasChildAccounts: !!child,
-    hasJournalLines: !!journalLine,
-    parentAccount,
-  })) {
-    throw new Error(
-      `Configured purchase_invoice/payable account 21011 is invalid (type=${account.accountType}, posting=${account.isPosting}, active=${account.isActive}); safe repair refused because it is not an unused mapped supplier payable`,
-    );
-  }
-
-  const definition = DEFAULT_CHART_OF_ACCOUNTS.find((row) => row.code === "21011")!;
-  const [corrected] = await tx.update(accountsTable).set({
-    accountType: "liability",
-    isPosting: true,
-    isActive: true,
-    reportDirection: definition.reportDirection,
-    updatedAt: new Date(),
-  }).where(and(
-    eq(accountsTable.companyId, companyId),
-    eq(accountsTable.id, account.id),
-  )).returning();
-  if (!corrected) throw new Error("Supplier payable account 21011 could not be safely updated");
-
-  const updated = [...accounts];
-  updated[accountIndex] = corrected;
-  return updated;
 }
 
 export const MANUFACTURING_FIELDS = {
@@ -331,12 +258,6 @@ export async function seedOptionalModuleAccountingTx(tx: any, companyId: number,
         accountId: accountingMappingsTable.accountId,
       }).from(accountingMappingsTable).where(eq(accountingMappingsTable.companyId, companyId))
       : [];
-    if (modules.contracting) {
-      const supplierPayableMapping = mappings.find((mapping: SharedRoleMapping) =>
-        mapping.documentType === "purchase_invoice" && mapping.roleKey === "payable",
-      );
-      existing = await repairCanonicalSupplierPayableIfSafe(tx, companyId, supplierPayableMapping, existing);
-    }
     const byCode = new Map<string, AccountRow>(existing.map((a: AccountRow) => [a.code, a]));
     const mappedCoreAccounts = modules.contracting
       ? resolveMappedCoreAccounts<AccountRow>(mappings, existing)

@@ -1304,7 +1304,7 @@ router.post("/:id/reverse", documentMutationLock("journal_entry", async (req, re
       original.status !== "posted" ||
       !REVERSIBLE_MANUAL_ENTRY_TYPES.has(original.entryType ?? "") ||
       original.reversalOfId != null ||
-      LOCKED_ENTRY_TYPES.includes(original.entryType ?? "") ||
+      isLockedJournalEntryType(original.entryType) ||
       original.salesInvoiceId != null ||
       original.purchaseInvoiceId != null ||
       original.settlementAmount != null ||
@@ -1785,6 +1785,23 @@ const LOCKED_ENTRY_TYPES = [
   "payroll_run", "payroll_payment", "employee_loan", "eos_payment",
 ];
 
+function isModuleManagedJournalEntryType(entryType: string | null | undefined): boolean {
+  if (!entryType) return false;
+  return entryType === "contracting" ||
+    entryType === "production" ||
+    entryType === "manufacturing" ||
+    entryType === "simple_manufacturing" ||
+    entryType.startsWith("contracting_") ||
+    entryType.startsWith("production_") ||
+    entryType.startsWith("manufacturing_") ||
+    entryType.startsWith("simple_manufacturing_");
+}
+
+function isLockedJournalEntryType(entryType: string | null | undefined): boolean {
+  return !!entryType &&
+    (LOCKED_ENTRY_TYPES.includes(entryType) || isModuleManagedJournalEntryType(entryType));
+}
+
 async function hasFiscalAdvanceSource(id: number, cid: number): Promise<boolean> {
   await ensureContractingAccountingTables();
   const [source] = await db.select({id:contractingFiscalInvoicesTable.id})
@@ -1817,7 +1834,7 @@ async function ensureNotLocked(id: number, cid: number): Promise<{ ok: boolean; 
   // An unapproved legacy contracting bill leaves its numbered draft JE as
   // cancelled evidence. Never allow a manual edit/delete to recycle it.
   if (existing.status === "cancelled") return { ok: false, entryType: existing.entryType };
-  if (existing.entryType && LOCKED_ENTRY_TYPES.includes(existing.entryType)) {
+  if (isLockedJournalEntryType(existing.entryType)) {
     return { ok: false, entryType: existing.entryType };
   }
   if (isFiscalAdvanceJournalLocked(existing.entryType,await hasFiscalAdvanceSource(id,cid)))

@@ -17,10 +17,8 @@
  *   GET /api/posting-center/ai-summary?module=X
  *   POST /api/posting-center/:module/:id/cancel|restore
  *
- * Modules supported (all read with company-scoped queries):
- *   sales_invoices, sales_returns,
- *   purchase_invoices, purchase_returns,
- *   receipt_vouchers, payment_vouchers
+ * Modules supported (all read with company-scoped queries), including
+ * source-generated contracting and manufacturing journal entries.
  */
 
 import { Router } from "express";
@@ -85,6 +83,8 @@ const MODULE_PERM_KEY: Record<string, string> = {
   sister_settlements: "sister_companies",
   fixed_asset_depreciation: "fixed_assets",
   hr_payroll:        "hr_payroll",
+  contracting_journals: "contracting",
+  manufacturing_journals: "production",
 };
 
 // Hard server-side cap on the number of rows returned per list call. The
@@ -119,6 +119,8 @@ const MODULES = [
   "sister_settlements",
   "fixed_asset_depreciation",
   "hr_payroll",
+  "contracting_journals",
+  "manufacturing_journals",
 ] as const;
 type ModuleKey = typeof MODULES[number];
 
@@ -217,6 +219,8 @@ const MODULE_LABELS_AR: Record<ModuleKey, string> = {
   sister_settlements: "تسويات الشركات الشقيقة",
   fixed_asset_depreciation: "إهلاك الأصول الثابتة",
   hr_payroll:        "مسيرات الرواتب",
+  contracting_journals: "قيود المقاولات",
+  manufacturing_journals: "قيود التصنيع",
 };
 
 // Unified row shape returned to the client. Every module is mapped onto this
@@ -251,6 +255,17 @@ function gateByModule(req: any, res: any, next: any) {
   if (moduleParam === "all") { next(); return; }
   if (!MODULES.includes(moduleParam as ModuleKey)) {
     res.status(400).json({ error: "نوع حركة غير صالح" });
+    return;
+  }
+  if (moduleParam === "manufacturing_journals") {
+    // Production and simple-manufacturing share the production journal pool.
+    // Allow either activated module to view that unified accounting stream.
+    if (canAccessModule(req.authUser, "production", "view") ||
+        canAccessModule(req.authUser, "simple_manufacturing", "view")) {
+      next();
+      return;
+    }
+    res.status(403).json({ error: "صلاحيات غير كافية" });
     return;
   }
   const permKey = MODULE_PERM_KEY[moduleParam] || "journal_entries";
@@ -321,6 +336,8 @@ async function listForModule(
     case "receipt_vouchers":  return listReceiptVouchers(req, cid, dateFrom, dateTo, branchIdRaw);
     case "payment_vouchers":  return listPaymentVouchers(req, cid, dateFrom, dateTo, branchIdRaw);
     case "journal_entries":   return listJournalEntries(req, cid, dateFrom, dateTo, branchIdRaw);
+    case "contracting_journals": return listJournalEntries(req, cid, dateFrom, dateTo, branchIdRaw, "contracting_journals");
+    case "manufacturing_journals": return listJournalEntries(req, cid, dateFrom, dateTo, branchIdRaw, "manufacturing_journals");
     case "monthly_adjustments": return listAdjustmentJes("monthly_adjustments", req, cid, dateFrom, dateTo, branchIdRaw);
     case "deferred_expenses":   return listAdjustmentJes("deferred_expenses",   req, cid, dateFrom, dateTo, branchIdRaw);
     case "goods_receipts":    return listGoodsReceipts(req, cid, dateFrom, dateTo, branchIdRaw);
@@ -376,9 +393,13 @@ router.get("/list", gateByModule, async (req, res) => {
       // the user are silently skipped (no 403) so the combined list only ever
       // shows rows the user could open anyway. Each row keeps its own `module`
       // so the client resolves the right post/unpost endpoint + source link.
-      const allowedModules = MODULES.filter(m =>
-        canAccessModule(req.authUser, MODULE_PERM_KEY[m] || "journal_entries", "view"),
-      );
+      const allowedModules = MODULES.filter(m => {
+        if (m === "manufacturing_journals") {
+          return canAccessModule(req.authUser, "production", "view") ||
+            canAccessModule(req.authUser, "simple_manufacturing", "view");
+        }
+        return canAccessModule(req.authUser, MODULE_PERM_KEY[m] || "journal_entries", "view");
+      });
       const perModule = await Promise.all(
         allowedModules.map(m => listForModule(req, m, cid, dateFrom, dateTo, branchIdRaw)),
       );
@@ -493,7 +514,9 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
       case "purchase_returns":  rows = await listPurchaseReturns(req, cid, undefined, undefined, branchIdRaw);  break;
       case "receipt_vouchers":  rows = await listReceiptVouchers(req, cid, undefined, undefined, branchIdRaw);  break;
       case "payment_vouchers":  rows = await listPaymentVouchers(req, cid, undefined, undefined, branchIdRaw);  break;
-      case "journal_entries":   rows = await listJournalEntries(req, cid, undefined, undefined, branchIdRaw);   break;
+       case "journal_entries":   rows = await listJournalEntries(req, cid, undefined, undefined, branchIdRaw);   break;
+       case "contracting_journals": rows = await listJournalEntries(req, cid, undefined, undefined, branchIdRaw, "contracting_journals"); break;
+       case "manufacturing_journals": rows = await listJournalEntries(req, cid, undefined, undefined, branchIdRaw, "manufacturing_journals"); break;
       case "monthly_adjustments": rows = await listAdjustmentJes("monthly_adjustments", req, cid, undefined, undefined, branchIdRaw); break;
       case "deferred_expenses":   rows = await listAdjustmentJes("deferred_expenses",   req, cid, undefined, undefined, branchIdRaw); break;
       case "goods_receipts":    rows = await listGoodsReceipts(req, cid, undefined, undefined, branchIdRaw);    break;
@@ -882,10 +905,11 @@ async function listFixedAssetDepreciation(
 }
 
 // ─── Journal Entries ────────────────────────────────────────────────────────
-// Manual JEs that the accountant created directly.
+// Manual JEs and separately classified source-generated accounting JEs.
 //
-// Auto-generated JEs (entryType IN LOCKED_JE_TYPES) are EXCLUDED from this
-// list because:
+// Source-generated JEs (exact entry types in LOCKED_JE_TYPES, monthly
+// adjustments, and contracting/manufacturing types matched below) are
+// EXCLUDED from this generic list because:
 //   1) they're already posted by their source document, and
 //   2) the JE post/unpost endpoint refuses to flip them — they must be
 //      unposted via the source document (invoice/voucher/etc.).
@@ -911,16 +935,46 @@ const LOCKED_JE_TYPES = [
 // endpoints for these rows.
 const ADJUSTMENT_JE_TYPES = ["adjustment_prepaid", "adjustment_accrued"];
 
+type JournalEntryModule = "journal_entries" | "contracting_journals" | "manufacturing_journals";
+function isModuleManagedJournalEntryType(entryType: string | null | undefined): boolean {
+  if (!entryType) return false;
+  return entryType === "contracting" ||
+    entryType === "production" ||
+    entryType === "manufacturing" ||
+    entryType === "simple_manufacturing" ||
+    entryType.startsWith("contracting_") ||
+    entryType.startsWith("production_") ||
+    entryType.startsWith("manufacturing_") ||
+    entryType.startsWith("simple_manufacturing_");
+}
+
+const CONTRACTING_JE_SCOPE = sql`(
+  ${journalEntriesTable.entryType} = 'contracting'
+  OR left(${journalEntriesTable.entryType}, 12) = 'contracting_'
+)`;
+const MANUFACTURING_JE_SCOPE = sql`(
+  ${journalEntriesTable.entryType} IN ('production', 'manufacturing', 'simple_manufacturing')
+  OR left(${journalEntriesTable.entryType}, 11) = 'production_'
+  OR left(${journalEntriesTable.entryType}, 14) = 'manufacturing_'
+  OR left(${journalEntriesTable.entryType}, 21) = 'simple_manufacturing_'
+)`;
+const MODULE_MANAGED_JE_SCOPE = sql`(${CONTRACTING_JE_SCOPE} OR ${MANUFACTURING_JE_SCOPE})`;
+
 async function listJournalEntries(
   req: Request, cid: number, dateFrom?: string, dateTo?: string, branchIdRaw?: unknown,
+  module: JournalEntryModule = "journal_entries",
 ): Promise<PostingRow[]> {
+  const typeScope = module === "contracting_journals"
+    ? CONTRACTING_JE_SCOPE
+    : module === "manufacturing_journals"
+      ? MANUFACTURING_JE_SCOPE
+      : sql`(${journalEntriesTable.entryType} IS NULL OR (
+          ${journalEntriesTable.entryType} NOT IN ${[...LOCKED_JE_TYPES, ...ADJUSTMENT_JE_TYPES]}
+          AND NOT ${MODULE_MANAGED_JE_SCOPE}
+        ))`;
   const conds = [
     eq(journalEntriesTable.companyId, cid),
-    // Only manual JEs — null entryType is treated as "general" and kept.
-    // Adjustment JEs are excluded here because they surface under their own
-    // "monthly_adjustments" module (see listMonthlyAdjustments) — keeping
-    // them out prevents double rows in the "عرض الكل" aggregate.
-    sql`(${journalEntriesTable.entryType} IS NULL OR ${journalEntriesTable.entryType} NOT IN ${[...LOCKED_JE_TYPES, ...ADJUSTMENT_JE_TYPES]})`,
+    typeScope,
     ...branchScopeSpread(req, journalEntriesTable.branchId, branchIdRaw),
   ];
   if (dateFrom) conds.push(gte(journalEntriesTable.entryDate, dateFrom));
@@ -953,10 +1007,10 @@ async function listJournalEntries(
 
   return docs.map(d => ({
     id: d.id,
-    module: "journal_entries",
+    module,
     docNumber: synthesizeDoc(d.id, d.docNumber),
     date: d.entryDate,
-    type: MODULE_LABELS_AR.journal_entries,
+    type: MODULE_LABELS_AR[module],
     description: d.description,
     party: null,
     amount: totalMap.get(d.id) ?? 0,
@@ -1482,7 +1536,10 @@ router.post(
           "fa_depreciation",
           "opening",
         ]);
-        if (doc.entryType && specialJeTypes.has(doc.entryType)) {
+        if (doc.entryType && (
+          specialJeTypes.has(doc.entryType) ||
+          isModuleManagedJournalEntryType(doc.entryType)
+        )) {
           throw new LifecycleError(409, "هذا القيد تابع لمستند أو مسار محاسبي خاص؛ ألغِه من المستند المصدر");
         }
         if (doc.salesInvoiceId || doc.purchaseInvoiceId) {
