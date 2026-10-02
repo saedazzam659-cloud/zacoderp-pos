@@ -24,3 +24,19 @@ export function contractWorkItemDefaults(item: ContractWorkItemSource) {
     unitPriceOverride: "",
   };
 }
+
+/**
+ * Selecting the first work item should not discard a price the user already
+ * entered in the blank BOQ draft. When replacing an already selected item,
+ * apply that item's defaults (including the intentionally unknown price).
+ */
+export function contractWorkItemDraftForSelection(
+  current: { workItemId: string; unitPrice: string },
+  item: ContractWorkItemSource,
+) {
+  const defaults = contractWorkItemDefaults(item);
+  return {
+    ...defaults,
+    unitPrice: current.workItemId ? defaults.unitPrice : current.unitPrice,
+  };
+}

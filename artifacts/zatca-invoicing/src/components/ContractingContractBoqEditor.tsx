@@ -13,7 +13,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
-import { contractWorkItemDefaults } from "@/lib/contractingWorkItemDefaults";
+import {
+  contractWorkItemDefaults,
+  contractWorkItemDraftForSelection,
+} from "@/lib/contractingWorkItemDefaults";
 import ContractingProjectScope from "./ContractingProjectScope";
 import { ContractingArchiveAction } from "./ContractingArchiveAction";
 import {
@@ -113,6 +116,7 @@ export default function ContractingContractBoqEditor({
   contractType = "main",
   parentContractId = null,
   onChanged,
+  onDraftStateChange,
   pendingLines = [],
   onPendingLinesChange,
 }: {
@@ -126,6 +130,7 @@ export default function ContractingContractBoqEditor({
   contractType?: string;
   parentContractId?: number | null;
   onChanged?: () => void;
+  onDraftStateChange?: (hasDraft: boolean) => void;
   pendingLines?: PendingContractBoqLine[] | null;
   onPendingLinesChange?: Dispatch<SetStateAction<PendingContractBoqLine[] | null>>;
 }) {
@@ -310,6 +315,7 @@ export default function ContractingContractBoqEditor({
     setEditingId(null);
     setEditingPendingIndex(null);
     setDraft(emptyDraft());
+    onDraftStateChange?.(true);
   }
 
   function beginEdit(row: BoqLine) {
@@ -328,15 +334,22 @@ export default function ContractingContractBoqEditor({
       unitPriceDelta: row.unitPriceDelta ?? "0",
       unitPriceOverride: row.unitPriceOverride ?? "",
     });
+    onDraftStateChange?.(true);
   }
 
   function chooseWorkItem(value: string) {
     const selected = workItems.find(item => String(item.id) === value);
     if (!selected) return;
-    setDraft(current => !current || current.workItemId === value ? current : {
-      ...current,
-      ...contractWorkItemDefaults(selected),
-    });
+    setDraft(current => !current || current.workItemId === value
+      ? current
+      : contractWorkItemDraftForSelection(current, selected));
+  }
+
+  function cancelDraft() {
+    setDraft(null);
+    setEditingId(null);
+    setEditingPendingIndex(null);
+    onDraftStateChange?.(false);
   }
 
   function chooseBaseLine(value: string) {
@@ -366,6 +379,7 @@ export default function ContractingContractBoqEditor({
       onPendingLinesChange?.(next);
       setDraft(null);
       setEditingPendingIndex(null);
+      onDraftStateChange?.(false);
       return;
     }
     const body = {
@@ -396,6 +410,7 @@ export default function ContractingContractBoqEditor({
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
       setDraft(null);
       setEditingId(null);
+      onDraftStateChange?.(false);
       await load();
       onChanged?.();
     } catch (caught: any) {
@@ -621,7 +636,7 @@ export default function ContractingContractBoqEditor({
           <div><label className="text-[11px] text-slate-600">الإجمالي</label><div className="rounded border bg-slate-50 px-3 py-2 text-sm tabular-nums">{total(draft).toLocaleString("en-US", { maximumFractionDigits: 2 })} {currencyLabel}</div></div>
           <div className="col-span-2"><label className="text-[11px] text-slate-600">الوصف</label><Input value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} /></div>
           <div className="col-span-2 flex items-end justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setDraft(null)}><X className="mx-1 h-3 w-3" />إلغاء</Button>
+             <Button variant="outline" size="sm" onClick={cancelDraft}><X className="mx-1 h-3 w-3" />إلغاء</Button>
             <Button size="sm" onClick={() => void save()}>حفظ السطر</Button>
           </div>
         </div>

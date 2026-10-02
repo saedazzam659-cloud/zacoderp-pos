@@ -9,6 +9,7 @@ import { CsvExportInspectorBody } from "@/components/admin/CsvExportInspectorBod
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1035,25 +1036,33 @@ export default function AuditLog() {
             )}
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{tr("moduleLabel")}</label>
-              <Select value={module} onValueChange={setModule}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all">{tr("all")}</SelectItem>
-                  {modules.map(m => <SelectItem key={m} value={m}>{moduleLabel(m)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchCombobox
+                value={module}
+                onValueChange={setModule}
+                items={[
+                  { value: "__all", label: tr("all") },
+                  ...modules.map(m => ({ value: m, label: moduleLabel(m) })),
+                ]}
+                placeholder={tr("all")}
+                searchPlaceholder={isRtl ? "بحث في الوحدات..." : "Search modules..."}
+                emptyText={isRtl ? "لا توجد وحدات مطابقة" : "No matching modules"}
+                testId="audit-filter-module"
+              />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{tr("actionLabel")}</label>
-              <Select value={action} onValueChange={setAction}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all">{tr("all")}</SelectItem>
-                  {ACTION_KEYS.map(v => (
-                    <SelectItem key={v} value={v}>{trAction(v)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchCombobox
+                value={action}
+                onValueChange={setAction}
+                items={[
+                  { value: "__all", label: tr("all") },
+                  ...ACTION_KEYS.map(v => ({ value: v, label: trAction(v) })),
+                ]}
+                placeholder={tr("all")}
+                searchPlaceholder={isRtl ? "بحث في الإجراءات..." : "Search actions..."}
+                emptyText={isRtl ? "لا توجد إجراءات مطابقة" : "No matching actions"}
+                testId="audit-filter-action"
+              />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">{tr("fromLabel")}</label>

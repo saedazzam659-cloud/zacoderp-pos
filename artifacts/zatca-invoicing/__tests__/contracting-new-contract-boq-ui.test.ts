@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { contractWorkItemDefaults } from "../src/lib/contractingWorkItemDefaults";
+import {
+  contractWorkItemDefaults,
+  contractWorkItemDraftForSelection,
+} from "../src/lib/contractingWorkItemDefaults";
 
 const detail = readFileSync(new URL("../src/pages/ContractingProjectDetail.tsx", import.meta.url), "utf8");
 const editor = readFileSync(new URL("../src/components/ContractingContractBoqEditor.tsx", import.meta.url), "utf8");
@@ -16,7 +19,7 @@ test("new owner contract proposes this project's WBS items before the contract e
   assert.match(editor, /current => current \?\? projectItems\.map\(contractWorkItemDefaults\)/);
   assert.match(editor, /onPendingLinesChange\?\.\(next\)/);
   assert.match(detail, /contractId=\{editing\.id \?\? null\}/);
-  assert.match(detail, /disabled=\{saving \|\| pendingBoqLines === null\}/);
+  assert.match(detail, /disabled=\{saving \|\| pendingBoqLines === null \|\| hasUnsavedBoqLine\}/);
 });
 
 test("saving a new agreement attaches each proposed BOQ line to its persisted contract only once", () => {
@@ -64,6 +67,32 @@ test("owner draft BOQ pricing does not mistake estimated WBS cost for a sale pri
   assert.match(editor, /مستقل عن تكلفة التخطيط وعن سعر عقد المالك/);
 });
 
+test("choosing the first WBS item preserves a unit price already entered in the blank draft", () => {
+  const selected = contractWorkItemDraftForSelection(
+    { workItemId: "", unitPrice: "125.50" },
+    { id: 42, code: "EXC", nameAr: "حفر", unit: "m3", plannedQty: "1000" },
+  );
+  assert.equal(selected.workItemId, "42");
+  assert.equal(selected.unitPrice, "125.50");
+
+  const changedItem = contractWorkItemDraftForSelection(
+    { workItemId: "41", unitPrice: "125.50" },
+    { id: 42, code: "EXC", nameAr: "حفر", unit: "m3", plannedQty: "1000" },
+  );
+  assert.equal(changedItem.unitPrice, "0");
+});
+
+test("owner and subcontract contract saves are blocked while a BOQ line edit is uncommitted", () => {
+  assert.match(editor, /onDraftStateChange\?\.\(true\)/);
+  assert.match(editor, /onDraftStateChange\?\.\(false\)/);
+  assert.match(detail, /onDraftStateChange=\{setHasUnsavedBoqLine\}/);
+  assert.match(detail, /disabled=\{saving \|\| pendingBoqLines === null \|\| hasUnsavedBoqLine\}/);
+  assert.match(detail, /disabled=\{saving \|\| hasUnsavedBoqLine\}/);
+  assert.match(detail, /if \(hasUnsavedBoqLine\)/);
+  assert.match(detail, /احفظ سطر جدول الكميات أو ألغِ تعديله قبل حفظ العقد/);
+  assert.match(detail, /احفظ سطر جدول الكميات أو ألغِ تعديله قبل حفظ عقد الباطن/);
+});
+
 test("saved owner BOQ rows are fetched by this contract and appear after reopening edit", () => {
   assert.match(editor, /ownerContractId=\$\{contractId\}/);
   assert.match(editor, /contractId \? fetch\(`\$\{API\}\$\{path\}`/);
@@ -71,7 +100,7 @@ test("saved owner BOQ rows are fetched by this contract and appear after reopeni
   assert.match(editor, /rows\.map\(row => \(/);
   assert.match(editor, /editingId == null \? "POST" : "PUT"/);
   assert.match(editor, /ownerContractId: direction === "owner" \? contractId : null/);
-  assert.match(detail, /setEditing\(null\);\s+void queryClient\.invalidateQueries\(\{ queryKey: \["contracting-project-options"\] \}\);\s+void load\(\)/);
+  assert.match(detail, /setEditing\(null\);\s+setHasUnsavedBoqLine\(false\);\s+void queryClient\.invalidateQueries\(\{ queryKey: \["contracting-project-options"\] \}\);\s+void load\(\)/);
   assert.match(detail, /setEditing\(c\)/);
   assert.match(detail, /key=\{`\$\{projectId\}:owner:\$\{editing\.id \?\? "new"\}`\}/);
   assert.match(detail, /persistedContractId\.current = null;\s+setEditing\(null\)/);

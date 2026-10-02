@@ -1829,6 +1829,7 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<OwnerContract> | null>(null);
   const [pendingBoqLines, setPendingBoqLines] = useState<PendingContractBoqLine[] | null>(null);
+  const [hasUnsavedBoqLine, setHasUnsavedBoqLine] = useState(false);
   const createRequestId = useRef<string | null>(null);
   const persistedContractId = useRef<number | null>(null);
   const saveInFlight = useRef(false);
@@ -1849,6 +1850,10 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
 
   async function save() {
     if (saveInFlight.current) return;
+    if (hasUnsavedBoqLine) {
+      toast({ title: "احفظ سطر جدول الكميات أو ألغِ تعديله قبل حفظ العقد", variant: "destructive" });
+      return;
+    }
     if (!editing?.contractNumber || !editing?.contractDate) {
       toast({ title: t("contracting.ownerContract.required", "رقم العقد والتاريخ مطلوبان"), variant: "destructive" }); return;
     }
@@ -1945,6 +1950,7 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
       }
       persistedContractId.current = null;
       setEditing(null);
+      setHasUnsavedBoqLine(false);
       void queryClient.invalidateQueries({ queryKey: ["contracting-project-options"] });
       void load();
     } catch (e: any) {
@@ -1969,6 +1975,7 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
     createRequestId.current = null;
     persistedContractId.current = null;
     setPendingBoqLines(null);
+    setHasUnsavedBoqLine(false);
     setEditing({
       contractNumber: "", contractDate: new Date().toISOString().slice(0,10),
       contractType: rows.length === 0 ? "main" : "change_order",
@@ -2038,7 +2045,7 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
                     companyName={user?.company?.nameAr || user?.company?.nameEn}
                     className="h-8 gap-1.5 text-xs"
                   />
-                  <Button size="sm" variant="ghost" onClick={() => { persistedContractId.current = null; setPendingBoqLines([]); setEditing(c); }}><Pencil className="h-4 w-4" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => { persistedContractId.current = null; setPendingBoqLines([]); setHasUnsavedBoqLine(false); setEditing(c); }}><Pencil className="h-4 w-4" /></Button>
                   <Button size="sm" variant="ghost" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                 </TableCell>
               </TableRow>
@@ -2053,7 +2060,7 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
             <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
               {(editing as any)?.id ? t("contracting.ownerContract.edit", "تعديل عقد المالك") : t("contracting.ownerContract.add", "إضافة عقد")}
             </h4>
-            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+            <Button size="sm" variant="ghost" onClick={() => { setHasUnsavedBoqLine(false); setEditing(null); }} aria-label={t("common.close", "إغلاق")}>
               <X className="h-4 w-4" />
             </Button>
            </div>
@@ -2136,7 +2143,8 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
             active={active}
             contractId={editing.id ?? null} contractType={editing.contractType}
             parentContractId={editing.parentContractId ?? null}
-            pendingLines={pendingBoqLines} onPendingLinesChange={setPendingBoqLines} />
+            pendingLines={pendingBoqLines} onPendingLinesChange={setPendingBoqLines}
+            onDraftStateChange={setHasUnsavedBoqLine} />
           {editing.id != null && (
             <details className="rounded-lg border bg-background">
               <summary className="cursor-pointer px-4 py-3 font-medium">
@@ -2152,9 +2160,10 @@ function OwnerContractTab({ projectId, project, active }: { projectId: number; p
               </div>
             </details>
           )}
+          {hasUnsavedBoqLine && <p role="status" className="text-xs text-amber-700">احفظ سطر جدول الكميات أو ألغِ تعديله قبل حفظ العقد.</p>}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
-            <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button disabled={saving || pendingBoqLines === null} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
+            <Button variant="outline" disabled={saving} onClick={() => { setHasUnsavedBoqLine(false); setEditing(null); }}>{t("common.cancel", "إلغاء")}</Button>
+            <Button disabled={saving || pendingBoqLines === null || hasUnsavedBoqLine} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
           </div>
         </div>
       )}
@@ -2173,6 +2182,7 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<SubContract> | null>(null);
+  const [hasUnsavedBoqLine, setHasUnsavedBoqLine] = useState(false);
   const createRequestId = useRef<string | null>(null);
   const saveInFlight = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -2197,6 +2207,10 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
 
   async function save() {
     if (saveInFlight.current) return;
+    if (hasUnsavedBoqLine) {
+      toast({ title: "احفظ سطر جدول الكميات أو ألغِ تعديله قبل حفظ عقد الباطن", variant: "destructive" });
+      return;
+    }
     if (!editing?.contractorId) {
       toast({ title: t("contracting.subContract.contractorRequired", "يجب اختيار المقاول الباطن"), variant: "destructive" }); return;
     }
@@ -2223,6 +2237,7 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
       if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
       createRequestId.current = null;
       setEditing(null);
+      setHasUnsavedBoqLine(false);
       void queryClient.invalidateQueries({ queryKey: ["contracting-project-options"] });
       await load();
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
@@ -2250,7 +2265,7 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
               contractorName: contractors.find(item => item.id === contract.contractorId)?.name || null,
             })) as ContractingContractSnapshot[]}
           />
-          <Button size="sm" disabled={saving} onClick={() => { createRequestId.current = null; setEditing({ contractNumber: "", contractDate: new Date().toISOString().slice(0,10), value: "0", advancePayment: "0", advancePercent: "0", retentionPercent: "10", vatPercent: "15", priceIncludesVat: false, durationDays: 0, status: "draft" }); }}>
+          <Button size="sm" disabled={saving} onClick={() => { createRequestId.current = null; setHasUnsavedBoqLine(false); setEditing({ contractNumber: "", contractDate: new Date().toISOString().slice(0,10), value: "0", advancePayment: "0", advancePercent: "0", retentionPercent: "10", vatPercent: "15", priceIncludesVat: false, durationDays: 0, status: "draft" }); }}>
             <Plus className="h-4 w-4 mx-1" /> {t("contracting.subContract.add", "عقد باطن جديد")}
           </Button>
         </div>
@@ -2291,7 +2306,7 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
                        companyName={user?.company?.nameAr || user?.company?.nameEn}
                        className="h-8 gap-1.5 text-xs"
                      />
-                    <Button size="sm" variant="ghost" onClick={() => setEditing(c)}><Pencil className="h-4 w-4" /></Button>
+                     <Button size="sm" variant="ghost" onClick={() => { setHasUnsavedBoqLine(false); setEditing(c); }}><Pencil className="h-4 w-4" /></Button>
                     <Button size="sm" variant="ghost" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                   </TableCell>
                 </TableRow>
@@ -2307,7 +2322,7 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
             <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
               {(editing as any)?.id ? t("contracting.subContract.edit", "تعديل عقد الباطن") : t("contracting.subContract.add", "عقد باطن جديد")}
             </h4>
-            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+            <Button size="sm" variant="ghost" onClick={() => { setHasUnsavedBoqLine(false); setEditing(null); }} aria-label={t("common.close", "إغلاق")}>
               <X className="h-4 w-4" />
             </Button>
            </div>
@@ -2374,7 +2389,8 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
           <ContractingAdvanceRecoveryFields value={editing} disabled={saving} currencyCode={project.currencyCode}
             onChange={values => setEditing(current => current ? { ...current, ...values } : current)} />
           {editing.id != null ? (
-            <ContractingContractBoqEditor key={`${projectId}:subcontract:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} currencyCode={project.currencyCode} direction="subcontract" active={active} contractId={editing.id} />
+             <ContractingContractBoqEditor key={`${projectId}:subcontract:${editing.id}`} projectId={projectId} projectName={project.nameAr} projectCode={project.code} currencyCode={project.currencyCode} direction="subcontract" active={active} contractId={editing.id}
+               onDraftStateChange={setHasUnsavedBoqLine} />
           ) : <p className="text-xs text-muted-foreground">احفظ العقد أولًا، ثم افتحه لإضافة بنود الباطن بأسعارها المستقلة وربطها ببنود التنفيذ أو مصدرها في عقد المالك.</p>}
           {editing.id != null && (
             <details className="rounded-lg border bg-background">
@@ -2391,9 +2407,10 @@ function SubContractsTab({ projectId, project, active }: { projectId: number; pr
               </div>
             </details>
           )}
+          {hasUnsavedBoqLine && <p role="status" className="text-xs text-amber-700">احفظ سطر جدول الكميات أو ألغِ تعديله قبل حفظ عقد الباطن.</p>}
           <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
-            <Button variant="outline" disabled={saving} onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button disabled={saving} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
+            <Button variant="outline" disabled={saving} onClick={() => { setHasUnsavedBoqLine(false); setEditing(null); }}>{t("common.cancel", "إلغاء")}</Button>
+            <Button disabled={saving || hasUnsavedBoqLine} onClick={save}>{saving ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}</Button>
           </div>
         </div>
       )}
