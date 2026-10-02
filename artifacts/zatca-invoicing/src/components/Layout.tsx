@@ -192,6 +192,7 @@ const ACCOUNTING_REPORTS_PERMS  = ["accounting_reports"];
 
 const superAdminNav: NavDef[] = [
   { nameKey: "nav.infoBoard",            href: "/",                         icon: LayoutDashboard, exact: true },
+  { nameKey: "nav.deletedRecordsRestore",href: "/admin/deleted-records",    icon: RotateCcw },
   { nameKey: "nav.demoAnalytics",        href: "/admin/demo-analytics",     icon: Gauge },
   { nameKey: "nav.enterCompany",         href: "/admin/enter-company",      icon: LogIn },
   { nameKey: "nav.registrationRequests", href: "/admin/requests",           icon: Clock },
@@ -225,7 +226,6 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.databaseStats",        href: "/admin/db-stats",           icon: Database },
   { nameKey: "nav.aiCompanyFix",         href: "/admin/ai-fix",             icon: Sparkles },
   { nameKey: "nav.dataDoctor",           href: "/admin/data-doctor",        icon: Stethoscope },
-  { nameKey: "nav.deletedRecordsRestore",href: "/admin/deleted-records",    icon: RotateCcw },
   { nameKey: "nav.supportInbox",         href: "/admin/support",            icon: Inbox },
   { nameKey: "nav.supportSettings",      href: "/admin/support-settings",   icon: MessageSquare },
   { nameKey: "nav.supportCall",          href: "/admin/support-call",       icon: Video },

@@ -454,6 +454,10 @@ export default function SuperAdminDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {[
             // ── Existing screens ──────────────────────────────────────
+            ...(deletedRecordsFeature.data?.enabled ? [{
+              title: "استعادة السجلات المحذوفة", desc: "فحص النسخ المحفوظة واستعادة السجلات المكتملة",
+              href: "/admin/deleted-records", icon: RotateCcw, bg: "bg-emerald-100", color: "text-emerald-700",
+            }] : []),
             { title: "إضافة شركة جديدة", desc: "تسجيل شركة جديدة يدوياً وإنشاء حسابها",
               href: "/companies/new", icon: Plus, bg: "bg-primary/10", color: "text-primary" },
             { title: "طلبات التسجيل", desc: (c?.pending ?? 0) > 0 ? `${c?.pending} طلب بانتظار المراجعة` : "لا توجد طلبات معلقة",
@@ -482,10 +486,6 @@ export default function SuperAdminDashboard() {
               href: "/admin/ai-fix", icon: Sparkles, bg: "bg-violet-100", color: "text-violet-700" },
             { title: "صلاحيات القوائم", desc: "إظهار وإخفاء أقسام لكل شركة",
               href: "/admin/menu-permissions", icon: BarChart3, bg: "bg-slate-100", color: "text-slate-700" },
-            ...(deletedRecordsFeature.data?.enabled ? [{
-              title: "استعادة السجلات المحذوفة", desc: "فحص النسخ المحفوظة واستعادة السجلات المكتملة",
-              href: "/admin/deleted-records", icon: RotateCcw, bg: "bg-emerald-100", color: "text-emerald-700",
-            }] : []),
             { title: "متابعة الديمو", desc: "متابعة استخدام الحسابات التجريبية ودرجة الاهتمام",
               href: "/admin/demo-analytics", icon: Activity, bg: "bg-purple-100", color: "text-purple-700" },
             { title: "نسخ القيود بين الشركات", desc: "نقل قيود اليومية من شركة إلى أخرى مع إعادة ربط الحسابات والفروع",

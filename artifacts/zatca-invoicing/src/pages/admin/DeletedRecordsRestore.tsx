@@ -4,14 +4,24 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 import {
-  AlertTriangle, ArchiveRestore, Check, ChevronLeft, ChevronRight, CircleAlert,
+  AlertTriangle, ArchiveRestore, Check, ChevronsUpDown, ChevronLeft, ChevronRight, CircleAlert,
   Clock3, Database, FileJson2, Layers3, Loader2, RefreshCw, Search, ShieldCheck,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const PAGE_SIZE = 100;
+type SearchableOption = {
+  value: string;
+  label: string;
+  description?: string;
+  searchText?: string;
+  testId?: string;
+};
+
 const TABLE_FILTER_OPTIONS = [
   { value: "customers", label: "العملاء" },
   { value: "suppliers", label: "الموردون" },
@@ -25,6 +35,13 @@ const TABLE_FILTER_OPTIONS = [
   { value: "purchase_invoices", label: "فواتير المشتريات" },
   { value: "journal_entries", label: "قيود اليومية" },
   { value: "sales_returns", label: "مرتجعات المبيعات" },
+];
+const TABLE_FILTER_COMBOBOX_OPTIONS: SearchableOption[] = [
+  { value: "all", label: "كل أنواع السجلات", testId: "option-table-filter-all" },
+  ...TABLE_FILTER_OPTIONS.map((option) => ({
+    ...option,
+    testId: `option-table-filter-${option.value}`,
+  })),
 ];
 
 type Company = {
@@ -97,6 +114,98 @@ function eligibilityReason(reason?: string | null) {
   return known[reason] ?? reason;
 }
 
+function SearchableCombobox({
+  value,
+  onValueChange,
+  options,
+  placeholder,
+  searchPlaceholder,
+  emptyText,
+  disabled = false,
+  testId,
+  id,
+  className = "",
+}: {
+  value: string;
+  onValueChange: (value: string) => void;
+  options: SearchableOption[];
+  placeholder: string;
+  searchPlaceholder: string;
+  emptyText: string;
+  disabled?: boolean;
+  testId: string;
+  id?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.value === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          id={id}
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          aria-label={placeholder}
+          disabled={disabled}
+          className={cn("h-10 w-full justify-between text-right font-normal", className)}
+          data-testid={testId}
+        >
+          <span className="min-w-0 flex-1 truncate text-right" title={selected?.label}>
+            {selected?.label ?? placeholder}
+          </span>
+          <ChevronsUpDown className="me-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        dir="rtl"
+        align="start"
+        className="z-50 p-0"
+        style={{ width: "var(--radix-popover-trigger-width)" }}
+      >
+        <Command
+          dir="rtl"
+          filter={(itemValue, search) =>
+            itemValue.toLocaleLowerCase().includes(search.toLocaleLowerCase()) ? 1 : 0
+          }
+        >
+          <CommandInput dir="rtl" placeholder={searchPlaceholder} className="h-10" />
+          <CommandList className="max-h-64">
+            <CommandEmpty>{emptyText}</CommandEmpty>
+            <CommandGroup>
+              {options.map((option) => (
+                <CommandItem
+                  key={option.value}
+                  value={`${option.label} ${option.description ?? ""} ${option.searchText ?? ""} ${option.value}`}
+                  onSelect={() => {
+                    onValueChange(option.value);
+                    setOpen(false);
+                  }}
+                  data-testid={option.testId}
+                  className="gap-2"
+                >
+                  <Check className={`h-4 w-4 shrink-0 ${value === option.value ? "opacity-100" : "opacity-0"}`} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{option.label}</span>
+                    {option.description && (
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {option.description}
+                      </span>
+                    )}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function DeletedRecordsRestore() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
@@ -121,6 +230,29 @@ export default function DeletedRecordsRestore() {
     },
   });
   const companies = companiesQuery.data ?? [];
+  const companyOptions = useMemo<SearchableOption[]>(
+    () => companies.map((company) => {
+      const databaseLabel = company.agentInstanceId != null
+        ? `قاعدة الوكيل · ${company.agentName || company.agentInstanceId}`
+        : "القاعدة المركزية";
+      return {
+        value: companyKey(company),
+        label: company.nameAr || `شركة ${company.id}`,
+        description: `${databaseLabel}${company.vatNumber ? ` · ${company.vatNumber}` : ""}`,
+        searchText: [
+          company.nameAr,
+          company.nameEn,
+          company.vatNumber,
+          company.agentName,
+          company.agentInstanceId,
+          company.id,
+          databaseLabel,
+        ].filter(Boolean).join(" "),
+        testId: `option-company-${companyKey(company)}`,
+      };
+    }),
+    [companies],
+  );
   const selectedCompany = companies.find((company) => companyKey(company) === selectedCompanyKey) ?? null;
 
   const recordsQuery = useQuery<RecycleResponse>({
@@ -225,22 +357,18 @@ export default function DeletedRecordsRestore() {
                 </Button>
               </div>
             ) : (
-              <Select value={selectedCompanyKey} onValueChange={chooseCompany}>
-                <SelectTrigger id="restore-company" className="h-11 border-[#cbdcd4] bg-white" data-testid="select-restore-company">
-                  <SelectValue placeholder="اختر الشركة وقاعدة البيانات" />
-                </SelectTrigger>
-                <SelectContent dir="rtl">
-                  {companies.map((company) => (
-                    <SelectItem key={companyKey(company)} value={companyKey(company)} data-testid={`option-company-${companyKey(company)}`}>
-                      <span>{company.nameAr}</span>
-                      <span className="mr-2 text-xs text-muted-foreground">
-                        {company.agentInstanceId != null ? `قاعدة الوكيل · ${company.agentName || company.agentInstanceId}` : "القاعدة المركزية"}
-                        {company.vatNumber ? ` · ${company.vatNumber}` : ""}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableCombobox
+                id="restore-company"
+                value={selectedCompanyKey}
+                onValueChange={chooseCompany}
+                options={companyOptions}
+                placeholder="اختر الشركة وقاعدة البيانات"
+                searchPlaceholder="ابحث باسم الشركة أو الرقم الضريبي أو قاعدة البيانات..."
+                emptyText="لا توجد شركة مطابقة"
+                disabled={companiesQuery.isLoading || companies.length === 0}
+                className="h-11 border-[#cbdcd4] bg-white"
+                testId="select-restore-company"
+              />
             )}
             {selectedCompany && (
               <div className="mt-3 flex items-start gap-2 rounded-lg bg-[#f0f6f3] px-3 py-2.5 text-xs text-[#55736a]" data-testid="text-selected-database">
@@ -265,15 +393,17 @@ export default function DeletedRecordsRestore() {
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <div className="min-w-0 flex-1">
-                <Select value={tableFilter} onValueChange={(value) => { setTableFilter(value); setOffset(0); }}>
-                  <SelectTrigger className="h-10 border-[#cbdcd4] bg-white" disabled={!selectedCompany} data-testid="select-table-filter">
-                    <SelectValue placeholder="كل أنواع السجلات" />
-                  </SelectTrigger>
-                  <SelectContent dir="rtl">
-                    <SelectItem value="all">كل أنواع السجلات</SelectItem>
-                    {TABLE_FILTER_OPTIONS.map((table) => <SelectItem key={table.value} value={table.value}>{table.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <SearchableCombobox
+                  value={tableFilter}
+                  onValueChange={(value) => { setTableFilter(value); setOffset(0); }}
+                  options={TABLE_FILTER_COMBOBOX_OPTIONS}
+                  placeholder="كل أنواع السجلات"
+                  searchPlaceholder="ابحث عن نوع السجل..."
+                  emptyText="لا توجد أنواع سجلات مطابقة"
+                  disabled={!selectedCompany}
+                  className="border-[#cbdcd4] bg-white"
+                  testId="select-table-filter"
+                />
               </div>
               <Button variant="outline" className="h-10 border-[#cbdcd4] bg-white" disabled={!selectedCompany || recordsQuery.isFetching} onClick={() => void recordsQuery.refetch()} data-testid="button-refresh-records">
                 {recordsQuery.isFetching ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <RefreshCw className="ml-2 h-4 w-4" />}
