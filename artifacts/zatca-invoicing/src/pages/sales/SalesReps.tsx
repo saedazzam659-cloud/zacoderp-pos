@@ -492,7 +492,7 @@ export default function SalesReps() {
           icon={editing ? Pencil : Plus}
           title={editing ? `تعديل المندوب: ${editing.nameAr}` : "إضافة مندوب جديد"}
           subtitle={editing ? `الكود: ${editing.code}` : "املأ بيانات المندوب — الكود يُولَّد تلقائياً إن تركته فارغاً"}
-          width="3xl"
+          width="full"
           onClose={() => { setShowForm(false); setEditing(null); }}
           onSave={() => saveMut.mutate()}
           saving={saveMut.isPending}
@@ -520,10 +520,11 @@ export default function SalesReps() {
             </TabsList>
 
             <TabsContent value="basic" className="mt-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <Label>الكود</Label>
+              <Label className="text-xs">الكود</Label>
               <Input
+                className="h-9 text-sm"
                 value={form.code}
                 onChange={(e) => setForm({ ...form, code: e.target.value })}
                 placeholder="تلقائي مثل SR0001"
@@ -531,8 +532,9 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label>الاسم بالعربية *</Label>
+              <Label className="text-xs">الاسم بالعربية *</Label>
               <Input
+                className="h-9 text-sm"
                 value={form.nameAr}
                 onChange={(e) => setForm({ ...form, nameAr: e.target.value })}
                 placeholder="اسم المندوب"
@@ -540,8 +542,9 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label>الاسم بالإنجليزية</Label>
+              <Label className="text-xs">الاسم بالإنجليزية</Label>
               <Input
+                className="h-9 text-sm"
                 value={form.nameEn}
                 onChange={(e) => setForm({ ...form, nameEn: e.target.value })}
                 placeholder="Sales Rep Name"
@@ -549,8 +552,9 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label>الهاتف</Label>
+              <Label className="text-xs">الهاتف</Label>
               <Input
+                className="h-9 text-sm"
                 value={form.phone}
                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 placeholder="05xxxxxxxx"
@@ -558,8 +562,9 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label>البريد الإلكتروني</Label>
+              <Label className="text-xs">البريد الإلكتروني</Label>
               <Input
+                className="h-9 text-sm"
                 type="email"
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
@@ -568,9 +573,9 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label>الفرع</Label>
+              <Label className="text-xs">الفرع</Label>
               <select
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.branchId}
                 onChange={(e) => setForm({ ...form, branchId: e.target.value })}
                 data-testid="select-branch"
@@ -584,8 +589,9 @@ export default function SalesReps() {
               </select>
             </div>
             <div>
-              <Label>المنطقة</Label>
+              <Label className="text-xs">المنطقة</Label>
               <Input
+                className="h-9 text-sm"
                 value={form.region}
                 onChange={(e) => setForm({ ...form, region: e.target.value })}
                 placeholder="الرياض / جدة / الشرقية…"
@@ -593,8 +599,9 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label>العنوان</Label>
+              <Label className="text-xs">العنوان</Label>
               <Input
+                className="h-9 text-sm"
                 value={form.address}
                 onChange={(e) => setForm({ ...form, address: e.target.value })}
                 placeholder="عنوان المندوب"
@@ -605,10 +612,11 @@ export default function SalesReps() {
             </TabsContent>
 
             <TabsContent value="financial" className="mt-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <Label>نسبة العمولة %</Label>
+              <Label className="text-xs">نسبة العمولة %</Label>
               <Input
+                className="h-9 text-sm"
                 type="number"
                 step="0.01"
                 min="0"
@@ -619,9 +627,9 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label>نوع العمولة</Label>
+              <Label className="text-xs">نوع العمولة</Label>
               <select
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.commissionType}
                 onChange={(e) => setForm({ ...form, commissionType: e.target.value as any })}
                 data-testid="select-commission-type"
@@ -631,8 +639,9 @@ export default function SalesReps() {
               </select>
             </div>
             <div>
-              <Label>الهدف الشهري (ر.س)</Label>
+              <Label className="text-xs">الهدف الشهري (ر.س)</Label>
               <Input
+                className="h-9 text-sm"
                 type="number"
                 step="0.01"
                 min="0"
@@ -642,7 +651,7 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label>الحساب المحاسبي (اختياري)</Label>
+              <Label className="text-xs">الحساب المحاسبي (اختياري)</Label>
               <AccountCombobox
                 value={form.accountId}
                 onValueChange={(v) => setForm({ ...form, accountId: v })}
@@ -650,22 +659,23 @@ export default function SalesReps() {
                 allowEmpty
               />
             </div>
-            <div className="md:col-span-2">
-              <Label>ملاحظات</Label>
+            <div className="col-span-2 lg:col-span-2">
+              <Label className="text-xs">ملاحظات</Label>
               <Input
+                className="h-9 text-sm"
                 value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })}
                 placeholder="ملاحظات إدارية"
                 data-testid="input-notes"
               />
             </div>
-            <div className="md:col-span-2">
-              <Label className="flex items-center gap-1">
+            <div className="col-span-2 lg:col-span-2">
+              <Label className="text-xs flex items-center gap-1">
                 <KeyRound className="h-3.5 w-3.5 text-blue-600" />
                 حساب الدخول للنظام
               </Label>
               <select
-                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.userId}
                 onChange={(e) => {
                   const newUserId = e.target.value;

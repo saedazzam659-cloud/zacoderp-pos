@@ -1,7 +1,7 @@
 // Purchase Order form — operational, finance-FREE.
 //
 // LAYOUT: pixel-mirror of PurchaseInvoiceForm so that purchase orders share
-// the same width (max-w-6xl), card structure, field sizing (h-9 text-sm),
+// the same full-width layout, card structure, field sizing (h-9 text-sm),
 // header band (icon tile + title + subtitle), header-data grid, lines grid,
 // totals box (w-72), and bottom action bar. The ONLY structural differences
 // from the invoice form are:
@@ -967,7 +967,7 @@ export default function PurchaseOrderForm() {
   );
 
   return (
-    <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
+    <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 w-full min-w-0" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center gap-3 flex-wrap">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/purchasing/orders")}>
           {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}

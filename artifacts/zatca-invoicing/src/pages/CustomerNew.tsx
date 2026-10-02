@@ -347,7 +347,7 @@ export default function CustomerNew() {
   };
 
   return (
-    <div ref={containerRef} onKeyDown={onKeyDown} className="max-w-4xl mx-auto space-y-4" dir="rtl">
+    <div ref={containerRef} onKeyDown={onKeyDown} className="w-full min-w-0 space-y-4 [&_label]:text-xs" dir="rtl">
 
       {/* Header */}
       <div className="flex items-center gap-4">
@@ -440,7 +440,7 @@ export default function CustomerNew() {
             <TabsContent value="basic" className="mt-0">
               <Card className="rounded-t-none border-t-0">
                 <CardContent className="pt-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 
                     {/* الشركة المصدرة */}
                     {isSuperAdmin ? (
@@ -456,6 +456,7 @@ export default function CustomerNew() {
                             </datalist>
                             <FormControl>
                               <Input
+                                className="h-9 text-sm"
                                 list="cust-companies-list"
                                 placeholder="اكتب اسم الشركة..."
                                 value={companyText}
@@ -527,7 +528,7 @@ export default function CustomerNew() {
 
                     {/* تصنيف الجهة — مستقل عن نوع الفاتورة B2B/B2C */}
                     <FormField control={form.control} name="partyClassification" render={({ field }) => (
-                      <FormItem className="md:col-span-2">
+                      <FormItem className="col-span-2 lg:col-span-4">
                         <FormLabel>تصنيف الجهة</FormLabel>
                         <div className="flex flex-wrap gap-4 rounded-md border p-3" role="radiogroup" aria-label="تصنيف الجهة">
                           {([
@@ -555,7 +556,7 @@ export default function CustomerNew() {
                           اسم العميل أو الجهة (عربي) <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
-                          <Input placeholder="مثال: شركة الأمانة للتجارة" {...field} />
+                          <Input className="h-9 text-sm" placeholder="مثال: شركة الأمانة للتجارة" {...field} />
                         </FormControl>
                         <FormDescription>الاسم الرسمي كما في السجل التجاري</FormDescription>
                         <FormMessage />
@@ -567,7 +568,7 @@ export default function CustomerNew() {
                       <FormItem>
                         <FormLabel>الاسم (إنجليزي)</FormLabel>
                         <FormControl>
-                          <Input placeholder="Al Amanah Trading Co." dir="ltr" className="text-left" {...field} />
+                          <Input placeholder="Al Amanah Trading Co." dir="ltr" className="h-9 text-sm text-left" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -582,7 +583,7 @@ export default function CustomerNew() {
                       <select
                         value={customerGroupId}
                         onChange={e => setCustomerGroupId(e.target.value)}
-                        className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                        className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
                         data-testid="customer-group"
                       >
                         <option value="">— بدون مجموعة —</option>
@@ -620,7 +621,7 @@ export default function CustomerNew() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* VAT */}
                     <FormField control={form.control} name="vatNumber" render={({ field }) => (
                       <FormItem>
@@ -632,7 +633,7 @@ export default function CustomerNew() {
                         <FormControl>
                           <Input
                             placeholder="310000000000003"
-                            dir="ltr" className="text-left font-mono tracking-widest"
+                            dir="ltr" className="h-9 text-sm text-left font-mono tracking-widest"
                             maxLength={15}
                             {...field}
                             onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
@@ -665,7 +666,7 @@ export default function CustomerNew() {
                         <FormControl>
                           <Input
                             placeholder="1010000001"
-                            dir="ltr" className="text-left font-mono"
+                            dir="ltr" className="h-9 text-sm text-left font-mono"
                             {...field}
                             onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
                           />
@@ -687,14 +688,14 @@ export default function CustomerNew() {
                       <BadgeCheck className="h-4 w-4 text-amber-600" />
                       <h3 className="text-sm font-semibold text-amber-900">الائتمان والمسموح به</h3>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <FormField control={form.control} name="creditLimit" render={({ field }) => (
                         <FormItem>
                           <FormLabel>الحد الائتماني للسحب (ر.س)</FormLabel>
                           <FormControl>
                             <Input
                               type="number" min={0} step="0.01" inputMode="decimal"
-                              placeholder="0.00" dir="ltr" className="text-left font-mono"
+                              placeholder="0.00" dir="ltr" className="h-9 text-sm text-left font-mono"
                               {...field}
                               value={field.value ?? 0}
                               onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))}
@@ -713,7 +714,7 @@ export default function CustomerNew() {
                           <FormControl>
                             <Input
                               type="number" min={0} step="1" inputMode="numeric"
-                              placeholder="0" dir="ltr" className="text-left font-mono"
+                              placeholder="0" dir="ltr" className="h-9 text-sm text-left font-mono"
                               {...field}
                               value={field.value ?? 0}
                               onChange={e => field.onChange(e.target.value === "" ? 0 : Number(e.target.value))}
@@ -786,12 +787,12 @@ export default function CustomerNew() {
                       <Phone className="h-4 w-4 text-primary" />
                       <h3 className="font-semibold text-sm">معلومات التواصل</h3>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <FormField control={form.control} name="email" render={({ field }) => (
                         <FormItem>
                           <FormLabel>البريد الإلكتروني</FormLabel>
                           <FormControl>
-                            <Input type="email" placeholder="info@company.com" dir="ltr" className="text-left" {...field} />
+                            <Input type="email" placeholder="info@company.com" dir="ltr" className="h-9 text-sm text-left" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -800,7 +801,7 @@ export default function CustomerNew() {
                         <FormItem>
                           <FormLabel>رقم الهاتف</FormLabel>
                           <FormControl>
-                            <Input placeholder="0500000000" dir="ltr" className="text-left" {...field} />
+                            <Input placeholder="0500000000" dir="ltr" className="h-9 text-sm text-left" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -837,12 +838,12 @@ export default function CustomerNew() {
                         </Button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <FormField control={form.control} name="street" render={({ field }) => (
                         <FormItem>
                           <FormLabel>اسم الشارع {isB2B && <span className="text-destructive">*</span>}</FormLabel>
                           <FormControl>
-                            <Input placeholder="شارع الملك فهد" {...field} />
+                            <Input className="h-9 text-sm" placeholder="شارع الملك فهد" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -854,7 +855,7 @@ export default function CustomerNew() {
                           <FormControl>
                             <Input
                               placeholder="1234"
-                              dir="ltr" className="text-left"
+                              dir="ltr" className="h-9 text-sm text-left"
                               maxLength={4}
                               {...field}
                               onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
@@ -868,7 +869,7 @@ export default function CustomerNew() {
                       <FormField control={form.control} name="district" render={({ field }) => (
                         <FormItem>
                           <FormLabel>الحي</FormLabel>
-                          <FormControl><Input placeholder="العليا" {...field} /></FormControl>
+                          <FormControl><Input className="h-9 text-sm" placeholder="العليا" {...field} /></FormControl>
                           <FormMessage />
                         </FormItem>
                       )} />
@@ -876,7 +877,7 @@ export default function CustomerNew() {
                       <FormField control={form.control} name="city" render={({ field }) => (
                         <FormItem>
                           <FormLabel>المدينة {isB2B && <span className="text-destructive">*</span>}</FormLabel>
-                          <FormControl><Input placeholder="الرياض" {...field} /></FormControl>
+                          <FormControl><Input className="h-9 text-sm" placeholder="الرياض" {...field} /></FormControl>
                           <FormMessage />
                         </FormItem>
                       )} />
@@ -887,7 +888,7 @@ export default function CustomerNew() {
                           <FormControl>
                             <Input
                               placeholder="12345"
-                              dir="ltr" className="text-left font-mono"
+                              dir="ltr" className="h-9 text-sm text-left font-mono"
                               maxLength={5}
                               {...field}
                               onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
@@ -927,7 +928,7 @@ export default function CustomerNew() {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <FormField control={form.control} name="nationalAddressShort" render={({ field }) => (
                         <FormItem>
                           <FormLabel>الرمز الوطني المختصر</FormLabel>
@@ -935,7 +936,7 @@ export default function CustomerNew() {
                             <Input
                               placeholder="RYDH2345"
                               dir="ltr"
-                              className="text-left font-mono tracking-widest uppercase"
+                              className="h-9 text-sm text-left font-mono tracking-widest uppercase"
                               maxLength={8}
                               value={field.value ?? ""}
                               onChange={(e) => field.onChange(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
@@ -956,7 +957,7 @@ export default function CustomerNew() {
                   </div>
 
                   {/* Branch + Accounting link */}
-                  <div className="pt-4 border-t grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="pt-4 border-t grid grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className="space-y-1.5">
                       <label className="text-sm font-medium flex items-center gap-1.5">
                         <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
@@ -965,7 +966,7 @@ export default function CustomerNew() {
                       <select
                         value={branchId}
                         onChange={e => setBranchId(e.target.value)}
-                        className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                        className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
                         data-testid="customer-branch"
                       >
                         <option value="">— بدون فرع محدد —</option>
@@ -992,12 +993,12 @@ export default function CustomerNew() {
                       <p className="text-xs text-muted-foreground">اختياري — الحساب المرتبط بهذا العميل في دفتر الأستاذ</p>
                     </div>
                     {!custAccountId && (
-                      <div className="space-y-1.5 md:col-span-2 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4">
+                      <div className="col-span-2 lg:col-span-4 space-y-1.5 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4">
                         <label className="text-sm font-medium">تصنيف العميل (للإنشاء التلقائي للحساب)</label>
                         <select
                           value={custAccountCategory}
                           onChange={e => setCustAccountCategory(e.target.value as "local" | "export")}
-                          className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                          className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
                           data-testid="customer-account-category"
                         >
                           <option value="local">عميل محلي (عملاء محليون)</option>

@@ -131,11 +131,11 @@ type SupplierImportPreview = {
 function Field({ label, value, onChange, placeholder, dir }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; dir?: string }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-sm font-medium">{label}</label>
+      <label className="text-xs font-medium">{label}</label>
       <Input
         placeholder={placeholder}
         dir={dir}
-        className={dir === "ltr" ? "text-left font-mono" : undefined}
+        className={dir === "ltr" ? "h-9 text-sm text-left font-mono" : "h-9 text-sm"}
         value={value}
         onChange={e => onChange(e.target.value)}
       />
@@ -766,7 +766,7 @@ export default function Suppliers() {
           subtitle={editSup
             ? t("pages.suppliers.editSubtitle")
             : t("pages.suppliers.addSubtitle", "أدخل بيانات المورد الجديد")}
-          width="4xl"
+          width="full"
           onClose={closePanel}
           onSave={() => editSup
             ? updateMutation.mutate(editForm)
@@ -793,8 +793,8 @@ export default function Suppliers() {
             </TabsList>
 
             <TabsContent value="identity" className="mt-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                <fieldset className="md:col-span-2 space-y-2">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <fieldset className="col-span-2 lg:col-span-4 space-y-2">
                   <legend className="text-sm font-medium">تصنيف الجهة</legend>
                   <div className="flex flex-wrap gap-4 rounded-md border p-3">
                     {([
@@ -814,7 +814,7 @@ export default function Suppliers() {
                 </fieldset>
                 <Field label="رقم المورد" value={editForm.code} onChange={v => setEditForm(f => ({ ...f, code: v }))} placeholder="SUP-001" dir="ltr" />
                 <Field label={`${t("pages.suppliers.supplierNameAr")} *`} value={editForm.nameAr} onChange={v => setEditForm(f => ({ ...f, nameAr: v }))} placeholder={t("pages.suppliers.supplierNameArPlaceholder")} />
-                <div className="md:col-span-2"><Field label={t("pages.suppliers.nameEnLabel")} value={editForm.nameEn} onChange={v => setEditForm(f => ({ ...f, nameEn: v }))} placeholder={t("pages.suppliers.nameEnPlaceholder")} dir="ltr" /></div>
+                <div className="col-span-2 lg:col-span-2"><Field label={t("pages.suppliers.nameEnLabel")} value={editForm.nameEn} onChange={v => setEditForm(f => ({ ...f, nameEn: v }))} placeholder={t("pages.suppliers.nameEnPlaceholder")} dir="ltr" /></div>
                 <Field label={t("pages.suppliers.vatNumberLabel")} value={editForm.vatNumber} onChange={v => setEditForm(f => ({ ...f, vatNumber: v }))} placeholder="310000000000003" dir="ltr" />
                 <Field label={t("pages.suppliers.crNumberLabel")} value={editForm.crNumber} onChange={v => setEditForm(f => ({ ...f, crNumber: v }))} placeholder="1010000001" dir="ltr" />
                 <Field label={t("pages.suppliers.emailLabel")} value={editForm.email} onChange={v => setEditForm(f => ({ ...f, email: v }))} placeholder="info@supplier.com" dir="ltr" />
@@ -823,7 +823,7 @@ export default function Suppliers() {
             </TabsContent>
 
             <TabsContent value="address" className="mt-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <Field label={t("pages.suppliers.streetName")} value={editForm.street} onChange={v => setEditForm(f => ({ ...f, street: v }))} placeholder={t("pages.suppliers.streetPlaceholder")} />
                 <Field label={t("pages.suppliers.buildingNumber")} value={editForm.buildingNumber} onChange={v => setEditForm(f => ({ ...f, buildingNumber: v }))} placeholder="1234" dir="ltr" />
                 <Field label={t("pages.suppliers.district")} value={editForm.district} onChange={v => setEditForm(f => ({ ...f, district: v }))} placeholder={t("pages.suppliers.districtPlaceholder")} />
@@ -854,7 +854,7 @@ export default function Suppliers() {
                     <select
                       value={accountCategory}
                       onChange={e => setAccountCategory(e.target.value as "local" | "foreign")}
-                      className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
+                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
                       data-testid="supplier-account-category"
                     >
                       <option value="local">مورد محلي (موردون محليون)</option>

@@ -420,7 +420,7 @@ export default function LetterOfCredit() {
           icon={CreditCard}
           title={editId ? tr("formEdit") : tr("formNew")}
           subtitle={tr("formSubtitle")}
-          width="4xl"
+          width="full"
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={saveMut.isPending}
@@ -433,18 +433,18 @@ export default function LetterOfCredit() {
               <TabsTrigger value="expenses" className="flex-1 text-xs gap-1.5"><ListOrdered className="h-3.5 w-3.5" />{tr("tabExpenses", { count: expenses.length })}</TabsTrigger>
             </TabsList>
             <TabsContent value="info" className="mt-0">
-              <FormGrid>
-                <Field label={tr("fLcNumber")} required><Input placeholder={tr("fLcNumberPh")} dir="ltr" className="text-left" value={form.lcNumber} onChange={e => setForm((p: any) => ({ ...p, lcNumber: e.target.value }))} /></Field>
-                <Field label={tr("fDate")} required><DateField value={form.lcDate} onChange={e => setForm((p: any) => ({ ...p, lcDate: e.target.value }))} /></Field>
+              <FormGrid cols={4}>
+                <Field label={tr("fLcNumber")} required><Input placeholder={tr("fLcNumberPh")} dir="ltr" className="h-9 text-sm text-left" value={form.lcNumber} onChange={e => setForm((p: any) => ({ ...p, lcNumber: e.target.value }))} /></Field>
+                <Field label={tr("fDate")} required><DateField className="h-9 text-sm" value={form.lcDate} onChange={e => setForm((p: any) => ({ ...p, lcDate: e.target.value }))} /></Field>
                 <Field label={tr("fSupplier")}><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder={tr("fSupplierPh")} /></Field>
                 <Field label="الفرع"><SearchCombobox items={branchItems} value={form.branchId ?? ""} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))} placeholder="— بدون فرع —" /></Field>
-                <Field label={tr("fBank")}><Input placeholder={tr("fBankPh")} value={form.bankName} onChange={e => setForm((p: any) => ({ ...p, bankName: e.target.value }))} /></Field>
-                <Field label={tr("fAmount")} required><Input type="text" inputMode="decimal" placeholder="0.00" dir="ltr" className="text-left" value={form.totalAmount} onChange={e => setForm((p: any) => ({ ...p, totalAmount: e.target.value.replace(/[^0-9.]/g, "") }))} /></Field>
+                <Field label={tr("fBank")}><Input className="h-9 text-sm" placeholder={tr("fBankPh")} value={form.bankName} onChange={e => setForm((p: any) => ({ ...p, bankName: e.target.value }))} /></Field>
+                <Field label={tr("fAmount")} required><Input className="h-9 text-sm text-left" type="text" inputMode="decimal" placeholder="0.00" dir="ltr" value={form.totalAmount} onChange={e => setForm((p: any) => ({ ...p, totalAmount: e.target.value.replace(/[^0-9.]/g, "") }))} /></Field>
                 <Field label={tr("fCurrency")}><SearchCombobox items={currencyItems} value={form.currencyCode} onValueChange={v => setForm((p: any) => ({ ...p, currencyCode: v }))} placeholder={tr("fCurrencyPh")} /></Field>
                 {form.currencyCode && form.currencyCode !== baseCode && (
-                  <Field label={`${tr("fExchangeRate")} — ${tr("fExchangeRateHint", { from: form.currencyCode, to: baseCode })}`} className="md:col-span-2">
+                  <Field label={`${tr("fExchangeRate")} — ${tr("fExchangeRateHint", { from: form.currencyCode, to: baseCode })}`} className="col-span-2 lg:col-span-2">
                     <div className="flex gap-2">
-                      <Input type="text" inputMode="decimal" dir="ltr" className="text-left font-mono" placeholder="3.75"
+                      <Input type="text" inputMode="decimal" dir="ltr" className="h-9 text-sm text-left font-mono" placeholder="3.75"
                         value={form.exchangeRate}
                         onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
                       <Button type="button" variant="outline" size="sm" className="shrink-0"
@@ -455,14 +455,14 @@ export default function LetterOfCredit() {
                     </div>
                   </Field>
                 )}
-                <Field label={tr("fSettlementAccount")} required className="md:col-span-2">
+                <Field label={tr("fSettlementAccount")} required className="col-span-2 lg:col-span-2">
                   <SearchCombobox items={accountItems}
                     value={String(form.settlementAccountId ?? "")}
                     onValueChange={v => setForm((p: any) => ({ ...p, settlementAccountId: v }))}
                     placeholder={tr("fSettlementAccountPh")} />
                   <p className="text-[11px] text-muted-foreground mt-1">{tr("fSettlementAccountHint")}</p>
                 </Field>
-                <Field label={tr("fNotes")} className="md:col-span-2">
+                <Field label={tr("fNotes")} className="col-span-2 lg:col-span-2">
                   <Textarea rows={2} className="resize-none text-sm" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
                 </Field>
               </FormGrid>
@@ -471,15 +471,15 @@ export default function LetterOfCredit() {
               {expenses.map((exp, idx) => (
                 <div key={exp._id ?? idx} className="space-y-2 p-3 rounded-lg border bg-muted/20">
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1"><Label className="text-xs">{tr("expenseType")}</Label><Input className="h-8 text-xs" placeholder={tr("expenseTypePh")} value={exp.expenseType} onChange={e => updateExpense(idx, "expenseType", e.target.value)} /></div>
+                    <div className="space-y-1"><Label className="text-xs">{tr("expenseType")}</Label><Input className="h-9 text-sm" placeholder={tr("expenseTypePh")} value={exp.expenseType} onChange={e => updateExpense(idx, "expenseType", e.target.value)} /></div>
                     <div className="space-y-1"><Label className="text-xs">{tr("expenseCurrency")}</Label><SearchCombobox items={currencyItems} value={exp.currencyCode} onValueChange={v => updateExpense(idx, "currencyCode", v)} placeholder={tr("fCurrencyPh")} /></div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 items-end">
                     <div className="space-y-1"><Label className="text-xs">{tr("expenseAccount")}</Label><SearchCombobox items={accountItems} value={String(exp.accountId ?? "")} onValueChange={v => updateExpense(idx, "accountId", v)} placeholder={tr("expenseAccountPh")} /></div>
                     <div className="space-y-1"><Label className="text-xs">{tr("expenseAmount")}</Label>
                       <div className="flex gap-2">
-                        <Input className="h-8 text-xs" type="text" inputMode="decimal" placeholder="0.00" value={exp.amount} onChange={e => updateExpense(idx, "amount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0" onClick={() => removeExpense(idx)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                        <Input className="h-9 text-sm" type="text" inputMode="decimal" placeholder="0.00" value={exp.amount} onChange={e => updateExpense(idx, "amount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                        <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-destructive shrink-0" onClick={() => removeExpense(idx)}><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
                     </div>
                   </div>
@@ -488,10 +488,10 @@ export default function LetterOfCredit() {
                       <div className="space-y-1">
                         <Label className="text-xs">{tr("fExchangeRate")} — {tr("fExchangeRateHint", { from: exp.currencyCode, to: baseCode })}</Label>
                         <div className="flex gap-2">
-                          <Input className="h-8 text-xs font-mono" type="text" inputMode="decimal" dir="ltr" placeholder="3.75"
+                          <Input className="h-9 text-sm font-mono" type="text" inputMode="decimal" dir="ltr" placeholder="3.75"
                             value={exp.exchangeRate ?? "1"}
                             onChange={e => updateExpense(idx, "exchangeRate", e.target.value.replace(/[^0-9.]/g, ""))} />
-                          <Button type="button" variant="outline" size="sm" className="h-8 shrink-0 text-xs"
+                          <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 text-sm"
                             onClick={() => fetchRateInto(exp.currencyCode, form.lcDate || today(), (r) =>
                               setExpenses(p => p.map((x, j) => j === idx ? { ...x, exchangeRate: r } : x)))}>
                             {tr("fetchRate")}
