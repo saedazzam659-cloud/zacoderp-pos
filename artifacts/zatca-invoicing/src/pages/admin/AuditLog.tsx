@@ -335,6 +335,7 @@ export default function AuditLog() {
   const { toast } = useToast();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`adminPages.auditLog.${k}`, opts) as string;
+  const locale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const trAction = (a: string) => {
     const translated = t(`adminPages.auditLog.actions.${a}`, { defaultValue: "" }) as string;
     return translated || (isRtl ? "عملية أخرى" : a.replace(/_/g, " "));
@@ -362,7 +363,6 @@ export default function AuditLog() {
     const success = value >= 200 && value < 400;
     return `${tr(success ? "statusSuccess" : "statusFailure")} (${value.toLocaleString(locale)})`;
   };
-  const locale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const headers = { Authorization: `Bearer ${token}` };
 
   const [module, setModule] = useState<string>("__all");
@@ -1030,7 +1030,7 @@ export default function AuditLog() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all">{tr("all")}</SelectItem>
-                  {modules.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                  {modules.map(m => <SelectItem key={m} value={m}>{moduleLabel(m)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -1215,7 +1215,7 @@ export default function AuditLog() {
                     : (c.nameEn ?? c.nameAr ?? `#${r.companyId}`);
                 })();
                 const entityNode = r.entityType ? (() => {
-                  const friendly = tr(`entityTypes.${r.entityType}`, { defaultValue: r.entityType });
+                  const friendly = entityLabel(r.entityType);
                   return `${friendly}${r.entityId ? ` #${r.entityId}` : ""}`;
                 })() : null;
                 return (
@@ -1286,7 +1286,7 @@ export default function AuditLog() {
                       <div className="flex items-center justify-between gap-2 text-xs">
                         <span className="text-muted-foreground">{tr("colUser")}</span>
                         <span className="font-medium text-end">
-                          {r.username ?? "—"}{r.role ? ` (${r.role})` : ""}
+                          {r.username ?? "—"}{r.role ? ` (${roleLabel(r.role)})` : ""}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2 text-xs">
@@ -1294,9 +1294,13 @@ export default function AuditLog() {
                         <span className="text-end">{companyName}</span>
                       </div>
                       <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="text-muted-foreground shrink-0">{tr("colPath")}</span>
-                        <span className="font-mono text-end truncate max-w-[65%]" title={`${r.method ?? ""} ${r.path ?? ""}`}>
-                          {r.method} {r.path ?? "—"}
+                        <span className="text-muted-foreground">{tr("colModule")}</span>
+                        <span className="text-end">{moduleLabel(r.module)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground shrink-0">{tr("colSerial")}</span>
+                        <span className="font-mono text-end" data-testid="audit-row-serial-m">
+                          {r.id.toLocaleString(locale)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2 text-xs">
@@ -1306,7 +1310,7 @@ export default function AuditLog() {
                       {r.statusCode != null && (
                         <div className="flex items-center justify-between gap-2 text-xs">
                           <span className="text-muted-foreground">{tr("colStatus")}</span>
-                          <span className={`font-mono ${ok ? "text-emerald-600" : "text-rose-600"}`}>{r.statusCode}</span>
+                          <span className={`font-mono ${ok ? "text-emerald-600" : "text-rose-600"}`}>{statusLabel(r.statusCode)}</span>
                         </div>
                       )}
                     </div>
@@ -1347,11 +1351,11 @@ export default function AuditLog() {
                         `payment_voucher` instead of "payment voucher" /
                         "سند صرف". */}
                     <th className="px-3 py-2 font-medium">{tr("colEntity")}</th>
-                    <th className="px-3 py-2 font-medium">{tr("colPath")}</th>
+                    <th className="px-3 py-2 font-medium">{tr("colSerial")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colStatus")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colIp")}</th>
-                    <th className="px-3 py-2 font-medium" title="المكان الفعلي الذي سجّل المستخدم الدخول منه (يُحدَّد تلقائيًا من GPS وقت تسجيل الدخول)">
-                      موقع الدخول
+                    <th className="px-3 py-2 font-medium" title="الموقع الذي سجّل المستخدم دخوله منه، ويُحدَّد تلقائيًا وقت تسجيل الدخول">
+                      {tr("loginLocation")}
                     </th>
                     {/* Row-level share-link column (task #131) — header text
                         is screen-reader only since the icon column is
@@ -1424,7 +1428,7 @@ export default function AuditLog() {
                         </td>
                         <td className="px-3 py-2">
                           <div className="font-medium">{r.username ?? "—"}</div>
-                          {r.role && <div className="text-[10px] text-muted-foreground">{r.role}</div>}
+                          {r.role && <div className="text-[10px] text-muted-foreground">{roleLabel(r.role)}</div>}
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex flex-wrap items-center gap-1">
@@ -1457,7 +1461,7 @@ export default function AuditLog() {
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-xs font-mono">{r.module}</td>
+                        <td className="px-3 py-2 text-xs">{moduleLabel(r.module)}</td>
                         {/* Entity cell (task #153). Resolves the raw enum
                             to the same translated friendly label the
                             Markdown bulk-copy uses (`entityTypes.invoice`
@@ -1481,10 +1485,8 @@ export default function AuditLog() {
                           title={r.entityType ?? undefined}
                         >
                           {r.entityType ? (() => {
-                            const friendly = tr(`entityTypes.${r.entityType}`, {
-                              defaultValue: r.entityType,
-                            });
-                            const showRaw = friendly !== r.entityType;
+                            const friendly = entityLabel(r.entityType);
+                            const showRaw = !isRtl && friendly !== r.entityType;
                             return (
                               <>
                                 <span>{friendly}</span>
@@ -1499,36 +1501,12 @@ export default function AuditLog() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </td>
-                        <td
-                          className="px-3 py-2 text-xs max-w-[300px] truncate"
-                          title={`${r.method ?? ""} ${r.path ?? ""}`}
-                          onClick={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => e.stopPropagation()}
-                        >
-                          {(() => {
-                            const fp = friendlyPath(r.method, r.path);
-                            if (!fp) {
-                              // Unknown pattern → fall back to the raw method/path so
-                              // we never hide what actually happened on the server.
-                              return (
-                                <span className="font-mono text-muted-foreground">
-                                  <span className="text-foreground/70">{r.method}</span> {r.path ?? "—"}
-                                </span>
-                              );
-                            }
-                            const cls = fp.mutation
-                              ? "text-blue-700 hover:text-blue-900 hover:underline font-medium"
-                              : "text-slate-700 hover:text-slate-900 hover:underline";
-                            return fp.href ? (
-                              <Link href={fp.href} className={cls} onClick={onPathLinkClick(r)}>{fp.label}</Link>
-                            ) : (
-                              <span className="text-slate-700 font-medium">{fp.label}</span>
-                            );
-                          })()}
+                        <td className="px-3 py-2 text-xs font-mono" data-testid="audit-row-serial">
+                          {r.id.toLocaleString(locale)}
                         </td>
                         <td className="px-3 py-2 text-xs">
                           {r.statusCode != null && (
-                            <span className={`font-mono ${ok ? "text-emerald-600" : "text-rose-600"}`}>{r.statusCode}</span>
+                            <span className={`font-mono ${ok ? "text-emerald-600" : "text-rose-600"}`}>{statusLabel(r.statusCode)}</span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-xs font-mono text-muted-foreground">{r.ip ?? "—"}</td>
@@ -1626,7 +1604,7 @@ export default function AuditLog() {
                                   <dt className="text-muted-foreground">{tr("sharePreviewAction")}</dt>
                                   <dd>{label}</dd>
                                   <dt className="text-muted-foreground">{tr("sharePreviewModule")}</dt>
-                                  <dd className="font-mono break-all">{r.module}</dd>
+                                  <dd className="break-all">{moduleLabel(r.module)}</dd>
                                   <dt className="text-muted-foreground">{tr("sharePreviewTime")}</dt>
                                   <dd className="font-mono">{tt.toLocaleString(locale, { hour12: false })}</dd>
                                   <dt className="text-muted-foreground">{tr("sharePreviewLink")}</dt>
@@ -1784,6 +1762,11 @@ export default function AuditLog() {
         locale={locale}
         tr={tr}
         trAction={trAction}
+        moduleLabel={moduleLabel}
+        roleLabel={roleLabel}
+        entityLabel={entityLabel}
+        methodLabel={methodLabel}
+        statusLabel={statusLabel}
         shareLinkLabelForRow={shareLinkLabelForRow}
         isSuperAdmin={isSuperAdmin}
         token={token ?? ""}
@@ -1848,6 +1831,11 @@ function AuditDetailsDialog({
   locale,
   tr,
   trAction,
+  moduleLabel,
+  roleLabel,
+  entityLabel,
+  methodLabel,
+  statusLabel,
   shareLinkLabelForRow,
   isSuperAdmin,
   token,
@@ -1863,6 +1851,11 @@ function AuditDetailsDialog({
   locale: string;
   tr: (k: string, opts?: any) => string;
   trAction: (a: string) => string;
+  moduleLabel: (value: string | null | undefined) => string;
+  roleLabel: (value: string) => string;
+  entityLabel: (value: string) => string;
+  methodLabel: (value: string | null | undefined) => string;
+  statusLabel: (value: number | null | undefined) => string;
   shareLinkLabelForRow: (row: AuditRow) => string;
   isSuperAdmin: boolean;
   token: string;
@@ -1924,7 +1917,7 @@ function AuditDetailsDialog({
                 {new Date(row.createdAt).toLocaleString(locale, { hour12: false })}
                 {" · "}
                 {trAction(row.action)}
-                {row.module ? ` · ${row.module}` : ""}
+                {row.module ? ` · ${moduleLabel(row.module)}` : ""}
               </span>
             ) : loading ? (
               <span className="text-xs text-muted-foreground">{tr("loadingEntry")}</span>
@@ -1973,7 +1966,7 @@ function AuditDetailsDialog({
               <DetailField label={tr("detailsUser")}>
                 <span className="font-medium">{row.username ?? "—"}</span>
                 {row.role && (
-                  <span className="text-[10px] text-muted-foreground ms-1">({row.role})</span>
+                  <span className="text-[10px] text-muted-foreground ms-1">({roleLabel(row.role)})</span>
                 )}
               </DetailField>
               <DetailField label={tr("detailsIp")}>
@@ -1994,10 +1987,8 @@ function AuditDetailsDialog({
                   // secondary line when the friendly label is identical
                   // to the raw enum (e.g. `invoice` → "invoice" in
                   // English) to avoid noisy "invoice (invoice)" output.
-                  const friendly = tr(`entityTypes.${row.entityType}`, {
-                    defaultValue: row.entityType,
-                  });
-                  const showRaw = friendly !== row.entityType;
+                  const friendly = entityLabel(row.entityType);
+                  const showRaw = !isRtl && friendly !== row.entityType;
                   return (
                     <>
                       <span>{friendly}</span>
@@ -2031,7 +2022,7 @@ function AuditDetailsDialog({
                     data-testid="audit-details-status"
                     className={`font-mono text-xs ${ok ? "text-emerald-600" : "text-rose-600"}`}
                   >
-                    {row.statusCode}
+                    {statusLabel(row.statusCode)}
                   </span>
                 ) : (
                   <span className="text-xs text-muted-foreground">—</span>
@@ -2060,7 +2051,7 @@ function AuditDetailsDialog({
                   })()}
                   <div className="flex items-start gap-1.5">
                     <span className="font-mono text-xs break-all flex-1 text-muted-foreground">
-                      {row.method ? <span className="text-foreground/70">{row.method} </span> : null}
+                      {row.method ? <span className="text-foreground/70">{methodLabel(row.method)} </span> : null}
                       {row.path ?? "—"}
                     </span>
                     {pathCopyValue && (
@@ -2192,7 +2183,7 @@ function AuditDetailsDialog({
                         <dt className="text-muted-foreground">{tr("sharePreviewAction")}</dt>
                         <dd>{trAction(row.action)}</dd>
                         <dt className="text-muted-foreground">{tr("sharePreviewModule")}</dt>
-                        <dd className="font-mono break-all">{row.module}</dd>
+                        <dd className="break-all">{moduleLabel(row.module)}</dd>
                         <dt className="text-muted-foreground">{tr("sharePreviewTime")}</dt>
                         <dd className="font-mono">
                           {new Date(row.createdAt).toLocaleString(locale, { hour12: false })}
@@ -2358,13 +2349,13 @@ function ShareSection({
   const friendly = friendlyPath(row.method, row.path);
   const subject = tr("shareEmailSubject", {
     action: trAction(row.action),
-    module: row.module,
+    module: tr(`modules.${row.module}`, { defaultValue: row.module }),
     id: row.id,
   });
   const summary = [
     `${tr("shareIntro")}:`,
     `• ${tr("sharePreviewAction")}: ${trAction(row.action)}`,
-    `• ${tr("sharePreviewModule")}: ${row.module}`,
+    `• ${tr("sharePreviewModule")}: ${tr(`modules.${row.module}`, { defaultValue: row.module })}`,
     friendly ? `• ${tr("detailsPath")}: ${friendly.label}` : null,
     row.username ? `• ${tr("detailsUser")}: ${row.username}` : null,
     `• ${tr("sharePreviewTime")}: ${new Date(row.createdAt).toLocaleString(locale, { hour12: false })}`,
