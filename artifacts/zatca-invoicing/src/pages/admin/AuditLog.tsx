@@ -335,7 +335,33 @@ export default function AuditLog() {
   const { toast } = useToast();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`adminPages.auditLog.${k}`, opts) as string;
-  const trAction = (a: string) => t(`adminPages.auditLog.actions.${a}`, { defaultValue: a }) as string;
+  const trAction = (a: string) => {
+    const translated = t(`adminPages.auditLog.actions.${a}`, { defaultValue: "" }) as string;
+    return translated || (isRtl ? "عملية أخرى" : a.replace(/_/g, " "));
+  };
+  const moduleLabel = (value: string | null | undefined) => {
+    if (!value) return "—";
+    const translated = t(`adminPages.auditLog.modules.${value}`, { defaultValue: "" }) as string;
+    return translated || (isRtl ? "وحدة أخرى" : value.replace(/_/g, " "));
+  };
+  const roleLabel = (value: string) => {
+    const translated = t(`adminPages.auditLog.roles.${value}`, { defaultValue: "" }) as string;
+    return translated || (isRtl ? "مستخدم" : value.replace(/_/g, " "));
+  };
+  const entityLabel = (value: string) => {
+    const translated = t(`adminPages.auditLog.entityTypes.${value}`, { defaultValue: "" }) as string;
+    return translated || (isRtl ? "نوع آخر" : value.replace(/_/g, " "));
+  };
+  const methodLabel = (value: string | null | undefined) => {
+    if (!value) return "";
+    const translated = t(`adminPages.auditLog.methods.${value.toUpperCase()}`, { defaultValue: "" }) as string;
+    return translated || (isRtl ? "طلب" : value);
+  };
+  const statusLabel = (value: number | null | undefined) => {
+    if (value == null) return "—";
+    const success = value >= 200 && value < 400;
+    return `${tr(success ? "statusSuccess" : "statusFailure")} (${value.toLocaleString(locale)})`;
+  };
   const locale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const headers = { Authorization: `Bearer ${token}` };
 
