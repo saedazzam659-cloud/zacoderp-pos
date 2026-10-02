@@ -14,6 +14,7 @@ export const CONTRACTING_ACCOUNTS = [
   spec("11901", "سلف مقاولي الباطن", "Subcontractor advances", "asset", "11"),
   spec("11902", "محتجزات لدى العملاء", "Owner retention receivable", "asset", "11"),
   spec("11903", "أعمال مقاولات تحت التنفيذ", "Contract work in progress", "asset", "11"),
+  spec("11904", "ذمم فواتير السلف الضريبية", "Taxable advance invoice receivables", "asset", "11"),
   spec("21901", "دفعات مقدمة من الملاك", "Owner advances", "liability", "21"),
   spec("21902", "محتجزات مقاولي الباطن", "Subcontractor retention payable", "liability", "21"),
   spec("41901", "إيرادات المقاولات", "Contract revenue", "revenue", "41"),
@@ -50,6 +51,7 @@ export function isOptionalModuleTemplateMapping(documentType: string): boolean {
 
 type Role = readonly [string, string, string];
 export const CONTRACTING_ROLES: readonly Role[] = [
+  ["contracting_taxable_advance_invoice", "advance_receivable", "11904"],
   ["contracting_advance_receipt", "advance_liability", "21901"],
   ["contracting_advance_payment", "advance_asset", "11901"],
   ["contracting_advance_application", "advance_liability", "21901"],
@@ -77,6 +79,64 @@ export const CONTRACTING_ROLES: readonly Role[] = [
       [doc, "deductions", deduction], [doc, "penalty", penalty], [doc, "penalties", penalty]];
   }),
 ];
+
+// Shared commercial accounts are already selected by the company's ordinary
+// accounting mappings. When those mappings explicitly choose a valid account,
+// use that account for the contracting role instead of requiring the standard
+// account's exact label/code. Specialized advances, retention, and WIP remain
+// on their dedicated codes below.
+export const CONTRACTING_SHARED_ACCOUNT_SOURCES = {
+  "11031": { documentType: "sales_invoice", roleKey: "receivable" },
+  "21011": { documentType: "purchase_invoice", roleKey: "payable" },
+  "11051": { documentType: "purchase_invoice", roleKey: "inventory" },
+  "21041": { documentType: "sales_invoice", roleKey: "vat_output" },
+  "11071": { documentType: "purchase_invoice", roleKey: "vat_input" },
+} as const;
+
+export function isCompatibleMappedModuleAccount(
+  account: Pick<AccountRow, "accountType" | "isPosting" | "isActive"> | undefined,
+  expectedType: AccountRow["accountType"],
+  expectedPosting: boolean,
+): boolean {
+  return !!account &&
+    account.accountType === expectedType &&
+    account.isPosting === expectedPosting &&
+    account.isActive;
+}
+
+type SharedRoleMapping = { documentType: string; roleKey: string; accountId: number | null };
+type SharedRoleAccount = Pick<AccountRow, "id" | "code" | "accountType" | "isPosting" | "isActive">;
+
+export function resolveMappedCoreAccounts<T extends SharedRoleAccount>(
+  mappings: readonly SharedRoleMapping[],
+  accounts: readonly T[],
+): Map<string, T> {
+  const accountById = new Map(accounts.map((account) => [account.id, account] as const));
+  const accountIdByRole = new Map(mappings.map((mapping) =>
+    [`${mapping.documentType}::${mapping.roleKey}`, mapping.accountId] as const,
+  ));
+  const resolved = new Map<string, T>();
+
+  for (const [code, source] of Object.entries(CONTRACTING_SHARED_ACCOUNT_SOURCES)) {
+    const accountId = accountIdByRole.get(`${source.documentType}::${source.roleKey}`);
+    if (accountId == null) continue;
+    const account = accountById.get(accountId);
+    if (!account) {
+      throw new Error(
+        `Configured ${source.documentType}/${source.roleKey} account is not in this company's chart`,
+      );
+    }
+    const definition = DEFAULT_CHART_OF_ACCOUNTS.find((row) => row.code === code);
+    if (!definition) throw new Error(`No accounting default for ${code}`);
+    if (!isCompatibleMappedModuleAccount(account, definition.accountType, definition.isPosting)) {
+      throw new Error(
+        `Configured ${source.documentType}/${source.roleKey} account ${account.code} must be an active posting ${definition.accountType} account before module activation`,
+      );
+    }
+    resolved.set(code, account);
+  }
+  return resolved;
+}
 
 export const MANUFACTURING_FIELDS = {
   defaultRawInventoryAccountId: "11911",
@@ -186,12 +246,30 @@ export async function seedOptionalModuleAccountingTx(tx: any, companyId: number,
     const required = new Set(catalog.map((a) => a.code));
     if (modules.contracting) for (const [, , code] of CONTRACTING_ROLES) required.add(code);
     const defs = new Map(catalog.map((a) => [a.code, a]));
+    const mappings = modules.contracting
+      ? await tx.select({
+        documentType: accountingMappingsTable.documentType,
+        roleKey: accountingMappingsTable.roleKey,
+        accountId: accountingMappingsTable.accountId,
+      }).from(accountingMappingsTable).where(eq(accountingMappingsTable.companyId, companyId))
+      : [];
+    const mappedCoreAccounts = modules.contracting
+      ? resolveMappedCoreAccounts<AccountRow>(mappings, existing)
+      : new Map<string, AccountRow>();
     const ensure = async (code: string): Promise<number> => {
       const definition = defs.get(code) ?? DEFAULT_CHART_OF_ACCOUNTS.find((a) => a.code === code);
       if (!definition) throw new Error(`No accounting default for ${code}`);
       const type = "type" in definition ? definition.type : definition.accountType;
       const parent = "parent" in definition ? definition.parent : definition.parentCode;
       const posting = "type" in definition ? true : definition.isPosting;
+      const mappedCoreAccount = mappedCoreAccounts.get(code);
+      if (mappedCoreAccount) {
+        // The explicit company mapping establishes the account's meaning. Keep
+        // its identity and label untouched, but alias it for this module's
+        // conventional role code.
+        byCode.set(code, mappedCoreAccount);
+        return mappedCoreAccount.id;
+      }
       const row = byCode.get(code);
       if (row) {
         // A matching number and GL type alone do not identify an account:

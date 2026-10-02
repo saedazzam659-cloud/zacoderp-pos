@@ -3,10 +3,14 @@ import { test } from "node:test";
 import { DOCUMENT_TYPES } from "../../zatca-invoicing/src/config/accountingMappings.js";
 import { DEFAULT_CHART_OF_ACCOUNTS } from "../src/lib/defaultChartOfAccounts.js";
 import {
-  CONTRACTING_ACCOUNTS, CONTRACTING_ROLES, MANUFACTURING_ACCOUNTS,
+  CONTRACTING_ACCOUNTS, CONTRACTING_ROLES, CONTRACTING_SHARED_ACCOUNT_SOURCES,
+  MANUFACTURING_ACCOUNTS,
   MANUFACTURING_FIELDS, OPTIONAL_MODULE_ACCOUNT_CODES, accountingModulesFromMenu,
-  isOptionalModuleTemplateMapping, missingContractingRoles, missingManufacturingFields, canRollbackFreshCompany,
+  isCompatibleMappedModuleAccount, isOptionalModuleTemplateMapping,
+  missingContractingRoles, missingManufacturingFields, canRollbackFreshCompany,
+  resolveMappedCoreAccounts,
 } from "../src/lib/optionalModuleAccounting.js";
+import { DEFAULT_MAPPINGS } from "../src/lib/accountingMappings.js";
 
 test("contracting mapping catalog includes every exposed role and no duplicate", () => {
   const configured = DOCUMENT_TYPES.filter((d) => d.key.startsWith("contracting_"))
@@ -47,6 +51,37 @@ test("new-company industry/template optional rows are deferred to the module see
   assert.equal(isOptionalModuleTemplateMapping("production_completion"), true);
   for (const code of Object.values(MANUFACTURING_FIELDS)) assert.equal(OPTIONAL_MODULE_ACCOUNT_CODES.has(code), true);
   assert.equal(OPTIONAL_MODULE_ACCOUNT_CODES.has("11031"), false);
+});
+
+test("contracting reuses explicitly mapped, compatible commercial accounts", () => {
+  for (const [code, source] of Object.entries(CONTRACTING_SHARED_ACCOUNT_SOURCES)) {
+    assert.ok(DEFAULT_MAPPINGS.some((mapping) =>
+      mapping.documentType === source.documentType &&
+      mapping.roleKey === source.roleKey &&
+      mapping.accountCode === code,
+    ), `${source.documentType}/${source.roleKey} must remain linked to ${code}`);
+  }
+
+  // An explicit payable mapping may use a customized label or code; its
+  // accounting type and posting state, not its display name, establish safety.
+  const mappedPayable = { accountType: "liability" as const, isPosting: true, isActive: true };
+  assert.equal(isCompatibleMappedModuleAccount(mappedPayable, "liability", true), true);
+  assert.equal(isCompatibleMappedModuleAccount({ ...mappedPayable, accountType: "asset" }, "liability", true), false);
+  assert.equal(isCompatibleMappedModuleAccount({ ...mappedPayable, isPosting: false }, "liability", true), false);
+  assert.equal(isCompatibleMappedModuleAccount({ ...mappedPayable, isActive: false }, "liability", true), false);
+
+  const customPayable = { id: 902, code: "21910", ...mappedPayable };
+  const resolved = resolveMappedCoreAccounts([
+    { documentType: "purchase_invoice", roleKey: "payable", accountId: customPayable.id },
+  ], [customPayable]);
+  assert.equal(resolved.get("21011"), customPayable);
+  assert.throws(() => resolveMappedCoreAccounts([
+    { documentType: "purchase_invoice", roleKey: "payable", accountId: 999 },
+  ], []), /not in this company's chart/);
+  assert.throws(() => resolveMappedCoreAccounts([
+    { documentType: "purchase_invoice", roleKey: "payable", accountId: 903 },
+  ], [{ id: 903, code: "11031", accountType: "asset" as const, isPosting: true, isActive: true }]),
+  /must be an active posting liability account/);
 });
 
 test("repeated activation preserves existing mapping rows and filled manufacturing settings", () => {

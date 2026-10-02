@@ -15,6 +15,12 @@ Contracting and manufacturing accounting have a separately authorized exception:
 
 **How to apply:** Do not backfill every existing company at startup. Preserve existing mapped accounts and historical postings; disabling a module hides settings rather than deleting accounts. Fresh template defaults must not bypass module selection. Manufacturing defaults use the canonical manufacturing settings, not duplicate accounting-mapping records. This exception does not authorize resetting other company defaults.
 
+When provisioning optional contracting roles, reuse a company's explicitly mapped commercial account when it is active, postable, and the correct account type; do not require its canonical label/code or rewrite it. Keep fiscal advance receivables separate from customer-level balances.
+
+**Why:** Template charts can intentionally use different account labels or numbers, while a configured accounting mapping already identifies the account's meaning. Fiscal advance invoices also need their own receivable balance to avoid duplicating customer-ledger balances.
+
+**How to apply:** Resolve shared roles through their corresponding base mapping and fail closed if the mapped account is invalid or outside the company. Continue provisioning dedicated advance, retention, and WIP accounts only when their module is enabled.
+
 Independent numbering means separate document namespaces, not separate payment methods within the same document namespace.
 
 **Why:** Cash/credit/bank invoices and auto-generated journal subtypes can share uniqueness constraints; starting each subtype independently at `00001` would create collisions.
