@@ -107,6 +107,23 @@ test("failed sales and purchase return creation rolls back its number reservatio
   assert.match(purchaseCreate, /db\.transaction\(async \(tx: any\) => \{[\s\S]*nextSequenceForPayment\(cid, "purchase_return"[\s\S]*false, tx\)[\s\S]*insertPurchaseReturnWithSerialRepair\([\s\S]*?, tx\)[\s\S]*tx\.insert\(purchaseReturnLinesTable\)/);
 });
 
+test("deleting draft returns stores proof in the same transaction as deletion", () => {
+  const salesDelete = salesSource.slice(
+    salesSource.indexOf('router.delete("/sales-returns/:id"'),
+    salesSource.indexOf("// ═", salesSource.indexOf('router.delete("/sales-returns/:id"')),
+  );
+  const purchaseDelete = purchasingSource.slice(
+    purchasingSource.indexOf('router.delete("/purchase-returns/:id"'),
+    purchasingSource.indexOf("// ═", purchasingSource.indexOf('router.delete("/purchase-returns/:id"')),
+  );
+  assert.match(salesDelete, /db\.transaction\(async \(tx\)/);
+  assert.match(salesDelete, /tombstoneAndDeleteDraftInvoice\(tx, salesReturnsTable, "sales_returns"/);
+  assert.match(salesDelete, /executor: tx/);
+  assert.match(purchaseDelete, /db\.transaction\(async \(tx\)/);
+  assert.match(purchaseDelete, /tombstoneAndDeleteDraftInvoice\(tx, purchaseReturnsTable, "purchase_returns"/);
+  assert.match(purchaseDelete, /executor: tx/);
+});
+
 test("Companies repair UI exposes both return kinds and checks server capability", () => {
   assert.match(uiSource, /option value="sales_return">مرتجعات المبيعات/);
   assert.match(uiSource, /option value="purchase_return">مرتجعات المشتريات/);
@@ -122,5 +139,39 @@ test("repair UI sends legacy reservation fields only when the explicit exception
   assert.match(request, /legacyReservationOverride: true/);
   assert.match(request, /legacyReservationReason: invoiceRepairLegacyReason\.trim\(\)/);
   assert.doesNotMatch(request, /legacyReservationOverride:\s*invoiceRepairLegacyActive/);
-  assert.match(uiSource, /body: JSON\.stringify\(\{ \.\.\.invoiceRepairRequest, kind, dryRun \}\)/);
+  assert.match(uiSource, /: \{ \.\.\.invoiceRepairRequest, kind, dryRun \}/);
+  assert.match(uiSource, /body: JSON\.stringify\(payload\)/);
+});
+
+test("return draft batches are atomic, contiguous, and require historical deletion proof", () => {
+  const batchStart = source.indexOf('router.post("/companies/:id/invoice-numbering-repair/batch"');
+  const batchEnd = source.indexOf('// PUT /api/admin/companies/:id/journal-sequence-control', batchStart);
+  const batchRoute = source.slice(batchStart, batchEnd);
+  assert.notEqual(batchStart, -1);
+  assert.match(batchRoute, /requireSuperAdmin/);
+  assert.match(batchRoute, /runWithAgentScope\(req, res/);
+  assert.match(batchRoute, /FOR UPDATE OF i/);
+  assert.match(batchRoute, /doc\.status !== "draft"/);
+  assert.match(batchRoute, /hasKnownInvoiceFiscalEvidence\(doc\)/);
+  assert.match(batchRoute, /DRAFTS_NOT_CONSECUTIVE/);
+  assert.match(batchRoute, /MISSING_DELETED_DRAFT_PROOF/);
+  assert.match(batchRoute, /UNKNOWN_OLD_NUMBER_CLAIM/);
+  assert.match(batchRoute, /UNKNOWN_SEQUENCE_LOG/);
+  assert.match(batchRoute, /PROTECTED_COUNTER_HIGH_WATER/);
+  assert.match(batchRoute, /reclaimableInvoiceLog/);
+  assert.match(batchRoute, /INSERT INTO sequence_logs/);
+  assert.match(batchRoute, /if \(dryRun\) return \{ \.\.\.result, canApply: true \}/);
+  assert.match(batchRoute, /op: "draft_renumber_release"/);
+  assert.match(batchRoute, /op: "draft_batch_renumber"/);
+  assert.match(batchRoute, /supportsReturnNumberRepair: true, supportsBatchDraftRenumber: true/);
+  assert.doesNotMatch(batchRoute, /legacyReservationOverride/);
+  assert.match(source, /supportsBatchDraftRenumber: true/);
+});
+
+test("return batch UI selects drafts and previews the same batch request before apply", () => {
+  assert.match(uiSource, /invoiceRepairMode === "batch_drafts"/);
+  assert.match(uiSource, /documentIds: invoiceRepairBatchDocumentIds/);
+  assert.match(uiSource, /invoice-numbering-repair\$\{isBatch \? "\/batch" : ""\}/);
+  assert.match(uiSource, /changedDocuments/);
+  assert.match(uiSource, /supportsBatchDraftRenumber !== true/);
 });

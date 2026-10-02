@@ -4428,15 +4428,34 @@ router.delete("/purchase-returns/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const [ret] = await db.select().from(purchaseReturnsTable)
-      .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
-    if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
-    if (ret.status === "posted") {
-      res.status(400).json({ error: "لا يمكن حذف مرتجع مُرحَّل. قم بإلغاء الترحيل أولاً ثم احذفه." });
-      return;
-    }
-    await cleanupDocArtifacts({ companyId: cid, refType: "purchase_return", refId: id, journalEntryId: (ret as any).journalEntryId });
-    await db.delete(purchaseReturnsTable).where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف المرتجع غير صحيح" }); return; }
+    await db.transaction(async (tx) => {
+      const [ret] = await tx.select().from(purchaseReturnsTable)
+        .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)))
+        .for("update");
+      if (!ret) throw Object.assign(new Error("المرتجع غير موجود"), { status: 404 });
+      if (ret.status === "posted") {
+        throw Object.assign(new Error("لا يمكن حذف مرتجع مُرحَّل. قم بإلغاء الترحيل أولاً ثم احذفه."), { status: 400 });
+      }
+      await cleanupDocArtifacts({
+        companyId: cid, refType: "purchase_return", refId: id,
+        journalEntryId: ret.journalEntryId, executor: tx,
+      });
+      if (ret.status === "draft") {
+        await tombstoneAndDeleteDraftInvoice(tx, purchaseReturnsTable, "purchase_returns", ret, {
+          companyId: cid,
+          recordId: id,
+          deletedBy: req.authUser?.id ?? null,
+          deletedByUsername: req.authUser?.username ?? null,
+          reason: "حذف مسودة مرتجع مشتريات",
+        });
+      } else {
+        await tx.delete(purchaseReturnsTable).where(and(
+          eq(purchaseReturnsTable.id, id),
+          eq(purchaseReturnsTable.companyId, cid),
+        ));
+      }
+    });
     res.json({ ok: true });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });

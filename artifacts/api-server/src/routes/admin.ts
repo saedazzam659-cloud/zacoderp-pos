@@ -2612,34 +2612,47 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
         `);
         const sequenceLogs = (logsQuery.rows ?? []) as any[];
         const releasedByDocument = new Map<number, number[]>();
+        const releasedIds = new Set<number>();
+        // Capture the selected drafts' exact prior claims before checking the
+        // destination range. Allocations created before the document ID existed
+        // have a null ref_id; those claims are not safely attributable here.
+        for (const doc of sortedDocs) {
+          const oldNumber = String(doc.doc_number);
+          const oldLogs = sequenceLogs.filter((log) =>
+            String(log.ref_table ?? "") === meta.table
+            && String(log.generated_number ?? "") === oldNumber);
+          for (const log of oldLogs) {
+            if (String(log.ref_id ?? "") === String(doc.id)) {
+              const logId = Number(log.id);
+              const idsForDoc = releasedByDocument.get(Number(doc.id)) ?? [];
+              idsForDoc.push(logId);
+              releasedByDocument.set(Number(doc.id), idsForDoc);
+              releasedIds.add(logId);
+              continue;
+            }
+            if (!await reclaimableInvoiceLog(tx, companyId, log, {
+              kind, branchId, bucket, seq, paymentType, isForeign,
+            })) {
+              throw Object.assign(new Error(
+                `الرقم السابق ${oldNumber} له سجل إصدار غير مرتبط بهذه المسودة؛ لا يمكن تحريره دون إثبات تاريخي مطابق`,
+              ), { status: 409, code: "UNKNOWN_OLD_NUMBER_CLAIM" });
+            }
+          }
+        }
         for (let index = 0; index < sortedDocs.length; index += 1) {
           const doc = sortedDocs[index];
           const plannedNumber = newNumbers[index];
-          const oldNumber = String(doc.doc_number);
           for (const log of sequenceLogs) {
             const logParts = invoiceNumberParts(String(log.generated_number ?? ""));
             const matchesTarget = String(log.generated_number) === plannedNumber
               || (!!logParts && targetParts.some((target) => target.equivalent === logParts.equivalent));
-            if (!matchesTarget || String(log.ref_table ?? "") !== meta.table) continue;
-
-            const logRefId = String(log.ref_id ?? "");
-            const selectedOwner = /^\d+$/.test(logRefId)
-              ? sortedDocs.find((candidate) => Number(candidate.id) === Number(logRefId))
-              : undefined;
-            if (selectedOwner) {
-              const ownerOldNumber = String(selectedOwner.doc_number);
-              const ownerNewNumber = newNumbers[sortedDocs.indexOf(selectedOwner)];
-              if (logRefId === String(selectedOwner.id)
-                && String(log.generated_number) === ownerOldNumber
-                && ownerNewNumber !== ownerOldNumber) {
-                const idsForDoc = releasedByDocument.get(Number(selectedOwner.id)) ?? [];
-                idsForDoc.push(Number(log.id));
-                releasedByDocument.set(Number(selectedOwner.id), idsForDoc);
-                continue;
-              }
-              if (logRefId === String(selectedOwner.id)
-                && String(log.generated_number) === ownerNewNumber) continue;
+            if (!matchesTarget) continue;
+            if (String(log.ref_table ?? "") !== meta.table) {
+              throw Object.assign(new Error(
+                `الرقم ${plannedNumber} له سجل إصدار في نوع مستند أو مرجع غير متوقع`,
+              ), { status: 409, code: "UNKNOWN_SEQUENCE_LOG" });
             }
+            if (releasedIds.has(Number(log.id))) continue;
 
             if (!await reclaimableInvoiceLog(tx, companyId, log, {
               kind, branchId, bucket, seq, paymentType, isForeign,
@@ -2652,10 +2665,19 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
         }
 
         const counter = await tx.execute(sql`
-          SELECT id FROM sequence_counters
+          SELECT id, current_number FROM sequence_counters
           WHERE sequence_id = ${seq.id} AND branch_id = ${branchId} AND period = ${bucket}
           FOR UPDATE
         `);
+        const counterHighWater = Number(counter.rows?.[0]?.current_number ?? seq.current_number);
+        const lastSelectedSuffix = sortedDocs[sortedDocs.length - 1].numberParts.suffix;
+        if (!Number.isSafeInteger(counterHighWater)
+          || counterHighWater < Number(seq.start_number)
+          || counterHighWater > lastSelectedSuffix + 1) {
+          throw Object.assign(new Error(
+            `قيمة العداد الحالي (${counterHighWater}) أعلى من أرقام المسودات المختارة؛ لا يمكن إرجاعه بأمان إلى ${nextNumber}`,
+          ), { status: 409, code: "PROTECTED_COUNTER_HIGH_WATER" });
+        }
         const protectedLiveRows = meta.companyWideUnique
           ? (companyRows.rows ?? [])
           : (streamDocs.rows ?? []);
@@ -2667,11 +2689,15 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
         if (protectedLive) {
           throw Object.assign(new Error(`الرقم ${protectedLive.doc_number} يمنع ضبط العداد التالي على ${nextNumber}`), { status: 409, code: "ACTIVE_HIGH_WATER" });
         }
-        const releasedIds = new Set([...releasedByDocument.values()].flat());
         for (const log of sequenceLogs) {
           const parts = invoiceNumberParts(String(log.generated_number ?? ""));
-          if (String(log.ref_table ?? "") !== meta.table || !parts || parts.prefix !== prefix || parts.suffix < nextSuffix) continue;
+          if (!parts || parts.prefix !== prefix || parts.suffix < nextSuffix) continue;
           if (releasedIds.has(Number(log.id))) continue;
+          if (String(log.ref_table ?? "") !== meta.table) {
+            throw Object.assign(new Error(
+              `الحجز التاريخي ${log.generated_number} من نوع مستند أو مرجع غير متوقع؛ لا يمكن ضبط العداد`,
+            ), { status: 409, code: "UNKNOWN_SEQUENCE_LOG" });
+          }
           if (!await reclaimableInvoiceLog(tx, companyId, log, {
             kind, branchId, bucket, seq, paymentType, isForeign,
           })) {
@@ -2685,7 +2711,7 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
         }));
         const result = {
           kind, sequenceCode: seq.code, branchId, bucket, nextNumber,
-          changedDocuments, supportsBatchDraftRenumber: true,
+          changedDocuments, supportsReturnNumberRepair: true, supportsBatchDraftRenumber: true,
         };
         if (dryRun) return { ...result, canApply: true };
 
@@ -2708,6 +2734,13 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
           await tx.execute(sql`
             UPDATE ${sql.raw(meta.table)} SET doc_number = ${newNumbers[index]}, updated_at = NOW()
             WHERE id = ${Number(doc.id)} AND company_id = ${companyId} AND status = 'draft'
+          `);
+          await tx.execute(sql`
+            INSERT INTO sequence_logs
+              (sequence_id, company_id, transaction_type, generated_number, user_id, ref_table, ref_id)
+            VALUES
+              (${seq.id}, ${companyId}, ${seq.transactionType}, ${newNumbers[index]},
+               ${req.adminUser?.id ?? null}, ${meta.table}, ${String(doc.id)})
           `);
           await tx.insert(auditLogTable).values({
             userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,

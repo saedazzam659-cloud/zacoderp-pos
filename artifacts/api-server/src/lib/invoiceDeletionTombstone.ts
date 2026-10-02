@@ -26,7 +26,7 @@ function hasZatcaArtifacts(invoice: any): boolean {
 export async function tombstoneAndDeleteDraftInvoice(
   tx: any,
   table: any,
-  tableName: "sales_invoices" | "purchase_invoices",
+  tableName: "sales_invoices" | "purchase_invoices" | "sales_returns" | "purchase_returns",
   snapshot: any,
   meta: {
     companyId: number;
