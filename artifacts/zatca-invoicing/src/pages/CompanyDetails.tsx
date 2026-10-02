@@ -151,13 +151,17 @@ export default function CompanyDetails() {
       if (!res.ok) throw new Error(json.error ?? "تعذّر تحديث حزمة حماية التسلسلات");
       return json;
     },
-    onSuccess: async (_result, enabled) => {
+    onSuccess: async (result: { protectedExistingRecords?: number }, enabled) => {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["admin-company", id, agentId] }),
         qc.invalidateQueries({ queryKey: ["companies"] }),
       ]);
       toast({
-        title: enabled ? "تم تفعيل حماية التسلسلات" : "تم إيقاف الحماية للمستندات الجديدة",
+        title: enabled
+          ? Number(result?.protectedExistingRecords ?? 0) > 0
+            ? `تم تفعيل الحماية وحماية السجلات المرقمة القائمة (${Number(result.protectedExistingRecords).toLocaleString("ar-EG")})، بما فيها المسودات وقيود اليومية.`
+            : "تم التفعيل؛ لا توجد سجلات مرقمة قائمة تحتاج إلى حماية إضافية."
+          : "تم إيقاف حماية الأرقام الجديدة؛ تبقى حماية السجلات المحمية سابقاً قائمة.",
       });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
@@ -800,8 +804,8 @@ export default function CompanyDetails() {
                 <div className="space-y-1">
                   <h3 className="font-semibold">حماية التسلسلات</h3>
                   <p className="text-sm text-muted-foreground leading-6">
-                    تمنع الحذف النهائي أو تغيير الرقم بعد إصداره للمستندات التي تُرقّم أثناء تفعيل الحزمة.
-                    تظل السجلات المحمية كذلك حتى بعد إيقاف الحزمة.
+                    عند تفعيل الحزمة، تُحمى جميع السجلات المرقمة الموجودة فوراً، بما فيها المسودات وقيود اليومية،
+                    وكذلك الأرقام التي تصدر لاحقاً. تظل السجلات المحمية كذلك حتى بعد إيقاف الحزمة.
                   </p>
                 </div>
               </div>
@@ -815,8 +819,8 @@ export default function CompanyDetails() {
             </div>
             <div className="mt-4 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground leading-5">
               {company.sequenceProtectionEnabled
-                ? "الحزمة فعّالة. الأرقام الجديدة ستُحمى من الحذف وإعادة الاستخدام."
-                : "الحزمة متوقفة. إيقافها لا يرفع الحماية عن أي مستند حُمي سابقاً؛ يؤثر فقط على الأرقام التي ستصدر بعده."}
+                ? "الحزمة فعّالة. السجلات المرقمة الحالية محمية، وستُحمى الأرقام الجديدة أيضاً."
+                : "الحزمة متوقفة للأرقام الجديدة. لا يرفع ذلك الحماية عن أي سجل حُمي سابقاً."}
             </div>
           </section>
         </div>

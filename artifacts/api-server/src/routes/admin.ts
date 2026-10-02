@@ -69,6 +69,7 @@ import {
   ensureJournalNumberClaimsTable, subTypeFor, foreignSubTypeFor,
   resolveSequencePeriodMatch, periodMatchWhereSql, periodMatchRankSql,
 } from "../lib/sequences.js";
+import { setCompanySequenceProtectionEnabled } from "../lib/sequenceProtection.js";
 
 const router = Router();
   // ─────────────────────────────────────────────────────────────────────────
@@ -1575,9 +1576,8 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
 });
 
 // PUT /api/admin/companies/:id/sequence-protection
-// The package switch is SuperAdmin-only. Existing protected records retain
-// their row marker when disabled; only numbers issued afterward use legacy
-// deletion behavior.
+// The package switch is SuperAdmin-only. Enabling it also protects every
+// existing numbered record (including drafts) in the same transaction.
 router.put("/companies/:id/sequence-protection", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
@@ -1592,27 +1592,21 @@ router.put("/companies/:id/sequence-protection", requireSuperAdmin, async (req, 
       return;
     }
 
-    const [company] = await db.select({
-      id: companiesTable.id,
-    }).from(companiesTable).where(and(
-      eq(companiesTable.id, companyId),
-      eq(companiesTable.isInternalDemoWorkspace, false),
-    )).limit(1);
-    if (!company) {
+    const updated = await setCompanySequenceProtectionEnabled(companyId, req.body.enabled);
+    if (!updated) {
       res.status(404).json({ error: "الشركة غير موجودة" });
       return;
     }
 
-    const [updated] = await db.update(companiesTable)
-      .set({ sequenceProtectionEnabled: req.body.enabled })
-      .where(eq(companiesTable.id, companyId))
-      .returning({ sequenceProtectionEnabled: companiesTable.sequenceProtectionEnabled });
-
     req.log?.info?.(
-      { companyId, enabled: updated.sequenceProtectionEnabled },
+      {
+        companyId,
+        enabled: updated.sequenceProtectionEnabled,
+        protectedExistingRecords: updated.protectedExistingRecords,
+      },
       "company sequence protection package updated",
     );
-    res.json({ ok: true, sequenceProtectionEnabled: updated.sequenceProtectionEnabled });
+    res.json({ ok: true, ...updated });
   });
 });
 

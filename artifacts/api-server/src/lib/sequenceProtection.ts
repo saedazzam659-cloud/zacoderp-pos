@@ -65,48 +65,60 @@ export async function setCompanySequenceProtectionEnabled(
   companyId: number,
   enabled: boolean,
 ): Promise<{ sequenceProtectionEnabled: boolean; protectedExistingRecords: number } | null> {
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`
-      SELECT pg_advisory_xact_lock(${SEQUENCE_PROTECTION_LOCK_NAMESPACE}, ${companyId})
-    `);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await db.transaction(async (tx) => {
+        await tx.execute(sql`
+          SELECT pg_advisory_xact_lock(${SEQUENCE_PROTECTION_LOCK_NAMESPACE}, ${companyId})
+        `);
 
-    const [company] = await tx.select({ id: companiesTable.id })
-      .from(companiesTable)
-      .where(and(
-        eq(companiesTable.id, companyId),
-        eq(companiesTable.isInternalDemoWorkspace, false),
-      ))
-      .for("update")
-      .limit(1);
-    if (!company) return null;
+        const [company] = await tx.select({ id: companiesTable.id })
+          .from(companiesTable)
+          .where(and(
+            eq(companiesTable.id, companyId),
+            eq(companiesTable.isInternalDemoWorkspace, false),
+          ))
+          .for("update")
+          .limit(1);
+        if (!company) return null;
 
-    const [updated] = await tx.update(companiesTable)
-      .set({ sequenceProtectionEnabled: enabled })
-      .where(eq(companiesTable.id, companyId))
-      .returning({ sequenceProtectionEnabled: companiesTable.sequenceProtectionEnabled });
-    if (!updated) return null;
+        const [updated] = await tx.update(companiesTable)
+          .set({ sequenceProtectionEnabled: enabled })
+          .where(eq(companiesTable.id, companyId))
+          .returning({ sequenceProtectionEnabled: companiesTable.sequenceProtectionEnabled });
+        if (!updated) return null;
 
-    let protectedExistingRecords = 0;
-    if (enabled) {
-      const result = await tx.execute(sql`
-        SELECT public.zacode_backfill_sequence_protection(${companyId}) AS protected_count
-      `);
-      const rows = Array.isArray(result)
-        ? result
-        : Array.isArray((result as any)?.rows)
-          ? (result as any).rows
-          : [];
-      protectedExistingRecords = Number(rows[0]?.protected_count ?? 0);
-      if (!Number.isFinite(protectedExistingRecords)) {
-        throw new Error("تعذر التحقق من عدد المستندات التي شملتها حماية التسلسلات.");
-      }
+        let protectedExistingRecords = 0;
+        if (enabled) {
+          const result = await tx.execute(sql`
+            SELECT public.zacode_backfill_sequence_protection(${companyId}) AS protected_count
+          `);
+          const rows = Array.isArray(result)
+            ? result
+            : Array.isArray((result as any)?.rows)
+              ? (result as any).rows
+              : [];
+          protectedExistingRecords = Number(rows[0]?.protected_count ?? 0);
+          if (!Number.isFinite(protectedExistingRecords)) {
+            throw new Error("تعذر التحقق من عدد المستندات التي شملتها حماية التسلسلات.");
+          }
+        }
+
+        return {
+          sequenceProtectionEnabled: updated.sequenceProtectionEnabled,
+          protectedExistingRecords,
+        };
+      });
+    } catch (error) {
+      const databaseError = error as { code?: string; cause?: { code?: string } };
+      const code = databaseError?.code ?? databaseError?.cause?.code;
+      if (code !== "40P01" || attempt === 2) throw error;
+      // A numbered-row writer can already own its row lock while contending
+      // for this activation lock. PostgreSQL rolls one side back; retry the
+      // entire atomic activation if it chose this transaction as the victim.
     }
-
-    return {
-      sequenceProtectionEnabled: updated.sequenceProtectionEnabled,
-      protectedExistingRecords,
-    };
-  });
+  }
+  throw new Error("تعذر تفعيل حماية التسلسلات بعد إعادة المحاولة.");
 }
 
 /**
@@ -130,13 +142,25 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
       current_row JSONB;
       previous_row JSONB;
       company_id_value INTEGER;
+      previous_company_id INTEGER;
       issued_number TEXT;
       previous_number TEXT;
-      previous_company_id INTEGER;
       protection_enabled BOOLEAN := FALSE;
     BEGIN
       IF TG_OP = 'DELETE' THEN
-        IF COALESCE((to_jsonb(OLD)->>'is_sequence_protected')::BOOLEAN, FALSE) THEN
+        previous_row := to_jsonb(OLD);
+        previous_company_id := NULLIF(previous_row->>'company_id', '')::INTEGER;
+        previous_number := NULLIF(BTRIM(previous_row->>TG_ARGV[0]), '');
+
+        IF previous_company_id IS NOT NULL
+           AND (
+             previous_number IS NOT NULL
+             OR COALESCE((previous_row->>'is_sequence_protected')::BOOLEAN, FALSE)
+           ) THEN
+          PERFORM pg_advisory_xact_lock(${SEQUENCE_PROTECTION_LOCK_NAMESPACE}, previous_company_id);
+        END IF;
+
+        IF COALESCE((previous_row->>'is_sequence_protected')::BOOLEAN, FALSE) THEN
           RAISE EXCEPTION USING
             ERRCODE = 'P0001',
             MESSAGE = 'هذا المستند المرقم محمي ولا يمكن حذفه. استخدم مسار الإلغاء بدلاً من الحذف.',
@@ -146,13 +170,46 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
       END IF;
 
       current_row := to_jsonb(NEW);
+      company_id_value := NULLIF(current_row->>'company_id', '')::INTEGER;
+      issued_number := NULLIF(BTRIM(current_row->>TG_ARGV[0]), '');
+
       IF TG_OP = 'UPDATE' THEN
         previous_row := to_jsonb(OLD);
+        previous_company_id := NULLIF(previous_row->>'company_id', '')::INTEGER;
+        previous_number := NULLIF(BTRIM(previous_row->>TG_ARGV[0]), '');
+
+        -- Only identity changes need coordination. Unrelated edits to legacy
+        -- rows can proceed while a backfill waits for their row lock, avoiding
+        -- a lock cycle with activation.
+        IF issued_number IS DISTINCT FROM previous_number
+           OR company_id_value IS DISTINCT FROM previous_company_id THEN
+          IF company_id_value IS NOT NULL AND previous_company_id IS NOT NULL
+             AND company_id_value IS DISTINCT FROM previous_company_id THEN
+            PERFORM pg_advisory_xact_lock(
+              ${SEQUENCE_PROTECTION_LOCK_NAMESPACE},
+              LEAST(company_id_value, previous_company_id)
+            );
+            PERFORM pg_advisory_xact_lock(
+              ${SEQUENCE_PROTECTION_LOCK_NAMESPACE},
+              GREATEST(company_id_value, previous_company_id)
+            );
+          ELSIF COALESCE(company_id_value, previous_company_id) IS NOT NULL THEN
+            PERFORM pg_advisory_xact_lock(
+              ${SEQUENCE_PROTECTION_LOCK_NAMESPACE},
+              COALESCE(company_id_value, previous_company_id)
+            );
+          END IF;
+        END IF;
+      ELSIF company_id_value IS NOT NULL
+         AND (
+           issued_number IS NOT NULL
+           OR COALESCE((current_row->>'is_sequence_protected')::BOOLEAN, FALSE)
+         ) THEN
+        PERFORM pg_advisory_xact_lock(${SEQUENCE_PROTECTION_LOCK_NAMESPACE}, company_id_value);
+      END IF;
+
+      IF TG_OP = 'UPDATE' THEN
         IF COALESCE((previous_row->>'is_sequence_protected')::BOOLEAN, FALSE) THEN
-          company_id_value := NULLIF(current_row->>'company_id', '')::INTEGER;
-          issued_number := NULLIF(BTRIM(current_row->>TG_ARGV[0]), '');
-          previous_number := NULLIF(BTRIM(previous_row->>TG_ARGV[0]), '');
-          previous_company_id := NULLIF(previous_row->>'company_id', '')::INTEGER;
           IF issued_number IS DISTINCT FROM previous_number
              OR company_id_value IS DISTINCT FROM previous_company_id THEN
             RAISE EXCEPTION USING
@@ -169,19 +226,15 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
         RETURN NEW;
       END IF;
 
-      company_id_value := NULLIF(current_row->>'company_id', '')::INTEGER;
-      issued_number := NULLIF(BTRIM(current_row->>TG_ARGV[0]), '');
       IF company_id_value IS NULL OR issued_number IS NULL THEN
         RETURN NEW;
       END IF;
 
       IF TG_OP = 'UPDATE' THEN
-        -- Do not retroactively protect a legacy document just because an
-        -- unrelated field is edited after package activation. A genuinely
-        -- changed/new number, however, is an issuance under the current policy.
-        previous_row := to_jsonb(OLD);
-        previous_number := NULLIF(BTRIM(previous_row->>TG_ARGV[0]), '');
-        IF issued_number IS NOT DISTINCT FROM previous_number THEN
+        -- A legacy row only becomes newly protected through activation's
+        -- backfill, unless its number or tenant changes under the active policy.
+        IF issued_number IS NOT DISTINCT FROM previous_number
+           AND company_id_value IS NOT DISTINCT FROM previous_company_id THEN
           RETURN NEW;
         END IF;
       END IF;
@@ -195,6 +248,56 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
         NEW.is_sequence_protected := TRUE;
       END IF;
       RETURN NEW;
+    END;
+    $function$;
+  `));
+
+  await db.execute(sql.raw(`
+    CREATE OR REPLACE FUNCTION public.zacode_backfill_sequence_protection(target_company_id INTEGER)
+    RETURNS BIGINT
+    LANGUAGE plpgsql
+    AS $function$
+    DECLARE
+      target RECORD;
+      target_regclass REGCLASS;
+      protected_rows BIGINT;
+      total_protected BIGINT := 0;
+    BEGIN
+      FOR target IN
+        SELECT * FROM (VALUES
+          ${targetValues}
+        ) AS document_targets(table_name, number_column)
+      LOOP
+        target_regclass := to_regclass(format('public.%I', target.table_name));
+        IF target_regclass IS NULL THEN
+          CONTINUE;
+        END IF;
+
+        IF (
+          SELECT COUNT(DISTINCT column_name)
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = target.table_name
+            AND column_name IN ('id', 'company_id', target.number_column, 'is_sequence_protected')
+        ) <> 4 THEN
+          RAISE EXCEPTION 'sequence protection target %.% is missing a required column',
+            target.table_name, target.number_column;
+        END IF;
+
+        EXECUTE format(
+          'UPDATE public.%I
+              SET is_sequence_protected = TRUE
+            WHERE company_id = $1
+              AND NULLIF(BTRIM(%I::TEXT), '''') IS NOT NULL
+              AND NOT COALESCE(is_sequence_protected, FALSE)',
+          target.table_name,
+          target.number_column
+        ) USING target_company_id;
+        GET DIAGNOSTICS protected_rows = ROW_COUNT;
+        total_protected := total_protected + protected_rows;
+      END LOOP;
+
+      RETURN total_protected;
     END;
     $function$;
   `));
