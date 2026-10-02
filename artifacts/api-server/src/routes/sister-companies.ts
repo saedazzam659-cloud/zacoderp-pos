@@ -30,6 +30,7 @@ import {
   draftLinkedSourceJournalEntry,
   replaceLinkedSourceJournalEntry,
 } from "../lib/sourceJournalEntryLifecycle.js";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -350,7 +351,7 @@ router.put("/transfers/:id", async (req, res) => {
 });
 
 // POST /transfers/:id/post — confirm: stock out + JE creation
-router.post("/transfers/:id/post", requirePostRight("stockMovement"), async (req, res) => {
+router.post("/transfers/:id/post", requirePostRight("stockMovement"), documentMutationLock("sister_transfer", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   // Atomic claim
@@ -440,7 +441,7 @@ router.post("/transfers/:id/post", requirePostRight("stockMovement"), async (req
     }).where(eq(sisterTransfersTable.id, id));
   }
   res.json({ ok: true, journalEntryId: entryId });
-});
+}));
 
 // POST /transfers/:id/unpost — reverse stock-out + JE, flip posted→draft.
 // BLOCKED when any return references this transfer (draft OR posted): returns
@@ -724,7 +725,7 @@ router.put("/returns/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/returns/:id/post", requirePostRight("stockMovement"), async (req, res) => {
+router.post("/returns/:id/post", requirePostRight("stockMovement"), documentMutationLock("sister_return", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const claim = await db.update(sisterReturnsTable)
@@ -832,7 +833,7 @@ router.post("/returns/:id/post", requirePostRight("stockMovement"), async (req, 
     }).where(eq(sisterReturnsTable.id, id));
   }
   res.json({ ok: true, journalEntryId: entryId });
-});
+}));
 
 // POST /returns/:id/unpost — reverse stock-in + JE + returnedQty, posted→draft.
 router.post("/returns/:id/unpost", requireUnpostRight("stockMovement"), async (req, res) => {
@@ -1038,9 +1039,15 @@ router.put("/settlements/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/settlements/:id/post", requirePostRight("receipt"), async (req, res) => {
+router.post("/settlements/:id/post", requirePostRight("receipt"), documentMutationLock("sister_settlement", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
+  const [existing] = await db.select({ status: sisterSettlementsTable.status })
+    .from(sisterSettlementsTable)
+    .where(and(eq(sisterSettlementsTable.id, id), eq(sisterSettlementsTable.companyId, cid)));
+  if (existing?.status === "cancelled") {
+    res.status(400).json({ error: "لا يمكن ترحيل سند ملغى" }); return;
+  }
   const claim = await db.update(sisterSettlementsTable)
     .set({ updatedAt: new Date() })
     .where(and(eq(sisterSettlementsTable.id, id), eq(sisterSettlementsTable.companyId, cid), eq(sisterSettlementsTable.status, "draft")))
@@ -1119,7 +1126,7 @@ router.post("/settlements/:id/post", requirePostRight("receipt"), async (req, re
     }).where(eq(sisterSettlementsTable.id, id));
   }
   res.json({ ok: true, journalEntryId: entryId });
-});
+}));
 
 // POST /settlements/:id/unpost — reverse the cash/bank↔AR JE, posted→draft.
 router.post("/settlements/:id/unpost", requireUnpostRight("receipt"), async (req, res) => {

@@ -31,7 +31,7 @@ import {
 import {
   RefreshCw, Sparkles, FileSpreadsheet, FileDown, Send, Undo2,
   CheckSquare, Square, Loader2, AlertTriangle, Info, ShieldCheck,
-  Filter, X, Layers, Calculator,
+  Filter, X, Layers, Calculator, Ban, RotateCcw,
   ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft,
 } from "lucide-react";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
@@ -81,26 +81,29 @@ type ModuleDef = {
   // Some inventory/cash modules only expose a "post" endpoint; bulk-unpost
   // is hidden for those so the user never gets stuck with a 404.
   supportsUnpost?: boolean;
+  // Cancellation is available only for document families whose draft state
+  // can be safely restored without replaying posting side effects.
+  supportsCancel?: boolean;
 };
 
 const MODULES: ModuleDef[] = [
   // ── Sales ──
-  { key: "sales_invoices",    label: "فواتير المبيعات",    group: "المبيعات",  endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true },
+  { key: "sales_invoices",    label: "فواتير المبيعات",    group: "المبيعات",  endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true, supportsCancel: true },
   // POS-originated invoices live in the same salesInvoicesTable as manual
   // sales invoices, so they share the same /post endpoint. We only split
   // them in the listing so the accountant can batch-post POS shifts
   // without drowning in manual invoices.
-  { key: "pos_sales",         label: "فواتير نقاط البيع",  group: "المبيعات",  endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true },
-  { key: "sales_returns",     label: "مرتجعات المبيعات",   group: "المبيعات",  endpoint: (id, a) => `/api/sales/sales-returns/${id}/${a}`,        method: "PATCH", supportsUnpost: true },
+  { key: "pos_sales",         label: "فواتير نقاط البيع",  group: "المبيعات",  endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true, supportsCancel: true },
+  { key: "sales_returns",     label: "مرتجعات المبيعات",   group: "المبيعات",  endpoint: (id, a) => `/api/sales/sales-returns/${id}/${a}`,        method: "PATCH", supportsUnpost: true, supportsCancel: true },
   // ── Purchasing ──
-  { key: "purchase_invoices", label: "فواتير المشتريات",   group: "المشتريات", endpoint: (id, a) => `/api/purchasing/purchase-invoices/${id}/${a}`, method: "PATCH", supportsUnpost: true },
-  { key: "purchase_returns",  label: "مرتجعات المشتريات",  group: "المشتريات", endpoint: (id, a) => `/api/purchasing/purchase-returns/${id}/${a}`,  method: "PATCH", supportsUnpost: true },
+  { key: "purchase_invoices", label: "فواتير المشتريات",   group: "المشتريات", endpoint: (id, a) => `/api/purchasing/purchase-invoices/${id}/${a}`, method: "PATCH", supportsUnpost: true, supportsCancel: true },
+  { key: "purchase_returns",  label: "مرتجعات المشتريات",  group: "المشتريات", endpoint: (id, a) => `/api/purchasing/purchase-returns/${id}/${a}`,  method: "PATCH", supportsUnpost: true, supportsCancel: true },
   // ── Cash ──
-  { key: "receipt_vouchers",  label: "سندات القبض",        group: "النقدية",   endpoint: (id, a) => `/api/receipt-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true },
-  { key: "payment_vouchers",  label: "سندات الصرف",        group: "النقدية",   endpoint: (id, a) => `/api/payment-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true },
-  { key: "cash_transfers",    label: "التحويلات النقدية",  group: "النقدية",   endpoint: (id, a) => `/api/cash-transfers/${id}/${a}`,             method: "POST",  supportsUnpost: false },
+  { key: "receipt_vouchers",  label: "سندات القبض",        group: "النقدية",   endpoint: (id, a) => `/api/receipt-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true, supportsCancel: true },
+  { key: "payment_vouchers",  label: "سندات الصرف",        group: "النقدية",   endpoint: (id, a) => `/api/payment-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true, supportsCancel: true },
+  { key: "cash_transfers",    label: "التحويلات النقدية",  group: "النقدية",   endpoint: (id, a) => `/api/cash-transfers/${id}/${a}`,             method: "POST",  supportsUnpost: false, supportsCancel: true },
   // ── Accounting ──
-  { key: "journal_entries",   label: "القيود المحاسبية",   group: "المحاسبة",  endpoint: (id, a) => `/api/journal-entries/${id}/${a}`,            method: "POST",  supportsUnpost: true },
+  { key: "journal_entries",   label: "القيود المحاسبية",   group: "المحاسبة",  endpoint: (id, a) => `/api/journal-entries/${id}/${a}`,            method: "POST",  supportsUnpost: true, supportsCancel: true },
   // Monthly accounting adjustments (مصروف مقدم/مستحق) — the row id IS the JE
   // id, so post/unpost go through the journal-entries endpoints. Unpost
   // cascades server-side: deletes the run + JE and reactivates the month.
@@ -110,15 +113,15 @@ const MODULES: ModuleDef[] = [
   // journal-entries post/unpost endpoints (unpost cascades to the run).
   { key: "deferred_expenses", label: "المصروفات المرحلة (من الفواتير)", group: "المحاسبة", endpoint: (id, a) => `/api/journal-entries/${id}/${a}`, method: "POST", supportsUnpost: true },
   // ── Inventory documents ──
-  { key: "goods_receipts",    label: "إيصالات الاستلام",   group: "المخازن",   endpoint: (id, a) => `/api/goods-receipts/${id}/${a}`,             method: "PATCH", supportsUnpost: true },
-  { key: "goods_deliveries",  label: "إذونات التسليم",     group: "المخازن",   endpoint: (id, a) => `/api/goods-deliveries/${id}/${a}`,           method: "PATCH", supportsUnpost: true },
-  { key: "stock_transfers",   label: "تحويلات المخزون",    group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-transfers/${id}/${a}`,  method: "POST",  supportsUnpost: false },
-  { key: "stock_adjustments", label: "تسويات المخزون",     group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-adjustments/${id}/${a}`, method: "POST",  supportsUnpost: false },
-  { key: "stock_counts",      label: "جرد المخزون",        group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-counts/${id}/${a}`,     method: "POST",  supportsUnpost: false },
+  { key: "goods_receipts",    label: "إيصالات الاستلام",   group: "المخازن",   endpoint: (id, a) => `/api/goods-receipts/${id}/${a}`,             method: "PATCH", supportsUnpost: true, supportsCancel: true },
+  { key: "goods_deliveries",  label: "إذونات التسليم",     group: "المخازن",   endpoint: (id, a) => `/api/goods-deliveries/${id}/${a}`,           method: "PATCH", supportsUnpost: true, supportsCancel: true },
+  { key: "stock_transfers",   label: "تحويلات المخزون",    group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-transfers/${id}/${a}`,  method: "POST",  supportsUnpost: false, supportsCancel: true },
+  { key: "stock_adjustments", label: "تسويات المخزون",     group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-adjustments/${id}/${a}`, method: "POST",  supportsUnpost: false, supportsCancel: true },
+  { key: "stock_counts",      label: "جرد المخزون",        group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-counts/${id}/${a}`,     method: "POST",  supportsUnpost: false, supportsCancel: true },
   // ── Sister Companies (الشركات الشقيقة) ──
-  { key: "sister_transfers",   label: "تحويلات الشركات الشقيقة", group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/transfers/${id}/${a}`,   method: "POST", supportsUnpost: true },
-  { key: "sister_returns",     label: "مرتجعات الشركات الشقيقة", group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/returns/${id}/${a}`,     method: "POST", supportsUnpost: true },
-  { key: "sister_settlements", label: "تسويات الشركات الشقيقة",  group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/settlements/${id}/${a}`, method: "POST", supportsUnpost: true },
+  { key: "sister_transfers",   label: "تحويلات الشركات الشقيقة", group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/transfers/${id}/${a}`,   method: "POST", supportsUnpost: true, supportsCancel: true },
+  { key: "sister_returns",     label: "مرتجعات الشركات الشقيقة", group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/returns/${id}/${a}`,     method: "POST", supportsUnpost: true, supportsCancel: true },
+  { key: "sister_settlements", label: "تسويات الشركات الشقيقة",  group: "الشركات الشقيقة", endpoint: (id, a) => `/api/sister-companies/settlements/${id}/${a}`, method: "POST", supportsUnpost: true, supportsCancel: true },
   // ── Fixed Assets (الأصول الثابتة) ──
   // Row id = fa_depreciation_runs.id. "unpost" fully reverses the run's effect
   // (asset accum-dep + book value AND its JE); "post" recomputes day-based and
@@ -127,7 +130,7 @@ const MODULES: ModuleDef[] = [
   // ── HR (الموارد البشرية) ──
   // Row id = payroll_runs.id. post/unpost reuse the HR module's own endpoints
   // (JE build + loan-installment reversal live there).
-  { key: "hr_payroll", label: "مسيرات الرواتب", group: "الموارد البشرية", endpoint: (id, a) => `/api/employees/payroll/runs/${id}/${a}`, method: "POST", supportsUnpost: true },
+  { key: "hr_payroll", label: "مسيرات الرواتب", group: "الموارد البشرية", endpoint: (id, a) => `/api/employees/payroll/runs/${id}/${a}`, method: "POST", supportsUnpost: true, supportsCancel: true },
 ];
 
 // Memoization-friendly conversion of MODULES into the SearchCombobox's
@@ -178,7 +181,7 @@ const SOURCE_ROUTE: Record<ModuleKey, (id: number) => string> = {
   hr_payroll:         ()   => `/hr/payroll`,
 };
 
-type StatusFilter = "all" | "posted" | "unposted";
+type StatusFilter = "all" | "posted" | "unposted" | "cancelled";
 
 // ─── Back-navigation state persistence ─────────────────────────────────────
 // When the accountant clicks a document number we navigate away to the source
@@ -307,7 +310,7 @@ export default function PostingCenter() {
 
   // Bulk action progress UI
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkAction, setBulkAction] = useState<"post" | "unpost" | null>(null);
+  const [bulkAction, setBulkAction] = useState<"post" | "unpost" | "cancel" | "restore" | null>(null);
   const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0, failed: 0 });
 
   // AI sheet
@@ -379,6 +382,13 @@ export default function PostingCenter() {
   const truncated = !!data?.truncated;
   const totalMatched = data?.totalMatched ?? allRows.length;
   const serverLimit = data?.limit ?? 5000;
+  const selectedRows = allRows.filter(r => selected.has(rowKey(r)));
+  const cancelableSelection = selectedRows.filter(r =>
+    !r.posted && r.status === "draft" && MODULES.find(m => m.key === r.module)?.supportsCancel,
+  );
+  const restorableSelection = selectedRows.filter(r =>
+    r.status === "cancelled" && MODULES.find(m => m.key === r.module)?.supportsCancel,
+  );
 
   // Restore scroll position exactly once after the first data load following a
   // Back navigation, then clear it so a normal refresh doesn't keep jumping.
@@ -465,7 +475,13 @@ export default function PostingCenter() {
   // Runs `worker` over `ids` with at most `BULK_CONCURRENCY` in flight.
   // Aborts as soon as `cancelRef.current` becomes true (the user clicks the
   // floating Cancel button mid-run).
-  async function runBulk(action: "post" | "unpost") {
+  async function runBulk(action: "post" | "unpost" | "cancel" | "restore") {
+    const actionLabel = {
+      post: "الترحيل",
+      unpost: "فك الترحيل",
+      cancel: "إلغاء المسودات",
+      restore: "الاستعادة إلى مسودة",
+    }[action];
     // In "عرض الكل" mode rows span multiple modules, so the post/unpost
     // endpoint is resolved PER ROW (from row.module) rather than from a single
     // selected module. `singleDef` is only set when a specific module is chosen.
@@ -495,12 +511,19 @@ export default function PostingCenter() {
     const eligible = keys.filter(k => {
       const row = rowByKey.get(k);
       if (!row) return false;
-      // Only post unposted rows; only unpost posted rows.
-      if (action === "post" ? row.posted : !row.posted) return false;
+      if (action === "post" && (row.posted || row.status === "cancelled")) return false;
+      if (action === "unpost" && !row.posted) return false;
+      if (action === "cancel" && (row.posted || row.status !== "draft")) return false;
+      if (action === "restore" && row.status !== "cancelled") return false;
       // On unpost, drop rows whose module has no unpost endpoint.
       if (action === "unpost") {
         const d = MODULES.find(m => m.key === row.module);
         if (d?.supportsUnpost === false) { skippedUnsupported++; return false; }
+      }
+      if ((action === "cancel" || action === "restore")
+        && !MODULES.find(m => m.key === row.module)?.supportsCancel) {
+        skippedUnsupported++;
+        return false;
       }
       return true;
     });
@@ -508,7 +531,7 @@ export default function PostingCenter() {
     if (eligible.length === 0) {
       toast({
         title: skippedUnsupported > 0
-          ? "العناصر المحددة لا تدعم فك الترحيل"
+          ? `العناصر المحددة لا تدعم ${actionLabel}`
           : "لا توجد عناصر مؤهلة لهذه العملية",
         variant: "destructive",
       });
@@ -517,15 +540,18 @@ export default function PostingCenter() {
 
     if (skippedUnsupported > 0) {
       toast({
-        title: `سيتم تخطّي ${skippedUnsupported} عنصر لا يدعم فك الترحيل`,
-        description: "هذه الأنواع (تحويلات نقدية / مخزون) تُلغى من مستندها الأصلي.",
+        title: `سيتم تخطّي ${skippedUnsupported} عنصر لا يدعم ${actionLabel}`,
       });
     }
 
     if (!confirm(
       action === "post"
         ? `سيتم ترحيل ${eligible.length} عملية. هل تريد المتابعة؟`
-        : `سيتم فك ترحيل ${eligible.length} عملية. هل تريد المتابعة؟`,
+        : action === "unpost"
+          ? `سيتم فك ترحيل ${eligible.length} عملية. هل تريد المتابعة؟`
+          : action === "cancel"
+            ? `سيتم إلغاء ${eligible.length} مسودة دون حذفها. ستُحفظ أرقام المستندات والقيود المرتبطة، ولن يمكن ترحيلها حتى استعادتها إلى مسودة. هل تريد المتابعة؟`
+            : `ستُستعاد ${eligible.length} وثيقة إلى مسودة فقط، دون ترحيلها. هل تريد المتابعة؟`,
     )) return;
 
     setBulkBusy(true);
@@ -553,10 +579,16 @@ export default function PostingCenter() {
           continue;
         }
         try {
-          const r = await fetch(d.endpoint(row.id, action), {
-            method: d.method,
-            headers: authHeaders(),
-          });
+          const isLifecycle = action === "cancel" || action === "restore";
+          const r = await fetch(
+            isLifecycle
+              ? `/api/posting-center/${encodeURIComponent(row.module)}/${row.id}/${action}`
+              : d.endpoint(row.id, action as "post" | "unpost"),
+            {
+              method: isLifecycle ? "POST" : d.method,
+              headers: authHeaders(),
+            },
+          );
           if (!r.ok) {
             const body = await r.json().catch(() => ({}));
             const err: any = new Error(body?.error || `HTTP ${r.status}`);
@@ -584,7 +616,10 @@ export default function PostingCenter() {
       });
     } else if (failed === 0) {
       toast({
-        title: action === "post" ? "تم الترحيل بنجاح" : "تم فك الترحيل بنجاح",
+        title: action === "post" ? "تم الترحيل بنجاح"
+          : action === "unpost" ? "تم فك الترحيل بنجاح"
+            : action === "cancel" ? "تم إلغاء المسودات"
+              : "تمت الاستعادة إلى مسودة",
         description: `${ok} عملية`,
       });
     } else {
@@ -646,6 +681,38 @@ export default function PostingCenter() {
     } catch (e: any) {
       toast({
         title: "تعذّر فك الترحيل",
+        description: e?.message || "حدث خطأ غير متوقع",
+        variant: "destructive",
+      });
+    } finally {
+      setRowBusyId(null);
+    }
+  }
+
+  async function runSingleLifecycle(row: PostingRow, action: "cancel" | "restore") {
+    const def = MODULES.find(m => m.key === row.module);
+    if (!def?.supportsCancel) return;
+    const canceling = action === "cancel";
+    if (!confirm(canceling
+      ? `سيتم إلغاء المسودة ${row.docNumber || `#${row.id}`} دون حذفها. هل تريد المتابعة؟`
+      : `ستُعاد الوثيقة ${row.docNumber || `#${row.id}`} إلى مسودة غير مرحّلة. هل تريد المتابعة؟`
+    )) return;
+
+    setRowBusyId(rowKey(row));
+    try {
+      const r = await fetch(
+        `/api/posting-center/${encodeURIComponent(row.module)}/${row.id}/${action}`,
+        { method: "POST", headers: authHeaders() },
+      );
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.error || `HTTP ${r.status}`);
+      }
+      toast({ title: canceling ? "تم إلغاء المسودة" : "تمت الاستعادة إلى مسودة" });
+      qc.invalidateQueries({ queryKey: ["posting-center-list"] });
+    } catch (e: any) {
+      toast({
+        title: canceling ? "تعذّر إلغاء المسودة" : "تعذّرت استعادة المستند",
         description: e?.message || "حدث خطأ غير متوقع",
         variant: "destructive",
       });
@@ -765,8 +832,8 @@ export default function PostingCenter() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-800">مركز الترحيل</h1>
-            <p className="text-xs text-slate-500">
-              ترحيل وفك ترحيل العمليات يدويًا من جميع الموديولات في مكان واحد
+              <p className="text-xs text-slate-500">
+              ترحيل وفك ترحيل وإلغاء مسودات المستندات واستعادتها من مكان واحد
             </p>
           </div>
         </div>
@@ -829,6 +896,7 @@ export default function PostingCenter() {
               <SelectContent>
                 <SelectItem value="unposted">غير مرحّل</SelectItem>
                 <SelectItem value="posted">مرحّل</SelectItem>
+                <SelectItem value="cancelled">ملغى</SelectItem>
                 <SelectItem value="all">الكل</SelectItem>
               </SelectContent>
             </Select>
@@ -950,6 +1018,20 @@ export default function PostingCenter() {
               <Undo2 className="size-4 me-1.5" /> فك الترحيل
             </Button>
           )}
+          {cancelableSelection.length > 0 && (
+            <Button onClick={() => runBulk("cancel")} disabled={bulkBusy}
+                    variant="outline" className="border-rose-300 text-rose-800 hover:bg-rose-50"
+                    data-testid="button-bulk-cancel">
+              <Ban className="size-4 me-1.5" /> إلغاء المسودات ({cancelableSelection.length})
+            </Button>
+          )}
+          {restorableSelection.length > 0 && (
+            <Button onClick={() => runBulk("restore")} disabled={bulkBusy}
+                    variant="outline" className="border-sky-300 text-sky-800 hover:bg-sky-50"
+                    data-testid="button-bulk-restore">
+              <RotateCcw className="size-4 me-1.5" /> استعادة إلى مسودة ({restorableSelection.length})
+            </Button>
+          )}
           <div className="h-6 w-px bg-slate-300 mx-1" />
           <Button onClick={selectAllPostable} disabled={bulkBusy}
                   variant="outline" className="border-teal-300 text-teal-800 hover:bg-teal-50"
@@ -977,7 +1059,10 @@ export default function PostingCenter() {
           <div className="mt-3 space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-600">
-                {bulkAction === "post" ? "جاري الترحيل..." : "جاري فك الترحيل..."}
+                {bulkAction === "post" ? "جاري الترحيل..."
+                  : bulkAction === "unpost" ? "جاري فك الترحيل..."
+                    : bulkAction === "cancel" ? "جاري إلغاء المسودات..."
+                      : "جاري استعادة المستندات إلى مسودة..."}
                 {" — "}
                 <span className="font-bold text-teal-700">{bulkProgress.done}</span> / {bulkProgress.total}
                 {bulkProgress.failed > 0 && (
@@ -1112,23 +1197,49 @@ export default function PostingCenter() {
                       {r.journalEntryDocNumber || (r.journalEntryId ? `#${r.journalEntryId}` : "—")}
                     </td>
                     <td className="px-2 py-1.5 text-center">
-                      {r.posted && (MODULES.find(m => m.key === r.module)?.supportsUnpost !== false) ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2 text-[11px] text-rose-700 border-rose-200 hover:bg-rose-50"
-                          disabled={rowBusyId === rowKey(r) || bulkBusy}
-                          onClick={() => runSingleUnpost(r)}
-                          data-testid={`button-unpost-${r.module}-${r.id}`}>
-                          {rowBusyId === rowKey(r) ? (
-                            <Loader2 className="size-3 animate-spin" />
-                          ) : (
-                            <><Undo2 className="size-3 me-1" /> فك الترحيل</>
-                          )}
-                        </Button>
-                      ) : (
-                        <span className="text-slate-300 text-xs">—</span>
-                      )}
+                      <div className="flex items-center justify-center gap-1">
+                        {r.posted && (MODULES.find(m => m.key === r.module)?.supportsUnpost !== false) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px] text-amber-700 border-amber-200 hover:bg-amber-50"
+                            disabled={rowBusyId === rowKey(r) || bulkBusy}
+                            onClick={() => runSingleUnpost(r)}
+                            data-testid={`button-unpost-${r.module}-${r.id}`}>
+                            {rowBusyId === rowKey(r) ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : (
+                              <><Undo2 className="size-3 me-1" /> فك الترحيل</>
+                            )}
+                          </Button>
+                        )}
+                        {r.status === "draft" && MODULES.find(m => m.key === r.module)?.supportsCancel && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px] text-rose-700 border-rose-200 hover:bg-rose-50"
+                            disabled={rowBusyId === rowKey(r) || bulkBusy}
+                            onClick={() => runSingleLifecycle(r, "cancel")}
+                            title="إلغاء المسودة مع حفظ المستند والقيد المرتبط"
+                            data-testid={`button-cancel-${r.module}-${r.id}`}>
+                            {rowBusyId === rowKey(r) ? <Loader2 className="size-3 animate-spin" /> : <><Ban className="size-3 me-1" /> إلغاء</>}
+                          </Button>
+                        )}
+                        {r.status === "cancelled" && MODULES.find(m => m.key === r.module)?.supportsCancel && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px] text-sky-700 border-sky-200 hover:bg-sky-50"
+                            disabled={rowBusyId === rowKey(r) || bulkBusy}
+                            onClick={() => runSingleLifecycle(r, "restore")}
+                            title="إعادة المستند إلى مسودة غير مرحّلة"
+                            data-testid={`button-restore-${r.module}-${r.id}`}>
+                            {rowBusyId === rowKey(r) ? <Loader2 className="size-3 animate-spin" /> : <><RotateCcw className="size-3 me-1" /> استعادة</>}
+                          </Button>
+                        )}
+                        {!r.posted && r.status !== "draft" && r.status !== "cancelled"
+                          && <span className="text-slate-300 text-xs">—</span>}
+                      </div>
                     </td>
                   </tr>
                 );

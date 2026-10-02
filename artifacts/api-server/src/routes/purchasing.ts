@@ -67,6 +67,7 @@ import {
 } from "../lib/unitConversion.js";
 import { assertInvoiceHasRealItemLine } from "../lib/invoiceLineValidation.js";
 import { tombstoneAndDeleteDraftInvoice } from "../lib/invoiceDeletionTombstone.js";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import {
   createInvoiceIdempotently,
   findInvoiceCreateReplay,
@@ -1966,7 +1967,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
 // status check and duplicate side effects. api-server is a single process,
 // so a process-local lock fully serializes concurrent requests.
 const __postingLocks = new Set<string>();
-router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async (req, res) => {
+router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), documentMutationLock("purchase_invoice", async (req, res) => {
   let __lockKey: string | null = null;
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -1983,6 +1984,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status === "posted") { res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" }); return; }
+    if (inv.status !== "draft") { res.status(400).json({ error: "لا يمكن ترحيل إلا فواتير الشراء المسودة" }); return; }
 
     const lines = await db.select().from(purchaseInvoiceLinesTable)
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
@@ -2748,7 +2750,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), async 
     res.json(adjustmentRunWarnings.length ? { ...updated, adjustmentRunWarnings } : updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
   finally { if (__lockKey) __postingLocks.delete(__lockKey); }
-});
+}));
 
 // ─── UNPOST purchase invoice (فك الترحيل) ───────────────────────────────────
 // Reverses stock movements and returns the invoice to draft. Protected linked
@@ -3836,7 +3838,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (req, res) => {
+router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), documentMutationLock("purchase_return", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -3850,6 +3852,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
       ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status === "posted") { res.status(400).json({ error: "المرتجع مُرحَّل مسبقاً" }); return; }
+    if (ret.status !== "draft") { res.status(400).json({ error: "لا يمكن ترحيل إلا مرتجعات الشراء المسودة" }); return; }
 
     const sourceHasInternalLandedCosts = ret.invoiceId
       ? (await readExpenseRows(db, cid, "purchase_invoice", ret.invoiceId)).rows.some(r => r.treatment === "capitalized")
@@ -4462,7 +4465,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), async (
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
-});
+}));
 
 // ─── UNPOST purchase return (فك الترحيل) ────────────────────────────────────
 router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), async (req, res) => {

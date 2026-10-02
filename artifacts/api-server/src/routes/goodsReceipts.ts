@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { db } from "@workspace/db";
 import {
   goodsReceiptsTable, goodsReceiptLinesTable,
@@ -589,7 +590,7 @@ router.delete("/:id", async (req, res) => {
 // POST (ترحيل) — increase stock + create JE
 // Dr Inventory (per warehouse) / Cr Receiving Clearing
 // ═══════════════════════════════════════════════
-router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => {
+router.patch("/:id/post", requirePostRight("goodsReceipt"), documentMutationLock("goods_receipt", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -883,12 +884,12 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), async (req, res) => 
     req.log?.error?.({ err: e }, "goods-receipts: post failed");
     res.status(500).json({ error: "تعذر ترحيل إذن الاستلام. راجع إعدادات الحسابات والمخزون وأعد المحاولة." });
   }
-});
+}));
 
 // ═══════════════════════════════════════════════
 // UNPOST (فك الترحيل) — only when not yet invoiced
 // ═══════════════════════════════════════════════
-router.patch("/:id/unpost", requireUnpostRight("goodsReceipt"), async (req, res) => {
+router.patch("/:id/unpost", requireUnpostRight("goodsReceipt"), documentMutationLock("goods_receipt", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -982,7 +983,7 @@ router.patch("/:id/unpost", requireUnpostRight("goodsReceipt"), async (req, res)
     req.log?.error?.({ err: e }, "goods-receipts: unpost failed");
     res.status(500).json({ error: e.message });
   }
-});
+}));
 
 // ═══════════════════════════════════════════════
 // CONVERT TO PURCHASE INVOICE (إنشاء فاتورة)

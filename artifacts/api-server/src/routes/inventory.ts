@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireItemUnit } from "../lib/requiredItemUnit.js";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { db, pool } from "@workspace/db";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
@@ -2347,7 +2348,7 @@ router.put("/stock-transfers/:id", async (req, res) => {
 });
 
 // POST transfer — confirm/post
-router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), async (req, res) => {
+router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), documentMutationLock("stock_transfer", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
 
@@ -2589,7 +2590,7 @@ router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), asyn
     }
     throw e;
   }
-});
+}));
 
 // A delivery can be posted before a production order exists.  This endpoint
 // changes only the manufacturing source ownership; it never creates another
@@ -2842,7 +2843,7 @@ router.put("/stock-adjustments/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), async (req, res) => {
+router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), documentMutationLock("stock_adjustment", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   class HttpError extends Error {
@@ -2973,7 +2974,7 @@ router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), as
     }
     throw e;
   }
-});
+}));
 
 router.delete("/stock-adjustments/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
@@ -3185,7 +3186,7 @@ router.put("/stock-counts/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/stock-counts/:id/post", requirePostRight("stockMovement"), async (req, res) => {
+router.post("/stock-counts/:id/post", requirePostRight("stockMovement"), documentMutationLock("stock_count", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   class HttpError extends Error {
@@ -3306,7 +3307,7 @@ router.post("/stock-counts/:id/post", requirePostRight("stockMovement"), async (
     }
     throw e;
   }
-});
+}));
 
 router.delete("/stock-counts/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;

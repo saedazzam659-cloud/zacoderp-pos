@@ -46,6 +46,7 @@ import { customersTable, suppliersTable } from "@workspace/db";
 import {
   isManagedInventoryOpeningLine,
 } from "../lib/openingBalances.js";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 
 async function unbalancedOpeningAllowed(companyId: number): Promise<boolean> {
   const [company] = await db.select({
@@ -1843,7 +1844,7 @@ router.put("/:id", async (req, res) => {
 // require the entry to be balanced (sum debit === sum credit) with ≥2 valid
 // lines and an open period. Source-document JEs left as drafts (auto-posting
 // OFF) ARE postable here — see the NOTE in the handler.
-router.post("/:id/post", requirePostRight("journalEntry"), async (req, res) => {
+router.post("/:id/post", requirePostRight("journalEntry"), documentMutationLock("journal_entry", async (req, res) => {
   let openingLockClient: any = null;
   let openingLockCompanyId: number | null = null;
   try {
@@ -1881,6 +1882,10 @@ router.post("/:id/post", requirePostRight("journalEntry"), async (req, res) => {
       [existing] = await db.select().from(journalEntriesTable)
         .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
       if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+    }
+    if (existing.status === "cancelled") {
+      res.status(409).json({ error: "لا يمكن ترحيل قيد ملغى" });
+      return;
     }
     if (existing.status === "posted") { res.json({ ok: true, alreadyPosted: true }); return; }
     if (existing.status !== "draft") {
@@ -1959,7 +1964,7 @@ router.post("/:id/post", requirePostRight("journalEntry"), async (req, res) => {
       openingLockClient.release();
     }
   }
-});
+}));
 
 // ─── POST /:id/unpost — flip status from posted → draft ─────────────────────
 router.post("/:id/unpost", requireUnpostRight("journalEntry"), async (req, res) => {

@@ -7,7 +7,7 @@ import { accountsTable } from "./accounts";
 import { salesInvoicesTable } from "./sales";
 
 export const goodsDeliveryStatusEnum = pgEnum("goods_delivery_status", [
-  "draft", "posted", "invoiced",
+  "draft", "posted", "invoiced", "cancelled",
 ]);
 
 export const goodsDeliveriesTable = pgTable("goods_deliveries", {

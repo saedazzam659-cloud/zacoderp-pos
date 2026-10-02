@@ -8,6 +8,7 @@ import { generateZatcaQr } from "../lib/zatca-tlv.js";
 import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
 import { buildSignedZatcaInvoice } from "../lib/zatca-build-signed.js";
 import { invoiceRowToZatcaData, zatcaDocumentUuid } from "../lib/zatca-invoice-mapper.js";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
@@ -224,8 +225,8 @@ router.get("/:id", async (req, res) => {
   res.json(result);
 });
 
-router.put("/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.put("/:id", documentMutationLock("zatca_invoice", async (req, res) => {
+  const id = parseInt(String(req.params.id), 10);
   const parsed = UpdateInvoiceBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
@@ -306,7 +307,7 @@ router.put("/:id", async (req, res) => {
   
   const result = await getInvoiceWithRelations(id);
   res.json(result);
-});
+}));
 
 router.delete("/:id", async (req, res) => {
   const id = parseInt(req.params.id);
@@ -314,8 +315,8 @@ router.delete("/:id", async (req, res) => {
   res.status(204).send();
 });
 
-router.post("/:id/issue", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.post("/:id/issue", documentMutationLock("zatca_invoice", async (req, res) => {
+  const id = parseInt(String(req.params.id), 10);
   const [existing] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
   if (!existing) {
     res.status(404).json({ error: "Invoice not found" });
@@ -431,22 +432,102 @@ router.post("/:id/issue", async (req, res) => {
 
   const result = await getInvoiceWithRelations(id);
   res.json(result);
-});
+}));
 
-router.post("/:id/cancel", async (req, res) => {
-  const id = parseInt(req.params.id);
-  const [invoice] = await db.update(invoicesTable).set({
-    status: "cancelled",
-    updatedAt: new Date(),
-  }).where(eq(invoicesTable.id, id)).returning();
-  
-  if (!invoice) {
-    res.status(404).json({ error: "Invoice not found" });
+router.post("/:id/cancel", documentMutationLock("zatca_invoice", async (req, res) => {
+  const id = Number(req.params.id);
+  const requestedCompanyId = req.body?.companyId ?? req.query.companyId;
+  const cid = resolveCompanyId(req, requestedCompanyId ? Number(requestedCompanyId) : undefined);
+  if (!Number.isSafeInteger(id) || id <= 0 || !cid) {
+    res.status(400).json({ error: "Invalid invoice or company" });
     return;
   }
-  
+
+  const transition = await db.transaction(async (tx) => {
+    const [invoice] = await tx.select().from(invoicesTable).where(and(
+      eq(invoicesTable.id, id),
+      eq(invoicesTable.companyId, cid),
+    )).for("update");
+    if (!invoice) return { error: "Invoice not found", status: 404 as const };
+    if (invoice.status !== "draft") {
+      return {
+        error: "Only draft invoices can be cancelled here; issued ZATCA invoices require the official correction flow",
+        status: 409 as const,
+      };
+    }
+    if (
+      invoice.invoiceHash ||
+      Number(invoice.invoiceCounterValue ?? 0) > 0 ||
+      (invoice.zatcaStatus && invoice.zatcaStatus !== "pending")
+    ) {
+      return {
+        error: "This invoice has fiscal submission data and cannot use generic cancellation",
+        status: 409 as const,
+      };
+    }
+    const [updated] = await tx.update(invoicesTable).set({
+      status: "cancelled",
+      updatedAt: new Date(),
+    }).where(and(
+      eq(invoicesTable.id, id),
+      eq(invoicesTable.companyId, cid),
+      eq(invoicesTable.status, "draft"),
+    )).returning({ id: invoicesTable.id });
+    return updated ? { status: 200 as const } : { error: "Invoice status changed; reload and try again", status: 409 as const };
+  });
+
+  if (transition.status !== 200) {
+    res.status(transition.status).json({ error: transition.error });
+    return;
+  }
   const result = await getInvoiceWithRelations(id);
   res.json(result);
-});
+}));
+
+router.post("/:id/restore", documentMutationLock("zatca_invoice", async (req, res) => {
+  const id = Number(req.params.id);
+  const requestedCompanyId = req.body?.companyId ?? req.query.companyId;
+  const cid = resolveCompanyId(req, requestedCompanyId ? Number(requestedCompanyId) : undefined);
+  if (!Number.isSafeInteger(id) || id <= 0 || !cid) {
+    res.status(400).json({ error: "Invalid invoice or company" });
+    return;
+  }
+
+  const transition = await db.transaction(async (tx) => {
+    const [invoice] = await tx.select().from(invoicesTable).where(and(
+      eq(invoicesTable.id, id),
+      eq(invoicesTable.companyId, cid),
+    )).for("update");
+    if (!invoice) return { error: "Invoice not found", status: 404 as const };
+    if (invoice.status !== "cancelled") {
+      return { error: "Only cancelled invoices can be restored", status: 409 as const };
+    }
+    if (
+      invoice.invoiceHash ||
+      Number(invoice.invoiceCounterValue ?? 0) > 0 ||
+      (invoice.zatcaStatus && invoice.zatcaStatus !== "pending")
+    ) {
+      return {
+        error: "This invoice has fiscal submission data and cannot be restored through the generic draft flow",
+        status: 409 as const,
+      };
+    }
+    const [updated] = await tx.update(invoicesTable).set({
+      status: "draft",
+      updatedAt: new Date(),
+    }).where(and(
+      eq(invoicesTable.id, id),
+      eq(invoicesTable.companyId, cid),
+      eq(invoicesTable.status, "cancelled"),
+    )).returning({ id: invoicesTable.id });
+    return updated ? { status: 200 as const } : { error: "Invoice status changed; reload and try again", status: 409 as const };
+  });
+
+  if (transition.status !== 200) {
+    res.status(transition.status).json({ error: transition.error });
+    return;
+  }
+  res.json(await getInvoiceWithRelations(id));
+}));
 
 export default router;

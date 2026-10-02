@@ -12,6 +12,7 @@
 - [POS Desktop index](pos-desktop-index.md) — POS Desktop shell, local data, fiscal, inventory, printing, licensing, and offline/ZATCA implementation notes.
 - [Accounting and ZATCA index](accounting-zatca-index.md) — accounting, numbering, settlement, reports, documents, imports, and ZATCA implementation notes.
 - [Source-linked JE reuse](je-number-reuse-on-repost.md) — protected unpost/repost keeps the same linked JE row and number; reservations remain for legacy paths.
+- [Document lifecycle locking](document-lifecycle-locking.md) — use PostgreSQL advisory locks keyed by type, tenant, and document across posting and cancel/restore.
 - [Additional accounting report boundary](additional-accounting-reports-boundary.md) — only genuinely new reports join the default-off selector; preserve existing report surfaces and fail closed on unsupported audit scope.
 - [Operational report rendering boundary](operational-report-rendering-boundary.md) — reuse the journal grid and branded exports; suppress monetary totals for mixed or unknown currencies.
 - [Platform and security index](platform-ops-index.md) — tenant isolation, permissions, agents, mobile/HR, storage, infrastructure, and operational safeguards.

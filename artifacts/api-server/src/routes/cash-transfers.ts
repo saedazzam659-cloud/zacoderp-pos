@@ -6,6 +6,7 @@ import { eq, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { nextSequenceOrFallback } from "../lib/sequences.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -87,11 +88,12 @@ router.put("/:id", async (req, res) => {
   res.json(row);
 });
 
-router.post("/:id/post", requirePostRight("cashTransfer"), async (req, res) => {
-  const id = parseInt(req.params.id);
+router.post("/:id/post", requirePostRight("cashTransfer"), documentMutationLock("cash_transfer", async (req, res) => {
+  const id = parseInt(String(req.params.id), 10);
   const [existing] = await db.select().from(cashTransfersTable).where(eq(cashTransfersTable.id, id));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status === "posted") { res.status(400).json({ error: "مرحّل مسبقاً" }); return; }
+  if (existing.status === "cancelled") { res.status(400).json({ error: "لا يمكن ترحيل تحويل ملغى" }); return; }
   if (!existing.amount || parseFloat(existing.amount) <= 0) {
     res.status(400).json({ error: "المبلغ يجب أن يكون أكبر من صفر" }); return;
   }
@@ -99,7 +101,7 @@ router.post("/:id/post", requirePostRight("cashTransfer"), async (req, res) => {
     .set({ status: "posted" })
     .where(eq(cashTransfersTable.id, id)).returning();
   res.json(row);
-});
+}));
 
 router.delete("/:id", async (req, res) => {
   const [existing] = await db.select().from(cashTransfersTable)

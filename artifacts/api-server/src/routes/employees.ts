@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { db } from "@workspace/db";
 import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, payrollAllocationSnapshotsTable, employeeProjectAssignmentsTable, branchesTable, accountsTable, companiesTable, costCentersTable, contractingProjectsTable, employeeViolationsTable, employeeTravelsTable, employeeMedicalInsurancePoliciesTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull, inArray } from "drizzle-orm";
@@ -1991,7 +1992,7 @@ router.patch("/payroll/runs/:id/manufacturing-config", async (req, res) => {
   } catch (e: any) { respondHrError(req, res, e); }
 });
 
-router.post("/payroll/runs/:id/post", requirePostRight("payroll"), async (req, res) => {
+router.post("/payroll/runs/:id/post", requirePostRight("payroll"), documentMutationLock("payroll_run", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -2038,7 +2039,7 @@ router.post("/payroll/runs/:id/post", requirePostRight("payroll"), async (req, r
   } catch (e: any) {
     res.status(e?.status || 400).json({ error: e.message });
   }
-});
+}));
 
 // Get the JE attached to a payroll run (if posted)
 router.get("/payroll/runs/:id/journal", async (req, res) => {
@@ -2058,7 +2059,7 @@ router.get("/payroll/runs/:id/journal", async (req, res) => {
 });
 
 // Unpost a payroll run — deletes its JE and reverts loan paidAmounts
-router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), async (req, res) => {
+router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), documentMutationLock("payroll_run", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -2123,7 +2124,7 @@ router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), async (re
     });
     res.json(upd);
   } catch (e: any) { res.status(e?.status || 500).json({ error: e.message }); }
-});
+}));
 
 // ─── PAY (صرف الرواتب) — DR salaries payable / CR cash|bank ─────────────────
 router.post("/payroll/runs/:id/pay", requirePostRight("payroll"), async (req, res) => {

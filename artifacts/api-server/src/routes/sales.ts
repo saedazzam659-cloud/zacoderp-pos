@@ -80,6 +80,7 @@ import {
   findInvoiceCreateReplay,
   parseInvoiceClientRequestId,
 } from "../lib/invoiceCreateIdempotency.js";
+import { documentMutationLock, withDocumentMutationLock } from "../lib/document-mutation-lock.js";
 
 function hasSalesZatcaArtifacts(invoice: any): boolean {
   const zatcaStatus = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
@@ -3499,7 +3500,9 @@ router.put("/sales-invoices/:id", async (req, res) => {
       };
       const previousParams = req.params;
       req.params = { ...previousParams, id: String(id) };
-      await postSalesInvoiceHandler(req, res, restoreDraft);
+       await withDocumentMutationLock("sales_invoice", cid, id, () =>
+         postSalesInvoiceHandler(req, res, restoreDraft),
+       );
       req.params = previousParams;
       return;
     }
@@ -3545,7 +3548,13 @@ async function postSalesInvoiceHandler(
     let inv = initialInvoice;
     let lines = initialLines;
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
-    if (inv.status === "posted") { res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" }); return; }
+    const inlineIssueCancelled = !!onFailure && inv.status === "cancelled";
+    if (inv.status !== "draft" && !inlineIssueCancelled) {
+      res.status(400).json({
+        error: inv.status === "posted" ? "الفاتورة مُرحَّلة مسبقاً" : "لا يمكن ترحيل فاتورة ملغاة أو غير مسودة",
+      });
+      return;
+    }
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
     timing?.setLineCount(lines.length);
     timing?.mark("invoice-and-lines-read");
@@ -3663,8 +3672,11 @@ async function postSalesInvoiceHandler(
         res.status(404).json({ error: "الفاتورة غير موجودة" });
         return;
       }
-      if (lockedInvoice.status === "posted") {
-        res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" });
+      const lockedInlineIssueCancelled = !!onFailure && lockedInvoice.status === "cancelled";
+      if (lockedInvoice.status !== "draft" && !lockedInlineIssueCancelled) {
+        res.status(400).json({
+          error: lockedInvoice.status === "posted" ? "الفاتورة مُرحَّلة مسبقاً" : "لا يمكن ترحيل فاتورة ملغاة أو غير مسودة",
+        });
         return;
       }
       const lockedLines = await tx
@@ -4304,8 +4316,15 @@ async function postSalesInvoiceHandler(
         postedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(salesInvoicesTable.id, id))
+      .where(and(
+        eq(salesInvoicesTable.id, id),
+        eq(salesInvoicesTable.companyId, cid),
+        eq(salesInvoicesTable.status, lockedInvoice.status),
+      ))
       .returning();
+    if (!updated) {
+      throw Object.assign(new Error("تغيّرت حالة الفاتورة أثناء الترحيل — أعد المحاولة"), { status: 409 });
+    }
     timing?.mark("invoice-finalize");
 
     // NOTE: لا نُنشئ سند قبض تلقائياً عند ترحيل فاتورة نقدية/بنكية.
@@ -4353,7 +4372,7 @@ async function postSalesInvoiceHandler(
 router.patch(
   "/sales-invoices/:id/post",
   requirePostRight("sales"),
-  (req, res) => postSalesInvoiceHandler(req, res),
+  documentMutationLock("sales_invoice", (req, res) => postSalesInvoiceHandler(req, res)),
 );
 
 // ─── UNPOST sales invoice (فك الترحيل) ──────────────────────────────────────
@@ -5362,7 +5381,10 @@ router.put("/sales-returns/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, res) => {
+router.patch(
+  "/sales-returns/:id/post",
+  requirePostRight("sales"),
+  documentMutationLock("sales_return", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     if (!(await requireMobilePerm(req, res, cid, "return_post", "ليست لديك صلاحية ترحيل مرتجعات المبيعات من تطبيق الموبايل"))) return;
@@ -5376,7 +5398,12 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
         ...branchScopeSpread(req, salesReturnsTable.branchId, undefined),
       ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
-    if (ret.status === "posted") { res.status(400).json({ error: "المرتجع مُرحَّل مسبقاً" }); return; }
+    if (ret.status !== "draft") {
+      res.status(400).json({
+        error: ret.status === "posted" ? "المرتجع مُرحَّل مسبقاً" : "لا يمكن ترحيل مرتجع ملغى أو غير مسودة",
+      });
+      return;
+    }
 
     // Source-invoice integrity: if linked, the source must belong to the same
     // company (branch scope on the SOURCE is intentionally not enforced — the
@@ -5462,8 +5489,10 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
       if (!lockedReturn)
         throw Object.assign(new Error("المرتجع غير موجود"), { status: 404 });
       ret = lockedReturn;
-      if (ret.status === "posted")
-        throw Object.assign(new Error("المرتجع مُرحَّل مسبقاً"), { status: 400 });
+      if (ret.status !== "draft")
+        throw Object.assign(new Error(
+          ret.status === "posted" ? "المرتجع مُرحَّل مسبقاً" : "لا يمكن ترحيل مرتجع ملغى أو غير مسودة",
+        ), { status: 400 });
       lines = await tx.select().from(salesReturnLinesTable)
         .where(eq(salesReturnLinesTable.returnId, id));
       if (!lines.length)
@@ -5855,8 +5884,15 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
 
     const [updated] = await tx.update(salesReturnsTable)
       .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
-      .where(eq(salesReturnsTable.id, id))
+      .where(and(
+        eq(salesReturnsTable.id, id),
+        eq(salesReturnsTable.companyId, cid),
+        eq(salesReturnsTable.status, "draft"),
+      ))
       .returning();
+    if (!updated) {
+      throw Object.assign(new Error("تغيّرت حالة المرتجع أثناء الترحيل — أعد المحاولة"), { status: 409 });
+    }
     return updated;
     });
 
@@ -5879,7 +5915,8 @@ router.patch("/sales-returns/:id/post", requirePostRight("sales"), async (req, r
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
-});
+  }),
+);
 
 // ─── UNPOST sales return (فك الترحيل) ───────────────────────────────────────
 router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (req, res) => {

@@ -15,6 +15,7 @@
  * Endpoints:
  *   GET /api/posting-center/list?module=X&status=Y[&search=&dateFrom=&dateTo=]
  *   GET /api/posting-center/ai-summary?module=X
+ *   POST /api/posting-center/:module/:id/cancel|restore
  *
  * Modules supported (all read with company-scoped queries):
  *   sales_invoices, sales_returns,
@@ -30,6 +31,7 @@ import {
   receiptVouchersTable, paymentVouchersTable,
   customersTable, suppliersTable,
   journalEntriesTable, journalEntryLinesTable,
+  settlementLinksTable,
   goodsReceiptsTable, goodsDeliveriesTable,
   cashTransfersTable,
   stockTransfersTable, stockAdjustmentsTable, stockCountsTable,
@@ -40,10 +42,11 @@ import {
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
   payrollRunsTable,
 } from "@workspace/db";
-import { eq, and, desc, gte, lte, inArray, sql } from "drizzle-orm";
+import { eq, and, desc, gte, lte, inArray, sql, isNull, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
-import { requirePermission, canAccessModule } from "../middleware/permissions.js";
-import type { Request } from "express";
+import { requirePermission, canAccessModule, writeAudit } from "../middleware/permissions.js";
+import { documentMutationLock, withDocumentMutationLock } from "../lib/document-mutation-lock.js";
+import type { Request, Response, NextFunction } from "express";
 
 const router = Router();
 // Auth gate at the router level — closes the unauthenticated
@@ -118,6 +121,79 @@ const MODULES = [
   "hr_payroll",
 ] as const;
 type ModuleKey = typeof MODULES[number];
+
+// Lifecycle changes are intentionally limited to rows whose existing source
+// workflow can safely be paused while still a draft. Monthly/deferred
+// adjustments and depreciation runs have their own source-side cascades and
+// must continue to use those workflows.
+const LIFECYCLE_CONFIG: Partial<Record<ModuleKey, {
+  table: any;
+  permission: string;
+  lockType: string;
+  journalEntryField?: string;
+  settlementSourceType?: string;
+  isJournalEntry?: boolean;
+  scope?: (table: any) => any[];
+}>> = {
+  sales_invoices: {
+    table: salesInvoicesTable, permission: "sales_invoices", lockType: "sales_invoice", journalEntryField: "journalEntryId",
+    scope: (t) => [isNull(t.posSessionId)],
+  },
+  pos_sales: {
+    table: salesInvoicesTable, permission: "pos", lockType: "sales_invoice", journalEntryField: "journalEntryId",
+    scope: (t) => [isNotNull(t.posSessionId)],
+  },
+  sales_returns: {
+    table: salesReturnsTable, permission: "sales_returns", lockType: "sales_return", journalEntryField: "journalEntryId",
+  },
+  purchase_invoices: {
+    table: purchaseInvoicesTable, permission: "purchase_invoices", lockType: "purchase_invoice", journalEntryField: "journalEntryId",
+  },
+  purchase_returns: {
+    table: purchaseReturnsTable, permission: "purchase_returns", lockType: "purchase_return", journalEntryField: "journalEntryId",
+  },
+  receipt_vouchers: {
+    table: receiptVouchersTable, permission: "receipt_vouchers", lockType: "receipt_voucher",
+    journalEntryField: "journalEntryId", settlementSourceType: "receipt_voucher",
+  },
+  payment_vouchers: {
+    table: paymentVouchersTable, permission: "payment_vouchers", lockType: "payment_voucher",
+    journalEntryField: "journalEntryId", settlementSourceType: "payment_voucher",
+  },
+  cash_transfers: {
+    table: cashTransfersTable, permission: "cash_boxes", lockType: "cash_transfer",
+  },
+  journal_entries: {
+    table: journalEntriesTable, permission: "journal_entries", lockType: "journal_entry", isJournalEntry: true,
+  },
+  goods_receipts: {
+    table: goodsReceiptsTable, permission: "purchase_invoices", lockType: "goods_receipt", journalEntryField: "journalEntryId",
+  },
+  goods_deliveries: {
+    table: goodsDeliveriesTable, permission: "sales_invoices", lockType: "goods_delivery", journalEntryField: "journalEntryId",
+  },
+  stock_transfers: {
+    table: stockTransfersTable, permission: "stock_transfers", lockType: "stock_transfer", journalEntryField: "journalEntryId",
+  },
+  stock_adjustments: {
+    table: stockAdjustmentsTable, permission: "stock_adjustments", lockType: "stock_adjustment", journalEntryField: "journalEntryId",
+  },
+  stock_counts: {
+    table: stockCountsTable, permission: "stock_counts", lockType: "stock_count", journalEntryField: "journalEntryId",
+  },
+  sister_transfers: {
+    table: sisterTransfersTable, permission: "sister_companies", lockType: "sister_transfer", journalEntryField: "journalEntryId",
+  },
+  sister_returns: {
+    table: sisterReturnsTable, permission: "sister_companies", lockType: "sister_return", journalEntryField: "journalEntryId",
+  },
+  sister_settlements: {
+    table: sisterSettlementsTable, permission: "sister_companies", lockType: "sister_settlement", journalEntryField: "journalEntryId",
+  },
+  hr_payroll: {
+    table: payrollRunsTable, permission: "hr_payroll", lockType: "payroll_run", journalEntryField: "postedJournalId",
+  },
+};
 
 const MODULE_LABELS_AR: Record<ModuleKey, string> = {
   sales_invoices:    "فواتير المبيعات",
@@ -344,6 +420,8 @@ router.get("/list", gateByModule, async (req, res) => {
       // already posted AND not cancelled. We only show actionable rows so
       // the bulk-post button never hits a cancelled doc and gets rejected.
       filtered = rows.filter(r => !r.posted && r.status !== "cancelled");
+    } else if (statusFilter === "cancelled") {
+      filtered = rows.filter(r => r.status === "cancelled");
     }
 
     // Optional client-side search hook (Arabic name, doc#, JE#, description)
@@ -1317,5 +1395,220 @@ async function loadSupplierMap(cid: number, ids: number[]): Promise<Map<number, 
     .where(and(eq(suppliersTable.companyId, cid), inArray(suppliersTable.id, unique)));
   return new Map(rows.map(r => [r.id, r.nameAr || r.nameEn || `#${r.id}`] as const));
 }
+
+class LifecycleError extends Error {
+  constructor(public statusCode: number, message: string) {
+    super(message);
+  }
+}
+
+function lifecyclePermission(req: Request, res: Response, next: NextFunction) {
+  const module = req.params.module as ModuleKey;
+  const config = LIFECYCLE_CONFIG[module];
+  if (!config) {
+    res.status(404).json({ error: "هذا النوع لا يدعم إلغاء المسودات أو استعادتها من مركز الترحيل" });
+    return;
+  }
+  return requirePermission(config.permission, "cancel")(req, res, next);
+}
+
+// Cancel/restore is a status-only transition for an unposted document. It
+// deliberately does not delete/recreate a source record or its generated JE,
+// so protected document and JE numbers, lines, and links remain unchanged.
+router.post(
+  "/:module/:id/:action",
+  lifecyclePermission,
+  documentMutationLock(
+    (req) => LIFECYCLE_CONFIG[req.params.module as ModuleKey]?.lockType,
+    async (req, res) => {
+  const module = req.params.module as ModuleKey;
+  const config = LIFECYCLE_CONFIG[module];
+  const action = req.params.action;
+  const id = Number(req.params.id);
+  const cid = resolveCompanyId(req);
+
+  if (!config || (action !== "cancel" && action !== "restore")) {
+    res.status(404).json({ error: "المسار غير متاح" });
+    return;
+  }
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    res.status(400).json({ error: "رقم المستند غير صالح" });
+    return;
+  }
+  if (!cid) {
+    res.status(401).json({ error: "غير مصرح" });
+    return;
+  }
+
+  const table = config.table as any;
+  const expectedStatus = action === "cancel" ? "draft" : "cancelled";
+  const targetStatus = action === "cancel" ? "cancelled" : "draft";
+  let linkedJournalEntryId: number | null = null;
+
+  try {
+    await db.transaction(async (tx) => {
+      const scope = table.branchId
+        ? branchScopeSpread(req, table.branchId, undefined)
+        : [];
+      const [doc] = await tx.select().from(table).where(and(
+        eq(table.id, id),
+        eq(table.companyId, cid),
+        ...scope,
+        ...(config.scope?.(table) ?? []),
+      )).for("update");
+
+      if (!doc) {
+        throw new LifecycleError(404, "المستند غير موجود أو لا تملك صلاحية الوصول إلى فرعه");
+      }
+      if (doc.status !== expectedStatus) {
+        if (action === "cancel" && doc.status === "posted") {
+          throw new LifecycleError(409, "يجب فك ترحيل المستند من مساره الأصلي قبل إلغائه");
+        }
+        throw new LifecycleError(
+          409,
+          action === "cancel"
+            ? "يمكن إلغاء المسودات فقط"
+            : "يمكن استعادة المستندات الملغاة فقط، وستعود إلى مسودة غير مرحّلة",
+        );
+      }
+
+      if (config.isJournalEntry) {
+        // A manual JE with source-side settlement links is not an isolated
+        // document. Keep those accounting relationships intact and require
+        // their owning workflow to resolve them first.
+        const specialJeTypes = new Set([
+          ...LOCKED_JE_TYPES,
+          ...ADJUSTMENT_JE_TYPES,
+          "fa_depreciation",
+          "opening",
+        ]);
+        if (doc.entryType && specialJeTypes.has(doc.entryType)) {
+          throw new LifecycleError(409, "هذا القيد تابع لمستند أو مسار محاسبي خاص؛ ألغِه من المستند المصدر");
+        }
+        if (doc.salesInvoiceId || doc.purchaseInvoiceId) {
+          throw new LifecycleError(409, "لا يمكن إلغاء قيد مرتبط بتسوية فاتورة");
+        }
+        const [jeSettlement] = await tx.select({ id: settlementLinksTable.id })
+          .from(settlementLinksTable)
+          .where(and(
+            eq(settlementLinksTable.companyId, cid),
+            eq(settlementLinksTable.sourceType, "je"),
+            eq(settlementLinksTable.sourceId, id),
+          )).limit(1);
+        if (jeSettlement) {
+          throw new LifecycleError(409, "لا يمكن إلغاء قيد مستخدم في تسوية فواتير");
+        }
+      }
+
+      if (config.settlementSourceType) {
+        const [voucherSettlement] = await tx.select({ id: settlementLinksTable.id })
+          .from(settlementLinksTable)
+          .where(and(
+            eq(settlementLinksTable.companyId, cid),
+            eq(settlementLinksTable.sourceType, config.settlementSourceType),
+            eq(settlementLinksTable.sourceId, id),
+          )).limit(1);
+        if (voucherSettlement) {
+          throw new LifecycleError(409, "أزل روابط تسوية الفواتير من السند قبل إلغائه أو استعادته");
+        }
+      }
+
+      if (!config.isJournalEntry && config.journalEntryField) {
+        const rawLinkedId = doc[config.journalEntryField];
+        if (rawLinkedId != null) {
+        const linkedId = Number(rawLinkedId);
+        if (!Number.isSafeInteger(linkedId) || linkedId <= 0) {
+          throw new LifecycleError(409, "معرّف القيد المرتبط غير صالح؛ لم يتم تغيير أي حالة");
+        }
+        linkedJournalEntryId = linkedId;
+        await withDocumentMutationLock("journal_entry", cid, linkedId, async () => {
+            const [linkedJe] = await tx.select({
+              id: journalEntriesTable.id,
+              status: journalEntriesTable.status,
+            }).from(journalEntriesTable).where(and(
+              eq(journalEntriesTable.id, linkedId),
+                eq(journalEntriesTable.companyId, cid),
+              )).for("update");
+
+            if (!linkedJe) {
+              throw new LifecycleError(409, "القيد المرتبط بالمستند غير موجود؛ لم يتم تغيير أي حالة");
+            }
+            if (linkedJe.status === "posted") {
+              throw new LifecycleError(409, "القيد المرتبط ما زال مرحّلاً؛ فك ترحيل المستند من مساره الأصلي أولاً");
+            }
+            if (action === "cancel" && linkedJe.status !== "draft" && linkedJe.status !== "cancelled") {
+              throw new LifecycleError(409, "حالة القيد المرتبط لا تسمح بإلغاء آمن");
+            }
+            if (action === "restore" && linkedJe.status !== "cancelled" && linkedJe.status !== "draft") {
+              throw new LifecycleError(409, "حالة القيد المرتبط لا تسمح باستعادة آمنة");
+            }
+            if (action === "cancel" && linkedJe.status === "draft") {
+              await tx.update(journalEntriesTable)
+                .set({ status: "cancelled", updatedAt: new Date() })
+                .where(and(
+                  eq(journalEntriesTable.id, linkedId),
+                  eq(journalEntriesTable.companyId, cid),
+                  eq(journalEntriesTable.status, "draft"),
+                ));
+            } else if (action === "restore" && linkedJe.status === "cancelled") {
+              await tx.update(journalEntriesTable)
+                .set({ status: "draft", updatedAt: new Date() })
+                .where(and(
+                  eq(journalEntriesTable.id, linkedId),
+                  eq(journalEntriesTable.companyId, cid),
+                  eq(journalEntriesTable.status, "cancelled"),
+                ));
+            }
+          });
+        }
+      }
+
+      const updateSet: Record<string, unknown> = {
+        status: targetStatus,
+      };
+      if (table.updatedAt) updateSet.updatedAt = new Date();
+      const changed = await tx.update(table).set(updateSet).where(and(
+        eq(table.id, id),
+        eq(table.companyId, cid),
+        eq(table.status, expectedStatus),
+      )).returning({ id: table.id });
+      if (!changed.length) {
+        throw new LifecycleError(409, "تغيرت حالة المستند أثناء العملية؛ أعد تحميل القائمة");
+      }
+    });
+
+    const user = req.authUser;
+    await writeAudit({
+      userId: user?.id ? Number(user.id) : null,
+      username: user?.username ?? null,
+      role: user?.role ?? null,
+      companyId: cid,
+      module: config.permission,
+      action,
+      method: req.method,
+      path: req.originalUrl,
+      entityType: module,
+      entityId: String(id),
+      statusCode: 200,
+      metadata: {
+        fromStatus: expectedStatus,
+        toStatus: targetStatus,
+        linkedJournalEntryId,
+      },
+    });
+
+    res.json({ ok: true, id, module, status: targetStatus, journalEntryId: linkedJournalEntryId });
+  } catch (error: any) {
+    const statusCode = error instanceof LifecycleError ? error.statusCode : 500;
+    if (statusCode === 500) {
+      req.log?.error?.({ err: error, module, id, action }, "posting-center lifecycle transition failed");
+    }
+    res.status(statusCode).json({
+      error: error instanceof LifecycleError ? error.message : (error?.message || "تعذر تغيير حالة المستند"),
+    });
+    }
+    },
+  ),
+);
 
 export default router;

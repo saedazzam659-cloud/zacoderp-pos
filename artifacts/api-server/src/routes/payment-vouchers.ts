@@ -1473,6 +1473,9 @@ router.post("/:id/post", requirePostRight("payment"), async (req, res) => {
     if (linked && existing.journalEntryId) { res.json({ ...existing, idempotentReplay: true }); return; }
     res.status(400).json({ error: "مرحّل مسبقاً" }); return;
   }
+  if (existing.status !== "draft") {
+    res.status(400).json({ error: "لا يمكن ترحيل إلا سندات الصرف المسودة" }); return;
+  }
   if (!existing.amount || parseFloat(existing.amount) <= 0) {
     res.status(400).json({ error: "المبلغ يجب أن يكون أكبر من صفر" }); return;
   }
