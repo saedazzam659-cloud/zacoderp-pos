@@ -14,3 +14,9 @@ The SuperAdmin repair tool must refuse a scoped repair if the selected sequence 
 **Why:** Resetting one stream's counter on a shared sequence can shift another stream, while correcting a number can collide with claims the scoped repair never checks.
 
 **How to apply:** Compare the selected sequence's configured transaction types with the complete allocator candidate set for that document kind. Fail closed on unknown or cross-kind types; do not infer sharing merely from similar prefixes.
+
+During a batch repair, a legacy null-`ref_id` reservation for an active selected draft may be released only if it is the sole exact/numeric-equivalent claim in that sequence, its transaction type is configured on the resolved sequence, and that draft is the sole live company-wide owner of the number. Keep ambiguous claims blocked.
+
+**Why:** Return creation allocates before inserting the row, so historical sequence logs may lack a document ID. Rejecting every such claim makes legitimate draft-gap repair impossible; matching by number alone could instead release another document's reservation.
+
+**How to apply:** Record the exact released log ID and that it was matched to the unique active draft in the repair audit. Continue requiring deletion proof for a target number claimed by a deleted row, and preserve the shared-sequence guard.

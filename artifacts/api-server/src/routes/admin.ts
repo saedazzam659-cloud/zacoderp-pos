@@ -2607,20 +2607,33 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
         }
 
         const logsQuery = await tx.execute(sql`
-          SELECT id, ref_table, ref_id, generated_number FROM sequence_logs
+          SELECT id, transaction_type, ref_table, ref_id, generated_number FROM sequence_logs
           WHERE company_id = ${companyId} AND sequence_id = ${seq.id}
         `);
         const sequenceLogs = (logsQuery.rows ?? []) as any[];
         const releasedByDocument = new Map<number, number[]>();
+        const activeDraftMatchedNullReferenceLogIds = new Map<number, number[]>();
         const releasedIds = new Set<number>();
-        // Capture the selected drafts' exact prior claims before checking the
-        // destination range. Allocations created before the document ID existed
-        // have a null ref_id; those claims are not safely attributable here.
+        // Capture selected drafts' prior claims before checking the destination.
+        // Older return allocations ran before the document ID existed, leaving
+        // ref_id null. Release such a claim only when it is the sole matching
+        // claim in this sequence, the configured transaction type matches, and
+        // exactly one live return in the company owns that number: this draft.
+        // Ambiguous legacy claims still require the deleted-draft proof below.
         for (const doc of sortedDocs) {
           const oldNumber = String(doc.doc_number);
+          const oldParts = invoiceNumberParts(oldNumber);
+          const sameOldNumber = (value: unknown) => {
+            const candidate = String(value ?? "");
+            const parts = invoiceNumberParts(candidate);
+            return candidate === oldNumber
+              || (!!oldParts && parts?.equivalent === oldParts.equivalent);
+          };
           const oldLogs = sequenceLogs.filter((log) =>
             String(log.ref_table ?? "") === meta.table
-            && String(log.generated_number ?? "") === oldNumber);
+            && sameOldNumber(log.generated_number));
+          const liveOwners = (companyRows.rows ?? []).filter((row: any) =>
+            sameOldNumber(row.doc_number));
           for (const log of oldLogs) {
             if (String(log.ref_id ?? "") === String(doc.id)) {
               const logId = Number(log.id);
@@ -2628,6 +2641,24 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
               idsForDoc.push(logId);
               releasedByDocument.set(Number(doc.id), idsForDoc);
               releasedIds.add(logId);
+              continue;
+            }
+            const configuredTransactionTypes = Array.isArray(seq.transaction_types)
+              ? seq.transaction_types.map(String)
+              : [];
+            const uniquelyOwnedNullReference = (log.ref_id == null || String(log.ref_id) === "")
+              && oldLogs.length === 1
+              && configuredTransactionTypes.includes(String(log.transaction_type ?? ""))
+              && liveOwners.length === 1
+              && Number(liveOwners[0].id) === Number(doc.id)
+              && String(liveOwners[0].status ?? "").toLowerCase() === "draft";
+            if (uniquelyOwnedNullReference) {
+              const logId = Number(log.id);
+              const idsForDoc = releasedByDocument.get(Number(doc.id)) ?? [];
+              idsForDoc.push(logId);
+              releasedByDocument.set(Number(doc.id), idsForDoc);
+              releasedIds.add(logId);
+              activeDraftMatchedNullReferenceLogIds.set(Number(doc.id), [logId]);
               continue;
             }
             if (!await reclaimableInvoiceLog(tx, companyId, log, {
@@ -2708,6 +2739,8 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
         const changedDocuments = sortedDocs.map((doc, index) => ({
           documentId: Number(doc.id), oldNumber: String(doc.doc_number), newNumber: newNumbers[index],
           releasedSequenceLogIds: releasedByDocument.get(Number(doc.id)) ?? [],
+          activeDraftMatchedNullReferenceLogIds:
+            activeDraftMatchedNullReferenceLogIds.get(Number(doc.id)) ?? [],
         }));
         const result = {
           kind, sequenceCode: seq.code, branchId, bucket, nextNumber,
@@ -2751,6 +2784,8 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
               op: "draft_renumber_release", kind, sequenceId: Number(seq.id), sequenceCode: seq.code,
               branchId, bucket, documentId: Number(doc.id), oldNumber: String(doc.doc_number),
               newNumber: newNumbers[index], releasedSequenceLogIds: releasedByDocument.get(Number(doc.id)) ?? [],
+              activeDraftMatchedNullReferenceLogIds:
+                activeDraftMatchedNullReferenceLogIds.get(Number(doc.id)) ?? [],
               noZatcaArtifactsVerified: true,
             },
           });

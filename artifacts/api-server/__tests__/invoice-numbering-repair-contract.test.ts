@@ -158,6 +158,9 @@ test("return draft batches are atomic, contiguous, and require historical deleti
   assert.match(batchRoute, /UNKNOWN_OLD_NUMBER_CLAIM/);
   assert.match(batchRoute, /UNKNOWN_SEQUENCE_LOG/);
   assert.match(batchRoute, /PROTECTED_COUNTER_HIGH_WATER/);
+  assert.match(batchRoute, /oldLogs\.length === 1/);
+  assert.match(batchRoute, /liveOwners\.length === 1/);
+  assert.match(batchRoute, /activeDraftMatchedNullReferenceLogIds/);
   assert.match(batchRoute, /reclaimableInvoiceLog/);
   assert.match(batchRoute, /INSERT INTO sequence_logs/);
   assert.match(batchRoute, /if \(dryRun\) return \{ \.\.\.result, canApply: true \}/);
