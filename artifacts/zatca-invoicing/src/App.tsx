@@ -35,6 +35,8 @@ import InstallWizard from "@/pages/InstallWizard";
 import DatabaseStats from "@/pages/admin/DatabaseStats";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
 import CompanyDataDoctor from "@/pages/admin/CompanyDataDoctor";
+import DeletedRecordsRestore from "@/pages/admin/DeletedRecordsRestore";
+import { useDeletedRecordsRestoreFeature } from "@/hooks/useDeletedRecordsRestoreFeature";
 import DataCopyJournalEntries from "@/pages/admin/DataCopyJournalEntries";
 import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
@@ -685,6 +687,7 @@ const CompanyDemoAnalyticsDetail = () => <DemoAnalyticsDetail scope="company" />
 
 function AppRoutes() {
   const { isAuthenticated, loading, user, actingCompanyId } = useAuth() as any;
+  const deletedRecordsFeature = useDeletedRecordsRestoreFeature();
   const [location] = useLocation();
   // يجب أن يبقى هذا الهوك قبل أي early-return (قاعدة الهوكس).
   const isAgentDomain = useIsAgentDomain();
@@ -918,6 +921,8 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/db-stats" component={DatabaseStats} />}
             {isSuperAdmin && <Route path="/admin/ai-fix" component={AICompanyFix} />}
             {isSuperAdmin && <Route path="/admin/data-doctor" component={CompanyDataDoctor} />}
+            {isSuperAdmin && deletedRecordsFeature.data?.enabled === true
+              && <Route path="/admin/deleted-records" component={DeletedRecordsRestore} />}
             {isSuperAdmin && <Route path="/admin/data-copy/journal-entries" component={DataCopyJournalEntries} />}
             {isSuperAdmin && <Route path="/admin/support" component={SupportInbox} />}
             {isSuperAdmin && <Route path="/admin/support-settings" component={SupportSettings} />}

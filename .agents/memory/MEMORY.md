@@ -1,5 +1,6 @@
 # Durable memory indexes
 - [Invoice expenses and documentary credits](invoice-expense-lc-boundary.md) — preserve the working credit lifecycle and ZATCA; prevent duplicate expense capitalization.
+- [Deleted-record restoration boundary](deleted-record-restore-boundary.md) — keep restore platform-only, default-off, and fail-closed on incomplete or fiscally affected snapshots.
 - [Country tax integration boundary](multi-country-tax-boundary.md) — keep Egypt/Jordan adapters separate; never edit or route them through Saudi ZATCA.
 - [Internal control boundary](internal-control-boundary.md) — monitoring only, evidence limitations, and company activation separate from individual access.
 - [Crawler hardening boundary](crawl-hardening-boundary.md) — advisory indexing controls must preserve ERP workflows; agent gateway rollout is separate from central publication.

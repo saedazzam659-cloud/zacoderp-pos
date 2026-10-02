@@ -1,7 +1,7 @@
 import { deletedRecordsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 
-function hasZatcaArtifacts(invoice: any): boolean {
+export function hasZatcaArtifacts(invoice: any): boolean {
   const status = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
   if (status && status !== "pending") return true;
   return [
@@ -34,6 +34,7 @@ export async function tombstoneAndDeleteDraftInvoice(
     deletedBy: number | null;
     deletedByUsername: string | null;
     reason: string;
+    lineSnapshot?: any[];
   },
 ): Promise<void> {
   if (snapshot?.status !== "draft") {
@@ -50,6 +51,7 @@ export async function tombstoneAndDeleteDraftInvoice(
     payload: {
       ...snapshot,
       companyId: meta.companyId,
+      ...(tableName === "sales_returns" ? { lines: meta.lineSnapshot ?? [] } : {}),
       docNumber: snapshot.docNumber ?? null,
       status: snapshot.status,
       // These flags are the durable, fail-closed evidence consumed by the

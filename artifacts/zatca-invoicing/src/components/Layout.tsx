@@ -46,6 +46,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
+import { useDeletedRecordsRestoreFeature } from "@/hooks/useDeletedRecordsRestoreFeature";
 import { usePermission, userHasGrant } from "@/hooks/usePermission";
 import { useIdleLogout } from "@/hooks/useIdleLogout";
 import {
@@ -224,6 +225,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.databaseStats",        href: "/admin/db-stats",           icon: Database },
   { nameKey: "nav.aiCompanyFix",         href: "/admin/ai-fix",             icon: Sparkles },
   { nameKey: "nav.dataDoctor",           href: "/admin/data-doctor",        icon: Stethoscope },
+  { nameKey: "nav.deletedRecordsRestore",href: "/admin/deleted-records",    icon: RotateCcw },
   { nameKey: "nav.supportInbox",         href: "/admin/support",            icon: Inbox },
   { nameKey: "nav.supportSettings",      href: "/admin/support-settings",   icon: MessageSquare },
   { nameKey: "nav.supportCall",          href: "/admin/support-call",       icon: Video },
@@ -2593,6 +2595,11 @@ function TopNavBar(props: any) {
   const { t } = useTranslation();
   const { location, isSuperAdmin, isAgentDomain, user, menuPerms, onNavigate } = props;
   const localSuperadminScreens = useLocalSuperadminScreens();
+  const deletedRecordsFeature = useDeletedRecordsRestoreFeature();
+  const visibleSuperAdminNav = superAdminNav.filter(item =>
+    (item.href !== "/admin/deleted-records" || deletedRecordsFeature.data?.enabled === true)
+    && isLocalSuperadminScreenAllowed(item.href, localSuperadminScreens),
+  );
   const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
   const NOOP = () => {};
   const nav = (close: () => void) => () => {
@@ -2606,7 +2613,7 @@ function TopNavBar(props: any) {
         className="hidden md:flex items-center gap-1 overflow-x-auto border-b border-sidebar-border bg-sidebar px-3 py-1.5"
         data-testid="topnav-bar"
       >
-        {superAdminNav.filter(item => isLocalSuperadminScreenAllowed(item.href, localSuperadminScreens)).map(item => (
+        {visibleSuperAdminNav.map(item => (
           <div key={item.href} className="shrink-0">
             <NavItem item={item} location={location} onClick={onNavigate} />
           </div>
@@ -3056,6 +3063,11 @@ function SidebarInner({
   // Agent-domain brand (e.g. «طفرة») replaces the default app name.
   const agentBrand = useAgentBrandName();
   const localSuperadminScreens = useLocalSuperadminScreens();
+  const deletedRecordsFeature = useDeletedRecordsRestoreFeature();
+  const visibleSuperAdminNav = superAdminNav.filter(item =>
+    (item.href !== "/admin/deleted-records" || deletedRecordsFeature.data?.enabled === true)
+    && isLocalSuperadminScreenAllowed(item.href, localSuperadminScreens),
+  );
   const filteredBusiness = useMemo(() => {
     const items = moduleReportsUnified
       ? [...companyBusinessNav, fieldServiceUnifiedReportsNav]
@@ -3139,7 +3151,7 @@ function SidebarInner({
       <nav className="flex-1 px-3 py-2 space-y-4 overflow-y-auto">
         {isSuperAdmin ? (
           <div className="space-y-0.5">
-            {superAdminNav.filter(item => isLocalSuperadminScreenAllowed(item.href, localSuperadminScreens)).map(item => (
+            {visibleSuperAdminNav.map(item => (
               <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
             ))}
           </div>

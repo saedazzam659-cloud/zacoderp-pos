@@ -27,7 +27,7 @@ export const LOCAL_SUPERADMIN_SCREEN_IDS = [
   "dev_studio", "marketplace", "plans", "modules", "industries", "company_cloning",
   "menu_permissions", "windows_app_permissions", "gateway_clients", "orphan_stock",
   "database_stats", "ai_company_fix", "data_doctor", "support_inbox", "support_settings",
-  "support_call", "seo_dashboard", "seo_ai_studio", "ai_controls", "audit_log",
+  "deleted_records_restore", "support_call", "seo_dashboard", "seo_ai_studio", "ai_controls", "audit_log",
   "pos_monitoring", "users", "invoice_field_policies",
 ] as const;
 

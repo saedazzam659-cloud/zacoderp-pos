@@ -21,12 +21,20 @@ import {
   customersTable, suppliersTable, itemsTable, accountsTable,
   branchesTable, warehousesTable, cashBoxesTable, bankAccountsTable,
   invoicesTable, purchaseInvoicesTable, journalEntriesTable, journalEntryLinesTable,
+  salesReturnsTable, salesReturnLinesTable,
   deletedRecordsTable,
   auditLogTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray, isNull, isNotNull, desc, gte, lte } from "drizzle-orm";
 import { writeAudit } from "../middleware/permissions.js";
 import { resolveBearerToken } from "../middleware/auth.js";
+import { runWithAgentScope } from "../lib/agentScope.js";
+import { isDeletedRecordsRestoreEnabled } from "../lib/deletedRecordsRestoreFeature.js";
+import {
+  assessSalesReturnRestoreSnapshot,
+  getReturnLineSnapshot,
+  RETURN_LINE_SNAPSHOT_KEYS,
+} from "../lib/deletedRecordRestorePolicy.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage } from "../middleware/requireAiFeature.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -465,6 +473,64 @@ function reviveTimestamps<T>(payload: T): T {
   return out;
 }
 
+const NON_RESTORABLE_DOCUMENT_KEYS = new Set(["invoices", "purchase_invoices", "journal_entries"]);
+
+function assessSnapshotRestore(snap: any): { allowed: boolean; reason: string | null; lineCount: number | null } {
+  const payload = snap?.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { allowed: false, reason: "invalid_snapshot", lineCount: null };
+  }
+  if (snap.tableName === "sales_returns") return assessSalesReturnRestoreSnapshot(snap);
+  if (Number(payload.id) !== Number(snap.recordId)) {
+    return { allowed: false, reason: "record_id_mismatch", lineCount: null };
+  }
+  if (snap.companyId == null || Number(payload.companyId) !== Number(snap.companyId)) {
+    return { allowed: false, reason: "company_id_mismatch", lineCount: null };
+  }
+  if (NON_RESTORABLE_DOCUMENT_KEYS.has(String(snap.tableName))) {
+    return { allowed: false, reason: "document_child_snapshot_not_supported", lineCount: null };
+  }
+  if (!isValidTable(String(snap.tableName))) {
+    return { allowed: false, reason: "unknown_table", lineCount: null };
+  }
+  return { allowed: true, reason: null, lineCount: null };
+}
+
+async function restoreSalesReturnSnapshot(tx: any, snap: any): Promise<void> {
+  const payload = snap.payload as Record<string, any>;
+  const lines = getReturnLineSnapshot(payload) ?? [];
+  const header = { ...payload };
+  for (const key of RETURN_LINE_SNAPSHOT_KEYS) delete header[key];
+  header.id = Number(snap.recordId);
+  header.companyId = Number(snap.companyId);
+
+  if (header.docNumber != null && String(header.docNumber).trim()) {
+    const [conflict] = await tx.select({ id: salesReturnsTable.id })
+      .from(salesReturnsTable)
+      .where(and(
+        eq(salesReturnsTable.companyId, Number(snap.companyId)),
+        eq(salesReturnsTable.docNumber, String(header.docNumber)),
+      ))
+      .limit(1);
+    if (conflict) throw new Error("conflict_doc_number");
+  }
+
+  const inserted = await tx.insert(salesReturnsTable)
+    .values(reviveTimestamps(header))
+    .onConflictDoNothing()
+    .returning({ id: salesReturnsTable.id });
+  if (!inserted.length) throw new Error("conflict_pk_or_unique_in_use");
+
+  const restoredLines = lines.map((line: Record<string, any>) => {
+    const restored: Record<string, any> = { ...line, returnId: inserted[0].id, companyId: Number(snap.companyId) };
+    const lineId = Number(restored.id);
+    if (Number.isSafeInteger(lineId) && lineId > 0) restored.id = lineId;
+    else delete restored.id;
+    return reviveTimestamps(restored);
+  });
+  await tx.insert(salesReturnLinesTable).values(restoredLines);
+}
+
 // ─── Helper: snapshot + delete one row, inside a tx ────────────────────────
 async function snapshotAndDelete(
   tx: any,
@@ -649,7 +715,16 @@ router.post("/wipe-company", requireSuperAdmin, async (req, res) => {
 // ─── GET /api/admin/data-doctor/recycle-bin ────────────────────────────────
 // Filters: companyId, table, from, to, includeRestored. Paginated.
 router.get("/recycle-bin", requireSuperAdmin, async (req, res) => {
-  const companyId      = req.query.companyId ? Number(req.query.companyId) : null;
+  if (!await isDeletedRecordsRestoreEnabled()) {
+    res.status(403).json({ error: "ميزة استعادة المحذوفات معطلة" });
+    return;
+  }
+  const rawCompanyId   = req.query.companyId;
+  const companyId      = rawCompanyId ? Number(rawCompanyId) : null;
+  if (rawCompanyId && (!Number.isSafeInteger(companyId) || Number(companyId) <= 0)) {
+    res.status(400).json({ error: "companyId غير صالح" });
+    return;
+  }
   const table          = req.query.table ? String(req.query.table) : null;
   const from           = req.query.from ? new Date(String(req.query.from)) : null;
   const to             = req.query.to   ? new Date(String(req.query.to))   : null;
@@ -657,74 +732,124 @@ router.get("/recycle-bin", requireSuperAdmin, async (req, res) => {
   const limit          = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
   const offset         = Math.max(0, Number(req.query.offset ?? 0));
 
-  const conds: any[] = [];
-  if (companyId) conds.push(eq(deletedRecordsTable.companyId, companyId));
-  if (table && isValidTable(table)) conds.push(eq(deletedRecordsTable.tableName, table));
-  if (from && !Number.isNaN(from.getTime())) conds.push(gte(deletedRecordsTable.deletedAt, from));
-  if (to   && !Number.isNaN(to.getTime()))   conds.push(lte(deletedRecordsTable.deletedAt, to));
-  if (!includeRestored) conds.push(isNull(deletedRecordsTable.restoredAt));
+  await runWithAgentScope(req, res, async () => {
+    const conds: any[] = [];
+    if (companyId) conds.push(eq(deletedRecordsTable.companyId, companyId));
+    if (table && (isValidTable(table) || table === "sales_returns")) {
+      conds.push(eq(deletedRecordsTable.tableName, table));
+    }
+    if (from && !Number.isNaN(from.getTime())) conds.push(gte(deletedRecordsTable.deletedAt, from));
+    if (to && !Number.isNaN(to.getTime())) conds.push(lte(deletedRecordsTable.deletedAt, to));
+    if (!includeRestored) conds.push(isNull(deletedRecordsTable.restoredAt));
 
-  const where = conds.length > 0 ? and(...conds) : undefined;
+    const where = conds.length > 0 ? and(...conds) : undefined;
+    const rows = await db.select().from(deletedRecordsTable)
+      .where(where as any).orderBy(desc(deletedRecordsTable.deletedAt))
+      .limit(limit).offset(offset) as any[];
 
-  const rows = await db.select().from(deletedRecordsTable)
-    .where(where as any).orderBy(desc(deletedRecordsTable.deletedAt))
-    .limit(limit).offset(offset);
-
-  // Decorate each row with a friendly summary derived from the snapshot.
-  const decorated = rows.map(r => {
-    const reg = TABLE_REGISTRY[r.tableName as TableKey];
-    return {
-      ...r,
-      tableLabel: reg?.labelAr ?? r.tableName,
-      summary: reg ? reg.summary(r.payload) : "—",
-    };
+    const candidateNumbers = companyId == null ? [] : rows
+      .filter(r => r.tableName === "sales_returns" && assessSnapshotRestore(r).allowed && r.payload?.docNumber)
+      .map(r => String(r.payload.docNumber));
+    const activeNumbers = candidateNumbers.length
+      ? await db.select({ docNumber: salesReturnsTable.docNumber })
+        .from(salesReturnsTable)
+        .where(and(
+          eq(salesReturnsTable.companyId, companyId as number),
+          inArray(salesReturnsTable.docNumber, [...new Set(candidateNumbers)]),
+        ))
+      : [];
+    const activeNumberSet = new Set(activeNumbers.map(row => String(row.docNumber)));
+    const decorated = rows.map(r => {
+      const reg = TABLE_REGISTRY[r.tableName as TableKey];
+      const restore = assessSnapshotRestore(r);
+      const numberConflict = r.tableName === "sales_returns"
+        && r.payload?.docNumber != null
+        && activeNumberSet.has(String(r.payload.docNumber));
+      const restoreAllowed = !r.restoredAt && restore.allowed && !numberConflict;
+      return {
+        ...r,
+        tableLabel: r.tableName === "sales_returns" ? "مرتجعات المبيعات" : (reg?.labelAr ?? r.tableName),
+        summary: r.tableName === "sales_returns"
+          ? `${r.payload?.docNumber ?? ""} — ${r.payload?.totalAmount ?? ""}`
+          : (reg ? reg.summary(r.payload) : "—"),
+        restoreAllowed,
+        restoreReason: r.restoredAt ? "already_restored" : (numberConflict ? "conflict_doc_number" : restore.reason),
+        lineCount: restore.lineCount,
+      };
+    });
+    const [{ total }] = await db.select({ total: sql<number>`count(*)::int` })
+      .from(deletedRecordsTable).where(where as any);
+    res.json({ rows: decorated, total, limit, offset });
   });
-
-  const [{ total }] = await db.select({ total: sql<number>`count(*)::int` })
-    .from(deletedRecordsTable).where(where as any);
-
-  res.json({ rows: decorated, total, limit, offset });
 });
 
 // ─── POST /api/admin/data-doctor/restore  body: { ids } ────────────────────
 // Re-INSERT each snapshot back into its source table (preserving the
 // original PK so foreign keys still resolve). Marks restoredAt/restoredBy.
 router.post("/restore", requireSuperAdmin, async (req, res) => {
-  const ids: number[] = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isFinite) : [];
+  if (!await isDeletedRecordsRestoreEnabled()) {
+    res.status(403).json({ error: "ميزة استعادة المحذوفات معطلة" });
+    return;
+  }
+  const rawIds: unknown[] = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const ids: number[] = [...new Set(rawIds.map(Number).filter(
+    (id: number) => Number.isSafeInteger(id) && id > 0,
+  ))];
   if (ids.length === 0) { res.status(400).json({ error: "ids مطلوبة" }); return; }
+  if (ids.length > 200) { res.status(400).json({ error: "يمكن استعادة 200 سجل كحد أقصى في الطلب الواحد" }); return; }
+  const rawCompanyId = req.body?.companyId;
+  const companyId = rawCompanyId == null ? null : Number(rawCompanyId);
+  if (rawCompanyId != null && (!Number.isSafeInteger(companyId) || Number(companyId) <= 0)) {
+    res.status(400).json({ error: "companyId غير صالح" });
+    return;
+  }
 
-  const results: Array<{ id: number; ok: boolean; reason?: string }> = [];
-
-  await db.transaction(async (tx) => {
-    const snaps = await tx.select().from(deletedRecordsTable).where(inArray(deletedRecordsTable.id, ids));
-    for (const snap of snaps) {
-      if (snap.restoredAt) { results.push({ id: snap.id, ok: false, reason: "already_restored" }); continue; }
-      const reg = TABLE_REGISTRY[snap.tableName as TableKey];
-      if (!reg) { results.push({ id: snap.id, ok: false, reason: "unknown_table" }); continue; }
-      try {
-        // Re-insert with the original ID. `payload` was captured by the
-        // Drizzle row select so the keys match the table's column names
-        // (camelCase). We use onConflictDoNothing + .returning() so we can
-        // distinguish "actually inserted" from "PK or unique conflict, no
-        // row inserted". Marking the snapshot as restored when nothing was
-        // re-inserted would silently lose the recovery path.
-        const inserted = await tx.insert(reg.table)
-          .values(reviveTimestamps(snap.payload))
-          .onConflictDoNothing()
-          .returning({ id: (reg.table as any).id });
-        if (inserted.length === 0) {
-          results.push({ id: snap.id, ok: false, reason: "conflict_pk_or_unique_in_use" });
+  const results = await runWithAgentScope(req, res, async () => {
+    const itemResults: Array<{ id: number; ok: boolean; reason?: string }> = [];
+    await db.transaction(async (tx) => {
+      const conditions: any[] = [inArray(deletedRecordsTable.id, ids)];
+      if (companyId != null) conditions.push(eq(deletedRecordsTable.companyId, companyId));
+      const snaps = await tx.select().from(deletedRecordsTable).where(and(...conditions));
+      const foundIds = new Set(snaps.map(snap => snap.id));
+      for (const snap of snaps) {
+        if (snap.restoredAt) {
+          itemResults.push({ id: snap.id, ok: false, reason: "already_restored" });
           continue;
         }
-        await tx.update(deletedRecordsTable)
-          .set({ restoredAt: new Date(), restoredBy: req.adminUser?.id ?? null })
-          .where(eq(deletedRecordsTable.id, snap.id));
-        results.push({ id: snap.id, ok: true });
-      } catch (e: any) {
-        results.push({ id: snap.id, ok: false, reason: e?.message?.slice(0, 200) ?? "insert_failed" });
+        const assessment = assessSnapshotRestore(snap);
+        if (!assessment.allowed) {
+          itemResults.push({ id: snap.id, ok: false, reason: assessment.reason ?? "not_restorable" });
+          continue;
+        }
+        try {
+          await tx.transaction(async (itemTx) => {
+            if (snap.tableName === "sales_returns") {
+              await restoreSalesReturnSnapshot(itemTx, snap);
+            } else {
+              const reg = TABLE_REGISTRY[snap.tableName as TableKey];
+              if (!reg) throw new Error("unknown_table");
+              const inserted = await itemTx.insert(reg.table)
+                .values(reviveTimestamps(snap.payload as any))
+                .onConflictDoNothing()
+                .returning({ id: (reg.table as any).id });
+              if (inserted.length === 0) throw new Error("conflict_pk_or_unique_in_use");
+            }
+            await itemTx.update(deletedRecordsTable)
+              .set({ restoredAt: new Date(), restoredBy: req.adminUser?.id ?? null })
+              .where(eq(deletedRecordsTable.id, snap.id));
+          });
+          itemResults.push({ id: snap.id, ok: true });
+        } catch (e: any) {
+          itemResults.push({ id: snap.id, ok: false, reason: e?.message?.slice(0, 200) ?? "insert_failed" });
+        }
       }
-    }
+      for (const id of ids) {
+        if (!foundIds.has(id)) itemResults.push({ id, ok: false, reason: "not_found_or_company_mismatch" });
+      }
+    });
+    return itemResults;
   });
+  if (!results) return;
 
   const ok = results.filter(r => r.ok).length;
   await writeAudit({
@@ -736,7 +861,13 @@ router.post("/restore", requireSuperAdmin, async (req, res) => {
     action: "restore",
     method: "POST",
     path: req.path,
-    metadata: { requested: ids.length, ok },
+    metadata: {
+      requested: ids.length,
+      ok,
+      companyId,
+      agentInstanceId: req.query.agent ? Number(req.query.agent) : null,
+      results,
+    },
   });
 
   res.json({ summary: { requested: ids.length, ok, failed: results.length - ok }, results });
@@ -745,11 +876,20 @@ router.post("/restore", requireSuperAdmin, async (req, res) => {
 // ─── DELETE /api/admin/data-doctor/recycle-bin/:id ─────────────────────────
 // Permanently purge a single recycle-bin entry. No undo after this.
 router.delete("/recycle-bin/:id", requireSuperAdmin, async (req, res) => {
+  if (!await isDeletedRecordsRestoreEnabled()) {
+    res.status(403).json({ error: "ميزة استعادة المحذوفات معطلة" });
+    return;
+  }
   const id = Number(req.params.id);
-  if (!Number.isFinite(id)) { res.status(400).json({ error: "id غير صالح" }); return; }
-  const [row] = await db.select().from(deletedRecordsTable).where(eq(deletedRecordsTable.id, id));
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "id غير صالح" }); return; }
+  const row = await runWithAgentScope(req, res, async () => {
+    const [found] = await db.select().from(deletedRecordsTable).where(eq(deletedRecordsTable.id, id));
+    if (!found) return null;
+    await db.delete(deletedRecordsTable).where(eq(deletedRecordsTable.id, id));
+    return found;
+  });
+  if (row === undefined) return;
   if (!row) { res.status(404).json({ error: "السجل غير موجود" }); return; }
-  await db.delete(deletedRecordsTable).where(eq(deletedRecordsTable.id, id));
   await writeAudit({
     userId: req.adminUser?.id ?? null,
     username: req.adminUser?.username ?? null,
@@ -761,6 +901,7 @@ router.delete("/recycle-bin/:id", requireSuperAdmin, async (req, res) => {
     path: req.path,
     entityType: row.tableName,
     entityId: String(row.recordId),
+    metadata: { agentInstanceId: req.query.agent ? Number(req.query.agent) : null },
   });
   res.json({ ok: true });
 });

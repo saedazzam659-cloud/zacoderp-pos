@@ -16,6 +16,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { useDeletedRecordsRestoreFeature } from "@/hooks/useDeletedRecordsRestoreFeature";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -145,6 +146,8 @@ function MiniMarkdown({ text }: { text: string }) {
 // ─── Main page ────────────────────────────────────────────────────────────
 export default function CompanyDataDoctor() {
   const { token } = useAuth();
+  const deletedRecordsFeature = useDeletedRecordsRestoreFeature();
+  const recycleBinEnabled = deletedRecordsFeature.data?.enabled === true;
   const { toast } = useToast();
   const qc = useQueryClient();
   const headers = useMemo(() => ({
@@ -257,10 +260,10 @@ export default function CompanyDataDoctor() {
       </div>
 
       <Tabs defaultValue="diagnose" className="w-full">
-        <TabsList className="grid grid-cols-3 w-full max-w-2xl">
+        <TabsList className={`grid ${recycleBinEnabled ? "grid-cols-3" : "grid-cols-2"} w-full max-w-2xl`}>
           <TabsTrigger value="diagnose"  data-testid="tab-diagnose"><ScanSearch className="w-4 h-4 ml-2" />تشخيص</TabsTrigger>
           <TabsTrigger value="delete"    data-testid="tab-delete"><Trash2 className="w-4 h-4 ml-2" />حذف البيانات</TabsTrigger>
-          <TabsTrigger value="recycle"   data-testid="tab-recycle"><RotateCcw className="w-4 h-4 ml-2" />سلة المحذوفات</TabsTrigger>
+          {recycleBinEnabled && <TabsTrigger value="recycle" data-testid="tab-recycle"><RotateCcw className="w-4 h-4 ml-2" />سلة المحذوفات</TabsTrigger>}
         </TabsList>
 
         {/* ─── TAB 1: DIAGNOSE ───────────────────────────────────────────── */}
@@ -406,9 +409,11 @@ export default function CompanyDataDoctor() {
         </TabsContent>
 
         {/* ─── TAB 3: RECYCLE BIN ───────────────────────────────────────── */}
-        <TabsContent value="recycle" className="mt-4">
-          <RecycleBinTab headers={headers} companies={companies} defaultCompanyId={companyId} />
-        </TabsContent>
+        {recycleBinEnabled && (
+          <TabsContent value="recycle" className="mt-4">
+            <RecycleBinTab headers={headers} companies={companies} defaultCompanyId={companyId} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
@@ -709,6 +714,7 @@ function RecycleBinTab({
     { v: "invoices", l: "فواتير المبيعات" },
     { v: "purchase_invoices", l: "فواتير المشتريات" },
     { v: "journal_entries", l: "قيود اليومية" },
+    { v: "sales_returns", l: "مرتجعات المبيعات" },
   ];
 
   return (

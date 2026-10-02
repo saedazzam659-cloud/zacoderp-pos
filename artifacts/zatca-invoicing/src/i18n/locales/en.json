@@ -758,6 +758,7 @@
     "databaseStats": "Database Statistics",
     "aiCompanyFix": "AI Company Issue Fixer",
     "dataDoctor": "Company Data Doctor",
+    "deletedRecordsRestore": "Restore Deleted Records",
     "supportInbox": "Support Inbox",
     "supportSettings": "Support Channels Settings",
     "supportCall": "Live Support Call (Video & Screen Share)",

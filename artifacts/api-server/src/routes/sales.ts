@@ -5891,12 +5891,17 @@ router.delete("/sales-returns/:id", async (req, res) => {
         journalEntryId: ret.journalEntryId, executor: tx,
       });
       if (ret.status === "draft") {
+        const lineSnapshot = await tx.select().from(salesReturnLinesTable).where(and(
+          eq(salesReturnLinesTable.returnId, id),
+          eq(salesReturnLinesTable.companyId, cid),
+        ));
         await tombstoneAndDeleteDraftInvoice(tx, salesReturnsTable, "sales_returns", ret, {
           companyId: cid,
           recordId: id,
           deletedBy: req.authUser?.id ?? null,
           deletedByUsername: req.authUser?.username ?? null,
           reason: "حذف مسودة مرتجع مبيعات",
+          lineSnapshot,
         });
       } else {
         await tx.delete(salesReturnsTable).where(and(

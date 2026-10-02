@@ -7,9 +7,10 @@ import {
   Building2, Clock, CheckCircle2, XCircle, Users, ArrowLeft, Plus, Package,
   TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, ShieldAlert,
   HardDrive, ScrollText, Activity, LineChart as LineChartIcon, PieChart as PieChartIcon,
-  KeyRound, Inbox, BarChart3, Wrench, FileBarChart, Sparkles, Copy,
+  KeyRound, Inbox, BarChart3, Wrench, FileBarChart, Sparkles, Copy, RotateCcw,
   type LucideIcon,
 } from "lucide-react";
+import { useDeletedRecordsRestoreFeature } from "@/hooks/useDeletedRecordsRestoreFeature";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
   PieChart, Pie, Cell, Legend,
@@ -132,6 +133,7 @@ function CategoryHeader({ icon: Icon, label, color }: { icon: LucideIcon; label:
 
 export default function SuperAdminDashboard() {
   const { token } = useAuth();
+  const deletedRecordsFeature = useDeletedRecordsRestoreFeature();
   const headers = { Authorization: `Bearer ${token}` };
 
   // Single consolidated query — every figure on this page is computed
@@ -480,6 +482,10 @@ export default function SuperAdminDashboard() {
               href: "/admin/ai-fix", icon: Sparkles, bg: "bg-violet-100", color: "text-violet-700" },
             { title: "صلاحيات القوائم", desc: "إظهار وإخفاء أقسام لكل شركة",
               href: "/admin/menu-permissions", icon: BarChart3, bg: "bg-slate-100", color: "text-slate-700" },
+            ...(deletedRecordsFeature.data?.enabled ? [{
+              title: "استعادة السجلات المحذوفة", desc: "فحص النسخ المحفوظة واستعادة السجلات المكتملة",
+              href: "/admin/deleted-records", icon: RotateCcw, bg: "bg-emerald-100", color: "text-emerald-700",
+            }] : []),
             { title: "متابعة الديمو", desc: "متابعة استخدام الحسابات التجريبية ودرجة الاهتمام",
               href: "/admin/demo-analytics", icon: Activity, bg: "bg-purple-100", color: "text-purple-700" },
             { title: "نسخ القيود بين الشركات", desc: "نقل قيود اليومية من شركة إلى أخرى مع إعادة ربط الحسابات والفروع",

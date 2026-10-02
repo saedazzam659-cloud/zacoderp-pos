@@ -39,6 +39,7 @@ export const LOCAL_SUPERADMIN_SCREENS: LocalSuperadminScreen[] = [
   { id: "database_stats", label: "إحصاءات قاعدة البيانات", paths: ["/admin/db-stats"] },
   { id: "ai_company_fix", label: "إصلاح الشركات بالذكاء الاصطناعي", paths: ["/admin/ai-fix"] },
   { id: "data_doctor", label: "طبيب البيانات", paths: ["/admin/data-doctor", "/admin/data-copy"] },
+  { id: "deleted_records_restore", label: "استعادة السجلات المحذوفة", paths: ["/admin/deleted-records"] },
   { id: "support_inbox", label: "صندوق الدعم", paths: ["/admin/support"] },
   { id: "support_settings", label: "إعدادات الدعم", paths: ["/admin/support-settings"] },
   { id: "support_call", label: "مكالمة الدعم", paths: ["/admin/support-call"] },

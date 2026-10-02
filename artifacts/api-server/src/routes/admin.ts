@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import securityAutomationRouter from "./admin-security-automation.js";
-import { db } from "@workspace/db";
+import { db, centralDb } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, reportEmailInvitationsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable, userVisitsTable, trackingZonesTable } from "@workspace/db";
 import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
 import { emitSessionRefresh, emitSessionRefreshMany } from "../lib/sessionEvents.js";
@@ -46,6 +46,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 import { writeAudit } from "../middleware/permissions.js";
+import { DELETED_RECORDS_RESTORE_KEY } from "../lib/deletedRecordsRestoreFeature.js";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { canManageDemoOperationalSetting } from "../lib/demoOperationalPolicy.js";
 import { accrueResellerCommission } from "../lib/resellerCommissions.js";
@@ -863,8 +864,35 @@ router.get("/subscriptions/usage", requireSuperAdmin, async (req, res) => {
   res.json(out);
 });
 
-// ─── System Settings (currently only auto-suspend flag) ────────────────────
+// ─── Global system settings ────────────────────────────────────────────────
 const AUTO_SUSPEND_KEY = "auto_suspend_expired";
+router.get("/system-settings/deleted-records-restore", requireSuperAdmin, async (_req, res) => {
+  const [row] = await centralDb.select().from(systemSettingsTable)
+    .where(eq(systemSettingsTable.key, DELETED_RECORDS_RESTORE_KEY));
+  res.json({ enabled: row?.value === "on", updatedAt: row?.updatedAt ?? null });
+});
+
+router.put("/system-settings/deleted-records-restore", requireSuperAdmin, async (req, res) => {
+  const enabled = req.body?.enabled === true;
+  const value = enabled ? "on" : "off";
+  await centralDb.execute(sql`
+    INSERT INTO system_settings (key, value, updated_at)
+    VALUES (${DELETED_RECORDS_RESTORE_KEY}, ${value}, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `);
+  await writeAudit({
+    userId: req.adminUser?.id ?? null,
+    username: req.adminUser?.username ?? null,
+    role: "superadmin",
+    companyId: null,
+    module: "data_doctor",
+    action: "edit",
+    entityType: "system_setting",
+    entityId: DELETED_RECORDS_RESTORE_KEY,
+    metadata: { enabled },
+  });
+  res.json({ ok: true, enabled });
+});
 
 router.get("/system-settings/auto-suspend", requireSuperAdmin, async (_req, res) => {
   const [row] = await db.select().from(systemSettingsTable).where(eq(systemSettingsTable.key, AUTO_SUSPEND_KEY));

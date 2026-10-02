@@ -2,6 +2,10 @@ import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import {
+  DELETED_RECORDS_RESTORE_QUERY_KEY,
+  useDeletedRecordsRestoreFeature,
+} from "@/hooks/useDeletedRecordsRestoreFeature";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -97,6 +101,7 @@ export default function MenuPermissions() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, boolean> | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const deletedRecordsFeature = useDeletedRecordsRestoreFeature();
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token ?? ""}`,
@@ -160,6 +165,24 @@ export default function MenuPermissions() {
       toast({ title: "تم حفظ الصلاحيات بنجاح" });
     },
     onError: (e: any) => toast({ title: "فشل الحفظ: " + e.message, variant: "destructive" }),
+  });
+
+  const deletedRecordsFeatureMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await fetch(`${API}/api/admin/system-settings/deleted-records-restore`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ enabled }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "فشل حفظ الإعداد");
+      return json;
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(DELETED_RECORDS_RESTORE_QUERY_KEY, data);
+      toast({ title: data.enabled ? "تم تفعيل استعادة المحذوفات" : "تم تعطيل استعادة المحذوفات" });
+    },
+    onError: (e: any) => toast({ title: "فشل حفظ الإعداد: " + e.message, variant: "destructive" }),
   });
 
   const filteredCompanies = useMemo(() => {
@@ -250,6 +273,32 @@ export default function MenuPermissions() {
           </div>
         </div>
       </div>
+
+      <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
+        <CardContent className="flex flex-col justify-between gap-4 py-4 sm:flex-row sm:items-center">
+          <div className="min-w-0">
+            <h2 className="font-semibold text-sm">ميزة استعادة السجلات المحذوفة — SuperAdmin</h2>
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
+              إعداد عام للمنصة، معطّل افتراضياً. عند تفعيله تظهر شاشة الاستعادة لمشرفي المنصة فقط؛ لا يمنح مستخدمي الشركات صلاحية الاستعادة.
+            </p>
+            {deletedRecordsFeature.isError && (
+              <p className="mt-1 text-xs text-destructive">{(deletedRecordsFeature.error as Error).message}</p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="text-xs font-medium">
+              {deletedRecordsFeature.data?.enabled ? "مفعّل" : "معطّل"}
+            </span>
+            <Switch
+              aria-label="تفعيل استعادة السجلات المحذوفة لمشرفي المنصة"
+              checked={deletedRecordsFeature.data?.enabled === true}
+              disabled={deletedRecordsFeature.isLoading || deletedRecordsFeatureMutation.isPending || deletedRecordsFeature.isError}
+              onCheckedChange={(enabled) => deletedRecordsFeatureMutation.mutate(enabled)}
+              data-testid="switch-deleted-records-restore"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-20">
