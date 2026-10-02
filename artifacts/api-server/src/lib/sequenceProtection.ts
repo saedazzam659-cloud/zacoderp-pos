@@ -76,6 +76,7 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
       company_id_value INTEGER;
       issued_number TEXT;
       previous_number TEXT;
+      previous_company_id INTEGER;
       protection_enabled BOOLEAN := FALSE;
     BEGIN
       IF TG_OP = 'DELETE' THEN
@@ -103,10 +104,12 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
         previous_row := to_jsonb(OLD);
         IF COALESCE((previous_row->>'is_sequence_protected')::BOOLEAN, FALSE) THEN
           previous_number := NULLIF(BTRIM(previous_row->>TG_ARGV[0]), '');
-          IF issued_number IS DISTINCT FROM previous_number THEN
+          previous_company_id := NULLIF(previous_row->>'company_id', '')::INTEGER;
+          IF issued_number IS DISTINCT FROM previous_number
+             OR company_id_value IS DISTINCT FROM previous_company_id THEN
             RAISE EXCEPTION USING
               ERRCODE = 'P0001',
-              MESSAGE = 'لا يمكن تغيير رقم مستند محمي بعد إصداره.',
+              MESSAGE = 'لا يمكن تغيير رقم المستند المحمي أو نقله إلى شركة أخرى.',
               DETAIL = 'SEQUENCE_PROTECTED_NUMBER_CHANGE';
           END IF;
           NEW.is_sequence_protected := TRUE;
@@ -114,10 +117,10 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
         END IF;
 
         -- Do not retroactively protect a legacy document just because an
-        -- unrelated field is edited after package activation. Only its first
-        -- non-empty sequence assignment can make it protected.
+        -- unrelated field is edited after package activation. A genuinely
+        -- changed/new number, however, is an issuance under the current policy.
         previous_number := NULLIF(BTRIM(previous_row->>TG_ARGV[0]), '');
-        IF previous_number IS NOT NULL THEN
+        IF issued_number IS NOT DISTINCT FROM previous_number THEN
           RETURN NEW;
         END IF;
       END IF;
@@ -159,7 +162,8 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
             AND table_name = target.table_name
             AND column_name IN ('id', 'company_id', target.number_column)
         ) <> 3 THEN
-          CONTINUE;
+          RAISE EXCEPTION 'sequence protection target %.% is missing id, company_id, or number column',
+            target.table_name, target.number_column;
         END IF;
 
         EXECUTE format(
