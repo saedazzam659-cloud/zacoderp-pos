@@ -766,6 +766,27 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface JournalEntryReversalInput {
+  entryDate: string;
+}
+
+export type JournalEntryReversalResultStatus =
+  (typeof JournalEntryReversalResultStatus)[keyof typeof JournalEntryReversalResultStatus];
+
+export const JournalEntryReversalResultStatus = {
+  draft: "draft",
+} as const;
+
+export interface JournalEntryReversalResult {
+  id: number;
+  /** @nullable */
+  docNumber: string | null;
+  entryDate: string;
+  entryType: string;
+  status: JournalEntryReversalResultStatus;
+  reversalOfId: number;
+}
+
 export type CompanyInvoiceType =
   (typeof CompanyInvoiceType)[keyof typeof CompanyInvoiceType];
 

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { pgTable, serial, text, boolean, timestamp, integer, numeric, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { accountsTable } from "./accounts";
@@ -17,6 +18,7 @@ export const journalEntriesTable = pgTable("journal_entries", {
   // remain valid until backfilled; new rows are auto-resolved at write time.
   periodId:     integer("period_id"),
   status:       text("status").notNull().default("draft"),
+  reversalOfId: integer("reversal_of_id"),
   isSequenceProtected: boolean("is_sequence_protected").notNull().default(false),
   // ── Audit trail (who/where/when created the entry & posted it) ────────
   // All nullable: legacy rows + system-generated rows that pre-date this
@@ -51,6 +53,9 @@ export const journalEntriesTable = pgTable("journal_entries", {
   companyBranchCreatedIdx: index("journal_entries_company_branch_created_idx").on(t.companyId, t.branchId, t.createdAt.desc()),
   companyStatusDateIdx: index("journal_entries_company_status_date_idx").on(t.companyId, t.status, t.entryDate),
   companyDateIdx: index("journal_entries_company_date_idx").on(t.companyId, t.entryDate),
+  reversalOfUniqueIdx: uniqueIndex("journal_entries_reversal_of_unique_idx")
+    .on(t.reversalOfId)
+    .where(sql`${t.reversalOfId} IS NOT NULL`),
 }));
 
 // ─── Partial settlement links (سداد جزئي متعدد الفواتير) ─────────────────────

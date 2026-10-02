@@ -21,7 +21,37 @@ tags:
     description: Occupational Safety & Health (OSH / ISO 45001)
   - name: security
     description: Central SuperAdmin security operations
+  - name: journalEntries
+    description: Manual accounting journal entries
 paths:
+  /journal-entries/{id}/reverse:
+    post:
+      operationId: reverseJournalEntry
+      tags: [journalEntries]
+      summary: Create a draft reversal of an eligible manually-created journal entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JournalEntryReversalInput"
+      responses:
+        "201":
+          description: Reversal draft created; the original entry is unchanged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JournalEntryReversalResult"
+        "400": { description: Invalid date or entry is not eligible for reversal }
+        "403": { description: Not authorized to access or reverse this entry }
+        "404": { description: Original journal entry not found }
+        "409": { description: A reversal already exists or the entry changed state }
+        "423": { description: Reversal date is in a closed period }
   /inventory/stock-transfers:
     get:
       operationId: listInternalStockTransfers
@@ -2300,6 +2330,24 @@ components:
           type: string
       required:
         - status
+
+    JournalEntryReversalInput:
+      type: object
+      required: [entryDate]
+      properties:
+        entryDate:
+          type: string
+          format: date
+    JournalEntryReversalResult:
+      type: object
+      required: [id, docNumber, entryDate, entryType, status, reversalOfId]
+      properties:
+        id: { type: integer }
+        docNumber: { type: ["string", "null"] }
+        entryDate: { type: string, format: date }
+        entryType: { type: string }
+        status: { type: string, enum: [draft] }
+        reversalOfId: { type: integer }
 
     Company:
       type: object

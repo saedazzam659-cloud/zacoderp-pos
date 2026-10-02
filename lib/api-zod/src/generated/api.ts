@@ -8,6 +8,18 @@
 import * as zod from "zod";
 
 /**
+ * @summary Create a draft reversal of an eligible manually-created journal entry
+ */
+
+export const ReverseJournalEntryParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const ReverseJournalEntryBody = zod.object({
+  entryDate: zod.coerce.date(),
+});
+
+/**
  * @summary List warehouse transfers and internal manufacturing deliveries in the caller scope
  */
 export const ListInternalStockTransfersResponseItem = zod.object({

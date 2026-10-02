@@ -57,6 +57,8 @@ import type {
   InternalStockTransfer,
   InternalStockTransferInput,
   Invoice,
+  JournalEntryReversalInput,
+  JournalEntryReversalResult,
   ListContractingTaxSubmissionsParams,
   ListCustomersParams,
   ListHistoricalOwnerBoqPriceReferencesParams,
@@ -104,6 +106,97 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+/**
+ * @summary Create a draft reversal of an eligible manually-created journal entry
+ */
+export const getReverseJournalEntryUrl = (id: number) => {
+  return `/api/journal-entries/${id}/reverse`;
+};
+
+export const reverseJournalEntry = async (
+  id: number,
+  journalEntryReversalInput: JournalEntryReversalInput,
+  options?: RequestInit,
+): Promise<JournalEntryReversalResult> => {
+  return customFetch<JournalEntryReversalResult>(
+    getReverseJournalEntryUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(journalEntryReversalInput),
+    },
+  );
+};
+
+export const getReverseJournalEntryMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reverseJournalEntry>>,
+    TError,
+    { id: number; data: BodyType<JournalEntryReversalInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reverseJournalEntry>>,
+  TError,
+  { id: number; data: BodyType<JournalEntryReversalInput> },
+  TContext
+> => {
+  const mutationKey = ["reverseJournalEntry"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reverseJournalEntry>>,
+    { id: number; data: BodyType<JournalEntryReversalInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return reverseJournalEntry(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReverseJournalEntryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reverseJournalEntry>>
+>;
+export type ReverseJournalEntryMutationBody =
+  BodyType<JournalEntryReversalInput>;
+export type ReverseJournalEntryMutationError = ErrorType<void>;
+
+/**
+ * @summary Create a draft reversal of an eligible manually-created journal entry
+ */
+export const useReverseJournalEntry = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reverseJournalEntry>>,
+    TError,
+    { id: number; data: BodyType<JournalEntryReversalInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reverseJournalEntry>>,
+  TError,
+  { id: number; data: BodyType<JournalEntryReversalInput> },
+  TContext
+> => {
+  return useMutation(getReverseJournalEntryMutationOptions(options));
+};
 
 /**
  * @summary List warehouse transfers and internal manufacturing deliveries in the caller scope
