@@ -1271,7 +1271,12 @@ export default function SalesReturns() {
   }
 
   const customerItems = [{ value: "", label: t("salesReturns.noCustomer") }, ...customers.map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` }))];
-  const invoiceItems  = [{ value: "", label: t("salesReturns.noInvoice") }, ...invoices.map((i: any) => ({ value: String(i.id), label: i.docNumber ?? `SI-${i.id}` }))];
+  const invoiceItems  = [
+    { value: "", label: t("salesReturns.noInvoice") },
+    ...invoices
+      .filter((i: any) => i.status === "posted" || (editingId != null && String(i.id) === form.invoiceId))
+      .map((i: any) => ({ value: String(i.id), label: i.docNumber ?? `SI-${i.id}` })),
+  ];
   const salesRepItems = [
     { value: "", label: t("salesReturns.noSalesRep") },
     ...(salesReps as any[])

@@ -4897,6 +4897,23 @@ router.get("/sales-returns/:id", async (req, res) => {
 //      one being edited) cannot exceed the source invoice's sold qty.
 //      Comparison is in base units (qty × conversionFactor) so the rule
 //      survives unit changes between source and return.
+async function readSalesReturnSourceInvoice(
+  executor: any,
+  companyId: number,
+  invoiceId: number,
+  lock = false,
+) {
+  const query = executor.select({
+    id: salesInvoicesTable.id,
+    status: salesInvoicesTable.status,
+  }).from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.id, invoiceId),
+    eq(salesInvoicesTable.companyId, companyId),
+  ));
+  const [invoice] = lock ? await query.for("update") : await query;
+  return invoice ?? null;
+}
+
 // Returns true if the request may proceed; otherwise writes a 400 and
 // returns false (caller must `return` immediately).
 async function validateSalesReturnPayload(
@@ -4927,6 +4944,13 @@ async function validateSalesReturnPayload(
   if (invoiceId) {
     const invId = Number(invoiceId);
     if (Number.isFinite(invId)) {
+       const sourceInvoice = await readSalesReturnSourceInvoice(db, ctx.cid, invId);
+       if (!sourceInvoice) {
+         res.status(400).json({ error: "الفاتورة المصدر غير موجودة في هذه الشركة" }); return false;
+       }
+       if (sourceInvoice.status !== "posted") {
+         res.status(400).json({ error: "لا يمكن حفظ مرتجع مرتبط بفاتورة مبيعات غير مُرحّلة" }); return false;
+       }
        const srcLines = await db.select({
          id: salesInvoiceLinesTable.id,
         itemId: salesInvoiceLinesTable.itemId,
@@ -4934,7 +4958,10 @@ async function validateSalesReturnPayload(
         freeQty: salesInvoiceLinesTable.freeQty,
          unitId: salesInvoiceLinesTable.unitId,
         conversionFactor: salesInvoiceLinesTable.conversionFactor,
-      }).from(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, invId));
+       }).from(salesInvoiceLinesTable).where(and(
+         eq(salesInvoiceLinesTable.invoiceId, invId),
+         eq(salesInvoiceLinesTable.companyId, ctx.cid),
+       ));
        const srcByItem = new Map<number, typeof srcLines>();
        const srcById = new Map<number, typeof srcLines[number]>();
        for (const row of srcLines) {
@@ -5165,6 +5192,15 @@ router.post("/sales-returns", async (req, res) => {
       createdById: (req as any).authUser?.id ?? null,
     };
     const ret = await db.transaction(async (tx: any) => {
+      if (invoiceId) {
+        const sourceInvoice = await readSalesReturnSourceInvoice(tx, cid, Number(invoiceId), true);
+        if (!sourceInvoice) {
+          throw Object.assign(new Error("الفاتورة المصدر غير موجودة في هذه الشركة"), { status: 409 });
+        }
+        if (sourceInvoice.status !== "posted") {
+          throw Object.assign(new Error("تغيّرت حالة الفاتورة المصدر؛ لا يمكن حفظ مرتجع مرتبط بفاتورة غير مُرحّلة"), { status: 409 });
+        }
+      }
       let resolvedDocNumber: string | null;
       try {
         const allocateReturnNumber = () => nextSequenceForPayment(cid, "sales_return", pType, {
