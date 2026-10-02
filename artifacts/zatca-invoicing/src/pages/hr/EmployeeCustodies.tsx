@@ -395,12 +395,13 @@ export default function EmployeeCustodies() {
       {showForm && (
         <FormPanel
           title={editingId ? tr("editTitle") : tr("formTitle")}
+          width="full"
           onClose={resetForm}
           onSave={handleSave}
           saveLabel={tr("save")}
           saving={save.isPending || upd.isPending}
         >
-          <FormGrid>
+          <FormGrid cols={4}>
             <Field label={tr("fieldEmployee")}>
               <SearchCombobox
                 items={employees.filter((e: any) => e.status === "active").map((e: any) => ({
@@ -416,7 +417,7 @@ export default function EmployeeCustodies() {
               />
             </Field>
             {selectedEmp && (
-              <div className="md:col-span-3 rounded border bg-muted/30 p-2 text-xs space-y-1" data-testid="custody-bank-info">
+              <div className="col-span-2 lg:col-span-4 rounded border bg-muted/30 p-2 text-xs space-y-1" data-testid="custody-bank-info">
                 <div className="font-medium text-muted-foreground">{tr("bankInfoTitle")}</div>
                 {(selectedEmp.bankName || selectedEmp.bankAccountIban) ? (
                   <>
@@ -435,7 +436,7 @@ export default function EmployeeCustodies() {
               <Input type="number" step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })}
                 disabled={lockPrincipal} data-testid="custody-amount" />
             </Field>
-            <Field label={tr("fieldCustodyAccount")} className="md:col-span-3">
+            <Field label={tr("fieldCustodyAccount")} className="col-span-2 lg:col-span-3">
               <SearchCombobox
                 items={((hrSettings?.accounts || []) as any[]).map((a: any) => ({
                   value: String(a.id), code: a.code, label: pickName(a.nameAr, a.nameEn),
@@ -449,10 +450,10 @@ export default function EmployeeCustodies() {
                 data-testid="custody-account"
               />
             </Field>
-            <Field label={tr("fieldPurpose")} className="md:col-span-3">
+            <Field label={tr("fieldPurpose")} className="col-span-2 lg:col-span-3">
               <Input value={form.purpose} onChange={e => setForm({ ...form, purpose: e.target.value })} placeholder={tr("purposePlaceholder")} />
             </Field>
-            <Field label={tr("fieldNotes")} className="md:col-span-3">
+            <Field label={tr("fieldNotes")} className="col-span-2 lg:col-span-3">
               <Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} />
             </Field>
           </FormGrid>

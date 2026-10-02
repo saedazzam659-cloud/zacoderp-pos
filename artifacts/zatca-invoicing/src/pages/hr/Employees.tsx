@@ -224,7 +224,7 @@ export default function Employees() {
               icon={UserCog}
               title={editing.id ? tr("formEdit", { name: pickName(editing.nameAr, editing.nameEn) }) : tr("formNew")}
               subtitle={editing.id ? tr("formEditSubtitle", { code: editing.code }) : tr("formNewSubtitle")}
-              width="5xl"
+              width="full"
               onClose={() => { setShowForm(false); setEditing(null); }}
               onSave={handleSave}
               saving={upsert.isPending}
@@ -239,7 +239,7 @@ export default function Employees() {
                 </TabsList>
 
                 <TabsContent value="info" className="space-y-4">
-                  <FormGrid>
+                  <FormGrid cols={4}>
                     <Field label={tr("fEmpCode")}><Input dir="ltr" value={editing.code} onChange={e => setF("code", e.target.value)} placeholder={tr("fEmpCodePh")} /></Field>
                     <Field label={tr("fStatus")}>
                       <SearchCombobox
@@ -340,12 +340,12 @@ export default function Employees() {
                         className="w-full"
                       />
                     </Field>
-                    <Field label={tr("fNotes")} className="md:col-span-2"><Textarea rows={2} value={editing.notes} onChange={e => setF("notes", e.target.value)} /></Field>
+                    <Field label={tr("fNotes")} className="col-span-2 lg:col-span-4"><Textarea rows={2} value={editing.notes} onChange={e => setF("notes", e.target.value)} /></Field>
                   </FormGrid>
                 </TabsContent>
 
                 <TabsContent value="job" className="space-y-4">
-                  <FormGrid>
+                  <FormGrid cols={4}>
                     <Field label={tr("fDepartment")}><Input value={editing.department} onChange={e => setF("department", e.target.value)} /></Field>
                     <Field label={tr("fJobTitle")}><Input value={editing.jobTitle} onChange={e => setF("jobTitle", e.target.value)} /></Field>
                     <Field label={tr("fProfession")}><Input value={editing.profession} onChange={e => setF("profession", e.target.value)} /></Field>
@@ -371,7 +371,7 @@ export default function Employees() {
                   <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-sm text-emerald-900">
                     {tr("kafalaBlurb")}
                   </div>
-                  <FormGrid>
+                  <FormGrid cols={4}>
                     <Field label={tr("fSaudiType")}>
                       <SearchCombobox
                         items={[

@@ -268,7 +268,7 @@ export default function EmployeeContracts() {
               icon={FileSignature}
               title={editingC.id ? tr("formEdit") : tr("formNew")}
               subtitle={tr("formSubtitle")}
-              width="5xl"
+              width="full"
               onClose={() => { setShowCForm(false); setEditingC(null); }}
               onSave={handleSaveContract}
               saving={upsertContract.isPending}
@@ -291,7 +291,7 @@ export default function EmployeeContracts() {
                 </div>
               )}
 
-              <FormGrid>
+              <FormGrid cols={4}>
                 <Field label={tr("fContractNo")}><Input value={editingC.contractNumber} onChange={e => setCF("contractNumber", e.target.value)} placeholder={tr("fContractNoPh")} /></Field>
                 <Field label={tr("fContractType")}>
                   <SearchCombobox
@@ -315,8 +315,8 @@ export default function EmployeeContracts() {
                 <Field label={tr("fProbationDays")}><Input type="number" min="0" value={editingC.probationDays} onChange={e => setCF("probationDays", Number(e.target.value))} /></Field>
                 <Field label={tr("fNoticePeriod")}><Input type="number" min="0" value={editingC.noticePeriod} onChange={e => setCF("noticePeriod", Number(e.target.value))} /></Field>
                 <Field label={tr("fVacationDays")}><Input type="number" min="0" value={editingC.vacationDays} onChange={e => setCF("vacationDays", Number(e.target.value))} /></Field>
-                <Field label={tr("fTerms")} className="md:col-span-2"><Textarea rows={6} value={editingC.terms} onChange={e => setCF("terms", e.target.value)} placeholder={tr("fTermsPh")} /></Field>
-                <Field label={tr("fNotes")} className="md:col-span-2"><Textarea rows={2} value={editingC.notes} onChange={e => setCF("notes", e.target.value)} /></Field>
+                <Field label={tr("fTerms")} className="col-span-2 lg:col-span-4"><Textarea rows={6} value={editingC.terms} onChange={e => setCF("terms", e.target.value)} placeholder={tr("fTermsPh")} /></Field>
+                <Field label={tr("fNotes")} className="col-span-2 lg:col-span-4"><Textarea rows={2} value={editingC.notes} onChange={e => setCF("notes", e.target.value)} /></Field>
               </FormGrid>
 
               <div className="mt-4 rounded-lg border bg-muted/30 p-3">
@@ -391,12 +391,12 @@ export default function EmployeeContracts() {
               icon={CalendarDays}
               title={tr("leaveFormTitle")}
               subtitle={tr("leaveFormSubtitle")}
-              width="3xl"
+              width="full"
               onClose={() => { setShowLForm(false); setEditingL(null); }}
               onSave={handleSaveLeave}
               saving={upsertLeave.isPending}
             >
-              <FormGrid>
+              <FormGrid cols={4}>
                 <Field label={tr("fLeaveType")}>
                   <SearchCombobox
                     items={Object.entries(LEAVE_LABEL).map(([v, l]) => ({ value: v, label: l as string }))}
@@ -422,7 +422,7 @@ export default function EmployeeContracts() {
                 <Field label={tr("fLeaveStart")} required><DateField value={editingL.startDate} onChange={e => { const v = e.target.value; setLF("startDate", v); const days = Math.max(1, Math.ceil((new Date(editingL.endDate).getTime() - new Date(v).getTime()) / 86400000) + 1); if (!isNaN(days)) setLF("days", days); }} /></Field>
                 <Field label={tr("fLeaveEnd")} required><DateField value={editingL.endDate} onChange={e => { const v = e.target.value; setLF("endDate", v); const days = Math.max(1, Math.ceil((new Date(v).getTime() - new Date(editingL.startDate).getTime()) / 86400000) + 1); if (!isNaN(days)) setLF("days", days); }} /></Field>
                 <Field label={tr("fDays")}><Input type="number" min="1" value={editingL.days} onChange={e => setLF("days", Number(e.target.value))} /></Field>
-                <Field label={tr("fReason")} className="md:col-span-2"><Textarea rows={3} value={editingL.reason} onChange={e => setLF("reason", e.target.value)} placeholder={tr("fReasonPh")} /></Field>
+                <Field label={tr("fReason")} className="col-span-2 lg:col-span-4"><Textarea rows={3} value={editingL.reason} onChange={e => setLF("reason", e.target.value)} placeholder={tr("fReasonPh")} /></Field>
               </FormGrid>
               <div className="mt-3 flex items-center gap-2">
                 <Button onClick={suggestLeave} disabled={leaveAiBusy} className="gap-2 bg-purple-600 hover:bg-purple-700" size="sm">
