@@ -47,6 +47,7 @@ const TABLE_FILTER_COMBOBOX_OPTIONS: SearchableOption[] = [
 type Company = {
   id: number;
   nameAr: string;
+  nameEn?: string | null;
   vatNumber?: string | null;
   agentInstanceId?: number | string | null;
   agentName?: string | null;
