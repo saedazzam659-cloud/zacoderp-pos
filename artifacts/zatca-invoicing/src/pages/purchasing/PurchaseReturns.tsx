@@ -1687,7 +1687,7 @@ ${sections}
           subtitle={form.invoiceId
             ? <>{tr("fromInvoiceHint")} <span className="font-mono text-orange-600">{invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `PI-${form.invoiceId}`}</span> {tr("fromInvoiceTail")}</>
             : tr("createSubtitle")}
-          width="7xl"
+          width="full"
           onClose={reset}
           onSave={viewMode ? undefined : () => handleSubmit({ preventDefault() {} } as any)}
           saving={saveMut.isPending}

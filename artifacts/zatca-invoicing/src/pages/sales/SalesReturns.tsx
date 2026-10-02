@@ -2202,7 +2202,7 @@ ${sections}
           subtitle={form.invoiceId
             ? t("salesReturns.formSubtitleFromInvoice", { number: invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `SI-${form.invoiceId}` })
             : t("salesReturns.formSubtitleDefault")}
-          width="7xl"
+          width="full"
           onClose={reset}
           onSave={viewMode ? undefined : () => handleSubmit({ preventDefault() {} } as any)}
           saving={saveMut.isPending}
