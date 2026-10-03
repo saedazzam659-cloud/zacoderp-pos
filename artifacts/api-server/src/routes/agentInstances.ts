@@ -6396,7 +6396,9 @@ router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
         selected.platformControlTokenVerifier === null
           ? isNull(agentControllerLinksTable.platformControlTokenVerifier)
           : eq(agentControllerLinksTable.platformControlTokenVerifier, selected.platformControlTokenVerifier),
-        eq(agentControllerLinksTable.updatedAt, selected.updatedAt),
+        // Do not compare updatedAt to the JavaScript Date snapshot here:
+        // PostgreSQL preserves sub-millisecond precision that Date truncates,
+        // so an unchanged row can falsely fail this optimistic update.
         selected.dbFingerprint === null
           ? isNull(agentControllerLinksTable.dbFingerprint)
           : eq(agentControllerLinksTable.dbFingerprint, selected.dbFingerprint),

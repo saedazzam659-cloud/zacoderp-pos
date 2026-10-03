@@ -38,3 +38,9 @@ Renewal diagnostics may identify failed source-side predicates, but must not ret
 **Why:** Source-side names help operators fix stale registry state without exposing identifiers or fingerprints. Detailed target errors would turn the proof endpoint into an invitation-state oracle.
 
 **How to apply:** Preserve every Epoch 0, active-controller, installation, domain, and database-fingerprint check. Return only fixed failure codes for source checks; keep target proof and acceptance criteria unchanged.
+
+Optimistic renewal writes must not compare PostgreSQL timestamp columns to JavaScript `Date` values for exact equality. PostgreSQL can retain sub-millisecond precision that JavaScript dates discard, making an unchanged link look stale after target proof.
+
+**Why:** A valid renewal can otherwise repeatedly fail its final compare-and-swap while leaving all rows untouched.
+
+**How to apply:** Guard renewal with stable link identity, credential, installation, fingerprint, epoch, and active-controller fields, or use an exact database-native version token. Do not use a round-tripped `Date` as the concurrency token.
