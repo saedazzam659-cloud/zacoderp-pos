@@ -54,6 +54,39 @@ type Stage = {
   notes: string;
 };
 
+const STAGE_TAB_TONES = [
+  {
+    idle: "border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100",
+    active: "border-sky-700 bg-sky-700 text-white shadow-sm shadow-sky-100",
+    number: "bg-white/80 text-sky-800",
+  },
+  {
+    idle: "border-teal-200 bg-teal-50 text-teal-900 hover:bg-teal-100",
+    active: "border-teal-700 bg-teal-700 text-white shadow-sm shadow-teal-100",
+    number: "bg-white/80 text-teal-800",
+  },
+  {
+    idle: "border-amber-200 bg-amber-50 text-amber-950 hover:bg-amber-100",
+    active: "border-amber-700 bg-amber-600 text-white shadow-sm shadow-amber-100",
+    number: "bg-white/80 text-amber-900",
+  },
+  {
+    idle: "border-violet-200 bg-violet-50 text-violet-900 hover:bg-violet-100",
+    active: "border-violet-700 bg-violet-700 text-white shadow-sm shadow-violet-100",
+    number: "bg-white/80 text-violet-800",
+  },
+  {
+    idle: "border-emerald-200 bg-emerald-50 text-emerald-950 hover:bg-emerald-100",
+    active: "border-emerald-700 bg-emerald-700 text-white shadow-sm shadow-emerald-100",
+    number: "bg-white/80 text-emerald-800",
+  },
+  {
+    idle: "border-rose-200 bg-rose-50 text-rose-950 hover:bg-rose-100",
+    active: "border-rose-700 bg-rose-700 text-white shadow-sm shadow-rose-100",
+    number: "bg-white/80 text-rose-800",
+  },
+] as const;
+
 export function ProductionStageExecution({ orderId, orderStatus, plannedQty, token, apiBase, permissionKey, isSimple, resourceCostingVersion = 0, overheadAccountId, onReload }: StageExecutionProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -417,42 +450,53 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
 
       {stages.length > 0 && (
         <div className="flex flex-col rounded-xl border bg-white shadow-sm overflow-hidden transition-all">
-          <div 
-            className="flex border-b overflow-x-auto rtl:space-x-reverse hide-scrollbar bg-slate-50/50" 
+          <div
+            className="flex snap-x snap-proximity gap-2.5 overflow-x-auto scroll-smooth border-b border-slate-200 bg-slate-50/70 p-3"
             role="tablist" 
-             aria-label="مراحل التصنيع"
+            aria-label={`مراحل التصنيع (${stages.length})`}
             aria-orientation="horizontal"
           >
             {stages.map((stage, idx) => {
               const isActive = stage.id === activeTabId;
               const isDone = stage.status === "done";
+              const stageTone = STAGE_TAB_TONES[idx % STAGE_TAB_TONES.length];
               return (
                 <button
                   key={stage.id}
                   ref={el => { tabRefs.current[idx] = el; }}
                   type="button"
                   role="tab"
-                   id={`stage-tab-${orderId}-${stage.id}`}
-                   aria-controls={`stage-panel-${orderId}-${stage.id}`}
-                   tabIndex={isActive ? 0 : -1}
+                  id={`stage-tab-${orderId}-${stage.id}`}
+                  aria-controls={`stage-panel-${orderId}-${stage.id}`}
+                  aria-posinset={idx + 1}
+                  aria-setsize={stages.length}
+                  tabIndex={isActive ? 0 : -1}
                   aria-selected={isActive}
                   onClick={() => navigateToTab(stage.id)}
                   onKeyDown={e => handleTabKeyDown(e, idx)}
-                  className={`px-5 py-3.5 border-b-2 flex items-center gap-2.5 font-medium text-sm whitespace-nowrap transition-colors outline-none focus-visible:bg-slate-100 ${
-                    isActive ? 'border-violet-600 text-violet-800 bg-white shadow-[0_-1px_0_0_inset_#e5e7eb] z-10' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100/70'
+                  data-active={isActive}
+                  data-testid={`production-stage-tab-${idx + 1}`}
+                  className={`flex min-h-[60px] min-w-max shrink-0 snap-start items-center gap-2.5 rounded-xl border px-4 py-3 text-sm font-semibold whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 sm:gap-3 sm:px-5 sm:text-base ${
+                    isActive ? stageTone.active : stageTone.idle
                   }`}
                 >
-                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${
-                    isDone ? 'bg-emerald-100 text-emerald-700' : 
-                    isActive ? 'bg-violet-600 text-white' : 
-                    'bg-slate-200 text-slate-600'
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                    isDone ? "bg-emerald-100 text-emerald-700" :
+                    stage.status === "skipped" ? "bg-slate-200 text-slate-600" :
+                    isActive ? "bg-white/20 text-white" :
+                    stageTone.number
                   }`}>
-                    {isDone ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : (idx + 1)}
+                    {isDone ? <Check className="h-4 w-4" strokeWidth={3} /> : (idx + 1)}
                   </span>
-                  {stage.nameAr}
-                   <span className={`text-[10px] rounded-full px-2 py-0.5 ${isDone ? "bg-emerald-50 text-emerald-700" : stage.status === "in_progress" ? "bg-amber-50 text-amber-800" : "bg-slate-100 text-slate-500"}`}>
-                     {isDone ? "مكتملة" : stage.status === "in_progress" ? "قيد التنفيذ" : stage.status === "skipped" ? "تم التخطي" : "لم تبدأ"}
-                   </span>
+                  <span>{stage.nameAr}</span>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium sm:text-xs ${
+                    isDone ? "bg-emerald-50 text-emerald-700" :
+                    stage.status === "in_progress" ? "bg-amber-50 text-amber-800" :
+                    stage.status === "skipped" ? "bg-slate-100 text-slate-600" :
+                    "bg-white/80 text-slate-600"
+                  }`}>
+                    {isDone ? "مكتملة" : stage.status === "in_progress" ? "قيد التنفيذ" : stage.status === "skipped" ? "تم التخطي" : "لم تبدأ"}
+                  </span>
                   {dirtyStages.current.has(stage.id) && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 ms-0.5" title="تعديلات غير محفوظة"></span>}
                 </button>
               );
