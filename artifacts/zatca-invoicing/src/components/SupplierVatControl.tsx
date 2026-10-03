@@ -266,6 +266,6 @@ export function SupplierVatControl({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
