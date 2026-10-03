@@ -17,9 +17,23 @@ type Props = {
   suppliers: any[];
   supplierId: string;
   onSupplierChange: (id: string) => void;
+  /** Let a document form place the quick-add trigger beside its supplier picker. */
+  addDialogOpen?: boolean;
+  onAddDialogOpenChange?: (open: boolean) => void;
+  hideAddButton?: boolean;
+  /** Keep the create dialog while omitting the VAT field on forms without VAT entry. */
+  hideVatField?: boolean;
 };
 
-export function SupplierVatControl({ suppliers, supplierId, onSupplierChange }: Props) {
+export function SupplierVatControl({
+  suppliers,
+  supplierId,
+  onSupplierChange,
+  addDialogOpen,
+  onAddDialogOpenChange,
+  hideAddButton,
+  hideVatField,
+}: Props) {
   const { user, token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -75,8 +89,14 @@ export function SupplierVatControl({ suppliers, supplierId, onSupplierChange }: 
     updateVat.mutate(newVat);
   }
 
-  // Quick-add dialog
-  const [open, setOpen] = useState(false);
+  // Quick-add dialog can be controlled by a document form so its trigger can
+  // sit beside the supplier picker, matching the sales quotation flow.
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = addDialogOpen ?? localOpen;
+  function setOpen(next: boolean) {
+    if (addDialogOpen === undefined) setLocalOpen(next);
+    onAddDialogOpenChange?.(next);
+  }
   const [newName, setNewName] = useState("");
   const [newVat, setNewVat] = useState("");
   // National Address (العنوان الوطني) — all optional
@@ -96,6 +116,12 @@ export function SupplierVatControl({ suppliers, supplierId, onSupplierChange }: 
     setNewCity(""); setNewPostalCode("");
     try { setNewAccountId(localStorage.getItem(lastAccKey) ?? ""); } catch { setNewAccountId(""); }
   }
+
+  useEffect(() => {
+    if (open) resetForm();
+    // Reset only when the dialog opens; preserve edits while it remains open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const createSupplier = useMutation({
     mutationFn: async () => {
@@ -139,30 +165,36 @@ export function SupplierVatControl({ suppliers, supplierId, onSupplierChange }: 
   });
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2 leading-none">
-        <Label className="text-xs">الرقم الضريبي للمورد</Label>
-        <button
-          type="button"
-          className="text-[11px] leading-none text-primary hover:underline inline-flex items-center gap-0.5"
-          onClick={() => { resetForm(); setOpen(true); }}
-        >
-          <Plus className="h-2.5 w-2.5" />مورد جديد
-        </button>
-      </div>
-      <Input
-        className="h-9 text-sm font-mono text-left"
-        dir="ltr"
-        placeholder={selected ? "31xxxxxxxxxxxx3" : "اختر المورد أو أضف مورد جديد"}
-        value={vat}
-        onChange={(e) => setVat(e.target.value)}
-        onBlur={handleBlur}
-        disabled={!selected || updateVat.isPending}
-      />
-      {selected?.code && (
-        <p className="text-[11px] text-muted-foreground" dir="ltr">رقم المورد: <span className="font-mono">{selected.code}</span></p>
+    <>
+      {!hideVatField && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2 leading-none">
+            <Label className="text-xs">الرقم الضريبي للمورد</Label>
+            {!hideAddButton && (
+              <button
+                type="button"
+                data-testid="button-add-supplier"
+                className="text-[11px] leading-none text-primary hover:underline inline-flex items-center gap-0.5"
+                onClick={() => { resetForm(); setOpen(true); }}
+              >
+                <Plus className="h-2.5 w-2.5" />مورد جديد
+              </button>
+            )}
+          </div>
+          <Input
+            className="h-9 text-sm font-mono text-left"
+            dir="ltr"
+            placeholder={selected ? "31xxxxxxxxxxxx3" : "اختر المورد أو أضف مورد جديد"}
+            value={vat}
+            onChange={(e) => setVat(e.target.value)}
+            onBlur={handleBlur}
+            disabled={!selected || updateVat.isPending}
+          />
+          {selected?.code && (
+            <p className="text-[11px] text-muted-foreground" dir="ltr">رقم المورد: <span className="font-mono">{selected.code}</span></p>
+          )}
+        </div>
       )}
-
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent dir="rtl" className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>

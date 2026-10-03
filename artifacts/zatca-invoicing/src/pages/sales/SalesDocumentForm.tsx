@@ -3485,13 +3485,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && <span className="text-destructive"> *</span>}</Label>
-                    {isQuotation && fp.isVisible("addCustomerTool") && !fp.isReadOnly("addCustomerTool") && !fp.isReadOnly("customer") && (
+                    {(isQuotation || isOrder) && fp.isVisible("addCustomerTool") && !fp.isReadOnly("addCustomerTool") && !fp.isReadOnly("customer") && (
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
                         className="h-7 gap-1 px-2 text-[11px] text-primary"
-                        data-testid="button-open-create-quotation-customer"
+                        data-testid={isOrder ? "button-open-create-sales-order-customer" : "button-open-create-quotation-customer"}
                         onClick={() => setQuickCustomerDialogOpen(true)}
                       >
                         <Plus className="h-3 w-3" />
@@ -3512,7 +3512,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   readOnly={fp.isReadOnly("addCustomerTool")}
                   addDialogOpen={quickCustomerDialogOpen}
                   onAddDialogOpenChange={setQuickCustomerDialogOpen}
-                  hideAddButton={isQuotation}
+                  hideAddButton={isQuotation || isOrder}
                 />
                 {isInvoice && isNew && (
                   <div className="space-y-1.5">

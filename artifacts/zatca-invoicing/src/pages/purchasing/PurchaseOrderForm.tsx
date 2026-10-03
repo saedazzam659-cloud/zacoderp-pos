@@ -51,6 +51,7 @@ import {
 import { DateField } from "@/components/ui/date-field";
 import PurchaseOrderDetails from "./PurchaseOrderDetails";
 import QuickAddCatalogItemDialog from "../sales/QuotationQuickAddItemDialog";
+import { SupplierVatControl } from "@/components/SupplierVatControl";
 import {
   catalogUnitsWithHistoricalSelection,
   isActiveItemUnit,
@@ -167,6 +168,7 @@ export default function PurchaseOrderForm() {
   const [convertedInvoiceId, setConvertedInvoiceId] = useState<number | null>(null);
   const [lines,        setLines]        = useState<OrderLine[]>([newLine()]);
   const [quickItemDialogOpen, setQuickItemDialogOpen] = useState(false);
+  const [quickSupplierDialogOpen, setQuickSupplierDialogOpen] = useState(false);
   const [focusLineId, setFocusLineId] = useState<string>(() => "");
   useEffect(() => {
     if (lines.length > 0 && !lines.some(l => l._id === focusLineId)) {
@@ -1099,8 +1101,30 @@ export default function PurchaseOrderForm() {
                   <DateField className="h-9 text-sm" value={expectedDeliveryDate} onChange={e => setExpectedDeliveryDate(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{tr("fields.supplier")}</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs">{tr("fields.supplier")}</Label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 px-2 text-[11px] text-primary"
+                      data-testid="button-open-create-purchase-order-supplier"
+                      onClick={() => setQuickSupplierDialogOpen(true)}
+                    >
+                      <Plus className="h-3 w-3" />
+                      مورد جديد
+                    </Button>
+                  </div>
                   <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder={tr("fields.supplierPh")} />
+                  <SupplierVatControl
+                    suppliers={suppliers}
+                    supplierId={supplierId}
+                    onSupplierChange={setSupplierId}
+                    hideVatField
+                    hideAddButton
+                    addDialogOpen={quickSupplierDialogOpen}
+                    onAddDialogOpenChange={setQuickSupplierDialogOpen}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.supplierInvoiceNumber")}</Label>
