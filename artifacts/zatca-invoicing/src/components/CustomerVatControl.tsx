@@ -21,9 +21,22 @@ type Props = {
   hidden?: boolean;
   /** سياسة الحقول (الحوكمة): تعطيل زر «+ عميل جديد» (للقراءة فقط). */
   readOnly?: boolean;
+  /** Optional controlled state so document forms can place the trigger beside the customer picker. */
+  addDialogOpen?: boolean;
+  onAddDialogOpenChange?: (open: boolean) => void;
+  hideAddButton?: boolean;
 };
 
-export function CustomerVatControl({ customers, customerId, onCustomerChange, hidden, readOnly }: Props) {
+export function CustomerVatControl({
+  customers,
+  customerId,
+  onCustomerChange,
+  hidden,
+  readOnly,
+  addDialogOpen,
+  onAddDialogOpenChange,
+  hideAddButton,
+}: Props) {
   const { user, token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -79,7 +92,12 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
     updateVat.mutate(newVat);
   }
 
-  const [open, setOpen] = useState(false);
+  const [localDialogOpen, setLocalDialogOpen] = useState(false);
+  const dialogOpen = addDialogOpen ?? localDialogOpen;
+  function setDialogOpen(next: boolean) {
+    if (addDialogOpen === undefined) setLocalDialogOpen(next);
+    onAddDialogOpenChange?.(next);
+  }
   const [newName, setNewName] = useState("");
   const [newVat, setNewVat] = useState("");
   const [newPhone, setNewPhone] = useState("");
@@ -100,6 +118,12 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
     setNewCity(""); setNewPostalCode("");
     try { setNewAccountId(localStorage.getItem(lastAccKey) ?? ""); } catch { setNewAccountId(""); }
   }
+
+  useEffect(() => {
+    if (dialogOpen) resetForm();
+    // reset only when the dialog opens; form edits must not be overwritten.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogOpen]);
 
   const createCustomer = useMutation({
     mutationFn: async () => {
@@ -136,7 +160,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
       } catch {}
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast({ title: "تم إضافة العميل" });
-      setOpen(false);
+      setDialogOpen(false);
       resetForm();
       if (cus?.id) onCustomerChange(String(cus.id));
     },
@@ -149,15 +173,18 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2 leading-none">
         <Label className="text-xs font-medium text-foreground/80">الرقم الضريبي للعميل</Label>
-        <button
-          type="button"
-          disabled={readOnly}
-          title={readOnly ? "غير مسموح حسب سياسة الحقول" : undefined}
-          className="text-[11px] leading-none text-primary hover:underline inline-flex items-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
-          onClick={() => { if (readOnly) return; resetForm(); setOpen(true); }}
-        >
-          <Plus className="h-2.5 w-2.5" />عميل جديد
-        </button>
+        {!hideAddButton && (
+          <button
+            type="button"
+            disabled={readOnly}
+            title={readOnly ? "غير مسموح حسب سياسة الحقول" : undefined}
+            data-testid="button-add-customer"
+            className="text-[11px] leading-none text-primary hover:underline inline-flex items-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+            onClick={() => { if (!readOnly) setDialogOpen(true); }}
+          >
+            <Plus className="h-2.5 w-2.5" />عميل جديد
+          </button>
+        )}
       </div>
       {/* الرقم الضريبي السعودي: 15 رقم بالضبط — نمنع إدخال أكثر من 15
           (maxLength) ونحجب أي حرف غير رقمي عبر تنقية القيمة قبل التحديث،
@@ -175,7 +202,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
         disabled={!selected || updateVat.isPending}
       />
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent dir="rtl" className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>إضافة عميل جديد</DialogTitle>
@@ -251,7 +278,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange, hi
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-2">
-            <Button type="button" variant="outline" onClick={() => setOpen(false)} className="gap-1"><X className="h-4 w-4" />إلغاء</Button>
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} className="gap-1"><X className="h-4 w-4" />إلغاء</Button>
             <Button type="button" onClick={() => createCustomer.mutate()} disabled={createCustomer.isPending || newName.trim().length < 2} className="gap-1">
               <Save className="h-4 w-4" />{createCustomer.isPending ? "جاري الحفظ..." : "حفظ العميل"}
             </Button>

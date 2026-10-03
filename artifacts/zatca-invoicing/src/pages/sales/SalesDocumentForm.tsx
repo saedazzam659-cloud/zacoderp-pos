@@ -50,6 +50,7 @@ import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { DateField } from "@/components/ui/date-field";
 import SalesDocumentDetails from "@/pages/sales/SalesDocumentDetails";
 import { SalesBatchAllocationControl, type SalesBatchAllocation } from "./SalesBatchAllocationControl";
+import QuotationQuickAddItemDialog from "./QuotationQuickAddItemDialog";
 import {
   catalogUnitsWithHistoricalSelection,
   isActiveItemUnit,
@@ -276,6 +277,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [matchEdit, params]   = useRoute(`${basePath}/:id`);
   const isNew  = !!matchNew;
   const canCreateInvoice = usePermission("sales_invoices", "create");
+  const canCreateCatalogItems = usePermission("items", "create");
   const canManuallyPickBatches = usePermission("sales_invoices", "edit");
   const newArchiveKeyRef = useRef(`SI-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   // /new matches the /:id route too (id="new") → Number("new")=NaN, and JSX
@@ -340,6 +342,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [docDate,   setDocDate]         = useState(today());
   const [validUntil,setValidUntil]      = useState("");
   const [customerId,setCustomerId]      = useState("");
+  const [quickCustomerDialogOpen, setQuickCustomerDialogOpen] = useState(false);
+  const [quickItemDialogOpen, setQuickItemDialogOpen] = useState(false);
   // ID of the quotation the user picked from the "بناءً على عرض سعر"
   // combobox on the new-invoice form. Sent on save so the backend can mark
   // the source quotation as converted and back-link it. Only meaningful
@@ -2023,7 +2027,22 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         style={{ gridTemplateColumns: "minmax(200px,2fr) 140px 120px 76px 76px 110px 128px auto" }}
       >
         <div className="space-y-1">
-          <label className="text-[11px] text-muted-foreground">الصنف</label>
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-[11px] text-muted-foreground">الصنف</label>
+            {isQuotation && canCreateCatalogItems && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-6 gap-1 px-2 text-[10px]"
+                data-testid="button-open-create-quotation-item"
+                onClick={() => setQuickItemDialogOpen(true)}
+              >
+                <Plus className="h-3 w-3" />
+                صنف جديد
+              </Button>
+            )}
+          </div>
           <SearchCombobox
             items={itemComboItems}
             value={qaItemId}
@@ -3436,13 +3455,37 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 )}
                 {fp.isVisible("customer") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && <span className="text-destructive"> *</span>}</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && <span className="text-destructive"> *</span>}</Label>
+                    {isQuotation && fp.isVisible("addCustomerTool") && !fp.isReadOnly("addCustomerTool") && !fp.isReadOnly("customer") && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1 px-2 text-[11px] text-primary"
+                        data-testid="button-open-create-quotation-customer"
+                        onClick={() => setQuickCustomerDialogOpen(true)}
+                      >
+                        <Plus className="h-3 w-3" />
+                        عميل جديد
+                      </Button>
+                    )}
+                  </div>
                   <div className={fp.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""} title={fp.isReadOnly("customer") ? "للقراءة فقط حسب السياسة" : undefined}>
                     <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
                   </div>
                 </div>
                 )}
-                <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} hidden={!fp.isVisible("addCustomerTool")} readOnly={fp.isReadOnly("addCustomerTool")} />
+                <CustomerVatControl
+                  customers={customers}
+                  customerId={customerId}
+                  onCustomerChange={setCustomerId}
+                  hidden={!fp.isVisible("addCustomerTool")}
+                  readOnly={fp.isReadOnly("addCustomerTool")}
+                  addDialogOpen={quickCustomerDialogOpen}
+                  onAddDialogOpenChange={setQuickCustomerDialogOpen}
+                  hideAddButton={isQuotation}
+                />
                 {isInvoice && isNew && (
                   <div className="space-y-1.5">
                     <Label className="text-xs flex items-center gap-1.5">
@@ -3846,6 +3889,29 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           </Button>
         )}
       </div>
+      )}
+      {isQuotation && (
+        <QuotationQuickAddItemDialog
+          open={quickItemDialogOpen}
+          onOpenChange={setQuickItemDialogOpen}
+          units={units as any[]}
+          companyId={cid}
+          onCreated={(item: any) => {
+            const current = qc.getQueryData<any[]>(["inventory-items", cid]) ?? inventoryItems;
+            qc.setQueryData(["inventory-items", cid], [
+              item,
+              ...current.filter((row: any) => String(row.id) !== String(item.id)),
+            ]);
+            void qc.invalidateQueries({ queryKey: ["inventory-items", cid] });
+            void qc.invalidateQueries({ queryKey: ["items"] });
+            setQaItemId(String(item.id));
+            setQaQty("1");
+            setQaFreeQty("0");
+            setQaPrice("");
+            setQaDiscount("0");
+            if (!qaWarehouseId && defaultWarehouse?.id) setQaWarehouseId(String(defaultWarehouse.id));
+          }}
+        />
       )}
     </div>
   );
