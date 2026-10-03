@@ -50,7 +50,7 @@ import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { DateField } from "@/components/ui/date-field";
 import SalesDocumentDetails from "@/pages/sales/SalesDocumentDetails";
 import { SalesBatchAllocationControl, type SalesBatchAllocation } from "./SalesBatchAllocationControl";
-import QuotationQuickAddItemDialog from "./QuotationQuickAddItemDialog";
+import QuickAddCatalogItemDialog from "./QuotationQuickAddItemDialog";
 import {
   catalogUnitsWithHistoricalSelection,
   isActiveItemUnit,
@@ -1146,8 +1146,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     return v != null && v !== "" ? String(v) : null;
   }
 
-  async function selectItem(lineId: string, itemId: string) {
-    const item = inventoryItems.find((i: any) => String(i.id) === itemId);
+  async function selectItem(lineId: string, itemId: string, createdItem?: any) {
+    const item = createdItem ?? inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
     const itemUnits = await fetchItemUnits(itemId);
     // Pick base unit (or first configured, or fallback to item's default unit)
@@ -2029,7 +2029,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
             <label className="text-[11px] text-muted-foreground">الصنف</label>
-            {isQuotation && canCreateCatalogItems && (
+            {(isInvoice || isQuotation) && canCreateCatalogItems && (
               <Button
                 type="button"
                 size="sm"
@@ -2296,7 +2296,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         </div>
         <div className="border-t bg-muted/20 px-3 py-2">
           <div className="flex flex-wrap items-center gap-2">
-            {isQuotation && canCreateCatalogItems && hideQuickAdd && (
+            {(isInvoice || isQuotation) && canCreateCatalogItems && hideQuickAdd && (
               <Button
                 type="button"
                 variant="outline"
@@ -2558,6 +2558,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 );
               })()}
 
+              {(isInvoice || isQuotation) && canCreateCatalogItems && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => setQuickItemDialogOpen(true)}
+                  data-testid="button-open-create-sales-item-classic"
+                >
+                  <Plus className="h-4 w-4" />
+                  إنشاء صنف جديد
+                </Button>
+              )}
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
                 <Plus className="h-4 w-4" />{t("salesDocForm.addLine")}
               </Button>
@@ -3905,13 +3918,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         )}
       </div>
       )}
-      {isQuotation && (
-        <QuotationQuickAddItemDialog
+      {(isInvoice || isQuotation) && (
+        <QuickAddCatalogItemDialog
           open={quickItemDialogOpen}
           onOpenChange={setQuickItemDialogOpen}
           units={units as any[]}
           companyId={cid}
-          onCreated={(item: any, defaults: { unitId: number; salePrice: string; vatRate: string }) => {
+          documentName={isInvoice ? "فاتورة المبيعات" : "عرض السعر"}
+          priceMode="sale"
+          onCreated={(item: any) => {
             const current = qc.getQueryData<any[]>(["inventory-items", cid]) ?? inventoryItems;
             qc.setQueryData(["inventory-items", cid], [
               item,
@@ -3919,27 +3934,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             ]);
             void qc.invalidateQueries({ queryKey: ["inventory-items", cid] });
             void qc.invalidateQueries({ queryKey: ["items"] });
-            if (hideQuickAdd) {
+            if (hideQuickAdd || !useTabbedLayout) {
               const line = newLine();
-              const unit = (units as any[]).find((candidate: any) =>
-                String(candidate.id) === String(defaults.unitId),
-              );
-              line.itemId = String(item.id);
-              line.itemName = item.nameAr ?? item.nameEn ?? "";
-              line.itemCode = item.code ?? "";
-              line.unitId = String(defaults.unitId);
-              line.unit = unit?.nameAr ?? unit?.nameEn ?? "";
-              line.conversionFactor = "1";
-              line.unitPrice = defaults.salePrice;
-              line.baseUnitPrice = defaults.salePrice;
-              line.vatRate = defaults.vatRate;
-              line.warehouseId = item.itemType === "service" || item.itemType === "prepaid_expense"
-                ? ""
-                : String(headerWarehouseId || defaultWarehouse?.id || "");
-              const { lineTotal } = calcLine(line, priceIncludesVat, taxMode);
-              line.lineTotal = lineTotal.toFixed(2);
+              line.warehouseId = String(headerWarehouseId || defaultWarehouse?.id || "");
               setLines((previous) => [...previous, line]);
               setFocusLineId(line._id);
+              void selectItem(line._id, String(item.id), item);
             } else {
               setQaItemId(String(item.id));
               setQaQty("1");

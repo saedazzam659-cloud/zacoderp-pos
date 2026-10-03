@@ -35,10 +35,9 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   units: any[];
   companyId?: number;
-  onCreated: (
-    item: any,
-    defaults: { unitId: number; salePrice: string; vatRate: string },
-  ) => void;
+  documentName?: string;
+  priceMode?: "sale" | "cost";
+  onCreated: (item: any) => void;
 };
 
 type QuickAddValues = {
@@ -46,7 +45,7 @@ type QuickAddValues = {
   nameEn: string;
   code: string;
   unitId: string;
-  salePrice: string;
+  basePrice: string;
   vatRate: string;
   unitNameAr: string;
   unitNameEn: string;
@@ -67,11 +66,13 @@ function apiErrorMessage(error: unknown): string {
   return raw || "حدث خطأ غير متوقع.";
 }
 
-export default function QuotationQuickAddItemDialog({
+export default function QuickAddCatalogItemDialog({
   open,
   onOpenChange,
   units,
   companyId,
+  documentName = "المستند",
+  priceMode = "sale",
   onCreated,
 }: Props) {
   const { toast } = useToast();
@@ -84,7 +85,7 @@ export default function QuotationQuickAddItemDialog({
       nameEn: "",
       code: "",
       unitId: "",
-      salePrice: "0",
+      basePrice: "0",
       vatRate: "15",
       unitNameAr: "",
       unitNameEn: "",
@@ -100,7 +101,7 @@ export default function QuotationQuickAddItemDialog({
       nameEn: "",
       code: "",
       unitId: activeUnits[0]?.id != null ? String(activeUnits[0].id) : "",
-      salePrice: "0",
+      basePrice: "0",
       vatRate: "15",
       unitNameAr: "",
       unitNameEn: "",
@@ -158,6 +159,9 @@ export default function QuotationQuickAddItemDialog({
       const values = form.getValues();
       const trimmedName = values.nameAr.trim();
       const selectedUnitId = Number(values.unitId);
+      const basePrice = values.basePrice.trim() || "0";
+      const costPrice = priceMode === "cost" ? basePrice : "0";
+      const salePrice = priceMode === "sale" ? basePrice : "0";
       if (trimmedName.length < 2) throw new Error("اسم الصنف مطلوب (حرفان على الأقل).");
       if (!Number.isSafeInteger(selectedUnitId) || selectedUnitId <= 0) {
         throw new Error("اختر وحدة قياس أساسية أو أضف وحدة جديدة.");
@@ -170,8 +174,8 @@ export default function QuotationQuickAddItemDialog({
         itemType: "stock",
         itemNature: "merchandise",
         unitId: selectedUnitId,
-        costPrice: "0",
-        salePrice: values.salePrice.trim() || "0",
+        costPrice,
+        salePrice,
         vatRate: values.vatRate.trim() || "15",
         reorderLevel: "0",
         costMethod: "weighted_avg",
@@ -184,8 +188,8 @@ export default function QuotationQuickAddItemDialog({
         await inventoryApi.addItemUnit(Number(item.id), {
           unitId: selectedUnitId,
           relationFactor: "1",
-          costPrice: "0",
-          salePrice: values.salePrice.trim() || "0",
+          costPrice,
+          salePrice,
           isBase: true,
           isActive: true,
           decimalPlaces: 2,
@@ -201,27 +205,18 @@ export default function QuotationQuickAddItemDialog({
         );
       }
 
-      return {
-        item,
-        baseUnitLinked,
-        defaults: {
-          unitId: selectedUnitId,
-          salePrice: values.salePrice.trim() || "0",
-          vatRate: values.vatRate.trim() || "15",
-        },
-      };
+      return { item, baseUnitLinked };
     },
-    onSuccess: ({ item, baseUnitLinked, defaults }: {
+    onSuccess: ({ item, baseUnitLinked }: {
       item: any;
       baseUnitLinked: boolean;
-      defaults: { unitId: number; salePrice: string; vatRate: string };
     }) => {
-      onCreated(item, defaults);
+      onCreated(item);
       onOpenChange(false);
       if (baseUnitLinked) {
         toast({
           title: "تمت إضافة الصنف",
-          description: "أُضيف إلى قائمة الأصناف في عرض السعر.",
+          description: `أُضيف إلى ${documentName}.`,
         });
       } else {
         toast({
@@ -253,9 +248,9 @@ export default function QuotationQuickAddItemDialog({
               <Package className="h-5 w-5" />
             </div>
             <div className="space-y-1">
-              <DialogTitle>إضافة صنف إلى عرض السعر</DialogTitle>
+              <DialogTitle>إضافة صنف جديد إلى {documentName}</DialogTitle>
               <DialogDescription>
-                أضف بيانات الصنف ووحدة بيعه هنا، وسيظهر مباشرة في قائمة الأصناف دون مغادرة العرض.
+                أضف الصنف ووحدة القياس هنا، وسيظهر في المستند دون مغادرة الشاشة.
               </DialogDescription>
             </div>
           </div>
@@ -494,11 +489,11 @@ export default function QuotationQuickAddItemDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField
                 control={form.control}
-                name="salePrice"
+                name="basePrice"
                 rules={{ min: { value: 0, message: "السعر لا يمكن أن يكون سالباً." } }}
                 render={({ field }) => (
                   <FormItem className="space-y-1.5">
-                    <FormLabel>سعر البيع الافتراضي</FormLabel>
+                    <FormLabel>{priceMode === "cost" ? "سعر الشراء الافتراضي" : "سعر البيع الافتراضي"}</FormLabel>
                     <FormControl>
                       <Input
                         {...field}

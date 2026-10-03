@@ -54,6 +54,7 @@ import {
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 import PurchasePrintModal from "./PurchasePrintModal";
+import QuickAddCatalogItemDialog from "../sales/QuotationQuickAddItemDialog";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import IndustrialCostsTab, { type IndustrialCostDraft } from "./IndustrialCostsTab";
@@ -130,6 +131,7 @@ export default function PurchaseReturns() {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const canCreateReturn = usePermission("purchase_returns", "create");
+  const canCreateCatalogItems = usePermission("items", "create");
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const { data: projectOptions } = useQuery({
     queryKey: contractingOptionsKey(user?.id, cid, undefined, token),
@@ -183,6 +185,7 @@ export default function PurchaseReturns() {
   // price/discount → commit. Discount is PERCENT-only (return lines have no
   // fixed-amount discount field — no calc-path change).
   const [qaItemId, setQaItemId]           = useState("");
+  const [quickItemDialogOpen, setQuickItemDialogOpen] = useState(false);
   const [qaWarehouseId, setQaWarehouseId] = useState("");
   const [qaUnitId, setQaUnitId]           = useState("");
   const [qaQty, setQaQty]                 = useState("1");
@@ -850,8 +853,8 @@ export default function PurchaseReturns() {
     return String(m.costPrice);
   }
 
-  async function selectItem(lineId: string, itemId: string) {
-    const item = inventoryItems.find((i: any) => String(i.id) === itemId);
+  async function selectItem(lineId: string, itemId: string, createdItem?: any) {
+    const item = createdItem ?? inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) return;
     const itemUnits = await fetchItemUnits(itemId);
     const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
@@ -1093,7 +1096,22 @@ export default function PurchaseReturns() {
         style={{ gridTemplateColumns: "minmax(200px,2fr) 140px 120px 76px 76px 110px 110px auto" }}
       >
         <div className="space-y-1">
-          <label className="text-[11px] text-muted-foreground">الصنف</label>
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-[11px] text-muted-foreground">الصنف</label>
+            {canCreateCatalogItems && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-6 gap-1 px-2 text-[10px]"
+                onClick={() => setQuickItemDialogOpen(true)}
+                data-testid="button-open-create-purchase-return-item"
+              >
+                <Plus className="h-3 w-3" />
+                صنف جديد
+              </Button>
+            )}
+          </div>
           <SearchCombobox
             items={itemComboItems}
             value={qaItemId}
@@ -2191,9 +2209,24 @@ ${sections}
                 </div>
                 </div>
                 <div className="border-t bg-muted/20 px-3 py-2">
-                  <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addGridLine}>
-                    <Plus className="h-4 w-4" />{tr("addLine")}
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(hideQuickAdd || !useTabbedLayout) && canCreateCatalogItems && !viewMode && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 border-primary/50 text-primary hover:bg-primary/5"
+                        onClick={() => setQuickItemDialogOpen(true)}
+                        data-testid="button-open-create-purchase-return-item-from-grid"
+                      >
+                        <Plus className="h-4 w-4" />
+                        إنشاء صنف جديد
+                      </Button>
+                    )}
+                    <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addGridLine}>
+                      <Plus className="h-4 w-4" />{tr("addLine")}
+                    </Button>
+                  </div>
                 </div>
               </div>
                 );
@@ -2688,6 +2721,38 @@ ${sections}
         />
       </div>
 
+      <QuickAddCatalogItemDialog
+        open={quickItemDialogOpen}
+        onOpenChange={setQuickItemDialogOpen}
+        units={units as any[]}
+        companyId={cid}
+        documentName="مرتجع المشتريات"
+        priceMode="cost"
+        onCreated={(item: any) => {
+          const current = qc.getQueryData<any[]>(["inventory-items", cid]) ?? inventoryItems;
+          qc.setQueryData(["inventory-items", cid], [
+            item,
+            ...current.filter((row: any) => String(row.id) !== String(item.id)),
+          ]);
+          void qc.invalidateQueries({ queryKey: ["inventory-items", cid] });
+          void qc.invalidateQueries({ queryKey: ["items"] });
+          if (hideQuickAdd || !useTabbedLayout) {
+            const line = newLine();
+            line.warehouseId = String(headerWarehouseId || defaultWarehouse?.id || "");
+            setLines((previous) => [...previous, line]);
+            setFocusLineId(line._id);
+            void selectItem(line._id, String(item.id), item);
+          } else {
+            setQaItemId(String(item.id));
+            setQaQty("1");
+            setQaFreeQty("0");
+            setQaPrice("");
+            setQaDiscount("0");
+            setQaUnitId("");
+            if (!qaWarehouseId && defaultWarehouse?.id) setQaWarehouseId(String(defaultWarehouse.id));
+          }
+        }}
+      />
       <PurchasePrintModal
         open={!!printData}
         onClose={() => setPrintData(null)}

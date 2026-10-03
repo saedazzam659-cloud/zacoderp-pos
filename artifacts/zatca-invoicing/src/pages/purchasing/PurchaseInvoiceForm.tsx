@@ -42,6 +42,7 @@ import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
 import PurchaseInvoicePaymentsTab from "@/pages/purchasing/PurchaseInvoicePaymentsTab";
 import { DateField } from "@/components/ui/date-field";
 import PurchaseInvoiceDetails from "./PurchaseInvoiceDetails";
+import QuickAddCatalogItemDialog from "../sales/QuotationQuickAddItemDialog";
 import IndustrialCostsTab, { type IndustrialCostDraft } from "./IndustrialCostsTab";
 import {
   catalogUnitsWithHistoricalSelection,
@@ -159,6 +160,7 @@ function PurchaseInvoiceFormContent() {
   const [matchEdit, params] = useRoute("/purchasing/invoices/:id");
   const isNew  = !!matchNew;
   const canCreateInvoice = usePermission("purchase_invoices", "create");
+  const canCreateCatalogItems = usePermission("items", "create");
   const newArchiveKeyRef = useRef(`PI-new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   // /new matches the /:id route too (id="new") → Number("new")=NaN, and JSX
   // renders `{NaN && <Tab/>}` as a literal "NaN" chip. Only accept numeric ids.
@@ -236,6 +238,7 @@ function PurchaseInvoiceFormContent() {
   // price/discount → commit. Discount here is PERCENT-only (purchase lines
   // have no fixed-amount discount field — no calc-path change).
   const [qaItemId, setQaItemId]           = useState("");
+  const [quickItemDialogOpen, setQuickItemDialogOpen] = useState(false);
   const [qaWarehouseId, setQaWarehouseId] = useState("");
   const [qaUnitId, setQaUnitId]           = useState("");
   const [qaQty, setQaQty]                 = useState("1");
@@ -701,8 +704,8 @@ function PurchaseInvoiceFormContent() {
     return String(m.costPrice);
   }
 
-  async function selectItem(lineId: string, itemId: string) {
-    const item = inventoryItems.find((i: any) => String(i.id) === itemId);
+  async function selectItem(lineId: string, itemId: string, createdItem?: any) {
+    const item = createdItem ?? inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
     const itemUnits = await fetchItemUnits(itemId);
     const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
@@ -1211,7 +1214,22 @@ function PurchaseInvoiceFormContent() {
         style={{ gridTemplateColumns: "minmax(200px,2fr) 140px 120px 76px 76px 110px 110px auto" }}
       >
         <div className="space-y-1">
-          <label className="text-[11px] text-muted-foreground">الصنف</label>
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-[11px] text-muted-foreground">الصنف</label>
+            {canCreateCatalogItems && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-6 gap-1 px-2 text-[10px]"
+                onClick={() => setQuickItemDialogOpen(true)}
+                data-testid="button-open-create-purchase-invoice-item"
+              >
+                <Plus className="h-3 w-3" />
+                صنف جديد
+              </Button>
+            )}
+          </div>
           <SearchCombobox
             items={itemComboItems}
             value={qaItemId}
@@ -2061,9 +2079,24 @@ function PurchaseInvoiceFormContent() {
                 </div>
                 </div>
                 <div className="border-t bg-muted/20 px-3 py-2">
-                  <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addGridLine}>
-                    <Plus className="h-4 w-4" />{tr("addLine")}
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(hideQuickAdd || !useTabbedLayout) && canCreateCatalogItems && !isPosted && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 border-primary/50 text-primary hover:bg-primary/5"
+                        onClick={() => setQuickItemDialogOpen(true)}
+                        data-testid="button-open-create-purchase-invoice-item-from-grid"
+                      >
+                        <Plus className="h-4 w-4" />
+                        إنشاء صنف جديد
+                      </Button>
+                    )}
+                    <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addGridLine}>
+                      <Plus className="h-4 w-4" />{tr("addLine")}
+                    </Button>
+                  </div>
                 </div>
               </div>
                 );
@@ -2410,6 +2443,38 @@ function PurchaseInvoiceFormContent() {
         )}
       </div>
       )}
+      <QuickAddCatalogItemDialog
+        open={quickItemDialogOpen}
+        onOpenChange={setQuickItemDialogOpen}
+        units={units as any[]}
+        companyId={cid}
+        documentName="فاتورة المشتريات"
+        priceMode="cost"
+        onCreated={(item: any) => {
+          const current = qc.getQueryData<any[]>(["inventory-items", cid]) ?? inventoryItems;
+          qc.setQueryData(["inventory-items", cid], [
+            item,
+            ...current.filter((row: any) => String(row.id) !== String(item.id)),
+          ]);
+          void qc.invalidateQueries({ queryKey: ["inventory-items", cid] });
+          void qc.invalidateQueries({ queryKey: ["items"] });
+          if (hideQuickAdd || !useTabbedLayout) {
+            const line = newLine();
+            line.warehouseId = headerWarehouseId;
+            setLines((previous) => [...previous, line]);
+            setFocusLineId(line._id);
+            void selectItem(line._id, String(item.id), item);
+          } else {
+            setQaItemId(String(item.id));
+            setQaQty("1");
+            setQaFreeQty("0");
+            setQaPrice("");
+            setQaDiscount("0");
+            setQaUnitId("");
+            if (!qaWarehouseId && defaultWarehouse?.id) setQaWarehouseId(String(defaultWarehouse.id));
+          }
+        }}
+      />
     </div>
   );
 }
