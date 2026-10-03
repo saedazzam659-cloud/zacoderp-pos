@@ -19,6 +19,7 @@
 - [Platform and security index](platform-ops-index.md) — tenant isolation, permissions, agents, mobile/HR, storage, infrastructure, and operational safeguards.
 - [Controller-link state integrity](dual-platform-agent-control.md) — preserve exact concurrency checks and use idempotent recovery after remote shell-sync failures.
 - [Web and shared UI index](web-shared-index.md) — browser forms, shared UI, dates, catalog, reports, and cross-cutting web behavior.
+- [Variable manufacturing routes](manufacturing-route-stages.md) — stage count and sequence vary by factory and product; never assume a fixed six-stage flow.
 - [Sales-invoice form parity](sales-invoice-form-parity.md) — keep related customer, supplier, HR, order, credit, and representative forms on the same full-width field layout.
 - [Approved agent UI](approved-agent-ui.md) — current agent-facing web UI is approved; custom views must be opt-in and leave the default unchanged.
 - [Invoice save retries](invoice-save-retry-safety.md) — stable per-form keys, immediate persisted-ID capture, and atomic finalized replay prevent repeated-save duplicates.

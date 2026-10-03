@@ -67,7 +67,7 @@ const STAGE_TAB_TONES = [
   },
   {
     idle: "border-amber-200 bg-amber-50 text-amber-950 hover:bg-amber-100",
-    active: "border-amber-700 bg-amber-600 text-white shadow-sm shadow-amber-100",
+    active: "border-amber-800 bg-amber-700 text-white shadow-sm shadow-amber-100",
     number: "bg-white/80 text-amber-900",
   },
   {
