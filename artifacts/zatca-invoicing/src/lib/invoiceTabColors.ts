@@ -13,7 +13,10 @@ export const INVOICE_TAB_COLOR_CLASSES = {
   archive: "text-slate-700 hover:bg-slate-100 data-[state=active]:bg-slate-700 data-[state=active]:text-white",
   expenses: "text-cyan-800 hover:bg-cyan-50 data-[state=active]:bg-cyan-700 data-[state=active]:text-white",
   details: "text-purple-800 hover:bg-purple-50 data-[state=active]:bg-purple-700 data-[state=active]:text-white",
-  header: "text-teal-800 hover:bg-teal-50 data-[state=active]:bg-teal-700 data-[state=active]:text-white",
 } as const;
 
 export type InvoiceTabColorId = keyof typeof INVOICE_TAB_COLOR_CLASSES;
+
+export function getInvoiceTabColorClass(id: InvoiceTabColorId, enabled: boolean): string {
+  return enabled ? INVOICE_TAB_COLOR_CLASSES[id] : "";
+}

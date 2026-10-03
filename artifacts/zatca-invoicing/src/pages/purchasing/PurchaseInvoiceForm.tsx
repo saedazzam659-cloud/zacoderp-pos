@@ -50,6 +50,8 @@ import {
   itemUnitsWithHistoricalSelection,
   serializeDocumentLine,
 } from "@/lib/documentLineUnits";
+import { useAgentColorfulInvoiceTabs } from "@/lib/agentBranding";
+import { COLORFUL_INVOICE_TAB_LIST_CLASS, getInvoiceTabColorClass } from "@/lib/invoiceTabColors";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -132,6 +134,7 @@ function calcLine(l: InvoiceLine, priceIncludesVat = false, taxMode: TaxMode = "
 }
 
 function PurchaseInvoiceFormContent() {
+  const colorfulInvoiceTabs = useAgentColorfulInvoiceTabs();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1407,48 +1410,48 @@ function PurchaseInvoiceFormContent() {
                 every chip on ONE line; the hint text truncates instead. */}
             <div className="flex items-center justify-between gap-3 flex-nowrap px-4 py-2 border-b bg-muted/20">
               {useTabbedLayout ? (
-                <TabsList className="h-8 bg-background border gap-1 shrink-0">
-                  <TabsTrigger value="basic" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <TabsList className={cn("h-8 bg-background border gap-1 shrink-0", colorfulInvoiceTabs && COLORFUL_INVOICE_TAB_LIST_CLASS)}>
+                  <TabsTrigger value="basic" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("basic", colorfulInvoiceTabs))}>
                     <FileText className="h-3.5 w-3.5" />البيانات الأساسية
                   </TabsTrigger>
-                  <TabsTrigger value="items" className={`h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground ${basicFieldsValid ? "" : "opacity-50"}`}>
+                  <TabsTrigger value="items" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("items", colorfulInvoiceTabs), !basicFieldsValid && "opacity-50")}>
                     <ListOrdered className="h-3.5 w-3.5" />الأصناف
                   </TabsTrigger>
-                  <TabsTrigger value="industrialCosts" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="industrialCosts" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("industrialCosts", colorfulInvoiceTabs))}>
                     <TrendingUp className="h-3.5 w-3.5" />التكاليف الصناعية
                   </TabsTrigger>
                   {/* Linked-ops tabs stay VISIBLE on a new invoice but disabled
                       until it is saved (they need a persisted invoice id). */}
-                  <TabsTrigger value="debitNote" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="debitNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("debitNote", colorfulInvoiceTabs))}>
                     <FileText className="h-3.5 w-3.5" />إشعار مدين
                   </TabsTrigger>
-                  <TabsTrigger value="creditNote" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="creditNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("creditNote", colorfulInvoiceTabs))}>
                     <FileText className="h-3.5 w-3.5" />إشعار دائن
                   </TabsTrigger>
-                  <TabsTrigger value="payments" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="payments" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("payments", colorfulInvoiceTabs))}>
                     <Wallet className="h-3.5 w-3.5" />السداد
                   </TabsTrigger>
-                  <TabsTrigger value="returns" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="returns" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("returns", colorfulInvoiceTabs))}>
                     <Undo2 className="h-3.5 w-3.5" />الإرجاع
                   </TabsTrigger>
                   {lines.some(l => isDeferredLine(l)) && (
-                    <TabsTrigger value="deferred" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <TabsTrigger value="deferred" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("deferred", colorfulInvoiceTabs))}>
                       <ClipboardList className="h-3.5 w-3.5" />مصروف مرحّل
                     </TabsTrigger>
                   )}
-                  <TabsTrigger value="archive" disabled={!editId} className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="archive" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("archive", colorfulInvoiceTabs))}>
                     <Archive className="h-3.5 w-3.5" />أرشفة
                   </TabsTrigger>
-                  <TabsTrigger value="expenses" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="expenses" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("expenses", colorfulInvoiceTabs))}>
                     <ReceiptIcon_ className="h-3.5 w-3.5" />المصروفات والتكاليف
                   </TabsTrigger>
-                  <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <TabsTrigger value="details" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("details", colorfulInvoiceTabs))}>
                     <ClipboardList className="h-3.5 w-3.5" />التفاصيل
                   </TabsTrigger>
                 </TabsList>
               ) : (
-                <TabsList className="h-8 bg-background border gap-1 shrink-0">
-                  <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <TabsList className={cn("h-8 bg-background border gap-1 shrink-0", colorfulInvoiceTabs && COLORFUL_INVOICE_TAB_LIST_CLASS)}>
+                  <TabsTrigger value="header" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("basic", colorfulInvoiceTabs))}>
                     <FileText className="h-3.5 w-3.5" />{tr("headerData")}
                   </TabsTrigger>
                 </TabsList>

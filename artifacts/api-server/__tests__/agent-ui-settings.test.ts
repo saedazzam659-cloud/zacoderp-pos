@@ -6,6 +6,8 @@ import { resolvedAgentBranding } from "../src/lib/agentPublicBranding.js";
 test("public agent UI settings keep the compact invoice selector disabled by default", () => {
   assert.equal(sanitizeAgentUiSettings(null).compactInvoiceTypeSelector, false);
   assert.equal(sanitizeAgentUiSettings({}).compactInvoiceTypeSelector, false);
+  assert.equal(sanitizeAgentUiSettings(null).colorfulInvoiceTabs, false);
+  assert.equal(sanitizeAgentUiSettings({}).colorfulInvoiceTabs, false);
 });
 
 test("public agent UI settings expose compact invoice selector only when explicitly enabled", () => {
@@ -17,6 +19,8 @@ test("public agent UI settings expose compact invoice selector only when explici
     sanitizeAgentUiSettings({ compactInvoiceTypeSelector: 1 }).compactInvoiceTypeSelector,
     false,
   );
+  assert.equal(sanitizeAgentUiSettings({ colorfulInvoiceTabs: true }).colorfulInvoiceTabs, true);
+  assert.equal(sanitizeAgentUiSettings({ colorfulInvoiceTabs: "true" }).colorfulInvoiceTabs, false);
 });
 
 test("public branding exposes the compact selector only through sanitized agent UI settings", () => {
@@ -29,10 +33,15 @@ test("public branding exposes the compact selector only through sanitized agent 
     inventoryReportsUnified: false,
     moduleShortcutIcons: false,
     moduleReportsUnified: false,
-    agentUiSettings: { compactInvoiceTypeSelector: true, privateFlag: "discard" },
+    agentUiSettings: {
+      compactInvoiceTypeSelector: true,
+      colorfulInvoiceTabs: true,
+      privateFlag: "discard",
+    },
   });
 
   assert.equal(branding.isAgentDomain, true);
   assert.equal(branding.agentUiSettings.compactInvoiceTypeSelector, true);
+  assert.equal(branding.agentUiSettings.colorfulInvoiceTabs, true);
   assert.equal("privateFlag" in branding.agentUiSettings, false);
 });
