@@ -2427,8 +2427,8 @@ export default function AgentServers() {
                   <div>
                     <h3 className="text-sm font-semibold">أيقونات اختصارات الوحدات</h3>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                      تعرض شبكات الاختصارات وتبويبات الإعدادات كبطاقات أيقونات بأسمائها لهذا الوكيل فقط.
-                      الروابط والصلاحيات والشاشات الحالية لا تتغير.
+                      تعرض شبكات الاختصارات وتبويبات الإعدادات كبطاقات أيقونات، وتضيف سهمًا لفتح كل وحدة في تبويب جديد لهذا الوكيل فقط.
+                      النقر الأساسي على الوحدة والروابط والصلاحيات الحالية لا تتغير.
                     </p>
                   </div>
                   <label className="flex cursor-pointer items-start gap-2 text-sm">

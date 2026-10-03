@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
   useAgentBrandName,
+  useAgentModuleShortcutIcons,
   useAgentModuleScreensAsTiles,
   useIsAgentDomain,
   useLocalSuperadminScreens,
@@ -10,6 +11,7 @@ import {
   useUnifiedModuleReports,
 } from "@/lib/agentBranding";
 import { AGENT_MODULE_SCREEN_TILE_OPTIONS } from "@/lib/agentUiSettings";
+import { appRouteHref } from "@/lib/appRouteHref";
 import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import AgentServerUpdateDialog from "@/components/AgentServerUpdateDialog";
 import {
@@ -2549,6 +2551,30 @@ function SecurityNavGroup({
 // (forced `open`) inside a dropdown panel — so we reuse 100% of the sidebar's
 // menu data, permission gating, and styling. `children` is a render-prop that
 // receives a `close` callback so navigating a link collapses the dropdown.
+function AgentTopNavNewTabAction({
+  href,
+  label,
+  testId,
+}: {
+  href: string;
+  label: string;
+  testId: string;
+}) {
+  return (
+    <a
+      href={appRouteHref(href)}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`فتح ${label} في تبويب جديد`}
+      title="فتح في تبويب جديد"
+      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/65 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      data-testid={testId}
+    >
+      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+    </a>
+  );
+}
+
 function TopNavDropdown({
   label,
   children,
@@ -2601,6 +2627,14 @@ function TopNavBar(props: any) {
     && isLocalSuperadminScreenAllowed(item.href, localSuperadminScreens),
   );
   const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
+  const showAgentNewTabActions = useAgentModuleShortcutIcons() === true;
+  const canViewInventoryMaster = usePermission("items", "view");
+  const zatcaReportsUnified = useUnifiedModuleReports("zatca") === true;
+  const moduleReportsUnified = useUnifiedModuleReports("field-service") === true;
+  const zatcaNewTabHref = filterNav(zatcaGroupSubNav, user)
+    .map(item => zatcaReportsUnified && item.href === "/zatca-report"
+      ? { ...item, href: "/module-reports/zatca" }
+      : item)[0]?.href ?? "/zatca";
   const NOOP = () => {};
   const nav = (close: () => void) => () => {
     close();
@@ -2622,7 +2656,6 @@ function TopNavBar(props: any) {
     );
   }
 
-  const moduleReportsUnified = useUnifiedModuleReports("field-service") === true;
   const filteredBusiness = useMemo(() => {
     const items = moduleReportsUnified
       ? [...companyBusinessNav, fieldServiceUnifiedReportsNav]
@@ -2631,10 +2664,16 @@ function TopNavBar(props: any) {
   }, [menuPerms, moduleReportsUnified]);
   const filteredSystem = useMemo(() => companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
 
-  const groups: { key: string; label: string; node: (close: () => void) => React.ReactNode }[] = [
+  const groups: {
+    key: string;
+    label: string;
+    newTabHref: string;
+    node: (close: () => void) => React.ReactNode;
+  }[] = [
     {
       key: "dashboard",
       label: t("nav.dashboardGroup", { defaultValue: "الرئيسية" }),
+      newTabHref: "/control-panel",
       node: close => (
         <>
           <NavItem
@@ -2649,11 +2688,13 @@ function TopNavBar(props: any) {
     {
       key: "zatca",
       label: t("nav.zatcaGroup", { defaultValue: "الفوترة الإلكترونية" }),
+      newTabHref: zatcaNewTabHref,
       node: close => <ZatcaNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "inventory",
       label: t("navExtra.inventoryRoot", { defaultValue: "المخزون" }),
+      newTabHref: canViewInventoryMaster ? "/inventory" : "/inventory/reports",
       node: close => (
         <InventoryNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
       ),
@@ -2661,26 +2702,31 @@ function TopNavBar(props: any) {
     {
       key: "sister",
       label: t("nav.sisterGroup", { defaultValue: "الشركات الشقيقة" }),
+      newTabHref: "/inventory/sister-companies",
       node: close => <SisterNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "office",
       label: t("nav.officeGroup", { defaultValue: "أوفيس زاكود" }),
+      newTabHref: "/office",
       node: close => <OfficeNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "deliveryDocs",
       label: t("nav.deliveryDocsGroup", { defaultValue: "سندات الاستلام والتسليم" }),
+      newTabHref: "/goods-receipts",
       node: close => <DeliveryDocsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "trainingRoom",
       label: t("nav.trainingRoom", { defaultValue: "قاعة التدريب المباشر" }),
+      newTabHref: "/training-room",
       node: close => <TrainingRoomNavGroup location={location} onNavigate={nav(close)} />,
     },
     {
       key: "sales",
       label: t("nav.salesGroup", { defaultValue: "المبيعات" }),
+      newTabHref: "/sales",
       node: close => (
         <SalesNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
       ),
@@ -2688,6 +2734,7 @@ function TopNavBar(props: any) {
     {
       key: "purchasing",
       label: t("nav.purchasingGroup", { defaultValue: "المشتريات" }),
+      newTabHref: "/purchasing",
       node: close => (
         <PurchasingNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
       ),
@@ -2695,6 +2742,7 @@ function TopNavBar(props: any) {
     {
       key: "cash",
       label: t("nav.cashGroup", { defaultValue: "الخزينة والبنوك" }),
+      newTabHref: "/cash",
       node: close => (
         <CashNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
       ),
@@ -2702,6 +2750,7 @@ function TopNavBar(props: any) {
     {
       key: "accounting",
       label: t("navExtra.accountingRoot", { defaultValue: "المحاسبة" }),
+      newTabHref: "/accounting",
       node: close => (
         <AccountingNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} reportsOpen onReportsToggle={NOOP} />
       ),
@@ -2709,106 +2758,127 @@ function TopNavBar(props: any) {
     {
       key: "hr",
       label: t("nav.hrGroup", { defaultValue: "الموارد البشرية" }),
+      newTabHref: "/hr",
       node: close => <HrNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "production",
       label: t("nav.productionGroup", { defaultValue: "الإنتاج" }),
+      newTabHref: "/production",
       node: close => <ProductionNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "internalControl",
       label: "الرقابة الداخلية",
+      newTabHref: "/internal-control",
       node: close => <InternalControlNavGroup location={location} onNavigate={nav(close)} />,
     },
     {
       key: "simpleManufacturing",
       label: t("nav.simpleManufacturingGroup", { defaultValue: "التصنيع الذكي" }),
+      newTabHref: "/simple-manufacturing",
       node: close => <SimpleManufacturingNavGroup location={location} onNavigate={nav(close)} />,
     },
     {
       key: "safety",
       label: t("nav.safetyGroup", { defaultValue: "السلامة" }),
+      newTabHref: "/safety",
       node: close => <SafetyNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "contracting",
       label: t("nav.contractingGroup", { defaultValue: "المقاولات" }),
+      newTabHref: "/contracting",
       node: close => <ContractingNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "maintenance",
       label: t("nav.maintenanceGroup", { defaultValue: "الصيانة" }),
+      newTabHref: "/maintenance",
       node: close => <MaintenanceNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "installments",
       label: t("nav.installmentsGroup", { defaultValue: "التقسيط" }),
+      newTabHref: "/installments",
       node: close => <InstallmentsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "hotel",
       label: t("nav.hotelGroup", { defaultValue: "الفنادق" }),
+      newTabHref: "/hotel",
       node: close => <HotelNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "hospital",
       label: t("nav.hospitalGroup", { defaultValue: "المستشفيات" }),
+      newTabHref: "/hospital",
       node: close => <HospitalNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "crm",
       label: t("nav.crmGroup", { defaultValue: "إدارة العملاء" }),
+      newTabHref: "/crm",
       node: close => <CrmNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "fixedAssets",
       label: t("nav.fixedAssetsGroup", { defaultValue: "الأصول الثابتة" }),
+      newTabHref: "/fixed-assets",
       node: close => <FixedAssetsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "multiLink",
       label: t("nav.multiLinkGroup", { defaultValue: "الربط المتعدد" }),
+      newTabHref: "/integrations/marketplace",
       node: close => <MultiLinkNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "pos",
       label: t("nav.posGroup", { defaultValue: "نقاط البيع" }),
+      newTabHref: "/pos-management",
       node: close => <PosNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "security",
       label: t("nav.securityGroup", { defaultValue: "الأمان" }),
+      newTabHref: "/security",
       node: close => <SecurityNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "aiTools",
       label: t("nav.aiToolsGroup", { defaultValue: "أدوات الذكاء الاصطناعي" }),
+      newTabHref: "/inbox",
       node: close => <AIToolsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "voiceAssistant",
       label: t("nav.voiceAssistantGroup", { defaultValue: "المساعد الصوتي" }),
+      newTabHref: "/voice-assistant/settings",
       node: close => <VoiceAssistantNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "sessions",
       label: t("nav.sessionsGroup", { defaultValue: "الجلسات" }),
+      newTabHref: "/work-sessions",
       node: close => <SessionsNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "chat",
       label: t("nav.chatGroup", { defaultValue: "المحادثة" }),
+      newTabHref: "/chat",
       node: close => <ChatNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "companyMaintenance",
       label: t("nav.companyMaintenanceGroup", { defaultValue: "صيانة الشركة" }),
+      newTabHref: "/settings/data-io",
       node: close => <CompanyMaintenanceNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
       key: "liveMonitoring",
       label: t("nav.liveMonitoringGroup", { defaultValue: "المراقبة المباشرة" }),
+      newTabHref: "/user-tracking",
       node: close => <LiveMonitoringNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
   ];
@@ -2829,22 +2899,30 @@ function TopNavBar(props: any) {
           if (isAgentDomain && g.key === "dashboard") {
             const active = location === "/control-panel" || location.startsWith("/control-panel/");
             return (
-              <Link
-                key={g.key}
-                href="/control-panel"
-                onClick={onNavigate}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-foreground"
-                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+              <div key={g.key} className="inline-flex shrink-0 items-center gap-0.5">
+                <Link
+                  href="/control-panel"
+                  onClick={onNavigate}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+                    active
+                      ? "bg-sidebar-accent text-sidebar-foreground"
+                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                  )}
+                  data-testid="topnav-agent-control-panel"
+                >
+                  <Settings className="h-4 w-4" aria-hidden="true" />
+                  {g.label}
+                </Link>
+                {showAgentNewTabActions && (
+                  <AgentTopNavNewTabAction
+                    href={g.newTabHref}
+                    label={g.label}
+                    testId="topnav-open-new-tab-dashboard"
+                  />
                 )}
-                data-testid="topnav-agent-control-panel"
-              >
-                <Settings className="h-4 w-4" aria-hidden="true" />
-                {g.label}
-              </Link>
+              </div>
             );
           }
           const tileHub = moduleScreensAsTiles.includes(g.key)
@@ -2853,37 +2931,68 @@ function TopNavBar(props: any) {
           if (tileHub) {
             const active = location === tileHub.href || location.startsWith(`${tileHub.href}/`);
             return (
-              <Link
-                key={g.key}
-                href={tileHub.href}
-                onClick={onNavigate}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "inline-flex shrink-0 items-center rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-foreground"
-                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+              <div key={g.key} className="inline-flex shrink-0 items-center gap-0.5">
+                <Link
+                  href={tileHub.href}
+                  onClick={onNavigate}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "inline-flex shrink-0 items-center rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+                    active
+                      ? "bg-sidebar-accent text-sidebar-foreground"
+                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                  )}
+                  data-testid={`topnav-module-tiles-${g.key}`}
+                >
+                  {g.label}
+                </Link>
+                {showAgentNewTabActions && (
+                  <AgentTopNavNewTabAction
+                    href={tileHub.href}
+                    label={g.label}
+                    testId={`topnav-open-new-tab-${g.key}`}
+                  />
                 )}
-                data-testid={`topnav-module-tiles-${g.key}`}
-              >
-                {g.label}
-              </Link>
+              </div>
             );
           }
           return (
-            <TopNavDropdown key={g.key} label={g.label}>
-              {close => <div className="space-y-0.5">{g.node(close)}</div>}
-            </TopNavDropdown>
+            <div key={g.key} className="inline-flex shrink-0 items-center gap-0.5">
+              <TopNavDropdown label={g.label}>
+                {close => <div className="space-y-0.5">{g.node(close)}</div>}
+              </TopNavDropdown>
+              {showAgentNewTabActions && (
+                <AgentTopNavNewTabAction
+                  href={g.newTabHref}
+                  label={g.label}
+                  testId={`topnav-open-new-tab-${g.key}`}
+                />
+              )}
+            </div>
           );
         })}
       {filteredBusiness.map(item => (
-        <div key={item.href} className="shrink-0">
+        <div key={item.href} className="inline-flex shrink-0 items-center gap-0.5">
           <NavItem item={item} location={location} onClick={onNavigate} />
+          {showAgentNewTabActions && (
+            <AgentTopNavNewTabAction
+              href={item.href}
+              label={t(item.nameKey)}
+              testId={`topnav-open-new-tab-${item.href.replace(/[^a-zA-Z0-9]+/g, "-")}`}
+            />
+          )}
         </div>
       ))}
       {filteredSystem.map(item => (
-        <div key={item.href} className="shrink-0">
+        <div key={item.href} className="inline-flex shrink-0 items-center gap-0.5">
           <NavItem item={item} location={location} onClick={onNavigate} />
+          {showAgentNewTabActions && (
+            <AgentTopNavNewTabAction
+              href={item.href}
+              label={t(item.nameKey)}
+              testId={`topnav-open-new-tab-${item.href.replace(/[^a-zA-Z0-9]+/g, "-")}`}
+            />
+          )}
         </div>
       ))}
     </div>
