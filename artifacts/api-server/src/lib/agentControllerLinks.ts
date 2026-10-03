@@ -207,6 +207,26 @@ export function derivePlatformControlToken(inviteSecret: string, linkId: string,
     .update(`zacod-platform-control-v1:${linkId}:${targetPlatformId}`, "utf8").digest("base64url");
 }
 
+export function controllerLinkRenewalCredentialsMatchInvite(
+  link: {
+    linkId: string;
+    targetPlatformId: string;
+    controllerTokenVerifier: string | null;
+    platformControlTokenVerifier: string | null;
+  },
+  inviteSecret: string,
+): boolean {
+  if (!link.linkId || !link.targetPlatformId || !inviteSecret ||
+      !link.controllerTokenVerifier || !link.platformControlTokenVerifier) return false;
+  return constantTimeHexEqual(
+    link.controllerTokenVerifier,
+    sha256Verifier(deriveControllerToken(inviteSecret, link.linkId, link.targetPlatformId)),
+  ) && constantTimeHexEqual(
+    link.platformControlTokenVerifier,
+    sha256Verifier(derivePlatformControlToken(inviteSecret, link.linkId, link.targetPlatformId)),
+  );
+}
+
 export type ControllerCommitAuthorization = {
   linkId: string; installationId: string; expectedEpoch: number; expectedActiveControllerId: string;
   requestedEpoch: number; requestedActiveControllerId: string; expiresAt: number;

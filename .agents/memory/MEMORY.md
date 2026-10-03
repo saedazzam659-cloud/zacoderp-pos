@@ -17,7 +17,7 @@
 - [Additional accounting report boundary](additional-accounting-reports-boundary.md) — only genuinely new reports join the default-off selector; preserve existing report surfaces and fail closed on unsupported audit scope.
 - [Operational report rendering boundary](operational-report-rendering-boundary.md) — reuse the journal grid and branded exports; suppress monetary totals for mixed or unknown currencies.
 - [Platform and security index](platform-ops-index.md) — tenant isolation, permissions, agents, mobile/HR, storage, infrastructure, and operational safeguards.
-- [Controller-link timestamp precision](dual-platform-agent-control.md) — never compare PostgreSQL microsecond timestamps to millisecond JavaScript Dates as exact stale-state tokens.
+- [Controller-link state integrity](dual-platform-agent-control.md) — preserve exact concurrency checks and use idempotent recovery after remote shell-sync failures.
 - [Web and shared UI index](web-shared-index.md) — browser forms, shared UI, dates, catalog, reports, and cross-cutting web behavior.
 - [Sales-invoice form parity](sales-invoice-form-parity.md) — keep related customer, supplier, HR, order, credit, and representative forms on the same full-width field layout.
 - [Approved agent UI](approved-agent-ui.md) — current agent-facing web UI is approved; custom views must be opt-in and leave the default unchanged.

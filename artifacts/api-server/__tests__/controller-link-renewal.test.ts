@@ -2,7 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   classifyControllerLinkRenewalAttestationResponse,
+  controllerLinkRenewalCredentialsMatchInvite,
   controllerLinkRenewalSourceFailures,
+  deriveControllerToken,
+  derivePlatformControlToken,
+  sha256Verifier,
 } from "../src/lib/agentControllerLinks.ts";
 
 const expected = {
@@ -86,4 +90,23 @@ test("controller-link renewal distinguishes target refusal from an unavailable a
     classifyControllerLinkRenewalAttestationResponse(403, "other_error"),
     "unavailable",
   );
+});
+
+test("controller-link renewal recognizes a committed invite for safe file recovery", () => {
+  const inviteSecret = "test-fresh-invite-secret";
+  const linkId = "5434c9c8-11f9-4ee3-b6dd-49e1623993ea";
+  const targetPlatformId = "platform:target-1234";
+  const committed = {
+    linkId,
+    targetPlatformId,
+    controllerTokenVerifier: sha256Verifier(deriveControllerToken(inviteSecret, linkId, targetPlatformId)),
+    platformControlTokenVerifier: sha256Verifier(derivePlatformControlToken(inviteSecret, linkId, targetPlatformId)),
+  };
+
+  assert.equal(controllerLinkRenewalCredentialsMatchInvite(committed, inviteSecret), true);
+  assert.equal(controllerLinkRenewalCredentialsMatchInvite(committed, "different-invite-secret"), false);
+  assert.equal(controllerLinkRenewalCredentialsMatchInvite({
+    ...committed,
+    platformControlTokenVerifier: null,
+  }, inviteSecret), false);
 });

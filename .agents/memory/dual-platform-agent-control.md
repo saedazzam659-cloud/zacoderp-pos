@@ -44,3 +44,9 @@ Optimistic renewal writes must not compare PostgreSQL timestamp columns to JavaS
 **Why:** A valid renewal can otherwise repeatedly fail its final compare-and-swap while leaving all rows untouched.
 
 **How to apply:** Guard renewal with stable link identity, credential, installation, fingerprint, epoch, and active-controller fields, or use an exact database-native version token. Do not use a round-tripped `Date` as the concurrency token.
+
+If the link-registry transaction commits but the remote shell sync fails, preserve the committed row and provide an idempotent recovery that re-proves target absence before retrying sync or reissuing the file.
+
+**Why:** Rolling back or blindly rotating credentials after an ambiguous remote write can desynchronize the source registry from the agent shell.
+
+**How to apply:** Record only a sanitized sync diagnostic, let a matching fresh invite identify the already-committed renewal, and retry synchronization without changing the stored link credentials or signing key.

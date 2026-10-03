@@ -117,6 +117,7 @@ import {
   assertStoredInviteUsable,
   buildControllerLinkFile,
   constantTimeHexEqual,
+  controllerLinkRenewalCredentialsMatchInvite,
   createControllerLinkRenewalAttestation,
   createControllerSigningKeyPair,
   createPlatformLinkInvite,
@@ -6292,10 +6293,9 @@ router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
       return;
     }
 
-    const signing = createControllerSigningKeyPair();
     const controllerToken = deriveControllerToken(invite.inviteSecret, selected.linkId, invite.targetPlatformId);
     const platformControlToken = derivePlatformControlToken(invite.inviteSecret, selected.linkId, invite.targetPlatformId);
-    const payload = {
+    const payloadFor = (sourceSigningPublicKey: string) => ({
       schemaVersion: 1 as const,
       linkId: selected.linkId,
       inviteId: invite.inviteId,
@@ -6317,8 +6317,48 @@ router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
       target: { platformId: invite.targetPlatformId, origin: invite.targetOrigin },
       controllerEpoch: 0,
       activeControllerId: source.platformId,
-      sourceSigningPublicKey: signing.publicKey,
-    };
+      sourceSigningPublicKey,
+    });
+
+    // A prior attempt may have committed the registry update but failed while
+    // syncing the agent shell. If this same invite deterministically matches
+    // the stored credentials, re-prove target absence, retry only the shell
+    // sync, and rebuild the file without rotating the committed link again.
+    if (candidates.length === 1 &&
+        controllerLinkRenewalCredentialsMatchInvite(selected, invite.inviteSecret) &&
+        selected.sourceSigningPublicKey && selected.sourceSigningPrivateKeyEnc) {
+      const payload = payloadFor(selected.sourceSigningPublicKey);
+      const file = buildControllerLinkFile(payload, invite.inviteSecret);
+      try {
+        await syncShellControllerConfig(inst);
+      } catch (error: any) {
+        const diagnostic = controllerSyncErrorDetail(error);
+        const syncInDoubt = error?.syncInDoubt !== false;
+        await logAgentEvent(agentId, "controller_link_renewal_shell_sync_failed", {
+          linkId: selected.linkId, diagnostic, syncInDoubt, recoveryAttempt: true,
+        }, req);
+        res.status(503).json({
+          error: "shell_controller_sync_failed",
+          code: "RENEWAL_SHELL_SYNC_FAILED",
+          serverMessage: diagnostic,
+          linkId: selected.linkId,
+          databaseCommitted: true,
+          shellSynced: false,
+          inDoubt: syncInDoubt,
+        });
+        return;
+      }
+      await logAgentEvent(agentId, "controller_link_renewal_recovered", {
+        linkId: selected.linkId, inviteId: invite.inviteId,
+      }, req);
+      res.status(201).json({
+        file, shellSynced: true, renewed: true, recovered: true, linkId: selected.linkId,
+      });
+      return;
+    }
+
+    const signing = createControllerSigningKeyPair();
+    const payload = payloadFor(signing.publicKey);
     const file = buildControllerLinkFile(payload, invite.inviteSecret);
 
     await db.transaction(async tx => {
@@ -6410,12 +6450,19 @@ router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
     try {
       await syncShellControllerConfig(inst);
     } catch (error: any) {
+      const diagnostic = controllerSyncErrorDetail(error);
+      const syncInDoubt = error?.syncInDoubt !== false;
+      await logAgentEvent(agentId, "controller_link_renewal_shell_sync_failed", {
+        linkId: selected.linkId, diagnostic, syncInDoubt, recoveryAttempt: false,
+      }, req);
       res.status(503).json({
         error: "shell_controller_sync_failed",
         code: "RENEWAL_SHELL_SYNC_FAILED",
-        serverMessage: controllerSyncErrorDetail(error),
+        serverMessage: diagnostic,
         linkId: selected.linkId,
-        inDoubt: true,
+        databaseCommitted: true,
+        shellSynced: false,
+        inDoubt: syncInDoubt,
       });
       return;
     }

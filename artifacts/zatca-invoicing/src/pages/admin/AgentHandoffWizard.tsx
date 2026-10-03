@@ -34,9 +34,28 @@ async function parseJsonResponse(response: Response) {
       renewal_stale_source_state: "تغيرت حالة الرابط أثناء التجديد؛ لم تتغير أي صفوف.",
       renewal_attestation_not_proven: "تعذر إثبات عدم الاستيراد؛ لم تتغير أي صفوف.",
       RENEWAL_ALREADY_IN_PROGRESS: "توجد عملية تجديد أخرى قيد التنفيذ؛ أعد المحاولة بعد انتهائها.",
+      RENEWAL_SHELL_SYNC_FAILED: "حُفظ الرابط في المصدر، لكن لم تكتمل مزامنة إعدادات الوكيل ولم يُنزّل الملف.",
     };
     const key = data.code || data.error || data.serverMessage;
-    throw Object.assign(new Error(labels[key] || key || `HTTP ${response.status}`), { serverData: data });
+    const shellSyncDiagnostics: Record<string, string> = {
+      agent_controller_config_missing: "ملف إعداد الوكيل غير موجود على الخادم.",
+      agent_python_runtime_missing: "Python 3 غير مثبت على الخادم.",
+      agent_flock_runtime_missing: "أداة قفل إعداد الوكيل غير مثبتة.",
+      agent_controller_config_busy: "ملف إعداد الوكيل مشغول؛ أعد المحاولة بعد انتهاء العملية الحالية.",
+      agent_controller_config_permission_denied: "لا توجد صلاحية كافية لتحديث ملف إعداد الوكيل.",
+      controller_link_credentials_unavailable: "تعذر التحقق من بيانات اعتماد الرابط المخزنة.",
+      duplicate_outbound_controller_link: "ما زال يوجد رابط مكرر للمنصة الهدف.",
+      controller_registry_inconsistent: "سجل المتحكمات غير متسق.",
+    };
+    const baseMessage = labels[key] || key || `HTTP ${response.status}`;
+    const rawDetail = key === "RENEWAL_SHELL_SYNC_FAILED" && typeof data.serverMessage === "string"
+      ? data.serverMessage.trim()
+      : "";
+    const detail = rawDetail ? (shellSyncDiagnostics[rawDetail] || rawDetail) : "";
+    throw Object.assign(
+      new Error(detail ? `${baseMessage} السبب: ${detail}` : baseMessage),
+      { serverData: data },
+    );
   }
   return data;
 }
@@ -140,7 +159,12 @@ function AgentHandoffWizard({ agentId, agentName, agentDomain, onClose, onComple
       setRenewalInviteReady(false);
       toast({ title: "تم تجديد رابط النقل بأمان", description: "استورد الملف الجديد في المنصة الهدف ثم اضغط تحقق وانقل." });
     },
-    onError: (err: Error) => toast({ title: "تعذر تجديد الرابط", description: err.message, variant: "destructive" }),
+    onError: (err: any) => {
+      toast({ title: "تعذر تجديد الرابط", description: err.message, variant: "destructive" });
+      if (err.serverData?.code === "RENEWAL_SHELL_SYNC_FAILED") {
+        preflightMut.mutate();
+      }
+    },
   });
 
   const commitMut = useMutation({
