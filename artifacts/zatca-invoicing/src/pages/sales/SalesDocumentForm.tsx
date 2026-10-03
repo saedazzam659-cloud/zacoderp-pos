@@ -2029,7 +2029,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
             <label className="text-[11px] text-muted-foreground">الصنف</label>
-            {(isInvoice || isQuotation) && canCreateCatalogItems && (
+            {(isInvoice || isQuotation || isOrder) && canCreateCatalogItems && (
               <Button
                 type="button"
                 size="sm"
@@ -2296,7 +2296,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         </div>
         <div className="border-t bg-muted/20 px-3 py-2">
           <div className="flex flex-wrap items-center gap-2">
-            {(isInvoice || isQuotation) && canCreateCatalogItems && hideQuickAdd && (
+            {(isInvoice || isQuotation || isOrder) && canCreateCatalogItems && hideQuickAdd && (
               <Button
                 type="button"
                 variant="outline"
@@ -2558,7 +2558,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 );
               })()}
 
-              {(isInvoice || isQuotation) && canCreateCatalogItems && (
+              {(isInvoice || isQuotation || isOrder) && canCreateCatalogItems && (
                 <Button
                   type="button"
                   variant="outline"
@@ -3918,13 +3918,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         )}
       </div>
       )}
-      {(isInvoice || isQuotation) && (
+      {(isInvoice || isQuotation || isOrder) && (
         <QuickAddCatalogItemDialog
           open={quickItemDialogOpen}
           onOpenChange={setQuickItemDialogOpen}
           units={units as any[]}
           companyId={cid}
-          documentName={isInvoice ? "فاتورة المبيعات" : "عرض السعر"}
+          documentName={isInvoice ? "فاتورة المبيعات" : isOrder ? "أمر البيع" : "عرض السعر"}
           priceMode="sale"
           onCreated={(item: any) => {
             const current = qc.getQueryData<any[]>(["inventory-items", cid]) ?? inventoryItems;
