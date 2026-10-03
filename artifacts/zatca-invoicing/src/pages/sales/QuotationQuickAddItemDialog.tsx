@@ -35,7 +35,10 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   units: any[];
   companyId?: number;
-  onCreated: (item: any) => void;
+  onCreated: (
+    item: any,
+    defaults: { unitId: number; salePrice: string; vatRate: string },
+  ) => void;
 };
 
 type QuickAddValues = {
@@ -198,10 +201,22 @@ export default function QuotationQuickAddItemDialog({
         );
       }
 
-      return { item, baseUnitLinked };
+      return {
+        item,
+        baseUnitLinked,
+        defaults: {
+          unitId: selectedUnitId,
+          salePrice: values.salePrice.trim() || "0",
+          vatRate: values.vatRate.trim() || "15",
+        },
+      };
     },
-    onSuccess: ({ item, baseUnitLinked }: { item: any; baseUnitLinked: boolean }) => {
-      onCreated(item);
+    onSuccess: ({ item, baseUnitLinked, defaults }: {
+      item: any;
+      baseUnitLinked: boolean;
+      defaults: { unitId: number; salePrice: string; vatRate: string };
+    }) => {
+      onCreated(item, defaults);
       onOpenChange(false);
       if (baseUnitLinked) {
         toast({

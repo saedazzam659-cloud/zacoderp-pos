@@ -2295,9 +2295,24 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           </div>
         </div>
         <div className="border-t bg-muted/20 px-3 py-2">
-          <Button type="button" variant="outline" size="sm" className="gap-2 h-8" onClick={addGridLine} data-testid="button-add-grid-line">
-            <Plus className="h-4 w-4" />{t("salesDocForm.addLine")}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {isQuotation && canCreateCatalogItems && hideQuickAdd && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2 h-8 border-primary/50 text-primary hover:bg-primary/5"
+                onClick={() => setQuickItemDialogOpen(true)}
+                data-testid="button-open-create-quotation-item-from-grid"
+              >
+                <Plus className="h-4 w-4" />
+                إنشاء صنف جديد
+              </Button>
+            )}
+            <Button type="button" variant="outline" size="sm" className="gap-2 h-8" onClick={addGridLine} data-testid="button-add-grid-line">
+              <Plus className="h-4 w-4" />{t("salesDocForm.addLine")}
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -3896,7 +3911,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           onOpenChange={setQuickItemDialogOpen}
           units={units as any[]}
           companyId={cid}
-          onCreated={(item: any) => {
+          onCreated={(item: any, defaults: { unitId: number; salePrice: string; vatRate: string }) => {
             const current = qc.getQueryData<any[]>(["inventory-items", cid]) ?? inventoryItems;
             qc.setQueryData(["inventory-items", cid], [
               item,
@@ -3904,12 +3919,35 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             ]);
             void qc.invalidateQueries({ queryKey: ["inventory-items", cid] });
             void qc.invalidateQueries({ queryKey: ["items"] });
-            setQaItemId(String(item.id));
-            setQaQty("1");
-            setQaFreeQty("0");
-            setQaPrice("");
-            setQaDiscount("0");
-            if (!qaWarehouseId && defaultWarehouse?.id) setQaWarehouseId(String(defaultWarehouse.id));
+            if (hideQuickAdd) {
+              const line = newLine();
+              const unit = (units as any[]).find((candidate: any) =>
+                String(candidate.id) === String(defaults.unitId),
+              );
+              line.itemId = String(item.id);
+              line.itemName = item.nameAr ?? item.nameEn ?? "";
+              line.itemCode = item.code ?? "";
+              line.unitId = String(defaults.unitId);
+              line.unit = unit?.nameAr ?? unit?.nameEn ?? "";
+              line.conversionFactor = "1";
+              line.unitPrice = defaults.salePrice;
+              line.baseUnitPrice = defaults.salePrice;
+              line.vatRate = defaults.vatRate;
+              line.warehouseId = item.itemType === "service" || item.itemType === "prepaid_expense"
+                ? ""
+                : String(headerWarehouseId || defaultWarehouse?.id || "");
+              const { lineTotal } = calcLine(line, priceIncludesVat, taxMode);
+              line.lineTotal = lineTotal.toFixed(2);
+              setLines((previous) => [...previous, line]);
+              setFocusLineId(line._id);
+            } else {
+              setQaItemId(String(item.id));
+              setQaQty("1");
+              setQaFreeQty("0");
+              setQaPrice("");
+              setQaDiscount("0");
+              if (!qaWarehouseId && defaultWarehouse?.id) setQaWarehouseId(String(defaultWarehouse.id));
+            }
           }}
         />
       )}
