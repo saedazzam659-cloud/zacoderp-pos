@@ -68,6 +68,35 @@ import {
 } from "@/lib/contractingLabels";
 
 const API = import.meta.env.VITE_API_URL || "";
+const BILL_EDITOR_STAGES: ReadonlyArray<{
+  value: ContractingBillEditorTab;
+  label: string;
+}> = [
+  { value: "metadata", label: "بيانات المستخلص" },
+  { value: "execution", label: "بنود التنفيذ" },
+  { value: "adjustments", label: "الإضافات والخصومات" },
+  { value: "payments", label: "الدفعات والاستقطاعات" },
+  { value: "summary", label: "الملخص النهائي" },
+];
+const BILL_EDITOR_STAGE_DOT_CLASS: Record<ContractingBillEditorTab, string> = {
+  metadata: "bg-sky-600 dark:bg-sky-400",
+  execution: "bg-teal-600 dark:bg-teal-400",
+  adjustments: "bg-amber-600 dark:bg-amber-400",
+  payments: "bg-violet-600 dark:bg-violet-400",
+  summary: "bg-emerald-600 dark:bg-emerald-400",
+};
+const BILL_EDITOR_TAB_CLASSES: Record<ContractingBillEditorTab, string> = {
+  metadata:
+    "border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 focus-visible:ring-sky-500 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-900/60 data-[state=active]:!border-sky-700 data-[state=active]:!bg-sky-700 data-[state=active]:!text-white data-[state=active]:!shadow-md dark:data-[state=active]:!border-sky-500 dark:data-[state=active]:!bg-sky-600",
+  execution:
+    "border-teal-200 bg-teal-50 text-teal-900 hover:bg-teal-100 focus-visible:ring-teal-500 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200 dark:hover:bg-teal-900/60 data-[state=active]:!border-teal-700 data-[state=active]:!bg-teal-700 data-[state=active]:!text-white data-[state=active]:!shadow-md dark:data-[state=active]:!border-teal-500 dark:data-[state=active]:!bg-teal-600",
+  adjustments:
+    "border-amber-200 bg-amber-50 text-amber-950 hover:bg-amber-100 focus-visible:ring-amber-500 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-900/60 data-[state=active]:!border-amber-700 data-[state=active]:!bg-amber-600 data-[state=active]:!text-white data-[state=active]:!shadow-md dark:data-[state=active]:!border-amber-500 dark:data-[state=active]:!bg-amber-600",
+  payments:
+    "border-violet-200 bg-violet-50 text-violet-900 hover:bg-violet-100 focus-visible:ring-violet-500 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200 dark:hover:bg-violet-900/60 data-[state=active]:!border-violet-700 data-[state=active]:!bg-violet-700 data-[state=active]:!text-white data-[state=active]:!shadow-md dark:data-[state=active]:!border-violet-500 dark:data-[state=active]:!bg-violet-600",
+  summary:
+    "border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 focus-visible:ring-emerald-500 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:bg-emerald-900/60 data-[state=active]:!border-emerald-700 data-[state=active]:!bg-emerald-700 data-[state=active]:!text-white data-[state=active]:!shadow-md dark:data-[state=active]:!border-emerald-500 dark:data-[state=active]:!bg-emerald-600",
+};
 
 type Project = {
   id: number; code: string; nameAr: string; nameEn: string | null;
@@ -565,6 +594,8 @@ function BillsTab({
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Bill> | null>(null);
   const [billEditorTab, setBillEditorTab] = useState<ContractingBillEditorTab>("metadata");
+  const billEditorStageIndex = BILL_EDITOR_STAGES.findIndex(stage => stage.value === billEditorTab);
+  const billEditorStageLabel = BILL_EDITOR_STAGES[billEditorStageIndex]?.label ?? "";
   const [saving, setSaving] = useState(false);
   const [unapproving, setUnapproving] = useState(false);
   const saveLock = useRef(false);
@@ -1147,23 +1178,30 @@ function BillsTab({
             onValueChange={value => setBillEditorTab(value as ContractingBillEditorTab)}
             className="space-y-4"
           >
-            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl bg-muted/60 p-1 sm:grid-cols-3 xl:grid-cols-5">
-              <TabsTrigger value="metadata" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+            <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-xl bg-transparent p-0 sm:grid-cols-3 xl:grid-cols-5">
+              <TabsTrigger value="metadata" className={`min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${BILL_EDITOR_TAB_CLASSES.metadata}`}>
                 <Briefcase className="h-4 w-4 shrink-0" /><span>بيانات المستخلص</span>
               </TabsTrigger>
-              <TabsTrigger value="execution" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+              <TabsTrigger value="execution" className={`min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${BILL_EDITOR_TAB_CLASSES.execution}`}>
                 <FileSpreadsheet className="h-4 w-4 shrink-0" /><span>بنود التنفيذ</span>
               </TabsTrigger>
-              <TabsTrigger value="adjustments" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+              <TabsTrigger value="adjustments" className={`min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${BILL_EDITOR_TAB_CLASSES.adjustments}`}>
                 <Plus className="h-4 w-4 shrink-0" /><span>الإضافات والخصومات</span>
               </TabsTrigger>
-              <TabsTrigger value="payments" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+              <TabsTrigger value="payments" className={`min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${BILL_EDITOR_TAB_CLASSES.payments}`}>
                 <Wallet className="h-4 w-4 shrink-0" /><span>الدفعات والاستقطاعات</span>
               </TabsTrigger>
-              <TabsTrigger value="summary" className="min-h-11 gap-2 px-2 text-xs sm:text-sm">
+              <TabsTrigger value="summary" className={`min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${BILL_EDITOR_TAB_CLASSES.summary} last:col-span-2 sm:last:col-span-1`}>
                 <TrendingUp className="h-4 w-4 shrink-0" /><span>الملخص النهائي</span>
               </TabsTrigger>
             </TabsList>
+            <div role="status" aria-live="polite" aria-atomic="true" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300">
+              <span className="inline-flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-200">
+                <span className={`h-2 w-2 rounded-full ${BILL_EDITOR_STAGE_DOT_CLASS[billEditorTab]}`} />
+                المرحلة {billEditorStageIndex + 1} من {BILL_EDITOR_STAGES.length}
+              </span>
+              <span>القسم الحالي: <strong className="font-semibold text-slate-900 dark:text-white">{billEditorStageLabel}</strong></span>
+            </div>
             <TabsContent value={billEditorTab} forceMount className="mt-0 space-y-4 outline-none">
             <div hidden={billEditorTab !== "metadata"} className="space-y-4">
           {/* بيانات المستخلص والعقد والفترة */}
