@@ -3202,6 +3202,111 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             companyName={user?.company?.nameAr ?? null}
           />
         )}
+        {isInvoice && (() => {
+          const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId)) ?? null;
+          const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
+          const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
+          const standardReady = vatOk && addrMissing.length === 0;
+          const isStd = invoiceType === "standard";
+          const isSimp = invoiceType === "simplified";
+          const standardMissing = [
+            ...(!vatOk ? ["رقم ضريبي سعودي صحيح (15 رقم)"] : []),
+            ...(addrMissing.length > 0 ? [`العنوان الوطني: ${addrMissing.join("، ")}`] : []),
+          ];
+          const standardHint = !cust
+            ? "اختر العميل أولاً للتحقق من بيانات الفاتورة الضريبية."
+            : standardReady
+              ? "بيانات العميل الأساسية مكتملة. رقم السجل التجاري اختياري."
+              : `بيانات العميل الناقصة: ${standardMissing.join("، ")}. رقم السجل التجاري اختياري.`;
+          const simplifiedHint = customerId
+            ? "تم اختيار العميل — الفاتورة المبسطة جاهزة للحفظ والإبلاغ إلى زاتكا."
+            : "اختر اسم العميل لإكمال الفاتورة المبسطة. يتم الإبلاغ عنها إلى زاتكا.";
+          return (
+            <div
+              data-testid="invoice-type-compact-switch"
+              role="group"
+              aria-label="نوع الفاتورة"
+              className="flex shrink-0 items-center gap-1 rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm"
+            >
+              <button
+                type="button"
+                data-testid="invoice-type-standard"
+                aria-pressed={isStd}
+                title={standardHint}
+                aria-label={`فاتورة ضريبية B2B. ${standardHint}`}
+                onClick={() => { setInvoiceType("standard"); invoiceTypeUserPickedRef.current = true; }}
+                className={cn(
+                  "inline-flex h-9 min-w-[7.25rem] items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:h-10 sm:min-w-[9rem] sm:gap-2 sm:px-3 sm:text-sm",
+                  isStd
+                    ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                    : "border-transparent bg-background text-foreground hover:border-primary/30 hover:bg-primary/5"
+                )}
+              >
+                <Receipt className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="hidden sm:inline">فاتورة ضريبية</span>
+                <span className="sm:hidden">ضريبية</span>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "h-5 px-1.5 text-[9px]",
+                    isStd
+                      ? "border-white/40 bg-white/15 text-primary-foreground"
+                      : "border-primary/30 text-primary"
+                  )}
+                >
+                  B2B
+                </Badge>
+                {isStd && standardReady && (
+                  <ShieldCheck
+                    className="h-4 w-4 shrink-0 text-emerald-500"
+                    aria-label="جاهزة للإرسال إلى زاتكا"
+                    title="جاهزة للإرسال إلى زاتكا"
+                  />
+                )}
+              </button>
+              <button
+                type="button"
+                data-testid="invoice-type-simplified"
+                aria-pressed={isSimp}
+                title={simplifiedHint}
+                aria-label={`فاتورة ضريبية مبسطة B2C. ${simplifiedHint}`}
+                onClick={() => { setInvoiceType("simplified"); invoiceTypeUserPickedRef.current = true; }}
+                className={cn(
+                  "inline-flex h-9 min-w-[7.25rem] items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 sm:h-10 sm:min-w-[9rem] sm:gap-2 sm:px-3 sm:text-sm",
+                  isSimp
+                    ? "border-sky-700 bg-sky-700 text-white shadow-sm"
+                    : "border-transparent bg-background text-foreground hover:border-sky-300 hover:bg-sky-50"
+                )}
+              >
+                <Receipt className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="hidden sm:inline">فاتورة مبسطة</span>
+                <span className="sm:hidden">مبسطة</span>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "h-5 px-1.5 text-[9px]",
+                    isSimp
+                      ? "border-white/40 bg-white/15 text-white"
+                      : "border-sky-300 bg-sky-50 text-sky-700"
+                  )}
+                >
+                  B2C
+                </Badge>
+                {isSimp && (
+                  <span
+                    className={cn(
+                      "hidden rounded-full px-1.5 py-0.5 text-[9px] font-medium lg:inline-flex",
+                      customerId ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"
+                    )}
+                    aria-hidden="true"
+                  >
+                    {customerId ? "جاهزة" : "اختر العميل"}
+                  </span>
+                )}
+              </button>
+            </div>
+          );
+        })()}
         {/* Status pill — visible whenever editing an existing doc (any mode).
             Status enum varies per mode; <DocStatusBadge> handles them all. */}
         {editId && (existing as any) && (
@@ -3242,130 +3347,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <span>{t("salesDocForm.postedReadOnly", "هذه الفاتورة مُرحَّلة — للعرض فقط. لتعديلها قم بفك الترحيل أولاً من شاشة قائمة الفواتير.")}</span>
         </div>
       )}
-
-      {/* ── نوع الفاتورة (ZATCA) ──────────────────────────────────────────
-          مفتاح اختيار جذاب بين «فاتورة ضريبية» (B2B / Standard) و«فاتورة
-          ضريبية مبسطة» (B2C / Simplified). يظهر فقط في وضع الفاتورة
-          (لا للعروض/الطلبات). يحدِّد قواعد التحقق قبل الحفظ:
-          - الضريبية: يلزم رقم ضريبي صحيح + سجل تجاري + عنوان وطني كامل
-          - المبسطة: يكفي اختيار اسم العميل
-          القاعدة الذهبية من زاتكا: تستخدم الفاتورة الضريبية عند البيع
-          لشركات (B2B) ⩾ 1000 ريال، والمبسّطة لمبيعات التجزئة (B2C). */}
-      {isInvoice && (() => {
-        const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId)) ?? null;
-        const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
-        const crOk = cust ? !!String(cust.crNumber ?? "").trim() : false;
-        const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
-        // رقم السجل التجاري اختياري — لا يدخل في جاهزية الإرسال إلى زاتكا.
-        const standardReady = vatOk && addrMissing.length === 0;
-        const isStd = invoiceType === "standard";
-        const isSimp = invoiceType === "simplified";
-        return (
-          <div className="rounded-2xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background p-3 shadow-sm">
-            <div className="flex items-center gap-2 mb-2.5 px-1">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
-                <Receipt className="h-4 w-4 text-primary" />
-              </div>
-              <div className="flex-1">
-                <p className="text-xs font-bold text-foreground">نوع الفاتورة</p>
-                <p className="text-[10px] text-muted-foreground">اختر نوع الفاتورة وفق متطلّبات هيئة الزكاة والضريبة (ZATCA)</p>
-              </div>
-              {standardReady && isStd && (
-                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] gap-1">
-                  <ShieldCheck className="h-3 w-3" />جاهز للإرسال إلى زاتكا
-                </Badge>
-              )}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {/* ── فاتورة ضريبية (Standard / B2B) ── */}
-              <button
-                type="button"
-                data-testid="invoice-type-standard"
-                onClick={() => { setInvoiceType("standard"); invoiceTypeUserPickedRef.current = true; }}
-                className={cn(
-                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
-                  isStd
-                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
-                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <div className={cn(
-                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
-                    isStd ? "border-primary bg-primary" : "border-muted-foreground/30"
-                  )}>
-                    {isStd && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية</span>
-                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-primary/30 text-primary">B2B · Standard</Badge>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                      للبيع لشركات/منشآت مسجَّلة بضريبة القيمة المضافة. تتطلّب اعتماد زاتكا (Clearance).
-                    </p>
-                    {isStd && cust && (
-                      <div className="mt-2 space-y-0.5 text-[10px]">
-                        <div className={cn("flex items-center gap-1", vatOk ? "text-emerald-700" : "text-rose-700")}>
-                          <span>{vatOk ? "✓" : "✗"}</span><span>رقم ضريبي سعودي صحيح (15 رقم)</span>
-                        </div>
-                        <div className={cn("flex items-center gap-1", crOk ? "text-emerald-700" : "text-muted-foreground")}>
-                          <span>{crOk ? "✓" : "•"}</span><span>رقم السجل التجاري (اختياري)</span>
-                        </div>
-                        <div className={cn("flex items-center gap-1", addrMissing.length === 0 ? "text-emerald-700" : "text-rose-700")}>
-                          <span>{addrMissing.length === 0 ? "✓" : "✗"}</span>
-                          <span>العنوان الوطني{addrMissing.length > 0 ? ` (ينقص: ${addrMissing.join("، ")})` : ""}</span>
-                        </div>
-                      </div>
-                    )}
-                    {isStd && !cust && (
-                      <p className="mt-2 text-[10px] text-amber-700 flex items-center gap-1">
-                        <span>⚠</span><span>اختر العميل أولاً للتحقق من اكتمال البيانات</span>
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </button>
-
-              {/* ── فاتورة ضريبية مبسّطة (Simplified / B2C) ── */}
-              <button
-                type="button"
-                data-testid="invoice-type-simplified"
-                onClick={() => { setInvoiceType("simplified"); invoiceTypeUserPickedRef.current = true; }}
-                className={cn(
-                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
-                  isSimp
-                    ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
-                    : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <div className={cn(
-                    "mt-0.5 h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
-                    isSimp ? "border-primary bg-primary" : "border-muted-foreground/30"
-                  )}>
-                    {isSimp && <div className="h-full w-full rounded-full bg-background scale-[0.4]" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية مبسّطة</span>
-                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-sky-300 text-sky-700">B2C · Simplified</Badge>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                      لمبيعات التجزئة والأفراد. يكفي اسم العميل فقط، ويتم الإبلاغ عنها لزاتكا (Reporting).
-                    </p>
-                    {isSimp && (
-                      <p className="mt-2 text-[10px] text-emerald-700 flex items-center gap-1">
-                        <span>✓</span><span>{customerId ? "تم اختيار العميل — جاهزة للحفظ" : "اختر اسم العميل لإكمال الحفظ"}</span>
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
-        );
-      })()}
 
       <div className="contents">
       <Tabs value={useTabbedLayout ? activeTab : "header"} onValueChange={handleTabChange} dir={isRtl ? "rtl" : "ltr"}>
