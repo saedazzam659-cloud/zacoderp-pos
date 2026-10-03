@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { sanitizeAgentUiSettings } from "../src/lib/agentUiSettings.js";
+import { resolvedAgentBranding } from "../src/lib/agentPublicBranding.js";
+
+test("public agent UI settings keep the compact invoice selector disabled by default", () => {
+  assert.equal(sanitizeAgentUiSettings(null).compactInvoiceTypeSelector, false);
+  assert.equal(sanitizeAgentUiSettings({}).compactInvoiceTypeSelector, false);
+});
+
+test("public agent UI settings expose compact invoice selector only when explicitly enabled", () => {
+  assert.equal(
+    sanitizeAgentUiSettings({ compactInvoiceTypeSelector: true }).compactInvoiceTypeSelector,
+    true,
+  );
+  assert.equal(
+    sanitizeAgentUiSettings({ compactInvoiceTypeSelector: 1 }).compactInvoiceTypeSelector,
+    false,
+  );
+});
+
+test("public branding exposes the compact selector only through sanitized agent UI settings", () => {
+  const branding = resolvedAgentBranding({
+    status: "active",
+    brandName: "Example Agent",
+    brandLogoUrl: null,
+    brandColor: null,
+    contactPhone: null,
+    inventoryReportsUnified: false,
+    moduleShortcutIcons: false,
+    moduleReportsUnified: false,
+    agentUiSettings: { compactInvoiceTypeSelector: true, privateFlag: "discard" },
+  });
+
+  assert.equal(branding.isAgentDomain, true);
+  assert.equal(branding.agentUiSettings.compactInvoiceTypeSelector, true);
+  assert.equal("privateFlag" in branding.agentUiSettings, false);
+});

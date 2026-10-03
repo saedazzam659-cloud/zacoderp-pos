@@ -1105,6 +1105,8 @@ const upsertSchema = z.object({
   agentUiSettings: z.object({
     moduleScreensAsTiles: z.array(z.enum(AGENT_MODULE_SCREEN_TILE_IDS))
       .max(AGENT_MODULE_SCREEN_TILE_IDS.length).optional(),
+    compactInvoiceTypeSelector: z.boolean().optional(),
+    colorfulInvoiceTabs: z.boolean().optional(),
     loginPage: z.object({
       showMarketingContent: z.boolean().optional(),
       hideLoginSubtitle: z.boolean().optional(),

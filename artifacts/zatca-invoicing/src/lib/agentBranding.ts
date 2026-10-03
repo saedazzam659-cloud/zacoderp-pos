@@ -184,6 +184,32 @@ export function useAgentModuleScreensAsTiles(): string[] {
   return v;
 }
 
+/** Compact invoice-type controls are opt-in per agent and off everywhere else. */
+export function useAgentCompactInvoiceTypeSelector(): boolean {
+  const [enabled, setEnabled] = useState(
+    cache?.isAgentDomain === true && cache.agentUiSettings.compactInvoiceTypeSelector === true,
+  );
+  useEffect(() => {
+    fetchBranding().then(b => {
+      setEnabled(b.isAgentDomain && b.agentUiSettings.compactInvoiceTypeSelector === true);
+    });
+  }, []);
+  return enabled;
+}
+
+/** Colorful invoice navigation is opt-in per agent and off on central domains. */
+export function useAgentColorfulInvoiceTabs(): boolean {
+  const [enabled, setEnabled] = useState(
+    cache?.isAgentDomain === true && cache.agentUiSettings.colorfulInvoiceTabs === true,
+  );
+  useEffect(() => {
+    fetchBranding().then(b => {
+      setEnabled(b.isAgentDomain && b.agentUiSettings.colorfulInvoiceTabs === true);
+    });
+  }, []);
+  return enabled;
+}
+
 /** Null means the central platform/default policy: every SA screen is allowed. */
 export function useLocalSuperadminScreens(): string[] | null {
   const [v, setV] = useState<string[] | null>(cache?.localSuperadminScreens ?? null);

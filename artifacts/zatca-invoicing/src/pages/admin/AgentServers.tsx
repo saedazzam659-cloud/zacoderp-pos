@@ -2480,6 +2480,30 @@ export default function AgentServers() {
 
                   <section className="border-t pt-4 space-y-3">
                     <div>
+                      <h3 className="text-sm font-semibold">اختيار نوع الفاتورة</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        عند التفعيل، تظهر خيارات الفاتورة الضريبية والمبسطة بشكل مدمج في شريط الفاتورة لهذا الوكيل فقط.
+                        عند إيقافه تبقى شاشة الاختيار الحالية كما هي. لا يغيّر ذلك نوع الفاتورة أو التحقق أو الحفظ.
+                      </p>
+                    </div>
+                    <label className="flex cursor-pointer items-start gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4 accent-primary"
+                        checked={form.agentUiSettings.compactInvoiceTypeSelector}
+                        disabled={busy === `save-agent-ui-${form.id}`}
+                        onChange={event => set("agentUiSettings", normalizeAgentUiSettings({
+                          ...form.agentUiSettings,
+                          compactInvoiceTypeSelector: event.target.checked,
+                        }))}
+                        data-testid="checkbox-agent-compact-invoice-type-selector"
+                      />
+                      <span>تفعيل اختيار نوع الفاتورة المدمج لهذا الوكيل فقط</span>
+                    </label>
+                  </section>
+
+                  <section className="border-t pt-4 space-y-3">
+                    <div>
                       <h3 className="text-sm font-semibold">صفحة دخول هذا الوكيل</h3>
                       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                         هذه الإعدادات تخص دومين هذا الوكيل فقط. تظل حقول الدخول الأساسية ظاهرة، ولا تتغير صفحة الدخول المركزية.

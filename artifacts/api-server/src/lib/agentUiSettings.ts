@@ -6,6 +6,8 @@ export const AGENT_MODULE_SCREEN_TILE_IDS = [
 
 export type AgentUiSettings = {
   moduleScreensAsTiles?: string[];
+  compactInvoiceTypeSelector?: boolean;
+  colorfulInvoiceTabs?: boolean;
   loginPage?: {
     showMarketingContent?: boolean;
     hideLoginSubtitle?: boolean;
@@ -34,6 +36,8 @@ export function sanitizeAgentUiSettings(value: unknown): AgentUiSettings {
           (id): id is string => typeof id === "string" && moduleIds.has(id),
         ))]
       : [],
+    compactInvoiceTypeSelector: source.compactInvoiceTypeSelector === true,
+    colorfulInvoiceTabs: source.colorfulInvoiceTabs === true,
     loginPage: {
       showMarketingContent: rawLogin.showMarketingContent === true,
       hideLoginSubtitle: rawLogin.hideLoginSubtitle === true,
