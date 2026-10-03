@@ -37,6 +37,47 @@ const steps: Array<{ id: StepId; label: string; icon: typeof ClipboardList }> = 
   { id: "review", label: "المراجعة", icon: CheckCircle2 },
 ];
 
+const READONLY_STEP_COLORS: Record<StepId, { active: string; inactive: string; dot: string }> = {
+  basic: {
+    active: "border-sky-700 bg-sky-700 text-white shadow-md",
+    inactive: "border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-900/60",
+    dot: "bg-sky-600 dark:bg-sky-400",
+  },
+  materials: {
+    active: "border-teal-700 bg-teal-700 text-white shadow-md",
+    inactive: "border-teal-200 bg-teal-50 text-teal-900 hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200 dark:hover:bg-teal-900/60",
+    dot: "bg-teal-600 dark:bg-teal-400",
+  },
+  routing: {
+    active: "border-amber-600 bg-amber-600 text-white shadow-md",
+    inactive: "border-amber-200 bg-amber-50 text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-900/60",
+    dot: "bg-amber-600 dark:bg-amber-400",
+  },
+  resources: {
+    active: "border-violet-700 bg-violet-700 text-white shadow-md",
+    inactive: "border-violet-200 bg-violet-50 text-violet-900 hover:bg-violet-100 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200 dark:hover:bg-violet-900/60",
+    dot: "bg-violet-600 dark:bg-violet-400",
+  },
+  costs: {
+    active: "border-blue-700 bg-blue-700 text-white shadow-md",
+    inactive: "border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200 dark:hover:bg-blue-900/60",
+    dot: "bg-blue-600 dark:bg-blue-400",
+  },
+  review: {
+    active: "border-emerald-700 bg-emerald-700 text-white shadow-md",
+    inactive: "border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:bg-emerald-900/60",
+    dot: "bg-emerald-600 dark:bg-emerald-400",
+  },
+};
+
+const READONLY_STAGE_COLORS = [
+  { card: "border-sky-200 dark:border-sky-800", marker: "border-sky-300 bg-sky-100 text-sky-800 dark:border-sky-700 dark:bg-sky-900 dark:text-sky-200" },
+  { card: "border-teal-200 dark:border-teal-800", marker: "border-teal-300 bg-teal-100 text-teal-800 dark:border-teal-700 dark:bg-teal-900 dark:text-teal-200" },
+  { card: "border-amber-200 dark:border-amber-800", marker: "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-200" },
+  { card: "border-violet-200 dark:border-violet-800", marker: "border-violet-300 bg-violet-100 text-violet-800 dark:border-violet-700 dark:bg-violet-900 dark:text-violet-200" },
+  { card: "border-emerald-200 dark:border-emerald-800", marker: "border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-900 dark:text-emerald-200" },
+];
+
 const costCategories = [
   { id: "payroll", label: "الرواتب والأجور" },
   { id: "fixed_asset_depreciation", label: "الإهلاك" },
@@ -153,6 +194,7 @@ export function SimpleOrderWizardReadonly({
   internalTransport?: any;
 }) {
   const [tab, setTab] = useState<StepId>("basic");
+  const activeStepIndex = Math.max(0, steps.findIndex(step => step.id === tab));
   const detail = order.detail ?? {};
   const savedOrder = (detail.order ?? order) as Record<string, any>;
   const meta = savedObject(savedOrder.meta) ?? savedObject(order.meta) ?? {};
@@ -267,28 +309,42 @@ export function SimpleOrderWizardReadonly({
         </div>
       ) : (
         <div className="space-y-3">
-          {stages.map((stage, index) => (
-            <Card key={stage.id ?? `${stage.sequence}-${index}`} className="border-slate-200 shadow-none">
-              <CardContent className="pt-5">
-                <div className="mb-3 flex items-center gap-2">
-                  <Badge variant="outline">{valueOrNotSaved(stage.sequence ?? index + 1)}</Badge>
-                  <div className="font-semibold text-slate-800">{valueOrNotSaved(stage.nameAr || stage.nameEn)}</div>
-                  {stage.code && <span className="text-xs text-slate-500">({stage.code})</span>}
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  <SnapshotValue label="المدة المتوقعة المحفوظة (دقيقة)" value={savedNumber(stage.expectedDurationMinutes)} />
-                   <SnapshotValue label="مدة التشغيل الفعلية المحفوظة (دقيقة)" value={savedNumber(stage.actualDurationMinutes)} />
-                   <SnapshotValue label="حالة التنفيذ المحفوظة" value={valueOrNotSaved(stage.status)} />
-                  <SnapshotValue label="التكلفة المتوقعة المحفوظة" value={savedNumber(stage.expectedCost)} />
-                  <SnapshotValue label="الهالك المتوقع المحفوظ" value={savedNumber(stage.expectedWasteRatio)} />
-                  <SnapshotValue label="مركز العمل المحفوظ" value={stage.workCenterId == null ? NOT_SAVED : `#${stage.workCenterId}`} />
-                   <SnapshotValue label="نمط المورد المحفوظ" value={stage.resourceMode === "both" ? "آلة + عمالة" : stage.resourceMode === "machine" ? "آلة" : stage.resourceMode === "labor" ? "عمالة" : NOT_SAVED} />
-                   <SnapshotValue label="معرّف آلة المرحلة المحفوظ" value={stage.resourceId == null ? NOT_SAVED : `#${stage.resourceId}`} />
-                   <SnapshotValue label="عدد العمال المحفوظ" value={savedNumber(stage.workerCount)} />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          {stages.map((stage, index) => {
+            const accent = READONLY_STAGE_COLORS[index % READONLY_STAGE_COLORS.length];
+            return (
+              <Card
+                key={stage.id ?? `${stage.sequence}-${index}`}
+                data-testid={`saved-production-stage-${index + 1}`}
+                className={`shadow-sm ${accent.card}`}
+              >
+                <CardContent className="pt-4">
+                  <div className="mb-4 flex flex-wrap items-center gap-3">
+                    <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 text-sm font-bold ${accent.marker}`}>
+                      {valueOrNotSaved(stage.sequence ?? index + 1)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-bold text-slate-500">المرحلة {index + 1}</div>
+                      <div className="font-semibold text-slate-900 dark:text-white">
+                        {valueOrNotSaved(stage.nameAr || stage.nameEn)}
+                      </div>
+                    </div>
+                    {stage.code && <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-300">({stage.code})</span>}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <SnapshotValue label="المدة المتوقعة المحفوظة (دقيقة)" value={savedNumber(stage.expectedDurationMinutes)} />
+                    <SnapshotValue label="مدة التشغيل الفعلية المحفوظة (دقيقة)" value={savedNumber(stage.actualDurationMinutes)} />
+                    <SnapshotValue label="حالة التنفيذ المحفوظة" value={valueOrNotSaved(stage.status)} />
+                    <SnapshotValue label="التكلفة المتوقعة المحفوظة" value={savedNumber(stage.expectedCost)} />
+                    <SnapshotValue label="الهالك المتوقع المحفوظ" value={savedNumber(stage.expectedWasteRatio)} />
+                    <SnapshotValue label="مركز العمل المحفوظ" value={stage.workCenterId == null ? NOT_SAVED : `#${stage.workCenterId}`} />
+                    <SnapshotValue label="نمط المورد المحفوظ" value={stage.resourceMode === "both" ? "آلة + عمالة" : stage.resourceMode === "machine" ? "آلة" : stage.resourceMode === "labor" ? "عمالة" : NOT_SAVED} />
+                    <SnapshotValue label="معرّف آلة المرحلة المحفوظ" value={stage.resourceId == null ? NOT_SAVED : `#${stage.resourceId}`} />
+                    <SnapshotValue label="عدد العمال المحفوظ" value={savedNumber(stage.workerCount)} />
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
@@ -531,7 +587,7 @@ export function SimpleOrderWizardReadonly({
         </div>
       </CardHeader>
       <CardContent className="space-y-4 p-4 md:p-6">
-        <div className="flex gap-2 overflow-x-auto rounded-xl border bg-white p-2 no-scrollbar" role="tablist" aria-label="خطوات المعالج المحفوظة">
+        <div className="grid grid-cols-2 gap-2 rounded-xl border bg-white p-2 sm:grid-cols-3 xl:grid-cols-6" role="tablist" aria-label="خطوات المعالج المحفوظة">
           {steps.map(step => {
             const Icon = step.icon;
             const active = tab === step.id;
@@ -543,17 +599,24 @@ export function SimpleOrderWizardReadonly({
                 aria-selected={active}
                 aria-controls={`saved-wizard-panel-${step.id}`}
                 onClick={() => setTab(step.id)}
-                className={`flex min-w-[125px] flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-                  active
-                    ? "bg-emerald-50 text-emerald-800 shadow-sm ring-1 ring-emerald-200"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                className={`flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border px-2 py-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 sm:text-sm ${
+                  active ? READONLY_STEP_COLORS[step.id].active : READONLY_STEP_COLORS[step.id].inactive
                 }`}
               >
-                <Icon className="h-4 w-4" />
-                {step.label}
+                <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${active ? "bg-white/15" : "bg-white/80"}`}>
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="text-start leading-5">{step.label}</span>
               </button>
             );
           })}
+        </div>
+        <div role="status" aria-live="polite" aria-atomic="true" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300">
+          <span className="inline-flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-200">
+            <span className={`h-2.5 w-2.5 rounded-full ${READONLY_STEP_COLORS[tab].dot}`} />
+            الخطوة {activeStepIndex + 1} من {steps.length}
+          </span>
+          <span>القسم الحالي: <strong className="font-semibold text-slate-900 dark:text-white">{steps[activeStepIndex]?.label}</strong></span>
         </div>
         <div id={`saved-wizard-panel-${tab}`} role="tabpanel" aria-label={steps.find(step => step.id === tab)?.label}>
           {content[tab]()}

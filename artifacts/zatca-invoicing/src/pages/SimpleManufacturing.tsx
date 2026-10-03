@@ -16,6 +16,17 @@ import { ProductionStageExecution } from "@/components/ProductionStageExecution"
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+const MANUFACTURING_TAB_COLORS = {
+  orders:
+    "border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 focus-visible:ring-sky-500 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-900/60 data-[state=active]:!border-sky-700 data-[state=active]:!bg-sky-700 data-[state=active]:!text-white data-[state=active]:!shadow-md dark:data-[state=active]:!border-sky-500 dark:data-[state=active]:!bg-sky-600",
+  new:
+    "border-violet-200 bg-violet-50 text-violet-900 hover:bg-violet-100 focus-visible:ring-violet-500 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200 dark:hover:bg-violet-900/60 data-[state=active]:!border-violet-700 data-[state=active]:!bg-violet-700 data-[state=active]:!text-white data-[state=active]:!shadow-md dark:data-[state=active]:!border-violet-500 dark:data-[state=active]:!bg-violet-600",
+  setup:
+    "border-amber-200 bg-amber-50 text-amber-950 hover:bg-amber-100 focus-visible:ring-amber-500 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-900/60 data-[state=active]:!border-amber-700 data-[state=active]:!bg-amber-600 data-[state=active]:!text-white data-[state=active]:!shadow-md dark:data-[state=active]:!border-amber-500 dark:data-[state=active]:!bg-amber-600",
+  reports:
+    "border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 focus-visible:ring-emerald-500 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:bg-emerald-900/60 data-[state=active]:!border-emerald-700 data-[state=active]:!bg-emerald-700 data-[state=active]:!text-white data-[state=active]:!shadow-md dark:data-[state=active]:!border-emerald-500 dark:data-[state=active]:!bg-emerald-600",
+} as const;
+
 export default function SimpleManufacturing() {
   const { token, user, actingCompanyId } = useAuth();
   const { toast } = useToast();
@@ -395,20 +406,20 @@ export default function SimpleManufacturing() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-6">
-        <TabsList className="flex w-full overflow-x-auto no-scrollbar bg-white border p-1 h-14 rounded-xl shadow-sm">
-          <TabsTrigger value="orders" className="flex-1 rounded-lg text-base h-11 data-[state=active]:bg-violet-50 data-[state=active]:text-violet-700 data-[state=active]:shadow-sm">
+        <TabsList aria-label="أقسام التصنيع الذكي" className="grid h-auto w-full grid-cols-2 gap-2 rounded-xl bg-transparent p-0 sm:grid-cols-4">
+          <TabsTrigger value="orders" className={`h-auto min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${MANUFACTURING_TAB_COLORS.orders}`}>
             <Boxes className="ml-2 h-4 w-4" />
             سجل الأوامر
           </TabsTrigger>
-          <TabsTrigger value="new" className="flex-1 rounded-lg text-base h-11 data-[state=active]:bg-violet-600 data-[state=active]:text-white data-[state=active]:shadow-sm">
+          <TabsTrigger value="new" className={`h-auto min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${MANUFACTURING_TAB_COLORS.new}`}>
             <Plus className="ml-2 h-4 w-4" />
             أمر تصنيع جديد
           </TabsTrigger>
-          <TabsTrigger value="setup" className="flex-1 rounded-lg text-base h-11 data-[state=active]:bg-violet-50 data-[state=active]:text-violet-700 data-[state=active]:shadow-sm">
+          <TabsTrigger value="setup" className={`h-auto min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${MANUFACTURING_TAB_COLORS.setup}`}>
             <Settings2 className="ml-2 h-4 w-4" />
             الإعدادات
           </TabsTrigger>
-          <TabsTrigger value="reports" className="flex-1 rounded-lg text-base h-11 data-[state=active]:bg-violet-50 data-[state=active]:text-violet-700 data-[state=active]:shadow-sm">
+          <TabsTrigger value="reports" className={`h-auto min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${MANUFACTURING_TAB_COLORS.reports}`}>
             <FileText className="ml-2 h-4 w-4" />
             التقارير المجمعة
           </TabsTrigger>

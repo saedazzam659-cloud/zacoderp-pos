@@ -8,6 +8,14 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Switch } from "@/components/ui/switch";
 import type { Catalog } from "./types";
 
+const ROUTING_STAGE_ACCENTS = [
+  { card: "border-sky-200 bg-sky-50/50 dark:border-sky-800 dark:bg-sky-950/20", marker: "border-sky-300 bg-sky-100 text-sky-800 dark:border-sky-700 dark:bg-sky-900 dark:text-sky-200" },
+  { card: "border-teal-200 bg-teal-50/50 dark:border-teal-800 dark:bg-teal-950/20", marker: "border-teal-300 bg-teal-100 text-teal-800 dark:border-teal-700 dark:bg-teal-900 dark:text-teal-200" },
+  { card: "border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20", marker: "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-200" },
+  { card: "border-violet-200 bg-violet-50/50 dark:border-violet-800 dark:bg-violet-950/20", marker: "border-violet-300 bg-violet-100 text-violet-800 dark:border-violet-700 dark:bg-violet-900 dark:text-violet-200" },
+  { card: "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20", marker: "border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-900 dark:text-emerald-200" },
+];
+
 export function SimpleSetup({
   catalog,
   busy,
@@ -525,18 +533,43 @@ export function SimpleSetup({
                 </div>
 
                 <div className="space-y-2">
-                  <div className="text-sm font-semibold text-slate-700">مراحل الإنتاج بالترتيب</div>
-                  {routingStages.map((stage, index) => (
-                     <div key={index} className="rounded-lg border bg-slate-50/50 p-3 space-y-3">
-                       <div className="flex items-center gap-2">
-                         <div className="w-6 h-6 shrink-0 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500">{index + 1}</div>
-                         <Input className="flex-[2]" value={stage.nameAr} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, nameAr: e.target.value } : s))} placeholder="اسم المرحلة (مثال: العجن)" />
-                         <Input className="flex-[1]" type="text" inputMode="numeric" value={stage.expectedDurationMinutes || ""} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, expectedDurationMinutes: Number(e.target.value) || 0 } : s))} placeholder="المدة (دقيقة)" />
-                         <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0"
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">مراحل الإنتاج بالترتيب</div>
+                    <div className="text-xs text-slate-500">تظهر الأرقام ترتيب التنفيذ المقترح</div>
+                  </div>
+                  {routingStages.map((stage, index) => {
+                    const accent = ROUTING_STAGE_ACCENTS[index % ROUTING_STAGE_ACCENTS.length];
+                    return (
+                     <div key={index} data-testid={`routing-stage-editor-${index + 1}`} className={`rounded-xl border p-4 shadow-sm transition-colors ${accent.card}`}>
+                       <div className="mb-3 flex items-center justify-between gap-3">
+                         <div className="flex items-center gap-3">
+                           <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 text-sm font-bold ${accent.marker}`}>{index + 1}</div>
+                           <div>
+                             <div className="text-[11px] font-bold text-slate-500">المرحلة {index + 1}</div>
+                             <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{stage.nameAr || "مرحلة جديدة"}</div>
+                           </div>
+                         </div>
+                         <Button
+                           type="button"
+                           variant="ghost"
+                           size="icon"
+                           aria-label={`حذف المرحلة ${index + 1}`}
+                           className="h-9 w-9 shrink-0 text-destructive hover:bg-destructive/10"
                            disabled={routingStages.length <= 1}
-                           onClick={() => setRoutingStages(stages => stages.filter((_, i) => i !== index))}>
+                           onClick={() => setRoutingStages(stages => stages.filter((_, i) => i !== index))}
+                         >
                            ×
                          </Button>
+                       </div>
+                       <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(150px,1fr)]">
+                         <label className="space-y-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+                           <span>اسم المرحلة</span>
+                           <Input value={stage.nameAr} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, nameAr: e.target.value } : s))} placeholder="مثال: العجن" />
+                         </label>
+                         <label className="space-y-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+                           <span>المدة المتوقعة (دقيقة)</span>
+                           <Input type="text" inputMode="numeric" value={stage.expectedDurationMinutes || ""} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, expectedDurationMinutes: Number(e.target.value) || 0 } : s))} placeholder="مثال: 20" />
+                         </label>
                        </div>
                        <div className="grid gap-3 sm:grid-cols-3">
                          <div className="space-y-1">
@@ -591,9 +624,11 @@ export function SimpleSetup({
                        <p className="text-[11px] text-slate-500">
                           تستخدم المرحلة ساعات تشغيل واحدة فقط. بيانات الطاقة مرتبطة بالآلة المختارة؛ لا توجد ساعات كهرباء أو إهلاك منفصلة.
                        </p>
-                    </div>
-                  ))}
+                     </div>
+                    );
+                  })}
                   <Button type="button" variant="outline" size="sm"
+                     className="h-11 w-full justify-center border-dashed border-violet-300 bg-violet-50/40 font-semibold text-violet-800 hover:bg-violet-50 dark:border-violet-800 dark:bg-violet-950/20 dark:text-violet-200 dark:hover:bg-violet-950/50"
                      onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }])}
                     disabled={!canEdit}>
                     <Plus className="mr-1 h-4 w-4" /> إضافة مرحلة
@@ -630,13 +665,17 @@ export function SimpleSetup({
                     </div>
                     {loadingRoutingId === r.id && <div className="text-xs text-violet-500">جارٍ تحميل المسار…</div>}
                     {r.stages && r.stages.length > 0 ? (
-                      <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-1">
-                        {r.stages.map((st, idx) => (
-                          <span key={st.id || idx} className="bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded flex items-center">
-                            <span className="opacity-50 mr-1">{idx + 1}.</span> {st.nameAr}
-                            {st.plannedMinutes ? <span className="mr-1 opacity-75">({st.plannedMinutes}د)</span> : null}
-                          </span>
-                        ))}
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {r.stages.map((st, idx) => {
+                          const accent = ROUTING_STAGE_ACCENTS[idx % ROUTING_STAGE_ACCENTS.length];
+                          return (
+                            <span key={st.id || idx} className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium ${accent.card}`}>
+                              <span className="font-bold text-slate-500">{idx + 1}.</span>
+                              <span className="text-slate-700 dark:text-slate-200">{st.nameAr}</span>
+                              {st.plannedMinutes ? <span className="text-slate-500">({st.plannedMinutes}د)</span> : null}
+                            </span>
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="text-xs text-slate-400 mt-1">عدد المراحل: {r.stagesCount || 0}</div>

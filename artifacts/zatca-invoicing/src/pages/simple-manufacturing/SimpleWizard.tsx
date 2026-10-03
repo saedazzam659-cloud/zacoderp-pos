@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { ClipboardList, Boxes, GitBranch, Cog, Calculator, CheckCircle2, Save, Play, Plus, Trash2, RefreshCw } from "lucide-react";
+import { ClipboardList, Boxes, GitBranch, Cog, Calculator, CheckCircle2, Save, Play, Plus, Trash2, RefreshCw, Clock3, Users } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { DateField } from "@/components/ui/date-field";
 import { Switch } from "@/components/ui/switch";
@@ -27,6 +27,13 @@ import {
 } from "./costPreferences";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+const ROUTE_STAGE_ACCENTS = [
+  { marker: "border-sky-500 bg-sky-50 text-sky-800 dark:border-sky-400 dark:bg-sky-950 dark:text-sky-200", card: "border-sky-200 dark:border-sky-800", label: "text-sky-700 dark:text-sky-300", chip: "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200" },
+  { marker: "border-teal-500 bg-teal-50 text-teal-800 dark:border-teal-400 dark:bg-teal-950 dark:text-teal-200", card: "border-teal-200 dark:border-teal-800", label: "text-teal-700 dark:text-teal-300", chip: "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-800 dark:bg-teal-950/50 dark:text-teal-200" },
+  { marker: "border-amber-500 bg-amber-50 text-amber-900 dark:border-amber-400 dark:bg-amber-950 dark:text-amber-200", card: "border-amber-200 dark:border-amber-800", label: "text-amber-700 dark:text-amber-300", chip: "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200" },
+  { marker: "border-violet-500 bg-violet-50 text-violet-800 dark:border-violet-400 dark:bg-violet-950 dark:text-violet-200", card: "border-violet-200 dark:border-violet-800", label: "text-violet-700 dark:text-violet-300", chip: "border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-800 dark:bg-violet-950/50 dark:text-violet-200" },
+  { marker: "border-emerald-500 bg-emerald-50 text-emerald-800 dark:border-emerald-400 dark:bg-emerald-950 dark:text-emerald-200", card: "border-emerald-200 dark:border-emerald-800", label: "text-emerald-700 dark:text-emerald-300", chip: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200" },
+];
 
 export function SimpleWizard({
   token,
@@ -812,13 +819,50 @@ export function SimpleWizard({
     : null;
 
   const steps = [
-    { id: "basic" as const, label: "البيانات الأساسية", icon: ClipboardList },
-    { id: "materials" as const, label: "المواد والوصفة", icon: Boxes },
-    { id: "routing" as const, label: "مسار الإنتاج", icon: GitBranch },
-    { id: "resources" as const, label: "الموارد", icon: Cog },
-    { id: "costs" as const, label: "التكاليف", icon: Calculator },
-    { id: "review" as const, label: "المراجعة", icon: CheckCircle2 }
+    {
+      id: "basic" as const, label: "البيانات الأساسية", icon: ClipboardList,
+      active: "border-sky-700 bg-sky-700 text-white shadow-md focus-visible:ring-sky-500 dark:border-sky-500 dark:bg-sky-600",
+      inactive: "border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 focus-visible:ring-sky-500 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-900/60",
+      dot: "bg-sky-600",
+    },
+    {
+      id: "materials" as const, label: "المواد والوصفة", icon: Boxes,
+      active: "border-teal-700 bg-teal-700 text-white shadow-md focus-visible:ring-teal-500 dark:border-teal-500 dark:bg-teal-600",
+      inactive: "border-teal-200 bg-teal-50 text-teal-900 hover:bg-teal-100 focus-visible:ring-teal-500 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200 dark:hover:bg-teal-900/60",
+      dot: "bg-teal-600",
+    },
+    {
+      id: "routing" as const, label: "مسار الإنتاج", icon: GitBranch,
+      active: "border-amber-600 bg-amber-600 text-white shadow-md focus-visible:ring-amber-500 dark:border-amber-500 dark:bg-amber-600",
+      inactive: "border-amber-200 bg-amber-50 text-amber-950 hover:bg-amber-100 focus-visible:ring-amber-500 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-900/60",
+      dot: "bg-amber-600",
+    },
+    {
+      id: "resources" as const, label: "الموارد", icon: Cog,
+      active: "border-violet-700 bg-violet-700 text-white shadow-md focus-visible:ring-violet-500 dark:border-violet-500 dark:bg-violet-600",
+      inactive: "border-violet-200 bg-violet-50 text-violet-900 hover:bg-violet-100 focus-visible:ring-violet-500 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200 dark:hover:bg-violet-900/60",
+      dot: "bg-violet-600",
+    },
+    {
+      id: "costs" as const, label: "التكاليف", icon: Calculator,
+      active: "border-blue-700 bg-blue-700 text-white shadow-md focus-visible:ring-blue-500 dark:border-blue-500 dark:bg-blue-600",
+      inactive: "border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100 focus-visible:ring-blue-500 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200 dark:hover:bg-blue-900/60",
+      dot: "bg-blue-600",
+    },
+    {
+      id: "review" as const, label: "المراجعة", icon: CheckCircle2,
+      active: "border-emerald-700 bg-emerald-700 text-white shadow-md focus-visible:ring-emerald-500 dark:border-emerald-500 dark:bg-emerald-600",
+      inactive: "border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 focus-visible:ring-emerald-500 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:bg-emerald-900/60",
+      dot: "bg-emerald-600",
+    },
   ];
+  const activeStepIndex = Math.max(0, steps.findIndex(step => step.id === tab));
+  const activeStep = steps[activeStepIndex];
+  const routeStages = Array.isArray(routingPreview?.stages) ? routingPreview.stages : [];
+  const routeTotalMinutes = routeStages.reduce(
+    (total: number, stage: any) => total + Math.max(0, Number(stage.expectedDurationMinutes) || 0),
+    0,
+  );
   const postingAccounts = (catalog.accounting?.accounts ?? []);
   const accountingAccounts = postingAccounts
     .filter(account => account.accountType === "asset");
@@ -832,24 +876,56 @@ export function SimpleWizard({
   return (
     <div className="space-y-4">
       {/* Wizard Header / Tabs */}
-      <div className="flex gap-2 mb-4 bg-slate-50 border p-2 rounded-xl overflow-x-auto no-scrollbar">
-        {steps.map(step => (
-          <button
-            key={step.id}
-            onClick={() => setTab(step.id)}
-            className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-sm font-semibold transition-all ${
-              tab === step.id
-                ? "bg-white text-violet-700 shadow-sm border border-violet-100"
-                : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-            }`}
-          >
-            <step.icon className={`h-4 w-4 ${tab === step.id ? "text-violet-600" : ""}`} />
-            {step.label}
-          </button>
-        ))}
+      <div
+        className="grid grid-cols-2 gap-2 rounded-xl border bg-white p-2 shadow-sm sm:grid-cols-3 xl:grid-cols-6"
+        data-testid="manufacturing-wizard-steps"
+        aria-label="مراحل إعداد أمر التصنيع"
+      >
+        {steps.map(step => {
+          const active = tab === step.id;
+          return (
+            <button
+              key={step.id}
+              type="button"
+              aria-current={active ? "step" : undefined}
+              aria-controls="manufacturing-wizard-step-content"
+              data-testid={`manufacturing-wizard-step-${step.id}`}
+              onClick={() => setTab(step.id)}
+              className={`flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border px-2 py-2 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 sm:text-sm ${
+                active ? step.active : step.inactive
+              }`}
+            >
+              <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${active ? "bg-white/15" : "bg-white/80"}`}>
+                <step.icon className="h-4 w-4" />
+              </span>
+              <span className="text-start leading-5">{step.label}</span>
+            </button>
+          );
+        })}
       </div>
 
-      <Card className="border-0 shadow-sm bg-white min-h-[400px]">
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="manufacturing-wizard-step-status"
+        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300"
+      >
+        <span className="inline-flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-200">
+          <span className={`h-2.5 w-2.5 rounded-full ${activeStep.dot}`} />
+          الخطوة {activeStepIndex + 1} من {steps.length}
+        </span>
+        <span>
+          القسم الحالي: <strong className="font-semibold text-slate-900 dark:text-white">{activeStep.label}</strong>
+        </span>
+      </div>
+
+      <Card
+        id="manufacturing-wizard-step-content"
+        role="region"
+        aria-label={activeStep.label}
+        className="min-h-[400px] border-0 bg-white shadow-sm"
+      >
         <CardContent className="p-6">
           {tab === "basic" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
@@ -1094,26 +1170,88 @@ export function SimpleWizard({
               ) : previewLoading ? (
                 <div className="text-center py-12 text-slate-500">جاري تحميل مسار الإنتاج...</div>
               ) : !routingPreview ? (
-                <div className="text-center py-12 text-slate-500 border-2 border-dashed rounded-xl bg-slate-50/50">
+                <div className="rounded-xl border-2 border-dashed bg-slate-50/50 py-12 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-400">
                   لا يوجد مسار نشط لهذا المنتج.
                   <p className="text-xs mt-1">سيتم تنفيذ الإنتاج كمرحلة واحدة مباشرة.</p>
                 </div>
               ) : (
-                <div className="flex flex-col gap-3 relative before:absolute before:inset-y-0 before:start-[19px] before:w-0.5 before:bg-violet-100 pl-8">
-                  {(routingPreview.stages ?? []).map((s: any, i: number) => (
-                    <div key={s.id} className="relative rounded-lg border bg-white p-4 shadow-sm">
-                      <div className="absolute top-1/2 -translate-y-1/2 -start-11 w-6 h-6 rounded-full bg-violet-100 border-2 border-violet-500 flex items-center justify-center text-xs font-bold text-violet-700 z-10">
-                        {i + 1}
-                      </div>
-                      <div className="font-semibold text-slate-800">{s.nameAr}</div>
-                      <div className="text-xs text-slate-500 mt-1 flex items-center gap-4">
-                        <span>المدة (محرك التكلفة): {s.expectedDurationMinutes || 0} دقيقة</span>
-                         <span>المورد: {s.resourceMode === "both" ? "آلة + عمالة" : s.resourceMode === "machine" ? "آلة" : "عمالة"}</span>
-                         {(s.resourceMode === "labor" || s.resourceMode === "both") && <span>العمال: {s.workerCount ?? "—"}</span>}
-                         {(s.resourceMode === "machine" || s.resourceMode === "both") && <span>الآلة: {s.resourceId == null ? "—" : `#${s.resourceId}`}</span>}
-                      </div>
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                    <div>
+                      <p className="text-xs font-semibold text-violet-700 dark:text-violet-300">مسار الإنتاج المحفوظ للمنتج</p>
+                      <h3 className="mt-1 text-base font-bold text-slate-900 dark:text-white">
+                        {routingPreview.nameAr || "المراحل المخططة"}
+                      </h3>
                     </div>
-                  ))}
+                    <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                      <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-violet-800 dark:border-violet-800 dark:bg-violet-950/50 dark:text-violet-200">
+                        {routeStages.length} مراحل
+                      </span>
+                      {routeTotalMinutes > 0 && (
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                          {routeTotalMinutes} دقيقة مخططة
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {routeStages.length === 0 ? (
+                    <div className="rounded-xl border border-dashed bg-slate-50 p-5 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-400">
+                      المسار النشط لا يحتوي على مراحل محفوظة.
+                    </div>
+                  ) : (
+                    <ol
+                      aria-label="مراحل الإنتاج بالترتيب"
+                      className="relative space-y-3 before:absolute before:inset-y-4 before:start-[17px] before:w-0.5 before:bg-gradient-to-b before:from-sky-300 before:via-violet-300 before:to-emerald-300 before:content-[''] dark:before:from-sky-800 dark:before:via-violet-800 dark:before:to-emerald-800"
+                    >
+                      {routeStages.map((s: any, i: number) => {
+                        const accent = ROUTE_STAGE_ACCENTS[i % ROUTE_STAGE_ACCENTS.length];
+                        const machine = (catalog.machines ?? []).find((row: any) => String(row.id) === String(s.resourceId));
+                        const resourceLabel = s.resourceMode === "both" ? "آلة + عمالة" : s.resourceMode === "machine" ? "آلة" : "عمالة";
+                        const duration = Math.max(0, Number(s.expectedDurationMinutes) || 0);
+                        return (
+                          <li
+                            key={s.id ?? `${s.sequence ?? i + 1}-${i}`}
+                            data-testid={`planned-production-stage-${i + 1}`}
+                            className="relative ps-10"
+                          >
+                            <span className={`absolute start-0 top-4 z-10 grid h-9 w-9 place-items-center rounded-full border-2 text-sm font-bold shadow-sm ${accent.marker}`}>
+                              {i + 1}
+                            </span>
+                            <article className={`rounded-xl border bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:bg-slate-900 ${accent.card}`}>
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <p className={`mb-1 text-[11px] font-bold uppercase tracking-wide ${accent.label}`}>المرحلة {i + 1}</p>
+                                  <h4 className="font-bold text-slate-900 dark:text-white">{s.nameAr || "مرحلة دون اسم"}</h4>
+                                </div>
+                                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${accent.chip}`}>
+                                  <Clock3 className="h-3.5 w-3.5" />
+                                  {duration} دقيقة مخططة
+                                </span>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3 text-xs dark:border-slate-800">
+                                <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                  <Cog className="h-3.5 w-3.5 text-slate-500" />
+                                  المورد: {resourceLabel}
+                                </span>
+                                {(s.resourceMode === "labor" || s.resourceMode === "both") && (
+                                  <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                    <Users className="h-3.5 w-3.5 text-slate-500" />
+                                    العمال: {s.workerCount ?? "—"}
+                                  </span>
+                                )}
+                                {(s.resourceMode === "machine" || s.resourceMode === "both") && (
+                                  <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                    <Cog className="h-3.5 w-3.5 text-slate-500" />
+                                    الآلة: {machine?.name || (s.resourceId == null ? "غير محددة" : `#${s.resourceId}`)}
+                                  </span>
+                                )}
+                              </div>
+                            </article>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
                 </div>
               )}
             </div>
