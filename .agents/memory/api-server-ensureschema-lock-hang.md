@@ -24,3 +24,9 @@ The `artifacts/api-server: API Server` workflow can fail to restart with `DIDNT_
 - The root holders are the stuck test backends. `SELECT pg_terminate_backend(pid)` them (just DB sessions — not destructive to data), confirm `still_blocked=0`, then restart the api-server.
 - Note: `executeSql` masks `pg_stat_activity.query`/`application_name` (shows state `disabled`, blank query), but `pid`, `wait_event_type`, and `pg_blocking_pids()` are reliable.
 - More direct when `pg_blocking_pids()` comes back empty under the pooler: join `pg_locks` to `pg_class` by `relname` for the specific blocked table (usually `companies`) — the `granted=true` `AccessShareLock` holders are leaked idle-in-transaction sessions; `pg_terminate_backend()` exactly those, then the queued `AccessExclusiveLock` (the boot ALTER) drains and the port opens. Killing the always-on `admin-reports-tests` process alone is not enough; you must terminate the granted-lock backends.
+
+**Additional startup rule:** The schema boot budget does not cover later awaited database work before `httpServer.listen`. Optional configuration and cache warmups must have their own deadline; when it expires, let the work continue in the background and open the health-check port.
+
+**Why:** A publish can finish compiling and create its VM, yet still fail readiness if a database read after schema reconciliation blocks indefinitely.
+
+**How to apply:** Review the whole bootstrap path from the schema race through `httpServer.listen`, not only the schema helper; bound every non-critical database-dependent await on that path.
