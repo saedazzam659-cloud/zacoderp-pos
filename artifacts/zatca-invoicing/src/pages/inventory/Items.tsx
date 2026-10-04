@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import ExportButtons from "@/components/ExportButtons";
-import { SearchCombobox } from "@/components/ui/search-combobox";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt, trimTrailingZeros } from "@/hooks/use-fmt";
 import {
@@ -2559,35 +2559,65 @@ function ItemBundleComponentsPanel({
               );
               const options = draftUnitOptions[index] ?? [];
               const unitQuery = unitQueries[index];
+              const childSearchItems: ComboboxItem[] = [
+                { value: "", label: `— ${t("pages.items.bundle.chooseChild")} —` },
+                ...rowChildren.map((candidate: any) => {
+                  const nameAr = candidate.nameAr || candidate.nameEn || candidate.code || `#${candidate.id}`;
+                  const nameEn = candidate.nameEn || candidate.nameAr || candidate.code || `#${candidate.id}`;
+                  return {
+                    value: String(candidate.id),
+                    code: candidate.code ? String(candidate.code) : undefined,
+                    label: isAr ? nameAr : nameEn,
+                    description: isAr ? candidate.nameEn || undefined : candidate.nameAr || undefined,
+                  };
+                }),
+              ];
+              const unitSearchItems: ComboboxItem[] = options.map((unit: any) => {
+                const unitName = isAr
+                  ? (unit.nameAr || unit.nameEn || unit.code)
+                  : (unit.nameEn || unit.nameAr || unit.code);
+                return {
+                  value: String(unit.unitId),
+                  code: unit.code ? String(unit.code) : undefined,
+                  label: `${unitName || unit.code || `#${unit.unitId}`}${unit.isBase
+                    ? ` — ${t("pages.items.bundle.baseUnit")}`
+                    : ` (×${trimTrailingZeros(unit.factor)})`}`,
+                  description: isAr ? unit.nameEn || undefined : unit.nameAr || undefined,
+                };
+              });
+              const unitPlaceholder = !child?.unitId
+                ? t("pages.items.bundle.unitNotConfigured")
+                : unitQuery?.isLoading
+                  ? t("common.loading", { defaultValue: "جارٍ التحميل..." })
+                  : options.length === 0
+                    ? t("pages.items.bundle.unitNotConfigured")
+                    : t("pages.items.chooseUnit");
 
               return (
                 <div key={row.key} className="rounded-md border bg-background p-3">
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(150px,2.8fr)_minmax(74px,1fr)_minmax(140px,2.5fr)_minmax(100px,2fr)_36px]">
                     <div className="min-w-0">
-                      <Label className="mb-1 block whitespace-nowrap text-[11px] leading-4">{t("pages.items.bundle.childItem")} *</Label>
-                      <select
+                      <Label htmlFor={`bundle-child-${row.key}`} className="mb-1 block whitespace-nowrap text-[11px] leading-4">{t("pages.items.bundle.childItem")} *</Label>
+                      <SearchCombobox
+                        id={`bundle-child-${row.key}`}
+                        items={childSearchItems}
                         value={row.childItemId}
-                        onChange={event => {
+                        onValueChange={value => {
                           const selected = (allItems as any[]).find(
-                            (candidate: any) => String(candidate.id) === event.target.value,
+                            (candidate: any) => String(candidate.id) === value,
                           );
                           updateDraftRow(row.key, {
-                            childItemId: event.target.value,
+                            childItemId: value,
                             unitId: selected?.unitId ? String(selected.unitId) : "",
                             qty: "1",
                           });
                         }}
-                        className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
+                        placeholder={`— ${t("pages.items.bundle.chooseChild")} —`}
+                        searchPlaceholder={isAr ? "ابحث بالاسم أو الكود..." : "Search by name or code..."}
+                        emptyText={isAr ? "لا توجد أصناف مطابقة" : "No matching items"}
+                        className="w-full"
                         disabled={addBulkMut.isPending}
-                      >
-                        <option value="">— {t("pages.items.bundle.chooseChild")} —</option>
-                        {rowChildren.map((candidate: any) => (
-                          <option key={candidate.id} value={candidate.id}>
-                            {(isAr ? candidate.nameAr : (candidate.nameEn || candidate.nameAr))}
-                            {candidate.code ? ` (${candidate.code})` : ""}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </div>
                     <div className="min-w-0">
                       <Label className="mb-1 block whitespace-nowrap text-[11px] leading-4">{t("pages.items.bundle.qty")} *</Label>
@@ -2602,35 +2632,18 @@ function ItemBundleComponentsPanel({
                       />
                     </div>
                     <div className="min-w-0">
-                      <Label className="mb-1 block whitespace-nowrap text-[11px] leading-4">{t("pages.items.bundle.unit")} *</Label>
-                      <select
+                      <Label htmlFor={`bundle-unit-${row.key}`} className="mb-1 block whitespace-nowrap text-[11px] leading-4">{t("pages.items.bundle.unit")} *</Label>
+                      <SearchCombobox
+                        id={`bundle-unit-${row.key}`}
+                        items={unitSearchItems}
                         value={row.unitId}
-                        onChange={event => updateDraftRow(row.key, { unitId: event.target.value })}
-                        className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
+                        onValueChange={value => updateDraftRow(row.key, { unitId: value })}
+                        placeholder={unitPlaceholder}
+                        searchPlaceholder={isAr ? "ابحث عن الوحدة..." : "Search units..."}
+                        emptyText={isAr ? "لا توجد وحدات مطابقة" : "No matching units"}
+                        className="w-full"
                         disabled={!child || !child.unitId || unitQuery?.isLoading || unitQuery?.isError || addBulkMut.isPending}
-                      >
-                        {!child?.unitId ? (
-                          <option value="">{t("pages.items.bundle.unitNotConfigured")}</option>
-                        ) : unitQuery?.isLoading ? (
-                          <option value="">{t("common.loading", { defaultValue: "جارٍ التحميل..." })}</option>
-                        ) : options.length === 0 ? (
-                          <option value="">{t("pages.items.bundle.unitNotConfigured")}</option>
-                        ) : (
-                          options.map((unit: any) => {
-                            const unitName = isAr
-                              ? (unit.nameAr || unit.nameEn || unit.code)
-                              : (unit.nameEn || unit.nameAr || unit.code);
-                            return (
-                              <option key={unit.unitId} value={unit.unitId}>
-                                {unitName || unit.code || `#${unit.unitId}`}
-                                {unit.isBase
-                                  ? ` — ${t("pages.items.bundle.baseUnit")}`
-                                  : ` (×${trimTrailingZeros(unit.factor)})`}
-                              </option>
-                            );
-                          })
-                        )}
-                      </select>
+                      />
                       {unitQuery?.isError && (
                         <p className="mt-1 text-xs text-destructive">{t("pages.items.bundle.unitLoadError")}</p>
                       )}
