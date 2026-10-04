@@ -3,6 +3,11 @@ import { requireItemUnit } from "../lib/requiredItemUnit.js";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { documentMutationLock } from "../lib/document-mutation-lock.js";
+import {
+  BUNDLE_ASSEMBLY_REASON,
+  deriveBundleAssemblyUnitCost,
+  parseBundleAssemblyRequestId,
+} from "../lib/bundleAssemblyCost.js";
 import { db, pool } from "@workspace/db";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
@@ -2683,6 +2688,26 @@ router.post("/stock-adjustments", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { adjustmentNumber, adjustmentDate, warehouseId, accountId, inventoryAccountId, adjustmentAccountId, reason, notes, items } = req.body;
   if (!adjustmentDate || !warehouseId) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
+  const isBundleAssembly = reason === BUNDLE_ASSEMBLY_REASON;
+  const assemblyRequestId = isBundleAssembly ? parseBundleAssemblyRequestId(notes) : null;
+  if (isBundleAssembly && !assemblyRequestId) {
+    res.status(400).json({ error: "مرجع طلب التجميع غير صالح" });
+    return;
+  }
+  const assemblyRequestMarker = assemblyRequestId
+    ? `[bundle-assembly-request:${assemblyRequestId}]`
+    : null;
+  if (assemblyRequestMarker) {
+    const [existingAssembly] = await db.select().from(stockAdjustmentsTable).where(and(
+      eq(stockAdjustmentsTable.companyId, cid),
+      eq(stockAdjustmentsTable.reason, BUNDLE_ASSEMBLY_REASON),
+      sql`${stockAdjustmentsTable.notes} LIKE ${`%${assemblyRequestMarker}%`}`,
+    )).limit(1);
+    if (existingAssembly) {
+      res.json(existingAssembly);
+      return;
+    }
+  }
   // Item Usage Control (Phase ب): block a save containing restricted items.
   {
     const usageIds = Array.from(new Set((items ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0))) as number[];
@@ -2731,6 +2756,18 @@ router.post("/stock-adjustments", async (req, res) => {
   let adj: any;
   try {
     adj = await db.transaction(async (tx) => {
+      if (assemblyRequestId && assemblyRequestMarker) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(
+          hashtext(${`bundle-assembly:${cid}`}),
+          hashtext(${assemblyRequestId})
+        )`);
+        const [duplicate] = await tx.select().from(stockAdjustmentsTable).where(and(
+          eq(stockAdjustmentsTable.companyId, cid),
+          eq(stockAdjustmentsTable.reason, BUNDLE_ASSEMBLY_REASON),
+          sql`${stockAdjustmentsTable.notes} LIKE ${`%${assemblyRequestMarker}%`}`,
+        )).limit(1);
+        if (duplicate) return duplicate;
+      }
       const [created] = await tx.insert(stockAdjustmentsTable).values({
         companyId: cid, adjustmentNumber: num, adjustmentDate, warehouseId,
         accountId: accountId || null,
@@ -2861,16 +2898,55 @@ router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), do
         .where(eq(stockAdjustmentItemsTable.adjustmentId, id))
         .orderBy(asc(stockAdjustmentItemsTable.itemId), asc(stockAdjustmentItemsTable.id));
       if (!lines.length) throw new HttpError(400, "لا توجد أصناف");
+      const isBundleAssembly = adj.reason === BUNDLE_ASSEMBLY_REASON;
 
       const usageIds = Array.from(new Set(lines.map(l => l.itemId).filter((x): x is number => !!x)));
       const usageV = await checkItemsUsable(cid, "stock_adjust", usageIds, (req as any).authUser, "post");
       if (usageV.length) throw new HttpError(403, usageViolationMessage(usageV, "post"));
 
-      const ownedItems = await tx.select({ id: itemsTable.id }).from(itemsTable).where(and(
+      const ownedItems = await tx.select({
+        id: itemsTable.id,
+        itemType: itemsTable.itemType,
+        isBundle: itemsTable.isBundle,
+      }).from(itemsTable).where(and(
         eq(itemsTable.companyId, cid),
         inArray(itemsTable.id, usageIds),
       ));
       if (ownedItems.length !== usageIds.length) throw new HttpError(400, "تحتوي التسوية على صنف لا ينتمي للشركة");
+      const ownedItemById = new Map(ownedItems.map(item => [item.id, item]));
+      let bundleAssemblyProductId: number | null = null;
+      if (isBundleAssembly) {
+        const outputLines = lines.filter(line => Number(line.qty) > 0);
+        if (outputLines.length !== 1) {
+          throw new HttpError(400, "تجميع المخزون يتطلب سطر استلام واحداً للصنف المركب");
+        }
+        const productId = outputLines[0].itemId;
+        const product = ownedItemById.get(productId);
+        if (!product || product.itemType !== "stock" || !product.isBundle) {
+          throw new HttpError(400, "صنف الاستلام يجب أن يكون صنفاً مخزونياً مركباً");
+        }
+        if (lines.some(line => line.itemId === productId && Number(line.qty) <= 0)) {
+          throw new HttpError(400, "لا يمكن صرف الصنف التام ضمن مكونات التجميع");
+        }
+        if (!lines.some(line => line.itemId !== productId && Number(line.qty) < 0)) {
+          throw new HttpError(400, "أضف مكوناً مخزونياً واحداً على الأقل");
+        }
+        if (lines.some(line =>
+          line.itemId !== productId &&
+          (Number(line.qty) >= 0 || ownedItemById.get(line.itemId)?.itemType !== "stock"),
+        )) {
+          throw new HttpError(400, "مكونات التجميع يجب أن تكون أصنافاً مخزونية مصروفة");
+        }
+        const [savedComponent] = await tx.select({ id: itemBundleComponentsTable.id })
+          .from(itemBundleComponentsTable)
+          .where(and(
+            eq(itemBundleComponentsTable.companyId, cid),
+            eq(itemBundleComponentsTable.parentItemId, productId),
+          ))
+          .limit(1);
+        if (!savedComponent) throw new HttpError(400, "لا توجد مكونات محفوظة لهذا الصنف المركب");
+        bundleAssemblyProductId = productId;
+      }
 
       const writability = await assertWritableForDate(cid, adj.adjustmentDate);
       if (!writability.ok) throw new HttpError(423, writability.reason ?? "الفترة المالية مغلقة");
@@ -2882,11 +2958,18 @@ router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), do
       if (!wh) throw new HttpError(400, "المخزن غير صالح");
 
       let inventoryValueDelta = 0;
+      let bundleAssemblyMaterialCost = 0;
       const touchedItems = new Set<number>();
       await lockStockBalances(lines.map(line => ({
         companyId: cid, itemId: line.itemId, warehouseId: adj.warehouseId,
       })), tx);
-      for (const line of lines) {
+      const postingLines = isBundleAssembly
+        ? [
+            ...lines.filter(line => Number(line.qty) < 0),
+            ...lines.filter(line => Number(line.qty) > 0),
+          ]
+        : lines;
+      for (const line of postingLines) {
         const qty = Number(toStorageDecimal(
           multiplyQuantity(
             String(line.qty),
@@ -2895,7 +2978,7 @@ router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), do
           4,
           "half_up",
         ));
-        const enteredCost = Number(toStorageDecimal(
+        let enteredCost = Number(toStorageDecimal(
           divideQuantity(
             String(line.costPrice),
             String(line.conversionFactor ?? "1"),
@@ -2905,6 +2988,21 @@ router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), do
         ));
         if (!Number.isFinite(qty) || qty === 0) throw new HttpError(400, `كمية الصنف #${line.itemId} يجب ألا تكون صفراً`);
         if (!Number.isFinite(enteredCost) || enteredCost < 0) throw new HttpError(400, `تكلفة الصنف #${line.itemId} غير صحيحة`);
+        if (bundleAssemblyProductId === line.itemId) {
+          const outputQtyInEntryUnit = Number(toStorageDecimal(String(line.qty), 4, "half_up"));
+          if (qty <= 0 || !Number.isFinite(outputQtyInEntryUnit) || outputQtyInEntryUnit <= 0) {
+            throw new HttpError(400, "كمية المنتج التام في التجميع غير صحيحة");
+          }
+          // Derive the finished-item cost from the actual WAC used by the
+          // component outflows in this same transaction, not the UI preview.
+          enteredCost = deriveBundleAssemblyUnitCost(bundleAssemblyMaterialCost, outputQtyInEntryUnit);
+          await tx.update(stockAdjustmentItemsTable)
+            .set({ costPrice: String(enteredCost) })
+            .where(and(
+              eq(stockAdjustmentItemsTable.id, line.id),
+              eq(stockAdjustmentItemsTable.adjustmentId, id),
+            ));
+        }
 
         const newBal = await upsertBalance(cid, line.itemId, adj.warehouseId, qty, enteredCost, tx);
         const [balanceRow] = await tx.select({ avgCost: stockBalanceTable.avgCost })
@@ -2917,6 +3015,9 @@ router.post("/stock-adjustments/:id/post", requirePostRight("stockMovement"), do
         // this is the same value used by the weighted-average update.
         const movementCost = qty < 0 ? Number(balanceRow?.avgCost ?? enteredCost) : enteredCost;
         const totalCost = qty * movementCost;
+        if (bundleAssemblyProductId && qty < 0) {
+          bundleAssemblyMaterialCost += Math.abs(totalCost);
+        }
         inventoryValueDelta += totalCost;
         touchedItems.add(line.itemId);
         await tx.insert(stockLedgerTable).values({

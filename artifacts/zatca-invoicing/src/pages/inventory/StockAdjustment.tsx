@@ -37,7 +37,8 @@ const STATUS_CONFIG: Record<string, { color: string }> = {
   draft:  { color: "bg-amber-50 text-amber-700" },
   posted: { color: "bg-green-50 text-green-700" },
 };
-const REASONS = ["رصيد افتتاحي", "إضافة مخزنية", "تصحيح مخزون", "تعديل كمي", "تلف وخسارة", "فاقد وكسر", "مكافآت وهبات", "أخرى"];
+const BUNDLE_ASSEMBLY_REASON = "__BUNDLE_ASSEMBLY_V1__";
+const REASONS = ["رصيد افتتاحي", "إضافة مخزنية", "تصحيح مخزون", "تعديل كمي", "تلف وخسارة", "فاقد وكسر", "مكافآت وهبات", "أخرى", BUNDLE_ASSEMBLY_REASON];
 const REASON_KEYS: Record<string, string> = {
   "رصيد افتتاحي": "reasonOpeningBalance",
   "إضافة مخزنية": "reasonStockAddition",
@@ -67,7 +68,9 @@ export default function StockAdjustment() {
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const reasonLabel = (r: string) =>
-    REASON_KEYS[r] ? t(`stockAdjustmentPage.${REASON_KEYS[r]}`) : r;
+    r === BUNDLE_ASSEMBLY_REASON
+      ? (isRtl ? "تجميع مخزني لصنف مركب" : "Inventory bundle assembly")
+      : REASON_KEYS[r] ? t(`stockAdjustmentPage.${REASON_KEYS[r]}`) : r;
   const { fmt, fmtQty } = useFmt();
   const { user, token } = useAuth() as any;
   const canCreate = usePermission("stock_adjustments", "create");

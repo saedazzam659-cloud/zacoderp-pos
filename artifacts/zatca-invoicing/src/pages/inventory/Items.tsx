@@ -30,6 +30,7 @@ import { QRCodeSVG } from "qrcode.react";
 import BulkLabelDialog from "@/components/BulkLabelDialog";
 import ScanToImageDialog from "@/components/ScanToImageDialog";
 import type { ItemDocument, ItemSupplier, BundleComponent, ItemVariant, ItemBranchStockRow } from "@/lib/inventoryApi";
+import { BundleAssemblyDialog } from "./BundleAssemblyDialog";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -2333,6 +2334,7 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
     queryFn: () => inventoryApi.getItems(),
   });
   const linkedChildIds = new Set(components.map(c => c.childItemId));
+  const parentItem = (allItems as any[]).find((it: any) => Number(it.id) === Number(itemId));
   const availableChildren = (allItems as any[]).filter((it: any) =>
     it.id !== itemId && !linkedChildIds.has(it.id) && !it.isBundle
   );
@@ -2414,6 +2416,14 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
               </p>
             )}
           </div>
+          {data?.isBundle && components.length > 0 && parentItem && (
+            <BundleAssemblyDialog
+              item={parentItem}
+              components={components}
+              allItems={allItems as any[]}
+              isArabic={isAr}
+            />
+          )}
           <Button
             size="sm"
             variant="outline"
