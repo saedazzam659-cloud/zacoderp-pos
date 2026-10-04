@@ -196,6 +196,9 @@ async function capture(fixture: Fixture, targetUrl: string): Promise<void> {
     const page = await context.newPage();
     page.setDefaultTimeout(timeout);
     page.setDefaultNavigationTimeout(timeout);
+    await page.addInitScript({
+      content: "globalThis.__name = globalThis.__name ?? ((target, name) => { Object.defineProperty(target, 'name', { value: name, configurable: true }); return target; });",
+    });
     await page.goto("/login", { waitUntil: "domcontentloaded" });
     const login = await page.evaluate(async (credentials) => {
       const response = await fetch("/api/auth/login", {
