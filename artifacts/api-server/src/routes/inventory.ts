@@ -1,7 +1,12 @@
 import { Router } from "express";
+import { AddBundleComponentsBulkBody } from "@workspace/api-zod";
 import { requireItemUnit } from "../lib/requiredItemUnit.js";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
+import {
+  BundleComponentQuantityError,
+  normalizeBundleComponentQuantity,
+} from "../lib/bundleComponents.js";
 import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import {
   BUNDLE_ASSEMBLY_REASON,
@@ -4373,6 +4378,171 @@ router.post("/items/:id/bundle/components", async (req, res) => {
 
   auditSubEntity(req, "item_bundle_components", row.id, "create", null, row);
   res.status(201).json(row);
+});
+
+router.post("/items/:id/bundle/components/bulk", async (req, res): Promise<void> => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    res.status(400).json({ error: "معرّف الصنف المركّب غير صالح" });
+    return;
+  }
+
+  const parsed = AddBundleComponentsBulkBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const requested = parsed.data.components;
+  const childIds = requested.map(component => component.childItemId);
+  if (childIds.includes(id)) {
+    res.status(400).json({ error: "لا يمكن إضافة الصنف كمكوّن لنفسه" });
+    return;
+  }
+  if (new Set(childIds).size !== childIds.length) {
+    res.status(400).json({ error: "لا يمكن تكرار الصنف نفسه في أكثر من سطر" });
+    return;
+  }
+
+  const routeError = (status: number, message: string) => Object.assign(new Error(message), { status });
+  let inserted: any[];
+  try {
+    inserted = await db.transaction(async tx => {
+      // Serialize edits for the parent, then lock child unit graphs in a
+      // stable order so the chosen conversion factors cannot change mid-save.
+      await tx.execute(sql`SELECT id FROM ${itemsTable}
+        WHERE id = ${id} AND company_id = ${cid} FOR UPDATE`);
+      for (const childId of [...childIds].sort((a, b) => a - b)) {
+        await lockItemUnitGraph(tx, cid, childId);
+      }
+
+      const [parent] = await tx.select({
+        id: itemsTable.id,
+        parentItemId: itemsTable.parentItemId,
+      }).from(itemsTable)
+        .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+      if (!parent) throw routeError(404, "الصنف المركّب غير موجود");
+      if (parent.parentItemId) {
+        throw routeError(400, "لا يمكن تحويل المتغيّر إلى صنف مركّب");
+      }
+
+      const childRows = await tx.select({
+        id: itemsTable.id,
+        unitId: itemsTable.unitId,
+        isBundle: itemsTable.isBundle,
+        parentItemId: itemsTable.parentItemId,
+      }).from(itemsTable)
+        .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, childIds)));
+      if (childRows.length !== childIds.length) {
+        throw routeError(404, "أحد الأصناف الفرعية غير موجود");
+      }
+      const childById = new Map(childRows.map(child => [child.id, child]));
+      for (const child of childRows) {
+        if (child.parentItemId) {
+          throw routeError(400, "لا يمكن استخدام متغيّر كمكوّن داخل صنف مركّب");
+        }
+        if (child.isBundle) {
+          throw routeError(400, "لا يمكن استخدام صنف مركّب كمكوّن داخل صنف مركّب آخر");
+        }
+      }
+
+      const requestedUnitIds = [...new Set(
+        requested
+          .map(component => component.unitId)
+          .filter((unitId): unitId is number => unitId !== null),
+      )];
+      const unitRows = requestedUnitIds.length
+        ? await tx.select({
+            itemId: itemUnitPricesTable.itemId,
+            unitId: itemUnitPricesTable.unitId,
+            conversionFactor: itemUnitPricesTable.conversionFactor,
+            isActive: itemUnitPricesTable.isActive,
+            legacyConversionConflict: itemUnitPricesTable.legacyConversionConflict,
+          }).from(itemUnitPricesTable)
+            .where(and(
+              eq(itemUnitPricesTable.companyId, cid),
+              inArray(itemUnitPricesTable.itemId, childIds),
+              inArray(itemUnitPricesTable.unitId, requestedUnitIds),
+            ))
+        : [];
+      const unitByPair = new Map(unitRows.map(unit => [`${unit.itemId}:${unit.unitId}`, unit]));
+
+      const values = requested.map(component => {
+        const child = childById.get(component.childItemId)!;
+        const unitRow = component.unitId === null
+          ? undefined
+          : unitByPair.get(`${component.childItemId}:${component.unitId}`);
+        if (component.unitId !== null &&
+            component.unitId !== child.unitId &&
+            (!unitRow || !unitRow.isActive || unitRow.legacyConversionConflict)) {
+          throw routeError(400, "وحدة القياس غير مرتبطة بهذا الصنف أو غير صالحة");
+        }
+
+        const unitFactors = new Map<number, string>();
+        if (unitRow && component.unitId !== child.unitId) {
+          unitFactors.set(unitRow.unitId, unitRow.conversionFactor);
+        }
+        let qty: string;
+        try {
+          qty = normalizeBundleComponentQuantity({
+            qty: component.qty,
+            unitId: component.unitId,
+            baseUnitId: child.unitId ?? null,
+            unitFactors,
+          });
+        } catch (error) {
+          if (error instanceof BundleComponentQuantityError) {
+            throw routeError(400, error.message);
+          }
+          throw error;
+        }
+
+        return {
+          companyId: cid,
+          parentItemId: id,
+          childItemId: component.childItemId,
+          qty,
+          notes: component.notes ? component.notes.slice(0, 1000) : null,
+        };
+      });
+
+      const existing = await tx.select({ childItemId: itemBundleComponentsTable.childItemId })
+        .from(itemBundleComponentsTable)
+        .where(and(
+          eq(itemBundleComponentsTable.companyId, cid),
+          eq(itemBundleComponentsTable.parentItemId, id),
+          inArray(itemBundleComponentsTable.childItemId, childIds),
+        ));
+      if (existing.length) {
+        throw routeError(409, "أحد هذه المكوّنات مضاف بالفعل للصنف المركّب");
+      }
+
+      const rows = await tx.insert(itemBundleComponentsTable).values(values).returning();
+      await tx.update(itemsTable)
+        .set({ isBundle: true, updatedAt: new Date() })
+        .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+      return rows;
+    });
+  } catch (error: any) {
+    if (error?.status) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
+    if (error?.code === "23505") {
+      res.status(409).json({ error: "أحد هذه المكوّنات مضاف بالفعل للصنف المركّب" });
+      return;
+    }
+    if (error?.code === "22003") {
+      res.status(400).json({ error: "الكمية بعد التحويل أكبر من الحد المسموح به" });
+      return;
+    }
+    throw error;
+  }
+
+  for (const row of inserted) {
+    auditSubEntity(req, "item_bundle_components", row.id, "create", null, row);
+  }
+  res.status(201).json(inserted);
 });
 
 router.put("/items/:id/bundle/components/:linkId", async (req, res) => {

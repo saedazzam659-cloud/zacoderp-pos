@@ -345,6 +345,41 @@ export const ListManufacturingInternalDeliveriesResponse = zod.array(
 );
 
 /**
+ * @summary Add multiple bundle components atomically
+ */
+
+export const AddBundleComponentsBulkParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const addBundleComponentsBulkBodyComponentsItemQtyMax = 64;
+
+export const addBundleComponentsBulkBodyComponentsItemNotesMax = 1000;
+
+export const addBundleComponentsBulkBodyComponentsMax = 100;
+
+export const AddBundleComponentsBulkBody = zod.object({
+  components: zod
+    .array(
+      zod.object({
+        childItemId: zod.number().min(1),
+        qty: zod
+          .string()
+          .min(1)
+          .max(addBundleComponentsBulkBodyComponentsItemQtyMax)
+          .describe("Positive quantity expressed in the selected item unit"),
+        unitId: zod.number().min(1).nullable(),
+        notes: zod
+          .string()
+          .max(addBundleComponentsBulkBodyComponentsItemNotesMax)
+          .nullish(),
+      }),
+    )
+    .min(1)
+    .max(addBundleComponentsBulkBodyComponentsMax),
+});
+
+/**
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({

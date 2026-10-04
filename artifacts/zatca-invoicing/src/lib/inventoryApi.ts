@@ -175,6 +175,12 @@ export interface BundleComponent {
   childCostPrice?: string | null;
   childIsBundle?: boolean | null;
 }
+export interface BundleComponentInput {
+  childItemId: number;
+  qty: string;
+  unitId: number | null;
+  notes?: string | null;
+}
 export interface BundleResponse {
   isBundle: boolean;
   components: BundleComponent[];
@@ -200,6 +206,8 @@ export const inventoryApi = {
   // PRO Extension #2 — Bundle Components
   getBundleComponents:    (itemId: number)             => get<BundleResponse>(`/items/${itemId}/bundle/components`),
   addBundleComponent:     (itemId: number, data: any)  => post<BundleComponent>(`/items/${itemId}/bundle/components`, data),
+  addBundleComponentsBulk: (itemId: number, components: BundleComponentInput[]) =>
+    post<BundleComponent[]>(`/items/${itemId}/bundle/components/bulk`, { components }),
   updateBundleComponent:  (itemId: number, linkId: number, data: any) => put<BundleComponent>(`/items/${itemId}/bundle/components/${linkId}`, data),
   deleteBundleComponent:  (itemId: number, linkId: number) => del(`/items/${itemId}/bundle/components/${linkId}`),
   // PRO Extension #20 — Item Variants

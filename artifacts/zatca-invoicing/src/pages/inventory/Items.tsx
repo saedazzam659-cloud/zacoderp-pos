@@ -1,5 +1,5 @@
 import { useState, Fragment, useEffect, useMemo, useRef } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocation } from "wouter";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -2240,7 +2240,10 @@ export default function Items() {
                           )}
 
                           {expandedTab === "bundle" && (
-                            <ItemBundleComponentsPanel itemId={it.id} />
+                            <ItemBundleComponentsPanel
+                              itemId={it.id}
+                              parentUnitCode={it.unit?.code ?? it.unitCode ?? null}
+                            />
                           )}
 
                           {expandedTab === "variants" && (
@@ -2313,10 +2316,26 @@ export default function Items() {
 // optional notes. The backend auto-flips `items.is_bundle` to true when the
 // first child is added and back to false when the last is removed, so the
 // user doesn't have to touch the checkbox separately.
-function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
+type BundleComponentDraftRow = {
+  key: number;
+  childItemId: string;
+  unitId: string;
+  qty: string;
+  notes: string;
+};
+
+function ItemBundleComponentsPanel({
+  itemId,
+  parentUnitCode,
+}: {
+  itemId: number;
+  parentUnitCode?: string | null;
+}) {
   const { t, i18n } = useTranslation();
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { user, actingCompanyId } = useAuth();
+  const companyId = actingCompanyId ?? user?.company?.id;
   const isAr = i18n.language?.startsWith("ar");
 
   const { data, isLoading, isError } = useQuery({
@@ -2328,20 +2347,37 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
 
   // Pull the full items list (already cached by the page) to populate the
   // child dropdown. Filter out: this item itself, items already added as
-  // components, and other bundles (no nested bundles in this batch).
+  // components, variants, and other bundles (no nested recipes in this batch).
   const { data: allItems = [] } = useQuery({
     queryKey: ["items"],
     queryFn: () => inventoryApi.getItems(),
   });
-  const linkedChildIds = new Set(components.map(c => c.childItemId));
+  const linkedChildIds = new Set(components.map(c => Number(c.childItemId)));
   const parentItem = (allItems as any[]).find((it: any) => Number(it.id) === Number(itemId));
   const availableChildren = (allItems as any[]).filter((it: any) =>
-    it.id !== itemId && !linkedChildIds.has(it.id) && !it.isBundle
+    Number(it.id) !== Number(itemId) &&
+    !linkedChildIds.has(Number(it.id)) &&
+    !it.isBundle &&
+    !it.parentItemId
   );
 
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ childItemId: "", qty: "1", notes: "" });
-  const resetForm = () => setForm({ childItemId: "", qty: "1", notes: "" });
+  const [draftRows, setDraftRows] = useState<BundleComponentDraftRow[]>([]);
+  const nextDraftKey = useRef(0);
+  const newDraftRow = (): BundleComponentDraftRow => ({
+    key: ++nextDraftKey.current,
+    childItemId: "",
+    unitId: "",
+    qty: "1",
+    notes: "",
+  });
+  const startAdding = () => {
+    setDraftRows([newDraftRow()]);
+    setShowForm(true);
+  };
+  const updateDraftRow = (key: number, patch: Partial<BundleComponentDraftRow>) => {
+    setDraftRows(previous => previous.map(row => row.key === key ? { ...row, ...patch } : row));
+  };
 
   const inv = () => {
     qc.invalidateQueries({ queryKey: ["item-bundle", itemId] });
@@ -2349,15 +2385,16 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
     qc.invalidateQueries({ queryKey: ["items"] });
   };
 
-  const addMut = useMutation({
-    mutationFn: () => inventoryApi.addBundleComponent(itemId, {
-      childItemId: Number(form.childItemId),
-      qty: form.qty,
-      notes: form.notes || null,
-    }),
+  const addBulkMut = useMutation({
+    mutationFn: () => inventoryApi.addBundleComponentsBulk(itemId, draftRows.map(row => ({
+      childItemId: Number(row.childItemId),
+      qty: row.qty,
+      unitId: row.unitId ? Number(row.unitId) : null,
+      notes: row.notes.trim() || null,
+    }))),
     onSuccess: () => {
-      inv(); resetForm(); setShowForm(false);
-      toast({ title: t("pages.items.bundle.added") });
+      inv(); setDraftRows([]); setShowForm(false);
+      toast({ title: t("pages.items.bundle.savedAll") });
     },
     onError: (e: any) => toast({
       title: t("pages.items.bundle.addFailed"),
@@ -2365,6 +2402,68 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
       variant: "destructive",
     }),
   });
+
+  const unitQueries = useQueries({
+    queries: draftRows.map(row => ({
+      queryKey: ["item-units", row.childItemId, companyId],
+      queryFn: () => inventoryApi.getItemUnits(Number(row.childItemId)),
+      enabled: Boolean(row.childItemId),
+      staleTime: 60_000,
+    })),
+  });
+
+  const draftUnitOptions = draftRows.map((row, index) => {
+    if (!row.childItemId) return [];
+    const child = (allItems as any[]).find((it: any) => Number(it.id) === Number(row.childItemId));
+    if (!child?.unitId) return [];
+    const available = ((unitQueries[index]?.data ?? []) as any[])
+      .filter((unit: any) =>
+        unit.isActive !== false &&
+        !unit.legacyConversionConflict &&
+        Number.isFinite(Number(unit.conversionFactor)) &&
+        Number(unit.conversionFactor) > 0
+      )
+      .map((unit: any) => {
+        const isBase = Number(unit.unitId) === Number(child.unitId) || Boolean(unit.isBase);
+        return {
+          unitId: Number(unit.unitId),
+          factor: isBase ? "1" : String(unit.conversionFactor),
+          isBase,
+          code: unit.unit?.code ?? unit.code ?? "",
+          nameAr: unit.unit?.nameAr ?? unit.nameAr ?? "",
+          nameEn: unit.unit?.nameEn ?? unit.nameEn ?? "",
+        };
+      });
+    if (!available.some((unit: any) => unit.unitId === Number(child.unitId))) {
+      available.push({
+        unitId: Number(child.unitId),
+        factor: "1",
+        isBase: true,
+        code: child.unit?.code ?? child.unitCode ?? "",
+        nameAr: child.unit?.nameAr ?? "",
+        nameEn: child.unit?.nameEn ?? "",
+      });
+    }
+    return available.sort((a: any, b: any) => Number(b.isBase) - Number(a.isBase));
+  });
+
+  const hasDraftDuplicate = new Set(
+    draftRows.filter(row => row.childItemId).map(row => row.childItemId),
+  ).size !== draftRows.filter(row => row.childItemId).length;
+  const canSaveDrafts = !addBulkMut.isPending &&
+    draftRows.length > 0 &&
+    !hasDraftDuplicate &&
+    draftRows.every((row, index) => {
+      const child = (allItems as any[]).find((it: any) => Number(it.id) === Number(row.childItemId));
+      const unitQuery = unitQueries[index];
+      const qty = Number(row.qty);
+      const hasUnit = !child?.unitId ||
+        draftUnitOptions[index]?.some((unit: any) => unit.unitId === Number(row.unitId));
+      return Boolean(child) &&
+        Number.isFinite(qty) && qty > 0 &&
+        !unitQuery?.isLoading && !unitQuery?.isError &&
+        hasUnit;
+    });
 
   const updateMut = useMutation({
     mutationFn: ({ linkId, qty }: { linkId: number; qty: string }) =>
@@ -2428,7 +2527,7 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
             size="sm"
             variant="outline"
             className="gap-1.5 shrink-0"
-            onClick={() => setShowForm(true)}
+            onClick={startAdding}
             disabled={availableChildren.length === 0}
             title={availableChildren.length === 0 ? t("pages.items.bundle.noMoreToAdd") : ""}
           >
@@ -2439,56 +2538,176 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
       )}
 
       {showForm && (
-        <div className="p-3 rounded-lg border bg-background/50 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="sm:col-span-2">
-              <label className="text-xs font-medium block mb-1">{t("pages.items.bundle.childItem")} *</label>
-              <select
-                value={form.childItemId}
-                onChange={(e) => setForm(f => ({ ...f, childItemId: e.target.value }))}
-                className="w-full h-9 rounded-md border bg-background px-2 text-sm"
-              >
-                <option value="">— {t("pages.items.bundle.chooseChild")} —</option>
-                {availableChildren.map((c: any) => (
-                  <option key={c.id} value={c.id}>
-                    {(isAr ? c.nameAr : (c.nameEn || c.nameAr))} {c.code ? `(${c.code})` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium block mb-1">{t("pages.items.bundle.qty")} *</label>
-              <Input
-                type="number"
-                step="0.0001"
-                min="0.0001"
-                value={form.qty}
-                onChange={(e) => setForm(f => ({ ...f, qty: e.target.value }))}
-                className="h-9"
-              />
-            </div>
-          </div>
+        <div className="rounded-lg border bg-background/50 p-3 space-y-3">
           <div>
-            <label className="text-xs font-medium block mb-1">{t("pages.items.bundle.notes")}</label>
-            <Input
-              value={form.notes}
-              onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
-              className="h-9"
-            />
+            <p className="text-sm font-semibold">{t("pages.items.bundle.perParentUnit")}</p>
+            <p className="text-xs text-muted-foreground">
+              {parentUnitCode ? `1 ${parentUnitCode}` : t("pages.items.bundle.perParentUnit")}
+            </p>
           </div>
-          <div className="flex gap-2 justify-end">
-            <Button size="sm" variant="ghost" onClick={() => { resetForm(); setShowForm(false); }}>
-              {t("common.cancel", { defaultValue: "إلغاء" })}
-            </Button>
+          <div className="space-y-3">
+            {draftRows.map((row, index) => {
+              const child = (allItems as any[]).find((it: any) => Number(it.id) === Number(row.childItemId));
+              const chosenByOtherRows = new Set(
+                draftRows
+                  .filter(candidate => candidate.key !== row.key && candidate.childItemId)
+                  .map(candidate => Number(candidate.childItemId)),
+              );
+              const rowChildren = availableChildren.filter((candidate: any) =>
+                Number(candidate.id) === Number(row.childItemId) ||
+                !chosenByOtherRows.has(Number(candidate.id)),
+              );
+              const options = draftUnitOptions[index] ?? [];
+              const unitQuery = unitQueries[index];
+
+              return (
+                <div key={row.key} className="rounded-md border bg-background p-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+                    <div className="sm:col-span-5">
+                      <Label className="mb-1 block text-xs">{t("pages.items.bundle.childItem")} *</Label>
+                      <select
+                        value={row.childItemId}
+                        onChange={event => {
+                          const selected = (allItems as any[]).find(
+                            (candidate: any) => String(candidate.id) === event.target.value,
+                          );
+                          updateDraftRow(row.key, {
+                            childItemId: event.target.value,
+                            unitId: selected?.unitId ? String(selected.unitId) : "",
+                            qty: "1",
+                          });
+                        }}
+                        className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                        disabled={addBulkMut.isPending}
+                      >
+                        <option value="">— {t("pages.items.bundle.chooseChild")} —</option>
+                        {rowChildren.map((candidate: any) => (
+                          <option key={candidate.id} value={candidate.id}>
+                            {(isAr ? candidate.nameAr : (candidate.nameEn || candidate.nameAr))}
+                            {candidate.code ? ` (${candidate.code})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Label className="mb-1 block text-xs">{t("pages.items.bundle.qty")} *</Label>
+                      <Input
+                        type="number"
+                        step="0.0001"
+                        min="0.0001"
+                        value={row.qty}
+                        onChange={event => updateDraftRow(row.key, { qty: event.target.value })}
+                        className="h-9"
+                        disabled={addBulkMut.isPending}
+                      />
+                    </div>
+                    <div className="sm:col-span-4">
+                      <Label className="mb-1 block text-xs">{t("pages.items.bundle.unit")} *</Label>
+                      <select
+                        value={row.unitId}
+                        onChange={event => updateDraftRow(row.key, { unitId: event.target.value })}
+                        className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                        disabled={!child || !child.unitId || unitQuery?.isLoading || unitQuery?.isError || addBulkMut.isPending}
+                      >
+                        {!child?.unitId ? (
+                          <option value="">{t("pages.items.bundle.unitNotConfigured")}</option>
+                        ) : unitQuery?.isLoading ? (
+                          <option value="">{t("common.loading", { defaultValue: "جارٍ التحميل..." })}</option>
+                        ) : options.length === 0 ? (
+                          <option value="">{t("pages.items.bundle.unitNotConfigured")}</option>
+                        ) : (
+                          options.map((unit: any) => {
+                            const unitName = isAr
+                              ? (unit.nameAr || unit.nameEn || unit.code)
+                              : (unit.nameEn || unit.nameAr || unit.code);
+                            return (
+                              <option key={unit.unitId} value={unit.unitId}>
+                                {unitName || unit.code || `#${unit.unitId}`}
+                                {unit.isBase
+                                  ? ` — ${t("pages.items.bundle.baseUnit")}`
+                                  : ` (×${trimTrailingZeros(unit.factor)})`}
+                              </option>
+                            );
+                          })
+                        )}
+                      </select>
+                      {unitQuery?.isError && (
+                        <p className="mt-1 text-xs text-destructive">{t("pages.items.bundle.unitLoadError")}</p>
+                      )}
+                    </div>
+                    <div className="flex items-end justify-end sm:col-span-1">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-9 w-9 text-destructive"
+                        aria-label={t("pages.items.bundle.removeLine")}
+                        title={t("pages.items.bundle.removeLine")}
+                        onClick={() => setDraftRows(previous => previous.filter(candidate => candidate.key !== row.key))}
+                        disabled={addBulkMut.isPending}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="sm:col-span-11">
+                      <Label className="mb-1 block text-xs">{t("pages.items.bundle.notes")}</Label>
+                      <Input
+                        value={row.notes}
+                        onChange={event => updateDraftRow(row.key, { notes: event.target.value })}
+                        className="h-9"
+                        disabled={addBulkMut.isPending}
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {hasDraftDuplicate && (
+            <p className="text-xs text-destructive">{t("pages.items.bundle.duplicateChild")}</p>
+          )}
+          {draftRows.length > 0 && !canSaveDrafts && !hasDraftDuplicate && (
+            <p className="text-xs text-muted-foreground">{t("pages.items.bundle.invalidRows")}</p>
+          )}
+          <div className="flex flex-wrap justify-between gap-2">
             <Button
+              type="button"
               size="sm"
-              disabled={!form.childItemId || !form.qty || addMut.isPending}
-              onClick={() => addMut.mutate()}
+              variant="outline"
               className="gap-1.5"
+              onClick={() => setDraftRows(previous => [...previous, newDraftRow()])}
+              disabled={
+                addBulkMut.isPending ||
+                draftRows.length >= 100 ||
+                availableChildren.length <= new Set(draftRows.filter(row => row.childItemId).map(row => row.childItemId)).size
+              }
             >
-              {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              {t("pages.items.bundle.save")}
+              <Plus className="h-3.5 w-3.5" />
+              {t("pages.items.bundle.addLine")}
             </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => { setDraftRows([]); setShowForm(false); }}
+                disabled={addBulkMut.isPending}
+              >
+                {t("common.cancel", { defaultValue: "إلغاء" })}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!canSaveDrafts}
+                onClick={() => addBulkMut.mutate()}
+                className="gap-1.5"
+              >
+                {addBulkMut.isPending
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <Save className="h-3.5 w-3.5" />}
+                {t("pages.items.bundle.saveAll")}
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -2514,6 +2733,7 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
             <tbody className="divide-y">
               {components.map((c) => {
                 const subTotal = (Number(c.childCostPrice) || 0) * (Number(c.qty) || 0);
+                const child = (allItems as any[]).find((it: any) => Number(it.id) === Number(c.childItemId));
                 return (
                   <tr key={c.id} className="hover:bg-muted/30">
                     <td className="px-3 py-2 font-medium">
@@ -2521,19 +2741,24 @@ function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
                     </td>
                     <td className="px-3 py-2 hidden sm:table-cell font-mono text-[11px] text-muted-foreground">{c.childCode ?? "—"}</td>
                     <td className="px-3 py-2">
-                      <Input
-                        type="number"
-                        step="0.0001"
-                        min="0.0001"
-                        defaultValue={trimTrailingZeros(c.qty)}
-                        onBlur={(e) => {
-                          const v = e.target.value;
-                          if (v && Number(v) > 0 && v !== trimTrailingZeros(c.qty)) {
-                            updateMut.mutate({ linkId: c.id, qty: v });
-                          }
-                        }}
-                        className="h-7 text-xs w-24"
-                      />
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          type="number"
+                          step="0.0001"
+                          min="0.0001"
+                          defaultValue={trimTrailingZeros(c.qty)}
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (v && Number(v) > 0 && v !== trimTrailingZeros(c.qty)) {
+                              updateMut.mutate({ linkId: c.id, qty: v });
+                            }
+                          }}
+                          className="h-7 text-xs w-24"
+                        />
+                        <span className="whitespace-nowrap text-muted-foreground">
+                          {child?.unit?.code ?? child?.unitCode ?? ""}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
                       {c.childCostPrice ? trimTrailingZeros(c.childCostPrice) : "—"}

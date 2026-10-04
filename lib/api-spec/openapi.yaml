@@ -183,6 +183,35 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ManufacturingDeliveryEvidence"
+  /items/{id}/bundle/components/bulk:
+    post:
+      operationId: addBundleComponentsBulk
+      tags: [inventory]
+      summary: Add multiple bundle components atomically
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BundleComponentsInput"
+      responses:
+        "201":
+          description: All requested components were added
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BundleComponentRecord"
+        "400": { description: "Invalid component, quantity, or unit" }
+        "403": { description: Not authorized to edit items }
+        "404": { description: Parent or child item not found }
+        "409": { description: A component already exists on this bundle }
   /healthz:
     get:
       operationId: healthCheck
@@ -1825,6 +1854,38 @@ paths:
 
 components:
   schemas:
+    BundleComponentInput:
+      type: object
+      required: [childItemId, qty, unitId]
+      properties:
+        childItemId: { type: integer, minimum: 1 }
+        qty:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Positive quantity expressed in the selected item unit
+        unitId: { type: ["integer", "null"], minimum: 1 }
+        notes: { type: ["string", "null"], maxLength: 1000 }
+    BundleComponentsInput:
+      type: object
+      required: [components]
+      properties:
+        components:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/BundleComponentInput"
+    BundleComponentRecord:
+      type: object
+      required: [id, parentItemId, childItemId, qty, notes, createdAt]
+      properties:
+        id: { type: integer }
+        parentItemId: { type: integer }
+        childItemId: { type: integer }
+        qty: { type: string }
+        notes: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
     HistoricalOwnerBoqPriceSource:
       type: object
       required: [unitPrice, contractNumber, contractDate, projectCode, projectName, contractType]

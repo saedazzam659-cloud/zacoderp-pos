@@ -20,6 +20,8 @@ import type {
   AdditionalAccountingReport,
   AdditionalPurchaseReport,
   AdditionalSalesReport,
+  BundleComponentRecord,
+  BundleComponentsInput,
   Company,
   ContractingContractorOption,
   ContractingGuaranteeOptions,
@@ -909,6 +911,97 @@ export function useListManufacturingInternalDeliveries<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Add multiple bundle components atomically
+ */
+export const getAddBundleComponentsBulkUrl = (id: number) => {
+  return `/api/items/${id}/bundle/components/bulk`;
+};
+
+export const addBundleComponentsBulk = async (
+  id: number,
+  bundleComponentsInput: BundleComponentsInput,
+  options?: RequestInit,
+): Promise<BundleComponentRecord[]> => {
+  return customFetch<BundleComponentRecord[]>(
+    getAddBundleComponentsBulkUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(bundleComponentsInput),
+    },
+  );
+};
+
+export const getAddBundleComponentsBulkMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addBundleComponentsBulk>>,
+    TError,
+    { id: number; data: BodyType<BundleComponentsInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addBundleComponentsBulk>>,
+  TError,
+  { id: number; data: BodyType<BundleComponentsInput> },
+  TContext
+> => {
+  const mutationKey = ["addBundleComponentsBulk"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addBundleComponentsBulk>>,
+    { id: number; data: BodyType<BundleComponentsInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addBundleComponentsBulk(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddBundleComponentsBulkMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addBundleComponentsBulk>>
+>;
+export type AddBundleComponentsBulkMutationBody =
+  BodyType<BundleComponentsInput>;
+export type AddBundleComponentsBulkMutationError = ErrorType<void>;
+
+/**
+ * @summary Add multiple bundle components atomically
+ */
+export const useAddBundleComponentsBulk = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addBundleComponentsBulk>>,
+    TError,
+    { id: number; data: BodyType<BundleComponentsInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addBundleComponentsBulk>>,
+  TError,
+  { id: number; data: BodyType<BundleComponentsInput> },
+  TContext
+> => {
+  return useMutation(getAddBundleComponentsBulkMutationOptions(options));
+};
 
 /**
  * @summary Health check

@@ -5,6 +5,45 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export interface BundleComponentInput {
+  /** @minimum 1 */
+  childItemId: number;
+  /**
+   * Positive quantity expressed in the selected item unit
+   * @minLength 1
+   * @maxLength 64
+   */
+  qty: string;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  unitId: number | null;
+  /**
+   * @maxLength 1000
+   * @nullable
+   */
+  notes?: string | null;
+}
+
+export interface BundleComponentsInput {
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  components: BundleComponentInput[];
+}
+
+export interface BundleComponentRecord {
+  id: number;
+  parentItemId: number;
+  childItemId: number;
+  qty: string;
+  /** @nullable */
+  notes: string | null;
+  createdAt: string;
+}
+
 export interface HistoricalOwnerBoqPriceSource {
   unitPrice: number;
   /** @nullable */
