@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>Graphic Art — Zacode UI concepts</title>
+  <style>
+    @font-face {
+      font-family: Cairo;
+      src: url("offer-assets/fonts/Cairo-VF.ttf") format("truetype");
+      font-weight: 200 900;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 1440px;
+      height: 900px;
+      overflow: hidden;
+      color: #172a35;
+      background: #eef3f4;
+      font: 16px/1.55 Cairo, sans-serif;
+    }
+    .screen { display: none; width: 1440px; height: 900px; }
+    .screen.active { display: block; }
+    .topbar {
+      height: 72px;
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #19353b;
+      background: #fff;
+      border-bottom: 1px solid #dce6e7;
+    }
+    .brand { display: flex; align-items: center; gap: 13px; font-size: 22px; font-weight: 900; }
+    .brand img { width: 39px; height: 39px; border-radius: 10px; }
+    .top-actions { display: flex; align-items: center; gap: 15px; color: #62747d; font-size: 14px; }
+    .avatar { width: 35px; height: 35px; border-radius: 50%; background: #dbf3ea; color: #087b60; display: grid; place-items: center; font-weight: 900; }
+    .workspace { display: flex; height: 828px; }
+    .sidebar {
+      width: 246px;
+      padding: 24px 15px;
+      color: #d9e8e3;
+      background: #112b33;
+    }
+    .side-title { padding: 0 12px 16px; color: #7fcdb0; font-size: 12px; font-weight: 900; }
+    .nav { display: flex; flex-direction: column; gap: 7px; }
+    .nav-item { padding: 11px 13px; border-radius: 9px; color: #ccdad7; font-size: 14px; }
+    .nav-item.active { color: #fff; background: #087e62; font-weight: 800; }
+    .side-note { margin-top: 245px; padding: 13px; border-radius: 11px; background: rgba(255,255,255,.07); color: #b6c9c4; font-size: 12px; }
+    .side-note b { display: block; margin-bottom: 4px; color: #f0ce75; }
+    .main { flex: 1; padding: 24px 28px; overflow: hidden; }
+    .heading-row { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 17px; }
+    h1 { margin: 0; color: #16303a; font-size: 26px; line-height: 1.35; }
+    .subhead { margin-top: 4px; color: #7c8d95; font-size: 13px; }
+    .date-chip, .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 12px;
+      border: 1px solid #dce7e8;
+      border-radius: 9px;
+      color: #60747d;
+      background: #fff;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .demo-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding: 9px 13px;
+      border: 1px solid #f0dfa9;
+      border-radius: 9px;
+      color: #735d1b;
+      background: #fff9e7;
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin-bottom: 16px; }
+    .metric, .panel {
+      border: 1px solid #e0e8e9;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 3px 9px rgba(18,48,56,.035);
+    }
+    .metric { min-height: 105px; padding: 14px 16px; }
+    .metric-label { color: #74858c; font-size: 12px; }
+    .metric-value { margin-top: 5px; color: #142f37; font-size: 25px; font-weight: 900; }
+    .metric-note { margin-top: 2px; color: #078466; font-size: 11px; }
+    .content-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 13px; }
+    .panel { padding: 16px 18px; }
+    .panel-title { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: #17333c; font-size: 15px; font-weight: 900; }
+    .panel-title small { color: #819198; font-size: 11px; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; }
+    th { padding: 9px 7px; border-bottom: 1px solid #e9eeee; color: #819198; font-size: 11px; font-weight: 700; text-align: right; }
+    td { padding: 10px 7px; border-bottom: 1px solid #eff2f2; color: #41565e; font-size: 12px; vertical-align: middle; }
+    tr:last-child td { border-bottom: 0; }
+    .pill { display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 10px; font-weight: 800; }
+    .pill.green { color: #067451; background: #e6f7ef; }
+    .pill.gold { color: #936e08; background: #fff5d3; }
+    .pill.blue { color: #356e91; background: #e8f4fa; }
+    .bar-list { display: flex; flex-direction: column; gap: 15px; }
+    .bar-item { display: grid; grid-template-columns: 116px 1fr 35px; align-items: center; gap: 10px; color: #60727a; font-size: 11px; }
+    .bar-track { height: 10px; border-radius: 10px; background: #edf2f2; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 10px; background: linear-gradient(90deg,#0a8e6d,#55c49e); }
+    .bar-fill.gold { background: linear-gradient(90deg,#d5a82e,#f1cf71); }
+    .activity { display: flex; flex-direction: column; gap: 13px; }
+    .activity-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid #eef2f2; }
+    .activity-row:last-child { border: 0; padding: 0; }
+    .activity-name { color: #334a53; font-size: 12px; font-weight: 750; }
+    .activity-meta { margin-top: 2px; color: #89979c; font-size: 10px; }
+    .button {
+      border: 0;
+      border-radius: 8px;
+      padding: 9px 14px;
+      color: #fff;
+      background: #087e62;
+      font: 700 12px Cairo, sans-serif;
+    }
+    .customer-grid { display: grid; grid-template-columns: 1.35fr .78fr; gap: 14px; }
+    .quote-meta { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 12px; }
+    .meta-box { padding: 10px 12px; border: 1px solid #e8eeee; border-radius: 9px; background: #fafcfc; }
+    .meta-label { color: #85949a; font-size: 10px; }
+    .meta-value { margin-top: 3px; color: #29434c; font-size: 12px; font-weight: 800; }
+    .quote-table th, .quote-table td { padding: 12px 8px; }
+    .quote-table td { font-size: 11px; }
+    .line-name { color: #29434c; font-weight: 750; }
+    .totals { width: 48%; margin-right: auto; margin-top: 10px; padding: 10px 13px; border-radius: 9px; background: #f5f8f7; }
+    .total-row { display: flex; justify-content: space-between; padding: 4px 0; color: #677981; font-size: 11px; }
+    .total-row.final { border-top: 1px solid #dde6e5; margin-top: 4px; padding-top: 8px; color: #17333c; font-size: 13px; font-weight: 900; }
+    .side-card { margin-bottom: 12px; }
+    .side-card:last-child { margin-bottom: 0; }
+    .side-card p { color: #697d84; font-size: 11px; line-height: 1.9; }
+    .mini-status { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #edf1f1; color: #64777f; font-size: 11px; }
+    .mini-status:last-child { border-bottom: 0; }
+    .inventory-grid { display: grid; grid-template-columns: 1.22fr .9fr; gap: 14px; }
+    .stock-level { display: flex; align-items: center; gap: 8px; }
+    .stock-dot { width: 8px; height: 8px; border-radius: 50%; background: #0a9a70; }
+    .stock-dot.low { background: #e2a82f; }
+    .stock-dot.critical { background: #d76d55; }
+    .job-card { padding: 13px; border: 1px solid #e5eceb; border-radius: 10px; margin-bottom: 10px; }
+    .job-head { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+    .job-name { color: #203b44; font-size: 13px; font-weight: 900; }
+    .job-client { margin-top: 2px; color: #89979c; font-size: 10px; }
+    .job-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #edf1f1; }
+    .job-stat span { display: block; color: #87959a; font-size: 9px; }
+    .job-stat b { color: #3b555c; font-size: 11px; }
+    .progress { height: 7px; margin-top: 10px; border-radius: 7px; background: #edf2f1; overflow: hidden; }
+    .progress i { display: block; height: 100%; border-radius: 7px; background: #09916d; }
+    .stock-summary { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; margin-top: 13px; }
+    .summary-box { padding: 11px; border-radius: 9px; background: #f5f9f7; }
+    .summary-box span { display: block; color: #839298; font-size: 10px; }
+    .summary-box b { display: block; margin-top: 3px; color: #21404a; font-size: 15px; }
+    .screen-caption { margin-top: 13px; color: #7b8b91; font-size: 10px; }
+  </style>
+</head>
+<body>
+  <div id="dashboard" class="screen">
+    <header class="topbar">
+      <div class="brand"><img src="offer-assets/zacode-mark-512.png" alt=""><span>زاكود ERP</span></div>
+      <div class="top-actions"><span>شركة جرافيك آرت للدعاية والإعلان · تصور توضيحي</span><span>مركز المساعدة</span><div class="avatar">م</div></div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="side-title">مساحة العمل</div>
+        <div class="nav">
+          <div class="nav-item active">◈　لوحة الإدارة</div>
+          <div class="nav-item">♙　العملاء</div>
+          <div class="nav-item">▤　عروض الأسعار والمبيعات</div>
+          <div class="nav-item">▧　المشتريات والمخزون</div>
+          <div class="nav-item">▣　المشاريع والتكاليف</div>
+          <div class="nav-item">◉　الحسابات والتحصيل</div>
+          <div class="nav-item">▥　التقارير</div>
+        </div>
+        <div class="side-note"><b>تصور توضيحي</b>قيم وأسماء تدريبية؛ الشاشة ليست لقطة مباشرة من حساب الشركة.</div>
+      </aside>
+      <main class="main">
+        <div class="heading-row">
+          <div><h1>نظرة عامة على التشغيل</h1><div class="subhead">مؤشرات مختصرة لمتابعة العملاء والعروض والأعمال والخامات</div></div>
+          <div class="date-chip">الأحد، 4 أكتوبر 2026</div>
+        </div>
+        <div class="demo-strip"><span>واجهة تصورّية لوكالة دعاية وإعلان — جميع البيانات افتراضية</span><span>التهيئة النهائية حسب نطاق التطبيق</span></div>
+        <div class="metric-grid">
+          <div class="metric"><div class="metric-label">عروض سعر مفتوحة</div><div class="metric-value">08</div><div class="metric-note">بحاجة إلى متابعة</div></div>
+          <div class="metric"><div class="metric-label">أعمال قيد التنفيذ</div><div class="metric-value">12</div><div class="metric-note">عبر مراحل التشغيل</div></div>
+          <div class="metric"><div class="metric-label">فواتير مستحقة</div><div class="metric-value">06</div><div class="metric-note">ضمن دورة التحصيل</div></div>
+          <div class="metric"><div class="metric-label">أصناف منخفضة</div><div class="metric-value">04</div><div class="metric-note" style="color:#aa7b09">تحتاج مراجعة المخزون</div></div>
+        </div>
+        <div class="content-grid">
+          <section class="panel">
+            <div class="panel-title"><span>الأعمال النشطة</span><small>بيانات تجريبية</small></div>
+            <table>
+              <thead><tr><th>العميل / العمل</th><th>القيمة التوضيحية</th><th>التقدم</th><th>الحالة</th></tr></thead>
+              <tbody>
+                <tr><td>حملة افتتاح فرع — مثال</td><td>—</td><td>72%</td><td><span class="pill green">قيد التنفيذ</span></td></tr>
+                <tr><td>مواد ترويج موسمية — مثال</td><td>—</td><td>48%</td><td><span class="pill blue">تجهيز</span></td></tr>
+                <tr><td>لوحة واجهة — مثال</td><td>—</td><td>90%</td><td><span class="pill gold">بانتظار التسليم</span></td></tr>
+              </tbody>
+            </table>
+            <div class="screen-caption">تُعرض البيانات وفق المستندات والوحدات التي تعتمدها المنشأة.</div>
+          </section>
+          <section class="panel">
+            <div class="panel-title"><span>متابعة دورات العمل</span><small>نموذج تجريبي</small></div>
+            <div class="bar-list">
+              <div class="bar-item"><span>عروض الأسعار</span><div class="bar-track"><div class="bar-fill" style="width:73%"></div></div><b>73%</b></div>
+              <div class="bar-item"><span>المشتريات</span><div class="bar-track"><div class="bar-fill gold" style="width:54%"></div></div><b>54%</b></div>
+              <div class="bar-item"><span>التحصيل</span><div class="bar-track"><div class="bar-fill" style="width:61%"></div></div><b>61%</b></div>
+            </div>
+            <div style="height:16px"></div>
+            <div class="panel-title"><span>ملاحظات للمتابعة</span><small>مثال</small></div>
+            <div class="activity">
+              <div class="activity-row"><div><div class="activity-name">عرض سعر يحتاج مراجعة</div><div class="activity-meta">شركة النور — مثال توضيحي</div></div><span class="pill gold">مفتوح</span></div>
+              <div class="activity-row"><div><div class="activity-name">طلب شراء مرتبط بمواد</div><div class="activity-meta">مخزن الخامات — مثال توضيحي</div></div><span class="pill blue">متابعة</span></div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="quote" class="screen">
+    <header class="topbar">
+      <div class="brand"><img src="offer-assets/zacode-mark-512.png" alt=""><span>زاكود ERP</span></div>
+      <div class="top-actions"><span>شركة جرافيك آرت للدعاية والإعلان · تصور توضيحي</span><span>المبيعات</span><div class="avatar">م</div></div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="side-title">المبيعات والعملاء</div>
+        <div class="nav">
+          <div class="nav-item">◈　لوحة الإدارة</div>
+          <div class="nav-item">♙　العملاء</div>
+          <div class="nav-item active">▤　عروض الأسعار</div>
+          <div class="nav-item">▣　فواتير المبيعات</div>
+          <div class="nav-item">↩　المرتجعات</div>
+          <div class="nav-item">◉　التحصيل</div>
+        </div>
+        <div class="side-note"><b>بيانات تدريبية</b>الأسماء والبنود هنا أمثلة فقط، وليست عرضًا فعليًا أو أسعارًا معتمدة.</div>
+      </aside>
+      <main class="main">
+        <div class="heading-row">
+          <div><h1>عرض سعر جديد</h1><div class="subhead">إنشاء العرض ومراجعته ثم ربطه بمستندات البيع ذات الصلة</div></div>
+          <button class="button">حفظ كمسودة</button>
+        </div>
+        <div class="demo-strip"><span>تصور توضيحي — أسماء وبنود وقيم افتراضية غير ملزمة</span><span class="pill gold">مسودة للمراجعة</span></div>
+        <div class="customer-grid">
+          <section class="panel">
+            <div class="panel-title"><span>بيانات العرض</span><small>نموذج واجهة مقترح</small></div>
+            <div class="quote-meta">
+              <div class="meta-box"><div class="meta-label">العميل</div><div class="meta-value">شركة النور للفعاليات — مثال</div></div>
+              <div class="meta-box"><div class="meta-label">رقم العرض</div><div class="meta-value">QT-0000</div></div>
+              <div class="meta-box"><div class="meta-label">العملة</div><div class="meta-value">تحدد عند الإعداد</div></div>
+            </div>
+            <table class="quote-table">
+              <thead><tr><th>البند</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead>
+              <tbody>
+                <tr><td class="line-name">تصميم وتجهيز مواد حملة — مثال</td><td>1</td><td>قيمة توضيحية</td><td>—</td></tr>
+                <tr><td class="line-name">طباعة مواد ترويجية — مثال</td><td>حسب الطلب</td><td>قيمة توضيحية</td><td>—</td></tr>
+                <tr><td class="line-name">توريد وتركيب لوحة — مثال</td><td>1</td><td>قيمة توضيحية</td><td>—</td></tr>
+              </tbody>
+            </table>
+            <div class="totals">
+              <div class="total-row"><span>الإجمالي قبل الضريبة</span><b>يُحدد عند التسعير</b></div>
+              <div class="total-row"><span>الضريبة / المعالجة</span><b>حسب المتطلبات المحلية</b></div>
+              <div class="total-row final"><span>إجمالي العرض</span><b>غير محدد في هذا التصور</b></div>
+            </div>
+          </section>
+          <div>
+            <section class="panel side-card">
+              <div class="panel-title"><span>سير العمل</span></div>
+              <div class="mini-status"><span>1. إعداد العرض</span><span class="pill green">حاليًا</span></div>
+              <div class="mini-status"><span>2. مراجعة واعتماد</span><span>التالي</span></div>
+              <div class="mini-status"><span>3. مستند بيع / فاتورة</span><span>بعد الاعتماد</span></div>
+            </section>
+            <section class="panel side-card">
+              <div class="panel-title"><span>بيانات العميل</span></div>
+              <p>تنظيم بيانات التواصل وشروط البيع والمتابعة بحسب حقول النظام وإعداد الشركة.</p>
+            </section>
+            <section class="panel side-card">
+              <div class="panel-title"><span>ملاحظة</span></div>
+              <p>إظهار دورة العرض حتى الفاتورة والتحصيل، دون تغيير برامج التصميم الإبداعي.</p>
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="inventory" class="screen">
+    <header class="topbar">
+      <div class="brand"><img src="offer-assets/zacode-mark-512.png" alt=""><span>زاكود ERP</span></div>
+      <div class="top-actions"><span>شركة جرافيك آرت للدعاية والإعلان · تصور توضيحي</span><span>المخزون والتكلفة</span><div class="avatar">م</div></div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="side-title">المخزون والتكلفة</div>
+        <div class="nav">
+          <div class="nav-item">◈　لوحة الإدارة</div>
+          <div class="nav-item">▧　الأصناف والخامات</div>
+          <div class="nav-item active">▤　أرصدة المستودعات</div>
+          <div class="nav-item">⇄　حركة المخزون</div>
+          <div class="nav-item">▣　مراكز التكلفة</div>
+          <div class="nav-item">▥　التقارير</div>
+        </div>
+        <div class="side-note"><b>مثال لخامات التشغيل</b>الأصناف والكميات على الشاشة بيانات افتراضية للتوضيح.</div>
+      </aside>
+      <main class="main">
+        <div class="heading-row">
+          <div><h1>المخزون وتكلفة الأعمال</h1><div class="subhead">متابعة الخامات وحركة الصرف وربطها بالمستندات ومراكز التكلفة وفق الإعداد</div></div>
+          <div class="date-chip">مخزن خامات الإنتاج · مثال</div>
+        </div>
+        <div class="demo-strip"><span>تصور توضيحي — كميات تجريبية لا تمثل أرصدة فعلية</span><span>تُضبط الأصناف والوحدات حسب المنشأة</span></div>
+        <div class="inventory-grid">
+          <section class="panel">
+            <div class="panel-title"><span>أصناف تحتاج متابعة</span><small>بيانات افتراضية</small></div>
+            <table>
+              <thead><tr><th>الصنف</th><th>الوحدة</th><th>الرصيد</th><th>الحالة</th></tr></thead>
+              <tbody>
+                <tr><td class="line-name">فينيل لاصق — رول</td><td>رول</td><td>6</td><td><span class="pill gold">قرب حد الطلب</span></td></tr>
+                <tr><td class="line-name">ورق مطبوع — مثال</td><td>ربطة</td><td>18</td><td><span class="pill green">متاح</span></td></tr>
+                <tr><td class="line-name">حبر طباعة CMYK — مثال</td><td>عبوة</td><td>4</td><td><span class="pill gold">قرب حد الطلب</span></td></tr>
+                <tr><td class="line-name">ألواح أكريليك — مثال</td><td>لوح</td><td>2</td><td><span class="pill blue">متابعة</span></td></tr>
+                <tr><td class="line-name">إضاءة LED — مثال</td><td>قطعة</td><td>24</td><td><span class="pill green">متاح</span></td></tr>
+              </tbody>
+            </table>
+            <div class="stock-summary">
+              <div class="summary-box"><span>حركات صرف هذا الشهر</span><b>تقرير تجريبي</b></div>
+              <div class="summary-box"><span>أصناف تحت حد الطلب</span><b>يحدد من إعداد المخزون</b></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-title"><span>مركز تكلفة / عمل</span><small>تصور تهيئة</small></div>
+            <div class="job-card">
+              <div class="job-head">
+                <div><div class="job-name">حملة افتتاح فرع — مثال</div><div class="job-client">العميل: بيانات تجريبية</div></div>
+                <span class="pill green">نشط</span>
+              </div>
+              <div class="job-stats">
+                <div class="job-stat"><span>الموازنة</span><b>تحدد لاحقًا</b></div>
+                <div class="job-stat"><span>التكاليف المسجلة</span><b>حسب التهيئة</b></div>
+                <div class="job-stat"><span>المستندات</span><b>عرض / شراء</b></div>
+              </div>
+              <div class="progress"><i style="width:65%"></i></div>
+            </div>
+            <div class="job-card">
+              <div class="job-head">
+                <div><div class="job-name">توريد مواد ترويجية — مثال</div><div class="job-client">مركز تكلفة توضيحي</div></div>
+                <span class="pill blue">متابعة</span>
+              </div>
+              <div class="job-stats">
+                <div class="job-stat"><span>مشتريات</span><b>مرتبطة بالمستند</b></div>
+                <div class="job-stat"><span>صرف مخزون</span><b>حسب الإجراء</b></div>
+                <div class="job-stat"><span>تحليل</span><b>تقرير تكلفة</b></div>
+              </div>
+              <div class="progress"><i style="width:42%"></i></div>
+            </div>
+            <div class="screen-caption">ربط المشروع ومركز التكلفة وتفاصيل التقارير يثبت ضمن نطاق الوحدات المفعّلة.</div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script>
+    const selected = location.hash.replace("#", "") || "dashboard";
+    document.querySelectorAll(".screen").forEach((screen) => {
+      screen.classList.toggle("active", screen.id === selected);
+    });
+  </script>
+</body>
+</html>
