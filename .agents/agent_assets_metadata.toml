@@ -581,3 +581,31 @@ mtime_ms = 1790294646282
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/3d43a6d0-1da3-42ce-8e12-37623082d9f2/043cfa0c-a7b8-4def-9fda-04891afd45b9"
 storage_version_token = "1790294685770702"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "p87OUeJAT89-LexfSDNXg"
+uri = "file://exports/Zacode-ERP-General-Proposal-AR.pdf"
+type = "pdf"
+title = "عرض زاكود ERP العام — PDF"
+description = "عرض عربي من 6 صفحات جاهز للإرسال، يغطي الأنشطة التجارية والصناعية والمقاولات والخدمات."
+logical_id = "34b7b675-68d2-42c8-a8fe-7fdab5088be5"
+content_hash = "sha256:c6f194da8bfdaf8b45435e2756e078859ec29855c8c441faca7eecde2338d023"
+size = 1019567
+mtime_ms = 1791138434043
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/34b7b675-68d2-42c8-a8fe-7fdab5088be5/1c209479-5a13-4ccb-87bb-4071779d6776"
+storage_version_token = "1791138584496734"
+content_type = "application/pdf"
+
+[[outputs]]
+id = "CZFZGNed8ASL3c3oB_QoT"
+uri = "file://exports/Zacode-ERP-General-Proposal-AR.docx"
+type = "word_document"
+title = "عرض زاكود ERP العام — Word"
+description = "نسخة قابلة للتعديل من العرض الفني والتجاري العربي، مع بيانات التواصل المطلوبة."
+logical_id = "42d50423-1f78-4f00-a7ce-d4856693e396"
+content_hash = "sha256:e7f3e0efcb0c404c372b7432b9994467818c5fc48b608e63d67f783628b05ae5"
+size = 113995
+mtime_ms = 1791138527854
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/42d50423-1f78-4f00-a7ce-d4856693e396/86c31853-1a55-4648-b917-5fcaafa4d0a3"
+storage_version_token = "1791138585211016"
+content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
