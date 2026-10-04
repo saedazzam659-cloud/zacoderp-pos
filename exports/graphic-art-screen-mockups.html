@@ -153,6 +153,16 @@
     .summary-box span { display: block; color: #839298; font-size: 10px; }
     .summary-box b { display: block; margin-top: 3px; color: #21404a; font-size: 15px; }
     .screen-caption { margin-top: 13px; color: #7b8b91; font-size: 10px; }
+    .payment-options { display: flex; flex-direction: column; gap: 10px; }
+    .payment-option { padding: 13px 14px; border: 1px solid #e0e9e8; border-radius: 10px; background: #fbfdfc; }
+    .payment-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; color: #203b44; font-size: 13px; font-weight: 900; }
+    .payment-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: #087b60; background: #e5f5ee; font-size: 15px; }
+    .payment-detail { display: flex; justify-content: space-between; gap: 9px; padding: 6px 0; border-bottom: 1px solid #edf1f1; color: #7a8b91; font-size: 10px; }
+    .payment-detail:last-child { border-bottom: 0; }
+    .payment-detail b { color: #40575e; font-weight: 750; text-align: left; }
+    .invoice-summary { margin-top: 10px; padding: 11px 13px; border-radius: 9px; background: #f5f8f7; }
+    .invoice-summary .total-row { font-size: 10px; }
+    .receipt-note { margin-top: 10px; padding: 10px 12px; border: 1px solid #bce6d7; border-radius: 9px; color: #42615b; background: #eff9f5; font-size: 10px; line-height: 1.8; }
   </style>
 </head>
 <body>
@@ -355,6 +365,75 @@
               <div class="progress"><i style="width:42%"></i></div>
             </div>
             <div class="screen-caption">ربط المشروع ومركز التكلفة وتفاصيل التقارير يثبت ضمن نطاق الوحدات المفعّلة.</div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="sales-payment" class="screen">
+    <header class="topbar">
+      <div class="brand"><img src="offer-assets/zacode-mark-512.png" alt=""><span>زاكود ERP</span></div>
+      <div class="top-actions"><span>شركة جرافيك آرت للدعاية والإعلان · تصور توضيحي</span><span>المبيعات والتحصيل</span><div class="avatar">م</div></div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="side-title">المبيعات والحسابات</div>
+        <div class="nav">
+          <div class="nav-item">◈　لوحة الإدارة</div>
+          <div class="nav-item active">▤　فواتير المبيعات</div>
+          <div class="nav-item">♙　العملاء</div>
+          <div class="nav-item">◉　سندات القبض</div>
+          <div class="nav-item">▣　الخزائن والبنوك</div>
+          <div class="nav-item">▥　تقارير التحصيل</div>
+        </div>
+        <div class="side-note"><b>دورة بيع وتحصيل</b>بيانات الواجهة وأسماء الحسابات افتراضية، وتحدد الحسابات الفعلية عند التهيئة.</div>
+      </aside>
+      <main class="main">
+        <div class="heading-row">
+          <div><h1>عمليات البيع والتحصيل</h1><div class="subhead">فاتورة بيع مع تسجيل السداد نقدًا أو عبر البنك</div></div>
+          <button class="button">إنشاء فاتورة بيع</button>
+        </div>
+        <div class="demo-strip"><span>تصور توضيحي — لا يعرض بيانات أو أرصدة فعلية</span><span>الأسعار والحسابات تحدد عند الإعداد</span></div>
+        <div class="customer-grid">
+          <section class="panel">
+            <div class="panel-title"><span>فاتورة بيع</span><small>نموذج تجريبي</small></div>
+            <div class="quote-meta">
+              <div class="meta-box"><div class="meta-label">العميل</div><div class="meta-value">يُحدد عند إنشاء الفاتورة</div></div>
+              <div class="meta-box"><div class="meta-label">رقم المستند</div><div class="meta-value">يُنشأ حسب تسلسل الشركة</div></div>
+              <div class="meta-box"><div class="meta-label">العملة</div><div class="meta-value">وفق إعداد المنشأة</div></div>
+            </div>
+            <table class="quote-table">
+              <thead><tr><th>الخدمة / الصنف</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead>
+              <tbody>
+                <tr><td class="line-name">تصميم مواد إعلانية — مثال</td><td>—</td><td>يحدد عند التسعير</td><td>—</td></tr>
+                <tr><td class="line-name">طباعة وتوريد — مثال</td><td>—</td><td>يحدد عند التسعير</td><td>—</td></tr>
+                <tr><td class="line-name">تركيب وتجهيز — مثال</td><td>—</td><td>يحدد عند التسعير</td><td>—</td></tr>
+              </tbody>
+            </table>
+            <div class="invoice-summary">
+              <div class="total-row"><span>إجمالي الفاتورة</span><b>يحدد عند اعتماد الأسعار</b></div>
+              <div class="total-row"><span>المدفوع</span><b>يُسجل في سند قبض</b></div>
+              <div class="total-row final"><span>المتبقي</span><b>يحسب حسب السداد المسجل</b></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-title"><span>اختيار طريقة السداد</span><small>نقدي أو بنكي</small></div>
+            <div class="payment-options">
+              <div class="payment-option">
+                <div class="payment-head"><span>سداد نقدي</span><span class="payment-icon">◉</span></div>
+                <div class="payment-detail"><span>جهة الاستلام</span><b>خزينة تحددها الشركة</b></div>
+                <div class="payment-detail"><span>إثبات التحصيل</span><b>سند قبض نقدي</b></div>
+                <div class="payment-detail"><span>ربط السداد</span><b>بفاتورة العميل</b></div>
+              </div>
+              <div class="payment-option">
+                <div class="payment-head"><span>سداد عبر البنك</span><span class="payment-icon">▤</span></div>
+                <div class="payment-detail"><span>جهة الاستلام</span><b>حساب بنكي تحدده الشركة</b></div>
+                <div class="payment-detail"><span>بيانات التحويل</span><b>مرجع يضاف عند التسجيل</b></div>
+                <div class="payment-detail"><span>إثبات التحصيل</span><b>سند قبض بنكي</b></div>
+              </div>
+            </div>
+            <div class="receipt-note">تُسجل الدفعة وتاريخها وطريقتها، ويرتبط سند القبض بالفاتورة وفق الحسابات والصلاحيات التي تعتمدها الشركة.</div>
           </section>
         </div>
       </main>
