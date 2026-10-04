@@ -637,3 +637,9 @@ mtime_ms = 1791141876602
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/a105fbe8-d5f4-401e-9b11-09be36f05367/66034e9b-7f69-457c-ae13-da06f9784066"
 storage_version_token = "1791141991085880"
 content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+[[outputs]]
+id = "Lf7xr60niuIbgh8E5k4db"
+uri = "file://.local/outputs/----------ERP--------------.pdf"
+type = "pdf"
+title = "عرض زاكود ERP التقني (عربي).pdf"
