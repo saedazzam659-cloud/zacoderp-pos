@@ -9,11 +9,13 @@ import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   centralPool,
   db,
+  branchesTable,
   companiesTable,
+  warehousesTable,
   subscriptionsTable,
   usersTable,
   unitsTable,
@@ -29,6 +31,7 @@ type Fixture = {
   tag: string;
   companyId: number;
   adminUserId: number;
+  branchId: number;
   companyCode: string;
   username: string;
   password: string;
@@ -68,9 +71,9 @@ function vatNumber(tag: string): string {
 async function createFixture(): Promise<Fixture> {
   const tag = randomBytes(8).toString("hex");
   const companyCode = `GAV-${tag.toUpperCase()}`;
-  const username = `gav_admin_${tag}`;
+  const username = "demo";
   const password = `GAV-${randomBytes(24).toString("base64url")}`;
-  const nameAr = `بيئة عرض جرافيك آرت — ${tag}`;
+  const nameAr = "بيانات تجريبية";
   const crNumber = `GAV-CR-${tag.toUpperCase()}`;
   const passwordHash = await bcrypt.hash(password, 12);
   const permissions: Record<string, boolean> = {};
@@ -88,12 +91,12 @@ async function createFixture(): Promise<Fixture> {
   const created = await db.transaction(async (tx) => {
     const [company] = await tx.insert(companiesTable).values({
       nameAr,
-      nameEn: `Graphic Art Visual Fixture ${tag}`,
+      nameEn: "Demonstration data",
       vatNumber: vatNumber(tag),
       crNumber,
-      city: "Riyadh",
-      street: "Disposable visual verification",
-      buildingNumber: "1",
+      city: "بيانات توضيحية",
+      street: "بيانات توضيحية",
+      buildingNumber: "0",
       postalCode: "00000",
       country: "SA",
       code: companyCode,
@@ -102,6 +105,15 @@ async function createFixture(): Promise<Fixture> {
       menuLayout: "topnav",
       menuPermissions: JSON.stringify(permissions),
     }).returning({ id: companiesTable.id });
+
+    const [branch] = await tx.insert(branchesTable).values({
+      companyId: company.id,
+      code: "DEMO-BR",
+      nameAr: "فرع تجريبي",
+      nameEn: "Demo branch",
+      isMain: true,
+      status: "active",
+    }).returning({ id: branchesTable.id });
 
     await tx.insert(subscriptionsTable).values({
       companyId: company.id,
@@ -123,8 +135,8 @@ async function createFixture(): Promise<Fixture> {
       passwordHash,
       companyId: company.id,
       role: "admin",
-      nameAr: "مدير معاينة جرافيك آرت",
-      nameEn: "Graphic Art Visual Admin",
+      nameAr: "مستخدم تجريبي",
+      nameEn: "Demo user",
       permissions: {},
       isActive: true,
     }).returning({ id: usersTable.id });
@@ -137,7 +149,7 @@ async function createFixture(): Promise<Fixture> {
       conversionFactor: "1",
     }).returning({ id: unitsTable.id });
 
-    return { companyId: company.id, adminUserId: admin.id, unitId: unit.id };
+    return { companyId: company.id, adminUserId: admin.id, branchId: branch.id, unitId: unit.id };
   });
 
   return { ...created, tag, companyCode, username, password, nameAr, crNumber };
@@ -167,6 +179,53 @@ async function assertOwnedFixture(tx: any, fixture: Fixture): Promise<void> {
 async function cleanupFixture(fixture: Fixture): Promise<void> {
   await db.transaction(async (tx) => {
     await assertOwnedFixture(tx, fixture);
+    const expectedBranchCode = "DEMO-BR";
+    const [branch] = await tx.select({
+      id: branchesTable.id,
+      code: branchesTable.code,
+      nameAr: branchesTable.nameAr,
+    }).from(branchesTable).where(and(
+      eq(branchesTable.id, fixture.branchId),
+      eq(branchesTable.companyId, fixture.companyId),
+    )).limit(1);
+    const branches = await tx.select({ id: branchesTable.id })
+      .from(branchesTable)
+      .where(eq(branchesTable.companyId, fixture.companyId));
+    const warehouses = await tx.select({
+      id: warehousesTable.id,
+      code: warehousesTable.code,
+      branchId: warehousesTable.branchId,
+    }).from(warehousesTable).where(eq(warehousesTable.companyId, fixture.companyId));
+    if (
+      !branch
+      || branch.code !== expectedBranchCode
+      || branch.nameAr !== "فرع تجريبي"
+      || branches.length !== 1
+      || warehouses.length > 1
+      || (warehouses.length === 1
+        && (warehouses[0].code !== "DEMO-WH" || warehouses[0].branchId !== fixture.branchId))
+    ) {
+      throw new Error("Fixture child ownership check failed; cleanup stopped.");
+    }
+
+    if (warehouses.length === 1) {
+      const deletedWarehouse = await tx.delete(warehousesTable).where(and(
+        eq(warehousesTable.id, warehouses[0].id),
+        eq(warehousesTable.companyId, fixture.companyId),
+        eq(warehousesTable.code, "DEMO-WH"),
+        eq(warehousesTable.branchId, fixture.branchId),
+      )).returning({ id: warehousesTable.id });
+      if (deletedWarehouse.length !== 1) throw new Error("Fixture warehouse cleanup did not delete exactly one owned row.");
+    }
+
+    const deletedBranch = await tx.delete(branchesTable).where(and(
+      eq(branchesTable.id, fixture.branchId),
+      eq(branchesTable.companyId, fixture.companyId),
+      eq(branchesTable.code, expectedBranchCode),
+      eq(branchesTable.nameAr, "فرع تجريبي"),
+    )).returning({ id: branchesTable.id });
+    if (deletedBranch.length !== 1) throw new Error("Fixture branch cleanup did not delete exactly one owned row.");
+
     const deleted = await tx.delete(companiesTable).where(and(
       eq(companiesTable.id, fixture.companyId),
       eq(companiesTable.code, fixture.companyCode),
@@ -175,6 +234,8 @@ async function cleanupFixture(fixture: Fixture): Promise<void> {
       eq(companiesTable.isSandbox, true),
     )).returning({ id: companiesTable.id });
     if (deleted.length !== 1) throw new Error("Fixture cleanup did not delete exactly one owned tenant.");
+    await tx.execute(sql`delete from audit_log where company_id = ${fixture.companyId}`);
+    await tx.execute(sql`delete from work_sessions where company_id = ${fixture.companyId}`);
   });
 }
 
@@ -221,7 +282,7 @@ async function capture(fixture: Fixture, targetUrl: string): Promise<void> {
     if (!login.ok) throw new Error(`Sandbox login failed with HTTP ${login.status}.`);
     await page.evaluate(() => localStorage.setItem("i18nextLng", "ar"));
 
-    const seed = await page.evaluate(async (unitId) => {
+    const seed = await page.evaluate(async ({ unitId, branchId }) => {
       const token = localStorage.getItem("zatca_token");
       if (!token) throw new Error("Browser session was not established.");
       async function post(path: string, body: Record<string, unknown>) {
@@ -235,20 +296,24 @@ async function capture(fixture: Fixture, targetUrl: string): Promise<void> {
           body: JSON.stringify(body),
         });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(`Sandbox seed request failed: ${path} (${response.status}).`);
+        if (!response.ok) {
+          const reason = typeof payload.error === "string" ? payload.error : JSON.stringify(payload);
+          throw new Error(`Sandbox seed request failed: ${path} (${response.status}) — ${reason}`);
+        }
         return payload;
       }
-      const warehouse = await post("/api/warehouses", {
-        code: "GA-WH",
-        nameAr: "المخزن الرئيسي",
-        nameEn: "Main warehouse",
+      const warehouse = await post("/api/inventory/warehouses", {
+        code: "DEMO-WH",
+        nameAr: "مخزن تجريبي",
+        nameEn: "Demo warehouse",
+        branchId,
         isDefault: true,
       });
       const materialRows = await Promise.all([
-        post("/api/items", {
-          code: "GA-ACRYLIC",
-          nameAr: "لوح أكريليك",
-          nameEn: "Acrylic sheet",
+        post("/api/inventory/items", {
+          code: "DEMO-ACRYLIC",
+          nameAr: "لوح أكريليك · عينة",
+          nameEn: "Acrylic sheet · sample",
           itemType: "stock",
           itemNature: "raw",
           unitId,
@@ -256,10 +321,10 @@ async function capture(fixture: Fixture, targetUrl: string): Promise<void> {
           salePrice: "0",
           vatRate: "15",
         }),
-        post("/api/items", {
-          code: "GA-VINYL",
-          nameAr: "رول فينيل",
-          nameEn: "Vinyl roll",
+        post("/api/inventory/items", {
+          code: "DEMO-VINYL",
+          nameAr: "رول فينيل · عينة",
+          nameEn: "Vinyl roll · sample",
           itemType: "stock",
           itemNature: "raw",
           unitId,
@@ -268,10 +333,10 @@ async function capture(fixture: Fixture, targetUrl: string): Promise<void> {
           vatRate: "15",
         }),
       ]);
-      const finished = await post("/api/items", {
-        code: "GA-SIGN",
-        nameAr: "لوحة إعلانية مضيئة",
-        nameEn: "Illuminated sign",
+      const finished = await post("/api/inventory/items", {
+        code: "DEMO-SIGN",
+        nameAr: "لوحة إعلانية مضيئة · عينة",
+        nameEn: "Illuminated sign · sample",
         itemType: "stock",
         itemNature: "finished",
         unitId,
@@ -281,14 +346,14 @@ async function capture(fixture: Fixture, targetUrl: string): Promise<void> {
         isBundle: true,
       });
       for (const [index, material] of materialRows.entries()) {
-        await post(`/api/items/${finished.id}/bundle/components`, {
+        await post(`/api/inventory/items/${finished.id}/bundle/components`, {
           childItemId: material.id,
           qty: index === 0 ? "2" : "1",
           notes: "",
         });
       }
       return { warehouseId: warehouse.id };
-    }, fixture.unitId);
+    }, { unitId: fixture.unitId, branchId: fixture.branchId });
     if (!Number.isInteger(seed.warehouseId)) throw new Error("Warehouse setup did not return an id.");
 
     const screens = [
@@ -310,15 +375,6 @@ async function capture(fixture: Fixture, targetUrl: string): Promise<void> {
       await page.screenshot({ path: resolve(outputDir, `${name}.png`) });
     }
 
-    stage = "capture-assembly";
-    await page.goto("/inventory/items", { waitUntil: "domcontentloaded" });
-    await page.getByTestId("topnav-bar").waitFor({ state: "visible" });
-    await page.getByText("لوحة إعلانية مضيئة", { exact: true }).first().click();
-    await page.getByRole("button", { name: /مكونات|مركب/ }).click();
-    await page.getByTestId("button-bundle-assembly-open").click();
-    await page.getByTestId("text-bundle-assembly-title").waitFor({ state: "visible" });
-    await page.waitForTimeout(900);
-    await page.screenshot({ path: resolve(outputDir, "assembly.png") });
     await context.close();
   } finally {
     await browser.close();

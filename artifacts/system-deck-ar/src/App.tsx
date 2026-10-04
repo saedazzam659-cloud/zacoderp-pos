@@ -148,6 +148,7 @@ function AllSlides() {
       {slides.map((slide) => (
         <div
           key={slide.id}
+          data-slide-id={slide.id}
           className="slide relative aspect-video overflow-hidden"
           style={{ width: "1920px", height: "1080px" }}
         >
