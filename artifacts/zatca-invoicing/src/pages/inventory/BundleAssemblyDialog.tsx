@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Form, FormControl, FormField, FormItem, FormLabel } from "@/components/ui/form";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -71,6 +72,7 @@ export function BundleAssemblyDialog({
     description: "تُصرف المكونات من المخزن المختار. يحسب الخادم تكلفة الصنف التام من تكلفة الصرف الفعلية وقت الترحيل؛ والتغييرات هنا تخص هذه العملية فقط.",
     warehouse: "مخزن الصرف والاستلام",
     chooseWarehouse: "اختر المخزن",
+    searchWarehouse: "ابحث بالكود أو الاسم...",
     finishedQty: "الكمية التامة",
     materials: "المكونات التي ستُصرف",
     materialQty: "كمية الصرف",
@@ -79,6 +81,8 @@ export function BundleAssemblyDialog({
     lineTotal: "القيمة",
     addMaterial: "إضافة خامة",
     chooseMaterial: "اختر صنفًا",
+    searchMaterial: "ابحث بالكود أو الاسم...",
+    noResults: "لا توجد نتائج",
     restoreRecipe: "إعادة كميات التركيب المحفوظة",
     waste: "وصف الهالك (اختياري)",
     wastePlaceholder: "مثال: قصاصات أكريليك 0.5 متر",
@@ -101,6 +105,7 @@ export function BundleAssemblyDialog({
     description: "Components are issued from the selected warehouse. The server derives finished-item cost from the actual issue cost when posting; edits apply to this operation only.",
     warehouse: "Issue and receipt warehouse",
     chooseWarehouse: "Choose a warehouse",
+    searchWarehouse: "Search by code or name...",
     finishedQty: "Finished quantity",
     materials: "Components to issue",
     materialQty: "Issue quantity",
@@ -109,6 +114,8 @@ export function BundleAssemblyDialog({
     lineTotal: "Value",
     addMaterial: "Add material",
     chooseMaterial: "Choose an item",
+    searchMaterial: "Search by code or name...",
+    noResults: "No matches",
     restoreRecipe: "Restore saved component quantities",
     waste: "Waste description (optional)",
     wastePlaceholder: "Example: 0.5 m acrylic offcuts",
@@ -335,26 +342,27 @@ export function BundleAssemblyDialog({
                   name="warehouseId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{copy.warehouse}</FormLabel>
-                      <FormControl>
-                        <select
-                          {...field}
-                          onChange={event => {
-                            field.onChange(event);
+                      <FormLabel htmlFor={`bundle-assembly-warehouse-${item.id}`}>{copy.warehouse}</FormLabel>
+                      <SearchCombobox
+                        id={`bundle-assembly-warehouse-${item.id}`}
+                        items={warehouses.map((warehouse: any) => ({
+                          value: String(warehouse.id),
+                          code: warehouse.code ?? undefined,
+                          label: warehouse.nameAr || warehouse.nameEn || `#${warehouse.id}`,
+                          labelEn: warehouse.nameEn || undefined,
+                        }))}
+                        value={field.value}
+                        onValueChange={value => {
+                            field.onChange(value);
                             if (!draftId) setRequestId(newAssemblyRequestId());
-                          }}
-                          className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                          disabled={assemblyMutation.isPending}
-                          data-testid="select-bundle-assembly-warehouse"
-                        >
-                          <option value="">{copy.chooseWarehouse}</option>
-                          {warehouses.map((warehouse: any) => (
-                            <option key={warehouse.id} value={warehouse.id}>
-                              {warehouse.nameAr || warehouse.nameEn || warehouse.code || `#${warehouse.id}`}
-                            </option>
-                          ))}
-                        </select>
-                      </FormControl>
+                        }}
+                        placeholder={copy.chooseWarehouse}
+                        searchPlaceholder={copy.searchWarehouse}
+                        emptyText={copy.noResults}
+                        disabled={warehousesLoading || assemblyMutation.isPending}
+                        openOnFocus={false}
+                        testId="select-bundle-assembly-warehouse"
+                      />
                     </FormItem>
                   )}
                 />
@@ -487,21 +495,24 @@ export function BundleAssemblyDialog({
 
             <div className="flex flex-wrap items-end gap-2">
               <div className="min-w-[220px] flex-1 space-y-1.5">
-                <Label>{copy.chooseMaterial}</Label>
-                <select
+                <Label htmlFor={`bundle-assembly-material-${item.id}`}>{copy.chooseMaterial}</Label>
+                <SearchCombobox
+                  id={`bundle-assembly-material-${item.id}`}
+                  items={addableItems.map(candidate => ({
+                    value: String(candidate.id),
+                    code: candidate.code ?? undefined,
+                    label: candidate.nameAr || candidate.nameEn || `#${candidate.id}`,
+                    labelEn: candidate.nameEn || undefined,
+                  }))}
                   value={newItemId}
-                  onChange={event => setNewItemId(event.target.value)}
-                  className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                  disabled={assemblyMutation.isPending}
-                  data-testid="select-bundle-assembly-add-material"
-                >
-                  <option value="">{copy.chooseMaterial}</option>
-                  {addableItems.map(candidate => (
-                    <option key={candidate.id} value={candidate.id}>
-                      {candidate.nameAr || candidate.nameEn || `#${candidate.id}`} {candidate.code ? `(${candidate.code})` : ""}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={setNewItemId}
+                  placeholder={copy.chooseMaterial}
+                  searchPlaceholder={copy.searchMaterial}
+                  emptyText={copy.noResults}
+                  disabled={assemblyMutation.isPending || addableItems.length === 0}
+                  openOnFocus={false}
+                  testId="select-bundle-assembly-add-material"
+                />
               </div>
               <Button
                 type="button"

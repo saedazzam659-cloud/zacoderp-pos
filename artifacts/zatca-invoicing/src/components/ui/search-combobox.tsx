@@ -29,6 +29,7 @@ interface SearchComboboxProps {
   items: ComboboxItem[];
   value?: string;
   onValueChange: (value: string) => void;
+  id?: string;
   placeholder?: string;
   searchPlaceholder?: string;
   emptyText?: string;
@@ -52,6 +53,7 @@ export function SearchCombobox({
   items,
   value,
   onValueChange,
+  id,
   placeholder = "اختر...",
   searchPlaceholder,
   emptyText = "لا توجد نتائج",
@@ -224,6 +226,7 @@ export function SearchCombobox({
         <div className={cn("relative w-full", className)}>
           <input
             ref={inputRef}
+            id={id}
             type="text"
             role="combobox"
             aria-expanded={open}

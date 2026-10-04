@@ -38,7 +38,7 @@ const STATUS_CONFIG: Record<string, { color: string }> = {
   posted: { color: "bg-green-50 text-green-700" },
 };
 const BUNDLE_ASSEMBLY_REASON = "__BUNDLE_ASSEMBLY_V1__";
-const REASONS = ["رصيد افتتاحي", "إضافة مخزنية", "تصحيح مخزون", "تعديل كمي", "تلف وخسارة", "فاقد وكسر", "مكافآت وهبات", "أخرى", BUNDLE_ASSEMBLY_REASON];
+const REASONS = ["رصيد افتتاحي", "إضافة مخزنية", "تصحيح مخزون", "تعديل كمي", "تلف وخسارة", "فاقد وكسر", "مكافآت وهبات", "أخرى"];
 const REASON_KEYS: Record<string, string> = {
   "رصيد افتتاحي": "reasonOpeningBalance",
   "إضافة مخزنية": "reasonStockAddition",
@@ -413,7 +413,16 @@ export default function StockAdjustment() {
                   <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))} value={form.warehouseId} onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))} placeholder={t("stockAdjustmentPage.selectWarehouse")} />
                 </Field>
                 <Field label={t("stockAdjustmentPage.adjustmentReason")}>
-                  <SearchCombobox items={REASONS.map(r => ({ value: r, label: reasonLabel(r) }))} value={form.reason} onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))} placeholder={t("stockAdjustmentPage.selectReason")} />
+                  <SearchCombobox
+                    items={[
+                      ...REASONS,
+                      ...(form.reason === BUNDLE_ASSEMBLY_REASON ? [BUNDLE_ASSEMBLY_REASON] : []),
+                    ].map(r => ({ value: r, label: reasonLabel(r) }))}
+                    value={form.reason}
+                    onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))}
+                    placeholder={t("stockAdjustmentPage.selectReason")}
+                    disabled={form.reason === BUNDLE_ASSEMBLY_REASON}
+                  />
                 </Field>
                 <Field label={t("stockAdjustmentPage.notes")} className="md:col-span-2"><Input placeholder={t("stockAdjustmentPage.notesPlaceholder")} value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
               </FormGrid>

@@ -20,6 +20,7 @@
 - [Controller-link state integrity](dual-platform-agent-control.md) — preserve exact concurrency checks and use idempotent recovery after remote shell-sync failures.
 - [Web and shared UI index](web-shared-index.md) — browser forms, shared UI, dates, catalog, reports, and cross-cutting web behavior.
 - [Variable manufacturing routes](manufacturing-route-stages.md) — stage count and sequence vary by factory and product; never assume a fixed six-stage flow.
+- [Inventory-only assembly boundary](inventory-quick-assembly-boundary.md) — quick item assembly must stay inside inventory and leave production/manufacturing flows untouched.
 - [Sales-invoice form parity](sales-invoice-form-parity.md) — keep related customer, supplier, HR, order, credit, and representative forms on the same full-width field layout.
 - [Approved agent UI](approved-agent-ui.md) — current agent-facing web UI is approved; custom views must be opt-in and leave the default unchanged.
 - [Module-aware user guide](module-aware-user-guide.md) — company help should show only chapters for modules enabled in that company.
