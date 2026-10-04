@@ -2562,9 +2562,9 @@ function ItemBundleComponentsPanel({
 
               return (
                 <div key={row.key} className="rounded-md border bg-background p-3">
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
-                    <div className="sm:col-span-5">
-                      <Label className="mb-1 block text-xs">{t("pages.items.bundle.childItem")} *</Label>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(150px,2.8fr)_minmax(74px,1fr)_minmax(140px,2.5fr)_minmax(100px,2fr)_36px]">
+                    <div className="min-w-0">
+                      <Label className="mb-1 block whitespace-nowrap text-[11px] leading-4">{t("pages.items.bundle.childItem")} *</Label>
                       <select
                         value={row.childItemId}
                         onChange={event => {
@@ -2577,7 +2577,7 @@ function ItemBundleComponentsPanel({
                             qty: "1",
                           });
                         }}
-                        className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                        className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
                         disabled={addBulkMut.isPending}
                       >
                         <option value="">— {t("pages.items.bundle.chooseChild")} —</option>
@@ -2589,24 +2589,24 @@ function ItemBundleComponentsPanel({
                         ))}
                       </select>
                     </div>
-                    <div className="sm:col-span-2">
-                      <Label className="mb-1 block text-xs">{t("pages.items.bundle.qty")} *</Label>
+                    <div className="min-w-0">
+                      <Label className="mb-1 block whitespace-nowrap text-[11px] leading-4">{t("pages.items.bundle.qty")} *</Label>
                       <Input
                         type="number"
                         step="0.0001"
                         min="0.0001"
                         value={row.qty}
                         onChange={event => updateDraftRow(row.key, { qty: event.target.value })}
-                        className="h-9"
+                        className="h-9 min-w-0 px-2"
                         disabled={addBulkMut.isPending}
                       />
                     </div>
-                    <div className="sm:col-span-4">
-                      <Label className="mb-1 block text-xs">{t("pages.items.bundle.unit")} *</Label>
+                    <div className="min-w-0">
+                      <Label className="mb-1 block whitespace-nowrap text-[11px] leading-4">{t("pages.items.bundle.unit")} *</Label>
                       <select
                         value={row.unitId}
                         onChange={event => updateDraftRow(row.key, { unitId: event.target.value })}
-                        className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                        className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm"
                         disabled={!child || !child.unitId || unitQuery?.isLoading || unitQuery?.isError || addBulkMut.isPending}
                       >
                         {!child?.unitId ? (
@@ -2635,7 +2635,16 @@ function ItemBundleComponentsPanel({
                         <p className="mt-1 text-xs text-destructive">{t("pages.items.bundle.unitLoadError")}</p>
                       )}
                     </div>
-                    <div className="flex items-end justify-end sm:col-span-1">
+                    <div className="min-w-0">
+                      <Label className="mb-1 block whitespace-nowrap text-[11px] leading-4">{t("pages.items.bundle.notes")}</Label>
+                      <Input
+                        value={row.notes}
+                        onChange={event => updateDraftRow(row.key, { notes: event.target.value })}
+                        className="h-9 min-w-0 px-2"
+                        disabled={addBulkMut.isPending}
+                      />
+                    </div>
+                    <div className="flex items-end justify-center">
                       <Button
                         type="button"
                         size="icon"
@@ -2648,15 +2657,6 @@ function ItemBundleComponentsPanel({
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
-                    </div>
-                    <div className="sm:col-span-11">
-                      <Label className="mb-1 block text-xs">{t("pages.items.bundle.notes")}</Label>
-                      <Input
-                        value={row.notes}
-                        onChange={event => updateDraftRow(row.key, { notes: event.target.value })}
-                        className="h-9"
-                        disabled={addBulkMut.isPending}
-                      />
                     </div>
                   </div>
                 </div>
