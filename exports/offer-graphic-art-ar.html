@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>مقترح زاكود ERP لشركة جرافيك آرت للدعاية والإعلان</title>
+  <style>
+    @font-face {
+      font-family: Cairo;
+      src: url("offer-assets/fonts/Cairo-VF.ttf") format("truetype");
+      font-weight: 200 900;
+      font-style: normal;
+    }
+    :root {
+      --green: #078466;
+      --green-dark: #075b49;
+      --mint: #48c8a0;
+      --gold: #d7a72b;
+      --ink: #132630;
+      --body: #435761;
+      --muted: #778992;
+      --line: #dce6e8;
+      --soft: #f3f8f7;
+    }
+    * { box-sizing: border-box; margin: 0; font-family: Cairo, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    @page { size: A4; margin: 0; }
+    html, body { width: 210mm; color: var(--ink); background: #e8eef0; font-size: 12px; line-height: 1.8; }
+    .page {
+      position: relative;
+      width: 210mm;
+      height: 297mm;
+      padding: 15mm 17mm 20mm;
+      overflow: hidden;
+      background: #fff;
+      page-break-after: always;
+      break-after: page;
+    }
+    .page:last-child { page-break-after: auto; break-after: auto; }
+    .cover {
+      padding: 0;
+      color: #fff;
+      background:
+        radial-gradient(65% 50% at 5% 5%, rgba(72,200,160,.27), transparent 70%),
+        radial-gradient(70% 55% at 100% 100%, rgba(215,167,43,.22), transparent 70%),
+        linear-gradient(143deg, #0d1924 0%, #10333a 55%, #075b49 100%);
+    }
+    .cover-inner { display: flex; flex-direction: column; height: 100%; padding: 19mm 18mm 16mm; position: relative; }
+    .cover-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    .logo-dark { width: 213px; border-radius: 8px; }
+    .cover-tag { padding: 6px 13px; border: 1px solid rgba(242,207,111,.55); border-radius: 999px; color: #f1d47e; background: rgba(255,255,255,.04); font-size: 10px; font-weight: 800; }
+    .cover-main { margin-top: auto; margin-bottom: auto; padding: 17mm 0 12mm; }
+    .overline { color: var(--green); font-size: 10px; font-weight: 900; letter-spacing: .4px; }
+    .cover .overline { color: #f0ce71; font-size: 13px; }
+    .cover h1 { max-width: 158mm; margin-top: 12px; color: #fff; font-size: 36px; font-weight: 900; line-height: 1.34; }
+    .cover h1 span { color: #53d1a8; }
+    .cover-lead { max-width: 155mm; margin-top: 14px; color: #d4e6e0; font-size: 15px; font-weight: 650; line-height: 1.95; }
+    .gold-rule { width: 78px; height: 4px; margin: 19px 0; border-radius: 4px; background: linear-gradient(90deg, #f2d171, #45c79e); }
+    .cover-sub { max-width: 150mm; color: #c0d5cf; font-size: 11.5px; line-height: 2; }
+    .cover-client {
+      margin-top: 17px;
+      padding: 11px 15px;
+      border-right: 3px solid var(--gold);
+      border-radius: 8px;
+      color: #f1f8f5;
+      background: rgba(255,255,255,.07);
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .cover-foot { display: flex; justify-content: space-between; gap: 15px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.2); color: #bdd3cc; font-size: 9.5px; }
+    .cover-foot b { display: block; color: #fff; font-size: 10.5px; }
+    .cover-mark { position: absolute; left: -22mm; bottom: -32mm; width: 92mm; opacity: .065; }
+    .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+    .header img { width: 133px; }
+    .header span { color: var(--muted); font-size: 9px; font-weight: 700; }
+    .kicker { margin-bottom: 3px; color: var(--green); font-size: 9.5px; font-weight: 900; }
+    h2 { margin-bottom: 7px; color: var(--ink); font-size: 22px; font-weight: 900; line-height: 1.45; }
+    .lead { margin-bottom: 11px; color: var(--body); font-size: 11.7px; line-height: 1.95; }
+    .callout { margin: 10px 0; padding: 11px 14px; border: 1px solid #bce6d7; border-radius: 11px; color: var(--body); background: #eff9f5; font-size: 10.8px; line-height: 1.9; }
+    .callout strong { color: var(--green-dark); }
+    .section-title { margin: 12px 0 7px; color: var(--ink); font-size: 13px; font-weight: 900; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 9px; }
+    .card { padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+    .card h3 { margin-bottom: 3px; color: var(--ink); font-size: 12px; font-weight: 900; }
+    .card p { color: var(--body); font-size: 10.2px; line-height: 1.85; }
+    .flow { display: grid; grid-template-columns: repeat(5,1fr); gap: 7px; margin: 13px 0; }
+    .flow-step { min-height: 93px; padding: 9px 8px; border: 1px solid var(--line); border-radius: 11px; background: #fbfdfd; }
+    .flow-step .n { display: grid; place-items: center; width: 24px; height: 24px; margin-bottom: 6px; border-radius: 8px; color: #fff; background: var(--green); font-size: 11px; font-weight: 900; }
+    .flow-step h3 { margin-bottom: 3px; font-size: 10.4px; font-weight: 900; }
+    .flow-step p { color: var(--muted); font-size: 8.8px; line-height: 1.65; }
+    .benefit-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 9px; margin-top: 10px; }
+    .benefit { min-height: 72px; padding: 10px 13px; border-radius: 11px; background: var(--soft); }
+    .benefit h3 { margin-bottom: 3px; color: var(--green-dark); font-size: 11px; font-weight: 900; }
+    .benefit p { color: var(--body); font-size: 9.7px; line-height: 1.8; }
+    .screen-frame { margin-top: 9px; padding: 7px; border: 1px solid #d8e2e4; border-radius: 13px; background: #f4f7f7; box-shadow: 0 7px 20px rgba(18,42,50,.08); }
+    .screen-frame img { display: block; width: 100%; height: auto; border-radius: 7px; }
+    .screen-caption { margin-top: 8px; color: var(--body); font-size: 10px; line-height: 1.85; }
+    .screen-caption b { color: var(--green-dark); }
+    .screen-note { margin-top: 7px; color: var(--muted); font-size: 8.7px; line-height: 1.75; }
+    .module-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 9px; }
+    .module { padding: 11px 13px; border: 1px solid var(--line); border-radius: 11px; background: linear-gradient(145deg,#fff,#f8fbfa); }
+    .module .tag { display: inline-block; margin-bottom: 4px; color: var(--green); font-size: 8.8px; font-weight: 900; }
+    .module h3 { margin-bottom: 3px; color: var(--ink); font-size: 11.5px; font-weight: 900; }
+    .module p { color: var(--body); font-size: 9.7px; line-height: 1.8; }
+    .steps { margin-top: 9px; }
+    .step-row { display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: start; padding: 7px 0; border-bottom: 1px dashed var(--line); }
+    .step-row:last-child { border: 0; }
+    .step-num { width: 26px; height: 26px; border-radius: 8px; color: #fff; background: var(--green); text-align: center; font-size: 10px; font-weight: 900; line-height: 26px; }
+    .step-row h3 { color: var(--ink); font-size: 10.7px; font-weight: 900; }
+    .step-row p { color: var(--muted); font-size: 9.3px; line-height: 1.75; }
+    .scope-box { margin-top: 10px; padding: 10px 13px; border-radius: 11px; background: #112d34; color: #deece8; }
+    .scope-box h3 { margin-bottom: 4px; color: #f0cf73; font-size: 11px; }
+    .scope-box p { color: #d3e4df; font-size: 9.4px; line-height: 1.85; }
+    .commercial-box { margin-top: 9px; padding: 12px 14px; border-radius: 12px; color: #e6f0ed; background: #112d34; }
+    .commercial-box h3 { margin-bottom: 5px; color: #f0cf73; font-size: 12px; }
+    .commercial-box ul { padding: 0 16px 0 0; }
+    .commercial-box li { margin: 3px 0; color: #d4e4df; font-size: 9.8px; line-height: 1.75; }
+    .signature { margin-top: 11px; padding: 11px 14px; border-right: 4px solid var(--gold); border-radius: 9px; color: var(--ink); background: var(--soft); line-height: 1.8; }
+    .signature b { color: var(--green-dark); font-size: 11px; }
+    .signature .name { font-weight: 900; }
+    .phone { direction: ltr; unicode-bidi: embed; display: inline-block; font-weight: 800; }
+    .footer { position: absolute; right: 17mm; left: 17mm; bottom: 7mm; display: flex; justify-content: space-between; padding-top: 4px; border-top: 2px solid var(--green); color: var(--muted); font-size: 8px; }
+    .footer b { color: var(--green-dark); }
+    .tiny { color: var(--muted); font-size: 8.4px; line-height: 1.75; }
+    @media screen { body { padding: 18px 0; } .page { margin: 0 auto 18px; box-shadow: 0 8px 30px rgba(18,42,50,.12); } }
+    @media print { html,body { background: #fff; } }
+  </style>
+</head>
+<body>
+  <section class="page cover">
+    <div class="cover-inner">
+      <div class="cover-top">
+        <img class="logo-dark" src="offer-assets/zacode-logo-dark.png" alt="Zacode ERP">
+        <span class="cover-tag">مقترح فني وتجاري مبدئي</span>
+      </div>
+      <img class="cover-mark" src="offer-assets/zacode-mark-512.png" alt="">
+      <div class="cover-main">
+        <div class="overline">ZACODE ERP · حلول إدارية ومالية مترابطة</div>
+        <h1>من فكرة الحملة<br><span>إلى عرض السعر والتحصيل.</span></h1>
+        <p class="cover-lead">تصور لتطبيق نظام زاكود في شركة جرافيك آرت للدعاية والإعلان</p>
+        <div class="gold-rule"></div>
+        <p class="cover-sub">نظرة عملية لربط العملاء وعروض الأسعار والمبيعات والمشتريات ومخزون الخامات والتكاليف في منظومة تساعد الإدارة على متابعة العمل من مكان واحد.</p>
+        <div class="cover-client">مقدم إلى إدارة شركة جرافيك آرت للدعاية والإعلان</div>
+      </div>
+      <div class="cover-foot">
+        <div><b>النطاق المقترح</b>الإدارة المالية والتشغيلية</div>
+        <div><b>القطاع</b>الدعاية والإعلان والطباعة</div>
+        <div><b>إعداد</b>سيستمورا للنظم والمعلومات والذكاء</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="page">
+    <header class="header"><img src="offer-assets/zacode-logo-horizontal.png" alt="Zacode ERP"><span>مقترح مخصص · جرافيك آرت</span></header>
+    <div class="kicker">01 · فهم طبيعة العمل</div>
+    <h2>إدارة دورة العمل، دون إبطاء الإبداع</h2>
+    <p class="lead">في شركة دعاية وإعلان، يتوزع العمل بين استقبال طلب العميل، إعداد العرض، توفير الخامات، متابعة التنفيذ، إصدار الفاتورة، ثم التحصيل. يقترح زاكود ربط الجوانب الإدارية والمالية لهذه الدورة مع بقاء أدوات التصميم والإنتاج الإبداعي ضمن بيئة الفريق المعتادة.</p>
+    <div class="callout"><strong>الفكرة الأساسية:</strong> رؤية أوضح لكل عرض وعميل ومشتريات وخامات ومستحقات، مع تقارير وصلاحيات تساعد الإدارة على المتابعة واتخاذ القرار.</div>
+    <h3 class="section-title">رحلة العمل المقترحة داخل المنظومة</h3>
+    <div class="flow">
+      <article class="flow-step"><div class="n">١</div><h3>العميل والطلب</h3><p>تجميع بيانات العملاء وطلبات التسعير.</p></article>
+      <article class="flow-step"><div class="n">٢</div><h3>عرض السعر</h3><p>إعداد البنود والكميات ومراجعة السعر.</p></article>
+      <article class="flow-step"><div class="n">٣</div><h3>الشراء والخامات</h3><p>متابعة الموردين والأرصدة والحركات.</p></article>
+      <article class="flow-step"><div class="n">٤</div><h3>التكلفة والتنفيذ</h3><p>تحليل المصروفات وفق التهيئة ومراكز التكلفة.</p></article>
+      <article class="flow-step"><div class="n">٥</div><h3>الفاتورة والتحصيل</h3><p>متابعة مستند البيع والذمم والتقارير.</p></article>
+    </div>
+    <h3 class="section-title">ما الذي تضيفه الإدارة المترابطة؟</h3>
+    <div class="benefit-grid">
+      <article class="benefit"><h3>متابعة أسرع للعروض</h3><p>صورة منظمة للعروض المفتوحة والعملاء ومستندات البيع.</p></article>
+      <article class="benefit"><h3>تحكم أفضل في الخامات</h3><p>أرصدة وحركات شراء وصرف أكثر وضوحًا للأصناف التشغيلية.</p></article>
+      <article class="benefit"><h3>قراءة مالية أدق</h3><p>متابعة المصروفات والمستحقات والتقارير المحاسبية ذات الصلة.</p></article>
+      <article class="benefit"><h3>مسؤوليات وصلاحيات</h3><p>تنظيم الوصول وسجل مراجعة للعمليات المهمة بحسب إعداد النظام.</p></article>
+    </div>
+    <p class="tiny" style="margin-top:10px">يُعتمد نطاق الربط بين كل خطوة والوحدات المتاحة بعد تحليل الإجراءات الحالية في الشركة.</p>
+    <footer class="footer"><b>زاكود ERP</b><span>مقترح مبدئي مخصص لجرافيك آرت</span><span>02 / 08</span></footer>
+  </section>
+
+  <section class="page">
+    <header class="header"><img src="offer-assets/zacode-logo-horizontal.png" alt="Zacode ERP"><span>شاشة توضيحية · لوحة الإدارة</span></header>
+    <div class="kicker">02 · نظرة الإدارة اليومية</div>
+    <h2>مؤشرات مختصرة بدل البحث بين ملفات متعددة</h2>
+    <p class="lead">تصور للوحة تجمع مؤشرات العروض والأعمال والمستحقات ومخزون الخامات؛ وتُحدّد المؤشرات الفعلية بحسب التقارير والبيانات التي تعتمدها جرافيك آرت.</p>
+    <div class="screen-frame"><img src="graphic-art-assets/graphic-art-dashboard.png" alt="تصور توضيحي للوحة إدارة جرافيك آرت"></div>
+    <p class="screen-caption"><b>الفائدة:</b> متابعة العناصر التي تحتاج إجراءً الآن، مثل عرض بانتظار المراجعة، أو فاتورة مستحقة، أو صنف يقترب من حد الطلب.</p>
+    <div class="callout"><strong>توضيح مهم:</strong> هذه صورة تصميمية ببيانات افتراضية لشرح الفكرة؛ ليست لقطة فعلية من حساب جرافيك آرت ولا تعكس أرصدة أو أعمالًا حقيقية.</div>
+    <footer class="footer"><b>زاكود ERP</b><span>تصور واجهة — يحتاج اعتماد النطاق</span><span>03 / 08</span></footer>
+  </section>
+
+  <section class="page">
+    <header class="header"><img src="offer-assets/zacode-logo-horizontal.png" alt="Zacode ERP"><span>شاشة توضيحية · عرض السعر</span></header>
+    <div class="kicker">03 · العملاء والمبيعات</div>
+    <h2>عرض واضح من البند إلى مستند البيع</h2>
+    <p class="lead">يمكن تنظيم الخدمات وبنود التوريد والكميات والأسعار وشروط البيع في مسار المبيعات، ثم متابعة المستندات المرتبطة به بحسب إعدادات الشركة.</p>
+    <div class="screen-frame"><img src="graphic-art-assets/graphic-art-quote.png" alt="تصور توضيحي لشاشة عرض سعر إعلاني"></div>
+    <p class="screen-caption"><b>مثال مناسب للنشاط:</b> عرض يضم تصميمًا أو طباعة أو توريدًا وتركيبًا، مع توضيح بيانات العميل والبنود ومراحل المراجعة.</p>
+    <div class="callout"><strong>الأسعار والضريبة:</strong> الحقول في الصورة تجريبية وليست أسعارًا أو معالجة ضريبية معتمدة. تُراجع العملة والضريبة ومتطلبات الفوترة المحلية ضمن النطاق الفني والمالي.</div>
+    <footer class="footer"><b>زاكود ERP</b><span>تصور واجهة — ليس عرض سعر فعليًا</span><span>04 / 08</span></footer>
+  </section>
+
+  <section class="page">
+    <header class="header"><img src="offer-assets/zacode-logo-horizontal.png" alt="Zacode ERP"><span>شاشة توضيحية · الخامات والتكلفة</span></header>
+    <div class="kicker">04 · المخزون ومراكز التكلفة</div>
+    <h2>الخامات والتكاليف ضمن صورة العمل</h2>
+    <p class="lead">متابعة المواد الاستهلاكية والأصناف وحركات الشراء والصرف، مع إمكان استخدام مراكز التكلفة أو المشروع للتحليل بحسب الوحدات والتفعيل المتفق عليه.</p>
+    <div class="screen-frame"><img src="graphic-art-assets/graphic-art-inventory.png" alt="تصور توضيحي لمخزون خامات الطباعة والتكلفة"></div>
+    <p class="screen-caption"><b>أمثلة أصناف:</b> خامات الطباعة واللوحات والإضاءة والمواد المستخدمة في التجهيز والتركيب. تُنشأ الأصناف ووحداتها وحدود إعادة الطلب من واقع بيانات الشركة.</p>
+    <div class="callout"><strong>القيم في الصورة افتراضية.</strong> لا تمثل أرصدة أو تكلفة فعلية، وربط المصروفات والمخزون بمشروع معيّن يثبت في تصميم النطاق قبل بدء التطبيق.</div>
+    <footer class="footer"><b>زاكود ERP</b><span>تصور واجهة — البيانات للتوضيح فقط</span><span>05 / 08</span></footer>
+  </section>
+
+  <section class="page">
+    <header class="header"><img src="offer-assets/zacode-logo-horizontal.png" alt="Zacode ERP"><span>الوحدات المقترحة</span></header>
+    <div class="kicker">05 · نطاق يناسب الوكالة</div>
+    <h2>وحدات زاكود ذات الأولوية لجرافيك آرت</h2>
+    <p class="lead">تُختار الوحدات التي تخدم دورة العمل الحالية، مع إبقاء التوسع المستقبلي ممكنًا دون فرض وحدات لا تحتاجها الشركة الآن.</p>
+    <div class="module-grid">
+      <article class="module"><span class="tag">العملاء والمبيعات</span><h3>عروض الأسعار والفواتير</h3><p>إدارة العملاء وبنود الخدمات ومستندات البيع والمرتجعات والتحصيل وفق إعداد الشركة.</p></article>
+      <article class="module"><span class="tag">التوريد والتخزين</span><h3>المشتريات والمخزون</h3><p>الأصناف والوحدات والمستودعات وحركة المواد والموردين وتقارير الأرصدة.</p></article>
+      <article class="module"><span class="tag">الرقابة المالية</span><h3>المحاسبة ومراكز التكلفة</h3><p>متابعة القيود والخزائن والبنوك والذمم والمصروفات والتقارير المالية.</p></article>
+      <article class="module"><span class="tag">إدارة الأداء</span><h3>التقارير والصلاحيات</h3><p>تقارير الإدارة، تحديد صلاحيات المستخدمين، وسجل مراجعة للعمليات المهمة.</p></article>
+    </div>
+    <div class="scope-box">
+      <h3>دور زاكود ضمن بيئة العمل الإبداعية</h3>
+      <p>يركز المقترح على الإدارة المالية والتشغيلية والمخزون والفوترة. تظل برامج التصميم والتحرير الإبداعي ومراجعة ملفات التصميم خارج النظام، إلا إذا اتُّفق لاحقًا على تكامل مستقل وحدوده.</p>
+    </div>
+    <div class="callout"><strong>الفوترة الإلكترونية:</strong> يُحدد التكامل المحلي المطلوب والجهة الضريبية ذات العلاقة بعد مراجعة وضع الشركة والمتطلبات الفنية، ويُذكر صراحةً ضمن نطاق التسليم إذا كان مطلوبًا.</div>
+    <p class="tiny">توافر الوحدات والتكاملات وتفاصيلها يخضع للباقة والبلد والتهيئة التي يعتمدها الطرفان.</p>
+    <footer class="footer"><b>زاكود ERP</b><span>نطاق عملي وقابل للتوسع</span><span>06 / 08</span></footer>
+  </section>
+
+  <section class="page">
+    <header class="header"><img src="offer-assets/zacode-logo-horizontal.png" alt="Zacode ERP"><span>منهجية التطبيق</span></header>
+    <div class="kicker">06 · التطبيق والتسليم</div>
+    <h2>خطوات تنفيذ مفهومة من البداية</h2>
+    <p class="lead">يبدأ التطبيق من إجراءات الشركة الفعلية، ثم تُعتمد الوحدات ومسؤوليات البيانات والاختبارات قبل الإطلاق.</p>
+    <div class="steps">
+      <div class="step-row"><div class="step-num">١</div><div><h3>جلسة تحليل وتحديد الأولويات</h3><p>مراجعة عدد المستخدمين والفروع ودورة العرض والشراء والمخزون والتحصيل.</p></div></div>
+      <div class="step-row"><div class="step-num">٢</div><div><h3>اعتماد النطاق والتهيئة</h3><p>تحديد الوحدات، الحسابات، الأصناف، المستودعات، الصلاحيات والتقارير المطلوبة.</p></div></div>
+      <div class="step-row"><div class="step-num">٣</div><div><h3>إعداد البيانات والاختبارات</h3><p>مراجعة ملفات العملاء والأصناف والأرصدة المتاحة واختبار السيناريوهات المتفق عليها.</p></div></div>
+      <div class="step-row"><div class="step-num">٤</div><div><h3>التدريب والتشغيل</h3><p>تدريب المستخدمين حسب الأدوار والانتقال إلى التشغيل وفق خطة قبول مشتركة.</p></div></div>
+      <div class="step-row"><div class="step-num">٥</div><div><h3>المتابعة والدعم</h3><p>تحديد قناة الدعم ومستواه ومدته وآلية استقبال الملاحظات في العرض النهائي.</p></div></div>
+    </div>
+    <h3 class="section-title">معلومات تساعد على إعداد عرض دقيق</h3>
+    <div class="benefit-grid">
+      <article class="benefit"><h3>حجم الاستخدام</h3><p>عدد المستخدمين والفروع والمخازن ونقاط البيع إن وجدت.</p></article>
+      <article class="benefit"><h3>البيانات الحالية</h3><p>ملفات العملاء والأصناف والأرصدة وشكل النظام المحاسبي الحالي.</p></article>
+      <article class="benefit"><h3>دورة العمل</h3><p>كيفية إعداد الأسعار والمشتريات والصرف والفوترة والتحصيل اليوم.</p></article>
+      <article class="benefit"><h3>التكاملات المطلوبة</h3><p>أي متطلبات ضريبية أو تقنية يجب تقييمها قبل اعتماد السعر والمدة.</p></article>
+    </div>
+    <div class="callout"><strong>ترحيل البيانات:</strong> يُحدد حسب الملفات المتاحة وجودتها وحجمها، وبعد مراجعة عينة وتوثيق مسؤوليات التحقق.</div>
+    <footer class="footer"><b>زاكود ERP</b><span>خطة التطبيق تعتمد بعد تحليل الاحتياج</span><span>07 / 08</span></footer>
+  </section>
+
+  <section class="page">
+    <header class="header"><img src="offer-assets/zacode-logo-horizontal.png" alt="Zacode ERP"><span>الإطار التجاري والتواصل</span></header>
+    <div class="kicker">07 · الخطوة التالية</div>
+    <h2>نحو نطاق واضح وعرض مالي مناسب</h2>
+    <p class="lead">هذا المقترح يوضح طريقة توظيف زاكود في الإدارة التشغيلية والمالية لجرافيك آرت. بعد جلسة تحليل الاحتياج، يُقدم عرض نهائي يحدد ما سيتم تفعيله وتسليمه دون بنود مبهمة.</p>
+    <div class="commercial-box">
+      <h3>العرض المالي التفصيلي سيحدد</h3>
+      <ul>
+        <li>الوحدات المطلوبة وعدد المستخدمين والشركات والفروع.</li>
+        <li>التهيئة والتدريب ونطاق استيراد البيانات.</li>
+        <li>متطلبات الاستضافة والتكاملات والفوترة الإلكترونية المحلية.</li>
+        <li>مدة التنفيذ والدعم وشروط الدفع والتسليم.</li>
+      </ul>
+    </div>
+    <div class="callout"><strong>تنبيه تجاري:</strong> هذا مستند مبدئي وليس تسعيرًا نهائيًا أو التزامًا بمدة التنفيذ. الأسعار والمدة ونطاق التسليم ومستوى الدعم تثبت في عرض مالي مستقل بعد الاتفاق على المتطلبات.</div>
+    <div class="callout" style="margin-top:8px">يسعدنا عقد جلسة تعريفية لتحديد أولويات الشركة، ثم تقديم خطة تطبيق وعرض مالي يتوافقان مع احتياجات جرافيك آرت وطبيعة أعمال الدعاية والإعلان.</div>
+    <div class="signature">
+      <b>شركة سيستمورا للنظم والمعلومات والذكاء</b><br>
+      المدير التنفيذي<br>
+      <span class="name">م. سعيد شحاته</span><br>
+      رقم الهاتف: <span class="phone">01000903159</span>
+    </div>
+    <footer class="footer"><b>زاكود ERP</b><span>نشكركم على إتاحة الفرصة للتعريف بالنظام</span><span>08 / 08</span></footer>
+  </section>
+</body>
+</html>

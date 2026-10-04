@@ -609,3 +609,31 @@ mtime_ms = 1791138527854
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/42d50423-1f78-4f00-a7ce-d4856693e396/86c31853-1a55-4648-b917-5fcaafa4d0a3"
 storage_version_token = "1791138585211016"
 content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+[[outputs]]
+id = "haLO6_3dPrC76mJaPELAu"
+uri = "file://exports/Zacode-Graphic-Art-Proposal-AR.pdf"
+type = "pdf"
+title = "مقترح زاكود لشركة جرافيك آرت — PDF"
+description = "نسخة عربية مخصصة من 8 صفحات، تتضمن ثلاث شاشات توضيحية لدورة عروض الأسعار والإدارة والمخزون والتكلفة."
+logical_id = "ee0b6cb4-1f33-4de4-85b6-1d60a2ba59fd"
+content_hash = "sha256:033b0c29db3dc41ee4d35475f629e1b0bf25af2b461accb6dd4c2d36e5d11c11"
+size = 1475356
+mtime_ms = 1791139473334
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/ee0b6cb4-1f33-4de4-85b6-1d60a2ba59fd/46c91207-102d-46ef-bb1a-9ada3e326d6e"
+storage_version_token = "1791139543917459"
+content_type = "application/pdf"
+
+[[outputs]]
+id = "Pk_TSlMMDUN1goibnVzfC"
+uri = "file://exports/Zacode-Graphic-Art-Proposal-AR.docx"
+type = "word_document"
+title = "مقترح زاكود لشركة جرافيك آرت — Word"
+description = "نسخة Word قابلة للتعديل من المقترح المخصص لشركة جرافيك آرت للدعاية والإعلان."
+logical_id = "a105fbe8-d5f4-401e-9b11-09be36f05367"
+content_hash = "sha256:4b20bce581bb3d3d60e5947e0d88ebc332ecd75602c003b7066a77fff1173401"
+size = 401828
+mtime_ms = 1791139533690
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/a105fbe8-d5f4-401e-9b11-09be36f05367/ebd95184-8814-4679-aaa2-7ceedc701016"
+storage_version_token = "1791139544623360"
+content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
