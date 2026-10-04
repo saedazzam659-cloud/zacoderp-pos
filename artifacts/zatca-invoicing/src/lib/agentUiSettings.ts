@@ -22,6 +22,7 @@ export type AgentUiSettings = {
   moduleScreensAsTiles: AgentModuleScreenTileId[];
   compactInvoiceTypeSelector: boolean;
   colorfulInvoiceTabs: boolean;
+  userGuideEnabled: boolean;
   loginPage: {
     showMarketingContent: boolean;
     hideLoginSubtitle: boolean;
@@ -36,6 +37,7 @@ export const DEFAULT_AGENT_UI_SETTINGS: AgentUiSettings = {
   moduleScreensAsTiles: [],
   compactInvoiceTypeSelector: false,
   colorfulInvoiceTabs: false,
+  userGuideEnabled: false,
   loginPage: {
     showMarketingContent: false,
     hideLoginSubtitle: false,
@@ -66,6 +68,7 @@ export function normalizeAgentUiSettings(value: unknown): AgentUiSettings {
     moduleScreensAsTiles: modules,
     compactInvoiceTypeSelector: source.compactInvoiceTypeSelector === true,
     colorfulInvoiceTabs: source.colorfulInvoiceTabs === true,
+    userGuideEnabled: source.userGuideEnabled === true,
     loginPage: {
       showMarketingContent: rawLogin.showMarketingContent === true,
       hideLoginSubtitle: rawLogin.hideLoginSubtitle === true,

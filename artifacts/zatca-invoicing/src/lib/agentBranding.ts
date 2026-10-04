@@ -210,6 +210,19 @@ export function useAgentColorfulInvoiceTabs(): boolean {
   return enabled;
 }
 
+/** Null while agent branding is loading; the in-system guide is opt-in per agent. */
+export function useAgentUserGuideEnabled(): boolean | null {
+  const [enabled, setEnabled] = useState<boolean | null>(
+    cache == null ? null : cache.isAgentDomain && cache.agentUiSettings.userGuideEnabled === true,
+  );
+  useEffect(() => {
+    fetchBranding().then(b => {
+      setEnabled(b.isAgentDomain && b.agentUiSettings.userGuideEnabled === true);
+    });
+  }, []);
+  return enabled;
+}
+
 /** Null means the central platform/default policy: every SA screen is allowed. */
 export function useLocalSuperadminScreens(): string[] | null {
   const [v, setV] = useState<string[] | null>(cache?.localSuperadminScreens ?? null);

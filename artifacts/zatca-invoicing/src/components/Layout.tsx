@@ -5,6 +5,7 @@ import {
   useAgentBrandName,
   useAgentModuleShortcutIcons,
   useAgentModuleScreensAsTiles,
+  useAgentUserGuideEnabled,
   useIsAgentDomain,
   useLocalSuperadminScreens,
   useUnifiedInventoryReports,
@@ -76,7 +77,7 @@ import SessionIndicator from "@/components/SessionIndicator";
 import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
-type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permKey?: string; companyGateKey?: string;
+type NavDef = { nameKey: string; name?: string; href: string; icon: any; exact?: boolean; permKey?: string; companyGateKey?: string;
   /** Country-specific entries are only visible for the matching tenant. */
   country?: "EG" | "JO";
   /** When true, hide this entry from non-admin users even if they were granted the matching permission.
@@ -244,6 +245,7 @@ const superAdminNav: NavDef[] = [
 // (POS Management) parent group rendered by PosNavGroup, so this list
 // stays empty (kept around for future business-level top-level NavItems).
 const companyBusinessNav: NavDef[] = [
+  { nameKey: "nav.userGuide", name: "دليل التشغيل", href: "/user-guide", icon: BookOpen },
   { nameKey: "nav.demoAnalytics", href: "/demo-analytics", icon: Activity, permKey: "demo_analytics", requireAdmin: true },
   { nameKey: "nav.egyptTax", href: "/tax-integration", icon: FileKey2, permKey: "egypt_tax", country: "EG", requireAdmin: true },
   { nameKey: "nav.jordanTax", href: "/tax-integration", icon: FileKey2, permKey: "jordan_tax", country: "JO", requireAdmin: true },
@@ -970,6 +972,7 @@ const NavItem = React.memo(function NavItem({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
+  const label = item.name ?? t(item.nameKey);
   // Per-user permission filter — hide entirely when the user lacks .view perm
   // for this screen. Admins/superadmins always see everything (handled inside
   // navItemAllowed).
@@ -992,15 +995,15 @@ const NavItem = React.memo(function NavItem({
         href={item.href}
         className="block flex-1 min-w-0"
         onClick={onClick}
-        aria-label={iconOnlyLabels ? t(item.nameKey) : undefined}
-        title={iconOnlyLabels ? t(item.nameKey) : undefined}
+        aria-label={iconOnlyLabels ? label : undefined}
+        title={iconOnlyLabels ? label : undefined}
       >
         <span className={cn(
           "flex items-center gap-3 px-3 py-2 text-sm font-medium",
           indent && !iconOnlyLabels && "ps-8",
         )}>
           <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span className={iconOnlyLabels ? "sr-only" : undefined}>{t(item.nameKey)}</span>
+          <span className={iconOnlyLabels ? "sr-only" : undefined}>{label}</span>
         </span>
       </Link>
       <a
@@ -2628,6 +2631,7 @@ function TopNavBar(props: any) {
   );
   const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
   const showAgentNewTabActions = useAgentModuleShortcutIcons() === true;
+  const userGuideEnabled = useAgentUserGuideEnabled() === true;
   const canViewInventoryMaster = usePermission("items", "view");
   const zatcaReportsUnified = useUnifiedModuleReports("zatca") === true;
   const moduleReportsUnified = useUnifiedModuleReports("field-service") === true;
@@ -2660,8 +2664,11 @@ function TopNavBar(props: any) {
     const items = moduleReportsUnified
       ? [...companyBusinessNav, fieldServiceUnifiedReportsNav]
       : companyBusinessNav;
-    return items.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
-  }, [menuPerms, moduleReportsUnified]);
+    return items.filter(i =>
+      (i.href !== "/user-guide" || userGuideEnabled)
+      && (!i.permKey || menuPerms[i.permKey] !== false),
+    );
+  }, [menuPerms, moduleReportsUnified, userGuideEnabled]);
   const filteredSystem = useMemo(() => companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
 
   const groups: {
@@ -2977,7 +2984,7 @@ function TopNavBar(props: any) {
           {showAgentNewTabActions && (
             <AgentTopNavNewTabAction
               href={item.href}
-              label={t(item.nameKey)}
+              label={item.name ?? t(item.nameKey)}
               testId={`topnav-open-new-tab-${item.href.replace(/[^a-zA-Z0-9]+/g, "-")}`}
             />
           )}
@@ -3169,6 +3176,7 @@ function SidebarInner({
 }) {
   const { t } = useTranslation();
   const moduleReportsUnified = useUnifiedModuleReports("field-service") === true;
+  const userGuideEnabled = useAgentUserGuideEnabled() === true;
   // Agent-domain brand (e.g. «طفرة») replaces the default app name.
   const agentBrand = useAgentBrandName();
   const localSuperadminScreens = useLocalSuperadminScreens();
@@ -3181,8 +3189,11 @@ function SidebarInner({
     const items = moduleReportsUnified
       ? [...companyBusinessNav, fieldServiceUnifiedReportsNav]
       : companyBusinessNav;
-    return items.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
-  }, [menuPerms, moduleReportsUnified]);
+    return items.filter(i =>
+      (i.href !== "/user-guide" || userGuideEnabled)
+      && (!i.permKey || menuPerms[i.permKey] !== false),
+    );
+  }, [menuPerms, moduleReportsUnified, userGuideEnabled]);
   const filteredSystem   = useMemo(() => companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false), [menuPerms]);
 
   const planColor =

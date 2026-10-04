@@ -23,6 +23,13 @@ test("public agent UI settings expose compact invoice selector only when explici
   assert.equal(sanitizeAgentUiSettings({ colorfulInvoiceTabs: "true" }).colorfulInvoiceTabs, false);
 });
 
+test("public agent UI settings keep the user guide disabled unless explicitly enabled", () => {
+  assert.equal(sanitizeAgentUiSettings(null).userGuideEnabled, false);
+  assert.equal(sanitizeAgentUiSettings({}).userGuideEnabled, false);
+  assert.equal(sanitizeAgentUiSettings({ userGuideEnabled: true }).userGuideEnabled, true);
+  assert.equal(sanitizeAgentUiSettings({ userGuideEnabled: "true" }).userGuideEnabled, false);
+});
+
 test("public branding exposes the compact selector only through sanitized agent UI settings", () => {
   const branding = resolvedAgentBranding({
     status: "active",
@@ -36,6 +43,7 @@ test("public branding exposes the compact selector only through sanitized agent 
     agentUiSettings: {
       compactInvoiceTypeSelector: true,
       colorfulInvoiceTabs: true,
+      userGuideEnabled: true,
       privateFlag: "discard",
     },
   });
@@ -43,5 +51,6 @@ test("public branding exposes the compact selector only through sanitized agent 
   assert.equal(branding.isAgentDomain, true);
   assert.equal(branding.agentUiSettings.compactInvoiceTypeSelector, true);
   assert.equal(branding.agentUiSettings.colorfulInvoiceTabs, true);
+  assert.equal(branding.agentUiSettings.userGuideEnabled, true);
   assert.equal("privateFlag" in branding.agentUiSettings, false);
 });

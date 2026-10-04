@@ -164,6 +164,7 @@ import ProductionOrderDetail from "@/pages/ProductionOrderDetail";
 import ProductionResources from "@/pages/ProductionResources";
 import ManufacturingSettings from "@/pages/production/ManufacturingSettings";
 import ProductionGuide from "@/pages/production/ProductionGuide";
+import UserGuidePage from "@/pages/UserGuidePage";
 import BomTemplates from "@/pages/production/BomTemplates";
 import BomTemplateEditor from "@/pages/production/BomTemplateEditor";
 import ProductionTraceability from "@/pages/production/Traceability";
@@ -1382,6 +1383,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_reps"       component={SalesReps} />}
 
             {/* Shared routes */}
+            {!isSuperAdmin && <Route path="/user-guide" component={UserGuidePage} />}
             <Route path="/settings" component={Settings} />
             {/* Authenticated catch-all: a logged-in user landing on a path
                 that has no matching route (e.g. a sales rep opening /users

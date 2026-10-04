@@ -8,6 +8,7 @@ export type AgentUiSettings = {
   moduleScreensAsTiles?: string[];
   compactInvoiceTypeSelector?: boolean;
   colorfulInvoiceTabs?: boolean;
+  userGuideEnabled?: boolean;
   loginPage?: {
     showMarketingContent?: boolean;
     hideLoginSubtitle?: boolean;
@@ -38,6 +39,7 @@ export function sanitizeAgentUiSettings(value: unknown): AgentUiSettings {
       : [],
     compactInvoiceTypeSelector: source.compactInvoiceTypeSelector === true,
     colorfulInvoiceTabs: source.colorfulInvoiceTabs === true,
+    userGuideEnabled: source.userGuideEnabled === true,
     loginPage: {
       showMarketingContent: rawLogin.showMarketingContent === true,
       hideLoginSubtitle: rawLogin.hideLoginSubtitle === true,
