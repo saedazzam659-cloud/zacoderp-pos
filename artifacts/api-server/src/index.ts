@@ -340,12 +340,30 @@ async function bootstrap() {
   ]);
   if (budgetTimer) clearTimeout(budgetTimer);
 
-  // Eagerly read DB-stored SMTP config so `emailConfigured()` (sync) reflects
-  // it from the very first request. Failures are swallowed; env-only path
-  // still works.
+  // Warm DB-stored SMTP config before the first request when possible, but
+  // never let a slow database read prevent the health-check port from opening.
+  // If this budget expires, the warmup continues in the background.
   try {
     const { warmEmailConfig } = await import("./lib/email");
-    await warmEmailConfig();
+    const warmupBudgetMs = 2_000;
+    let warmupTimer: ReturnType<typeof setTimeout> | undefined;
+    let warmupFinished = false;
+    try {
+      warmupFinished = await Promise.race([
+        warmEmailConfig().then(() => true),
+        new Promise<boolean>((resolve) => {
+          warmupTimer = setTimeout(() => resolve(false), warmupBudgetMs);
+        }),
+      ]);
+    } finally {
+      if (warmupTimer) clearTimeout(warmupTimer);
+    }
+    if (!warmupFinished) {
+      logger.warn(
+        { budgetMs: warmupBudgetMs },
+        "warmEmailConfig exceeded startup budget — opening port while SMTP config warmup continues",
+      );
+    }
   } catch (err) {
     logger.warn({ err }, "warmEmailConfig failed at startup");
   }
