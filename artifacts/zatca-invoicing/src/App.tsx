@@ -219,6 +219,15 @@ import HospitalPatients from "@/pages/hospital/HospitalPatients";
 import HospitalAppointments from "@/pages/hospital/HospitalAppointments";
 import HospitalInvoices from "@/pages/hospital/HospitalInvoices";
 import HospitalAI from "@/pages/hospital/HospitalAI";
+import SchoolDashboard from "@/pages/school/SchoolDashboard";
+import SchoolCampuses from "@/pages/school/Campuses";
+import SchoolAcademic from "@/pages/school/Academic";
+import SchoolStudents from "@/pages/school/Students";
+import SchoolEnrollments from "@/pages/school/Enrollments";
+import SchoolAttendance from "@/pages/school/Attendance";
+import SchoolAssessments from "@/pages/school/Assessments";
+import SchoolFees from "@/pages/school/Fees";
+import SchoolResources from "@/pages/school/Resources";
 import CrmHub from "@/pages/crm/CrmHub";
 import CrmLeads from "@/pages/crm/CrmLeads";
 import CrmOpportunities from "@/pages/crm/CrmOpportunities";
@@ -1116,6 +1125,17 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hospital/appointments"         module="hospital"       component={HospitalAppointments} />}
             {!isSuperAdmin && <PermRoute path="/hospital/invoices"             module="hospital"       component={HospitalInvoices} />}
             {!isSuperAdmin && <PermRoute path="/hospital/ai"                   module="hospital"       component={HospitalAI} />}
+
+            {/* K–12 school management — separately enabled by SuperAdmin. */}
+            {!isSuperAdmin && <PermRoute path="/school"              module="school" component={SchoolDashboard} />}
+            {!isSuperAdmin && <PermRoute path="/school/campuses"     module="school" component={SchoolCampuses} />}
+            {!isSuperAdmin && <PermRoute path="/school/academic"     module="school" component={SchoolAcademic} />}
+            {!isSuperAdmin && <PermRoute path="/school/students"     module="school" component={SchoolStudents} />}
+            {!isSuperAdmin && <PermRoute path="/school/enrollments"  module="school" component={SchoolEnrollments} />}
+            {!isSuperAdmin && <PermRoute path="/school/attendance"   module="school" component={SchoolAttendance} />}
+            {!isSuperAdmin && <PermRoute path="/school/assessments"  module="school" component={SchoolAssessments} />}
+            {!isSuperAdmin && <PermRoute path="/school/fees"         module="school" component={SchoolFees} />}
+            {!isSuperAdmin && <PermRoute path="/school/resources"    module="school" component={SchoolResources} />}
 
             {/* CRM module — gated by `crm` permission. */}
             {!isSuperAdmin && <PermRoute path="/crm"                            module="crm"            component={CrmHub} />}

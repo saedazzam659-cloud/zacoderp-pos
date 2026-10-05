@@ -1602,10 +1602,10 @@ router.post("/register", async (req, res) => {
       // go through the same canonical filter (see `routes/adminIndustries.ts`),
       // we re-filter here as defense-in-depth — guards against legacy rows
       // written before the whitelist existed and against any direct DB edits.
-      const { filterCanonicalKeys, CANONICAL_MENU_PERMISSION_KEYS } =
+      const { filterRegistrationMenuKeys, CANONICAL_MENU_PERMISSION_KEYS } =
         await import("../lib/menuPermissionCatalog.js");
       for (const r of rows) {
-        const safeKeys = filterCanonicalKeys((r.keys ?? []) as unknown[]);
+        const safeKeys = filterRegistrationMenuKeys((r.keys ?? []) as unknown[]);
         for (const k of safeKeys) granted[k] = true;
       }
       // Explicit-deny fill: write every canonical key the company did NOT
@@ -1658,13 +1658,13 @@ router.post("/register", async (req, res) => {
     const navOff = (Array.isArray(selectedNavOff) ? selectedNavOff : [])
       .filter((p: unknown): p is string => typeof p === "string" && p.startsWith("/"));
     if (hasMenuKeys || navOff.length > 0) {
-      const { filterCanonicalKeys, CANONICAL_MENU_PERMISSION_KEYS } =
+      const { filterRegistrationMenuKeys, CANONICAL_MENU_PERMISSION_KEYS } =
         await import("../lib/menuPermissionCatalog.js");
       const granted: Record<string, boolean> = resolvedMenuPermissions
         ? JSON.parse(resolvedMenuPermissions)
         : { dashboard: true, invoices: true, customers: true };
       if (hasMenuKeys) {
-        for (const k of filterCanonicalKeys(selectedMenuKeys as unknown[])) granted[k] = true;
+        for (const k of filterRegistrationMenuKeys(selectedMenuKeys as unknown[])) granted[k] = true;
         // Explicit-deny fill: any canonical key not granted is denied so the
         // sidebar gate (`parsed[k] !== false`) hides unselected modules.
         for (const k of CANONICAL_MENU_PERMISSION_KEYS) {

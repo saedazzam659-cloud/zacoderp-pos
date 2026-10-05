@@ -40,6 +40,7 @@ const G = {
   maintenance: "perms.groups.maintenance",
   hotel:       "perms.groups.hotel",
   hospital:    "perms.groups.hospital",
+  school:      "perms.groups.school",
   crm:         "perms.groups.crm",
   fixedAssets: "perms.groups.fixedAssets",
   security:    "perms.groups.security",
@@ -166,6 +167,8 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // this module ships the FHIR R4 generator and an offline blueprint
   // dashboard so the workflow can be exercised end-to-end.
   { key: "hospital",             label: "perms.modules.hospital",             group: G.hospital,    actions: ALL },
+  // K–12 school management is a separately enabled company module.
+  { key: "school",               label: "perms.modules.school",               group: G.school,      actions: ALL },
 
   // CRM — backend key is "crm"; covers Leads, Opportunities, Activities,
   // Campaigns, Pipeline, plus AI helpers (lead scoring, forecast, alerts).

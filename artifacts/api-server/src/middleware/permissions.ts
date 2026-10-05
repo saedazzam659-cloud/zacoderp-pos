@@ -114,6 +114,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   installments: "installments",
   hotel: "hotel",
   hospital: "hospital",
+  school: "school",
   crm: "crm",
   fixed_assets: "fixed_assets",
   security_events: "security_events",
@@ -186,6 +187,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing", "internal_control",
+  "school",
   "additional_accounting_reports",
   "additional_sales_reports",
   "additional_purchase_reports",

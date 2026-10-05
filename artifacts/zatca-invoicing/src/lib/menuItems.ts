@@ -61,6 +61,9 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "hotel",              label: "إدارة الفنادق الذكية",       section: "إدارة الفنادق" },
 
   { key: "hospital",           label: "إدارة المستشفيات والمستوصفات", section: "إدارة المستشفيات" },
+  // SuperAdmin enables School ERP per company from Menu Permissions. It is
+  // deliberately not part of the legacy default-on set or signup modules.
+  { key: "school",              label: "إدارة المدارس",                section: "إدارة المدارس" },
 
   { key: "crm",                label: "إدارة علاقات العملاء (CRM)", section: "إدارة CRM" },
 
@@ -153,6 +156,9 @@ export const LEGACY_DEFAULT_ON_MENU_KEYS: ReadonlySet<string> = new Set([
   // "office" intentionally excluded — already default-OFF.
 ]);
 
+// The school module must be enabled only from SuperAdmin Menu Permissions.
+export const REGISTRATION_BLOCKED_MENU_KEYS: ReadonlySet<string> = new Set(["school"]);
+
 export const MENU_ITEM_BY_KEY: Record<string, MenuItem> = Object.fromEntries(
   MENU_ITEMS.map(m => [m.key, m]),
 );
@@ -244,6 +250,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   maintenance:        "maintenance",
   hotel:              "hotel",
   hospital:           "hospital",
+  school:             null,           // SuperAdmin enables this per company
   crm:                "crm",
   fixed_assets:       "fixed_assets",
   security_events:    "security",
@@ -668,6 +675,20 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/hospital/appointments", label: "المواعيد والكشوفات" },
       { path: "/hospital/invoices", label: "الفواتير الطبية" },
       { path: "/hospital/ai", label: "الذكاء الاصطناعي و NPHIES" },
+    ],
+  },
+  {
+    key: "school", label: "إدارة المدارس", emoji: "", moduleKeys: ["school"],
+    screens: [
+      { path: "/school", label: "لوحة المدارس" },
+      { path: "/school/campuses", label: "الفروع المدرسية" },
+      { path: "/school/academic", label: "الإعداد الأكاديمي" },
+      { path: "/school/students", label: "الطلاب وأولياء الأمور" },
+      { path: "/school/enrollments", label: "القيد والتسكين" },
+      { path: "/school/attendance", label: "الحضور والغياب" },
+      { path: "/school/assessments", label: "الاختبارات والنتائج" },
+      { path: "/school/fees", label: "الرسوم والفواتير" },
+      { path: "/school/resources", label: "أنظمة ERP المرتبطة" },
     ],
   },
   {

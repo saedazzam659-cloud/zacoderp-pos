@@ -16,7 +16,9 @@ import {
   getCountryByCode, getCountryPolicy,
 } from "@/lib/countries";
 import { INDUSTRIES as INDUSTRIES_FALLBACK } from "@/lib/industries";
-import { MENU_ITEM_BY_KEY, deriveModulesFromMenuKeys } from "@/lib/menuItems";
+import {
+  MENU_ITEM_BY_KEY, REGISTRATION_BLOCKED_MENU_KEYS, deriveModulesFromMenuKeys,
+} from "@/lib/menuItems";
 import { DateField } from "@/components/ui/date-field";
 import ModuleScreenPicker, { type ModulePickerValue } from "@/components/ModuleScreenPicker";
 
@@ -357,7 +359,9 @@ export default function Register() {
     const set = new Set<string>();
     for (const code of industryCodes) {
       const ind = INDUSTRIES_LIVE.find(i => i.code === code);
-      if (ind) for (const k of ind.recommendedModuleKeys) set.add(k);
+      if (ind) for (const k of ind.recommendedModuleKeys) {
+        if (!REGISTRATION_BLOCKED_MENU_KEYS.has(k)) set.add(k);
+      }
     }
     return Array.from(set);
   };

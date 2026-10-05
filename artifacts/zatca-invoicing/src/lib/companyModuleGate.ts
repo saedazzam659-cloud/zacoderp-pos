@@ -90,6 +90,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   maintenance: "maintenance",
   hotel: "hotel",
   hospital: "hospital",
+  school: "school",
   crm: "crm",
   fixed_assets: "fixed_assets",
   security_events: "security_events",
@@ -158,7 +159,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
-  "internal_control", "egypt_tax", "jordan_tax", "additional_accounting_reports",
+  "internal_control", "egypt_tax", "jordan_tax", "school", "additional_accounting_reports",
   "additional_sales_reports", "additional_purchase_reports",
 ]);
 

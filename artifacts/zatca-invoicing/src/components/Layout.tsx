@@ -357,6 +357,19 @@ const hospitalSubNav: NavDef[] = [
   { nameKey: "nav.hospitalAI",           href: "/hospital/ai",           icon: Sparkles,       permKey: "hospital" },
 ];
 const HOSPITAL_GROUP_PERMS = ["hospital"];
+// K–12 School ERP — SuperAdmin-controlled company module.
+const schoolSubNav: NavDef[] = [
+  { nameKey: "nav.schoolHub",         href: "/school",              icon: GraduationCap, permKey: "school", exact: true },
+  { nameKey: "nav.schoolCampuses",    href: "/school/campuses",     icon: Building2,     permKey: "school" },
+  { nameKey: "nav.schoolAcademic",    href: "/school/academic",     icon: BookOpen,      permKey: "school" },
+  { nameKey: "nav.schoolStudents",    href: "/school/students",     icon: Users,         permKey: "school" },
+  { nameKey: "nav.schoolEnrollments", href: "/school/enrollments",  icon: UserSquare2,   permKey: "school" },
+  { nameKey: "nav.schoolAttendance",  href: "/school/attendance",   icon: CalendarRange, permKey: "school" },
+  { nameKey: "nav.schoolAssessments", href: "/school/assessments",  icon: ClipboardList, permKey: "school" },
+  { nameKey: "nav.schoolFees",        href: "/school/fees",         icon: Wallet,        permKey: "school" },
+  { nameKey: "nav.schoolResources",   href: "/school/resources",    icon: Link2,         permKey: "school" },
+];
+const SCHOOL_GROUP_PERMS = ["school"];
 
 // CRM — gated by a single `crm` permission key.
 // Fixed Assets — gated by a single `fixed_assets` permission key.
@@ -2188,6 +2201,37 @@ function HospitalNavGroup({
   );
 }
 
+// ─── SchoolNavGroup ──────────────────────────────────────────────────────────
+function SchoolNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, SCHOOL_GROUP_PERMS)) return null;
+  const isOnSub = schoolSubNav.some(i => i.exact ? location === i.href : location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/school"
+        icon={GraduationCap}
+        label={t("nav.schoolGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {schoolSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── FixedAssetsNavGroup ─────────────────────────────────────────────────────
 // Collapsible "الأصول الثابتة" group — Assets, Categories, Maintenance,
 // Transfers, Depreciation, Disposals, Reports, AI helpers. Single
@@ -2826,6 +2870,12 @@ function TopNavBar(props: any) {
       node: close => <HospitalNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
     {
+      key: "school",
+      label: t("nav.schoolGroup", { defaultValue: "إدارة المدارس" }),
+      newTabHref: "/school",
+      node: close => <SchoolNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
+    },
+    {
       key: "crm",
       label: t("nav.crmGroup", { defaultValue: "إدارة العملاء" }),
       newTabHref: "/crm",
@@ -3063,6 +3113,8 @@ function SidebarInner({
   onHotelToggle,
   hospitalOpen,
   onHospitalToggle,
+  schoolOpen,
+  onSchoolToggle,
   crmOpen,
   onCrmToggle,
   fixedAssetsOpen,
@@ -3143,6 +3195,8 @@ function SidebarInner({
   onHotelToggle: () => void;
   hospitalOpen: boolean;
   onHospitalToggle: () => void;
+  schoolOpen: boolean;
+  onSchoolToggle: () => void;
   crmOpen: boolean;
   onCrmToggle: () => void;
   fixedAssetsOpen: boolean;
@@ -3518,6 +3572,17 @@ function SidebarInner({
                   onNavigate={onNavigate}
                   open={hospitalOpen}
                   onToggle={onHospitalToggle}
+                />
+              </div>
+            )}
+
+            {isGroupAllowed(menuPerms, "school", isSuperAdmin, user) && (
+              <div className="space-y-0.5">
+                <SchoolNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={schoolOpen}
+                  onToggle={onSchoolToggle}
                 />
               </div>
             )}
@@ -4174,6 +4239,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [installmentsOpen, setInstallmentsOpen] = useState(() => location.startsWith("/installments"));
   const [hotelOpen,        setHotelOpen]       = useState(() => location.startsWith("/hotel"));
   const [hospitalOpen,     setHospitalOpen]    = useState(() => location.startsWith("/hospital"));
+  const [schoolOpen,       setSchoolOpen]      = useState(() => location.startsWith("/school"));
   const [crmOpen,          setCrmOpen]         = useState(() => location.startsWith("/crm"));
   const [fixedAssetsOpen,  setFixedAssetsOpen] = useState(() => location.startsWith("/fixed-assets"));
   const [multiLinkOpen,    setMultiLinkOpen]   = useState(() => location.startsWith("/admin/gateway-clients"));
@@ -4221,7 +4287,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // and their own open/closed state is independent.
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "sister" | "accounting"
-    | "purchasing" | "sales" | "cash" | "hr" | "production" | "simpleManufacturing" | "safety" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
+    | "purchasing" | "sales" | "cash" | "hr" | "production" | "simpleManufacturing" | "safety" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "school" | "crm" | "fixedAssets"
     | "multiLink" | "pos" | "security" | "aiTools" | "voiceAssistant" | "sessions" | "chat" | "companyMaintenance" | "liveMonitoring" | "extensions" | "office" | "deliveryDocs";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
@@ -4242,6 +4308,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "installments") setInstallmentsOpen(false);
     if (keep !== "hotel")       setHotelOpen(false);
     if (keep !== "hospital")    setHospitalOpen(false);
+    if (keep !== "school")      setSchoolOpen(false);
     if (keep !== "crm")         setCrmOpen(false);
     if (keep !== "fixedAssets") setFixedAssetsOpen(false);
     if (keep !== "multiLink")   setMultiLinkOpen(false);
@@ -4289,6 +4356,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleInstallmentsToggle = makeAccordionToggle("installments", installmentsOpen, setInstallmentsOpen);
   const handleHotelToggle       = makeAccordionToggle("hotel",       hotelOpen,       setHotelOpen);
   const handleHospitalToggle    = makeAccordionToggle("hospital",    hospitalOpen,    setHospitalOpen);
+  const handleSchoolToggle     = makeAccordionToggle("school",      schoolOpen,      setSchoolOpen);
   const handleCrmToggle         = makeAccordionToggle("crm",         crmOpen,         setCrmOpen);
   const handleFixedAssetsToggle = makeAccordionToggle("fixedAssets", fixedAssetsOpen, setFixedAssetsOpen);
   const handleMultiLinkToggle   = makeAccordionToggle("multiLink",   multiLinkOpen,   setMultiLinkOpen);
@@ -4414,6 +4482,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         installments: setInstallmentsOpen,
         hotel:       setHotelOpen,
         hospital:    setHospitalOpen,
+        school:      setSchoolOpen,
         crm:         setCrmOpen,
         fixedAssets: setFixedAssetsOpen,
         multiLink:   setMultiLinkOpen,
@@ -4484,6 +4553,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onHotelToggle: handleHotelToggle,
     hospitalOpen,
     onHospitalToggle: handleHospitalToggle,
+    schoolOpen,
+    onSchoolToggle: handleSchoolToggle,
     crmOpen,
     onCrmToggle: handleCrmToggle,
     fixedAssetsOpen,

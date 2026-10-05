@@ -69,6 +69,7 @@ export * from "./kioskTokens";
 export * from "./maintenance";
 export * from "./hotel";
 export * from "./hospital";
+export * from "./schools";
 export * from "./crm";
 export * from "./fixedAssets";
 export * from "./securityActions";

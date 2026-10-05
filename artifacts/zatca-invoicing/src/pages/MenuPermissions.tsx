@@ -49,7 +49,7 @@ const EXTRA_KEYS = MENU_ITEMS.map(m => m.key).filter(k => !GROUPED_MODULE_KEYS.h
 // and permissions.ts (backend).
 const DEFAULT_OFF_KEYS = new Set<string>([
   "office", "demo_analytics", "simple_manufacturing", "internal_control",
-  "egypt_tax", "jordan_tax", "additional_accounting_reports",
+  "egypt_tax", "jordan_tax", "school", "additional_accounting_reports",
   "additional_sales_reports", "additional_purchase_reports",
 ]);
 

@@ -77,6 +77,8 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "hotel",
   // ── إدارة المستشفيات والمستوصفات ──
   "hospital",
+  // School Management — SuperAdmin enabled per company; default OFF.
+  "school",
   "crm",
   "fixed_assets",
   // ── الأمن والمراقبة ──
@@ -133,6 +135,16 @@ export function filterCanonicalKeys(input: readonly unknown[]): string[] {
     out.push(k);
   }
   return out;
+}
+
+// Some optional products are enabled only by a SuperAdmin on the company
+// permission screen and must never be inherited from public registration.
+export const REGISTRATION_BLOCKED_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set(["school"]);
+
+export function filterRegistrationMenuKeys(input: readonly unknown[]): string[] {
+  return filterCanonicalKeys(input).filter(
+    (key) => !REGISTRATION_BLOCKED_MENU_PERMISSION_KEYS.has(key),
+  );
 }
 
 /**

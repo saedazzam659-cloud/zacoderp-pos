@@ -43,7 +43,7 @@ import { filterCanonicalKeys } from "../lib/menuPermissionCatalog.js";
 
 function normaliseModuleKeys(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
-  return filterCanonicalKeys(raw);
+  return filterCanonicalKeys(raw).filter((key) => key !== "school");
 }
 
 // Per-screen exclusions: keep only sane route paths ("/x/y", no spaces,

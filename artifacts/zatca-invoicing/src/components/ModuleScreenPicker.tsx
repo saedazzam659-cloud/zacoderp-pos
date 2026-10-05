@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronLeft, FileBarChart, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MODULE_GROUPS, SIZE_TIERS, screenKey, type ModuleGroupDef } from "@/lib/menuItems";
+import {
+  MODULE_GROUPS, REGISTRATION_BLOCKED_MENU_KEYS, SIZE_TIERS, screenKey, type ModuleGroupDef,
+} from "@/lib/menuItems";
 
 // ─────────────────────────────────────────────────────────────────────
 // ModuleScreenPicker — reusable module + per-screen selector
@@ -29,6 +31,12 @@ export interface ModulePickerValue {
   navOff: string[];
 }
 
+// Signup and the SuperAdmin new-company form must not provision products
+// whose activation is restricted to the existing company's Menu Permissions.
+const PICKER_MODULE_GROUPS = MODULE_GROUPS.filter(
+  group => !group.moduleKeys.some(key => REGISTRATION_BLOCKED_MENU_KEYS.has(key)),
+);
+
 interface Props {
   value: ModulePickerValue;
   onChange: (next: ModulePickerValue) => void;
@@ -43,11 +51,14 @@ function moduleEnabled(group: ModuleGroupDef, set: Set<string>): boolean {
 
 export default function ModuleScreenPicker({ value, onChange, hideTiers, className }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const moduleSet = useMemo(() => new Set(value.moduleKeys), [value.moduleKeys]);
+  const moduleSet = useMemo(
+    () => new Set(value.moduleKeys.filter(key => !REGISTRATION_BLOCKED_MENU_KEYS.has(key))),
+    [value.moduleKeys],
+  );
   const navOffSet = useMemo(() => new Set(value.navOff), [value.navOff]);
 
   const enabledCount = useMemo(
-    () => MODULE_GROUPS.filter(g => moduleEnabled(g, moduleSet)).length,
+    () => PICKER_MODULE_GROUPS.filter(g => moduleEnabled(g, moduleSet)).length,
     [moduleSet],
   );
 
@@ -69,7 +80,10 @@ export default function ModuleScreenPicker({ value, onChange, hideTiers, classNa
   }, [moduleSet]);
 
   const applyTier = (moduleKeys: string[]) =>
-    onChange({ moduleKeys: Array.from(new Set(moduleKeys)), navOff: [] });
+    onChange({
+      moduleKeys: Array.from(new Set(moduleKeys.filter(key => !REGISTRATION_BLOCKED_MENU_KEYS.has(key)))),
+      navOff: [],
+    });
 
   const toggleModule = (group: ModuleGroupDef) => {
     const on = moduleEnabled(group, moduleSet);
@@ -90,7 +104,7 @@ export default function ModuleScreenPicker({ value, onChange, hideTiers, classNa
   const toggleScreen = (path: string) => {
     const next = new Set(navOffSet);
     next.has(path) ? next.delete(path) : next.add(path);
-    onChange({ moduleKeys: value.moduleKeys, navOff: Array.from(next) });
+    onChange({ moduleKeys: Array.from(moduleSet), navOff: Array.from(next) });
   };
 
   const setAllScreens = (group: ModuleGroupDef, on: boolean) => {
@@ -101,12 +115,12 @@ export default function ModuleScreenPicker({ value, onChange, hideTiers, classNa
     } else {
       for (const p of groupPaths) next.add(p);
     }
-    onChange({ moduleKeys: value.moduleKeys, navOff: Array.from(next) });
+    onChange({ moduleKeys: Array.from(moduleSet), navOff: Array.from(next) });
   };
 
   const enableAll = () =>
     onChange({
-      moduleKeys: Array.from(new Set(MODULE_GROUPS.flatMap(g => g.moduleKeys))),
+      moduleKeys: Array.from(new Set(PICKER_MODULE_GROUPS.flatMap(g => g.moduleKeys))),
       navOff: [],
     });
   const clearAll = () => onChange({ moduleKeys: [], navOff: [] });
@@ -146,7 +160,7 @@ export default function ModuleScreenPicker({ value, onChange, hideTiers, classNa
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="gap-1">
           <LayoutGrid className="h-3.5 w-3.5" />
-          مفعّل {enabledCount} من {MODULE_GROUPS.length} وحدة
+          مفعّل {enabledCount} من {PICKER_MODULE_GROUPS.length} وحدة
         </Badge>
         <div className="ms-auto flex gap-2">
           <Button type="button" size="sm" variant="outline" onClick={enableAll}>
@@ -160,7 +174,7 @@ export default function ModuleScreenPicker({ value, onChange, hideTiers, classNa
 
       {/* Module cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {MODULE_GROUPS.map(group => {
+        {PICKER_MODULE_GROUPS.map(group => {
           const on = moduleEnabled(group, moduleSet);
           const isOpen = expanded.has(group.key);
           const total = group.screens.length;

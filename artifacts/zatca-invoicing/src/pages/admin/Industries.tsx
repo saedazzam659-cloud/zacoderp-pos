@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import {
   MENU_ITEMS, SECTIONS, MENU_ITEM_BY_KEY, SECTION_THEME, MODULE_GROUPS,
+  REGISTRATION_BLOCKED_MENU_KEYS,
 } from "@/lib/menuItems";
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
@@ -197,7 +198,7 @@ export default function Industries() {
   // unselected; clears all of them if every key in the section is on.
   const toggleSectionInForm = (section: string) => {
     if (!editing) return;
-    const keysInSection = MENU_ITEMS.filter(m => m.section === section).map(m => m.key);
+    const keysInSection = MENU_ITEMS.filter(m => m.section === section && !REGISTRATION_BLOCKED_MENU_KEYS.has(m.key)).map(m => m.key);
     const allOn = keysInSection.every(k => editing.recommendedModuleKeys.includes(k));
     setEditing({
       ...editing,
@@ -412,7 +413,7 @@ function IndustryEditDialog({
   const filteredGroups = useMemo(() => {
     const q = pickerSearch.trim().toLowerCase();
     return SECTIONS.map(section => {
-      const items = MENU_ITEMS.filter(m => m.section === section).filter(m =>
+      const items = MENU_ITEMS.filter(m => m.section === section && !REGISTRATION_BLOCKED_MENU_KEYS.has(m.key)).filter(m =>
         !q
           ? true
           : m.label.toLowerCase().includes(q) ||
@@ -514,13 +515,13 @@ function IndustryEditDialog({
                 <span>
                   صلاحيات القوائم المُفعَّلة لهذا النشاط
                   <span className="text-xs text-muted-foreground mr-2 font-normal">
-                    (محدّد {editing.recommendedModuleKeys.length} من {MENU_ITEMS.length})
+                    (محدّد {editing.recommendedModuleKeys.length} من {MENU_ITEMS.filter(m => !REGISTRATION_BLOCKED_MENU_KEYS.has(m.key)).length})
                   </span>
                 </span>
                 <span className="flex items-center gap-1">
                   <Button
                     type="button" size="sm" variant="ghost" className="h-7 text-xs"
-                    onClick={() => setEditing({ ...editing, recommendedModuleKeys: MENU_ITEMS.map(m => m.key) })}
+                    onClick={() => setEditing({ ...editing, recommendedModuleKeys: MENU_ITEMS.filter(m => !REGISTRATION_BLOCKED_MENU_KEYS.has(m.key)).map(m => m.key) })}
                   >
                     تحديد الكل
                   </Button>
@@ -553,7 +554,7 @@ function IndustryEditDialog({
                   </div>
                 ) : filteredGroups.map(({ section, items }) => {
                   const theme = SECTION_THEME[section];
-                  const allKeys = MENU_ITEMS.filter(m => m.section === section).map(m => m.key);
+                  const allKeys = MENU_ITEMS.filter(m => m.section === section && !REGISTRATION_BLOCKED_MENU_KEYS.has(m.key)).map(m => m.key);
                   const selectedInSection = allKeys.filter(k => editing.recommendedModuleKeys.includes(k)).length;
                   const allOn = selectedInSection === allKeys.length;
                   return (
@@ -610,6 +611,8 @@ function IndustryEditDialog({
                 per-company from شاشة صلاحيات القوائم. */}
             {(() => {
               const selectedGroups = MODULE_GROUPS.filter(g =>
+                !g.moduleKeys.some(key => REGISTRATION_BLOCKED_MENU_KEYS.has(key))
+              ).filter(g =>
                 g.moduleKeys.some(k => editing.recommendedModuleKeys.includes(k)));
               if (selectedGroups.length === 0) return null;
               const hidden = editing.hiddenNavPaths ?? [];
