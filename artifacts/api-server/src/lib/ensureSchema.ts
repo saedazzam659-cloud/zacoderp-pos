@@ -1005,9 +1005,12 @@ export function assertStrictSchemaReady(input: {
   failures: string[];
   missingTables?: string[];
   optionalMissingTables?: readonly string[];
+  allowMissingTables?: boolean;
 }): void {
   const optional = new Set(input.optionalMissingTables ?? []);
-  const blockingMissingTables = (input.missingTables ?? []).filter((name) => !optional.has(name));
+  const blockingMissingTables = input.allowMissingTables
+    ? []
+    : (input.missingTables ?? []).filter((name) => !optional.has(name));
   if (!input.failures.length && !blockingMissingTables.length) return;
   const parts: string[] = [];
   if (input.failures.length) parts.push(`DDL failures: ${input.failures.slice(0, 5).join("; ")}`);
@@ -1081,6 +1084,7 @@ async function ensureColumns(
     strict?: boolean;
     optionalMissingTables?: readonly string[];
     excludedColumns?: readonly string[];
+    allowMissingTables?: boolean;
   } = {},
 ): Promise<{ applied: string[]; missingTables: string[] }> {
   const applied: string[] = [];
@@ -1185,6 +1189,7 @@ async function ensureColumns(
       failures,
       missingTables,
       optionalMissingTables: options.optionalMissingTables,
+      allowMissingTables: options.allowMissingTables,
     });
   }
   return { applied, missingTables };
@@ -4543,6 +4548,7 @@ async function runHeal(options: {
   strictSchema?: boolean;
   optionalMissingTables?: readonly string[];
   excludedColumns?: readonly string[];
+  allowMissingTables?: boolean;
 } = {}): Promise<void> {
   const includeIdentitySteps = options.includeIdentitySteps !== false;
   const strictSchema = options.strictSchema === true;
@@ -4617,6 +4623,7 @@ async function runHeal(options: {
       strict: strictSchema,
       optionalMissingTables: options.optionalMissingTables,
       excludedColumns: options.excludedColumns,
+      allowMissingTables: options.allowMissingTables,
     });
     appliedColStmts = r.applied;
     missingTables = r.missingTables;
@@ -4650,7 +4657,9 @@ async function runHeal(options: {
   if (requiredMissingTables.length) {
     logger.warn(
       { missingTables: requiredMissingTables },
-      "ensureSchema: schema declares tables that don't exist in DB — run `pnpm db:push` or write a migration",
+      options.allowMissingTables
+        ? "ensureSchema: continuing request readiness with missing tables; affected features still need their migration"
+        : "ensureSchema: schema declares tables that don't exist in DB — run `pnpm db:push` or write a migration",
     );
   }
   logger.info(
@@ -4668,6 +4677,7 @@ async function runHeal(options: {
   strictSchema?: boolean;
   optionalMissingTables?: readonly string[];
   excludedColumns?: readonly string[];
+  allowMissingTables?: boolean;
 } = {}): Promise<void> {
   const includeIdentitySteps = options.includeIdentitySteps !== false;
   const strictSchema = options.strictSchema === true;
@@ -4742,6 +4752,7 @@ async function runHeal(options: {
       strict: strictSchema,
       optionalMissingTables: options.optionalMissingTables,
       excludedColumns: options.excludedColumns,
+      allowMissingTables: options.allowMissingTables,
     });
     appliedColStmts = r.applied;
     missingTables = r.missingTables;
@@ -4775,7 +4786,9 @@ async function runHeal(options: {
   if (requiredMissingTables.length) {
     logger.warn(
       { missingTables: requiredMissingTables },
-      "ensureSchema: schema declares tables that don't exist in DB — run `pnpm db:push` or write a migration",
+      options.allowMissingTables
+        ? "ensureSchema: continuing request readiness with missing tables; affected features still need their migration"
+        : "ensureSchema: schema declares tables that don't exist in DB — run `pnpm db:push` or write a migration",
     );
   }
   logger.info(
@@ -4963,11 +4976,14 @@ export async function runAgentInitializationSchemaHealOnActiveDb(): Promise<void
  * full structural setup remains the responsibility of init-db / release
  * preflight, which continues to call runSchemaHealOnActiveDb().
  */
-export async function runAgentRequestSchemaHealOnActiveDb(): Promise<void> {
+export async function runAgentRequestSchemaHealOnActiveDb(options: {
+  allowMissingTables?: boolean;
+} = {}): Promise<void> {
   await runHeal({
     ...EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS,
     includeIdentitySteps: false,
     strictSchema: true,
+    allowMissingTables: options.allowMissingTables === true,
   });
   await ensureSequenceProtectionSchema();
 }

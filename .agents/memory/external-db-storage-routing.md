@@ -10,8 +10,10 @@ description: External Postgres routing boundaries and schema-heal constraints fo
 - Migrate = two-pass batched copy (full + delta) with ON CONFLICT (id) DO NOTHING + setval + count-verify before flipping routing. External→external rerouting is rejected (go central first). Routing back to central intentionally leaves data on the external DB (SA-confirmed flow).
 - Company archive POLICY (companies.archive_settings) always reads central; only document_archives rows are routed. Core tables/SA panel never routable by design (user requirement).
 
-Required business tables in externally routed agent databases must have complete, idempotent DDL in the shared pre-validation heal. Generic schema reconciliation adds columns to existing tables; strict readiness fails closed when a required table is absent. Scope cached ensure promises by active database context.
+Required business tables in externally routed agent databases should have complete, idempotent DDL in the shared pre-validation heal. Generic schema reconciliation adds columns to existing tables; request readiness is strict by default. Cached ensure promises must remain scoped by active database context.
 
-**Why:** A best-effort initialization can report success while request readiness still returns 503 for a missing relation. Process-wide promise caching can also let one database suppress creation in another.
+One owner-approved exception applies to a single designated registry ID on the agent-domain request path: missing tables may be logged and tolerated so an unrelated new table cannot block all ERP traffic. DDL, column, enum, and database errors remain strict; full initialization and fingerprint handling remain unchanged. A feature that needs an absent table may still fail until its migration runs.
 
-**How to apply:** Run one strict external heal before initialization stamps identity/fingerprint or reports the database ready. Keep business tables out of optional-missing lists; do not patch customer databases ad hoc or weaken strict readiness.
+**Why:** The owner requires the designated agent to remain available across central Publish without manual fingerprint initialization. A missing table should not disable unrelated routes, while other agents and genuine schema failures must retain their existing protection.
+
+**How to apply:** Resolve the exception through the authoritative agent registry and apply it only to request-time readiness. Keep full initialization fail-closed, do not generalize the exception to other agents, and preserve diagnostics for missing tables.

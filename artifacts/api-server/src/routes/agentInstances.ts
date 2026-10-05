@@ -394,6 +394,20 @@ type AgentDbContext = { db: unknown; pool: unknown };
 type ExternalDbRunner = (c: any, fn: () => any) => any;
 type AgentSchemaHealRunner = () => Promise<void> | void;
 
+// One explicitly designated production agent may keep unrelated routes online
+// when a release introduces a table that is not yet present. Column/enum and
+// DDL failures remain strict, and the full initialization/fingerprint flow is
+// unchanged. Do not broaden this to other agents without owner approval.
+const MISSING_TABLE_TOLERANT_REQUEST_AGENT_ID = 2;
+
+export function getAgentRequestSchemaHealOptions(agentId: number): {
+  allowMissingTables?: boolean;
+} {
+  return agentId === MISSING_TABLE_TOLERANT_REQUEST_AGENT_ID
+    ? { allowMissingTables: true }
+    : {};
+}
+
 export function startAgentSchemaHeal(
   agentId: number,
   ctx: AgentDbContext,
@@ -522,11 +536,20 @@ export async function agentDataSourceRouter(req: Request, res: any, next: (err?:
       // init/تهيئة flow, so every central schema addition broke agent-domain
       // requests (e.g. login 500) until a manual re-init. Never let a request
       // race the additive reconciliation: wait briefly, then return a
-      // retryable 503 without executing the downstream query or mutation.
+      // retryable 503 if a schema change cannot be reconciled safely. The
+      // designated agent tolerates missing tables only; other schema failures
+      // and all other agents retain the strict behavior.
       // This touches ONLY schema — it never reads or writes zacod_installation,
       // the fingerprint, or any encrypted material, so identity/fingerprint
       // guarantees are untouched.
-      await serveAgentRequestAfterSchemaReady(hit.id, ctx, runWithExternalDb, res, next);
+      const schemaHealOptions = getAgentRequestSchemaHealOptions(hit.id);
+      const healRunner = schemaHealOptions.allowMissingTables
+        ? async () => {
+            const { runAgentRequestSchemaHealOnActiveDb } = await import("../lib/ensureSchema.js");
+            await runAgentRequestSchemaHealOnActiveDb(schemaHealOptions);
+          }
+        : undefined;
+      await serveAgentRequestAfterSchemaReady(hit.id, ctx, runWithExternalDb, res, next, healRunner);
       return;
     }
     // A configured external database is an ownership boundary even while its

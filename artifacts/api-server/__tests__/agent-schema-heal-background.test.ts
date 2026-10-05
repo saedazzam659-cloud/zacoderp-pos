@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { serveAgentRequestAfterSchemaReady } from "../src/routes/agentInstances.ts";
+import {
+  getAgentRequestSchemaHealOptions,
+  serveAgentRequestAfterSchemaReady,
+} from "../src/routes/agentInstances.ts";
 import { assertStrictSchemaReady } from "../src/lib/ensureSchema.ts";
 
 const ensureSchemaSrc = readFileSync(
@@ -148,6 +151,35 @@ test("strict schema verification permits only explicitly optional lazy tables", 
     missingTables: ["integration_invoice_queue"],
     optionalMissingTables: ["integration_invoice_queue"],
   }));
+});
+
+test("the designated agent may tolerate missing tables without tolerating DDL failures", () => {
+  assert.doesNotThrow(() => assertStrictSchemaReady({
+    failures: [],
+    missingTables: ["new_release_feature"],
+    allowMissingTables: true,
+  }));
+  assert.throws(
+    () => assertStrictSchemaReady({
+      failures: ["users.email: lock timeout"],
+      missingTables: ["new_release_feature"],
+      allowMissingTables: true,
+    }),
+    /DDL failures: users\.email: lock timeout/,
+  );
+});
+
+test("missing-table tolerance is scoped to the designated agent request path", () => {
+  assert.deepEqual(getAgentRequestSchemaHealOptions(2), { allowMissingTables: true });
+  assert.deepEqual(getAgentRequestSchemaHealOptions(1), {});
+  assert.deepEqual(getAgentRequestSchemaHealOptions(3), {});
+
+  const agentInstancesSrc = readFileSync(
+    new URL("../src/routes/agentInstances.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(agentInstancesSrc, /getAgentRequestSchemaHealOptions\(hit\.id\)/);
+  assert.match(agentInstancesSrc, /runAgentRequestSchemaHealOnActiveDb\(schemaHealOptions\)/);
 });
 
 test("agent strict heal creates payroll allocation tables before missing-table validation", () => {
