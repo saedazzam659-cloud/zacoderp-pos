@@ -1,4 +1,7 @@
 {
+  "printOnlyPartyName": "Customer or supplier name (print only)",
+  "printOnlyPartyNamePlaceholder": "Enter the name to print",
+  "printOnlyPartyNameHint": "This does not create a record or affect accounting, reports, or ZATCA.",
   "goodsReceiptsPage": {
     "batchNumber": "Batch No.",
     "expiryDate": "Expiry Date",

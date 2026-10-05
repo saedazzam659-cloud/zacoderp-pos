@@ -20,6 +20,9 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   docNumber:      text("doc_number"),
   invoiceDate:    text("invoice_date").notNull(),
   customerId:     integer("customer_id").references(() => customersTable.id),
+  // Optional manual party name used only by print templates when no customer
+  // record is linked. Never included in ZATCA mapping, accounting, or reports.
+  manualPrintPartyName: text("manual_print_party_name"),
   paymentType:    text("payment_type").notNull().default("credit"),
   cashBoxId:      integer("cash_box_id"),
   bankAccountId:  integer("bank_account_id"),
@@ -157,6 +160,8 @@ export const salesReturnsTable = pgTable("sales_returns", {
   returnDate:   text("return_date").notNull(),
   customerId:   integer("customer_id").references(() => customersTable.id),
   invoiceId:    integer("invoice_id").references(() => salesInvoicesTable.id),
+  // Print-only fallback when a cash/bank return has no linked customer record.
+  manualPrintPartyName: text("manual_print_party_name"),
   paymentType:  text("payment_type").notNull().default("credit"),
   // Creation channel: 'mobile' from the companion app, null = web.
   sourceChannel: text("source_channel"),

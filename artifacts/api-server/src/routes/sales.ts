@@ -82,6 +82,7 @@ import {
   parseInvoiceClientRequestId,
 } from "../lib/invoiceCreateIdempotency.js";
 import { documentMutationLock, withDocumentMutationLock } from "../lib/document-mutation-lock.js";
+import { normalizeManualPrintPartyName } from "../lib/manualPrintPartyName.js";
 
 function hasSalesZatcaArtifacts(invoice: any): boolean {
   const zatcaStatus = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
@@ -2739,7 +2740,7 @@ router.post("/sales-invoices", async (req, res) => {
     // immediately even if the app UI is stale. NULL map = all allowed.
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "create"))) return;
     timing?.mark("mobile-rights");
-    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, customerId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
@@ -2890,7 +2891,7 @@ router.post("/sales-invoices", async (req, res) => {
     // POS exemption: walk-in customers are a first-class POS feature, so
     // when the request carries a posSessionId we skip the customer-required
     // rule. Branch is ALWAYS required (POS auto-fills it from the session).
-    if (!posSessionId && !customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
+    if (!posSessionId && !customerId && pType !== "cash" && pType !== "bank") { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
@@ -3042,6 +3043,7 @@ router.post("/sales-invoices", async (req, res) => {
       projectId: await resolveProjectLink(cid, req.body.projectId, branchId, req.authUser),
       docNumber: resolvedDocNumber, invoiceDate,
       customerId: customerId ? Number(customerId) : null,
+      manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!customerId),
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
@@ -3271,7 +3273,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     timing?.mark("invoice-read");
     // docNumber is intentionally not destructured here — it is immutable on
     // edit (see the .set() below).
-    const { invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { invoiceDate, customerId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             documentOfferId, costCenter, taxId } = req.body;
@@ -3279,11 +3281,11 @@ router.put("/sales-invoices/:id", async (req, res) => {
     // Same required-fields gate as the POST path so a direct PUT (e.g.
     // from a script or a stale draft that pre-dates the policy) cannot
     // strip the customer/branch off an existing invoice on edit.
-    if (!customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
+    const pType = paymentType || "credit";
+    if (!customerId && pType !== "cash" && pType !== "bank") { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
     const incomingOfferIds = collectInvoiceOfferIds(documentOfferId, lines);
-    const pType = paymentType || "credit";
     const requestedOverdraft = asBool(allowNegativeStock);
     if (requestedOverdraft && !canAccessModule(req.authUser, "sales_invoice_overdraft", "edit")) {
       res.status(403).json({ error: "ليست لديك صلاحية تفعيل السحب على المكشوف في فواتير المبيعات" });
@@ -3412,6 +3414,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
         })(),
         invoiceDate,
         customerId: customerId ? Number(customerId) : null,
+        manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!customerId),
         paymentType: pType,
         cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
         bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
@@ -5065,10 +5068,11 @@ async function validateSalesReturnPayload(
 router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { docNumber, returnDate, customerId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId, taxId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    const pType = paymentType || "credit";
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
       const usageIds = Array.from(new Set<number>((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
@@ -5076,9 +5080,8 @@ router.post("/sales-returns", async (req, res) => {
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
     if (!(await validateSalesReturnPayload(res, req.body, { cid, excludeReturnId: null }))) return;
-    // Required-fields gate: every sales return must carry an explicit
-    // customer + branch — same policy as the parent sales-invoice flow,
-    // so cost-center and customer-statement reports stay consistent.
+    // Credit returns need a customer for the receivable ledger. Cash/bank
+    // returns can omit the master record and carry a separate print-only name.
     //
     // Server-side fall-back: when the caller supplied an invoiceId (linked
     // return) but no customerId, derive the customer from the source
@@ -5089,6 +5092,7 @@ router.post("/sales-returns", async (req, res) => {
     // the cashier didn't override it.
     let resolvedCustomerId: number | null = customerId ? Number(customerId) : null;
     let resolvedBranchId:   number | null = branchId   ? Number(branchId)   : null;
+    let sourcePosSessionId: number | null = null;
     if ((!resolvedCustomerId || !resolvedBranchId) && invoiceId) {
       const [src] = await db.select({
         customerId: salesInvoicesTable.customerId,
@@ -5099,17 +5103,17 @@ router.post("/sales-returns", async (req, res) => {
       if (src) {
         if (!resolvedCustomerId) resolvedCustomerId = src.customerId ?? null;
         if (!resolvedBranchId)   resolvedBranchId   = src.branchId   ?? null;
-        // POS walk-in source: customer legitimately null. Skip the
-        // customer-required check so the return can post.
-        if (!resolvedCustomerId && src.posSessionId) {
-          // intentional — POS walk-in returns have no customer.
-        } else if (!resolvedCustomerId) {
-          res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return;
-        }
+        sourcePosSessionId = src.posSessionId ?? null;
       } else {
-        res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return;
+        res.status(400).json({ error: "الفاتورة المصدر غير موجودة في هذه الشركة" }); return;
       }
-    } else if (!resolvedCustomerId) {
+    }
+    if (
+      !resolvedCustomerId
+      && pType !== "cash"
+      && pType !== "bank"
+      && !sourcePosSessionId
+    ) {
       res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return;
     }
     if (!resolvedBranchId) { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع", field: "branchId" }); return; }
@@ -5133,7 +5137,6 @@ router.post("/sales-returns", async (req, res) => {
         resolvedRepId = rep ? rep.id : null;
       }
     }
-    const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند ردّ المبلغ بنكياً" }); return; }
     const grossR    = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
@@ -5175,6 +5178,7 @@ router.post("/sales-returns", async (req, res) => {
       })(),
       docNumber: null, returnDate,
       customerId: resolvedCustomerId,
+      manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!resolvedCustomerId),
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
@@ -5317,13 +5321,21 @@ router.put("/sales-returns/:id", async (req, res) => {
     if (existing.status !== "draft") { res.status(400).json({ error: "لا يمكن تعديل مرتجع مُرحَّل. قم بفك الترحيل أولاً." }); return; }
 
     // docNumber is intentionally not destructured — immutable on edit.
-    const { returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { returnDate, customerId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId, taxId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
-    // Same required-fields gate as the POST path so a stale-draft PUT
-    // can't strip customer/branch off an existing sales return.
-    if (!customerId) { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return; }
+    const pType = paymentType || "credit";
+    let resolvedCustomerId: number | null = customerId ? Number(customerId) : null;
+    if (!resolvedCustomerId && invoiceId) {
+      const [sourceInvoice] = await db.select({ customerId: salesInvoicesTable.customerId })
+        .from(salesInvoicesTable)
+        .where(and(eq(salesInvoicesTable.id, Number(invoiceId)), eq(salesInvoicesTable.companyId, cid)));
+      if (sourceInvoice?.customerId != null) resolvedCustomerId = sourceInvoice.customerId;
+    }
+    // Preserve a linked invoice's customer if the form clears its party field;
+    // the source buyer remains authoritative for return/ZATCA context.
+    if (!resolvedCustomerId && pType !== "cash" && pType !== "bank") { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ المرتجع", field: "customerId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
     if (!(await validateSalesReturnPayload(res, req.body, { cid, excludeReturnId: id }))) return;
     // Patch-safe rep update: only touch salesRepId when the client explicitly
@@ -5344,7 +5356,6 @@ router.put("/sales-returns/:id", async (req, res) => {
         }
       }
     }
-    const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند ردّ المبلغ بنكياً" }); return; }
     const grossR2 = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
@@ -5363,7 +5374,8 @@ router.put("/sales-returns/:id", async (req, res) => {
         return selected;
       })(),
       returnDate,
-      customerId: customerId ? Number(customerId) : null,
+      customerId: resolvedCustomerId,
+      manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!resolvedCustomerId),
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,

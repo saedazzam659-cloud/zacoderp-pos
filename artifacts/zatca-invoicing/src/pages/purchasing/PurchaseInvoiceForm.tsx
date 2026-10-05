@@ -207,6 +207,7 @@ function PurchaseInvoiceFormContent() {
   const [supplierInvoiceDate, setSupplierInvoiceDate] = useState("");
   const [invoiceDate,  setInvoiceDate]  = useState(today());
   const [supplierId,   setSupplierId]   = useState("");
+  const [manualPrintPartyName, setManualPrintPartyName] = useState("");
   const [branchId,     setBranchId]     = useState("");
 
   // Peek the NEXT number for the SAME branch the form will submit — counters
@@ -518,6 +519,7 @@ function PurchaseInvoiceFormContent() {
     setSupplierInvoiceDate(existing.supplierInvoiceDate ?? "");
     setInvoiceDate(existing.invoiceDate ?? today());
     setSupplierId(existing.supplierId ? String(existing.supplierId) : "");
+    setManualPrintPartyName(existing.manualPrintPartyName ?? "");
     setBranchId(existing.branchId ? String(existing.branchId) : "");
     setPaymentType(existing.paymentType ?? "credit");
     setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
@@ -599,6 +601,7 @@ function PurchaseInvoiceFormContent() {
         setSupplierInvoiceDate("");
         setInvoiceDate(today());
         setSupplierId(src.supplierId ? String(src.supplierId) : "");
+        setManualPrintPartyName(src.manualPrintPartyName ?? "");
         setBranchId(src.branchId ? String(src.branchId) : "");
         setPaymentType(src.paymentType ?? "credit");
         setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
@@ -985,7 +988,7 @@ function PurchaseInvoiceFormContent() {
     // Surfaced as a destructive toast BEFORE the network round-trip so the
     // user sees the failure instantly with both missing fields listed.
     const missing: string[] = [];
-    if (!supplierId) missing.push("المورد");
+    if (!supplierId && (paymentType !== "cash" && paymentType !== "bank" || !!lcId)) missing.push("المورد");
     if (!branchId)   missing.push("الفرع");
     if (missing.length) {
       toast({
@@ -1005,6 +1008,9 @@ function PurchaseInvoiceFormContent() {
       companyId: cid, branchId: branchId || null,
       docNumber: docNumber || null, supplierInvoiceNumber: supplierInvoiceNumber || null, supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
       supplierId: supplierId || null, paymentType,
+      manualPrintPartyName: !supplierId && (paymentType === "cash" || paymentType === "bank")
+        ? manualPrintPartyName.trim() || null
+        : null,
       cashBoxId: paymentType === "cash" ? (cashBoxId || null) : null,
       bankAccountId: paymentType === "bank" ? (bankAccountId || null) : null,
       currencyCode,
@@ -1500,9 +1506,28 @@ function PurchaseInvoiceFormContent() {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.supplier")}</Label>
-                  <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder={tr("fields.supplierPh")} />
+                  <SearchCombobox items={supplierItems} value={supplierId} onValueChange={v => {
+                    setSupplierId(v);
+                    if (v) setManualPrintPartyName("");
+                  }} placeholder={tr("fields.supplierPh")} />
                 </div>
-                <SupplierVatControl suppliers={suppliers} supplierId={supplierId} onSupplierChange={setSupplierId} />
+                <SupplierVatControl suppliers={suppliers} supplierId={supplierId} onSupplierChange={v => {
+                  setSupplierId(v);
+                  if (v) setManualPrintPartyName("");
+                }} />
+                {(paymentType === "cash" || paymentType === "bank") && !supplierId && !lcId && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("printOnlyPartyName")}</Label>
+                    <Input
+                      value={manualPrintPartyName}
+                      onChange={e => setManualPrintPartyName(e.target.value)}
+                      maxLength={200}
+                      placeholder={t("printOnlyPartyNamePlaceholder")}
+                      data-testid="purchase-manual-print-party-name"
+                    />
+                    <p className="text-[10px] text-muted-foreground">{t("printOnlyPartyNameHint")}</p>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.supplierInvoiceNumber")}</Label>
                   <Input className="h-9 text-sm" placeholder={tr("fields.supplierInvoiceNumberPh")} value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} />

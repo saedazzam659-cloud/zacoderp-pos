@@ -137,7 +137,7 @@ function newLine(): ReturnLine {
 }
 
 const EMPTY = {
-  docNumber: "", returnDate: today(), customerId: "", branchId: "", invoiceId: "", projectId: "",
+  docNumber: "", returnDate: today(), customerId: "", manualPrintPartyName: "", branchId: "", invoiceId: "", projectId: "",
   paymentType: "credit", cashBoxId: "", bankAccountId: "",
   currencyCode: "", exchangeRate: "1", notes: "", salesRepId: "",
   priceIncludesVat: false,
@@ -582,6 +582,7 @@ export default function SalesReturns() {
         docNumber: r.docNumber ?? "",
         returnDate: r.returnDate ?? today(),
         customerId: r.customerId ? String(r.customerId) : "",
+        manualPrintPartyName: r.manualPrintPartyName ?? "",
         invoiceId: r.invoiceId ? String(r.invoiceId) : "",
         projectId: r.projectId == null ? "" : String(r.projectId),
         branchId: r.branchId ? String(r.branchId) : "",
@@ -693,6 +694,7 @@ export default function SalesReturns() {
         docNumber: "",
         returnDate: today(),
         customerId: r.customerId ? String(r.customerId) : "",
+        manualPrintPartyName: r.manualPrintPartyName ?? "",
         invoiceId: r.invoiceId ? String(r.invoiceId) : "",
         projectId: r.projectId == null ? "" : String(r.projectId),
         branchId: r.branchId ? String(r.branchId) : "",
@@ -749,6 +751,7 @@ export default function SalesReturns() {
       setForm((prev: any) => ({
         ...prev,
         customerId: inv.customerId ? String(inv.customerId) : "",
+        manualPrintPartyName: inv.customerId ? "" : (inv.manualPrintPartyName ?? prev.manualPrintPartyName ?? ""),
         branchId:   inv.branchId   ? String(inv.branchId)   : "",
         invoiceId:  String(inv.id),
         projectId: inv.projectId == null ? "" : String(inv.projectId),
@@ -1218,12 +1221,14 @@ export default function SalesReturns() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Required-fields gate (mirrors the server's 400 in /sales-returns):
-    // every sales return must carry an explicit customer + branch.
+    // Credit returns need a customer; cash/bank returns may use a print-only
+    // name instead. All returns still require a branch.
     // Surfaced as a destructive Arabic toast BEFORE the network round-trip
     // so the user sees the failure instantly with both missing fields listed.
     const missing: string[] = [];
-    if (!form.customerId) missing.push(t("salesReturns.customer", { defaultValue: "العميل" }));
+    if (!form.customerId && form.paymentType !== "cash" && form.paymentType !== "bank") {
+      missing.push(t("salesReturns.customer", { defaultValue: "العميل" }));
+    }
     if (!form.branchId)   missing.push(t("salesReturns.branch",   { defaultValue: "الفرع" }));
     // حقل الملاحظات — إلزامي. يُعامَل بشكل أنيق inline (شريط + رسالة
     // حمراء تحت الحقل + focus تلقائي) بالإضافة للظهور في تجميعة
@@ -1297,7 +1302,8 @@ export default function SalesReturns() {
   // passed save validation, so they are never locked out of their lines.
   const basicFieldsValid =
     editingId != null || viewMode ||
-    (!!form.customerId && !!form.branchId && !!form.returnDate);
+    ((!!form.customerId || form.paymentType === "cash" || form.paymentType === "bank")
+      && !!form.branchId && !!form.returnDate);
 
   // ── "إضافة صنف" quick-entry bar (tabbed items tab) ────────────────────
   // Same design as the sales-invoice items tab: pick item → commit. The item
@@ -2262,8 +2268,20 @@ ${sections}
                 title={editingId != null ? "الرقم محفوظ — لا يمكن تعديله" : (seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
               /></Field>
               <Field label={t("salesReturns.date")} required><DateField value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
-              <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>
-              <CustomerVatControl customers={customers} customerId={form.customerId} onCustomerChange={v => setForm((p: any) => ({ ...p, customerId: v }))} />
+              <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v, ...(v ? { manualPrintPartyName: "" } : {}) }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>
+              <CustomerVatControl customers={customers} customerId={form.customerId} onCustomerChange={v => setForm((p: any) => ({ ...p, customerId: v, ...(v ? { manualPrintPartyName: "" } : {}) }))} />
+              {(form.paymentType === "cash" || form.paymentType === "bank") && !form.customerId && (
+                <Field label={t("printOnlyPartyName")}>
+                  <Input
+                    value={form.manualPrintPartyName}
+                    onChange={e => setForm((p: any) => ({ ...p, manualPrintPartyName: e.target.value }))}
+                    maxLength={200}
+                    placeholder={t("printOnlyPartyNamePlaceholder")}
+                    data-testid="sales-return-manual-print-party-name"
+                  />
+                  <p className="text-[10px] text-muted-foreground">{t("printOnlyPartyNameHint")}</p>
+                </Field>
+              )}
               <Field label={t("salesReturns.salesInvoice")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder={t("salesReturns.invoicePlaceholder")} /></Field>
               <Field label={t("salesReturns.branch")}>
                 <Select value={form.branchId || undefined} onValueChange={(v) => setForm((p: any) => ({ ...p, branchId: v }))}>

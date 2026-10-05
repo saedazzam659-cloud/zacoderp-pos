@@ -126,7 +126,7 @@ function supplierBlock(s: any) {
   if (!s) return "<div>—</div>";
   return `
     <div>
-      <div style="font-weight:600;">${s.nameAr ?? "—"}</div>
+      <div style="font-weight:600;">${escapePrintText(s.nameAr ?? "—")}</div>
       ${s.vatNumber ? `<div>الرقم الضريبي: ${s.vatNumber}</div>` : ""}
       ${s.phone     ? `<div>هاتف: ${s.phone}</div>` : ""}
       ${s.city      ? `<div>${s.city}</div>` : ""}
@@ -955,7 +955,7 @@ function template6(d: PrintData): string {
     <div class="sep"></div>
 
     <div class="info">
-      <div><b>المورد:</b> ${supplier?.nameAr ?? "—"}</div>
+      <div><b>المورد:</b> ${escapePrintText(supplier?.nameAr ?? "—")}</div>
       ${supplier?.vatNumber ? `<div><b>ر.ض:</b> ${supplier.vatNumber}</div>` : ""}
       ${supplier?.phone     ? `<div><b>هاتف:</b> ${supplier.phone}</div>` : ""}
       <div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : "آجل"}</div>
@@ -1083,7 +1083,7 @@ function template7(d: PrintData): string {
 
     <div class="body">
       <div class="info-card">
-        <div><b>المورد:</b> ${supplier?.nameAr ?? "—"}</div>
+        <div><b>المورد:</b> ${escapePrintText(supplier?.nameAr ?? "—")}</div>
         ${supplier?.vatNumber ? `<div><b>ر.ض:</b> ${supplier.vatNumber}</div>` : ""}
         ${supplier?.phone ? `<div><b>هاتف:</b> ${supplier.phone}</div>` : ""}
         <div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : "آجل"}</div>
@@ -1573,7 +1573,11 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
       const totals = computeFullTotals(data.doc, data.lines);
       qrDataUrl = await buildZatcaQrDataUrl(data.supplier, data.doc, totals);
     } catch { /* noop — placeholder fallback */ }
-    const printData: PrintData = qrDataUrl ? { ...data, _qrDataUrl: qrDataUrl } as PrintData : data;
+    const qrPrintData: PrintData = qrDataUrl ? { ...data, _qrDataUrl: qrDataUrl } as PrintData : data;
+    const manualName = String(data.doc?.manualPrintPartyName ?? "").trim();
+    const printData: PrintData = !data.supplier && data.doc?.supplierId == null && manualName
+      ? { ...qrPrintData, supplier: { nameAr: manualName, nameEn: manualName } }
+      : qrPrintData;
     const html = tmpl.fn(printData);
     const win = window.open("", "_blank", "width=900,height=700");
     if (!win) return;
@@ -1636,7 +1640,11 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
         <div className="rounded-lg bg-muted/40 border px-4 py-3 text-sm space-y-1">
           <div className="flex gap-6">
             <span className="text-muted-foreground">المورد:</span>
-            <span className="font-medium">{data.supplier?.nameAr ?? "—"}</span>
+            <span className="font-medium">
+              {data.supplier?.nameAr ?? data.supplier?.nameEn
+                ?? (data.doc?.supplierId == null ? data.doc?.manualPrintPartyName : null)
+                ?? "—"}
+            </span>
             <span className="text-muted-foreground">الوثيقة:</span>
             <span className="font-mono font-medium">
               {data.doc.docNumber ?? (data.type === "return" ? `PR-${data.doc.id}` : `PI-${data.doc.id}`)}

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { normalizeManualPrintPartyName } from "../lib/manualPrintPartyName.js";
 import { capitalizedExpenseShares, expenseJournalLines, installExpenseDocumentTransactions, readExpenseRows, withDocumentExpenseSavepoint } from "../lib/documentExpenses.js";
 import { returnedCostShare } from "../lib/documentExpenseAllocation.js";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
@@ -1639,11 +1640,12 @@ router.post("/purchase-invoices", async (req, res) => {
         }
       }
     }
-    const { docNumber, supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { docNumber, supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
+    const pType = paymentType || "credit";
     await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة الشراء");
     await assertPurchaseWriteReferences(cid, {
       supplierId, branchId, cashBoxId, bankAccountId, lcId, taxId,
@@ -1656,14 +1658,10 @@ router.post("/purchase-invoices", async (req, res) => {
       const usageV = await checkItemsUsable(cid, "purchase_invoices", usageIds, req.authUser, "save");
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
-    // Required-fields gate (per company policy): every purchase invoice
-    // must carry an explicit supplier + branch. Tightened from the older
-    // "credit-only" supplier requirement so cash/bank purchases also need
-    // an identified supplier — accountants need a clear vendor on every
-    // bill for VAT input claim and supplier-statement reporting.
-    if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
+    // Credit invoices require a supplier ledger. Cash/bank purchases may use
+    // a print-only manual name without creating a supplier master record.
+    if (!supplierId && (pType !== "cash" && pType !== "bank" || !!lcId)) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
-    const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
 
@@ -1721,6 +1719,7 @@ router.post("/purchase-invoices", async (req, res) => {
       docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null,
       supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
+      manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!supplierId),
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
@@ -1821,16 +1820,16 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       return;
     }
     // docNumber is intentionally not destructured — immutable on edit.
-    const { supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
-    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة الشراء");
-    // Same required-fields gate as the POST path so a stale-draft PUT
-    // can't strip supplier/branch off an existing purchase invoice.
-    if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
-    if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     const pType = paymentType || "credit";
+    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة الشراء");
+    // Credit invoices require a supplier ledger. Cash/bank purchases may use
+    // a print-only manual name without creating a supplier master record.
+    if (!supplierId && (pType !== "cash" && pType !== "bank" || !!lcId)) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
+    if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
     await assertPurchaseWriteReferences(cid, {
@@ -1867,6 +1866,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       supplierInvoiceNumber: supplierInvoiceNumber || null,
       supplierInvoiceDate: supplierInvoiceDate || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
+      manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!supplierId),
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
@@ -2427,12 +2427,17 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), docume
                               + Object.values(groupInvDebitByAccount).reduce((s, v) => s + v, 0);
 
     const desc = `قيد فاتورة مشتريات رقم ${inv.docNumber || inv.id}`;
-    if (inv.supplierId == null) {
+    if (
+      inv.supplierId == null
+      && (inv.paymentType !== "cash" && inv.paymentType !== "bank" || inv.lcId != null)
+    ) {
       throw Object.assign(new Error("يجب تحديد المورد قبل ترحيل فاتورة المشتريات"), { status: 400 });
     }
-    const [postingSupplier] = await db.select({ nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
-      .from(suppliersTable)
-      .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
+    const [postingSupplier] = inv.supplierId == null
+      ? []
+      : await db.select({ nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+          .from(suppliersTable)
+          .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
     const postingSupplierName = postingSupplier?.nameAr ?? postingSupplier?.nameEn ?? "";
     const supplierLineDesc = purchaseSupplierDescription({
       supplierName: postingSupplierName,
@@ -3595,10 +3600,11 @@ router.get("/purchase-returns/:id", async (req, res) => {
 router.post("/purchase-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, supplierInvoiceNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
+    const { docNumber, supplierInvoiceNumber, returnDate, supplierId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, taxId, postVariance } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    const pType = paymentType || "credit";
     await assertPurchaseWriteReferences(cid, {
       supplierId, branchId, cashBoxId, bankAccountId, taxId, invoiceId,
       lines,
@@ -3609,13 +3615,21 @@ router.post("/purchase-returns", async (req, res) => {
       const usageV = await checkItemsUsable(cid, "purchase_returns", usageIds, req.authUser, "save");
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
-    // Required-fields gate (per company policy): every purchase return
-    // must carry an explicit supplier + branch. Tightened from the
-    // older "credit-only" supplier requirement so cash/bank returns
-    // also need an identified vendor for accurate supplier statements.
-    if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ المرتجع", field: "supplierId" }); return; }
+    let resolvedSupplierId: number | null = supplierId ? Number(supplierId) : null;
+    if (!resolvedSupplierId && invoiceId) {
+      const [sourceInvoice] = await db.select({ supplierId: purchaseInvoicesTable.supplierId })
+        .from(purchaseInvoicesTable)
+        .where(and(eq(purchaseInvoicesTable.id, Number(invoiceId)), eq(purchaseInvoicesTable.companyId, cid)));
+      if (sourceInvoice?.supplierId != null) resolvedSupplierId = sourceInvoice.supplierId;
+    }
+    if (!supplierId && resolvedSupplierId) {
+      await assertPurchaseWriteReferences(cid, { supplierId: resolvedSupplierId });
+    }
+    // Credit returns need a supplier ledger; cash/bank returns can be
+    // identified by a print-only manual name. Linked invoices retain their
+    // supplier when the form's party field is cleared.
+    if (!resolvedSupplierId && pType !== "cash" && pType !== "bank") { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ المرتجع", field: "supplierId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
-    const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
     await assertIndustrialReturnSourceLinks(db, cid, invoiceId, lines);
@@ -3675,7 +3689,8 @@ router.post("/purchase-returns", async (req, res) => {
           return selected;
         })(),
         docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
-        supplierId: supplierId ? Number(supplierId) : null,
+        supplierId: resolvedSupplierId,
+        manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!resolvedSupplierId),
         invoiceId: invoiceId ? Number(invoiceId) : null,
         paymentType: pType,
         cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
@@ -3746,22 +3761,30 @@ router.put("/purchase-returns/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     // docNumber is intentionally not destructured — immutable on edit.
-    const { supplierInvoiceNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
+    const { supplierInvoiceNumber, returnDate, supplierId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, taxId, postVariance } = req.body;
     const [existing] = await db.select().from(purchaseReturnsTable)
       .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن تعديل مرتجع مُرحَّل. قم بفك الترحيل أولاً." }); return; }
-    // Same required-fields gate as the POST path so a stale-draft PUT
-    // can't strip supplier/branch off an existing purchase return.
-    if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ المرتجع", field: "supplierId" }); return; }
-    if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
     const pType = paymentType || "credit";
+    let resolvedSupplierId: number | null = supplierId ? Number(supplierId) : null;
+    if (!resolvedSupplierId && invoiceId) {
+      const [sourceInvoice] = await db.select({ supplierId: purchaseInvoicesTable.supplierId })
+        .from(purchaseInvoicesTable)
+        .where(and(eq(purchaseInvoicesTable.id, Number(invoiceId)), eq(purchaseInvoicesTable.companyId, cid)));
+      if (sourceInvoice?.supplierId != null) resolvedSupplierId = sourceInvoice.supplierId;
+    }
+    // Keep a linked invoice's supplier if its party picker is cleared.
+    // Credit returns need a supplier ledger; cash/bank returns can otherwise
+    // use a print-only manual name.
+    if (!resolvedSupplierId && pType !== "cash" && pType !== "bank") { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ المرتجع", field: "supplierId" }); return; }
+    if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
     await assertPurchaseWriteReferences(cid, {
-      supplierId, branchId, cashBoxId, bankAccountId, taxId, invoiceId, lines,
+      supplierId: resolvedSupplierId, branchId, cashBoxId, bankAccountId, taxId, invoiceId, lines,
     });
     await assertIndustrialReturnSourceLinks(db, cid, invoiceId, lines);
     // docNumber is intentionally omitted — once assigned, it is immutable.
@@ -3776,7 +3799,8 @@ router.put("/purchase-returns/:id", async (req, res) => {
         return selected;
       })(),
       supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
-      supplierId: supplierId ? Number(supplierId) : null,
+      supplierId: resolvedSupplierId,
+      manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!resolvedSupplierId),
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,

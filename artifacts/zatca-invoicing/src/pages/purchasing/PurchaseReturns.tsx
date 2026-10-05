@@ -105,7 +105,7 @@ function newLine(): ReturnLine {
 }
 
 const EMPTY = {
-  docNumber: "", supplierInvoiceNumber: "", returnDate: today(), supplierId: "", branchId: "", invoiceId: "", projectId: "",
+  docNumber: "", supplierInvoiceNumber: "", returnDate: today(), supplierId: "", manualPrintPartyName: "", branchId: "", invoiceId: "", projectId: "",
   paymentType: "credit", cashBoxId: "", bankAccountId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
   discountAmount: "0",
@@ -465,6 +465,7 @@ export default function PurchaseReturns() {
         supplierInvoiceNumber: full.supplierInvoiceNumber ?? "",
         returnDate:   full.returnDate ?? today(),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
+        manualPrintPartyName: full.manualPrintPartyName ?? "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
         invoiceId:    full.invoiceId  ? String(full.invoiceId)  : "",
         projectId: full.projectId == null ? "" : String(full.projectId),
@@ -572,6 +573,7 @@ export default function PurchaseReturns() {
         supplierInvoiceNumber: full.supplierInvoiceNumber ?? "",
         returnDate:   today(),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
+        manualPrintPartyName: full.manualPrintPartyName ?? "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
         invoiceId:    full.invoiceId  ? String(full.invoiceId)  : "",
         projectId: full.projectId == null ? "" : String(full.projectId),
@@ -680,6 +682,7 @@ export default function PurchaseReturns() {
       setForm((prev: any) => ({
         ...prev,
         supplierId: inv.supplierId ? String(inv.supplierId) : "",
+        manualPrintPartyName: inv.supplierId ? "" : (inv.manualPrintPartyName ?? prev.manualPrintPartyName ?? ""),
         branchId:   inv.branchId   ? String(inv.branchId)   : "",
         invoiceId:  String(inv.id),
         projectId: inv.projectId == null ? "" : String(inv.projectId),
@@ -951,12 +954,12 @@ export default function PurchaseReturns() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Required-fields gate (mirrors the server's 400 in /purchase-returns):
-    // every purchase return must carry an explicit supplier + branch.
+    // Credit returns need a supplier; cash/bank returns may use a print-only
+    // name instead. All returns still require a branch.
     // Surfaced as a destructive Arabic toast BEFORE the network round-trip
     // so the user sees the failure instantly with both missing fields listed.
     const missing: string[] = [];
-    if (!form.supplierId) missing.push("المورد");
+    if (!form.supplierId && form.paymentType !== "cash" && form.paymentType !== "bank") missing.push("المورد");
     if (!form.branchId)   missing.push("الفرع");
     if (missing.length) {
       toast({
@@ -1031,7 +1034,7 @@ export default function PurchaseReturns() {
     editingId != null || viewMode
       ? []
       : [
-          ...(!form.supplierId ? ["المورد"] : []),
+           ...(!form.supplierId && form.paymentType !== "cash" && form.paymentType !== "bank" ? ["المورد"] : []),
           ...(!form.branchId ? ["الفرع"] : []),
           ...(!form.returnDate ? ["التاريخ"] : []),
         ];
@@ -1754,13 +1757,25 @@ ${sections}
               /></Field>
               <Field label={t("common.date")} required><DateField value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label={tr("supplierLabel")}>
-                <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder={tr("supplierPlaceholder")} />
+                <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v, ...(v ? { manualPrintPartyName: "" } : {}) }))} placeholder={tr("supplierPlaceholder")} />
               </Field>
               <SupplierVatControl
                 suppliers={suppliers}
                 supplierId={form.supplierId}
-                onSupplierChange={(v) => setForm((p: any) => ({ ...p, supplierId: v }))}
+                onSupplierChange={(v) => setForm((p: any) => ({ ...p, supplierId: v, ...(v ? { manualPrintPartyName: "" } : {}) }))}
               />
+              {(form.paymentType === "cash" || form.paymentType === "bank") && !form.supplierId && (
+                <Field label={t("printOnlyPartyName")}>
+                  <Input
+                    value={form.manualPrintPartyName}
+                    onChange={e => setForm((p: any) => ({ ...p, manualPrintPartyName: e.target.value }))}
+                    maxLength={200}
+                    placeholder={t("printOnlyPartyNamePlaceholder")}
+                    data-testid="purchase-return-manual-print-party-name"
+                  />
+                  <p className="text-[10px] text-muted-foreground">{t("printOnlyPartyNameHint")}</p>
+                </Field>
+              )}
               <Field label={tr("supplierInvoiceLabel")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder={tr("invoiceNumberPh")} /></Field>
               <Field label={tr("supplierInvoiceNumber")}><Input placeholder={tr("supplierInvoiceNumberPh")} value={form.supplierInvoiceNumber} onChange={e => setForm((p: any) => ({ ...p, supplierInvoiceNumber: e.target.value }))} /></Field>
               <Field label={tr("branch")}>

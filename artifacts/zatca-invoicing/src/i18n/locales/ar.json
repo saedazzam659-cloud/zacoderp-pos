@@ -1,4 +1,7 @@
 {
+  "printOnlyPartyName": "اسم العميل أو المورد (للطباعة فقط)",
+  "printOnlyPartyNamePlaceholder": "اكتب الاسم الذي تريد طباعته",
+  "printOnlyPartyNameHint": "لا يُنشئ سجلاً ولا يدخل في المحاسبة أو التقارير أو زاتكا.",
   "goodsReceiptsPage": {
     "batchNumber": "رقم التشغيلة",
     "expiryDate": "تاريخ الانتهاء",

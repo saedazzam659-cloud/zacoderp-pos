@@ -357,6 +357,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [docDate,   setDocDate]         = useState(today());
   const [validUntil,setValidUntil]      = useState("");
   const [customerId,setCustomerId]      = useState("");
+  const [manualPrintPartyName, setManualPrintPartyName] = useState("");
   const [quickCustomerDialogOpen, setQuickCustomerDialogOpen] = useState(false);
   const [quickItemDialogOpen, setQuickItemDialogOpen] = useState(false);
   // ID of the quotation the user picked from the "بناءً على عرض سعر"
@@ -542,6 +543,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       }
       const src = await r.json();
       setCustomerId(src.customerId ? String(src.customerId) : "");
+      setManualPrintPartyName(src.manualPrintPartyName ?? "");
       if (usesBranch) setBranchId(src.branchId ? String(src.branchId) : "");
       setCurrencyCode(src.currencyCode ?? "SAR");
       setExchangeRate(String(src.exchangeRate ?? "1"));
@@ -891,6 +893,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (isQuotation) setValidUntil(existing.validUntil ?? "");
     if (isOrder)     setValidUntil(existing.expectedDeliveryDate ?? "");
     setCustomerId(existing.customerId ? String(existing.customerId) : "");
+    setManualPrintPartyName(existing.manualPrintPartyName ?? "");
     if (usesBranch) setBranchId(existing.branchId ? String(existing.branchId) : "");
     if (usesOps) setPaymentType(existing.paymentType ?? "credit");
     if (usesOps) setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
@@ -989,6 +992,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         setDocDate(today());
         if (!isInvoice) setValidUntil("");
         setCustomerId(src.customerId ? String(src.customerId) : "");
+        setManualPrintPartyName(src.manualPrintPartyName ?? "");
         if (usesBranch) setBranchId(src.branchId ? String(src.branchId) : "");
         if (usesOps) setPaymentType(src.paymentType ?? "credit");
         if (usesOps) setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
@@ -1676,7 +1680,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // (i.e. the `usesOps` modes that actually render the picker).
     if (isInvoice || isOrder) {
       const missing: string[] = [];
-      if (!customerId) missing.push(t("salesDocForm.customer", { defaultValue: "العميل" }));
+      if (!customerId && (!isInvoice || (paymentType !== "cash" && paymentType !== "bank"))) {
+        missing.push(t("salesDocForm.customer", { defaultValue: "العميل" }));
+      }
       if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: "الفرع" }));
       if (missing.length) {
         toast({
@@ -1688,7 +1694,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       }
       // ── متطلبات زاتكا للفاتورة الضريبية (Standard / B2B) ────────────────
       // المبسطة (Simplified / B2C) لا تحتاج إلى أي بيانات إضافية للعميل.
-      if (isInvoice && invoiceType === "standard") {
+      if (isInvoice && invoiceType === "standard" && customerId) {
         const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
         const reasons: string[] = [];
         if (!cust) {
@@ -1764,6 +1770,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     };
     if (isInvoice) {
       base.invoiceDate = docDate;
+      base.manualPrintPartyName = !customerId && (paymentType === "cash" || paymentType === "bank")
+        ? manualPrintPartyName.trim() || null
+        : null;
       // Header-level offer FK — sent on every save (including null) so the
       // engine can clear a previously-applied doc offer when conditions
       // change. Quotations + orders don't run offers.
@@ -2891,6 +2900,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         switch (name) {
           case "customerId":
             setCustomerId(value === null || value === undefined ? "" : String(value));
+            if (value) setManualPrintPartyName("");
             break;
           case "paymentType": {
             if (!usesOps) break;
@@ -3067,7 +3077,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (!isNew) return [] as string[];
     const missing: string[] = [];
     if (isInvoice || isOrder) {
-      if (!customerId) missing.push("العميل");
+      if (!customerId && (!isInvoice || (paymentType !== "cash" && paymentType !== "bank"))) {
+        missing.push("العميل");
+      }
       if (usesBranch && !branchId) missing.push("الفرع");
     } else if (fp.isRequired("customer") && !customerId) {
       missing.push("العميل");
@@ -3591,7 +3603,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 {fp.isVisible("customer") && (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
-                    <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && <span className="text-destructive"> *</span>}</Label>
+                    <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && !(isInvoice && (paymentType === "cash" || paymentType === "bank")) && <span className="text-destructive"> *</span>}</Label>
                     {(isQuotation || isOrder) && fp.isVisible("addCustomerTool") && !fp.isReadOnly("addCustomerTool") && !fp.isReadOnly("customer") && (
                       <Button
                         type="button"
@@ -3607,20 +3619,39 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     )}
                   </div>
                   <div className={fp.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""} title={fp.isReadOnly("customer") ? "للقراءة فقط حسب السياسة" : undefined}>
-                    <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
+                    <SearchCombobox items={customerComboItems} value={customerId} onValueChange={v => {
+                      setCustomerId(v);
+                      if (v) setManualPrintPartyName("");
+                    }} placeholder={t("salesDocForm.customerPlaceholder")} />
                   </div>
                 </div>
                 )}
                 <CustomerVatControl
                   customers={customers}
                   customerId={customerId}
-                  onCustomerChange={setCustomerId}
+                  onCustomerChange={v => {
+                    setCustomerId(v);
+                    if (v) setManualPrintPartyName("");
+                  }}
                   hidden={!fp.isVisible("addCustomerTool")}
                   readOnly={fp.isReadOnly("addCustomerTool")}
                   addDialogOpen={quickCustomerDialogOpen}
                   onAddDialogOpenChange={setQuickCustomerDialogOpen}
                   hideAddButton={isQuotation || isOrder}
                 />
+                {isInvoice && (paymentType === "cash" || paymentType === "bank") && !customerId && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("printOnlyPartyName")}</Label>
+                    <Input
+                      value={manualPrintPartyName}
+                      onChange={e => setManualPrintPartyName(e.target.value)}
+                      maxLength={200}
+                      placeholder={t("printOnlyPartyNamePlaceholder")}
+                      data-testid="sales-manual-print-party-name"
+                    />
+                    <p className="text-[10px] text-muted-foreground">{t("printOnlyPartyNameHint")}</p>
+                  </div>
+                )}
                 {isInvoice && isNew && (
                   <div className="space-y-1.5">
                     <Label className="text-xs flex items-center gap-1.5">

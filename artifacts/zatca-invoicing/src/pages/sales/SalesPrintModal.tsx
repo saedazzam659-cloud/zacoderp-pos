@@ -555,13 +555,22 @@ function customerBlock(cu: any, d?: PrintData) {
   if (!cu && !d?.doc?.buyerName) return "<div>—</div>";
   return `
     <div>
-      <div style="font-weight:600;">${displayName}</div>
+      <div style="font-weight:600;">${escapePrintHtml(displayName)}</div>
       ${(cu?.vatNumber ?? d?.doc?.buyerVatNumber) ? `<div>الرقم الضريبي: ${cu?.vatNumber ?? d?.doc?.buyerVatNumber}</div>` : ""}
       ${cu?.phone ? `<div>هاتف: ${cu.phone}</div>` : ""}
       ${isQuotation
         ? (quotationAddress ? `<div>${escapePrintHtml(quotationAddress)}</div>` : "")
         : (cu?.city ? `<div>${cu.city}</div>` : "")}
     </div>`;
+}
+
+function withManualSalesPrintPartyName(data: PrintData): PrintData {
+  const manualName = String(data.doc?.manualPrintPartyName ?? "").trim();
+  if (!manualName || data.doc?.customerId != null || data.customer) return data;
+  return {
+    ...data,
+    customer: { nameAr: manualName, nameEn: manualName },
+  };
 }
 
 function linesTable(doc: any, lines: any[], headerStyle = "", rowEvenStyle = "", inc = false) {
@@ -1091,7 +1100,7 @@ function template6(d: PrintData): string {
     <div class="sep"></div>
 
     <div class="info">
-      <div><b>العميل:</b> ${customer?.nameAr ?? customer?.nameEn ?? "—"}</div>
+      <div><b>العميل:</b> ${escapePrintHtml(customer?.nameAr ?? customer?.nameEn ?? "—")}</div>
       ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
       ${customer?.phone     ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
       ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
@@ -1227,7 +1236,7 @@ function template7(d: PrintData): string {
 
     <div class="body">
       <div class="info-card">
-        <div><b>العميل:</b> ${customer?.nameAr ?? customer?.nameEn ?? "—"}</div>
+        <div><b>العميل:</b> ${escapePrintHtml(customer?.nameAr ?? customer?.nameEn ?? "—")}</div>
         ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
         ${customer?.phone ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
         ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
@@ -1872,9 +1881,9 @@ function template13(d: PrintData): string {
     </div>
 
     <div class="customer-card">
-      <div class="seal">${(customer?.nameAr ?? customer?.nameEn ?? "؟").trim().charAt(0)}</div>
+      <div class="seal">${escapePrintHtml((customer?.nameAr ?? customer?.nameEn ?? "؟").trim().charAt(0))}</div>
       <div class="lines">
-        <div class="name">${customer?.nameAr ?? customer?.nameEn ?? "—"}</div>
+        <div class="name">${escapePrintHtml(customer?.nameAr ?? customer?.nameEn ?? "—")}</div>
         ${customer?.vatNumber ? `<div><span style="color:${GOLD_DARK}">الرقم الضريبي:</span> ${customer.vatNumber}</div>` : ""}
         ${customer?.phone     ? `<div><span style="color:${GOLD_DARK}">هاتف:</span> ${customer.phone}</div>` : ""}
         ${isQuot
@@ -2402,7 +2411,7 @@ export function template14(d: PrintData): string {
       <!-- CUSTOMER (left side in RTL — last in DOM) -->
       <div class="col-cu">
         <div class="label">${contracting ? "الطرف المرتبط" : L.customerInfo}</div>
-        <div class="cu-name">${(isEn ? (customer?.nameEn ?? customer?.nameAr) : (customer?.nameAr ?? customer?.nameEn)) ?? doc.buyerName ?? L.none}</div>
+        <div class="cu-name">${escapePrintHtml((isEn ? (customer?.nameEn ?? customer?.nameAr) : (customer?.nameAr ?? customer?.nameEn)) ?? doc.buyerName ?? L.none)}</div>
         ${isQuot ? `
           ${(customer?.vatNumber ?? doc.buyerVatNumber)
             ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
@@ -2784,7 +2793,7 @@ function template20(d: PrintData): string {
   const safeLogo = safeLogoSrc(company?.logo);
   const number = e(doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`);
   const taxDocument = !isNonPaymentDoc(d.type);
-  const name = customer?.nameAr ?? customer?.nameEn ?? doc.buyerName ?? "—";
+  const name = e(customer?.nameAr ?? customer?.nameEn ?? doc.buyerName ?? "—");
   const address = d.type === "quotation" ? quotationCustomerAddressText(d) : [
     customer?.city ?? doc.buyerCity, customer?.district ?? doc.buyerDistrict,
     customer?.buildingNumber ?? doc.buyerBuildingNumber,
@@ -2947,7 +2956,7 @@ export async function renderSalesDocsBundleHtml(datas: PrintData[], company: any
     } else {
       delete (d as any)._qrDataUrl;
     }
-    return tmpl.fn(d);
+    return tmpl.fn(withManualSalesPrintPartyName(d));
   }));
   if (rendered.length === 1) {
     // Single doc → keep the template's own auto-print behavior intact.
@@ -3250,7 +3259,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
       const resolved = map.get(Number(data.customer.accountId));
       if (resolved) (data.customer as any).accountCode = resolved;
     }
-    const html = tmpl.fn(data);
+    const html = tmpl.fn(withManualSalesPrintPartyName(data));
     // Use a hidden same-origin iframe instead of `window.open` so popup
     // blockers don't kill auto-print after save (no user-gesture path)
     // and so the print preview always shows up — even when the print
@@ -3394,7 +3403,11 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
         <div className="rounded-lg bg-muted/40 border px-4 py-3 text-sm space-y-1">
           <div className="flex gap-6">
             <span className="text-muted-foreground">العميل:</span>
-            <span className="font-medium">{data.customer?.nameAr ?? data.customer?.nameEn ?? "—"}</span>
+            <span className="font-medium">
+              {data.customer?.nameAr ?? data.customer?.nameEn
+                ?? (data.doc?.customerId == null ? data.doc?.manualPrintPartyName : null)
+                ?? "—"}
+            </span>
             <span className="text-muted-foreground">الوثيقة:</span>
             <span className="font-mono font-medium">
               {data.doc.docNumber ?? `${docPrefix(data.type)}-${data.doc.id}`}

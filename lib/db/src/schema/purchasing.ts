@@ -85,6 +85,9 @@ export const purchaseInvoicesTable = pgTable("purchase_invoices", {
   supplierInvoiceDate:  text("supplier_invoice_date"),
   invoiceDate:          text("invoice_date").notNull(),
   supplierId:           integer("supplier_id").references(() => suppliersTable.id),
+  // Optional manual party name used only by print templates when no supplier
+  // record is linked. Never used for accounting or reports.
+  manualPrintPartyName: text("manual_print_party_name"),
   paymentType:          text("payment_type").notNull().default("credit"),
   cashBoxId:            integer("cash_box_id"),
   bankAccountId:        integer("bank_account_id"),
@@ -247,6 +250,8 @@ export const purchaseReturnsTable = pgTable("purchase_returns", {
   returnDate:    text("return_date").notNull(),
   supplierId:    integer("supplier_id").references(() => suppliersTable.id),
   invoiceId:     integer("invoice_id").references(() => purchaseInvoicesTable.id),
+  // Print-only fallback when a cash/bank return has no linked supplier record.
+  manualPrintPartyName: text("manual_print_party_name"),
   paymentType:   text("payment_type").notNull().default("credit"),
   cashBoxId:     integer("cash_box_id"),
   bankAccountId: integer("bank_account_id"),
