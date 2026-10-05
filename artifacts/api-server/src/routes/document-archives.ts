@@ -5,6 +5,12 @@ import { Readable } from "node:stream";
 import crypto from "node:crypto";
 import { db } from "@workspace/db";
 import { getRoutedDb } from "../lib/externalDbRouting.js";
+import {
+  schoolAcademicYearsTable, schoolAttendanceTable, schoolCampusesTable,
+  schoolClassesTable, schoolEnrollmentsTable, schoolExamResultsTable,
+  schoolExamsTable, schoolFeesTable, schoolGradesTable,
+  schoolStudentGuardiansTable, schoolStudentsTable, schoolSubjectsTable,
+} from "@workspace/db/schema";
 
 // All document_archives ROW operations go through the platform storage
 // routing (may live on an external DB). Company policy reads stay central.
@@ -15,6 +21,7 @@ import {
   receiptVouchersTable, paymentVouchersTable,
 } from "@workspace/db";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
+import { canAccessModule, companyAllowsModule } from "../middleware/permissions.js";
 import { ObjectStorageService, ObjectNotFoundError } from "../lib/objectStorage.js";
 import { sendEmail } from "../lib/email.js";
 import {
@@ -30,6 +37,97 @@ interface ArchiveSettings {
   defaultMode?: ArchiveMode;
   screens?: Record<string, ArchiveMode>;
   allowedUserIds?: number[];
+}
+const SCHOOL_ARCHIVE_SCREEN = "school_records";
+const SCHOOL_ARCHIVE_TABLES: Record<string, any> = {
+  campuses: schoolCampusesTable,
+  "academic-years": schoolAcademicYearsTable,
+  grades: schoolGradesTable,
+  classes: schoolClassesTable,
+  students: schoolStudentsTable,
+  guardians: schoolStudentGuardiansTable,
+  enrollments: schoolEnrollmentsTable,
+  attendance: schoolAttendanceTable,
+  subjects: schoolSubjectsTable,
+  exams: schoolExamsTable,
+  results: schoolExamResultsTable,
+  fees: schoolFeesTable,
+};
+
+class SchoolArchiveAccessError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
+function resolveSchoolArchiveRecord(companyId: number, docKey: string) {
+  const match = /^school:(\d+):([a-z-]+):(\d+)$/.exec(docKey);
+  if (!match) throw new SchoolArchiveAccessError(400, "معرّف سجل المدرسة غير صالح");
+  const keyCompanyId = Number(match[1]);
+  const resource = match[2]!;
+  const id = Number(match[3]);
+  if (keyCompanyId !== companyId) {
+    throw new SchoolArchiveAccessError(404, "سجل المدرسة غير موجود");
+  }
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw new SchoolArchiveAccessError(400, "معرّف سجل المدرسة غير صالح");
+  }
+  const table = SCHOOL_ARCHIVE_TABLES[resource];
+  if (!table) throw new SchoolArchiveAccessError(400, "نوع سجل المدرسة غير مدعوم");
+  return { id, table };
+}
+
+async function assertSchoolArchiveRecord(companyId: number, docKey: string) {
+  const { id, table } = resolveSchoolArchiveRecord(companyId, docKey);
+  const [record] = await db.select({ id: table.id }).from(table).where(and(
+    eq(table.id, id),
+    eq(table.companyId, companyId),
+  )).limit(1);
+  if (!record) throw new SchoolArchiveAccessError(404, "سجل المدرسة غير موجود");
+}
+
+async function assertSchoolArchiveAccess(
+  req: Request,
+  companyId: number,
+  screenKey: string,
+  docKey: string,
+  action: "view" | "edit",
+) {
+  if (screenKey !== SCHOOL_ARCHIVE_SCREEN) return;
+  if (!canAccessModule(req.authUser, "school", action)) {
+    throw new SchoolArchiveAccessError(403, "لا تملك صلاحية الوصول إلى مرفقات المدارس");
+  }
+  await assertSchoolArchiveRecord(companyId, docKey);
+}
+
+function parseMenuPermissions(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function schoolArchiveShareIsAvailable(companyId: number, docKey: string): Promise<boolean> {
+  try {
+    await assertSchoolArchiveRecord(companyId, docKey);
+  } catch (error) {
+    if (error instanceof SchoolArchiveAccessError) return false;
+    throw error;
+  }
+  const [company] = await db.select({ menuPermissions: companiesTable.menuPermissions })
+    .from(companiesTable)
+    .where(eq(companiesTable.id, companyId))
+    .limit(1);
+  return companyAllowsModule({
+    role: "user",
+    companyMenuPermissions: parseMenuPermissions(company?.menuPermissions),
+  }, "school");
 }
 
 // Allow `?token=<bearer>` so the download URL works in window.open()/<a> where
@@ -75,9 +173,11 @@ function modeFor(settings: ArchiveSettings | null, screenKey: string): ArchiveMo
 }
 
 function archiveAccessError(res: Response, error: unknown): boolean {
-  if (!(error instanceof ContractingArchiveAccessError)) return false;
-  res.status(error.status).json({ error: error.message });
-  return true;
+  if (error instanceof ContractingArchiveAccessError || error instanceof SchoolArchiveAccessError) {
+    res.status(error.status).json({ error: error.message });
+    return true;
+  }
+  return false;
 }
 
 const RecordBody = z.object({
@@ -106,6 +206,9 @@ router.post("/", async (req: Request, res: Response) => {
   }
   try {
     await assertContractingArchiveAccess(
+      req, cid, parsed.data.screenKey, parsed.data.docKey, "edit",
+    );
+    await assertSchoolArchiveAccess(
       req, cid, parsed.data.screenKey, parsed.data.docKey, "edit",
     );
   } catch (error) {
@@ -154,6 +257,7 @@ router.get("/", async (req: Request, res: Response) => {
   }
   try {
     await assertContractingArchiveAccess(req, cid, screenKey, docKey, "view");
+    await assertSchoolArchiveAccess(req, cid, screenKey, docKey, "view");
   } catch (error) {
     if (archiveAccessError(res, error)) return;
     throw error;
@@ -315,6 +419,7 @@ router.post("/:id/share-link", async (req: Request, res: Response) => {
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   try {
     await assertContractingArchiveAccess(req, cid, row.screenKey, row.docKey, "view");
+    await assertSchoolArchiveAccess(req, cid, row.screenKey, row.docKey, "view");
   } catch (error) {
     if (archiveAccessError(res, error)) return;
     throw error;
@@ -345,6 +450,13 @@ router.get("/shared/:token", async (req: Request, res: Response) => {
     .from(documentArchivesTable)
     .where(eq(documentArchivesTable.id, id));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (
+    row.screenKey === SCHOOL_ARCHIVE_SCREEN &&
+    !await schoolArchiveShareIsAvailable(row.companyId, row.docKey)
+  ) {
+    res.status(403).json({ error: "مرفق المدرسة غير متاح" });
+    return;
+  }
   const settings = await loadSettings(row.companyId);
   if (modeFor(settings, row.screenKey) === "off") { res.status(403).json({ error: "الأرشفة معطّلة" }); return; }
   try {
@@ -386,6 +498,7 @@ router.get("/:id/download", async (req: Request, res: Response) => {
   }
   try {
     await assertContractingArchiveAccess(req, cid, row.screenKey, row.docKey, "view");
+    await assertSchoolArchiveAccess(req, cid, row.screenKey, row.docKey, "view");
   } catch (error) {
     if (archiveAccessError(res, error)) return;
     throw error;
@@ -441,6 +554,7 @@ router.post("/:id/email", async (req: Request, res: Response) => {
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   try {
     await assertContractingArchiveAccess(req, cid, row.screenKey, row.docKey, "view");
+    await assertSchoolArchiveAccess(req, cid, row.screenKey, row.docKey, "view");
   } catch (error) {
     if (archiveAccessError(res, error)) return;
     throw error;
@@ -488,6 +602,10 @@ router.patch("/rekey", async (req: Request, res: Response) => {
   });
   const parsed = Body.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "بيانات غير صحيحة" }); return; }
+  if (parsed.data.screenKey === SCHOOL_ARCHIVE_SCREEN) {
+    res.status(400).json({ error: "لا يمكن تغيير ربط مرفق سجل المدرسة" });
+    return;
+  }
   try {
     const oldRef = await assertContractingArchiveAccess(
       req, cid, parsed.data.screenKey, parsed.data.oldDocKey, "edit",
@@ -540,6 +658,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
   }
   try {
     await assertContractingArchiveAccess(req, cid, row.screenKey, row.docKey, "delete");
+    await assertSchoolArchiveAccess(req, cid, row.screenKey, row.docKey, "edit");
   } catch (error) {
     if (archiveAccessError(res, error)) return;
     throw error;

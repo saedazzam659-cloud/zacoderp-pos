@@ -7,7 +7,7 @@ export const SCHOOL_API = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/sc
 
 export function useSchoolContext() {
   const { user, token } = useAuth();
-  return { companyId: user?.companyId ?? null, token };
+  return { companyId: user?.companyId ?? null, companyName: user?.company?.nameAr ?? null, token };
 }
 
 async function request<T>(path: string, token: string | null, init?: RequestInit): Promise<T> {

@@ -101,6 +101,7 @@ const ARCHIVE_SCREENS: { key: string; label: string }[] = [
   { key: "customers",        label: "العملاء" },
   { key: "suppliers",        label: "الموردون" },
   { key: "hr_documents",     label: "مستندات الموظفين" },
+  { key: "school_records",   label: "سجلات المدارس" },
   { key: "contracting_projects",        label: "مشاريع المقاولات" },
   { key: "contracting_owner_contracts", label: "عقود المالك" },
   { key: "contracting_subcontracts",    label: "عقود المقاولين من الباطن" },

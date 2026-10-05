@@ -66,6 +66,10 @@ interface Props {
   sourceJournalEntryId?: number;
   /** Generated entries may view source attachments but must not create copies. */
   readOnly?: boolean;
+  /** Keep the existing archive view available while hiding all write actions. */
+  canEdit?: boolean;
+  /** Render as an icon-only action for dense record tables. */
+  compact?: boolean;
 }
 
 /** A cloud-archived file row as returned by /api/document-archives. */
@@ -128,7 +132,10 @@ function formatBytes(b: number): string {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export function JournalScanArchive({ jeKey, screenKey, companyName, className, sourceJournalEntryId, readOnly = false }: Props) {
+export function JournalScanArchive({
+  jeKey, screenKey, companyName, className, sourceJournalEntryId, readOnly = false,
+  canEdit: canModify = true, compact = false,
+}: Props) {
   const { toast } = useToast();
   const { user, token } = useAuth();
   const supported = isFsAccessSupported();
@@ -314,7 +321,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
     setBadgeCount(getArchivedFiles(jeKey).length);
   }, [jeKey, archived.length, isCloud, cloudFiles.length]);
   // In cloud mode, fetch once on mount so the badge is accurate before opening.
-  useEffect(() => { if (isCloud) fetchCloud(); }, [isCloud, fetchCloud]);
+  useEffect(() => { if (isCloud && !compact) fetchCloud(); }, [isCloud, fetchCloud, compact]);
   useEffect(() => { void fetchSourceArchive(); }, [fetchSourceArchive]);
   // Local mode: load the archived index on mount too, so the split-screen
   // panel can list files without the dialog ever being opened.
@@ -342,11 +349,11 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
   }, [jeKey]);
   // Auto-open the split view ONCE per document when archived files exist.
   useEffect(() => {
-    if (badgeCount > 0 && !autoOpenedRef.current) {
+    if (!compact && badgeCount > 0 && !autoOpenedRef.current) {
       autoOpenedRef.current = true;
       setPanelOpen(true);
     }
-  }, [badgeCount]);
+  }, [badgeCount, compact]);
 
   // ─── Camera lifecycle ────────────────────────────────────────────────────
   async function startCamera() {
@@ -547,11 +554,12 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
           type="button"
           variant="outline"
           size="sm"
-          className={className ?? "h-8 gap-1.5 text-xs relative"}
+          className={className ?? (compact ? "relative h-8 w-8 p-0" : "h-8 gap-1.5 text-xs relative")}
           title={isCloud ? "أرشفة مستندات (تخزين سحابي)" : "أرشفة مستندات (تخزين على جهازك المحلي)"}
+          aria-label="أرشفة مستند"
         >
           {isCloud ? <Cloud className="h-3.5 w-3.5" /> : <Paperclip className="h-3.5 w-3.5" />}
-          أرشفة مستند
+          {compact ? <span className="sr-only">أرشفة مستند</span> : "أرشفة مستند"}
           {badgeCount > 0 && (
             <span className="absolute -top-1.5 -left-1.5 h-4 min-w-[16px] rounded-full bg-emerald-500 text-white text-[10px] font-bold leading-none flex items-center justify-center px-1">
               {badgeCount}
@@ -574,7 +582,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
         </DialogHeader>
 
         {/* ── Folder selector (local mode only) ──────────────────────────── */}
-        {!isCloud && (
+        {!isCloud && canModify && (
           <div className={`rounded-lg border-2 p-3 flex items-center gap-3 ${
             folder ? "border-emerald-300 bg-emerald-50/50" : "border-amber-300 bg-amber-50/50"
           }`}>
@@ -599,7 +607,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
           </div>
         )}
 
-        <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="mt-3">
+        {canModify && <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="mt-3">
           <TabsList className="grid grid-cols-3 w-full">
             <TabsTrigger value="upload" className="gap-1.5">
               <Upload className="h-4 w-4" />ملفات / صور
@@ -780,10 +788,10 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
               </div>
             )}
           </TabsContent>
-        </Tabs>
+        </Tabs>}
 
         {/* ── Pending pages preview ────────────────────────────────────── */}
-        {pages.length > 0 && (
+        {canModify && pages.length > 0 && (
           <div className="mt-4 space-y-2">
             <Label className="text-sm font-semibold">
               صفحات قيد التحضير ({pages.length})
@@ -863,14 +871,14 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
                       companyName={companyName}
                       variant="row"
                     />
-                    <Button
+                    {canModify && <Button
                       type="button" size="sm" variant="ghost"
                       className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
                       title="حذف الملف من الأرشيف السحابي"
                       onClick={() => deleteCloud(f)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    </Button>}
                   </div>
                 ))}
               </div>
@@ -905,7 +913,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                     </Button>
-                    <Button
+                    {canModify && <Button
                       type="button" size="sm" variant="ghost"
                       className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
                       title="حذف من فهرس الأرشفة (لا يحذف الملف من جهازك)"
@@ -915,7 +923,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
                       }}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    </Button>}
                   </div>
                 ))}
               </div>
@@ -985,7 +993,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
     </Dialog>}
 
     {/* Split-view trigger — visible whenever archived files exist. */}
-    {totalBadgeCount > 0 && (
+    {!compact && totalBadgeCount > 0 && (
       <Button
         type="button"
         variant="outline"
@@ -1010,6 +1018,7 @@ export function JournalScanArchive({ jeKey, screenKey, companyName, className, s
       token={token ?? null}
       companyName={companyName}
       focusCloudId={panelFocusId}
+      canEdit={canModify}
       onDeleteCloud={(f) => deleteCloud(f as CloudFile)}
       onDeleteLocal={(f) => {
         removeArchivedFile(jeKey, f.filename);

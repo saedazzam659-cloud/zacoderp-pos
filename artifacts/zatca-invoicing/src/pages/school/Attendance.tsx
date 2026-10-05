@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { usePermission } from "@/hooks/usePermission";
-import { useSchoolBulkAttendance, useSchoolList, type Row } from "./schoolApi";
+import { JournalScanArchive } from "@/components/JournalScanArchive";
+import { useSchoolBulkAttendance, useSchoolContext, useSchoolList, type Row } from "./schoolApi";
 
 const dateToday = () => {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -23,6 +24,7 @@ export default function Attendance() {
   const [notes, setNotes] = useState<Record<number, string>>({});
   const canCreate = usePermission("school", "create");
   const canEdit = usePermission("school", "edit");
+  const { companyId, companyName } = useSchoolContext();
   const classes = useSchoolList<Row>("classes", { page: 1, limit: 100, ...(academicYearId ? { academicYearId } : {}) });
   const years = useSchoolList<Row>("academic-years", { page: 1, limit: 100 });
   const enrollments = useSchoolList<Row>("enrollments", { page: 1, limit: 100, ...(classId ? { classId } : {}), ...(academicYearId ? { academicYearId } : {}) });
@@ -51,10 +53,11 @@ export default function Attendance() {
         : enrollments.isLoading || existing.isLoading ? <div className="space-y-3 p-5">{[1, 2, 3].map(n => <div className="h-10 animate-pulse rounded bg-muted" key={n} />)}</div>
         : enrollments.isError || existing.isError ? <div role="alert" className="p-10 text-center"><AlertCircle className="mx-auto mb-2 h-5 w-5 text-destructive" /><p className="text-sm">تعذر تحميل بيانات الفصل والحضور.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => { void enrollments.refetch(); void existing.refetch(); }}>إعادة المحاولة</Button></div>
         : enrolled.length === 0 ? <div className="p-12 text-center text-sm text-muted-foreground">لا يوجد طلاب مقيدون في هذا الفصل لهذه السنة.</div>
-         : <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm"><thead className="bg-muted/40 text-xs text-muted-foreground"><tr><th className="px-4 py-3 text-start">الطالب</th><th className="px-4 py-3 text-start">الرقم الطلابي</th><th className="px-4 py-3 text-start">الحالة</th><th className="px-4 py-3 text-start">ملاحظة</th></tr></thead><tbody className="divide-y">{enrolled.map((e: Row) => {
+          : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="bg-muted/40 text-xs text-muted-foreground"><tr><th className="px-4 py-3 text-start">الطالب</th><th className="px-4 py-3 text-start">الرقم الطلابي</th><th className="px-4 py-3 text-start">الحالة</th><th className="px-4 py-3 text-start">ملاحظة</th><th className="px-4 py-3 text-center">المرفقات</th></tr></thead><tbody className="divide-y">{enrolled.map((e: Row) => {
            const student = students.data?.items.find((row: Row) => row.id === e.studentId);
            const studentName = e.studentNameAr || e.fullNameAr || student?.fullNameAr || `طالب رقم ${e.studentId}`;
-            return <tr key={e.id} className="hover:bg-muted/20"><td className="px-4 py-3 font-medium">{studentName}</td><td className="px-4 py-3 font-mono text-xs">{e.studentNumber || student?.studentNumber || e.studentId}</td><td className="px-4 py-3"><select aria-label={`حالة الطالب ${studentName}`} className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={getStatus(e.id)} disabled={!canCreate || !canEdit} onChange={ev => setStatus(prev => ({ ...prev, [e.id]: ev.target.value }))}>{attendanceStatuses.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></td><td className="px-4 py-3"><Input aria-label="ملاحظة الحضور" value={notes[e.id] ?? attendanceByEnrollment.get(e.id)?.note ?? ""} disabled={!canCreate || !canEdit} onChange={ev => setNotes(prev => ({ ...prev, [e.id]: ev.target.value }))} className="max-w-xs" placeholder="اختياري" /></td></tr>;
+             const attendanceRecord = attendanceByEnrollment.get(e.id);
+             return <tr key={e.id} className="hover:bg-muted/20"><td className="px-4 py-3 font-medium">{studentName}</td><td className="px-4 py-3 font-mono text-xs">{e.studentNumber || student?.studentNumber || e.studentId}</td><td className="px-4 py-3"><select aria-label={`حالة الطالب ${studentName}`} className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={getStatus(e.id)} disabled={!canCreate || !canEdit} onChange={ev => setStatus(prev => ({ ...prev, [e.id]: ev.target.value }))}>{attendanceStatuses.map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></td><td className="px-4 py-3"><Input aria-label="ملاحظة الحضور" value={notes[e.id] ?? attendanceRecord?.note ?? ""} disabled={!canCreate || !canEdit} onChange={ev => setNotes(prev => ({ ...prev, [e.id]: ev.target.value }))} className="max-w-xs" placeholder="اختياري" /></td><td className="px-4 py-2 text-center">{attendanceRecord?.id ? <JournalScanArchive compact canEdit={canEdit} companyName={companyName} screenKey="school_records" jeKey={`school:${companyId ?? "none"}:attendance:${attendanceRecord.id}`} /> : <span className="text-xs text-muted-foreground">احفظ الحضور أولاً</span>}</td></tr>;
          })}</tbody></table></div>}
     </section>
   </main>;

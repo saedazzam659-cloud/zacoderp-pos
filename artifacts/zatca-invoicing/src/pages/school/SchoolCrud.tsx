@@ -5,11 +5,12 @@ import { Input } from "@/components/ui/input";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { usePermission } from "@/hooks/usePermission";
+import { JournalScanArchive } from "@/components/JournalScanArchive";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useSchoolCrud, useSchoolList, useSchoolLists, type Row } from "./schoolApi";
+import { useSchoolContext, useSchoolCrud, useSchoolList, useSchoolLists, type Row } from "./schoolApi";
 
 export type FieldDef = { key: string; label: string; type?: "text" | "number" | "date" | "email" | "textarea" | "select" | "relation"; options?: [string, string][]; resource?: string; labelKey?: string; required?: boolean };
 export type ColumnDef = { key: string; label: string; type?: "status" | "date" | "number" | "relation"; options?: [string, string][]; resource?: string; labelKey?: string };
@@ -59,6 +60,7 @@ export function SchoolCrudPage({ config, headingExtra }: { config: CrudConfig; h
   const canCreate = usePermission("school", "create");
   const canEdit = usePermission("school", "edit");
   const canDelete = usePermission("school", "delete");
+  const { companyId, companyName } = useSchoolContext();
   const rows = data?.items ?? [];
   const relationFields = [...config.fields, ...config.columns].filter(field => field.type === "relation" && field.resource);
   const nestedResources = new Set<string>();
@@ -125,12 +127,12 @@ export function SchoolCrudPage({ config, headingExtra }: { config: CrudConfig; h
              : <Input aria-label={f.label} type={f.type || "text"} value={form[f.key] ?? ""} onChange={e => { setForm(prev => ({ ...prev, [f.key]: e.target.value })); setFormValidationError(""); }} required={f.required} />}</Field>)}</FormGrid>
         </FormPanel></div>}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[680px] text-sm">
-            <thead className="bg-muted/50 text-xs text-muted-foreground"><tr>{config.columns.map(c => <th key={c.key} className="px-3 py-3 text-start"><button className="inline-flex items-center gap-1 font-semibold hover:text-foreground" onClick={() => { setSort(c.key); setDir(sort === c.key && dir === "asc" ? "desc" : "asc"); }} aria-label={`ترتيب حسب ${c.label}`}>{c.label}<ArrowDownUp className="h-3 w-3" /></button></th>)}<th className="px-3 py-3 text-center">إجراءات</th></tr></thead>
+          <table className="w-full min-w-[760px] text-sm">
+            <thead className="bg-muted/50 text-xs text-muted-foreground"><tr>{config.columns.map(c => <th key={c.key} className="px-3 py-3 text-start"><button className="inline-flex items-center gap-1 font-semibold hover:text-foreground" onClick={() => { setSort(c.key); setDir(sort === c.key && dir === "asc" ? "desc" : "asc"); }} aria-label={`ترتيب حسب ${c.label}`}>{c.label}<ArrowDownUp className="h-3 w-3" /></button></th>)}<th className="px-3 py-3 text-center">المرفقات</th><th className="px-3 py-3 text-center">إجراءات</th></tr></thead>
             <tbody className="divide-y">
-              {isLoading && Array.from({ length: 4 }, (_, i) => <tr key={i}><td colSpan={config.columns.length + 1} className="px-3 py-3"><div className="h-5 animate-pulse rounded bg-muted" /></td></tr>)}
-              {isError && <tr><td colSpan={config.columns.length + 1} className="px-4 py-10 text-center"><AlertCircle className="mx-auto mb-2 h-5 w-5 text-destructive" /><p className="text-sm">{(error as Error)?.message || "تعذر تحميل البيانات"}</p><Button className="mt-3" size="sm" variant="outline" onClick={() => refetch()}>إعادة المحاولة</Button></td></tr>}
-              {!isLoading && !isError && rows.length === 0 && <tr><td colSpan={config.columns.length + 1} className="px-4 py-12 text-center"><div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-muted"><Search className="h-4 w-4 text-muted-foreground" /></div><p className="font-medium">لا توجد سجلات</p><p className="mt-1 text-xs text-muted-foreground">يمكنك إضافة سجل جديد أو تغيير عبارة البحث.</p></td></tr>}
+              {isLoading && Array.from({ length: 4 }, (_, i) => <tr key={i}><td colSpan={config.columns.length + 2} className="px-3 py-3"><div className="h-5 animate-pulse rounded bg-muted" /></td></tr>)}
+              {isError && <tr><td colSpan={config.columns.length + 2} className="px-4 py-10 text-center"><AlertCircle className="mx-auto mb-2 h-5 w-5 text-destructive" /><p className="text-sm">{(error as Error)?.message || "تعذر تحميل البيانات"}</p><Button className="mt-3" size="sm" variant="outline" onClick={() => refetch()}>إعادة المحاولة</Button></td></tr>}
+              {!isLoading && !isError && rows.length === 0 && <tr><td colSpan={config.columns.length + 2} className="px-4 py-12 text-center"><div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-muted"><Search className="h-4 w-4 text-muted-foreground" /></div><p className="font-medium">لا توجد سجلات</p><p className="mt-1 text-xs text-muted-foreground">يمكنك إضافة سجل جديد أو تغيير عبارة البحث.</p></td></tr>}
               {!isLoading && rows.map(row => <tr key={row.id} className="hover:bg-muted/30">
                 {config.columns.map(c => <td key={c.key} className="px-3 py-3">
                   {c.type === "status" ? <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${["active", "enrolled", "present", "passed", "current", "paid", "true"].includes(String(row[c.key])) ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{c.options?.find(([k]) => k === String(row[c.key]))?.[1] ?? row[c.key] ?? "—"}</span>
@@ -138,7 +140,8 @@ export function SchoolCrudPage({ config, headingExtra }: { config: CrudConfig; h
                   : c.type === "number" ? (row[c.key] ?? "—")
                    : c.type === "relation" ? labelFor(c, row[c.key], lookups[c.resource || ""], lookups)
                   : String(row[c.key] ?? "—")}</td>)}
-                 <td className="px-3 py-2"><div className="flex justify-center gap-1">{canEdit && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(row)} aria-label="تعديل"><Pencil className="h-4 w-4" /></Button>}{canDelete && <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => setDel(row)} aria-label="حذف"><Trash2 className="h-4 w-4" /></Button>}</div></td>
+                  <td className="px-3 py-2 text-center"><JournalScanArchive compact canEdit={canEdit} companyName={companyName} screenKey="school_records" jeKey={`school:${companyId ?? "none"}:${config.resource}:${row.id}`} /></td>
+                  <td className="px-3 py-2"><div className="flex justify-center gap-1">{canEdit && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(row)} aria-label="تعديل"><Pencil className="h-4 w-4" /></Button>}{canDelete && <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => setDel(row)} aria-label="حذف"><Trash2 className="h-4 w-4" /></Button>}</div></td>
               </tr>)}
             </tbody>
           </table>

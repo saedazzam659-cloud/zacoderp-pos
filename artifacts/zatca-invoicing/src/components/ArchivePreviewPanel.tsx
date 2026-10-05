@@ -45,6 +45,7 @@ interface Props {
   companyName?: string | null;
   /** When set (cloud mode), the panel jumps to this file id on open/change. */
   focusCloudId?: number | null;
+  canEdit?: boolean;
   onDeleteCloud: (f: PanelCloudFile) => void;
   onDeleteLocal: (f: ArchivedFileMeta) => void;
 }
@@ -67,7 +68,7 @@ function fmtBytes(b?: number | null): string {
 
 export function ArchivePreviewPanel({
   open, onClose, isCloud, cloudFiles, localFiles, token, companyName,
-  focusCloudId, onDeleteCloud, onDeleteLocal,
+  focusCloudId, canEdit = true, onDeleteCloud, onDeleteLocal,
 }: Props) {
   const count = isCloud ? cloudFiles.length : localFiles.length;
   const [idx, setIdx] = useState(0);
@@ -191,7 +192,7 @@ export function ArchivePreviewPanel({
               companyName={companyName}
               variant="toolbar"
             />
-            {!cloud.readOnly && (
+            {canEdit && !cloud.readOnly && (
               <Button
                 type="button" size="sm" variant="outline"
                 className="h-8 gap-1.5 text-xs text-destructive hover:bg-destructive/10"
@@ -202,7 +203,7 @@ export function ArchivePreviewPanel({
             )}
           </>
         )}
-        {!isCloud && local && (
+        {canEdit && !isCloud && local && (
           <Button
             type="button" size="sm" variant="outline"
             className="h-8 gap-1.5 text-xs text-destructive hover:bg-destructive/10"
