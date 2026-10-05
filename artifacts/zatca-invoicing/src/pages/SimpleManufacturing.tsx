@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
-import { Factory, RefreshCw, Boxes, Plus, Settings2, FileText } from "lucide-react";
+import { Factory, RefreshCw, Boxes, Plus, Settings2, FileText, BarChart3 } from "lucide-react";
+import { MenuHub, type HubTile } from "@/components/MenuHub";
+import { companyAllowsScreen } from "@/lib/companyModuleGate";
+import { useAgentModuleScreensAsTiles, useIsAgentDomain } from "@/lib/agentBranding";
 import type { Catalog, Order } from "./simple-manufacturing/types";
 import { SimpleOrderList } from "./simple-manufacturing/SimpleList";
 import { SimpleWizard } from "./simple-manufacturing/SimpleWizard";
@@ -29,6 +32,8 @@ const MANUFACTURING_TAB_COLORS = {
 
 export default function SimpleManufacturing() {
   const { token, user, actingCompanyId } = useAuth();
+  const isAgentDomain = useIsAgentDomain();
+  const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
@@ -42,6 +47,31 @@ export default function SimpleManufacturing() {
 
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("orders");
+  const showAgentManufacturingTiles = isAgentDomain &&
+    moduleScreensAsTiles.includes("simpleManufacturing") &&
+    companyAllowsScreen(user, "/simple-manufacturing");
+  const manufacturingHubTiles: HubTile[] = [
+    {
+      id: "simple-manufacturing-orders", href: "/simple-manufacturing",
+      nameKey: "nav.simpleManufacturingOrders", icon: Boxes, tone: "sky",
+      permKey: "simple_manufacturing", onClick: () => setTab("orders"), active: tab === "orders",
+    },
+    {
+      id: "simple-manufacturing-new-order", href: "/simple-manufacturing",
+      nameKey: "nav.simpleManufacturingNewOrder", icon: Plus, tone: "violet",
+      permKey: "simple_manufacturing", onClick: () => setTab("new"), active: tab === "new",
+    },
+    {
+      id: "simple-manufacturing-setup", href: "/simple-manufacturing",
+      nameKey: "nav.simpleManufacturingSetup", icon: Settings2, tone: "amber",
+      permKey: "simple_manufacturing", onClick: () => setTab("setup"), active: tab === "setup",
+    },
+    {
+      id: "simple-manufacturing-reports", href: "/simple-manufacturing",
+      nameKey: "nav.simpleManufacturingReports", icon: BarChart3, tone: "emerald",
+      permKey: "simple_manufacturing", onClick: () => setTab("reports"), active: tab === "reports",
+    },
+  ];
   const loadRequestRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
   const orderRequestRef = useRef(0);
@@ -405,8 +435,18 @@ export default function SimpleManufacturing() {
         </Button>
       </div>
 
+      {showAgentManufacturingTiles && (
+        <MenuHub
+          title="التصنيع الذكي"
+          icon={Factory}
+          headerTone="violet"
+          tiles={manufacturingHubTiles}
+          variant="compact"
+        />
+      )}
+
       <Tabs value={tab} onValueChange={setTab} className="space-y-6">
-        <TabsList aria-label="أقسام التصنيع الذكي" className="grid h-auto w-full grid-cols-2 gap-2 rounded-xl bg-transparent p-0 sm:grid-cols-4">
+        {!showAgentManufacturingTiles && <TabsList aria-label="أقسام التصنيع الذكي" className="grid h-auto w-full grid-cols-2 gap-2 rounded-xl bg-transparent p-0 sm:grid-cols-4">
           <TabsTrigger value="orders" className={`h-auto min-h-12 gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:text-sm ${MANUFACTURING_TAB_COLORS.orders}`}>
             <Boxes className="ml-2 h-4 w-4" />
             سجل الأوامر
@@ -423,7 +463,7 @@ export default function SimpleManufacturing() {
             <FileText className="ml-2 h-4 w-4" />
             التقارير المجمعة
           </TabsTrigger>
-        </TabsList>
+        </TabsList>}
 
         <TabsContent value="orders" className="mt-0">
           <SimpleOrderList

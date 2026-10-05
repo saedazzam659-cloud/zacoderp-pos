@@ -36,8 +36,14 @@ export type HubTile = {
   nameKey: string;
   /** i18n key for an optional short description shown beneath the label. */
   descKey?: string;
-  /** Route to navigate to. */
+  /** Route to navigate to, or the owning route for an in-page shortcut. */
   href: string;
+  /** Stable identifier for same-route shortcuts such as tabs. */
+  id?: string;
+  /** In-page action for destinations that do not have their own route. */
+  onClick?: () => void;
+  /** Marks an in-page shortcut as the currently selected destination. */
+  active?: boolean;
   /** Lucide icon component. */
   icon: React.ElementType;
   /** Color tone for the icon backdrop — pick a distinct one per tile. */
@@ -157,7 +163,7 @@ function HubGrid({
         : "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
     )}>
       {tiles.map(tile => (
-        <Tile key={tile.href} tile={tile} compact={compact} t={t} Chevron={Chevron} shortcutIcons={shortcutIcons} />
+        <Tile key={tile.id ?? tile.href} tile={tile} compact={compact} t={t} Chevron={Chevron} shortcutIcons={shortcutIcons} />
       ))}
     </div>
   );
@@ -168,56 +174,79 @@ function Tile({
 }: { tile: HubTile; compact: boolean; t: (k: string) => string; Chevron: React.ElementType; shortcutIcons: boolean }) {
   const Icon = tile.icon;
   const tone = toneStyles[tile.tone];
+  const cardClassName = cn(
+    "group relative block rounded-2xl border bg-card transition-all overflow-hidden",
+    shortcutIcons
+      ? "min-h-[132px] border-primary/10 bg-gradient-to-br from-primary/5 via-card to-card shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      : "hover:shadow-lg hover:-translate-y-0.5 hover:border-slate-300",
+    compact ? (shortcutIcons ? "p-4" : "p-3") : (shortcutIcons ? "p-6" : "p-5"),
+    tile.active && "border-primary ring-2 ring-primary/30 bg-primary/[0.04]",
+    tile.onClick && "w-full text-center"
+  );
+  const content = (
+    <>
+      {!shortcutIcons && <div className={cn("absolute inset-x-0 top-0 h-1.5", tone.bg, "opacity-90")} />}
+      <div className={cn(
+        "flex flex-col items-center text-center",
+        compact ? "gap-2" : "gap-3 pt-2",
+        shortcutIcons && "justify-center gap-3"
+      )}>
+        <div className={cn(
+          "rounded-2xl flex items-center justify-center transition-transform group-hover:scale-105",
+          tone.bg, tone.fg, "ring-4 ring-white shadow-md",
+          shortcutIcons
+            ? "h-14 w-14 md:h-16 md:w-16 shadow-lg group-hover:rotate-3"
+            : compact ? "h-12 w-12" : "h-16 w-16 md:h-[72px] md:w-[72px]"
+        )}>
+          <Icon className={cn(
+            shortcutIcons ? "h-7 w-7 md:h-8 md:w-8" : compact ? "h-6 w-6" : "h-8 w-8 md:h-9 md:w-9"
+          )} />
+        </div>
+        <div className="min-w-0 w-full">
+          <div className={cn(
+            "font-semibold text-foreground leading-tight line-clamp-2",
+            shortcutIcons ? "text-sm md:text-base font-bold" : compact ? "text-xs" : "text-sm md:text-[15px]"
+          )}>
+            {t(tile.nameKey)}
+          </div>
+          {!compact && tile.descKey && (
+            <div className="mt-1 text-xs text-muted-foreground line-clamp-2">
+              {t(tile.descKey)}
+            </div>
+          )}
+        </div>
+      </div>
+      {(!compact || shortcutIcons) && (
+        <div className="absolute bottom-2 end-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Chevron className="h-4 w-4 text-muted-foreground" />
+        </div>
+      )}
+    </>
+  );
+  const testIdSuffix = (tile.id ?? tile.href).replace(/[^a-zA-Z0-9]+/g, "-");
+
+  if (tile.onClick) {
+    return (
+      <div className="relative">
+        <button
+          type="button"
+          onClick={tile.onClick}
+          aria-pressed={tile.active}
+          className={cn(cardClassName, "font-[inherit] text-inherit")}
+          data-testid={`hub-tile-action-${testIdSuffix}`}
+        >
+          {content}
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="relative">
       <Link
         href={tile.href}
-        className={cn(
-          "group relative block rounded-2xl border bg-card transition-all overflow-hidden",
-          shortcutIcons
-            ? "min-h-[132px] border-primary/10 bg-gradient-to-br from-primary/5 via-card to-card shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-            : "hover:shadow-lg hover:-translate-y-0.5 hover:border-slate-300",
-          compact ? (shortcutIcons ? "p-4" : "p-3") : (shortcutIcons ? "p-6" : "p-5")
-        )}
+        className={cardClassName}
       >
-        {/* Soft top accent strip */}
-        {!shortcutIcons && <div className={cn("absolute inset-x-0 top-0 h-1.5", tone.bg, "opacity-90")} />}
-        <div className={cn(
-          "flex flex-col items-center text-center",
-          compact ? "gap-2" : "gap-3 pt-2",
-          shortcutIcons && "justify-center gap-3"
-        )}>
-          <div className={cn(
-            "rounded-2xl flex items-center justify-center transition-transform group-hover:scale-105",
-            tone.bg, tone.fg, "ring-4 ring-white shadow-md",
-            shortcutIcons
-              ? "h-14 w-14 md:h-16 md:w-16 shadow-lg group-hover:rotate-3"
-              : compact ? "h-12 w-12" : "h-16 w-16 md:h-[72px] md:w-[72px]"
-          )}>
-            <Icon className={cn(
-              shortcutIcons ? "h-7 w-7 md:h-8 md:w-8" : compact ? "h-6 w-6" : "h-8 w-8 md:h-9 md:w-9"
-            )} />
-          </div>
-          <div className="min-w-0 w-full">
-            <div className={cn(
-              "font-semibold text-foreground leading-tight line-clamp-2",
-              shortcutIcons ? "text-sm md:text-base font-bold" : compact ? "text-xs" : "text-sm md:text-[15px]"
-            )}>
-              {t(tile.nameKey)}
-            </div>
-            {!compact && tile.descKey && (
-              <div className="mt-1 text-xs text-muted-foreground line-clamp-2">
-                {t(tile.descKey)}
-              </div>
-            )}
-          </div>
-        </div>
-        {/* Hover affordance */}
-        {(!compact || shortcutIcons) && (
-          <div className="absolute bottom-2 end-2 opacity-0 group-hover:opacity-100 transition-opacity">
-            <Chevron className="h-4 w-4 text-muted-foreground" />
-          </div>
-      )}
+        {content}
       </Link>
       {shortcutIcons && (
         <a
@@ -227,7 +256,7 @@ function Tile({
           aria-label={`فتح ${t(tile.nameKey)} في تبويب جديد`}
           title="فتح في تبويب جديد"
           className="absolute start-2 top-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-xl border border-primary/15 bg-background/95 text-primary shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/10 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          data-testid={`hub-tile-open-new-tab-${tile.href.replace(/[^a-zA-Z0-9]+/g, "-")}`}
+          data-testid={`hub-tile-open-new-tab-${testIdSuffix}`}
         >
           <ExternalLink className="h-4 w-4" aria-hidden="true" />
         </a>

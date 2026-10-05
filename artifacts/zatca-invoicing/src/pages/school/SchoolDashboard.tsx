@@ -1,7 +1,26 @@
 import { Link } from "wouter";
-import { ArrowLeft, BookOpen, Building2, CalendarCheck, ClipboardList, FileText, GraduationCap, UsersRound } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { ArrowLeft, BookOpen, Building2, CalendarCheck, ClipboardList, FileText, GraduationCap, UsersRound, UserSquare2, Wallet, BusFront, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MenuHub, type HubTile } from "@/components/MenuHub";
+import { useAuth } from "@/contexts/AuthContext";
+import { companyAllowsScreen } from "@/lib/companyModuleGate";
+import { useAgentModuleScreensAsTiles, useIsAgentDomain } from "@/lib/agentBranding";
 import { useSchoolDashboard } from "./schoolApi";
+
+const SCHOOL_HUB_TILES: HubTile[] = [
+  { nameKey: "nav.schoolHub", href: "/school", icon: GraduationCap, tone: "violet", permKey: "school" },
+  { nameKey: "nav.schoolCampuses", href: "/school/campuses", icon: Building2, tone: "teal", permKey: "school" },
+  { nameKey: "nav.schoolAcademic", href: "/school/academic", icon: BookOpen, tone: "amber", permKey: "school" },
+  { nameKey: "nav.schoolStudents", href: "/school/students", icon: UsersRound, tone: "blue", permKey: "school" },
+  { nameKey: "nav.schoolEnrollments", href: "/school/enrollments", icon: UserSquare2, tone: "indigo", permKey: "school" },
+  { nameKey: "nav.schoolAttendance", href: "/school/attendance", icon: CalendarCheck, tone: "emerald", permKey: "school" },
+  { nameKey: "nav.schoolAssessments", href: "/school/assessments", icon: ClipboardList, tone: "orange", permKey: "school" },
+  { nameKey: "nav.schoolFees", href: "/school/fees", icon: Wallet, tone: "lime", permKey: "school" },
+  { nameKey: "nav.schoolTransport", href: "/school/transport", icon: BusFront, tone: "cyan", permKey: "school" },
+  { nameKey: "nav.schoolResources", href: "/school/resources", icon: Link2, tone: "slate", permKey: "school" },
+];
+
 const tiles = [
   { href: "/school/campuses", label: "المجمّعات", key: "campuses", icon: Building2, tone: "teal" },
   { href: "/school/students", label: "الطلاب", key: "students", icon: UsersRound, tone: "blue" },
@@ -10,8 +29,21 @@ const tiles = [
 ];
 const attendance = [["present", "حاضرون"], ["absent", "غائبون"], ["late", "متأخرون"], ["excused", "بعذر"]] as const;
 export default function SchoolDashboard() {
+  const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  const isAgentDomain = useIsAgentDomain();
+  const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
+  const showAgentSchoolTiles = isAgentDomain && moduleScreensAsTiles.includes("school");
+  const schoolHubTiles = SCHOOL_HUB_TILES.filter(tile => companyAllowsScreen(user, tile.href));
   const { data, isLoading, isError, error, refetch } = useSchoolDashboard();
   return <main dir="rtl" className="space-y-5 p-4 sm:p-5">
+    {showAgentSchoolTiles && <MenuHub
+      title={t("nav.schoolGroup", "إدارة المدارس")}
+      icon={GraduationCap}
+      headerTone="violet"
+      tiles={schoolHubTiles}
+      variant="compact"
+    />}
     <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 sm:p-5">
       <div><p className="text-xs font-semibold tracking-wide text-primary">إدارة المدرسة</p><h1 className="mt-1 text-2xl font-bold tracking-tight">ملخص العمليات المدرسية</h1><p className="mt-1 text-sm text-muted-foreground">صورة تشغيلية مباشرة للسجلات الأكاديمية والحضور والاختبارات.</p></div>
       <div className="flex gap-2"><Link href="/school/attendance" className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"><CalendarCheck className="h-4 w-4" />تسجيل الحضور</Link><Link href="/school/students" className="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-muted"><UsersRound className="h-4 w-4" />سجل الطلاب</Link></div>

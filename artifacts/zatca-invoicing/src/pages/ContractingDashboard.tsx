@@ -5,10 +5,14 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   HardHat, Briefcase, TrendingUp, Wallet, AlertTriangle, ShieldAlert,
-  CheckCircle2, Clock, Activity, ArrowRight,
+  CheckCircle2, Clock, Activity, ArrowRight, BarChart3, Users, FileText,
+  ArrowUpCircle, ArrowDownCircle, Settings2,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { MenuHub, type HubTile } from "@/components/MenuHub";
+import { companyAllowsScreen } from "@/lib/companyModuleGate";
+import { useAgentModuleScreensAsTiles, useIsAgentDomain } from "@/lib/agentBranding";
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
 import {
   EVENT_TYPE_LABEL,
@@ -18,6 +22,16 @@ import {
 } from "@/lib/contractingLabels";
 
 const API = import.meta.env.VITE_API_URL || "";
+
+const CONTRACTING_HUB_TILES: HubTile[] = [
+  { nameKey: "nav.contractingDashboard", href: "/contracting", icon: BarChart3, tone: "orange", permKey: "contracting" },
+  { nameKey: "nav.contractingProjects", href: "/contracting/projects", icon: Briefcase, tone: "blue", permKey: "contracting" },
+  { nameKey: "nav.contractingContractors", href: "/contracting/contractors", icon: Users, tone: "teal", permKey: "contracting" },
+  { nameKey: "nav.contractingBills", href: "/contracting/bills", icon: FileText, tone: "violet", permKey: "contracting" },
+  { nameKey: "nav.contractingOwnerBills", href: "/contracting/bills?direction=outgoing", icon: ArrowUpCircle, tone: "emerald", permKey: "contracting" },
+  { nameKey: "nav.contractingSubcontractorBills", href: "/contracting/bills?direction=incoming", icon: ArrowDownCircle, tone: "amber", permKey: "contracting" },
+  { nameKey: "nav.contractingSettings", href: "/contracting/settings", icon: Settings2, tone: "slate", permKey: "contracting", requireAdmin: true },
+];
 
 type DashboardData = {
   totals: {
@@ -42,10 +56,14 @@ type DashboardData = {
 
 export default function ContractingDashboard() {
   const { t } = useTranslation();
-  const { token } = useAuth() as any;
+  const { token, user } = useAuth() as any;
+  const isAgentDomain = useIsAgentDomain();
+  const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
   const { toast } = useToast();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(false);
+  const showAgentContractingTiles = isAgentDomain && moduleScreensAsTiles.includes("contracting");
+  const contractingHubTiles = CONTRACTING_HUB_TILES.filter(tile => companyAllowsScreen(user, tile.href));
   const financialCurrencyCode = data?.financialCurrency.status === "uniform"
     ? data.financialCurrency.currencyCode
     : null;
@@ -73,6 +91,16 @@ export default function ContractingDashboard() {
 
   return (
     <div className="space-y-4">
+      {showAgentContractingTiles && (
+        <MenuHub
+          title={t("nav.contractingGroup", "إدارة المقاولات")}
+          subtitle={t("contracting.dashboard.subtitle", "نظرة شاملة على مشاريع المقاولات والمخاطر والمستخلصات")}
+          icon={HardHat}
+          headerTone="orange"
+          tiles={contractingHubTiles}
+          variant="compact"
+        />
+      )}
       <div className="flex items-center gap-3">
         <div className="rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 p-2 text-white shadow">
           <HardHat className="h-5 w-5" />
