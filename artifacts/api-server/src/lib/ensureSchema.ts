@@ -24,6 +24,7 @@ import { ensureInternalControlSchema } from "./internalControlStorage.js";
 import { ensureDocumentExpenseSchema } from "./documentExpenses.js";
 import { ensureContractingLocalTaxMappingTables } from "./contracting-local-tax-mapping-service.js";
 import { ensureSequenceProtectionSchema } from "./sequenceProtection.js";
+import { ensureAgentSchoolSchema } from "./agentSchoolSchema.js";
 
 async function ensureTaxIntegrationSchema(): Promise<void> {
   await db.execute(sql.raw(`
@@ -4694,7 +4695,10 @@ async function runHeal(options: {
   await ensureGoodsCostCenterCompatibility();
   await ensureContractingAdvanceRecoveryCompatibility();
   await ensureContractingSettingsTable();
-  if (getActiveExternalDb()) await ensureContractingBoqTables();
+  if (getActiveExternalDb()) {
+    await ensureAgentSchoolSchema();
+    await ensureContractingBoqTables();
+  }
   // Owner-bill tax mappings are required application data. Agent databases
   // need their complete DDL before strict table validation; central schema
   // changes remain Publish-managed.

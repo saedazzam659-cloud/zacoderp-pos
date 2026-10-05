@@ -1,4 +1,4 @@
-import { db } from "@workspace/db";
+import { db, getActiveExternalDb } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
 const statements = [
@@ -80,20 +80,29 @@ const statements = [
     ON school_student_attendance_events(company_id, attendance_date)`,
 ];
 
-let schemaPromise: Promise<void> | null = null;
+const centralSchemaCacheKey = {};
+const schemaPromisesByDatabase = new WeakMap<object, Promise<void>>();
 
-export function ensureSchoolPortalSchema(): Promise<void> {
-  if (!schemaPromise) {
-    schemaPromise = (async () => {
+export async function ensureSchoolPortalSchema(): Promise<void> {
+  const cacheKey = (getActiveExternalDb()?.pool as object | undefined) ?? centralSchemaCacheKey;
+  const existing = schemaPromisesByDatabase.get(cacheKey);
+  if (existing) return existing;
+
+  const pending = (async () => {
       for (const statement of statements) {
         await db.execute(sql.raw(statement));
       }
-    })().catch((error) => {
-      schemaPromise = null;
-      throw error;
-    });
+  })();
+  schemaPromisesByDatabase.set(cacheKey, pending);
+
+  try {
+    await pending;
+  } catch (error) {
+    if (schemaPromisesByDatabase.get(cacheKey) === pending) {
+      schemaPromisesByDatabase.delete(cacheKey);
+    }
+    throw error;
   }
-  return schemaPromise;
 }
 
 export async function lockStudentBiometrics(tx: any, companyId: number, studentId: number): Promise<void> {
