@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 import { ArrowRight, Save, Truck, MapPin, Phone, AlertTriangle, BookMarked } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Link } from "wouter";
@@ -38,6 +39,7 @@ type FormValues = z.infer<typeof supplierSchema>;
 export default function SupplierNew() {
   const [, setLocation] = useLocation();
   const { user, token } = useAuth();
+  const contractingEnabled = companyExplicitlyEnablesModule(user, "contracting");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -148,6 +150,7 @@ export default function SupplierNew() {
             </CardHeader>
             <CardContent className="pt-5">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {contractingEnabled && (
                 <FormField control={form.control} name="partyClassification" render={({ field }) => (
                   <FormItem className="md:col-span-2">
                     <FormLabel>تصنيف الجهة</FormLabel>
@@ -169,6 +172,7 @@ export default function SupplierNew() {
                     <FormMessage />
                   </FormItem>
                 )} />
+                )}
                 <FormField control={form.control} name="code" render={({ field }) => (
                   <FormItem>
                     <FormLabel>رقم المورد</FormLabel>

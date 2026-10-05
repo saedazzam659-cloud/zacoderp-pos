@@ -29,6 +29,7 @@ import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { LocationCapture, type LocationValue } from "@/components/LocationCapture";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
+import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 
 const NATIONAL_ADDRESS_RX = /^[A-Z]{4}[0-9]{4}$/;
 
@@ -190,6 +191,15 @@ export default function CustomerNew() {
       paymentTermsDays: 0,
     },
   });
+
+  const selectedCompanyIdForModuleGate = form.watch("companyId");
+  const selectedCompanyForModuleGate = isSuperAdmin
+    ? (companies as any[] | undefined)?.find(
+        company => Number(company.id) === Number(selectedCompanyIdForModuleGate),
+      )
+    : user?.company;
+  const contractingEnabledForSelectedCompany = !!selectedCompanyForModuleGate
+    && companyExplicitlyEnablesModule({ company: selectedCompanyForModuleGate }, "contracting");
 
   // The router can reuse this component when moving from edit back to new.
   useEffect(() => {
@@ -527,6 +537,7 @@ export default function CustomerNew() {
                     </div>
 
                     {/* تصنيف الجهة — مستقل عن نوع الفاتورة B2B/B2C */}
+                    {contractingEnabledForSelectedCompany && (
                     <FormField control={form.control} name="partyClassification" render={({ field }) => (
                       <FormItem className="col-span-2 lg:col-span-4">
                         <FormLabel>تصنيف الجهة</FormLabel>
@@ -548,6 +559,7 @@ export default function CustomerNew() {
                         <FormMessage />
                       </FormItem>
                     )} />
+                    )}
 
                     {/* اسم عربي */}
                     <FormField control={form.control} name="nameAr" render={({ field }) => (

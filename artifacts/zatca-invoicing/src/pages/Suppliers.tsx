@@ -56,6 +56,7 @@ import {
   SUPPLIER_BULK_EXCEL_SAMPLE,
 } from "@/lib/supplierBulkExcel";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const SUPPLIER_CLASS_LABELS: Record<string, string> = {
@@ -146,6 +147,7 @@ function Field({ label, value, onChange, placeholder, dir }: { label: string; va
 export default function Suppliers() {
     const gate = useDemoActionGate();
   const { user, token } = useAuth();
+  const contractingEnabled = companyExplicitlyEnablesModule(user, "contracting");
   const { data: allowedBranches = [] } = useBranches();
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -794,7 +796,7 @@ export default function Suppliers() {
 
             <TabsContent value="identity" className="mt-4">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <fieldset className="col-span-2 lg:col-span-4 space-y-2">
+                {contractingEnabled && <fieldset className="col-span-2 lg:col-span-4 space-y-2">
                   <legend className="text-sm font-medium">تصنيف الجهة</legend>
                   <div className="flex flex-wrap gap-4 rounded-md border p-3">
                     {([
@@ -811,7 +813,7 @@ export default function Suppliers() {
                       </label>
                     ))}
                   </div>
-                </fieldset>
+                </fieldset>}
                 <Field label="رقم المورد" value={editForm.code} onChange={v => setEditForm(f => ({ ...f, code: v }))} placeholder="SUP-001" dir="ltr" />
                 <Field label={`${t("pages.suppliers.supplierNameAr")} *`} value={editForm.nameAr} onChange={v => setEditForm(f => ({ ...f, nameAr: v }))} placeholder={t("pages.suppliers.supplierNameArPlaceholder")} />
                 <div className="col-span-2 lg:col-span-2"><Field label={t("pages.suppliers.nameEnLabel")} value={editForm.nameEn} onChange={v => setEditForm(f => ({ ...f, nameEn: v }))} placeholder={t("pages.suppliers.nameEnPlaceholder")} dir="ltr" /></div>
