@@ -8,6 +8,9 @@ import {
 } from "@workspace/db";
 import {
   schoolAcademicYearsTable,
+  schoolAcademicPeriodsTable,
+  schoolGradeAuditEventsTable,
+  schoolResultApprovalsTable,
   schoolAttendanceTable,
   schoolCampusesTable,
   schoolClassesTable,
@@ -30,11 +33,13 @@ import {
   PromoteSchoolEnrollmentsResponse,
 } from "@workspace/api-zod";
 import {
-  and, asc, count, desc, eq, gte, ilike, inArray, or, sql,
+  and, asc, count, desc, eq, gte, ilike, inArray, lte, or, sql,
 } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requirePermission } from "../middleware/permissions.js";
 import schoolPortalAdminRouter from "./schoolPortalAdmin.js";
+import schoolAcademicControlRouter from "./schoolAcademicControl.js";
+import { ensureSchoolAcademicControlSchema } from "../lib/schoolAcademicControlSchema.js";
 
 type FieldKind = "string" | "integer" | "number" | "boolean" | "date";
 type FieldSpec = {
@@ -57,6 +62,7 @@ router.use(requireModulePermission("school"));
 router.use(requirePermission("school", "view"));
 router.use(moduleAudit("school"));
 router.use("/portal", schoolPortalAdminRouter);
+router.use("/academic-control", schoolAcademicControlRouter);
 
 const S = (required = false, values?: readonly string[]): FieldSpec => ({ kind: "string", required, values });
 const I = (required = false): FieldSpec => ({ kind: "integer", required });
@@ -175,7 +181,8 @@ const ENTITIES: Record<string, EntityConfig> = {
   exams: {
     table: schoolExamsTable,
     fields: {
-      academicYearId: I(true), classId: I(true), subjectId: I(true),
+      academicYearId: I(true), classId: I(true), subjectId: I(true), periodId: I(),
+      assessmentType: S(false, ["coursework", "monthly", "midyear", "year_end"]),
       name: S(true), examDate: D(true), maxScore: N(true),
       status: S(false, ["planned", "open", "closed"]), notes: S(),
     },
@@ -183,6 +190,7 @@ const ENTITIES: Record<string, EntityConfig> = {
       academicYearId: schoolAcademicYearsTable,
       classId: schoolClassesTable,
       subjectId: schoolSubjectsTable,
+      periodId: schoolAcademicPeriodsTable,
     },
     searchFields: ["name", "status"],
     filterFields: { academicYearId: "academicYearId", classId: "classId", subjectId: "subjectId", status: "status" },
@@ -358,6 +366,23 @@ async function validateBusinessRules(
       res.status(400).json({ error: "المادة غير مخصصة للصف المحدد" });
       return false;
     }
+    if (values.periodId != null) {
+      const [period] = await db.select({
+        academicYearId: schoolAcademicPeriodsTable.academicYearId,
+        startDate: schoolAcademicPeriodsTable.startDate,
+        endDate: schoolAcademicPeriodsTable.endDate,
+      }).from(schoolAcademicPeriodsTable).where(and(
+        eq(schoolAcademicPeriodsTable.id, values.periodId),
+        eq(schoolAcademicPeriodsTable.companyId, companyId),
+      )).limit(1);
+      if (!period
+        || period.academicYearId !== values.academicYearId
+        || values.examDate < period.startDate
+        || values.examDate > period.endDate) {
+        res.status(400).json({ error: "الاختبار يجب أن يقع داخل فترته الدراسية" });
+        return false;
+      }
+    }
   }
   if (name === "results") {
     const [exam] = await db.select({
@@ -417,6 +442,52 @@ async function validateBusinessRules(
     }
   }
   return true;
+}
+
+async function isApprovedAcademicScope(
+  companyId: number,
+  academicYearId: number,
+  classId: number,
+  subjectId: number,
+  periodId?: number | null,
+  examDate?: string | Date | null,
+): Promise<boolean> {
+  let periodIds = periodId ? [periodId] : [];
+  if (!periodIds.length && examDate) {
+    const dateValue = examDate instanceof Date ? examDate.toISOString().slice(0, 10) : String(examDate).slice(0, 10);
+    const periods = await db.select({ id: schoolAcademicPeriodsTable.id }).from(schoolAcademicPeriodsTable).where(and(
+      eq(schoolAcademicPeriodsTable.companyId, companyId),
+      eq(schoolAcademicPeriodsTable.academicYearId, academicYearId),
+      lte(schoolAcademicPeriodsTable.startDate, dateValue),
+      gte(schoolAcademicPeriodsTable.endDate, dateValue),
+    ));
+    periodIds = periods.map((period) => period.id);
+  }
+  if (!periodIds.length) return false;
+  const [approval] = await db.select({ id: schoolResultApprovalsTable.id }).from(schoolResultApprovalsTable).where(and(
+    eq(schoolResultApprovalsTable.companyId, companyId),
+    eq(schoolResultApprovalsTable.academicYearId, academicYearId),
+    eq(schoolResultApprovalsTable.classId, classId),
+    eq(schoolResultApprovalsTable.subjectId, subjectId),
+    eq(schoolResultApprovalsTable.status, "approved"),
+    inArray(schoolResultApprovalsTable.periodId, periodIds),
+  )).limit(1);
+  return !!approval;
+}
+
+async function isExamResultLocked(companyId: number, examId: number, enrollmentId: number): Promise<boolean> {
+  const [exam] = await db.select().from(schoolExamsTable).where(and(
+    eq(schoolExamsTable.companyId, companyId),
+    eq(schoolExamsTable.id, examId),
+  )).limit(1);
+  const [enrollment] = await db.select().from(schoolEnrollmentsTable).where(and(
+    eq(schoolEnrollmentsTable.companyId, companyId),
+    eq(schoolEnrollmentsTable.id, enrollmentId),
+  )).limit(1);
+  if (!exam || !enrollment) return false;
+  return isApprovedAcademicScope(
+    companyId, exam.academicYearId, exam.classId, exam.subjectId, exam.periodId, exam.examDate,
+  );
 }
 
 function queryValue(req: any, key: string): string | undefined {
@@ -903,6 +974,16 @@ router.get("/lookups/:resource", async (req, res) => {
 });
 
 for (const [name, config] of Object.entries(ENTITIES)) {
+  if (name === "exams" || name === "results") {
+    router.use(`/${name}`, async (_req, _res, next) => {
+      try {
+        await ensureSchoolAcademicControlSchema();
+        next();
+      } catch (error) {
+        next(error);
+      }
+    });
+  }
   router.get(`/${name}`, async (req, res) => {
     try {
       const companyId = companyIdFor(req, res);
@@ -971,6 +1052,16 @@ for (const [name, config] of Object.entries(ENTITIES)) {
       const values = normalized.values!;
       if (!await validateReferences(res, config, values, companyId)) return;
       if (!await validateBusinessRules(res, name, values, companyId)) return;
+      if (name === "results" && await isExamResultLocked(companyId, values.examId, values.enrollmentId)) {
+        res.status(423).json({ error: "النتائج معتمدة. يجب إعادة فتحها بصلاحية إدارية قبل التعديل" });
+        return;
+      }
+      if (name === "exams" && await isApprovedAcademicScope(
+        companyId, values.academicYearId, values.classId, values.subjectId, values.periodId, values.examDate,
+      )) {
+        res.status(423).json({ error: "النتائج معتمدة. أعد فتحها إداريًا قبل إضافة اختبار" });
+        return;
+      }
       const saved = await db.transaction(async (tx: any) => {
         if (name === "academic-years" && values.isCurrent === true) {
           await tx.update(schoolAcademicYearsTable)
@@ -979,6 +1070,21 @@ for (const [name, config] of Object.entries(ENTITIES)) {
         }
         const [row] = await tx.insert(config.table)
           .values({ ...values, companyId }).returning();
+        if (name === "results") {
+          const [exam] = await tx.select({ subjectId: schoolExamsTable.subjectId })
+            .from(schoolExamsTable).where(eq(schoolExamsTable.id, values.examId)).limit(1);
+          await tx.insert(schoolGradeAuditEventsTable).values({
+            companyId,
+            enrollmentId: values.enrollmentId,
+            subjectId: exam?.subjectId ?? null,
+            entityType: "exam_result",
+            entityId: row.id,
+            action: "create",
+            beforeValue: null,
+            afterValue: row,
+            actorId: req.authUser?.id ?? null,
+          });
+        }
         return row;
       });
       res.status(201).json(saved);
@@ -1012,6 +1118,20 @@ for (const [name, config] of Object.entries(ENTITIES)) {
       const merged = { ...existing, ...values };
       if (!await validateReferences(res, config, merged, companyId)) return;
       if (!await validateBusinessRules(res, name, merged, companyId)) return;
+      if (name === "results" && (
+        await isExamResultLocked(companyId, existing.examId, existing.enrollmentId)
+        || await isExamResultLocked(companyId, merged.examId, merged.enrollmentId)
+      )) {
+        res.status(423).json({ error: "النتائج معتمدة. يجب إعادة فتحها بصلاحية إدارية قبل التعديل" });
+        return;
+      }
+      if (name === "exams" && (
+        await isApprovedAcademicScope(companyId, existing.academicYearId, existing.classId, existing.subjectId, existing.periodId, existing.examDate)
+        || await isApprovedAcademicScope(companyId, merged.academicYearId, merged.classId, merged.subjectId, merged.periodId, merged.examDate)
+      )) {
+        res.status(423).json({ error: "النتائج معتمدة. أعد فتحها إداريًا قبل تعديل الاختبار" });
+        return;
+      }
       const saved = await db.transaction(async (tx: any) => {
         if (name === "academic-years" && values.isCurrent === true) {
           await tx.update(schoolAcademicYearsTable)
@@ -1025,6 +1145,21 @@ for (const [name, config] of Object.entries(ENTITIES)) {
           .set({ ...values, updatedAt: new Date() })
           .where(and(eq(config.table.id, id), eq(config.table.companyId, companyId)))
           .returning();
+        if (name === "results") {
+          const [exam] = await tx.select({ subjectId: schoolExamsTable.subjectId })
+            .from(schoolExamsTable).where(eq(schoolExamsTable.id, merged.examId)).limit(1);
+          await tx.insert(schoolGradeAuditEventsTable).values({
+            companyId,
+            enrollmentId: merged.enrollmentId,
+            subjectId: exam?.subjectId ?? null,
+            entityType: "exam_result",
+            entityId: row.id,
+            action: "update",
+            beforeValue: existing,
+            afterValue: row,
+            actorId: req.authUser?.id ?? null,
+          });
+        }
         return row;
       });
       res.json(saved);
@@ -1046,9 +1181,39 @@ for (const [name, config] of Object.entries(ENTITIES)) {
         res.status(404).json({ error: "السجل غير موجود" });
         return;
       }
-      await db.delete(config.table).where(and(
+      const [existing] = await db.select().from(config.table).where(and(
         eq(config.table.id, id), eq(config.table.companyId, companyId),
-      ));
+      )).limit(1);
+      if (name === "results" && await isExamResultLocked(companyId, existing.examId, existing.enrollmentId)) {
+        res.status(423).json({ error: "النتائج معتمدة. يجب إعادة فتحها بصلاحية إدارية قبل التعديل" });
+        return;
+      }
+      if (name === "exams" && await isApprovedAcademicScope(
+        companyId, existing.academicYearId, existing.classId, existing.subjectId, existing.periodId, existing.examDate,
+      )) {
+        res.status(423).json({ error: "النتائج معتمدة. أعد فتحها إداريًا قبل حذف الاختبار" });
+        return;
+      }
+      await db.transaction(async (tx: any) => {
+        await tx.delete(config.table).where(and(
+          eq(config.table.id, id), eq(config.table.companyId, companyId),
+        ));
+        if (name === "results") {
+          const [exam] = await tx.select({ subjectId: schoolExamsTable.subjectId })
+            .from(schoolExamsTable).where(eq(schoolExamsTable.id, existing.examId)).limit(1);
+          await tx.insert(schoolGradeAuditEventsTable).values({
+            companyId,
+            enrollmentId: existing.enrollmentId,
+            subjectId: exam?.subjectId ?? null,
+            entityType: "exam_result",
+            entityId: existing.id,
+            action: "delete",
+            beforeValue: existing,
+            afterValue: null,
+            actorId: req.authUser?.id ?? null,
+          });
+        }
+      });
       res.json({ ok: true });
     } catch (error) {
       fail(res, error);

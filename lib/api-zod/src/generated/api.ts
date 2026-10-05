@@ -48,6 +48,28 @@ export const getGuardianPortalChildrenResponseAttendanceSummaryExcusedMin = 0;
 
 export const getGuardianPortalChildrenResponseAttendanceSummaryTotalMin = 0;
 
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresAttendanceDisciplineMin = 0;
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresAttendanceDisciplineMax = 100;
+
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresParticipationMin = 0;
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresParticipationMax = 100;
+
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresHomeworkMin = 0;
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresHomeworkMax = 100;
+
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresActivityMin = 0;
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresActivityMax = 100;
+
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresBehaviorMin = 0;
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresBehaviorMax = 100;
+
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresTeacherEvaluationMin = 0;
+export const getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresTeacherEvaluationMax = 100;
+
+export const getGuardianPortalChildrenResponseAcademicControlWeeklySummaryAssessmentCountMin = 0;
+
+export const getGuardianPortalChildrenResponseAcademicControlMonthlySummaryAssessmentCountMin = 0;
+
 export const GetGuardianPortalChildrenResponseItem = zod.object({
   id: zod.number(),
   studentNumber: zod.string(),
@@ -101,6 +123,123 @@ export const GetGuardianPortalChildrenResponseItem = zod.object({
       invoiceNumber: zod.string().nullable(),
     }),
   ),
+  academicControl: zod
+    .object({
+      dailyAssessments: zod.array(
+        zod.object({
+          id: zod.number(),
+          assessmentDate: zod.coerce.date(),
+          subject: zod.string(),
+          scores: zod.object({
+            attendanceDiscipline: zod
+              .number()
+              .min(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresAttendanceDisciplineMin,
+              )
+              .max(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresAttendanceDisciplineMax,
+              )
+              .nullish(),
+            participation: zod
+              .number()
+              .min(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresParticipationMin,
+              )
+              .max(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresParticipationMax,
+              )
+              .nullish(),
+            homework: zod
+              .number()
+              .min(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresHomeworkMin,
+              )
+              .max(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresHomeworkMax,
+              )
+              .nullish(),
+            activity: zod
+              .number()
+              .min(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresActivityMin,
+              )
+              .max(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresActivityMax,
+              )
+              .nullish(),
+            behavior: zod
+              .number()
+              .min(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresBehaviorMin,
+              )
+              .max(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresBehaviorMax,
+              )
+              .nullish(),
+            teacherEvaluation: zod
+              .number()
+              .min(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresTeacherEvaluationMin,
+              )
+              .max(
+                getGuardianPortalChildrenResponseAcademicControlDailyAssessmentsItemScoresTeacherEvaluationMax,
+              )
+              .nullish(),
+          }),
+          notes: zod.string().nullable(),
+        }),
+      ),
+      publishedResults: zod.array(
+        zod.object({
+          approvalId: zod.number(),
+          academicYear: zod.string(),
+          periodName: zod.string(),
+          subject: zod.string(),
+          publicationType: zod.enum(["midyear", "year_end"]),
+          approvedAt: zod.coerce.date(),
+          result: zod.object({
+            enrollmentId: zod.number(),
+            studentId: zod.number(),
+            studentNumber: zod.string(),
+            fullNameAr: zod.string(),
+            score: zod.number(),
+            maximumScore: zod.number(),
+            percentage: zod.number(),
+            grade: zod.string(),
+            status: zod.enum(["pass", "fail", "second_round"]),
+            teacherNotes: zod.string(),
+          }),
+        }),
+      ),
+      weeklySummary: zod.object({
+        assessmentCount: zod
+          .number()
+          .min(
+            getGuardianPortalChildrenResponseAcademicControlWeeklySummaryAssessmentCountMin,
+          ),
+        averagePercent: zod.number().nullable(),
+        teacherNotes: zod.array(zod.string()),
+      }),
+      monthlySummary: zod.object({
+        assessmentCount: zod
+          .number()
+          .min(
+            getGuardianPortalChildrenResponseAcademicControlMonthlySummaryAssessmentCountMin,
+          ),
+        averagePercent: zod.number().nullable(),
+        teacherNotes: zod.array(zod.string()),
+      }),
+      subjectProgress: zod.array(
+        zod.object({
+          subjectId: zod.number(),
+          subject: zod.string(),
+          assessmentCount: zod.number(),
+          averagePercent: zod.number().nullable(),
+          latestDate: zod.coerce.date().nullable(),
+        }),
+      ),
+    })
+    .optional(),
   biometricConsentActive: zod.boolean(),
   faceEnrolled: zod.boolean(),
 });
@@ -500,6 +639,851 @@ export const PromoteSchoolEnrollmentsResponse = zod.object({
     .number()
     .min(promoteSchoolEnrollmentsResponseSkippedExistingMin),
 });
+
+/**
+ * @summary List academic periods for one school year
+ */
+
+export const GetSchoolAcademicPeriodsQueryParams = zod.object({
+  academicYearId: zod.coerce.number().min(1),
+});
+
+export const GetSchoolAcademicPeriodsResponseItem = zod.object({
+  id: zod.number(),
+  academicYearId: zod.number(),
+  name: zod.string(),
+  periodType: zod.enum(["term", "midyear", "year_end"]),
+  startDate: zod.coerce.date(),
+  endDate: zod.coerce.date(),
+  sortOrder: zod.number(),
+  isActive: zod.boolean(),
+});
+export const GetSchoolAcademicPeriodsResponse = zod.array(
+  GetSchoolAcademicPeriodsResponseItem,
+);
+
+/**
+ * @summary Create an academic period
+ */
+
+export const createSchoolAcademicPeriodBodyNameMax = 100;
+
+export const createSchoolAcademicPeriodBodySortOrderDefault = 1;
+
+export const CreateSchoolAcademicPeriodBody = zod.object({
+  academicYearId: zod.number().min(1),
+  name: zod.string().min(1).max(createSchoolAcademicPeriodBodyNameMax),
+  periodType: zod.enum(["term", "midyear", "year_end"]),
+  startDate: zod.coerce.date(),
+  endDate: zod.coerce.date(),
+  sortOrder: zod
+    .number()
+    .min(1)
+    .default(createSchoolAcademicPeriodBodySortOrderDefault),
+});
+
+/**
+ * @summary Update an academic period
+ */
+
+export const UpdateSchoolAcademicPeriodParams = zod.object({
+  periodId: zod.coerce.number().min(1),
+});
+
+export const updateSchoolAcademicPeriodBodyNameMax = 100;
+
+export const UpdateSchoolAcademicPeriodBody = zod.object({
+  name: zod
+    .string()
+    .min(1)
+    .max(updateSchoolAcademicPeriodBodyNameMax)
+    .optional(),
+  periodType: zod.enum(["term", "midyear", "year_end"]).optional(),
+  startDate: zod.coerce.date().optional(),
+  endDate: zod.coerce.date().optional(),
+  sortOrder: zod.number().min(1).optional(),
+  isActive: zod.boolean().optional(),
+});
+
+export const UpdateSchoolAcademicPeriodResponse = zod.object({
+  id: zod.number(),
+  academicYearId: zod.number(),
+  name: zod.string(),
+  periodType: zod.enum(["term", "midyear", "year_end"]),
+  startDate: zod.coerce.date(),
+  endDate: zod.coerce.date(),
+  sortOrder: zod.number(),
+  isActive: zod.boolean(),
+});
+
+/**
+ * @summary Delete an unused academic period
+ */
+
+export const DeleteSchoolAcademicPeriodParams = zod.object({
+  periodId: zod.coerce.number().min(1),
+});
+
+export const DeleteSchoolAcademicPeriodResponse = zod.object({
+  ok: zod.literal(true),
+});
+
+/**
+ * @summary List subjects assigned to classes for an academic year
+ */
+
+export const GetSchoolSubjectOfferingsQueryParams = zod.object({
+  academicYearId: zod.coerce.number().min(1),
+  classId: zod.coerce.number().min(1).optional(),
+});
+
+export const GetSchoolSubjectOfferingsResponseItem = zod.object({
+  id: zod.number(),
+  academicYearId: zod.number(),
+  classId: zod.number(),
+  className: zod.string(),
+  subjectId: zod.number(),
+  subjectNameAr: zod.string(),
+  teacherEmployeeId: zod.number().nullable(),
+  teacherNameAr: zod.string().nullable(),
+  isActive: zod.boolean(),
+  notes: zod.string().nullish(),
+});
+export const GetSchoolSubjectOfferingsResponse = zod.array(
+  GetSchoolSubjectOfferingsResponseItem,
+);
+
+/**
+ * @summary Assign a subject and teacher to a class
+ */
+
+export const createSchoolSubjectOfferingBodyIsActiveDefault = true;
+export const createSchoolSubjectOfferingBodyNotesMax = 1000;
+
+export const CreateSchoolSubjectOfferingBody = zod.object({
+  academicYearId: zod.number().min(1),
+  classId: zod.number().min(1),
+  subjectId: zod.number().min(1),
+  teacherEmployeeId: zod.number().min(1).nullish(),
+  isActive: zod
+    .boolean()
+    .default(createSchoolSubjectOfferingBodyIsActiveDefault),
+  notes: zod.string().max(createSchoolSubjectOfferingBodyNotesMax).nullish(),
+});
+
+/**
+ * @summary Update a class subject assignment
+ */
+
+export const UpdateSchoolSubjectOfferingParams = zod.object({
+  offeringId: zod.coerce.number().min(1),
+});
+
+export const updateSchoolSubjectOfferingBodyNotesMax = 1000;
+
+export const UpdateSchoolSubjectOfferingBody = zod.object({
+  teacherEmployeeId: zod.number().min(1).nullish(),
+  isActive: zod.boolean().optional(),
+  notes: zod.string().max(updateSchoolSubjectOfferingBodyNotesMax).nullish(),
+});
+
+export const UpdateSchoolSubjectOfferingResponse = zod.object({
+  id: zod.number(),
+  academicYearId: zod.number(),
+  classId: zod.number(),
+  className: zod.string(),
+  subjectId: zod.number(),
+  subjectNameAr: zod.string(),
+  teacherEmployeeId: zod.number().nullable(),
+  teacherNameAr: zod.string().nullable(),
+  isActive: zod.boolean(),
+  notes: zod.string().nullish(),
+});
+
+/**
+ * @summary Remove an unused class subject assignment
+ */
+
+export const DeleteSchoolSubjectOfferingParams = zod.object({
+  offeringId: zod.coerce.number().min(1),
+});
+
+export const DeleteSchoolSubjectOfferingResponse = zod.object({
+  ok: zod.literal(true),
+});
+
+/**
+ * @summary List grade-specific grading policies
+ */
+
+export const GetSchoolGradeSubjectPoliciesQueryParams = zod.object({
+  gradeId: zod.coerce.number().min(1),
+});
+
+export const getSchoolGradeSubjectPoliciesResponseGradeBandsItemMinimumPercentMin = 0;
+export const getSchoolGradeSubjectPoliciesResponseGradeBandsItemMinimumPercentMax = 100;
+
+export const getSchoolGradeSubjectPoliciesResponseGradeBandsItemLabelMax = 60;
+
+export const getSchoolGradeSubjectPoliciesResponseMidyearWeightsMinOne = 0;
+export const getSchoolGradeSubjectPoliciesResponseMidyearWeightsMaxOne = 100;
+
+export const getSchoolGradeSubjectPoliciesResponseYearEndWeightsMinOne = 0;
+export const getSchoolGradeSubjectPoliciesResponseYearEndWeightsMaxOne = 100;
+
+export const GetSchoolGradeSubjectPoliciesResponseItem = zod.object({
+  id: zod.number(),
+  gradeId: zod.number(),
+  subjectId: zod.number(),
+  subjectType: zod.string(),
+  maximumScore: zod.number(),
+  minimumScore: zod.number(),
+  passMarkPercent: zod.number(),
+  secondRoundPercent: zod.number(),
+  gradeBands: zod.array(
+    zod.object({
+      minimumPercent: zod
+        .number()
+        .min(
+          getSchoolGradeSubjectPoliciesResponseGradeBandsItemMinimumPercentMin,
+        )
+        .max(
+          getSchoolGradeSubjectPoliciesResponseGradeBandsItemMinimumPercentMax,
+        ),
+      label: zod
+        .string()
+        .min(1)
+        .max(getSchoolGradeSubjectPoliciesResponseGradeBandsItemLabelMax),
+    }),
+  ),
+  midyearWeights: zod.record(
+    zod.string(),
+    zod
+      .number()
+      .min(getSchoolGradeSubjectPoliciesResponseMidyearWeightsMinOne)
+      .max(getSchoolGradeSubjectPoliciesResponseMidyearWeightsMaxOne),
+  ),
+  yearEndWeights: zod.record(
+    zod.string(),
+    zod
+      .number()
+      .min(getSchoolGradeSubjectPoliciesResponseYearEndWeightsMinOne)
+      .max(getSchoolGradeSubjectPoliciesResponseYearEndWeightsMaxOne),
+  ),
+  showDailyAssessmentsToGuardians: zod.boolean(),
+  isActive: zod.boolean(),
+});
+export const GetSchoolGradeSubjectPoliciesResponse = zod.array(
+  GetSchoolGradeSubjectPoliciesResponseItem,
+);
+
+/**
+ * @summary Save the grading policy for a grade and subject
+ */
+
+export const SaveSchoolGradeSubjectPolicyParams = zod.object({
+  subjectId: zod.coerce.number().min(1),
+});
+
+export const saveSchoolGradeSubjectPolicyBodySubjectTypeMax = 60;
+
+export const saveSchoolGradeSubjectPolicyBodyMaximumScoreMin = 0.01;
+
+export const saveSchoolGradeSubjectPolicyBodyMinimumScoreMin = 0;
+
+export const saveSchoolGradeSubjectPolicyBodyPassMarkPercentMin = 0;
+export const saveSchoolGradeSubjectPolicyBodyPassMarkPercentMax = 100;
+
+export const saveSchoolGradeSubjectPolicyBodySecondRoundPercentMin = 0;
+export const saveSchoolGradeSubjectPolicyBodySecondRoundPercentMax = 100;
+
+export const saveSchoolGradeSubjectPolicyBodyGradeBandsItemMinimumPercentMin = 0;
+export const saveSchoolGradeSubjectPolicyBodyGradeBandsItemMinimumPercentMax = 100;
+
+export const saveSchoolGradeSubjectPolicyBodyGradeBandsItemLabelMax = 60;
+
+export const saveSchoolGradeSubjectPolicyBodyMidyearWeightsMinOne = 0;
+export const saveSchoolGradeSubjectPolicyBodyMidyearWeightsMaxOne = 100;
+
+export const saveSchoolGradeSubjectPolicyBodyYearEndWeightsMinOne = 0;
+export const saveSchoolGradeSubjectPolicyBodyYearEndWeightsMaxOne = 100;
+
+export const saveSchoolGradeSubjectPolicyBodyIsActiveDefault = true;
+
+export const SaveSchoolGradeSubjectPolicyBody = zod.object({
+  gradeId: zod.number().min(1),
+  subjectType: zod
+    .string()
+    .min(1)
+    .max(saveSchoolGradeSubjectPolicyBodySubjectTypeMax),
+  maximumScore: zod
+    .number()
+    .min(saveSchoolGradeSubjectPolicyBodyMaximumScoreMin),
+  minimumScore: zod
+    .number()
+    .min(saveSchoolGradeSubjectPolicyBodyMinimumScoreMin),
+  passMarkPercent: zod
+    .number()
+    .min(saveSchoolGradeSubjectPolicyBodyPassMarkPercentMin)
+    .max(saveSchoolGradeSubjectPolicyBodyPassMarkPercentMax),
+  secondRoundPercent: zod
+    .number()
+    .min(saveSchoolGradeSubjectPolicyBodySecondRoundPercentMin)
+    .max(saveSchoolGradeSubjectPolicyBodySecondRoundPercentMax),
+  gradeBands: zod.array(
+    zod.object({
+      minimumPercent: zod
+        .number()
+        .min(saveSchoolGradeSubjectPolicyBodyGradeBandsItemMinimumPercentMin)
+        .max(saveSchoolGradeSubjectPolicyBodyGradeBandsItemMinimumPercentMax),
+      label: zod
+        .string()
+        .min(1)
+        .max(saveSchoolGradeSubjectPolicyBodyGradeBandsItemLabelMax),
+    }),
+  ),
+  midyearWeights: zod.record(
+    zod.string(),
+    zod
+      .number()
+      .min(saveSchoolGradeSubjectPolicyBodyMidyearWeightsMinOne)
+      .max(saveSchoolGradeSubjectPolicyBodyMidyearWeightsMaxOne),
+  ),
+  yearEndWeights: zod.record(
+    zod.string(),
+    zod
+      .number()
+      .min(saveSchoolGradeSubjectPolicyBodyYearEndWeightsMinOne)
+      .max(saveSchoolGradeSubjectPolicyBodyYearEndWeightsMaxOne),
+  ),
+  showDailyAssessmentsToGuardians: zod.boolean(),
+  isActive: zod
+    .boolean()
+    .default(saveSchoolGradeSubjectPolicyBodyIsActiveDefault),
+});
+
+export const saveSchoolGradeSubjectPolicyResponseGradeBandsItemMinimumPercentMin = 0;
+export const saveSchoolGradeSubjectPolicyResponseGradeBandsItemMinimumPercentMax = 100;
+
+export const saveSchoolGradeSubjectPolicyResponseGradeBandsItemLabelMax = 60;
+
+export const saveSchoolGradeSubjectPolicyResponseMidyearWeightsMinOne = 0;
+export const saveSchoolGradeSubjectPolicyResponseMidyearWeightsMaxOne = 100;
+
+export const saveSchoolGradeSubjectPolicyResponseYearEndWeightsMinOne = 0;
+export const saveSchoolGradeSubjectPolicyResponseYearEndWeightsMaxOne = 100;
+
+export const SaveSchoolGradeSubjectPolicyResponse = zod.object({
+  id: zod.number(),
+  gradeId: zod.number(),
+  subjectId: zod.number(),
+  subjectType: zod.string(),
+  maximumScore: zod.number(),
+  minimumScore: zod.number(),
+  passMarkPercent: zod.number(),
+  secondRoundPercent: zod.number(),
+  gradeBands: zod.array(
+    zod.object({
+      minimumPercent: zod
+        .number()
+        .min(
+          saveSchoolGradeSubjectPolicyResponseGradeBandsItemMinimumPercentMin,
+        )
+        .max(
+          saveSchoolGradeSubjectPolicyResponseGradeBandsItemMinimumPercentMax,
+        ),
+      label: zod
+        .string()
+        .min(1)
+        .max(saveSchoolGradeSubjectPolicyResponseGradeBandsItemLabelMax),
+    }),
+  ),
+  midyearWeights: zod.record(
+    zod.string(),
+    zod
+      .number()
+      .min(saveSchoolGradeSubjectPolicyResponseMidyearWeightsMinOne)
+      .max(saveSchoolGradeSubjectPolicyResponseMidyearWeightsMaxOne),
+  ),
+  yearEndWeights: zod.record(
+    zod.string(),
+    zod
+      .number()
+      .min(saveSchoolGradeSubjectPolicyResponseYearEndWeightsMinOne)
+      .max(saveSchoolGradeSubjectPolicyResponseYearEndWeightsMaxOne),
+  ),
+  showDailyAssessmentsToGuardians: zod.boolean(),
+  isActive: zod.boolean(),
+});
+
+/**
+ * @summary Read students, assessments, and scores for a class subject and period
+ */
+
+export const GetSchoolGradebookQueryParams = zod.object({
+  academicYearId: zod.coerce.number().min(1),
+  periodId: zod.coerce.number().min(1),
+  classId: zod.coerce.number().min(1),
+  subjectId: zod.coerce.number().min(1),
+});
+
+export const getSchoolGradebookResponsePolicyOneGradeBandsItemMinimumPercentMin = 0;
+export const getSchoolGradebookResponsePolicyOneGradeBandsItemMinimumPercentMax = 100;
+
+export const getSchoolGradebookResponsePolicyOneGradeBandsItemLabelMax = 60;
+
+export const getSchoolGradebookResponsePolicyOneMidyearWeightsMinOne = 0;
+export const getSchoolGradebookResponsePolicyOneMidyearWeightsMaxOne = 100;
+
+export const getSchoolGradebookResponsePolicyOneYearEndWeightsMinOne = 0;
+export const getSchoolGradebookResponsePolicyOneYearEndWeightsMaxOne = 100;
+
+export const GetSchoolGradebookResponse = zod.object({
+  students: zod.array(
+    zod.object({
+      enrollmentId: zod.number(),
+      studentId: zod.number(),
+      studentNumber: zod.string(),
+      fullNameAr: zod.string(),
+      marks: zod.array(
+        zod.object({
+          enrollmentId: zod.number(),
+          resultId: zod.number().nullable(),
+          examId: zod.number(),
+          score: zod.number().nullable(),
+          notes: zod.string().nullable(),
+        }),
+      ),
+    }),
+  ),
+  assessments: zod.array(
+    zod.object({
+      id: zod.number(),
+      name: zod.string(),
+      examDate: zod.coerce.date(),
+      maxScore: zod.number(),
+      assessmentType: zod.enum([
+        "coursework",
+        "monthly",
+        "midyear",
+        "year_end",
+      ]),
+      status: zod.string(),
+    }),
+  ),
+  policy: zod.union([
+    zod.object({
+      id: zod.number(),
+      gradeId: zod.number(),
+      subjectId: zod.number(),
+      subjectType: zod.string(),
+      maximumScore: zod.number(),
+      minimumScore: zod.number(),
+      passMarkPercent: zod.number(),
+      secondRoundPercent: zod.number(),
+      gradeBands: zod.array(
+        zod.object({
+          minimumPercent: zod
+            .number()
+            .min(
+              getSchoolGradebookResponsePolicyOneGradeBandsItemMinimumPercentMin,
+            )
+            .max(
+              getSchoolGradebookResponsePolicyOneGradeBandsItemMinimumPercentMax,
+            ),
+          label: zod
+            .string()
+            .min(1)
+            .max(getSchoolGradebookResponsePolicyOneGradeBandsItemLabelMax),
+        }),
+      ),
+      midyearWeights: zod.record(
+        zod.string(),
+        zod
+          .number()
+          .min(getSchoolGradebookResponsePolicyOneMidyearWeightsMinOne)
+          .max(getSchoolGradebookResponsePolicyOneMidyearWeightsMaxOne),
+      ),
+      yearEndWeights: zod.record(
+        zod.string(),
+        zod
+          .number()
+          .min(getSchoolGradebookResponsePolicyOneYearEndWeightsMinOne)
+          .max(getSchoolGradebookResponsePolicyOneYearEndWeightsMaxOne),
+      ),
+      showDailyAssessmentsToGuardians: zod.boolean(),
+      isActive: zod.boolean(),
+    }),
+    zod.null(),
+  ]),
+  locked: zod.boolean(),
+});
+
+/**
+ * @summary Save assessment marks for multiple enrolled students
+ */
+
+export const saveSchoolGradebookMarksBodyRecordsItemScoreMin = 0;
+
+export const saveSchoolGradebookMarksBodyRecordsItemNotesMax = 1000;
+
+export const saveSchoolGradebookMarksBodyRecordsMax = 1000;
+
+export const SaveSchoolGradebookMarksBody = zod.object({
+  examId: zod.number().min(1),
+  records: zod
+    .array(
+      zod.object({
+        enrollmentId: zod.number().min(1),
+        score: zod
+          .number()
+          .min(saveSchoolGradebookMarksBodyRecordsItemScoreMin)
+          .nullable(),
+        notes: zod
+          .string()
+          .max(saveSchoolGradebookMarksBodyRecordsItemNotesMax)
+          .nullish(),
+      }),
+    )
+    .min(1)
+    .max(saveSchoolGradebookMarksBodyRecordsMax),
+});
+
+export const saveSchoolGradebookMarksResponseSavedMin = 0;
+
+export const SaveSchoolGradebookMarksResponse = zod.object({
+  saved: zod.number().min(saveSchoolGradebookMarksResponseSavedMin),
+});
+
+/**
+ * @summary Read daily evaluations for a class, subject, and date
+ */
+
+export const GetSchoolDailyAssessmentsQueryParams = zod.object({
+  academicYearId: zod.coerce.number().min(1),
+  periodId: zod.coerce.number().min(1),
+  classId: zod.coerce.number().min(1),
+  subjectId: zod.coerce.number().min(1),
+  assessmentDate: zod.date(),
+});
+
+export const getSchoolDailyAssessmentsResponseScoresAttendanceDisciplineMin = 0;
+export const getSchoolDailyAssessmentsResponseScoresAttendanceDisciplineMax = 100;
+
+export const getSchoolDailyAssessmentsResponseScoresParticipationMin = 0;
+export const getSchoolDailyAssessmentsResponseScoresParticipationMax = 100;
+
+export const getSchoolDailyAssessmentsResponseScoresHomeworkMin = 0;
+export const getSchoolDailyAssessmentsResponseScoresHomeworkMax = 100;
+
+export const getSchoolDailyAssessmentsResponseScoresActivityMin = 0;
+export const getSchoolDailyAssessmentsResponseScoresActivityMax = 100;
+
+export const getSchoolDailyAssessmentsResponseScoresBehaviorMin = 0;
+export const getSchoolDailyAssessmentsResponseScoresBehaviorMax = 100;
+
+export const getSchoolDailyAssessmentsResponseScoresTeacherEvaluationMin = 0;
+export const getSchoolDailyAssessmentsResponseScoresTeacherEvaluationMax = 100;
+
+export const GetSchoolDailyAssessmentsResponseItem = zod.object({
+  enrollmentId: zod.number(),
+  studentId: zod.number(),
+  studentNumber: zod.string(),
+  fullNameAr: zod.string(),
+  attendanceStatus: zod.string().nullable(),
+  assessmentId: zod.number().nullable(),
+  scores: zod.object({
+    attendanceDiscipline: zod
+      .number()
+      .min(getSchoolDailyAssessmentsResponseScoresAttendanceDisciplineMin)
+      .max(getSchoolDailyAssessmentsResponseScoresAttendanceDisciplineMax)
+      .nullish(),
+    participation: zod
+      .number()
+      .min(getSchoolDailyAssessmentsResponseScoresParticipationMin)
+      .max(getSchoolDailyAssessmentsResponseScoresParticipationMax)
+      .nullish(),
+    homework: zod
+      .number()
+      .min(getSchoolDailyAssessmentsResponseScoresHomeworkMin)
+      .max(getSchoolDailyAssessmentsResponseScoresHomeworkMax)
+      .nullish(),
+    activity: zod
+      .number()
+      .min(getSchoolDailyAssessmentsResponseScoresActivityMin)
+      .max(getSchoolDailyAssessmentsResponseScoresActivityMax)
+      .nullish(),
+    behavior: zod
+      .number()
+      .min(getSchoolDailyAssessmentsResponseScoresBehaviorMin)
+      .max(getSchoolDailyAssessmentsResponseScoresBehaviorMax)
+      .nullish(),
+    teacherEvaluation: zod
+      .number()
+      .min(getSchoolDailyAssessmentsResponseScoresTeacherEvaluationMin)
+      .max(getSchoolDailyAssessmentsResponseScoresTeacherEvaluationMax)
+      .nullish(),
+  }),
+  notes: zod.string().nullable(),
+});
+export const GetSchoolDailyAssessmentsResponse = zod.array(
+  GetSchoolDailyAssessmentsResponseItem,
+);
+
+/**
+ * @summary Save daily evaluations for enrolled students
+ */
+
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresAttendanceDisciplineMin = 0;
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresAttendanceDisciplineMax = 100;
+
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresParticipationMin = 0;
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresParticipationMax = 100;
+
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresHomeworkMin = 0;
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresHomeworkMax = 100;
+
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresActivityMin = 0;
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresActivityMax = 100;
+
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresBehaviorMin = 0;
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresBehaviorMax = 100;
+
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresTeacherEvaluationMin = 0;
+export const saveSchoolDailyAssessmentsBodyRecordsItemScoresTeacherEvaluationMax = 100;
+
+export const saveSchoolDailyAssessmentsBodyRecordsItemNotesMax = 1000;
+
+export const saveSchoolDailyAssessmentsBodyRecordsMax = 1000;
+
+export const SaveSchoolDailyAssessmentsBody = zod.object({
+  academicYearId: zod.number().min(1),
+  periodId: zod.number().min(1),
+  classId: zod.number().min(1),
+  subjectId: zod.number().min(1),
+  assessmentDate: zod.coerce.date(),
+  records: zod
+    .array(
+      zod.object({
+        enrollmentId: zod.number().min(1),
+        scores: zod.object({
+          attendanceDiscipline: zod
+            .number()
+            .min(
+              saveSchoolDailyAssessmentsBodyRecordsItemScoresAttendanceDisciplineMin,
+            )
+            .max(
+              saveSchoolDailyAssessmentsBodyRecordsItemScoresAttendanceDisciplineMax,
+            )
+            .nullish(),
+          participation: zod
+            .number()
+            .min(
+              saveSchoolDailyAssessmentsBodyRecordsItemScoresParticipationMin,
+            )
+            .max(
+              saveSchoolDailyAssessmentsBodyRecordsItemScoresParticipationMax,
+            )
+            .nullish(),
+          homework: zod
+            .number()
+            .min(saveSchoolDailyAssessmentsBodyRecordsItemScoresHomeworkMin)
+            .max(saveSchoolDailyAssessmentsBodyRecordsItemScoresHomeworkMax)
+            .nullish(),
+          activity: zod
+            .number()
+            .min(saveSchoolDailyAssessmentsBodyRecordsItemScoresActivityMin)
+            .max(saveSchoolDailyAssessmentsBodyRecordsItemScoresActivityMax)
+            .nullish(),
+          behavior: zod
+            .number()
+            .min(saveSchoolDailyAssessmentsBodyRecordsItemScoresBehaviorMin)
+            .max(saveSchoolDailyAssessmentsBodyRecordsItemScoresBehaviorMax)
+            .nullish(),
+          teacherEvaluation: zod
+            .number()
+            .min(
+              saveSchoolDailyAssessmentsBodyRecordsItemScoresTeacherEvaluationMin,
+            )
+            .max(
+              saveSchoolDailyAssessmentsBodyRecordsItemScoresTeacherEvaluationMax,
+            )
+            .nullish(),
+        }),
+        notes: zod
+          .string()
+          .max(saveSchoolDailyAssessmentsBodyRecordsItemNotesMax)
+          .nullish(),
+      }),
+    )
+    .min(1)
+    .max(saveSchoolDailyAssessmentsBodyRecordsMax),
+});
+
+export const saveSchoolDailyAssessmentsResponseSavedMin = 0;
+
+export const SaveSchoolDailyAssessmentsResponse = zod.object({
+  saved: zod.number().min(saveSchoolDailyAssessmentsResponseSavedMin),
+});
+
+/**
+ * @summary List approved and reopened result snapshots
+ */
+
+export const GetSchoolResultApprovalsQueryParams = zod.object({
+  academicYearId: zod.coerce.number().min(1),
+  classId: zod.coerce.number().min(1).optional(),
+});
+
+export const GetSchoolResultApprovalsResponseItem = zod.object({
+  id: zod.number(),
+  academicYearId: zod.number(),
+  periodId: zod.number(),
+  classId: zod.number(),
+  subjectId: zod.number(),
+  publicationType: zod.enum(["midyear", "year_end"]),
+  status: zod.enum(["approved", "reopened"]),
+  resultsSnapshot: zod.array(
+    zod.object({
+      enrollmentId: zod.number(),
+      studentId: zod.number(),
+      studentNumber: zod.string(),
+      fullNameAr: zod.string(),
+      score: zod.number(),
+      maximumScore: zod.number(),
+      percentage: zod.number(),
+      grade: zod.string(),
+      status: zod.enum(["pass", "fail", "second_round"]),
+      teacherNotes: zod.string(),
+    }),
+  ),
+  approvedAt: zod.coerce.date(),
+  approvedById: zod.number().nullable(),
+});
+export const GetSchoolResultApprovalsResponse = zod.array(
+  GetSchoolResultApprovalsResponseItem,
+);
+
+/**
+ * @summary Calculate and approve a midyear or year-end result snapshot
+ */
+
+export const ApproveSchoolResultsBody = zod.object({
+  academicYearId: zod.number().min(1),
+  periodId: zod.number().min(1),
+  classId: zod.number().min(1),
+  subjectId: zod.number().min(1),
+  publicationType: zod.enum(["midyear", "year_end"]),
+});
+
+/**
+ * @summary Reopen an approved result snapshot for an administrator-approved correction
+ */
+
+export const ReopenSchoolResultsParams = zod.object({
+  approvalId: zod.coerce.number().min(1),
+});
+
+export const ReopenSchoolResultsResponse = zod.object({
+  id: zod.number(),
+  academicYearId: zod.number(),
+  periodId: zod.number(),
+  classId: zod.number(),
+  subjectId: zod.number(),
+  publicationType: zod.enum(["midyear", "year_end"]),
+  status: zod.enum(["approved", "reopened"]),
+  resultsSnapshot: zod.array(
+    zod.object({
+      enrollmentId: zod.number(),
+      studentId: zod.number(),
+      studentNumber: zod.string(),
+      fullNameAr: zod.string(),
+      score: zod.number(),
+      maximumScore: zod.number(),
+      percentage: zod.number(),
+      grade: zod.string(),
+      status: zod.enum(["pass", "fail", "second_round"]),
+      teacherNotes: zod.string(),
+    }),
+  ),
+  approvedAt: zod.coerce.date(),
+  approvedById: zod.number().nullable(),
+});
+
+/**
+ * @summary Read weekly, monthly, exam, term, or student progress reports
+ */
+
+export const GetSchoolAcademicReportQueryParams = zod.object({
+  reportType: zod.enum([
+    "weekly",
+    "monthly",
+    "monthly_exams",
+    "midyear",
+    "year_end",
+    "student_progress",
+  ]),
+  academicYearId: zod.coerce.number().min(1).optional(),
+  periodId: zod.coerce.number().min(1).optional(),
+  classId: zod.coerce.number().min(1).optional(),
+  subjectId: zod.coerce.number().min(1).optional(),
+  enrollmentId: zod.coerce.number().min(1).optional(),
+  startDate: zod.date().optional(),
+  endDate: zod.date().optional(),
+});
+
+export const GetSchoolAcademicReportResponse = zod.object({
+  reportType: zod.string(),
+  startDate: zod.coerce.date().nullable(),
+  endDate: zod.coerce.date().nullable(),
+  rows: zod.array(
+    zod.object({
+      enrollmentId: zod.number(),
+      studentId: zod.number(),
+      studentNumber: zod.string(),
+      fullNameAr: zod.string(),
+      subjectId: zod.number(),
+      subjectNameAr: zod.string(),
+      assessmentCount: zod.number(),
+      averagePercent: zod.number().nullable(),
+      score: zod.number().nullable(),
+      maximumScore: zod.number().nullable(),
+      grade: zod.string(),
+      status: zod.string(),
+      teacherNotes: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * @summary Read grade, assessment, policy, and approval changes
+ */
+
+export const getSchoolGradeAuditQueryLimitDefault = 100;
+export const getSchoolGradeAuditQueryLimitMax = 200;
+
+export const GetSchoolGradeAuditQueryParams = zod.object({
+  enrollmentId: zod.coerce.number().min(1).optional(),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(getSchoolGradeAuditQueryLimitMax)
+    .default(getSchoolGradeAuditQueryLimitDefault),
+});
+
+export const GetSchoolGradeAuditResponseItem = zod.object({
+  id: zod.number(),
+  entityType: zod.string(),
+  entityId: zod.number().nullable(),
+  action: zod.string(),
+  beforeValue: zod.unknown(),
+  afterValue: zod.unknown(),
+  actorId: zod.number().nullable(),
+  occurredAt: zod.coerce.date(),
+});
+export const GetSchoolGradeAuditResponse = zod.array(
+  GetSchoolGradeAuditResponseItem,
+);
 
 /**
  * @summary Create a draft reversal of an eligible manually-created journal entry

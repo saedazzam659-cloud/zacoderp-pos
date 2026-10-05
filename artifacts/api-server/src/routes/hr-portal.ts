@@ -32,7 +32,7 @@ import {
 // Face logic reused from the admin face-attendance module — single source of
 // truth for descriptors/matching/settings (no duplication).
 import { getFaceSettings, parseDescriptor, euclidean } from "./faceAttendance.js";
-import { and, eq, desc, asc, gte, lte, or, sql } from "drizzle-orm";
+import { and, eq, desc, asc, gte, lte, or, inArray, sql } from "drizzle-orm";
 import { requireDate, timeOrNull, oneOf, respondHrError, HrValidationError } from "../lib/hrValidate.js";
 import { assertDayOpen, assertPeriodNotTransferred } from "../lib/attendanceLocks.js";
 import { loadEffectiveEmployeeSchedule, recalcDay } from "./attendance-plus.js";
@@ -46,6 +46,8 @@ import {
 } from "../lib/portalAttendanceState.js";
 import { companyAllowsModule } from "../middleware/permissions.js";
 import { ensureSchoolPortalSchema, lockStudentBiometrics } from "../lib/schoolPortalSchema.js";
+import { getGuardianAcademicControl } from "../lib/schoolGuardianAcademicControl.js";
+import { ensureSchoolAcademicControlSchema } from "../lib/schoolAcademicControlSchema.js";
 
 const router = Router();
 
@@ -929,6 +931,7 @@ guardianRouter.get("/children", async (req, res) => {
   try {
     const ctx = await guardianPortalAuth(req, res);
     if (!ctx) return;
+    await ensureSchoolAcademicControlSchema();
     const linkedRows = await db.select({
       studentId: schoolStudentsTable.id,
       studentNumber: schoolStudentsTable.studentNumber,
@@ -957,6 +960,8 @@ guardianRouter.get("/children", async (req, res) => {
         id: schoolEnrollmentsTable.id,
         academicYear: schoolAcademicYearsTable.name,
         academicYearId: schoolAcademicYearsTable.id,
+        classId: schoolClassesTable.id,
+        gradeId: schoolGradesTable.id,
         className: schoolClassesTable.name,
         gradeName: schoolGradesTable.nameAr,
       }).from(schoolEnrollmentsTable)
@@ -986,6 +991,13 @@ guardianRouter.get("/children", async (req, res) => {
       let attendanceRows: any[] = [];
       let recentExams: any[] = [];
       let fees: any[] = [];
+      let academicControl: any = {
+        dailyAssessments: [],
+        publishedResults: [],
+        weeklySummary: { assessmentCount: 0, averagePercent: null, teacherNotes: [] },
+        monthlySummary: { assessmentCount: 0, averagePercent: null, teacherNotes: [] },
+        subjectProgress: [],
+      };
       if (enrollment) {
         attendanceRows = await db.select({
           date: schoolAttendanceTable.attendanceDate,
@@ -1014,6 +1026,7 @@ guardianRouter.get("/children", async (req, res) => {
           .where(and(
             eq(schoolExamResultsTable.companyId, ctx.companyId),
             eq(schoolExamResultsTable.enrollmentId, enrollment.id),
+            inArray(schoolExamsTable.assessmentType, ["coursework", "monthly"]),
           ))
           .orderBy(desc(schoolExamsTable.examDate))
           .limit(10);
@@ -1027,6 +1040,12 @@ guardianRouter.get("/children", async (req, res) => {
           eq(schoolFeesTable.companyId, ctx.companyId),
           eq(schoolFeesTable.enrollmentId, enrollment.id),
         )).orderBy(desc(schoolFeesTable.dueDate)).limit(24);
+        academicControl = await getGuardianAcademicControl(ctx.companyId, {
+          id: enrollment.id,
+          academicYearId: enrollment.academicYearId,
+          classId: enrollment.classId,
+          gradeId: enrollment.gradeId,
+        });
       }
       const [ownConsent] = await db.select({
         isActive: schoolStudentBiometricConsentsTable.isActive,
@@ -1079,6 +1098,7 @@ guardianRouter.get("/children", async (req, res) => {
           status: row.status,
           invoiceNumber: null,
         })),
+        academicControl,
         biometricConsentActive: !!ownConsent?.isActive,
         faceEnrolled: !!template && validConsentStudentIds.has(student.studentId),
       };

@@ -5,6 +5,479 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export type SchoolAcademicPeriodPeriodType =
+  (typeof SchoolAcademicPeriodPeriodType)[keyof typeof SchoolAcademicPeriodPeriodType];
+
+export const SchoolAcademicPeriodPeriodType = {
+  term: "term",
+  midyear: "midyear",
+  year_end: "year_end",
+} as const;
+
+export interface SchoolAcademicPeriod {
+  id: number;
+  academicYearId: number;
+  name: string;
+  periodType: SchoolAcademicPeriodPeriodType;
+  startDate: string;
+  endDate: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export type SchoolAcademicPeriodInputPeriodType =
+  (typeof SchoolAcademicPeriodInputPeriodType)[keyof typeof SchoolAcademicPeriodInputPeriodType];
+
+export const SchoolAcademicPeriodInputPeriodType = {
+  term: "term",
+  midyear: "midyear",
+  year_end: "year_end",
+} as const;
+
+export interface SchoolAcademicPeriodInput {
+  /** @minimum 1 */
+  academicYearId: number;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  name: string;
+  periodType: SchoolAcademicPeriodInputPeriodType;
+  startDate: string;
+  endDate: string;
+  /** @minimum 1 */
+  sortOrder?: number;
+}
+
+export type SchoolAcademicPeriodUpdatePeriodType =
+  (typeof SchoolAcademicPeriodUpdatePeriodType)[keyof typeof SchoolAcademicPeriodUpdatePeriodType];
+
+export const SchoolAcademicPeriodUpdatePeriodType = {
+  term: "term",
+  midyear: "midyear",
+  year_end: "year_end",
+} as const;
+
+export interface SchoolAcademicPeriodUpdate {
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  name?: string;
+  periodType?: SchoolAcademicPeriodUpdatePeriodType;
+  startDate?: string;
+  endDate?: string;
+  /** @minimum 1 */
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
+export interface SchoolDeleteResult {
+  ok: boolean;
+}
+
+export interface SchoolSubjectOffering {
+  id: number;
+  academicYearId: number;
+  classId: number;
+  className: string;
+  subjectId: number;
+  subjectNameAr: string;
+  /** @nullable */
+  teacherEmployeeId: number | null;
+  /** @nullable */
+  teacherNameAr: string | null;
+  isActive: boolean;
+  /** @nullable */
+  notes?: string | null;
+}
+
+export interface SchoolSubjectOfferingInput {
+  /** @minimum 1 */
+  academicYearId: number;
+  /** @minimum 1 */
+  classId: number;
+  /** @minimum 1 */
+  subjectId: number;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  teacherEmployeeId?: number | null;
+  isActive?: boolean;
+  /**
+   * @maxLength 1000
+   * @nullable
+   */
+  notes?: string | null;
+}
+
+export interface SchoolSubjectOfferingUpdate {
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  teacherEmployeeId?: number | null;
+  isActive?: boolean;
+  /**
+   * @maxLength 1000
+   * @nullable
+   */
+  notes?: string | null;
+}
+
+export type SchoolGradeSubjectPolicyGradeBandsItem = {
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  minimumPercent: number;
+  /**
+   * @minLength 1
+   * @maxLength 60
+   */
+  label: string;
+};
+
+export type SchoolGradeSubjectPolicyMidyearWeights = { [key: string]: number };
+
+export type SchoolGradeSubjectPolicyYearEndWeights = { [key: string]: number };
+
+export interface SchoolGradeSubjectPolicy {
+  id: number;
+  gradeId: number;
+  subjectId: number;
+  subjectType: string;
+  maximumScore: number;
+  minimumScore: number;
+  passMarkPercent: number;
+  secondRoundPercent: number;
+  gradeBands: SchoolGradeSubjectPolicyGradeBandsItem[];
+  midyearWeights: SchoolGradeSubjectPolicyMidyearWeights;
+  yearEndWeights: SchoolGradeSubjectPolicyYearEndWeights;
+  showDailyAssessmentsToGuardians: boolean;
+  isActive: boolean;
+}
+
+export type SchoolGradeSubjectPolicyInputGradeBandsItem = {
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  minimumPercent: number;
+  /**
+   * @minLength 1
+   * @maxLength 60
+   */
+  label: string;
+};
+
+export type SchoolGradeSubjectPolicyInputMidyearWeights = {
+  [key: string]: number;
+};
+
+export type SchoolGradeSubjectPolicyInputYearEndWeights = {
+  [key: string]: number;
+};
+
+export interface SchoolGradeSubjectPolicyInput {
+  /** @minimum 1 */
+  gradeId: number;
+  /**
+   * @minLength 1
+   * @maxLength 60
+   */
+  subjectType: string;
+  /** @minimum 0.01 */
+  maximumScore: number;
+  /** @minimum 0 */
+  minimumScore: number;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  passMarkPercent: number;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  secondRoundPercent: number;
+  gradeBands: SchoolGradeSubjectPolicyInputGradeBandsItem[];
+  midyearWeights: SchoolGradeSubjectPolicyInputMidyearWeights;
+  yearEndWeights: SchoolGradeSubjectPolicyInputYearEndWeights;
+  showDailyAssessmentsToGuardians: boolean;
+  isActive?: boolean;
+}
+
+export interface SchoolSaveCountResult {
+  /** @minimum 0 */
+  saved: number;
+}
+
+export interface SchoolGradebookMark {
+  enrollmentId: number;
+  /** @nullable */
+  resultId: number | null;
+  examId: number;
+  /** @nullable */
+  score: number | null;
+  /** @nullable */
+  notes: string | null;
+}
+
+export interface SchoolGradebookStudent {
+  enrollmentId: number;
+  studentId: number;
+  studentNumber: string;
+  fullNameAr: string;
+  marks: SchoolGradebookMark[];
+}
+
+export type SchoolGradebookAssessmentAssessmentType =
+  (typeof SchoolGradebookAssessmentAssessmentType)[keyof typeof SchoolGradebookAssessmentAssessmentType];
+
+export const SchoolGradebookAssessmentAssessmentType = {
+  coursework: "coursework",
+  monthly: "monthly",
+  midyear: "midyear",
+  year_end: "year_end",
+} as const;
+
+export interface SchoolGradebookAssessment {
+  id: number;
+  name: string;
+  examDate: string;
+  maxScore: number;
+  assessmentType: SchoolGradebookAssessmentAssessmentType;
+  status: string;
+}
+
+export interface SchoolGradebook {
+  students: SchoolGradebookStudent[];
+  assessments: SchoolGradebookAssessment[];
+  policy: SchoolGradeSubjectPolicy | null;
+  locked: boolean;
+}
+
+export type SchoolGradebookMarksInputRecordsItem = {
+  /** @minimum 1 */
+  enrollmentId: number;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  score: number | null;
+  /**
+   * @maxLength 1000
+   * @nullable
+   */
+  notes?: string | null;
+};
+
+export interface SchoolGradebookMarksInput {
+  /** @minimum 1 */
+  examId: number;
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  records: SchoolGradebookMarksInputRecordsItem[];
+}
+
+export interface SchoolAssessmentScores {
+  /**
+   * @minimum 0
+   * @maximum 100
+   * @nullable
+   */
+  attendanceDiscipline?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 100
+   * @nullable
+   */
+  participation?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 100
+   * @nullable
+   */
+  homework?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 100
+   * @nullable
+   */
+  activity?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 100
+   * @nullable
+   */
+  behavior?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 100
+   * @nullable
+   */
+  teacherEvaluation?: number | null;
+}
+
+export interface SchoolDailyAssessmentRow {
+  enrollmentId: number;
+  studentId: number;
+  studentNumber: string;
+  fullNameAr: string;
+  /** @nullable */
+  attendanceStatus: string | null;
+  /** @nullable */
+  assessmentId: number | null;
+  scores: SchoolAssessmentScores;
+  /** @nullable */
+  notes: string | null;
+}
+
+export type SchoolDailyAssessmentBatchInputRecordsItem = {
+  /** @minimum 1 */
+  enrollmentId: number;
+  scores: SchoolAssessmentScores;
+  /**
+   * @maxLength 1000
+   * @nullable
+   */
+  notes?: string | null;
+};
+
+export interface SchoolDailyAssessmentBatchInput {
+  /** @minimum 1 */
+  academicYearId: number;
+  /** @minimum 1 */
+  periodId: number;
+  /** @minimum 1 */
+  classId: number;
+  /** @minimum 1 */
+  subjectId: number;
+  assessmentDate: string;
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  records: SchoolDailyAssessmentBatchInputRecordsItem[];
+}
+
+export type SchoolPublishedStudentResultStatus =
+  (typeof SchoolPublishedStudentResultStatus)[keyof typeof SchoolPublishedStudentResultStatus];
+
+export const SchoolPublishedStudentResultStatus = {
+  pass: "pass",
+  fail: "fail",
+  second_round: "second_round",
+} as const;
+
+export interface SchoolPublishedStudentResult {
+  enrollmentId: number;
+  studentId: number;
+  studentNumber: string;
+  fullNameAr: string;
+  score: number;
+  maximumScore: number;
+  percentage: number;
+  grade: string;
+  status: SchoolPublishedStudentResultStatus;
+  teacherNotes: string;
+}
+
+export type SchoolResultApprovalPublicationType =
+  (typeof SchoolResultApprovalPublicationType)[keyof typeof SchoolResultApprovalPublicationType];
+
+export const SchoolResultApprovalPublicationType = {
+  midyear: "midyear",
+  year_end: "year_end",
+} as const;
+
+export type SchoolResultApprovalStatus =
+  (typeof SchoolResultApprovalStatus)[keyof typeof SchoolResultApprovalStatus];
+
+export const SchoolResultApprovalStatus = {
+  approved: "approved",
+  reopened: "reopened",
+} as const;
+
+export interface SchoolResultApproval {
+  id: number;
+  academicYearId: number;
+  periodId: number;
+  classId: number;
+  subjectId: number;
+  publicationType: SchoolResultApprovalPublicationType;
+  status: SchoolResultApprovalStatus;
+  resultsSnapshot: SchoolPublishedStudentResult[];
+  approvedAt: string;
+  /** @nullable */
+  approvedById: number | null;
+}
+
+export type SchoolResultApprovalInputPublicationType =
+  (typeof SchoolResultApprovalInputPublicationType)[keyof typeof SchoolResultApprovalInputPublicationType];
+
+export const SchoolResultApprovalInputPublicationType = {
+  midyear: "midyear",
+  year_end: "year_end",
+} as const;
+
+export interface SchoolResultApprovalInput {
+  /** @minimum 1 */
+  academicYearId: number;
+  /** @minimum 1 */
+  periodId: number;
+  /** @minimum 1 */
+  classId: number;
+  /** @minimum 1 */
+  subjectId: number;
+  publicationType: SchoolResultApprovalInputPublicationType;
+}
+
+export interface SchoolAcademicReportRow {
+  enrollmentId: number;
+  studentId: number;
+  studentNumber: string;
+  fullNameAr: string;
+  subjectId: number;
+  subjectNameAr: string;
+  assessmentCount: number;
+  /** @nullable */
+  averagePercent: number | null;
+  /** @nullable */
+  score: number | null;
+  /** @nullable */
+  maximumScore: number | null;
+  grade: string;
+  status: string;
+  teacherNotes: string;
+}
+
+export interface SchoolAcademicReport {
+  reportType: string;
+  /** @nullable */
+  startDate: string | null;
+  /** @nullable */
+  endDate: string | null;
+  rows: SchoolAcademicReportRow[];
+}
+
+export interface SchoolGradeAuditEvent {
+  id: number;
+  entityType: string;
+  /** @nullable */
+  entityId: number | null;
+  action: string;
+  beforeValue: unknown;
+  afterValue: unknown;
+  /** @nullable */
+  actorId: number | null;
+  occurredAt: string;
+}
+
 export interface SchoolStudentAttendanceSummary {
   /** @minimum 0 */
   total: number;
@@ -1686,6 +2159,59 @@ export interface GuardianPortalFeeRow {
   invoiceNumber: string | null;
 }
 
+export interface GuardianPortalDailyAssessment {
+  id: number;
+  assessmentDate: string;
+  subject: string;
+  scores: SchoolAssessmentScores;
+  /** @nullable */
+  notes: string | null;
+}
+
+export interface GuardianProgressSummary {
+  /** @minimum 0 */
+  assessmentCount: number;
+  /** @nullable */
+  averagePercent: number | null;
+  teacherNotes: string[];
+}
+
+export type GuardianPublishedResultPublicationType =
+  (typeof GuardianPublishedResultPublicationType)[keyof typeof GuardianPublishedResultPublicationType];
+
+export const GuardianPublishedResultPublicationType = {
+  midyear: "midyear",
+  year_end: "year_end",
+} as const;
+
+export interface GuardianPublishedResult {
+  approvalId: number;
+  academicYear: string;
+  periodName: string;
+  subject: string;
+  publicationType: GuardianPublishedResultPublicationType;
+  approvedAt: string;
+  result: SchoolPublishedStudentResult;
+}
+
+export interface GuardianSubjectProgress {
+  subjectId: number;
+  subject: string;
+  assessmentCount: number;
+  /** @nullable */
+  averagePercent: number | null;
+  /** @nullable */
+  latestDate: string | null;
+}
+
+export interface GuardianAcademicControl {
+  dailyAssessments: GuardianPortalDailyAssessment[];
+  publishedResults: GuardianPublishedResult[];
+  weeklySummary: GuardianProgressSummary;
+  monthlySummary: GuardianProgressSummary;
+  subjectProgress: GuardianSubjectProgress[];
+}
+
 export type GuardianPortalChildAttendanceSummary = {
   /** @minimum 0 */
   present: number;
@@ -1716,6 +2242,7 @@ export interface GuardianPortalChild {
   recentAttendance: GuardianPortalAttendanceRow[];
   recentExams: GuardianPortalExamRow[];
   fees: GuardianPortalFeeRow[];
+  academicControl?: GuardianAcademicControl;
   biometricConsentActive: boolean;
   faceEnrolled: boolean;
 }
@@ -1901,6 +2428,131 @@ export type GetSchoolStudentAcademicHistoryParams = {
    * @minimum 1
    */
   companyId: number;
+};
+
+export type GetSchoolAcademicPeriodsParams = {
+  /**
+   * @minimum 1
+   */
+  academicYearId: number;
+};
+
+export type GetSchoolSubjectOfferingsParams = {
+  /**
+   * @minimum 1
+   */
+  academicYearId: number;
+  /**
+   * @minimum 1
+   */
+  classId?: number;
+};
+
+export type GetSchoolGradeSubjectPoliciesParams = {
+  /**
+   * @minimum 1
+   */
+  gradeId: number;
+};
+
+export type GetSchoolGradebookParams = {
+  /**
+   * @minimum 1
+   */
+  academicYearId: number;
+  /**
+   * @minimum 1
+   */
+  periodId: number;
+  /**
+   * @minimum 1
+   */
+  classId: number;
+  /**
+   * @minimum 1
+   */
+  subjectId: number;
+};
+
+export type GetSchoolDailyAssessmentsParams = {
+  /**
+   * @minimum 1
+   */
+  academicYearId: number;
+  /**
+   * @minimum 1
+   */
+  periodId: number;
+  /**
+   * @minimum 1
+   */
+  classId: number;
+  /**
+   * @minimum 1
+   */
+  subjectId: number;
+  assessmentDate: string;
+};
+
+export type GetSchoolResultApprovalsParams = {
+  /**
+   * @minimum 1
+   */
+  academicYearId: number;
+  /**
+   * @minimum 1
+   */
+  classId?: number;
+};
+
+export type GetSchoolAcademicReportParams = {
+  reportType: GetSchoolAcademicReportReportType;
+  /**
+   * @minimum 1
+   */
+  academicYearId?: number;
+  /**
+   * @minimum 1
+   */
+  periodId?: number;
+  /**
+   * @minimum 1
+   */
+  classId?: number;
+  /**
+   * @minimum 1
+   */
+  subjectId?: number;
+  /**
+   * @minimum 1
+   */
+  enrollmentId?: number;
+  startDate?: string;
+  endDate?: string;
+};
+
+export type GetSchoolAcademicReportReportType =
+  (typeof GetSchoolAcademicReportReportType)[keyof typeof GetSchoolAcademicReportReportType];
+
+export const GetSchoolAcademicReportReportType = {
+  weekly: "weekly",
+  monthly: "monthly",
+  monthly_exams: "monthly_exams",
+  midyear: "midyear",
+  year_end: "year_end",
+  student_progress: "student_progress",
+} as const;
+
+export type GetSchoolGradeAuditParams = {
+  /**
+   * @minimum 1
+   */
+  enrollmentId?: number;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
 };
 
 export type ListSecurityActiveCompaniesParams = {

@@ -1,0 +1,42 @@
+.academic-workspace{--ac-ink:#233b3c;--ac-muted:#647675;--ac-line:#dce6e2;--ac-paper:#fbfcf8;--ac-teal:#176b63;--ac-pale:#eaf3ef;color:var(--ac-ink)}
+.academic-workspace *{box-sizing:border-box}
+.academic-workspace .ac-head{background:linear-gradient(115deg,#f0f6f1 0%,#e4f0eb 62%,#dcebe5 100%);border:1px solid #d5e5dd;border-radius:20px;padding:24px;position:relative;overflow:hidden}
+.academic-workspace .ac-head:after{content:"";position:absolute;width:260px;height:260px;border:1px solid #bdd6cc;border-radius:50%;inset-inline-end:-70px;top:-125px;box-shadow:0 0 0 30px #d6e8df55,0 0 0 62px #d6e8df33;pointer-events:none}
+.academic-workspace .ac-kicker{color:#42756b;font-size:11px;font-weight:800;letter-spacing:.08em}
+.academic-workspace .ac-head h1{font-size:clamp(25px,3vw,36px);line-height:1.2;margin:8px 0 6px;font-weight:850;letter-spacing:-.04em}
+.academic-workspace .ac-head p{color:#58716b;font-size:14px;margin:0;max-width:640px}
+.academic-workspace .ac-nav{display:flex;gap:7px;overflow:auto;padding:5px 1px 10px;scrollbar-width:thin}
+.academic-workspace .ac-nav button{white-space:nowrap;border:1px solid var(--ac-line);background:#fff;color:#556967;border-radius:11px;padding:9px 13px;font-size:13px;font-weight:700;transition:transform .18s,background .18s,color .18s}
+.academic-workspace .ac-nav button:hover{transform:translateY(-1px)}
+.academic-workspace .ac-nav button[aria-current=true]{background:var(--ac-teal);border-color:var(--ac-teal);color:#fff;box-shadow:0 5px 12px #176b6322}
+.academic-workspace .ac-panel{background:#fff;border:1px solid var(--ac-line);border-radius:17px;padding:18px;box-shadow:0 7px 22px #24483d08}
+.academic-workspace .ac-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:15px}
+.academic-workspace .ac-title h2{font-size:18px;font-weight:800;margin:0}
+.academic-workspace .ac-title p{font-size:12px;color:var(--ac-muted);margin:5px 0 0}
+.academic-workspace .ac-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}
+.academic-workspace .ac-field{display:grid;gap:5px;min-width:0}
+.academic-workspace .ac-field label{font-size:11px;color:#617472;font-weight:700}
+.academic-workspace input,.academic-workspace select,.academic-workspace textarea{width:100%;height:38px;border:1px solid #d8e2de;border-radius:9px;background:#fff;padding:0 10px;color:#253c3a;font:inherit;font-size:13px;outline:none}
+.academic-workspace textarea{height:74px;padding:9px;resize:vertical}
+.academic-workspace input:focus,.academic-workspace select:focus,.academic-workspace textarea:focus{border-color:#4b9a88;box-shadow:0 0 0 3px #56a28c1c}
+.academic-workspace .ac-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.academic-workspace .ac-btn{border:1px solid #d7e2dd;background:#fff;color:#34504c;border-radius:9px;padding:8px 12px;font:inherit;font-size:12px;font-weight:750;cursor:pointer}
+.academic-workspace .ac-btn.primary{background:var(--ac-teal);border-color:var(--ac-teal);color:#fff}
+.academic-workspace .ac-btn.danger{color:#a84039}
+.academic-workspace .ac-btn:disabled{opacity:.48;cursor:not-allowed}
+.academic-workspace .ac-table-wrap{overflow:auto;border:1px solid #e3eae6;border-radius:12px}
+.academic-workspace .ac-table{width:100%;border-collapse:collapse;min-width:650px;font-size:12px}
+.academic-workspace .ac-table th{background:#f4f8f5;color:#647571;text-align:start;font-size:11px;white-space:nowrap}
+.academic-workspace .ac-table th,.academic-workspace .ac-table td{padding:10px 11px;border-bottom:1px solid #e9efeb}
+.academic-workspace .ac-table tbody tr:last-child td{border:0}
+.academic-workspace .ac-empty,.academic-workspace .ac-state{padding:28px 12px;text-align:center;color:#788784;font-size:13px}
+.academic-workspace .ac-badge{display:inline-flex;border-radius:99px;padding:4px 8px;background:#e9f4ef;color:#287568;font-size:10px;font-weight:800}
+.academic-workspace .ac-alert{background:#fff5ef;border:1px solid #efd8ca;color:#915c42;padding:10px 12px;border-radius:10px;font-size:12px}
+.academic-workspace .ac-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.academic-workspace .ac-stat{border:1px solid var(--ac-line);background:#f8faf7;border-radius:12px;padding:13px}
+.academic-workspace .ac-stat strong{display:block;font-size:23px;letter-spacing:-.04em}
+.academic-workspace .ac-stat span{font-size:11px;color:var(--ac-muted)}
+.academic-workspace .ac-load{height:13px;border-radius:6px;background:linear-gradient(90deg,#edf2ee,#f9faf8,#edf2ee);background-size:200% 100%;animation:ac-shimmer 1.4s linear infinite;margin:9px 0}
+@keyframes ac-shimmer{to{background-position:-200% 0}}
+@media(max-width:760px){.academic-workspace .ac-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.academic-workspace .ac-panel{padding:14px}.academic-workspace .ac-head{padding:20px}.academic-workspace .ac-summary{grid-template-columns:1fr}}
+@media(max-width:420px){.academic-workspace .ac-fields{grid-template-columns:1fr}.academic-workspace .ac-head h1{font-size:25px}}

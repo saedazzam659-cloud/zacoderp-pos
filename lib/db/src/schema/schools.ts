@@ -183,6 +183,8 @@ export const schoolExamsTable = pgTable("school_exams", {
   academicYearId: integer("academic_year_id").notNull().references(() => schoolAcademicYearsTable.id, { onDelete: "restrict" }),
   classId: integer("class_id").notNull().references(() => schoolClassesTable.id, { onDelete: "restrict" }),
   subjectId: integer("subject_id").notNull().references(() => schoolSubjectsTable.id, { onDelete: "restrict" }),
+  periodId: integer("period_id"),
+  assessmentType: text("assessment_type").notNull().default("coursework"),
   name: text("name").notNull(),
   examDate: date("exam_date", { mode: "string" }).notNull(),
   maxScore: numeric("max_score", { precision: 10, scale: 2 }).notNull().default("100"),

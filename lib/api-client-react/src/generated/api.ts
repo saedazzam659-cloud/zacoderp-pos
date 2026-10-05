@@ -48,8 +48,16 @@ import type {
   GetMonthlyStatsParams,
   GetRecentInvoicesParams,
   GetSafetyKpisParams,
+  GetSchoolAcademicPeriodsParams,
+  GetSchoolAcademicReportParams,
+  GetSchoolDailyAssessmentsParams,
   GetSchoolEnrollmentPromotionPlanParams,
+  GetSchoolGradeAuditParams,
+  GetSchoolGradeSubjectPoliciesParams,
+  GetSchoolGradebookParams,
+  GetSchoolResultApprovalsParams,
   GetSchoolStudentAcademicHistoryParams,
+  GetSchoolSubjectOfferingsParams,
   GetSecurityActiveCompanySessionsParams,
   GuardianBiometricConsentInput,
   GuardianBiometricConsentResult,
@@ -87,18 +95,36 @@ import type {
   SafetyKpis,
   SaveOwnerBillTaxMapping200,
   SaveOwnerBillTaxMappingBody,
+  SchoolAcademicPeriod,
+  SchoolAcademicPeriodInput,
+  SchoolAcademicPeriodUpdate,
+  SchoolAcademicReport,
+  SchoolDailyAssessmentBatchInput,
+  SchoolDailyAssessmentRow,
+  SchoolDeleteResult,
   SchoolEnrollmentPromotionInput,
   SchoolEnrollmentPromotionPlan,
   SchoolEnrollmentPromotionResult,
+  SchoolGradeAuditEvent,
+  SchoolGradeSubjectPolicy,
+  SchoolGradeSubjectPolicyInput,
+  SchoolGradebook,
+  SchoolGradebookMarksInput,
   SchoolGuardianPortalAccount,
   SchoolGuardianPortalAccountInput,
   SchoolGuardianPortalAccountUpdate,
+  SchoolResultApproval,
+  SchoolResultApprovalInput,
+  SchoolSaveCountResult,
   SchoolStudentAcademicHistory,
   SchoolStudentFaceEnrollmentInput,
   SchoolStudentFaceEnrollmentResult,
   SchoolStudentFaceEnrollmentStatus,
   SchoolStudentFaceRecognitionInput,
   SchoolStudentFaceRecognitionResult,
+  SchoolSubjectOffering,
+  SchoolSubjectOfferingInput,
+  SchoolSubjectOfferingUpdate,
   SecurityActiveCompaniesResponse,
   SecurityActiveCompanyEndInput,
   SecurityActiveCompanyEndResult,
@@ -1323,6 +1349,1832 @@ export const usePromoteSchoolEnrollments = <
 > => {
   return useMutation(getPromoteSchoolEnrollmentsMutationOptions(options));
 };
+
+/**
+ * @summary List academic periods for one school year
+ */
+export const getGetSchoolAcademicPeriodsUrl = (
+  params: GetSchoolAcademicPeriodsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/academic-control/periods?${stringifiedParams}`
+    : `/api/school/academic-control/periods`;
+};
+
+export const getSchoolAcademicPeriods = async (
+  params: GetSchoolAcademicPeriodsParams,
+  options?: RequestInit,
+): Promise<SchoolAcademicPeriod[]> => {
+  return customFetch<SchoolAcademicPeriod[]>(
+    getGetSchoolAcademicPeriodsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolAcademicPeriodsQueryKey = (
+  params?: GetSchoolAcademicPeriodsParams,
+) => {
+  return [
+    `/api/school/academic-control/periods`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolAcademicPeriodsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolAcademicPeriods>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolAcademicPeriodsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolAcademicPeriods>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolAcademicPeriodsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolAcademicPeriods>>
+  > = ({ signal }) =>
+    getSchoolAcademicPeriods(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolAcademicPeriods>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolAcademicPeriodsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolAcademicPeriods>>
+>;
+export type GetSchoolAcademicPeriodsQueryError = ErrorType<void>;
+
+/**
+ * @summary List academic periods for one school year
+ */
+
+export function useGetSchoolAcademicPeriods<
+  TData = Awaited<ReturnType<typeof getSchoolAcademicPeriods>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolAcademicPeriodsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolAcademicPeriods>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolAcademicPeriodsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create an academic period
+ */
+export const getCreateSchoolAcademicPeriodUrl = () => {
+  return `/api/school/academic-control/periods`;
+};
+
+export const createSchoolAcademicPeriod = async (
+  schoolAcademicPeriodInput: SchoolAcademicPeriodInput,
+  options?: RequestInit,
+): Promise<SchoolAcademicPeriod> => {
+  return customFetch<SchoolAcademicPeriod>(getCreateSchoolAcademicPeriodUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(schoolAcademicPeriodInput),
+  });
+};
+
+export const getCreateSchoolAcademicPeriodMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSchoolAcademicPeriod>>,
+    TError,
+    { data: BodyType<SchoolAcademicPeriodInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createSchoolAcademicPeriod>>,
+  TError,
+  { data: BodyType<SchoolAcademicPeriodInput> },
+  TContext
+> => {
+  const mutationKey = ["createSchoolAcademicPeriod"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createSchoolAcademicPeriod>>,
+    { data: BodyType<SchoolAcademicPeriodInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createSchoolAcademicPeriod(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateSchoolAcademicPeriodMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createSchoolAcademicPeriod>>
+>;
+export type CreateSchoolAcademicPeriodMutationBody =
+  BodyType<SchoolAcademicPeriodInput>;
+export type CreateSchoolAcademicPeriodMutationError = ErrorType<void>;
+
+/**
+ * @summary Create an academic period
+ */
+export const useCreateSchoolAcademicPeriod = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSchoolAcademicPeriod>>,
+    TError,
+    { data: BodyType<SchoolAcademicPeriodInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createSchoolAcademicPeriod>>,
+  TError,
+  { data: BodyType<SchoolAcademicPeriodInput> },
+  TContext
+> => {
+  return useMutation(getCreateSchoolAcademicPeriodMutationOptions(options));
+};
+
+/**
+ * @summary Update an academic period
+ */
+export const getUpdateSchoolAcademicPeriodUrl = (periodId: number) => {
+  return `/api/school/academic-control/periods/${periodId}`;
+};
+
+export const updateSchoolAcademicPeriod = async (
+  periodId: number,
+  schoolAcademicPeriodUpdate: SchoolAcademicPeriodUpdate,
+  options?: RequestInit,
+): Promise<SchoolAcademicPeriod> => {
+  return customFetch<SchoolAcademicPeriod>(
+    getUpdateSchoolAcademicPeriodUrl(periodId),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolAcademicPeriodUpdate),
+    },
+  );
+};
+
+export const getUpdateSchoolAcademicPeriodMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSchoolAcademicPeriod>>,
+    TError,
+    { periodId: number; data: BodyType<SchoolAcademicPeriodUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSchoolAcademicPeriod>>,
+  TError,
+  { periodId: number; data: BodyType<SchoolAcademicPeriodUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateSchoolAcademicPeriod"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSchoolAcademicPeriod>>,
+    { periodId: number; data: BodyType<SchoolAcademicPeriodUpdate> }
+  > = (props) => {
+    const { periodId, data } = props ?? {};
+
+    return updateSchoolAcademicPeriod(periodId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSchoolAcademicPeriodMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSchoolAcademicPeriod>>
+>;
+export type UpdateSchoolAcademicPeriodMutationBody =
+  BodyType<SchoolAcademicPeriodUpdate>;
+export type UpdateSchoolAcademicPeriodMutationError = ErrorType<void>;
+
+/**
+ * @summary Update an academic period
+ */
+export const useUpdateSchoolAcademicPeriod = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSchoolAcademicPeriod>>,
+    TError,
+    { periodId: number; data: BodyType<SchoolAcademicPeriodUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSchoolAcademicPeriod>>,
+  TError,
+  { periodId: number; data: BodyType<SchoolAcademicPeriodUpdate> },
+  TContext
+> => {
+  return useMutation(getUpdateSchoolAcademicPeriodMutationOptions(options));
+};
+
+/**
+ * @summary Delete an unused academic period
+ */
+export const getDeleteSchoolAcademicPeriodUrl = (periodId: number) => {
+  return `/api/school/academic-control/periods/${periodId}`;
+};
+
+export const deleteSchoolAcademicPeriod = async (
+  periodId: number,
+  options?: RequestInit,
+): Promise<SchoolDeleteResult> => {
+  return customFetch<SchoolDeleteResult>(
+    getDeleteSchoolAcademicPeriodUrl(periodId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getDeleteSchoolAcademicPeriodMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSchoolAcademicPeriod>>,
+    TError,
+    { periodId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteSchoolAcademicPeriod>>,
+  TError,
+  { periodId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteSchoolAcademicPeriod"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteSchoolAcademicPeriod>>,
+    { periodId: number }
+  > = (props) => {
+    const { periodId } = props ?? {};
+
+    return deleteSchoolAcademicPeriod(periodId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteSchoolAcademicPeriodMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteSchoolAcademicPeriod>>
+>;
+
+export type DeleteSchoolAcademicPeriodMutationError = ErrorType<void>;
+
+/**
+ * @summary Delete an unused academic period
+ */
+export const useDeleteSchoolAcademicPeriod = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSchoolAcademicPeriod>>,
+    TError,
+    { periodId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteSchoolAcademicPeriod>>,
+  TError,
+  { periodId: number },
+  TContext
+> => {
+  return useMutation(getDeleteSchoolAcademicPeriodMutationOptions(options));
+};
+
+/**
+ * @summary List subjects assigned to classes for an academic year
+ */
+export const getGetSchoolSubjectOfferingsUrl = (
+  params: GetSchoolSubjectOfferingsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/academic-control/offerings?${stringifiedParams}`
+    : `/api/school/academic-control/offerings`;
+};
+
+export const getSchoolSubjectOfferings = async (
+  params: GetSchoolSubjectOfferingsParams,
+  options?: RequestInit,
+): Promise<SchoolSubjectOffering[]> => {
+  return customFetch<SchoolSubjectOffering[]>(
+    getGetSchoolSubjectOfferingsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolSubjectOfferingsQueryKey = (
+  params?: GetSchoolSubjectOfferingsParams,
+) => {
+  return [
+    `/api/school/academic-control/offerings`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolSubjectOfferingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolSubjectOfferings>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolSubjectOfferingsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolSubjectOfferings>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolSubjectOfferingsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolSubjectOfferings>>
+  > = ({ signal }) =>
+    getSchoolSubjectOfferings(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolSubjectOfferings>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolSubjectOfferingsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolSubjectOfferings>>
+>;
+export type GetSchoolSubjectOfferingsQueryError = ErrorType<void>;
+
+/**
+ * @summary List subjects assigned to classes for an academic year
+ */
+
+export function useGetSchoolSubjectOfferings<
+  TData = Awaited<ReturnType<typeof getSchoolSubjectOfferings>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolSubjectOfferingsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolSubjectOfferings>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolSubjectOfferingsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Assign a subject and teacher to a class
+ */
+export const getCreateSchoolSubjectOfferingUrl = () => {
+  return `/api/school/academic-control/offerings`;
+};
+
+export const createSchoolSubjectOffering = async (
+  schoolSubjectOfferingInput: SchoolSubjectOfferingInput,
+  options?: RequestInit,
+): Promise<SchoolSubjectOffering> => {
+  return customFetch<SchoolSubjectOffering>(
+    getCreateSchoolSubjectOfferingUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolSubjectOfferingInput),
+    },
+  );
+};
+
+export const getCreateSchoolSubjectOfferingMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSchoolSubjectOffering>>,
+    TError,
+    { data: BodyType<SchoolSubjectOfferingInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createSchoolSubjectOffering>>,
+  TError,
+  { data: BodyType<SchoolSubjectOfferingInput> },
+  TContext
+> => {
+  const mutationKey = ["createSchoolSubjectOffering"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createSchoolSubjectOffering>>,
+    { data: BodyType<SchoolSubjectOfferingInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createSchoolSubjectOffering(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateSchoolSubjectOfferingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createSchoolSubjectOffering>>
+>;
+export type CreateSchoolSubjectOfferingMutationBody =
+  BodyType<SchoolSubjectOfferingInput>;
+export type CreateSchoolSubjectOfferingMutationError = ErrorType<void>;
+
+/**
+ * @summary Assign a subject and teacher to a class
+ */
+export const useCreateSchoolSubjectOffering = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSchoolSubjectOffering>>,
+    TError,
+    { data: BodyType<SchoolSubjectOfferingInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createSchoolSubjectOffering>>,
+  TError,
+  { data: BodyType<SchoolSubjectOfferingInput> },
+  TContext
+> => {
+  return useMutation(getCreateSchoolSubjectOfferingMutationOptions(options));
+};
+
+/**
+ * @summary Update a class subject assignment
+ */
+export const getUpdateSchoolSubjectOfferingUrl = (offeringId: number) => {
+  return `/api/school/academic-control/offerings/${offeringId}`;
+};
+
+export const updateSchoolSubjectOffering = async (
+  offeringId: number,
+  schoolSubjectOfferingUpdate: SchoolSubjectOfferingUpdate,
+  options?: RequestInit,
+): Promise<SchoolSubjectOffering> => {
+  return customFetch<SchoolSubjectOffering>(
+    getUpdateSchoolSubjectOfferingUrl(offeringId),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolSubjectOfferingUpdate),
+    },
+  );
+};
+
+export const getUpdateSchoolSubjectOfferingMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSchoolSubjectOffering>>,
+    TError,
+    { offeringId: number; data: BodyType<SchoolSubjectOfferingUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSchoolSubjectOffering>>,
+  TError,
+  { offeringId: number; data: BodyType<SchoolSubjectOfferingUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateSchoolSubjectOffering"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSchoolSubjectOffering>>,
+    { offeringId: number; data: BodyType<SchoolSubjectOfferingUpdate> }
+  > = (props) => {
+    const { offeringId, data } = props ?? {};
+
+    return updateSchoolSubjectOffering(offeringId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSchoolSubjectOfferingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSchoolSubjectOffering>>
+>;
+export type UpdateSchoolSubjectOfferingMutationBody =
+  BodyType<SchoolSubjectOfferingUpdate>;
+export type UpdateSchoolSubjectOfferingMutationError = ErrorType<void>;
+
+/**
+ * @summary Update a class subject assignment
+ */
+export const useUpdateSchoolSubjectOffering = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSchoolSubjectOffering>>,
+    TError,
+    { offeringId: number; data: BodyType<SchoolSubjectOfferingUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSchoolSubjectOffering>>,
+  TError,
+  { offeringId: number; data: BodyType<SchoolSubjectOfferingUpdate> },
+  TContext
+> => {
+  return useMutation(getUpdateSchoolSubjectOfferingMutationOptions(options));
+};
+
+/**
+ * @summary Remove an unused class subject assignment
+ */
+export const getDeleteSchoolSubjectOfferingUrl = (offeringId: number) => {
+  return `/api/school/academic-control/offerings/${offeringId}`;
+};
+
+export const deleteSchoolSubjectOffering = async (
+  offeringId: number,
+  options?: RequestInit,
+): Promise<SchoolDeleteResult> => {
+  return customFetch<SchoolDeleteResult>(
+    getDeleteSchoolSubjectOfferingUrl(offeringId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getDeleteSchoolSubjectOfferingMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSchoolSubjectOffering>>,
+    TError,
+    { offeringId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteSchoolSubjectOffering>>,
+  TError,
+  { offeringId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteSchoolSubjectOffering"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteSchoolSubjectOffering>>,
+    { offeringId: number }
+  > = (props) => {
+    const { offeringId } = props ?? {};
+
+    return deleteSchoolSubjectOffering(offeringId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteSchoolSubjectOfferingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteSchoolSubjectOffering>>
+>;
+
+export type DeleteSchoolSubjectOfferingMutationError = ErrorType<void>;
+
+/**
+ * @summary Remove an unused class subject assignment
+ */
+export const useDeleteSchoolSubjectOffering = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSchoolSubjectOffering>>,
+    TError,
+    { offeringId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteSchoolSubjectOffering>>,
+  TError,
+  { offeringId: number },
+  TContext
+> => {
+  return useMutation(getDeleteSchoolSubjectOfferingMutationOptions(options));
+};
+
+/**
+ * @summary List grade-specific grading policies
+ */
+export const getGetSchoolGradeSubjectPoliciesUrl = (
+  params: GetSchoolGradeSubjectPoliciesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/academic-control/policies?${stringifiedParams}`
+    : `/api/school/academic-control/policies`;
+};
+
+export const getSchoolGradeSubjectPolicies = async (
+  params: GetSchoolGradeSubjectPoliciesParams,
+  options?: RequestInit,
+): Promise<SchoolGradeSubjectPolicy[]> => {
+  return customFetch<SchoolGradeSubjectPolicy[]>(
+    getGetSchoolGradeSubjectPoliciesUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolGradeSubjectPoliciesQueryKey = (
+  params?: GetSchoolGradeSubjectPoliciesParams,
+) => {
+  return [
+    `/api/school/academic-control/policies`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolGradeSubjectPoliciesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolGradeSubjectPolicies>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolGradeSubjectPoliciesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolGradeSubjectPolicies>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolGradeSubjectPoliciesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolGradeSubjectPolicies>>
+  > = ({ signal }) =>
+    getSchoolGradeSubjectPolicies(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolGradeSubjectPolicies>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolGradeSubjectPoliciesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolGradeSubjectPolicies>>
+>;
+export type GetSchoolGradeSubjectPoliciesQueryError = ErrorType<void>;
+
+/**
+ * @summary List grade-specific grading policies
+ */
+
+export function useGetSchoolGradeSubjectPolicies<
+  TData = Awaited<ReturnType<typeof getSchoolGradeSubjectPolicies>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolGradeSubjectPoliciesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolGradeSubjectPolicies>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolGradeSubjectPoliciesQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Save the grading policy for a grade and subject
+ */
+export const getSaveSchoolGradeSubjectPolicyUrl = (subjectId: number) => {
+  return `/api/school/academic-control/policies/${subjectId}`;
+};
+
+export const saveSchoolGradeSubjectPolicy = async (
+  subjectId: number,
+  schoolGradeSubjectPolicyInput: SchoolGradeSubjectPolicyInput,
+  options?: RequestInit,
+): Promise<SchoolGradeSubjectPolicy> => {
+  return customFetch<SchoolGradeSubjectPolicy>(
+    getSaveSchoolGradeSubjectPolicyUrl(subjectId),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolGradeSubjectPolicyInput),
+    },
+  );
+};
+
+export const getSaveSchoolGradeSubjectPolicyMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveSchoolGradeSubjectPolicy>>,
+    TError,
+    { subjectId: number; data: BodyType<SchoolGradeSubjectPolicyInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveSchoolGradeSubjectPolicy>>,
+  TError,
+  { subjectId: number; data: BodyType<SchoolGradeSubjectPolicyInput> },
+  TContext
+> => {
+  const mutationKey = ["saveSchoolGradeSubjectPolicy"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveSchoolGradeSubjectPolicy>>,
+    { subjectId: number; data: BodyType<SchoolGradeSubjectPolicyInput> }
+  > = (props) => {
+    const { subjectId, data } = props ?? {};
+
+    return saveSchoolGradeSubjectPolicy(subjectId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveSchoolGradeSubjectPolicyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveSchoolGradeSubjectPolicy>>
+>;
+export type SaveSchoolGradeSubjectPolicyMutationBody =
+  BodyType<SchoolGradeSubjectPolicyInput>;
+export type SaveSchoolGradeSubjectPolicyMutationError = ErrorType<void>;
+
+/**
+ * @summary Save the grading policy for a grade and subject
+ */
+export const useSaveSchoolGradeSubjectPolicy = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveSchoolGradeSubjectPolicy>>,
+    TError,
+    { subjectId: number; data: BodyType<SchoolGradeSubjectPolicyInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof saveSchoolGradeSubjectPolicy>>,
+  TError,
+  { subjectId: number; data: BodyType<SchoolGradeSubjectPolicyInput> },
+  TContext
+> => {
+  return useMutation(getSaveSchoolGradeSubjectPolicyMutationOptions(options));
+};
+
+/**
+ * @summary Read students, assessments, and scores for a class subject and period
+ */
+export const getGetSchoolGradebookUrl = (params: GetSchoolGradebookParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/academic-control/gradebook?${stringifiedParams}`
+    : `/api/school/academic-control/gradebook`;
+};
+
+export const getSchoolGradebook = async (
+  params: GetSchoolGradebookParams,
+  options?: RequestInit,
+): Promise<SchoolGradebook> => {
+  return customFetch<SchoolGradebook>(getGetSchoolGradebookUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSchoolGradebookQueryKey = (
+  params?: GetSchoolGradebookParams,
+) => {
+  return [
+    `/api/school/academic-control/gradebook`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolGradebookQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolGradebook>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolGradebookParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolGradebook>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolGradebookQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolGradebook>>
+  > = ({ signal }) => getSchoolGradebook(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolGradebook>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolGradebookQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolGradebook>>
+>;
+export type GetSchoolGradebookQueryError = ErrorType<void>;
+
+/**
+ * @summary Read students, assessments, and scores for a class subject and period
+ */
+
+export function useGetSchoolGradebook<
+  TData = Awaited<ReturnType<typeof getSchoolGradebook>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolGradebookParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolGradebook>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolGradebookQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Save assessment marks for multiple enrolled students
+ */
+export const getSaveSchoolGradebookMarksUrl = () => {
+  return `/api/school/academic-control/gradebook`;
+};
+
+export const saveSchoolGradebookMarks = async (
+  schoolGradebookMarksInput: SchoolGradebookMarksInput,
+  options?: RequestInit,
+): Promise<SchoolSaveCountResult> => {
+  return customFetch<SchoolSaveCountResult>(getSaveSchoolGradebookMarksUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(schoolGradebookMarksInput),
+  });
+};
+
+export const getSaveSchoolGradebookMarksMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveSchoolGradebookMarks>>,
+    TError,
+    { data: BodyType<SchoolGradebookMarksInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveSchoolGradebookMarks>>,
+  TError,
+  { data: BodyType<SchoolGradebookMarksInput> },
+  TContext
+> => {
+  const mutationKey = ["saveSchoolGradebookMarks"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveSchoolGradebookMarks>>,
+    { data: BodyType<SchoolGradebookMarksInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveSchoolGradebookMarks(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveSchoolGradebookMarksMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveSchoolGradebookMarks>>
+>;
+export type SaveSchoolGradebookMarksMutationBody =
+  BodyType<SchoolGradebookMarksInput>;
+export type SaveSchoolGradebookMarksMutationError = ErrorType<void>;
+
+/**
+ * @summary Save assessment marks for multiple enrolled students
+ */
+export const useSaveSchoolGradebookMarks = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveSchoolGradebookMarks>>,
+    TError,
+    { data: BodyType<SchoolGradebookMarksInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof saveSchoolGradebookMarks>>,
+  TError,
+  { data: BodyType<SchoolGradebookMarksInput> },
+  TContext
+> => {
+  return useMutation(getSaveSchoolGradebookMarksMutationOptions(options));
+};
+
+/**
+ * @summary Read daily evaluations for a class, subject, and date
+ */
+export const getGetSchoolDailyAssessmentsUrl = (
+  params: GetSchoolDailyAssessmentsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/academic-control/daily-assessments?${stringifiedParams}`
+    : `/api/school/academic-control/daily-assessments`;
+};
+
+export const getSchoolDailyAssessments = async (
+  params: GetSchoolDailyAssessmentsParams,
+  options?: RequestInit,
+): Promise<SchoolDailyAssessmentRow[]> => {
+  return customFetch<SchoolDailyAssessmentRow[]>(
+    getGetSchoolDailyAssessmentsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolDailyAssessmentsQueryKey = (
+  params?: GetSchoolDailyAssessmentsParams,
+) => {
+  return [
+    `/api/school/academic-control/daily-assessments`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolDailyAssessmentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolDailyAssessments>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolDailyAssessmentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolDailyAssessments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolDailyAssessmentsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolDailyAssessments>>
+  > = ({ signal }) =>
+    getSchoolDailyAssessments(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolDailyAssessments>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolDailyAssessmentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolDailyAssessments>>
+>;
+export type GetSchoolDailyAssessmentsQueryError = ErrorType<void>;
+
+/**
+ * @summary Read daily evaluations for a class, subject, and date
+ */
+
+export function useGetSchoolDailyAssessments<
+  TData = Awaited<ReturnType<typeof getSchoolDailyAssessments>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolDailyAssessmentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolDailyAssessments>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolDailyAssessmentsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Save daily evaluations for enrolled students
+ */
+export const getSaveSchoolDailyAssessmentsUrl = () => {
+  return `/api/school/academic-control/daily-assessments`;
+};
+
+export const saveSchoolDailyAssessments = async (
+  schoolDailyAssessmentBatchInput: SchoolDailyAssessmentBatchInput,
+  options?: RequestInit,
+): Promise<SchoolSaveCountResult> => {
+  return customFetch<SchoolSaveCountResult>(
+    getSaveSchoolDailyAssessmentsUrl(),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolDailyAssessmentBatchInput),
+    },
+  );
+};
+
+export const getSaveSchoolDailyAssessmentsMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveSchoolDailyAssessments>>,
+    TError,
+    { data: BodyType<SchoolDailyAssessmentBatchInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveSchoolDailyAssessments>>,
+  TError,
+  { data: BodyType<SchoolDailyAssessmentBatchInput> },
+  TContext
+> => {
+  const mutationKey = ["saveSchoolDailyAssessments"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveSchoolDailyAssessments>>,
+    { data: BodyType<SchoolDailyAssessmentBatchInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveSchoolDailyAssessments(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveSchoolDailyAssessmentsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveSchoolDailyAssessments>>
+>;
+export type SaveSchoolDailyAssessmentsMutationBody =
+  BodyType<SchoolDailyAssessmentBatchInput>;
+export type SaveSchoolDailyAssessmentsMutationError = ErrorType<void>;
+
+/**
+ * @summary Save daily evaluations for enrolled students
+ */
+export const useSaveSchoolDailyAssessments = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveSchoolDailyAssessments>>,
+    TError,
+    { data: BodyType<SchoolDailyAssessmentBatchInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof saveSchoolDailyAssessments>>,
+  TError,
+  { data: BodyType<SchoolDailyAssessmentBatchInput> },
+  TContext
+> => {
+  return useMutation(getSaveSchoolDailyAssessmentsMutationOptions(options));
+};
+
+/**
+ * @summary List approved and reopened result snapshots
+ */
+export const getGetSchoolResultApprovalsUrl = (
+  params: GetSchoolResultApprovalsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/academic-control/approvals?${stringifiedParams}`
+    : `/api/school/academic-control/approvals`;
+};
+
+export const getSchoolResultApprovals = async (
+  params: GetSchoolResultApprovalsParams,
+  options?: RequestInit,
+): Promise<SchoolResultApproval[]> => {
+  return customFetch<SchoolResultApproval[]>(
+    getGetSchoolResultApprovalsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolResultApprovalsQueryKey = (
+  params?: GetSchoolResultApprovalsParams,
+) => {
+  return [
+    `/api/school/academic-control/approvals`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolResultApprovalsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolResultApprovals>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolResultApprovalsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolResultApprovals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolResultApprovalsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolResultApprovals>>
+  > = ({ signal }) =>
+    getSchoolResultApprovals(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolResultApprovals>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolResultApprovalsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolResultApprovals>>
+>;
+export type GetSchoolResultApprovalsQueryError = ErrorType<void>;
+
+/**
+ * @summary List approved and reopened result snapshots
+ */
+
+export function useGetSchoolResultApprovals<
+  TData = Awaited<ReturnType<typeof getSchoolResultApprovals>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolResultApprovalsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolResultApprovals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolResultApprovalsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Calculate and approve a midyear or year-end result snapshot
+ */
+export const getApproveSchoolResultsUrl = () => {
+  return `/api/school/academic-control/approvals`;
+};
+
+export const approveSchoolResults = async (
+  schoolResultApprovalInput: SchoolResultApprovalInput,
+  options?: RequestInit,
+): Promise<SchoolResultApproval> => {
+  return customFetch<SchoolResultApproval>(getApproveSchoolResultsUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(schoolResultApprovalInput),
+  });
+};
+
+export const getApproveSchoolResultsMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveSchoolResults>>,
+    TError,
+    { data: BodyType<SchoolResultApprovalInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof approveSchoolResults>>,
+  TError,
+  { data: BodyType<SchoolResultApprovalInput> },
+  TContext
+> => {
+  const mutationKey = ["approveSchoolResults"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof approveSchoolResults>>,
+    { data: BodyType<SchoolResultApprovalInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return approveSchoolResults(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ApproveSchoolResultsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof approveSchoolResults>>
+>;
+export type ApproveSchoolResultsMutationBody =
+  BodyType<SchoolResultApprovalInput>;
+export type ApproveSchoolResultsMutationError = ErrorType<void>;
+
+/**
+ * @summary Calculate and approve a midyear or year-end result snapshot
+ */
+export const useApproveSchoolResults = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveSchoolResults>>,
+    TError,
+    { data: BodyType<SchoolResultApprovalInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof approveSchoolResults>>,
+  TError,
+  { data: BodyType<SchoolResultApprovalInput> },
+  TContext
+> => {
+  return useMutation(getApproveSchoolResultsMutationOptions(options));
+};
+
+/**
+ * @summary Reopen an approved result snapshot for an administrator-approved correction
+ */
+export const getReopenSchoolResultsUrl = (approvalId: number) => {
+  return `/api/school/academic-control/approvals/${approvalId}/reopen`;
+};
+
+export const reopenSchoolResults = async (
+  approvalId: number,
+  options?: RequestInit,
+): Promise<SchoolResultApproval> => {
+  return customFetch<SchoolResultApproval>(
+    getReopenSchoolResultsUrl(approvalId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getReopenSchoolResultsMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reopenSchoolResults>>,
+    TError,
+    { approvalId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reopenSchoolResults>>,
+  TError,
+  { approvalId: number },
+  TContext
+> => {
+  const mutationKey = ["reopenSchoolResults"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reopenSchoolResults>>,
+    { approvalId: number }
+  > = (props) => {
+    const { approvalId } = props ?? {};
+
+    return reopenSchoolResults(approvalId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReopenSchoolResultsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reopenSchoolResults>>
+>;
+
+export type ReopenSchoolResultsMutationError = ErrorType<void>;
+
+/**
+ * @summary Reopen an approved result snapshot for an administrator-approved correction
+ */
+export const useReopenSchoolResults = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reopenSchoolResults>>,
+    TError,
+    { approvalId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reopenSchoolResults>>,
+  TError,
+  { approvalId: number },
+  TContext
+> => {
+  return useMutation(getReopenSchoolResultsMutationOptions(options));
+};
+
+/**
+ * @summary Read weekly, monthly, exam, term, or student progress reports
+ */
+export const getGetSchoolAcademicReportUrl = (
+  params: GetSchoolAcademicReportParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/academic-control/reports?${stringifiedParams}`
+    : `/api/school/academic-control/reports`;
+};
+
+export const getSchoolAcademicReport = async (
+  params: GetSchoolAcademicReportParams,
+  options?: RequestInit,
+): Promise<SchoolAcademicReport> => {
+  return customFetch<SchoolAcademicReport>(
+    getGetSchoolAcademicReportUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolAcademicReportQueryKey = (
+  params?: GetSchoolAcademicReportParams,
+) => {
+  return [
+    `/api/school/academic-control/reports`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolAcademicReportQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolAcademicReport>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolAcademicReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolAcademicReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolAcademicReportQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolAcademicReport>>
+  > = ({ signal }) =>
+    getSchoolAcademicReport(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolAcademicReport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolAcademicReportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolAcademicReport>>
+>;
+export type GetSchoolAcademicReportQueryError = ErrorType<void>;
+
+/**
+ * @summary Read weekly, monthly, exam, term, or student progress reports
+ */
+
+export function useGetSchoolAcademicReport<
+  TData = Awaited<ReturnType<typeof getSchoolAcademicReport>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolAcademicReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolAcademicReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolAcademicReportQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read grade, assessment, policy, and approval changes
+ */
+export const getGetSchoolGradeAuditUrl = (
+  params?: GetSchoolGradeAuditParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/academic-control/audit?${stringifiedParams}`
+    : `/api/school/academic-control/audit`;
+};
+
+export const getSchoolGradeAudit = async (
+  params?: GetSchoolGradeAuditParams,
+  options?: RequestInit,
+): Promise<SchoolGradeAuditEvent[]> => {
+  return customFetch<SchoolGradeAuditEvent[]>(
+    getGetSchoolGradeAuditUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolGradeAuditQueryKey = (
+  params?: GetSchoolGradeAuditParams,
+) => {
+  return [
+    `/api/school/academic-control/audit`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolGradeAuditQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolGradeAudit>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetSchoolGradeAuditParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolGradeAudit>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolGradeAuditQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolGradeAudit>>
+  > = ({ signal }) =>
+    getSchoolGradeAudit(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolGradeAudit>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolGradeAuditQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolGradeAudit>>
+>;
+export type GetSchoolGradeAuditQueryError = ErrorType<void>;
+
+/**
+ * @summary Read grade, assessment, policy, and approval changes
+ */
+
+export function useGetSchoolGradeAudit<
+  TData = Awaited<ReturnType<typeof getSchoolGradeAudit>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetSchoolGradeAuditParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolGradeAudit>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolGradeAuditQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Create a draft reversal of an eligible manually-created journal entry

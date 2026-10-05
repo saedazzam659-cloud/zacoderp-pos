@@ -338,6 +338,430 @@ paths:
           description: An academic year or target class does not exist in the current company
         "409":
           description: Enrollment data changed during promotion; refresh the preview
+  /school/academic-control/periods:
+    get:
+      operationId: getSchoolAcademicPeriods
+      tags: [school]
+      summary: List academic periods for one school year
+      parameters:
+        - name: academicYearId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Periods ordered for the selected school year
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SchoolAcademicPeriod" }
+        "403": { description: School view permission is denied }
+    post:
+      operationId: createSchoolAcademicPeriod
+      tags: [school]
+      summary: Create an academic period
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SchoolAcademicPeriodInput" }
+      responses:
+        "201":
+          description: Academic period created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolAcademicPeriod" }
+        "400": { description: Invalid dates or period values }
+        "403": { description: School create permission is denied }
+  /school/academic-control/periods/{periodId}:
+    put:
+      operationId: updateSchoolAcademicPeriod
+      tags: [school]
+      summary: Update an academic period
+      parameters:
+        - name: periodId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SchoolAcademicPeriodUpdate" }
+      responses:
+        "200":
+          description: Academic period updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolAcademicPeriod" }
+        "400": { description: Invalid dates or period values }
+        "403": { description: School edit permission is denied }
+        "404": { description: Academic period not found }
+    delete:
+      operationId: deleteSchoolAcademicPeriod
+      tags: [school]
+      summary: Delete an unused academic period
+      parameters:
+        - name: periodId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Academic period deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolDeleteResult" }
+        "403": { description: School delete permission is denied }
+        "404": { description: Academic period not found }
+        "409": { description: The period is used by exams or published results }
+  /school/academic-control/offerings:
+    get:
+      operationId: getSchoolSubjectOfferings
+      tags: [school]
+      summary: List subjects assigned to classes for an academic year
+      parameters:
+        - name: academicYearId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: classId
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Class subject assignments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SchoolSubjectOffering" }
+        "403": { description: School view permission is denied }
+    post:
+      operationId: createSchoolSubjectOffering
+      tags: [school]
+      summary: Assign a subject and teacher to a class
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SchoolSubjectOfferingInput" }
+      responses:
+        "201":
+          description: Subject assignment created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolSubjectOffering" }
+        "400": { description: "Class, subject, or academic year mismatch" }
+        "403": { description: School create permission is denied }
+        "409": { description: The subject is already assigned to this class and year }
+  /school/academic-control/offerings/{offeringId}:
+    put:
+      operationId: updateSchoolSubjectOffering
+      tags: [school]
+      summary: Update a class subject assignment
+      parameters:
+        - name: offeringId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SchoolSubjectOfferingUpdate" }
+      responses:
+        "200":
+          description: Subject assignment updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolSubjectOffering" }
+        "400": { description: Invalid assignment values }
+        "403": { description: School edit permission is denied }
+        "404": { description: Subject assignment not found }
+    delete:
+      operationId: deleteSchoolSubjectOffering
+      tags: [school]
+      summary: Remove an unused class subject assignment
+      parameters:
+        - name: offeringId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Subject assignment deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolDeleteResult" }
+        "403": { description: School delete permission is denied }
+        "404": { description: Subject assignment not found }
+        "409": { description: The assignment has academic records }
+  /school/academic-control/policies:
+    get:
+      operationId: getSchoolGradeSubjectPolicies
+      tags: [school]
+      summary: List grade-specific grading policies
+      parameters:
+        - name: gradeId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Grading policies for the selected grade
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SchoolGradeSubjectPolicy" }
+        "403": { description: School view permission is denied }
+  /school/academic-control/policies/{subjectId}:
+    put:
+      operationId: saveSchoolGradeSubjectPolicy
+      tags: [school]
+      summary: Save the grading policy for a grade and subject
+      parameters:
+        - name: subjectId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SchoolGradeSubjectPolicyInput" }
+      responses:
+        "200":
+          description: Grading policy saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolGradeSubjectPolicy" }
+        "400": { description: Invalid weights or grading thresholds }
+        "403": { description: School edit permission is denied }
+  /school/academic-control/gradebook:
+    get:
+      operationId: getSchoolGradebook
+      tags: [school]
+      summary: Read students, assessments, and scores for a class subject and period
+      parameters:
+        - name: academicYearId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: periodId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: classId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: subjectId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Gradebook with enrolled students and assessment marks
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolGradebook" }
+        "400": { description: Invalid gradebook scope }
+        "403": { description: School view permission is denied }
+    post:
+      operationId: saveSchoolGradebookMarks
+      tags: [school]
+      summary: Save assessment marks for multiple enrolled students
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SchoolGradebookMarksInput" }
+      responses:
+        "200":
+          description: Assessment marks saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolSaveCountResult" }
+        "400": { description: Invalid scores or students outside the assessment class }
+        "403": { description: School edit permission is denied }
+        "423": { description: Approved results are locked for non-administrators }
+  /school/academic-control/daily-assessments:
+    get:
+      operationId: getSchoolDailyAssessments
+      tags: [school]
+      summary: Read daily evaluations for a class, subject, and date
+      parameters:
+        - name: academicYearId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: periodId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: classId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: subjectId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: assessmentDate
+          in: query
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Daily assessment records alongside existing attendance
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SchoolDailyAssessmentRow" }
+        "400": { description: Invalid daily assessment scope }
+        "403": { description: School view permission is denied }
+    put:
+      operationId: saveSchoolDailyAssessments
+      tags: [school]
+      summary: Save daily evaluations for enrolled students
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SchoolDailyAssessmentBatchInput" }
+      responses:
+        "200":
+          description: Daily evaluations saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolSaveCountResult" }
+        "400": { description: Invalid assessment values or students outside the class }
+        "403": { description: School edit permission is denied }
+        "423": { description: Approved results are locked for non-administrators }
+  /school/academic-control/approvals:
+    get:
+      operationId: getSchoolResultApprovals
+      tags: [school]
+      summary: List approved and reopened result snapshots
+      parameters:
+        - name: academicYearId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: classId
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Result approval history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SchoolResultApproval" }
+        "403": { description: School view permission is denied }
+    post:
+      operationId: approveSchoolResults
+      tags: [school]
+      summary: Calculate and approve a midyear or year-end result snapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SchoolResultApprovalInput" }
+      responses:
+        "201":
+          description: Result snapshot approved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolResultApproval" }
+        "400": { description: Invalid approval scope or incomplete grading policy }
+        "403": { description: School administrator permission is required }
+        "409": { description: One or more students have incomplete component scores }
+  /school/academic-control/approvals/{approvalId}/reopen:
+    post:
+      operationId: reopenSchoolResults
+      tags: [school]
+      summary: Reopen an approved result snapshot for an administrator-approved correction
+      parameters:
+        - name: approvalId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Approval marked as reopened and excluded from the guardian portal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolResultApproval" }
+        "403": { description: School administrator permission is required }
+        "404": { description: Approved result snapshot not found }
+  /school/academic-control/reports:
+    get:
+      operationId: getSchoolAcademicReport
+      tags: [school]
+      summary: Read weekly, monthly, exam, term, or student progress reports
+      parameters:
+        - name: reportType
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [weekly, monthly, monthly_exams, midyear, year_end, student_progress]
+        - name: academicYearId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: periodId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: classId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: subjectId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: enrollmentId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: startDate
+          in: query
+          schema: { type: string, format: date }
+        - name: endDate
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Filtered academic report data
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchoolAcademicReport" }
+        "400": { description: Invalid report filters }
+        "403": { description: School view permission is denied }
+  /school/academic-control/audit:
+    get:
+      operationId: getSchoolGradeAudit
+      tags: [school]
+      summary: Read grade, assessment, policy, and approval changes
+      parameters:
+        - name: enrollmentId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        "200":
+          description: Academic audit history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SchoolGradeAuditEvent" }
+        "403": { description: School view permission is denied }
   /journal-entries/{id}/reverse:
     post:
       operationId: reverseJournalEntry
@@ -2168,6 +2592,311 @@ paths:
 
 components:
   schemas:
+    SchoolAcademicPeriod:
+      type: object
+      required: [id, academicYearId, name, periodType, startDate, endDate, sortOrder, isActive]
+      properties:
+        id: { type: integer }
+        academicYearId: { type: integer }
+        name: { type: string }
+        periodType: { type: string, enum: [term, midyear, year_end] }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        sortOrder: { type: integer }
+        isActive: { type: boolean }
+    SchoolAcademicPeriodInput:
+      type: object
+      required: [academicYearId, name, periodType, startDate, endDate]
+      properties:
+        academicYearId: { type: integer, minimum: 1 }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        periodType: { type: string, enum: [term, midyear, year_end] }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        sortOrder: { type: integer, minimum: 1, default: 1 }
+    SchoolAcademicPeriodUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        periodType: { type: string, enum: [term, midyear, year_end] }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        sortOrder: { type: integer, minimum: 1 }
+        isActive: { type: boolean }
+    SchoolDeleteResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean, enum: [true] }
+    SchoolSubjectOffering:
+      type: object
+      required: [id, academicYearId, classId, className, subjectId, subjectNameAr, teacherEmployeeId, teacherNameAr, isActive]
+      properties:
+        id: { type: integer }
+        academicYearId: { type: integer }
+        classId: { type: integer }
+        className: { type: string }
+        subjectId: { type: integer }
+        subjectNameAr: { type: string }
+        teacherEmployeeId: { type: ["integer", "null"] }
+        teacherNameAr: { type: ["string", "null"] }
+        isActive: { type: boolean }
+        notes: { type: ["string", "null"] }
+    SchoolSubjectOfferingInput:
+      type: object
+      required: [academicYearId, classId, subjectId]
+      properties:
+        academicYearId: { type: integer, minimum: 1 }
+        classId: { type: integer, minimum: 1 }
+        subjectId: { type: integer, minimum: 1 }
+        teacherEmployeeId: { type: ["integer", "null"], minimum: 1 }
+        isActive: { type: boolean, default: true }
+        notes: { type: ["string", "null"], maxLength: 1000 }
+    SchoolSubjectOfferingUpdate:
+      type: object
+      properties:
+        teacherEmployeeId: { type: ["integer", "null"], minimum: 1 }
+        isActive: { type: boolean }
+        notes: { type: ["string", "null"], maxLength: 1000 }
+    SchoolGradeSubjectPolicy:
+      type: object
+      required: [id, gradeId, subjectId, subjectType, maximumScore, minimumScore, passMarkPercent, secondRoundPercent, gradeBands, midyearWeights, yearEndWeights, showDailyAssessmentsToGuardians, isActive]
+      properties:
+        id: { type: integer }
+        gradeId: { type: integer }
+        subjectId: { type: integer }
+        subjectType: { type: string }
+        maximumScore: { type: number }
+        minimumScore: { type: number }
+        passMarkPercent: { type: number }
+        secondRoundPercent: { type: number }
+        gradeBands:
+          type: array
+          items:
+            type: object
+            required: [minimumPercent, label]
+            properties:
+              minimumPercent: { type: number, minimum: 0, maximum: 100 }
+              label: { type: string, minLength: 1, maxLength: 60 }
+        midyearWeights:
+          type: object
+          additionalProperties: { type: number, minimum: 0, maximum: 100 }
+        yearEndWeights:
+          type: object
+          additionalProperties: { type: number, minimum: 0, maximum: 100 }
+        showDailyAssessmentsToGuardians: { type: boolean }
+        isActive: { type: boolean }
+    SchoolGradeSubjectPolicyInput:
+      type: object
+      required: [gradeId, subjectType, maximumScore, minimumScore, passMarkPercent, secondRoundPercent, gradeBands, midyearWeights, yearEndWeights, showDailyAssessmentsToGuardians]
+      properties:
+        gradeId: { type: integer, minimum: 1 }
+        subjectType: { type: string, minLength: 1, maxLength: 60 }
+        maximumScore: { type: number, minimum: 0.01 }
+        minimumScore: { type: number, minimum: 0 }
+        passMarkPercent: { type: number, minimum: 0, maximum: 100 }
+        secondRoundPercent: { type: number, minimum: 0, maximum: 100 }
+        gradeBands:
+          type: array
+          items:
+            type: object
+            required: [minimumPercent, label]
+            properties:
+              minimumPercent: { type: number, minimum: 0, maximum: 100 }
+              label: { type: string, minLength: 1, maxLength: 60 }
+        midyearWeights:
+          type: object
+          additionalProperties: { type: number, minimum: 0, maximum: 100 }
+        yearEndWeights:
+          type: object
+          additionalProperties: { type: number, minimum: 0, maximum: 100 }
+        showDailyAssessmentsToGuardians: { type: boolean }
+        isActive: { type: boolean, default: true }
+    SchoolSaveCountResult:
+      type: object
+      required: [saved]
+      properties:
+        saved: { type: integer, minimum: 0 }
+    SchoolGradebookMark:
+      type: object
+      required: [enrollmentId, resultId, examId, score, notes]
+      properties:
+        enrollmentId: { type: integer }
+        resultId: { type: ["integer", "null"] }
+        examId: { type: integer }
+        score: { type: ["number", "null"] }
+        notes: { type: ["string", "null"] }
+    SchoolGradebookStudent:
+      type: object
+      required: [enrollmentId, studentId, studentNumber, fullNameAr, marks]
+      properties:
+        enrollmentId: { type: integer }
+        studentId: { type: integer }
+        studentNumber: { type: string }
+        fullNameAr: { type: string }
+        marks:
+          type: array
+          items: { $ref: "#/components/schemas/SchoolGradebookMark" }
+    SchoolGradebookAssessment:
+      type: object
+      required: [id, name, examDate, maxScore, assessmentType, status]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        examDate: { type: string, format: date }
+        maxScore: { type: number }
+        assessmentType: { type: string, enum: [coursework, monthly, midyear, year_end] }
+        status: { type: string }
+    SchoolGradebook:
+      type: object
+      required: [students, assessments, policy, locked]
+      properties:
+        students:
+          type: array
+          items: { $ref: "#/components/schemas/SchoolGradebookStudent" }
+        assessments:
+          type: array
+          items: { $ref: "#/components/schemas/SchoolGradebookAssessment" }
+        policy:
+          oneOf:
+            - $ref: "#/components/schemas/SchoolGradeSubjectPolicy"
+            - type: "null"
+        locked: { type: boolean }
+    SchoolGradebookMarksInput:
+      type: object
+      required: [examId, records]
+      properties:
+        examId: { type: integer, minimum: 1 }
+        records:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            required: [enrollmentId, score]
+            properties:
+              enrollmentId: { type: integer, minimum: 1 }
+              score: { type: ["number", "null"], minimum: 0 }
+              notes: { type: ["string", "null"], maxLength: 1000 }
+    SchoolAssessmentScores:
+      type: object
+      properties:
+        attendanceDiscipline: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        participation: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        homework: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        activity: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        behavior: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        teacherEvaluation: { type: ["number", "null"], minimum: 0, maximum: 100 }
+    SchoolDailyAssessmentRow:
+      type: object
+      required: [enrollmentId, studentId, studentNumber, fullNameAr, attendanceStatus, assessmentId, scores, notes]
+      properties:
+        enrollmentId: { type: integer }
+        studentId: { type: integer }
+        studentNumber: { type: string }
+        fullNameAr: { type: string }
+        attendanceStatus: { type: ["string", "null"] }
+        assessmentId: { type: ["integer", "null"] }
+        scores: { $ref: "#/components/schemas/SchoolAssessmentScores" }
+        notes: { type: ["string", "null"] }
+    SchoolDailyAssessmentBatchInput:
+      type: object
+      required: [academicYearId, periodId, classId, subjectId, assessmentDate, records]
+      properties:
+        academicYearId: { type: integer, minimum: 1 }
+        periodId: { type: integer, minimum: 1 }
+        classId: { type: integer, minimum: 1 }
+        subjectId: { type: integer, minimum: 1 }
+        assessmentDate: { type: string, format: date }
+        records:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            required: [enrollmentId, scores]
+            properties:
+              enrollmentId: { type: integer, minimum: 1 }
+              scores: { $ref: "#/components/schemas/SchoolAssessmentScores" }
+              notes: { type: ["string", "null"], maxLength: 1000 }
+    SchoolPublishedStudentResult:
+      type: object
+      required: [enrollmentId, studentId, studentNumber, fullNameAr, score, maximumScore, percentage, grade, status, teacherNotes]
+      properties:
+        enrollmentId: { type: integer }
+        studentId: { type: integer }
+        studentNumber: { type: string }
+        fullNameAr: { type: string }
+        score: { type: number }
+        maximumScore: { type: number }
+        percentage: { type: number }
+        grade: { type: string }
+        status: { type: string, enum: [pass, fail, second_round] }
+        teacherNotes: { type: string }
+    SchoolResultApproval:
+      type: object
+      required: [id, academicYearId, periodId, classId, subjectId, publicationType, status, resultsSnapshot, approvedAt, approvedById]
+      properties:
+        id: { type: integer }
+        academicYearId: { type: integer }
+        periodId: { type: integer }
+        classId: { type: integer }
+        subjectId: { type: integer }
+        publicationType: { type: string, enum: [midyear, year_end] }
+        status: { type: string, enum: [approved, reopened] }
+        resultsSnapshot:
+          type: array
+          items: { $ref: "#/components/schemas/SchoolPublishedStudentResult" }
+        approvedAt: { type: string, format: date-time }
+        approvedById: { type: ["integer", "null"] }
+    SchoolResultApprovalInput:
+      type: object
+      required: [academicYearId, periodId, classId, subjectId, publicationType]
+      properties:
+        academicYearId: { type: integer, minimum: 1 }
+        periodId: { type: integer, minimum: 1 }
+        classId: { type: integer, minimum: 1 }
+        subjectId: { type: integer, minimum: 1 }
+        publicationType: { type: string, enum: [midyear, year_end] }
+    SchoolAcademicReportRow:
+      type: object
+      required: [enrollmentId, studentId, studentNumber, fullNameAr, subjectId, subjectNameAr, assessmentCount, averagePercent, score, maximumScore, grade, status, teacherNotes]
+      properties:
+        enrollmentId: { type: integer }
+        studentId: { type: integer }
+        studentNumber: { type: string }
+        fullNameAr: { type: string }
+        subjectId: { type: integer }
+        subjectNameAr: { type: string }
+        assessmentCount: { type: integer }
+        averagePercent: { type: ["number", "null"] }
+        score: { type: ["number", "null"] }
+        maximumScore: { type: ["number", "null"] }
+        grade: { type: string }
+        status: { type: string }
+        teacherNotes: { type: string }
+    SchoolAcademicReport:
+      type: object
+      required: [reportType, startDate, endDate, rows]
+      properties:
+        reportType: { type: string }
+        startDate: { type: ["string", "null"], format: date }
+        endDate: { type: ["string", "null"], format: date }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/SchoolAcademicReportRow" }
+    SchoolGradeAuditEvent:
+      type: object
+      required: [id, entityType, entityId, action, beforeValue, afterValue, actorId, occurredAt]
+      properties:
+        id: { type: integer }
+        entityType: { type: string }
+        entityId: { type: ["integer", "null"] }
+        action: { type: string }
+        beforeValue: {}
+        afterValue: {}
+        actorId: { type: ["integer", "null"] }
+        occurredAt: { type: string, format: date-time }
     SchoolStudentAttendanceSummary:
       type: object
       required: [total, present, absent, late, excused, other]
@@ -4073,6 +4802,59 @@ components:
         dueDate: { type: ["string", "null"], format: date }
         status: { type: string }
         invoiceNumber: { type: ["string", "null"] }
+    GuardianPortalDailyAssessment:
+      type: object
+      required: [id, assessmentDate, subject, scores, notes]
+      properties:
+        id: { type: integer }
+        assessmentDate: { type: string, format: date }
+        subject: { type: string }
+        scores: { $ref: "#/components/schemas/SchoolAssessmentScores" }
+        notes: { type: ["string", "null"] }
+    GuardianProgressSummary:
+      type: object
+      required: [assessmentCount, averagePercent, teacherNotes]
+      properties:
+        assessmentCount: { type: integer, minimum: 0 }
+        averagePercent: { type: ["number", "null"] }
+        teacherNotes:
+          type: array
+          items: { type: string }
+    GuardianPublishedResult:
+      type: object
+      required: [approvalId, academicYear, periodName, subject, publicationType, approvedAt, result]
+      properties:
+        approvalId: { type: integer }
+        academicYear: { type: string }
+        periodName: { type: string }
+        subject: { type: string }
+        publicationType: { type: string, enum: [midyear, year_end] }
+        approvedAt: { type: string, format: date-time }
+        result: { $ref: "#/components/schemas/SchoolPublishedStudentResult" }
+    GuardianSubjectProgress:
+      type: object
+      required: [subjectId, subject, assessmentCount, averagePercent, latestDate]
+      properties:
+        subjectId: { type: integer }
+        subject: { type: string }
+        assessmentCount: { type: integer }
+        averagePercent: { type: ["number", "null"] }
+        latestDate: { type: ["string", "null"], format: date }
+    GuardianAcademicControl:
+      type: object
+      required: [dailyAssessments, publishedResults, weeklySummary, monthlySummary, subjectProgress]
+      properties:
+        dailyAssessments:
+          type: array
+          items: { $ref: "#/components/schemas/GuardianPortalDailyAssessment" }
+        publishedResults:
+          type: array
+          items: { $ref: "#/components/schemas/GuardianPublishedResult" }
+        weeklySummary: { $ref: "#/components/schemas/GuardianProgressSummary" }
+        monthlySummary: { $ref: "#/components/schemas/GuardianProgressSummary" }
+        subjectProgress:
+          type: array
+          items: { $ref: "#/components/schemas/GuardianSubjectProgress" }
     GuardianPortalChild:
       type: object
       required:
@@ -4117,6 +4899,8 @@ components:
         fees:
           type: array
           items: { $ref: "#/components/schemas/GuardianPortalFeeRow" }
+        academicControl:
+          $ref: "#/components/schemas/GuardianAcademicControl"
         biometricConsentActive: { type: boolean }
         faceEnrolled: { type: boolean }
     GuardianBiometricConsentInput:

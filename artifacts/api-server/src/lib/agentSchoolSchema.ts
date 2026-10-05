@@ -1,5 +1,6 @@
 import { db, getActiveExternalDb } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { SCHOOL_ACADEMIC_CONTROL_DDL } from "./schoolAcademicControlSchema.js";
 
 /**
  * School-module DDL for routed agent databases.
@@ -258,6 +259,7 @@ export const EXTERNAL_AGENT_SCHOOL_DDL = [
     ON school_biometric_consent_events(company_id, student_id, occurred_at)`,
   `CREATE INDEX IF NOT EXISTS idx_school_student_attendance_events_company_date
     ON school_student_attendance_events(company_id, attendance_date)`,
+  ...SCHOOL_ACADEMIC_CONTROL_DDL,
 ] as const;
 
 const schemaPromisesByPool = new WeakMap<object, Promise<void>>();

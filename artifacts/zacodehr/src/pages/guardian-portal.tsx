@@ -103,6 +103,16 @@ function ChildDetails({ child, token, onChange }: { child: GuardianPortalChild; 
   const attendanceRate = summary.total ? Math.round((summary.present / summary.total) * 100) : 0;
   const dueFees = child.fees.filter((fee) => !["paid", "مدفوع"].includes(fee.status.toLowerCase()));
   const dueTotal = dueFees.reduce((sum, fee) => sum + fee.amount, 0);
+  const academic = child.academicControl;
+  const publishedResults = academic?.publishedResults ?? [];
+  const scoreLabels: Record<string, string> = {
+    attendanceDiscipline: "الانضباط والحضور",
+    participation: "المشاركة",
+    homework: "الواجب",
+    activity: "النشاط",
+    behavior: "السلوك",
+    teacherEvaluation: "تقييم المعلم",
+  };
   return (
     <div className="child-content">
       <div className="overview-grid">
@@ -133,10 +143,47 @@ function ChildDetails({ child, token, onChange }: { child: GuardianPortalChild; 
           {child.recentAttendance.length ? <div className="record-list">{child.recentAttendance.slice(0, 5).map((record, index) => <div className="record-row" key={`${record.date}-${record.period}-${index}`} data-testid={`attendance-row-${child.id}-${index}`}><span className="record-date">{dateLabel(record.date)}</span><span className="record-period">{record.period}</span><span className={`status-pill ${attendanceTone(record.status)}`}>{statusLabel(record.status)}</span></div>)}</div> : <div className="mini-empty"><CalendarDays size={18} /><span>لا يوجد سجل حضور حديث.</span></div>}
         </section>
         <section className="data-card exams-card">
-          <div className="section-heading"><div><span className="section-kicker">التقدم الدراسي</span><h3>أحدث النتائج</h3></div><span className="soft-icon violet"><BookOpen size={18} /></span></div>
-          {child.recentExams.length ? <div className="exam-list">{child.recentExams.slice(0, 4).map((exam) => <div className="exam-row" key={exam.id} data-testid={`exam-row-${exam.id}`}><span className="exam-mark"><GraduationCap size={17} /></span><span className="exam-name"><b>{exam.name}</b><small>{exam.subject} · {dateLabel(exam.examDate)}</small></span><span className="exam-score"><b>{exam.score}<small>/{exam.maxScore}</small></b><i>{exam.maxScore ? Math.round((exam.score / exam.maxScore) * 100) : 0}%</i></span></div>)}</div> : <div className="mini-empty"><BookOpen size={18} /><span>لم تُسجل نتائج حديثة.</span></div>}
+          <div className="section-heading"><div><span className="section-kicker">نتائج معتمدة</span><h3>النتائج المنشورة</h3></div><span className="soft-icon violet"><BookOpen size={18} /></span></div>
+          {publishedResults.length ? <div className="exam-list">{publishedResults.slice(0, 6).map((entry) => {
+            const result = entry.result;
+            return <div className="exam-row" key={`${entry.approvalId}-${entry.subject}-${result.enrollmentId}`} data-testid={`published-result-${entry.approvalId}-${result.enrollmentId}`}>
+              <span className="exam-mark"><GraduationCap size={17} /></span>
+              <span className="exam-name"><b>{entry.subject}</b><small>{entry.academicYear} · {entry.periodName} · {entry.publicationType === "midyear" ? "منتصف العام" : "نهاية العام"}</small></span>
+              <span className="exam-score"><b>{result.score}<small>/{result.maximumScore}</small></b><i>{result.percentage}% · {result.grade}</i></span>
+            </div>;
+          })}</div> : <div className="mini-empty"><BookOpen size={18} /><span>لا توجد نتائج نهائية معتمدة ومنشورة حالياً.</span></div>}
         </section>
       </div>
+      {academic && (
+        <>
+          <div className="details-grid" data-testid={`academic-summaries-${child.id}`}>
+            {[{ heading: "ملخص الأسبوع", item: academic.weeklySummary }, { heading: "ملخص الشهر", item: academic.monthlySummary }].map(({ heading, item }) => {
+              return <section className="data-card" key={heading}>
+                <div className="section-heading"><div><span className="section-kicker">متابعة التقدم</span><h3>{heading}</h3></div><span className="soft-icon blue"><BookOpen size={18} /></span></div>
+                <div className="fee-meta"><span>{item.assessmentCount} تقييمات</span><b>{item.averagePercent == null ? "—" : `${Math.round(item.averagePercent)}%`}</b></div>
+                {item.teacherNotes.length ? <div className="record-list">{item.teacherNotes.map((note, index) => <div className="record-row" key={`${heading}-${index}`}><span>{note}</span></div>)}</div> : <p className="inline-empty">لا توجد ملاحظات مسجلة لهذه الفترة.</p>}
+              </section>;
+            })}
+          </div>
+          <section className="data-card" data-testid={`subject-progress-${child.id}`}>
+            <div className="section-heading"><div><span className="section-kicker">حسب المادة</span><h3>التقدم الدراسي</h3></div><span className="soft-icon green"><GraduationCap size={18} /></span></div>
+            {academic.subjectProgress.length ? <div className="exam-list">{academic.subjectProgress.map((subject) => <div className="exam-row" key={subject.subjectId}>
+              <span className="exam-mark"><BookOpen size={17} /></span>
+              <span className="exam-name"><b>{subject.subject}</b><small>{subject.assessmentCount} تقييمات · آخر تحديث {dateLabel(subject.latestDate)}</small></span>
+              <span className="exam-score"><b>{subject.averagePercent == null ? "—" : `${Math.round(subject.averagePercent)}%`}</b></span>
+            </div>)}</div> : <div className="mini-empty"><BookOpen size={18} /><span>لا توجد بيانات تقدم حسب المادة.</span></div>}
+          </section>
+          {academic.dailyAssessments.length > 0 && <section className="data-card" data-testid={`daily-academic-assessments-${child.id}`}>
+            <div className="section-heading"><div><span className="section-kicker">متابعة الصف اليومية</span><h3>التقييمات اليومية</h3></div><span className="soft-icon amber"><CalendarDays size={18} /></span></div>
+            <div className="exam-list">{academic.dailyAssessments.map((assessment) => <div className="exam-row" key={assessment.id}>
+              <span className="exam-mark"><CalendarCheck2 size={17} /></span>
+              <span className="exam-name"><b>{assessment.subject}</b><small>{dateLabel(assessment.assessmentDate)}{assessment.notes ? ` · ${assessment.notes}` : ""}</small></span>
+              <span className="exam-score"><b>{Object.entries(assessment.scores).filter(([, score]) => score != null).length} معايير</b></span>
+              <span className="exam-name">{Object.entries(assessment.scores).filter(([, score]) => score != null).map(([key, score]) => <small key={key}>{scoreLabels[key] || key}: {score}</small>)}</span>
+            </div>)}</div>
+          </section>}
+        </>
+      )}
       <ConsentControl child={child} token={token} onChange={onChange} />
     </div>
   );
