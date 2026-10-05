@@ -93,20 +93,56 @@ export default function GuardianAccounts() {
         <div><h2 className="font-bold">سجل الحسابات</h2><p className="mt-1 text-xs text-muted-foreground">تظهر هنا روابط الحساب بسجلات ولي الأمر والطالب.</p></div>
         <label className="relative block w-full sm:w-72"><Search className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={search} onChange={e => setSearch(e.target.value)} className="pr-9" placeholder="بحث بالاسم أو اسم المستخدم" data-testid="input-account-search" /></label>
       </div>
-      {accounts.isLoading ? <div className="space-y-3 p-5" aria-label="تحميل الحسابات">{[1,2,3].map(n => <div key={n} className="h-16 animate-pulse rounded-lg bg-muted" />)}</div> :
-        accounts.isError ? <div className="p-8 text-center"><p className="font-semibold">تعذر تحميل الحسابات</p><p className="mt-1 text-sm text-muted-foreground">{errorText(accounts.error)}</p><Button variant="outline" className="mt-4" onClick={() => accounts.refetch()}><RefreshCw className="ms-2 h-4 w-4" />إعادة المحاولة</Button></div> :
-        rows.length === 0 ? <div className="p-12 text-center"><UsersRound className="mx-auto h-8 w-8 text-teal-700/50" /><p className="mt-3 font-semibold">لا توجد حسابات مطابقة</p><p className="mt-1 text-sm text-muted-foreground">أنشئ حساباً جديداً أو غيّر عبارة البحث.</p></div> :
-        <div className="divide-y">{rows.map(account => <article key={account.id} className="flex flex-col gap-4 p-4 transition-colors hover:bg-muted/20 sm:flex-row sm:items-center sm:justify-between" data-testid={`row-guardian-account-${account.id}`}>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2"><h3 className="font-bold">{account.displayName}</h3><span dir="ltr" className="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">{account.username}</span><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${account.isActive ? "bg-emerald-100 text-emerald-800" : "bg-stone-100 text-stone-600"}`}>{account.isActive ? "نشط" : "موقوف"}</span></div>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">{account.guardians.map(link => <span key={link.guardianId}>{link.studentNameAr} <span className="text-foreground/70">· ولي الأمر #{link.guardianId}</span></span>)}</div>
-          </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => openEdit(account)} data-testid={`button-edit-account-${account.id}`}><UserRoundCog className="ms-2 h-4 w-4" />تعديل / كلمة المرور</Button>
-            <Button size="sm" variant={account.isActive ? "ghost" : "outline"} onClick={() => toggleActive(account)} disabled={updateAccount.isPending} data-testid={`button-toggle-account-${account.id}`}>{account.isActive ? "إيقاف الحساب" : "إعادة التفعيل"}</Button>
-          </div>
-        </article>)}</div>
-      }
+      {accounts.isLoading ? (
+        <div className="space-y-3 p-5" aria-label="تحميل الحسابات">
+          {[1, 2, 3].map(n => <div key={n} className="h-16 animate-pulse rounded-lg bg-muted" />)}
+        </div>
+      ) : accounts.isError ? (
+        <div className="p-8 text-center">
+          <p className="font-semibold">تعذر تحميل الحسابات</p>
+          <p className="mt-1 text-sm text-muted-foreground">{errorText(accounts.error)}</p>
+          <Button variant="outline" className="mt-4" onClick={() => accounts.refetch()}>
+            <RefreshCw className="ms-2 h-4 w-4" />إعادة المحاولة
+          </Button>
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="p-12 text-center">
+          <UsersRound className="mx-auto h-8 w-8 text-teal-700/50" />
+          <p className="mt-3 font-semibold">لا توجد حسابات مطابقة</p>
+          <p className="mt-1 text-sm text-muted-foreground">أنشئ حساباً جديداً أو غيّر عبارة البحث.</p>
+        </div>
+      ) : (
+        <div className="divide-y">
+          {rows.map(account => (
+            <article key={account.id} className="flex flex-col gap-4 p-4 transition-colors hover:bg-muted/20 sm:flex-row sm:items-center sm:justify-between" data-testid={`row-guardian-account-${account.id}`}>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-bold">{account.displayName}</h3>
+                  <span dir="ltr" className="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">{account.username}</span>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${account.isActive ? "bg-emerald-100 text-emerald-800" : "bg-stone-100 text-stone-600"}`}>
+                    {account.isActive ? "نشط" : "موقوف"}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  {account.guardians.map(link => (
+                    <span key={link.guardianId}>
+                      {link.studentNameAr} <span className="text-foreground/70">· ولي الأمر #{link.guardianId}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => openEdit(account)} data-testid={`button-edit-account-${account.id}`}>
+                  <UserRoundCog className="ms-2 h-4 w-4" />تعديل / كلمة المرور
+                </Button>
+                <Button size="sm" variant={account.isActive ? "ghost" : "outline"} onClick={() => toggleActive(account)} disabled={updateAccount.isPending} data-testid={`button-toggle-account-${account.id}`}>
+                  {account.isActive ? "إيقاف الحساب" : "إعادة التفعيل"}
+                </Button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </section>
 
     <AccountForm

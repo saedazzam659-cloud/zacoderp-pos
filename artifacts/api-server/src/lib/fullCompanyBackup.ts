@@ -97,7 +97,7 @@ export type FullCompanyPayload = {
 export type RestoreTableReport = { received: number; inserted: number; updated: number };
 export type FullCompanyIntegrityIssue = RestoreReferenceIssue | {
   severity: "error" | "warning";
-  code: "catalog_mismatch" | "count_mismatch" | "unexpected_column" | "missing_physical_reference";
+  code: "catalog_mismatch" | "count_mismatch" | "unexpected_column" | "missing_physical_reference" | "unbalanced_journal_entry";
   table: string;
   column: string;
   rowId: unknown;

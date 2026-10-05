@@ -709,7 +709,7 @@ function clientIp(req: Request): string | null {
 interface WriteRow {
   userId: number | null;
   username: string | null;
-  role: string | null;
+  role?: string | null;
   companyId: number | null;
   module: string;
   action: string;

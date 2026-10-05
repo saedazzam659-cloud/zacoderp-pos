@@ -9,6 +9,7 @@
 - [Taxable contracting advances](contracting-taxable-advance-boundaries.md) — tax-point ownership, fiscal-only certificates, legacy safety, and exact partial settlements.
 - [Retroactive sequence protection](retroactive-sequence-protection.md) — enabling protection sweeps existing numbered drafts and journal entries; record markers survive package disablement.
 - [School fee accounting boundary](school-fee-accounting-boundary.md) — link fee records to sales invoices; never create parallel collection, ledger, or posting flows.
+- [School guardian portal boundary](school-guardian-portal-boundary.md) — keep guardian logins separate; consent gates face attendance, which must preserve manual records.
 - [School-year promotion boundary](school-year-promotion-boundary.md) — keep one student identity and immutable yearly enrollments; promotion must not create separate billing flows.
 - [Drizzle schema sync boundary](drizzle-schema-sync-boundary.md) — avoid forced or subset-schema pushes; they can emit destructive changes for unrelated ERP objects.
 

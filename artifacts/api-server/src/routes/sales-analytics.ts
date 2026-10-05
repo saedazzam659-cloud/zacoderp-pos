@@ -109,7 +109,7 @@ async function customerStatementAccount(req: any, cid: number, customerId: numbe
     .where(and(
       eq(customersTable.id, customerId),
       eq(customersTable.companyId, cid),
-      ...branchScopeSpread(req, customersTable.branchId),
+      ...branchScopeSpread(req, customersTable.branchId, req.query.branchId),
     ));
   return account ?? null;
 }

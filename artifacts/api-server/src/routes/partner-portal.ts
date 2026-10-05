@@ -275,7 +275,9 @@ router.get("/documents/:id/download", async (req, res) => {
     res.status(response.status);
     response.headers.forEach((value, key) => res.setHeader(key, value));
     if (response.body) {
-      Readable.fromWeb(response.body as ReadableStream<Uint8Array>).pipe(res);
+      Readable.fromWeb(
+        response.body as unknown as Parameters<typeof Readable.fromWeb>[0],
+      ).pipe(res);
     } else {
       res.end();
     }

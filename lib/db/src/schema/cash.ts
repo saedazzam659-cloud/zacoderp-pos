@@ -10,7 +10,7 @@ import { purchaseInvoicesTable } from "./purchasing";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 export const cashVoucherStatusEnum = pgEnum("cash_voucher_status", ["draft", "posted", "cancelled"]);
-export const cashEntityTypeEnum    = pgEnum("cash_entity_type",   ["customer", "supplier", "other"]);
+export const cashEntityTypeEnum    = pgEnum("cash_entity_type",   ["customer", "supplier", "employee", "other"]);
 export const cashPaymentTypeEnum   = pgEnum("cash_payment_type",  ["cash", "bank"]);
 export const cashTransferTypeEnum  = pgEnum("cash_transfer_type", ["cash_to_cash","cash_to_bank","bank_to_cash","bank_to_bank"]);
 

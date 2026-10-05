@@ -1025,8 +1025,10 @@ router.post("/ai-match", requireAiFeature("account_suggestions"), async (req, re
     try { parsed = JSON.parse(content); } catch { parsed = {}; }
 
     // Server-side validation: keep only pairs whose sums actually balance.
-    const bookMap = new Map(book.map((t: any) => [String(t.id), Number(t.debit ?? 0) - Number(t.credit ?? 0)]));
-    const bankMap = new Map(bank.map((t: any) => [String(t.id), Number(t.debit ?? 0) - Number(t.credit ?? 0)]));
+    const bookMap = new Map<string, number>(book.map((t: any) =>
+      [String(t.id), Number(t.debit ?? 0) - Number(t.credit ?? 0)] as const));
+    const bankMap = new Map<string, number>(bank.map((t: any) =>
+      [String(t.id), Number(t.debit ?? 0) - Number(t.credit ?? 0)] as const));
     const seenBook = new Set<string>();
     const seenBank = new Set<string>();
     const validPairs: any[] = [];

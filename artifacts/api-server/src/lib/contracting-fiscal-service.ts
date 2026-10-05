@@ -163,7 +163,7 @@ async function advanceInvoiceAccounts(companyId: number) {
   if (!ar || !liability || !vat || new Set([ar,liability,vat]).size!==3)
     fail("الربط المحاسبي للسلفة الضريبية غير مكتمل أو يكرر نفس الحساب: اربط contracting_taxable_advance_invoice / advance_receivable، وcontracting_advance_receipt / advance_liability، وcontracting_outgoing_bill / vat_output كلٌ بحساب مختلف");
   const reused=await db.select({id:customersTable.id}).from(customersTable)
-    .where(and(eq(customersTable.companyId,companyId),eq(customersTable.accountId,ar))).limit(1);
+    .where(and(eq(customersTable.companyId,companyId),eq(customersTable.accountId,Number(ar)))).limit(1);
   if (reused.length) fail("حساب ذمم فاتورة السلفة الضريبية يجب أن يكون حساباً مستقلاً عن حسابات العملاء الفردية لمنع تكرار أرصدتهم");
   return {ar,liability,vat};
 }
@@ -344,11 +344,25 @@ export async function submitContractingFiscalInvoice(companyId: number, id: numb
         street:customer.street,buildingNumber:customer.buildingNumber,city:customer.city,
         district:customer.district,postalCode:customer.postalCode,country:customer.country ?? "SA"},
     };
-    const built = f.xml_content && f.invoice_hash
-      ? { finalXml:f.xml_content, invoiceHash:f.invoice_hash }
-      : buildSignedZatcaInvoice({invoiceData:data,certificatePem:token,privateKeyPem:company.zatcaPrivateKey,
-          seller:{nameAr:v(company.nameAr),vatNumber:v(company.vatNumber)},
-          qr:{invoiceTimestamp:`${data.issueDate}T${data.issueTime}Z`,invoiceTotal:data.grandTotal,vatAmount:data.vatTotal}});
+    let built: { finalXml: string; invoiceHash: string };
+    if (f.xml_content && f.invoice_hash) {
+      built = { finalXml: f.xml_content, invoiceHash: f.invoice_hash };
+    } else {
+      if (!token || !company.zatcaPrivateKey) {
+        fail("تعذّر توقيع فاتورة المستخلص: شهادة أو مفتاح زاتكا غير متوفر");
+      }
+      built = buildSignedZatcaInvoice({
+        invoiceData: data,
+        certificatePem: token!,
+        privateKeyPem: company.zatcaPrivateKey!,
+        seller: { nameAr: v(company.nameAr), vatNumber: v(company.vatNumber) },
+        qr: {
+          invoiceTimestamp: `${data.issueDate}T${data.issueTime}Z`,
+          invoiceTotal: data.grandTotal,
+          vatAmount: data.vatTotal,
+        },
+      });
+    }
     if (!f.xml_content) await db.execute(sql`UPDATE contracting_fiscal_invoices SET
       xml_content=${built.finalXml},invoice_hash=${built.invoiceHash},
       zatca_uuid=${data.uuid},zatca_icv=${chain.maxIcv+1},zatca_pih=${chain.previousInvoiceHash}

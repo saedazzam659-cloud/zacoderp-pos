@@ -554,7 +554,7 @@ router.post("/suggest-adjustment-accounts", requireAiFeature("account_suggestion
 
     const assetPosting   = accounts.filter(a => a.accountType === "asset"    && a.isPosting);
     const expensePosting = accounts.filter(a => a.accountType === "expense"  && a.isPosting);
-    const incomePosting  = accounts.filter(a => (a.accountType === "revenue" || a.accountType === "income") && a.isPosting);
+    const incomePosting  = accounts.filter(a => a.accountType === "revenue" && a.isPosting);
 
     // Net direction from items: + means net increase (gain) → income; - means net decrease (loss) → expense
     const netQty = (Array.isArray(items) ? items : []).reduce((s: number, it: any) => s + Number(it.qty || 0), 0);
@@ -710,7 +710,7 @@ router.post("/suggest-receipt-account", requireAiFeature("account_suggestions"),
     const byType = (t: string) => posting.filter(a => a.accountType === t);
     const assetPosting     = byType("asset");
     const liabilityPosting = byType("liability");
-    const revenuePosting   = posting.filter(a => a.accountType === "revenue" || a.accountType === "income");
+    const revenuePosting   = posting.filter(a => a.accountType === "revenue");
 
     // Pre-fetch linked entity account (customer AR / supplier AP).
     let linkedAccountId: number | null = null;

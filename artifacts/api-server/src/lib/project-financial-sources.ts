@@ -278,8 +278,9 @@ export async function consolidatedProjectMovements(companyId: number, projectId:
         AND gd.id=refs.source_id AND gd.company_id=${companyId}
       LEFT JOIN journal_entries prepay ON prepay.id=prepi.journal_entry_id AND prepay.company_id=${companyId}
     `);
-    const byKey = new Map((Array.isArray(result) ? result : (result as any).rows ?? []).map((row: any) =>
-      [`${row.source_type}:${row.source_id}`, row]));
+    const resultRows = (Array.isArray(result) ? result : (result as any).rows ?? []) as any[];
+    const byKey = new Map<string, any>(resultRows.map((row: any) =>
+      [`${row.source_type}:${row.source_id}`, row] as const));
     for (const movement of existingIds) {
       const ref = byKey.get(`${movement.sourceType}:${movement.sourceId}`);
       if (ref?.journal_entry_id != null) movement.journalEntryId = Number(ref.journal_entry_id);

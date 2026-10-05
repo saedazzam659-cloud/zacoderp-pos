@@ -779,7 +779,10 @@ async function assertApprovedChangeOrder(
 async function effectiveBoqTerms(
   companyId: number,
   bill: typeof contractingProgressBillsTable.$inferSelect,
-  baseLine: typeof contractingContractBoqLinesTable.$inferSelect,
+  baseLine: Pick<
+    typeof contractingContractBoqLinesTable.$inferSelect,
+    "id" | "workItemId" | "unitPrice" | "quantity" | "ownerContractId" | "subcontractorContractId"
+  >,
   changeOrderId: number | null,
   changeOrderSubcontractId: number | null,
 ) {
@@ -1707,7 +1710,7 @@ export async function certificationPreview(
     const previous = await priorBoqTotals(companyId, previewBill, boq.id);
     const priorCertificationLines = await priorBoqCertificationLines(companyId, previewBill, boq.id);
     const previousPendingValue = pendingValueForBoqLines(priorCertificationLines);
-    const terms = await effectiveBoqTerms(companyId, previewBill, boq as typeof contractingContractBoqLinesTable.$inferSelect, null, null);
+    const terms = await effectiveBoqTerms(companyId, previewBill, boq, null, null);
     lines.push({
       id: null,
       projectId,

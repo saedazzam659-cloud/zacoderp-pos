@@ -1652,7 +1652,7 @@ router.post("/purchase-invoices", async (req, res) => {
     });
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
-      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageIds: number[] = Array.from(new Set<number>((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
       const usageV = await checkItemsUsable(cid, "purchase_invoices", usageIds, req.authUser, "save");
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
@@ -2427,6 +2427,9 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), docume
                               + Object.values(groupInvDebitByAccount).reduce((s, v) => s + v, 0);
 
     const desc = `قيد فاتورة مشتريات رقم ${inv.docNumber || inv.id}`;
+    if (inv.supplierId == null) {
+      throw Object.assign(new Error("يجب تحديد المورد قبل ترحيل فاتورة المشتريات"), { status: 400 });
+    }
     const [postingSupplier] = await db.select({ nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
       .from(suppliersTable)
       .where(and(eq(suppliersTable.id, inv.supplierId), eq(suppliersTable.companyId, cid)));
@@ -3177,7 +3180,7 @@ router.post("/purchase-orders", async (req, res) => {
     if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد" }); return; }
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
-      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageIds: number[] = Array.from(new Set<number>((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
       const usageV = await checkItemsUsable(cid, "purchase_orders", usageIds, req.authUser, "save");
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
@@ -3602,7 +3605,7 @@ router.post("/purchase-returns", async (req, res) => {
     });
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
-      const usageIds = Array.from(new Set((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
+      const usageIds: number[] = Array.from(new Set<number>((lines ?? []).map((l: any) => Number(l?.itemId)).filter((n: number) => Number.isInteger(n) && n > 0)));
       const usageV = await checkItemsUsable(cid, "purchase_returns", usageIds, req.authUser, "save");
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }

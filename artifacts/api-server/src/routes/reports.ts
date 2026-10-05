@@ -147,7 +147,7 @@ router.get("/vat-declaration", requirePermissionAny(["vat_declaration", "account
   const missingFiscalJournal=await db.execute(dsql`SELECT id FROM contracting_fiscal_invoices
     WHERE company_id=${companyId} AND kind='advance' AND status='accepted_unposted'
     LIMIT 1`);
-  if (((missingFiscalJournal as any).rows ?? missingFiscalJournal as any[]).length) {
+  if (missingFiscalJournal.rows.length) {
     res.status(409).json({error:"فاتورة دفعة مقدمة مقبولة من ZATCA تنتظر ترحيل قيدها؛ أعد إكمال إصدارها قبل إعداد الإقرار"});
     return;
   }
@@ -166,7 +166,7 @@ router.get("/vat-declaration", requirePermissionAny(["vat_declaration", "account
     WHERE f.company_id=${companyId} AND f.status IN ('cleared','reported')
       AND f.invoice_date >= ${from} AND f.invoice_date <= ${to}
   `);
-  const fiscalRows = ((fiscalOutput as any).rows ?? fiscalOutput as any[]) as any[];
+  const fiscalRows = fiscalOutput.rows as any[];
 
   // ─── Pull posted documents from all sources in parallel ────────────────
   // NOTE: branchId exists on the new tables but the report intentionally
@@ -618,7 +618,7 @@ router.get("/vat-declaration/details", requirePermissionAny(["vat_declaration", 
   await ensureContractingAccountingTables();
   const pendingFiscal = await db.execute(dsql`SELECT id FROM contracting_fiscal_invoices
     WHERE company_id=${companyId} AND kind='advance' AND status='accepted_unposted' LIMIT 1`);
-  if (((pendingFiscal as any).rows ?? pendingFiscal as any[]).length) {
+  if (pendingFiscal.rows.length) {
     res.status(409).json({error:"فاتورة دفعة مقدمة مقبولة تنتظر ترحيل قيدها؛ أعد إكمال إصدارها قبل عرض التفاصيل"});
     return;
   }
@@ -711,7 +711,7 @@ router.get("/vat-declaration/details", requirePermissionAny(["vat_declaration", 
         ON c.id=f.customer_id AND c.company_id=f.company_id
       WHERE f.company_id=${companyId} AND f.status IN ('cleared','reported')
         AND f.invoice_date>=${from} AND f.invoice_date<=${to}`);
-    for (const r of ((fiscal as any).rows ?? fiscal as any[])) {
+    for (const r of fiscal.rows as any[]) {
       const base=Number(r.base), vat=Number(r.vat);
       if (target!=="standard") continue;
       out.push({id:Number(r.id),source:"contracting_fiscal_invoice",

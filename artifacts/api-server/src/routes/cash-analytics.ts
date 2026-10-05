@@ -429,7 +429,7 @@ router.get("/cash-box-statement", async (req, res) => {
     const [box] = await db.select({ branchId: cashBoxesTable.branchId, companyId: cashBoxesTable.companyId })
       .from(cashBoxesTable).where(eq(cashBoxesTable.id, id)).limit(1);
     if (!box || box.companyId !== cid) { res.json({ opening: 0, lines: [] }); return; }
-    if (scope.allowedSet && !scope.allowedSet.includes(box.branchId)) { res.json({ opening: 0, lines: [] }); return; }
+    if (scope.allowedSet && (box.branchId == null || !scope.allowedSet.includes(box.branchId))) { res.json({ opening: 0, lines: [] }); return; }
     const data = await buildAccountStatement({ req, cid, kind: "cash", accountId: id, from, to, bid });
     res.json(data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -449,7 +449,7 @@ router.get("/bank-statement", async (req, res) => {
     const [bank] = await db.select({ branchId: bankAccountsTable.branchId, companyId: bankAccountsTable.companyId })
       .from(bankAccountsTable).where(eq(bankAccountsTable.id, id)).limit(1);
     if (!bank || bank.companyId !== cid) { res.json({ opening: 0, lines: [] }); return; }
-    if (scope.allowedSet && !scope.allowedSet.includes(bank.branchId)) { res.json({ opening: 0, lines: [] }); return; }
+    if (scope.allowedSet && (bank.branchId == null || !scope.allowedSet.includes(bank.branchId))) { res.json({ opening: 0, lines: [] }); return; }
     const data = await buildAccountStatement({ req, cid, kind: "bank", accountId: id, from, to, bid });
     res.json(data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

@@ -1034,7 +1034,14 @@ router.post("/auto/:id/restore", async (req, res) => {
       return;
     }
 
-    const out = await restoreFromSnapshotPayload(companyId, row.data);
+    const snapshotPayload = row.data && typeof row.data === "object" && !Array.isArray(row.data)
+      ? row.data as { data?: Record<string, unknown> }
+      : null;
+    if (!snapshotPayload?.data) {
+      res.status(409).json({ error: "النسخة المحفوظة تالفة أو لا تحتوي على بيانات استعادة" });
+      return;
+    }
+    const out = await restoreFromSnapshotPayload(companyId, snapshotPayload);
 
     // ALL successful writes are audited under module="backups", regardless of
     // whether the caller is the tenant or a cross-tenant superadmin — this is

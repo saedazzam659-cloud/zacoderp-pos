@@ -512,7 +512,7 @@ router.post("/ai/suspicious/scan", async (req, res) => {
   // Rule 2: late-night sales (00:00–05:00) outside normal business hours
   const lateNight = await db.select({
     id: salesInvoicesTable.id,
-    userId: salesInvoicesTable.createdBy,
+    userId: salesInvoicesTable.createdById,
     total: salesInvoicesTable.totalAmount,
     when: salesInvoicesTable.createdAt,
   }).from(salesInvoicesTable)
@@ -620,12 +620,12 @@ router.get("/ai/waiter-performance", async (req, res) => {
 
   const rows = await db.select({
     waiterId:    posOrdersTable.waiterId,
-    waiterName:  usersTable.fullName,
+    waiterName:  usersTable.nameAr,
     orders:      sql<number>`COUNT(*)::int`,
     revenue:     sql<string>`COALESCE(SUM(${posOrdersTable.total}::numeric), 0)::text`,
     avgTicket:   sql<string>`COALESCE(AVG(${posOrdersTable.total}::numeric), 0)::text`,
     guests:      sql<number>`COALESCE(SUM(${posOrdersTable.guestCount}), 0)::int`,
-    avgPrepMin:  sql<string>`COALESCE(AVG(EXTRACT(EPOCH FROM (${posOrdersTable.closedAt} - ${posOrdersTable.openedAt}))/60), 0)::text`,
+    avgPrepMin:  sql<string>`COALESCE(AVG(EXTRACT(EPOCH FROM (${posOrdersTable.servedAt} - ${posOrdersTable.openedAt}))/60), 0)::text`,
     cancelled:   sql<number>`SUM(CASE WHEN ${posOrdersTable.status} = 'cancelled' THEN 1 ELSE 0 END)::int`,
   }).from(posOrdersTable)
     .leftJoin(usersTable, eq(usersTable.id, posOrdersTable.waiterId))
@@ -634,7 +634,7 @@ router.get("/ai/waiter-performance", async (req, res) => {
       gte(posOrdersTable.openedAt, since),
       sql`${posOrdersTable.waiterId} IS NOT NULL`,
     ))
-    .groupBy(posOrdersTable.waiterId, usersTable.fullName)
+    .groupBy(posOrdersTable.waiterId, usersTable.nameAr)
     .orderBy(sql`SUM(${posOrdersTable.total}::numeric) DESC NULLS LAST`);
 
   // Score 0-100 = 60% revenue rank + 30% orders rank + 10% low-cancel

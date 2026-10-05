@@ -525,12 +525,21 @@ const DEFAULT_AI_SETTINGS = {
   guidance:      "اكتب مقالاً تسويقياً موجهاً للشركات السعودية الصغيرة والمتوسطة، مع التركيز على الالتزام بمتطلبات هيئة الزكاة والضريبة والجمارك.",
 } as const;
 
-type SeoAiSettings = typeof DEFAULT_AI_SETTINGS & { defaultKeywords: string[]; guidance: string };
+type SeoAiSettings = {
+  model: string;
+  tone: keyof typeof TONE_LABEL_AR;
+  length: keyof typeof LENGTH_TARGETS;
+  language: "ar" | "en" | "both";
+  defaultKeywords: string[];
+  guidance: string;
+};
 
 async function readAiSettings(): Promise<SeoAiSettings> {
   const [row] = await db.select().from(systemSettingsTable)
     .where(eq(systemSettingsTable.key, "seo_ai_settings"));
-  if (!row?.value) return { ...DEFAULT_AI_SETTINGS };
+  if (!row?.value) {
+    return { ...DEFAULT_AI_SETTINGS, defaultKeywords: [...DEFAULT_AI_SETTINGS.defaultKeywords] };
+  }
   try {
     const parsed = JSON.parse(row.value);
     return {
@@ -541,7 +550,7 @@ async function readAiSettings(): Promise<SeoAiSettings> {
         : [...DEFAULT_AI_SETTINGS.defaultKeywords],
     };
   } catch {
-    return { ...DEFAULT_AI_SETTINGS };
+    return { ...DEFAULT_AI_SETTINGS, defaultKeywords: [...DEFAULT_AI_SETTINGS.defaultKeywords] };
   }
 }
 
@@ -834,7 +843,7 @@ router.post("/ai-articles/generate", requireSuperAdmin, async (req: any, res) =>
     // Per-user generator rate limit (cost guard). Falls back to remote IP
     // when no user is attached so the limit is never silently bypassed.
     const callerKey: number = (req as any).user?.id
-      ?? -Math.abs(((req.ip || "anon").split("").reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0)));
+      ?? -Math.abs(((req.ip || "anon").split("").reduce((h: number, c: string) => (h * 31 + c.charCodeAt(0)) | 0, 0)));
     const rl = checkGenRateLimit(callerKey);
     if (!rl.ok) {
       res.setHeader("Retry-After", String(rl.retryInSec));

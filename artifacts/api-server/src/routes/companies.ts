@@ -1162,7 +1162,7 @@ function toNullableId(v: unknown): number | null | "invalid" {
 
 // GET /:id/pos-settings — current POS payment-method → account mappings.
 router.get("/:id/pos-settings", extractAuth, async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id) || id <= 0) { res.status(400).json({ error: "معرّف الشركة غير صالح" }); return; }
   if (!authorizePosSettings(req, res, id, true)) return;
   const [c] = await db.select({
@@ -1177,7 +1177,7 @@ router.get("/:id/pos-settings", extractAuth, async (req, res) => {
 
 // PATCH /:id/pos-settings — admin/superadmin sets the cashbox/bank-account for each POS method.
 router.patch("/:id/pos-settings", extractAuth, async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id) || id <= 0) { res.status(400).json({ error: "معرّف الشركة غير صالح" }); return; }
   if (!authorizePosSettings(req, res, id)) return;
 
@@ -1209,7 +1209,7 @@ router.patch("/:id/pos-settings", extractAuth, async (req, res) => {
 
 // POST /:id/pos-settings/ai-suggest — AI suggests cashbox + bank accounts for each POS payment method.
 router.post("/:id/pos-settings/ai-suggest", extractAuth, requireAiFeature("pos_ai"), async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id) || id <= 0) { res.status(400).json({ error: "معرّف الشركة غير صالح" }); return; }
   if (!authorizePosSettings(req, res, id)) return;
 

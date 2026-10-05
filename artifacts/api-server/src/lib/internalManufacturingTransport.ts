@@ -83,7 +83,9 @@ export async function validateInternalTransportAccounts(
     eq(accountsTable.companyId, companyId),
     inArray(accountsTable.id, [expenseId, counterpartId]),
   ));
-  const byId = new Map(rows.map((row: any) => [row.id, row]));
+  const byId = new Map<number, (typeof rows)[number]>(
+    rows.map((row: any) => [row.id, row] as const),
+  );
   const expense = byId.get(expenseId);
   const counterpart = byId.get(counterpartId);
   if (!expense || !expense.isActive || !expense.isPosting || expense.accountType !== "expense") {
@@ -616,7 +618,7 @@ export async function reverseLateInternalTransportDeltas(
         description: journalEntryLinesTable.description,
         costCenter: journalEntryLinesTable.costCenter,
       }).from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, deltaJournalId)) : [];
-      if (!original || originalLines.length < 2 || originalLines.some((line) => !line.accountId)) {
+      if (!original || originalLines.length < 2 || originalLines.some((line: any) => !line.accountId)) {
         throw Object.assign(new Error("لا يمكن عكس تسوية النقل الداخلي: القيد الأصلي غير مكتمل"), { status: 409 });
       }
       const journalId = await insertJournal(tx, companyId, req, {
@@ -626,7 +628,7 @@ export async function reverseLateInternalTransportDeltas(
         entryType: "internal_transport_reclassification_reversal",
         status: original.status,
         description: `عكس تحميل تكلفة نقل داخلي لأمر ${order.orderNumber}`,
-        lines: originalLines.map((line) => ({
+        lines: originalLines.map((line: any) => ({
           accountId: Number(line.accountId),
           debit: Number(line.credit),
           credit: Number(line.debit),
@@ -713,7 +715,11 @@ export async function listInternalDeliveryEvidence(
   const allowed = getAllowedBranchIds(req);
   let visible = rows;
   if (allowed !== null && rows.length) {
-    const warehouseIds = [...new Set(rows.flatMap((row: any) => [row.fromWarehouseId, row.toWarehouseId]))];
+    const warehouseIds: number[] = [...new Set<number>(
+      rows.flatMap((row: any) => [row.fromWarehouseId, row.toWarehouseId]
+        .map((id: unknown) => Number(id))
+        .filter((id: number) => Number.isInteger(id) && id > 0)),
+    )];
     const warehouses = await q.select({ id: warehousesTable.id }).from(warehousesTable).where(and(
       eq(warehousesTable.companyId, companyId),
       inArray(warehousesTable.id, warehouseIds),

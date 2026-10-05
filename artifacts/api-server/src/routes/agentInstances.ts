@@ -2778,8 +2778,8 @@ async function buildSetupKit(
   for (const row of outboundLinks) {
     if (seenControllerTargets.has(row.targetPlatformId)) throw new Error("duplicate_outbound_controller_link");
     seenControllerTargets.add(row.targetPlatformId);
-    const token = row.controllerTokenEnc ? decryptSecret(row.controllerTokenEnc) : "";
-    assertControllerTokenMatchesVerifier(token, row.controllerTokenVerifier);
+    const token = row.controllerTokenEnc ? decryptSecret(row.controllerTokenEnc) ?? "" : "";
+    assertControllerTokenMatchesVerifier(token, row.controllerTokenVerifier ?? "");
   }
   const newestLeadership = outboundLinks.reduce<typeof outboundLinks[number] | null>(
     (best, row) => !best || row.controllerEpoch > best.controllerEpoch ? row : best, null,
@@ -3273,9 +3273,9 @@ async function syncShellControllerConfig(inst: typeof agentInstancesTable.$infer
       throw error;
     }
     seenTargets.add(targetKey);
-    const token = row.controllerTokenEnc ? decryptSecret(row.controllerTokenEnc) : "";
+    const token = row.controllerTokenEnc ? decryptSecret(row.controllerTokenEnc) ?? "" : "";
     try {
-      assertControllerTokenMatchesVerifier(token, row.controllerTokenVerifier);
+      assertControllerTokenMatchesVerifier(token, row.controllerTokenVerifier ?? "");
     } catch {
       const error = new Error("shell_controller_sync_failed");
       Object.assign(error, { syncDetail: "controller_link_credentials_unavailable", syncInDoubt: false });
@@ -3293,9 +3293,9 @@ async function syncShellControllerConfig(inst: typeof agentInstancesTable.$infer
     Object.assign(error, { syncDetail: "controller_registry_inconsistent", syncInDoubt: false });
     throw error;
   }
-  const controllers: ShellControllerState["controllerOrigins"] = [{ platformId: local.platformId, origin: local.origin, auth: "license" },
-    ...links.map(x => ({ platformId: x.targetPlatformId, origin: x.targetOrigin, auth: "controllerToken",
-      controllerToken: x.controllerTokenEnc ? decryptSecret(x.controllerTokenEnc) : "" }))]
+  const controllers: ShellControllerState["controllerOrigins"] = [{ platformId: local.platformId, origin: local.origin, auth: "license" as const },
+    ...links.map(x => ({ platformId: x.targetPlatformId, origin: x.targetOrigin, auth: "controllerToken" as const,
+      controllerToken: x.controllerTokenEnc ? decryptSecret(x.controllerTokenEnc) ?? "" : "" }))]
     .filter((x, i, a) => a.findIndex(y => y.platformId === x.platformId) === i);
   const state = {
     controllerOrigins: controllers,
@@ -3512,7 +3512,10 @@ router.post("/:id/operation/recover", async (req, res) => {
     return;
   }
 
-  let remote: { ok: boolean; log: string };
+  let remote: { ok: boolean; log: string } = {
+    ok: false,
+    log: "لم تُثبت نتيجة العملية البعيدة",
+  };
   let schemaServiceResumed = !isSchemaUpgrade;
   try {
     if (isSchemaUpgrade) {
@@ -5345,10 +5348,9 @@ echo "Frontend مرفوع: تم فكّه"`;
         ["SMTP_PASS", process.env.SMTP_PASS],
         ["SMTP_FROM", process.env.SMTP_FROM],
       ] as const)
-        .filter((entry): entry is readonly [string, string] => !!entry[1])
-        .map(([key, value]) =>
-          `if [ -f "$OLD_ENV" ] && grep -q '^${key}=' "$OLD_ENV"; then grep '^${key}=' "$OLD_ENV" | tail -n1 >> "$NEW_ENV"; else printf '%s\\n' ${shQ(systemdEnvLine(key, value))} >> "$NEW_ENV"; fi`,
-        )
+        .flatMap(([key, value]) => value
+          ? [`if [ -f "$OLD_ENV" ] && grep -q '^${key}=' "$OLD_ENV"; then grep '^${key}=' "$OLD_ENV" | tail -n1 >> "$NEW_ENV"; else printf '%s\\n' ${shQ(systemdEnvLine(key, value))} >> "$NEW_ENV"; fi`]
+          : [])
         .join("\n");
       await runSsh(`set -Ee
 export DEBIAN_FRONTEND=noninteractive
@@ -6086,7 +6088,7 @@ router.post("/:id/controller-links/export", async (req, res) => {
         version: inst.deployedVersion,
         status: inst.status,
         packageSource: inst.packageSource,
-        licenseVerifier: licenseKeyVerifier(inst.licenseKey),
+        licenseVerifier: licenseKeyVerifier(inst.licenseKey ?? ""),
       },
       source,
       target: { platformId: invite.targetPlatformId, origin: invite.targetOrigin },
@@ -6314,7 +6316,7 @@ router.post("/:id/controller-links/:linkId/renew", async (req, res) => {
         version: inst.deployedVersion,
         status: inst.status,
         packageSource: inst.packageSource,
-        licenseVerifier: licenseKeyVerifier(inst.licenseKey),
+        licenseVerifier: licenseKeyVerifier(inst.licenseKey ?? ""),
       },
       source,
       target: { platformId: invite.targetPlatformId, origin: invite.targetOrigin },
@@ -7682,12 +7684,17 @@ agentPublicRouter.post("/agent/controller-management", async (req, res) => {
     const payload = managementRequestPayload(operation, body.payload ?? {});
     const requesterPlatformId = platformId(String(body.requesterPlatformId ?? ""));
     const requesterOrigin = normalizeHttpsOrigin(String(body.requesterOrigin ?? ""));
+    const domain = normalizeHost(String(body.domain ?? ""));
+    if (!domain) throw Object.assign(new Error("invalid_domain"), { httpStatus: 400 });
     const [link] = await db.select().from(agentControllerLinksTable).where(and(
       eq(agentControllerLinksTable.linkId, String(body.linkId ?? "")),
       eq(agentControllerLinksTable.direction, "outbound"),
     )).limit(1);
     if (!link) throw Object.assign(new Error("controller_link_not_found"), { httpStatus: 404 });
     const token = typeof body.platformControlToken === "string" ? body.platformControlToken : "";
+    if (typeof body.dbFingerprint !== "string" || !body.dbFingerprint) {
+      throw Object.assign(new Error("invalid_db_fingerprint"), { httpStatus: 400 });
+    }
     assertPlatformControlToken(token, link.platformControlTokenVerifier);
     const local = localPlatformIdentity();
     assertSourceManagementAccess({
@@ -7696,7 +7703,7 @@ agentPublicRouter.post("/agent/controller-management", async (req, res) => {
       requesterPlatformId,
       requesterOrigin,
       installationId: body.installationId,
-      domain: normalizeHost(String(body.domain ?? "")),
+      domain,
       dbFingerprint: body.dbFingerprint,
       controllerEpoch: body.controllerEpoch,
       activeControllerId: body.activeControllerId,

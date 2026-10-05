@@ -3317,7 +3317,7 @@ router.put("/plans/:key", requireSuperAdmin, async (req, res) => {
 
   const [updated] = await db.update(planConfigsTable)
     .set(updates)
-    .where(eq(planConfigsTable.key, key))
+    .where(eq(planConfigsTable.key, String(key)))
     .returning();
 
   if (!updated) { res.status(404).json({ error: "الباقة غير موجودة" }); return; }
@@ -7421,7 +7421,7 @@ router.put("/email-channels/:channel", requireSuperAdmin, async (req, res) => {
 // (channel reverts to its built-in fallback: Outlook / system SMTP).
 router.delete("/email-channels/:channel", requireSuperAdmin, async (req, res) => {
   try {
-    const ch = parseChannelParam(req.params.channel);
+    const ch = parseChannelParam(String(req.params.channel));
     if (!ch) { res.status(400).json({ error: "قناة غير معروفة" }); return; }
     await db.delete(systemSettingsTable)
       .where(eq(systemSettingsTable.key, channelSettingKey(ch)));
@@ -7452,7 +7452,7 @@ router.delete("/email-channels/:channel", requireSuperAdmin, async (req, res) =>
 // channel's CURRENT resolution (pinned mailbox → Outlook/system fallbacks).
 router.post("/email-channels/:channel/test", requireSuperAdmin, async (req, res) => {
   try {
-    const ch = parseChannelParam(req.params.channel);
+    const ch = parseChannelParam(String(req.params.channel));
     if (!ch) { res.status(400).json({ error: "قناة غير معروفة" }); return; }
     const to = typeof req.body?.to === "string" ? req.body.to.trim() : "";
     if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {

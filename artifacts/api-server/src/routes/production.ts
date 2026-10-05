@@ -4586,9 +4586,10 @@ productionOverheadClosureRouter.post("/overhead-closures", closureActionPermissi
     const closure = await db.transaction(async (tx) => {
       await lockOverheadClosureMutation(tx, cid);
       let sourceKey = sourceKeyBase;
-      let [existing] = await tx.select().from(productionOverheadClosuresTable)
+      const [currentExisting] = await tx.select().from(productionOverheadClosuresTable)
         .where(and(eq(productionOverheadClosuresTable.companyId, cid),
           eq(productionOverheadClosuresTable.sourceKey, sourceKey))).limit(1);
+      let existing: typeof productionOverheadClosuresTable.$inferSelect | undefined = currentExisting;
       if (utilitySource && existing?.status === "reversed" &&
           isPendingUtilityClosure(existing.sourceSnapshot)) {
         // Snapshots (including source_key) are immutable. Find the latest

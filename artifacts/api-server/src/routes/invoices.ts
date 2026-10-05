@@ -11,6 +11,7 @@ import { invoiceRowToZatcaData, zatcaDocumentUuid } from "../lib/zatca-invoice-m
 import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { parseInvoiceDateFields } from "../lib/invoiceDateOnly.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -107,6 +108,11 @@ router.post("/", async (req, res) => {
     return;
   }
   const data = parsed.data;
+  const dateFields = parseInvoiceDateFields(req.body);
+  if (!dateFields) {
+    res.status(400).json({ error: "يجب إرسال تواريخ الفاتورة بصيغة YYYY-MM-DD" });
+    return;
+  }
   
   let subtotal = 0;
   let discountTotal = 0;
@@ -173,9 +179,9 @@ router.post("/", async (req, res) => {
     invoiceNumber,
     invoiceType: data.invoiceType,
     status: "draft",
-    issueDate: data.issueDate,
-    supplyDate: data.supplyDate,
-    dueDate: data.dueDate,
+    issueDate: dateFields.issueDate,
+    supplyDate: dateFields.supplyDate,
+    dueDate: dateFields.dueDate,
     currency: data.currency ?? "SAR",
     paymentMethod: d.paymentMethod ?? "10",
     subtotal: subtotal.toFixed(2),
@@ -233,6 +239,11 @@ router.put("/:id", documentMutationLock("zatca_invoice", async (req, res) => {
     return;
   }
   const data = parsed.data;
+  const dateFields = parseInvoiceDateFields(req.body);
+  if (!dateFields) {
+    res.status(400).json({ error: "يجب إرسال تواريخ الفاتورة بصيغة YYYY-MM-DD" });
+    return;
+  }
   
   let subtotal = 0;
   let discountTotal = 0;
@@ -261,9 +272,9 @@ router.put("/:id", documentMutationLock("zatca_invoice", async (req, res) => {
     companyId: data.companyId,
     customerId: data.customerId,
     invoiceType: data.invoiceType,
-    issueDate: data.issueDate,
-    supplyDate: data.supplyDate,
-    dueDate: data.dueDate,
+    issueDate: dateFields.issueDate,
+    supplyDate: dateFields.supplyDate,
+    dueDate: dateFields.dueDate,
     currency: data.currency ?? "SAR",
     paymentMethod: ud.paymentMethod ?? "10",
     subtotal: subtotal.toFixed(2),

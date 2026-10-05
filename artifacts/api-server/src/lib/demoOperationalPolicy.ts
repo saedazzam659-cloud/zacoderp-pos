@@ -54,11 +54,16 @@ export function isDemoOperationalRequest(url: string): boolean {
 }
 
 export function effectiveDemoPermissions(
-  original: Record<string, any> | null | undefined,
+  original: unknown,
   verified: boolean,
 ) {
-  if (!verified) return original;
-  const result = { ...original };
+  const permissions = original == null
+    ? original
+    : typeof original === "object" && !Array.isArray(original)
+      ? original as Record<string, any>
+      : {};
+  if (!verified) return permissions;
+  const result = { ...(permissions ?? {}) };
   for (const key of DEMO_OPERATIONAL_MODULES) {
     result[key] = { ...result[key], view: true, create: true, edit: true,
       delete: true, post: true, unpost: true, export: true, review: true,

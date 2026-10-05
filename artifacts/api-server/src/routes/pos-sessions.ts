@@ -117,7 +117,7 @@ router.post("/open", async (req, res) => {
         const [busy] = await tx.select({ id: posSessionsTable.id, userId: posSessionsTable.userId })
           .from(posSessionsTable)
           .where(and(
-            eq(posSessionsTable.companyId, u.companyId),
+            eq(posSessionsTable.companyId, Number(u.companyId)),
             eq(posSessionsTable.posTerminalId, Number(posTerminalId)),
             eq(posSessionsTable.status, "open"),
           )).limit(1);
@@ -133,7 +133,7 @@ router.post("/open", async (req, res) => {
           const allow = await tx.select({ userId: posTerminalUsersTable.userId })
             .from(posTerminalUsersTable)
             .where(and(
-              eq(posTerminalUsersTable.companyId, u.companyId),
+              eq(posTerminalUsersTable.companyId, Number(u.companyId)),
               eq(posTerminalUsersTable.posTerminalId, Number(posTerminalId)),
             ));
           const linked = allow.some(a => a.userId === u.id);
@@ -169,7 +169,7 @@ router.post("/open", async (req, res) => {
       }
 
       const [inserted] = await tx.insert(posSessionsTable).values({
-        companyId:     u.companyId,
+        companyId:     Number(u.companyId),
         userId:        u.id,
         branchId:      resolvedBranchId,
         cashBoxId:     resolvedCashBoxId,

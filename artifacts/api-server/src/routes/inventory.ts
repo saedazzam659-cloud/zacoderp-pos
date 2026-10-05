@@ -174,7 +174,7 @@ async function transferWarehouses(
     ));
   if (rows.length !== 2) throw Object.assign(new Error("مخزن غير صالح أو لا ينتمي للشركة"), { status: 400 });
   const allowed = req ? getAllowedBranchIds(req) : null;
-  if (allowed !== null && rows.some((row) => row.branchId == null || !allowed.includes(row.branchId))) {
+  if (allowed !== null && rows.some((row: any) => row.branchId == null || !allowed.includes(row.branchId))) {
     throw Object.assign(new Error("أحد مخازن التحويل خارج نطاق الفرع المسموح"), { status: 403 });
   }
   return rows;
@@ -2046,7 +2046,7 @@ async function linkTransferToProductionOrder(req: any, res: any) {
       }
       const warehouses = await transferWarehouses(tx, cid, transfer.fromWarehouseId, transfer.toWarehouseId, req);
       assertManufacturingDeliveryBranches(transfer.transferType, warehouses);
-      return linkPostedInternalTransport(tx, cid, transfer, orderId, req, warehouses.map((row) => row.branchId));
+      return linkPostedInternalTransport(tx, cid, transfer, orderId, req, warehouses.map((row: any) => row.branchId));
     });
     // Keep the incoming PATCH response shape; the POST contract is an envelope.
     res.json(result.transfer);
@@ -2152,7 +2152,7 @@ router.post("/stock-transfers", async (req, res) => {
     assertManufacturingDeliveryBranches(transferType, warehouseRows);
     await assertInternalTransportEnabledForCapture(db, cid, transportAmount);
     await validateInternalTransportAccounts(db, cid, transportAmount, internalTransportExpenseAccountId, internalTransportCounterpartAccountId);
-    await validateInternalTransportOrder(db, cid, orderId, warehouseRows.map((row) => row.branchId), req);
+    await validateInternalTransportOrder(db, cid, orderId, warehouseRows.map((row: any) => row.branchId), req);
   } catch (e: any) {
     res.status(e.status ?? 400).json({ error: e.message }); return;
   }
@@ -2270,7 +2270,7 @@ router.put("/stock-transfers/:id", async (req, res) => {
     assertManufacturingDeliveryBranches(effectiveType, warehouseRows);
     await assertInternalTransportEnabledForCapture(db, cid, transportAmount, Number(existing.internalTransportAmount));
     await validateInternalTransportAccounts(db, cid, transportAmount, expenseAccountId, counterpartAccountId);
-    await validateInternalTransportOrder(db, cid, orderId, warehouseRows.map((row) => row.branchId), req);
+    await validateInternalTransportOrder(db, cid, orderId, warehouseRows.map((row: any) => row.branchId), req);
     await assertCompanyOwned(cid, {
       warehouses: [nextFrom, nextTo].filter(Boolean) as number[],
       accounts: [fromAccountId, toAccountId, expenseAccountId, counterpartAccountId].map(Number).filter(Boolean) as number[],
@@ -2403,7 +2403,7 @@ router.post("/stock-transfers/:id/post", requirePostRight("stockMovement"), docu
         tx, cid, tr.fromWarehouseId, tr.toWarehouseId, req,
       );
       assertManufacturingDeliveryBranches(tr.transferType, transferWarehouseRows);
-      const transferBranches = transferWarehouseRows.map((row) => row.branchId);
+      const transferBranches = transferWarehouseRows.map((row: any) => row.branchId);
       try {
         await validateInternalTransportAccounts(
           tx, cid, internalTransportAmount(tr.internalTransportAmount),
@@ -2627,7 +2627,7 @@ router.post("/stock-transfers/:id/link-production-order", requirePostRight("stoc
       );
       assertManufacturingDeliveryBranches(transfer.transferType, warehouseRows);
       return linkPostedInternalTransport(
-        tx, cid, transfer, productionOrderId, req, warehouseRows.map((row) => row.branchId),
+        tx, cid, transfer, productionOrderId, req, warehouseRows.map((row: any) => row.branchId),
       );
     });
     res.json(result);
