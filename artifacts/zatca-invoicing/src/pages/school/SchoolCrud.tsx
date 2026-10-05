@@ -12,9 +12,17 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useSchoolContext, useSchoolCrud, useSchoolList, useSchoolLists, type Row } from "./schoolApi";
 
-export type FieldDef = { key: string; label: string; type?: "text" | "number" | "date" | "email" | "textarea" | "select" | "relation"; options?: [string, string][]; resource?: string; labelKey?: string; required?: boolean };
+export type FieldDef = { key: string; label: string; type?: "text" | "number" | "date" | "email" | "textarea" | "select" | "relation"; options?: [string, string][]; resource?: string; labelKey?: string; required?: boolean; clearable?: boolean; showWhen?: { key: string; value: string | string[] } };
 export type ColumnDef = { key: string; label: string; type?: "status" | "date" | "number" | "relation"; options?: [string, string][]; resource?: string; labelKey?: string };
 export type CrudConfig = { resource: string; title: string; description: string; singular: string; icon?: any; fields: FieldDef[]; columns: ColumnDef[]; defaultValues?: Record<string, any>; pageSize?: number };
+
+function matchesShowWhen(form: Record<string, any>, field: FieldDef): boolean {
+  if (!field.showWhen) return true;
+  const allowed = Array.isArray(field.showWhen.value)
+    ? field.showWhen.value
+    : [field.showWhen.value];
+  return allowed.includes(String(form[field.showWhen.key] ?? ""));
+}
 
 const relatedRowLabel = (field: FieldDef | ColumnDef, row: Row, lookups?: Record<string, Row[]>) => {
   const resource = field.resource;
@@ -70,6 +78,7 @@ export function SchoolCrudPage({
   const canDelete = usePermission("school", "delete");
   const { companyId, companyName } = useSchoolContext();
   const rows = data?.items ?? [];
+  const visibleFields = config.fields.filter(f => matchesShowWhen(form, f));
   const relationFields = [...config.fields, ...config.columns].filter(field => field.type === "relation" && field.resource);
   const nestedResources = new Set<string>();
   if (relationFields.some(field => field.resource === "enrollments")) {
@@ -97,19 +106,24 @@ export function SchoolCrudPage({
     setFormOpen(true);
   };
   const saveRow = () => {
-    const missing = config.fields.filter(f => f.required && (form[f.key] == null || String(form[f.key]).trim() === ""));
+    const missing = visibleFields.filter(f => f.required && (form[f.key] == null || String(form[f.key]).trim() === ""));
     if (missing.length) {
       setFormValidationError(`أكمل الحقول المطلوبة: ${missing.map(f => f.label).join("، ")}`);
       return;
     }
     setFormValidationError("");
-    const body = Object.fromEntries(config.fields.flatMap(f => {
+    const body = Object.fromEntries([
+      ...visibleFields.flatMap(f => {
       const val = form[f.key];
       // Omit untouched optional fields so database defaults remain active;
       // nullable values are null by default, while updates leave them intact.
-      if (val === "" || val == null) return [];
+      if (val === "" || val == null) {
+        return editing && f.clearable ? [[f.key, null] as [string, null]] : [];
+      }
       return [[f.key, f.type === "number" || f.type === "relation" ? Number(val) : f.type === "select" && (val === "true" || val === "false") ? val === "true" : val]];
-    }));
+      }),
+      ...(!editing ? [] : config.fields.filter(f => f.showWhen && f.showWhen.key && !visibleFields.includes(f) && form[f.key] === "").map(f => [f.key, null] as [string, null])),
+    ]);
     save.mutate({ id: editing?.id, body }, { onSuccess: () => setFormOpen(false) });
   };
   return (
@@ -128,9 +142,9 @@ export function SchoolCrudPage({
         </div>
         {formOpen && <div className="p-3 sm:p-4"><FormPanel icon={editing ? Pencil : Plus} title={editing ? `تعديل ${config.singular}` : `إضافة ${config.singular}`} subtitle={config.title} width="4xl" onClose={() => setFormOpen(false)} onSave={saveRow} saving={save.isPending} saveLabel="حفظ" cancelLabel="إلغاء">
            {(formValidationError || save.isError) && <div role="alert" className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{formValidationError || (save.error as Error).message || "تعذر حفظ البيانات"}</div>}
-          <FormGrid cols={2}>{config.fields.map(f => <Field key={f.key} label={f.label} required={f.required} className={f.type === "textarea" ? "md:col-span-2" : ""}>
+           <FormGrid cols={2}>{visibleFields.map(f => <Field key={f.key} label={f.label} required={f.required} className={f.type === "textarea" ? "md:col-span-2" : ""}>
              {f.type === "relation" ? <SearchCombobox items={(lookups[f.resource!] ?? []).map((r: Row) => ({ value: String(r.id), label: relatedRowLabel(f, r, lookups), description: r.code || r.jobTitle || r.phone || r.city || r.invoiceDate || "" }))} value={String(form[f.key] ?? "")} onValueChange={v => { setForm(prev => ({ ...prev, [f.key]: v })); setFormValidationError(""); }} placeholder="اختر من القائمة" searchPlaceholder="ابحث..." clearable />
-             : f.type === "select" ? <select aria-label={f.label} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={form[f.key] ?? ""} onChange={e => { setForm(prev => ({ ...prev, [f.key]: e.target.value })); setFormValidationError(""); }}><option value="">— اختر —</option>{f.options?.map(([v, l]) => <option value={v} key={v}>{l}</option>)}</select>
+              : f.type === "select" ? <select aria-label={f.label} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={form[f.key] ?? ""} onChange={e => { const value = e.target.value; setForm(prev => { const next = { ...prev, [f.key]: value }; config.fields.filter(field => field.showWhen && field.showWhen.key === f.key && !matchesShowWhen(next, field)).forEach(field => { next[field.key] = ""; }); return next; }); setFormValidationError(""); }}><option value="">— اختر —</option>{f.options?.map(([v, l]) => <option value={v} key={v}>{l}</option>)}</select>
              : f.type === "textarea" ? <textarea aria-label={f.label} className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form[f.key] ?? ""} onChange={e => { setForm(prev => ({ ...prev, [f.key]: e.target.value })); setFormValidationError(""); }} />
              : <Input aria-label={f.label} type={f.type || "text"} value={form[f.key] ?? ""} onChange={e => { setForm(prev => ({ ...prev, [f.key]: e.target.value })); setFormValidationError(""); }} required={f.required} />}</Field>)}</FormGrid>
         </FormPanel></div>}

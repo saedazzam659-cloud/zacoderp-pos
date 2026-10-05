@@ -230,6 +230,7 @@ import SchoolFees from "@/pages/school/Fees";
 import SchoolResources from "@/pages/school/Resources";
 import SchoolGuardianAccounts from "@/pages/school/GuardianAccounts";
 import SchoolFaceAttendance from "@/pages/school/FaceAttendance";
+import SchoolTransport from "@/pages/school/Transport";
 import CrmHub from "@/pages/crm/CrmHub";
 import CrmLeads from "@/pages/crm/CrmLeads";
 import CrmOpportunities from "@/pages/crm/CrmOpportunities";
@@ -516,7 +517,7 @@ const PROTECTED_PREFIXES = [
   "/hospital", "/hotel", "/hr", "/inbox", "/installments", "/inventory", "/invoices", "/maintenance",
   "/chat", "/notifications", "/org", "/pos-management", "/pos-monitoring", "/pos-operations",
   "/pos-settings", "/pos-terminals", "/production", "/simple-manufacturing", "/internal-control", "/purchasing",
-  "/sales", "/security", "/seo", "/sessions", "/settings", "/suppliers",
+  "/sales", "/school", "/security", "/seo", "/sessions", "/settings", "/suppliers",
   "/module-reports",
   "/users", "/vat-declaration", "/voice-assistant", "/work-sessions", "/tax-integration",
   "/zatca", "/zatca-bridge", "/zatca-report",
@@ -1139,6 +1140,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/school/attendance"   module="school" component={SchoolAttendance} />}
             {!isSuperAdmin && <PermRoute path="/school/assessments"  module="school" component={SchoolAssessments} />}
             {!isSuperAdmin && <PermRoute path="/school/fees"         module="school" component={SchoolFees} />}
+            {!isSuperAdmin && <PermRoute path="/school/transport"    module="school" component={SchoolTransport} />}
             {!isSuperAdmin && <PermRoute path="/school/resources"    module="school" component={SchoolResources} />}
 
             {/* CRM module — gated by `crm` permission. */}

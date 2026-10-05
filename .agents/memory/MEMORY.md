@@ -12,6 +12,7 @@
 - [School guardian portal boundary](school-guardian-portal-boundary.md) — keep guardian logins separate; consent gates face attendance, which must preserve manual records.
 - [School academic-control boundary](school-academic-control-boundary.md) — configurable independent grading weights, audited publication/reopen, and approved-only guardian results.
 - [School-year promotion boundary](school-year-promotion-boundary.md) — keep one student identity and immutable yearly enrollments; promotion must not create separate billing flows.
+- [School transport boundary](school-transport-boundary.md) — owned buses use fixed assets; rented buses use supplier leases; student opt-in and summer scope stay separate.
 - [Drizzle schema sync boundary](drizzle-schema-sync-boundary.md) — avoid forced or subset-schema pushes; they can emit destructive changes for unrelated ERP objects.
 
 - [POS Desktop index](pos-desktop-index.md) — POS Desktop shell, local data, fiscal, inventory, printing, licensing, and offline/ZATCA implementation notes.

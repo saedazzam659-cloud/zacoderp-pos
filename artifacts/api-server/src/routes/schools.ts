@@ -4,7 +4,9 @@ import {
   branchesTable,
   customersTable,
   employeesTable,
+  fixedAssetsTable,
   salesInvoicesTable,
+  suppliersTable,
 } from "@workspace/db";
 import {
   schoolAcademicYearsTable,
@@ -22,6 +24,10 @@ import {
   schoolStudentGuardiansTable,
   schoolStudentsTable,
   schoolSubjectsTable,
+  schoolTransportAssignmentsTable,
+  schoolTransportRoutesTable,
+  schoolTransportStopsTable,
+  schoolTransportVehiclesTable,
 } from "@workspace/db/schema";
 import {
   GetSchoolEnrollmentPromotionPlanQueryParams,
@@ -33,13 +39,14 @@ import {
   PromoteSchoolEnrollmentsResponse,
 } from "@workspace/api-zod";
 import {
-  and, asc, count, desc, eq, gte, ilike, inArray, lte, or, sql,
+  and, asc, count, desc, eq, gte, ilike, inArray, isNull, lte, or, sql,
 } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requirePermission } from "../middleware/permissions.js";
 import schoolPortalAdminRouter from "./schoolPortalAdmin.js";
 import schoolAcademicControlRouter from "./schoolAcademicControl.js";
 import { ensureSchoolAcademicControlSchema } from "../lib/schoolAcademicControlSchema.js";
+import { ensureSchoolTransportSchema } from "../lib/schoolTransportSchema.js";
 
 type FieldKind = "string" | "integer" | "number" | "boolean" | "date";
 type FieldSpec = {
@@ -54,6 +61,8 @@ type EntityConfig = {
   searchFields: string[];
   filterFields?: Record<string, string>;
   sortFields: string[];
+  readOnly?: boolean;
+  selection?: Record<string, any>;
 };
 
 const router = Router();
@@ -220,6 +229,101 @@ const ENTITIES: Record<string, EntityConfig> = {
     filterFields: { enrollmentId: "enrollmentId", guardianId: "guardianId", salesInvoiceId: "salesInvoiceId", status: "status" },
     sortFields: ["id", "description", "amount", "dueDate", "status", "createdAt"],
   },
+  "transport-vehicles": {
+    table: schoolTransportVehiclesTable,
+    fields: {
+      code: S(true), plateNumber: S(true),
+      ownerType: S(true, ["school_owned", "rented"]), capacity: I(true),
+      fixedAssetId: I(), supplierId: I(), leaseContractNo: S(),
+      leaseStartDate: D(), leaseEndDate: D(), monthlyRent: N(),
+      status: S(true, ["active", "out_of_service", "retired"]), notes: S(),
+    },
+    references: { fixedAssetId: fixedAssetsTable, supplierId: suppliersTable },
+    searchFields: ["code", "plateNumber", "leaseContractNo"],
+    filterFields: { ownerType: "ownerType", status: "status" },
+    sortFields: ["id", "code", "plateNumber", "ownerType", "capacity", "status", "createdAt"],
+  },
+  "transport-routes": {
+    table: schoolTransportRoutesTable,
+    fields: {
+      academicYearId: I(true), campusId: I(), code: S(true), name: S(true),
+      vehicleId: I(true), driverEmployeeId: I(), attendantEmployeeId: I(),
+      direction: S(true, ["morning", "afternoon", "round_trip"]),
+      capacityOverride: I(), isActive: B(), notes: S(),
+    },
+    references: {
+      academicYearId: schoolAcademicYearsTable,
+      campusId: schoolCampusesTable,
+      vehicleId: schoolTransportVehiclesTable,
+      driverEmployeeId: employeesTable,
+      attendantEmployeeId: employeesTable,
+    },
+    searchFields: ["code", "name", "direction"],
+    filterFields: { academicYearId: "academicYearId", campusId: "campusId", vehicleId: "vehicleId", isActive: "isActive" },
+    sortFields: ["id", "code", "name", "direction", "isActive", "createdAt"],
+  },
+  "transport-stops": {
+    table: schoolTransportStopsTable,
+    fields: {
+      routeId: I(true), sequence: I(true), name: S(true), address: S(),
+      pickupTime: S(), dropoffTime: S(), notes: S(),
+    },
+    references: { routeId: schoolTransportRoutesTable },
+    searchFields: ["name", "address"],
+    filterFields: { routeId: "routeId" },
+    sortFields: ["id", "routeId", "sequence", "name", "pickupTime", "dropoffTime"],
+  },
+  "transport-assignments": {
+    table: schoolTransportAssignmentsTable,
+    fields: {
+      academicYearId: I(true), enrollmentId: I(true), routeId: I(true),
+      pickupStopId: I(), dropoffStopId: I(),
+      serviceType: S(true, ["round_trip", "pickup_only", "dropoff_only"]),
+      startDate: D(true), endDate: D(), status: S(true, ["active", "inactive"]), notes: S(),
+    },
+    references: {
+      academicYearId: schoolAcademicYearsTable,
+      enrollmentId: schoolEnrollmentsTable,
+      routeId: schoolTransportRoutesTable,
+      pickupStopId: schoolTransportStopsTable,
+      dropoffStopId: schoolTransportStopsTable,
+    },
+    searchFields: ["serviceType", "status", "notes"],
+    filterFields: { academicYearId: "academicYearId", enrollmentId: "enrollmentId", routeId: "routeId", status: "status" },
+    sortFields: ["id", "academicYearId", "enrollmentId", "routeId", "startDate", "endDate", "status", "createdAt"],
+  },
+  // Read-only, company-scoped choices used by transport forms. Changes to
+  // assets and suppliers remain owned by their respective ERP modules.
+  "fixed-assets": {
+    table: fixedAssetsTable,
+    fields: {},
+    searchFields: ["code", "nameAr", "plateNumber"],
+    sortFields: ["id", "code", "nameAr", "plateNumber", "status"],
+    readOnly: true,
+    selection: {
+      id: fixedAssetsTable.id,
+      companyId: fixedAssetsTable.companyId,
+      code: fixedAssetsTable.code,
+      nameAr: fixedAssetsTable.nameAr,
+      plateNumber: fixedAssetsTable.plateNumber,
+      status: fixedAssetsTable.status,
+    },
+  },
+  "transport-suppliers": {
+    table: suppliersTable,
+    fields: {},
+    searchFields: ["code", "nameAr", "nameEn", "phone"],
+    sortFields: ["id", "nameAr", "code"],
+    readOnly: true,
+    selection: {
+      id: suppliersTable.id,
+      companyId: suppliersTable.companyId,
+      code: suppliersTable.code,
+      nameAr: suppliersTable.nameAr,
+      nameEn: suppliersTable.nameEn,
+      phone: suppliersTable.phone,
+    },
+  },
 };
 
 function errorMessage(error: unknown): { status: number; message: string } {
@@ -314,6 +418,145 @@ async function validateReferences(
     if (!await ownsRow(table, Number(id), companyId)) {
       res.status(400).json({ error: "إحدى البيانات المرتبطة غير موجودة في هذه الشركة" });
       return false;
+    }
+  }
+  return true;
+}
+
+async function lockTransportRouteCapacity(tx: any, companyId: number, routeId: number): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(${companyId}, ${routeId})`);
+}
+
+async function hasTransportAssignmentCapacity(
+  tx: any,
+  companyId: number,
+  routeId: number,
+  period: { academicYearId: number; startDate: string; endDate: string | null },
+  excludeAssignmentId?: number,
+): Promise<boolean> {
+  await lockTransportRouteCapacity(tx, companyId, routeId);
+  const [route] = await tx.select({
+    vehicleId: schoolTransportRoutesTable.vehicleId,
+    capacityOverride: schoolTransportRoutesTable.capacityOverride,
+    isActive: schoolTransportRoutesTable.isActive,
+    academicYearId: schoolTransportRoutesTable.academicYearId,
+  }).from(schoolTransportRoutesTable).where(and(
+    eq(schoolTransportRoutesTable.id, routeId),
+    eq(schoolTransportRoutesTable.companyId, companyId),
+  )).limit(1);
+  if (!route?.isActive || route.academicYearId !== period.academicYearId) return false;
+
+  const [vehicle] = await tx.select({
+    capacity: schoolTransportVehiclesTable.capacity,
+    status: schoolTransportVehiclesTable.status,
+    ownerType: schoolTransportVehiclesTable.ownerType,
+    leaseStartDate: schoolTransportVehiclesTable.leaseStartDate,
+    leaseEndDate: schoolTransportVehiclesTable.leaseEndDate,
+  }).from(schoolTransportVehiclesTable).where(and(
+    eq(schoolTransportVehiclesTable.id, route.vehicleId),
+    eq(schoolTransportVehiclesTable.companyId, companyId),
+  )).limit(1);
+  if (!vehicle || vehicle.status !== "active") return false;
+  if (vehicle.ownerType === "rented") {
+    const [year] = await tx.select({
+      startDate: schoolAcademicYearsTable.startDate,
+      endDate: schoolAcademicYearsTable.endDate,
+    }).from(schoolAcademicYearsTable).where(and(
+      eq(schoolAcademicYearsTable.id, period.academicYearId),
+      eq(schoolAcademicYearsTable.companyId, companyId),
+    )).limit(1);
+    if (!year || !vehicle.leaseStartDate || !vehicle.leaseEndDate
+      || period.startDate < year.startDate || period.startDate > year.endDate
+      || (period.endDate != null && (
+        period.endDate < period.startDate || period.endDate > year.endDate
+      ))
+      || period.startDate < vehicle.leaseStartDate
+      || (period.endDate ?? year.endDate) > vehicle.leaseEndDate) {
+      return false;
+    }
+  }
+
+  const capacity = Math.min(
+    Number(route.capacityOverride ?? vehicle.capacity),
+    Number(vehicle.capacity),
+  );
+  const conditions: any[] = [
+    eq(schoolTransportAssignmentsTable.companyId, companyId),
+    eq(schoolTransportAssignmentsTable.routeId, routeId),
+    eq(schoolTransportAssignmentsTable.status, "active"),
+  ];
+  if (excludeAssignmentId != null) {
+    conditions.push(sql`${schoolTransportAssignmentsTable.id} <> ${excludeAssignmentId}`);
+  }
+  const [occupied] = await tx.select({ total: count() })
+    .from(schoolTransportAssignmentsTable).where(and(...conditions));
+  return Number(occupied?.total ?? 0) < capacity;
+}
+
+async function transportVehicleFitsActiveRoutes(
+  tx: any,
+  companyId: number,
+  vehicleId: number,
+  proposed: Record<string, any>,
+): Promise<boolean> {
+  const routeIds = await tx.select({ id: schoolTransportRoutesTable.id })
+    .from(schoolTransportRoutesTable).where(and(
+      eq(schoolTransportRoutesTable.companyId, companyId),
+      eq(schoolTransportRoutesTable.vehicleId, vehicleId),
+      eq(schoolTransportRoutesTable.isActive, true),
+    )).orderBy(asc(schoolTransportRoutesTable.id));
+
+  for (const { id: routeId } of routeIds) {
+    await lockTransportRouteCapacity(tx, companyId, routeId);
+    const [route] = await tx.select({
+      academicYearId: schoolTransportRoutesTable.academicYearId,
+      capacityOverride: schoolTransportRoutesTable.capacityOverride,
+    }).from(schoolTransportRoutesTable).where(and(
+      eq(schoolTransportRoutesTable.id, routeId),
+      eq(schoolTransportRoutesTable.companyId, companyId),
+      eq(schoolTransportRoutesTable.vehicleId, vehicleId),
+      eq(schoolTransportRoutesTable.isActive, true),
+    )).limit(1);
+    if (!route) continue;
+    if (proposed.status !== "active") return false;
+
+    const [year] = await tx.select({
+      startDate: schoolAcademicYearsTable.startDate,
+      endDate: schoolAcademicYearsTable.endDate,
+    }).from(schoolAcademicYearsTable).where(and(
+      eq(schoolAcademicYearsTable.id, route.academicYearId),
+      eq(schoolAcademicYearsTable.companyId, companyId),
+    )).limit(1);
+    const [occupied] = await tx.select({ total: count() })
+      .from(schoolTransportAssignmentsTable).where(and(
+        eq(schoolTransportAssignmentsTable.companyId, companyId),
+        eq(schoolTransportAssignmentsTable.routeId, routeId),
+        eq(schoolTransportAssignmentsTable.status, "active"),
+      ));
+    const capacity = Math.min(
+      Number(route.capacityOverride ?? proposed.capacity),
+      Number(proposed.capacity),
+    );
+    if (!year
+      || (route.capacityOverride != null && Number(route.capacityOverride) > Number(proposed.capacity))
+      || Number(occupied?.total ?? 0) > capacity) return false;
+
+    if (proposed.ownerType === "rented") {
+      if (!proposed.leaseStartDate || !proposed.leaseEndDate
+        || proposed.leaseStartDate > year.endDate
+        || proposed.leaseEndDate < year.startDate) return false;
+      const assignments = await tx.select({
+        startDate: schoolTransportAssignmentsTable.startDate,
+        endDate: schoolTransportAssignmentsTable.endDate,
+      }).from(schoolTransportAssignmentsTable).where(and(
+        eq(schoolTransportAssignmentsTable.companyId, companyId),
+        eq(schoolTransportAssignmentsTable.routeId, routeId),
+        eq(schoolTransportAssignmentsTable.status, "active"),
+      ));
+      if (assignments.some((assignment: any) =>
+        assignment.startDate < proposed.leaseStartDate
+        || (assignment.endDate ?? year.endDate) > proposed.leaseEndDate
+      )) return false;
     }
   }
   return true;
@@ -439,6 +682,264 @@ async function validateBusinessRules(
           return false;
         }
       }
+    }
+  }
+  if (name === "transport-vehicles") {
+    if (Number(values.capacity) < 1) {
+      res.status(400).json({ error: "سعة الباص يجب أن تكون أكبر من صفر" });
+      return false;
+    }
+    if (values.ownerType === "school_owned") {
+      if (!values.fixedAssetId
+        || values.supplierId != null
+        || values.leaseContractNo
+        || values.leaseStartDate
+        || values.leaseEndDate
+        || values.monthlyRent != null) {
+        res.status(400).json({ error: "الباص المملوك للمدرسة يجب ربطه بأصل ثابت فقط، دون بيانات إيجار" });
+        return false;
+      }
+      const [asset] = await db.select({ status: fixedAssetsTable.status })
+        .from(fixedAssetsTable).where(and(
+          eq(fixedAssetsTable.id, values.fixedAssetId),
+          eq(fixedAssetsTable.companyId, companyId),
+        )).limit(1);
+      if (!asset || !["active", "in_maintenance", "fully_depreciated"].includes(asset.status)) {
+        res.status(400).json({ error: "اختر أصلًا ثابتًا غير مستبعد أو منقول إلى شركة أخرى" });
+        return false;
+      }
+    } else if (values.ownerType === "rented") {
+      if (values.fixedAssetId != null
+        || !values.supplierId
+        || !values.leaseContractNo
+        || !values.leaseStartDate
+        || !values.leaseEndDate
+        || Number(values.monthlyRent ?? 0) <= 0) {
+        res.status(400).json({ error: "الباص المستأجر يتطلب موردًا ورقم عقد وفترة إيجار وأجرة شهرية، ولا يُسجل كأصل" });
+        return false;
+      }
+      if (values.leaseStartDate > values.leaseEndDate) {
+        res.status(400).json({ error: "بداية عقد الإيجار يجب أن تسبق نهايته" });
+        return false;
+      }
+    }
+    if (values.id != null) {
+      const activeRoutes = await db.select({
+        id: schoolTransportRoutesTable.id,
+        academicYearId: schoolTransportRoutesTable.academicYearId,
+        capacityOverride: schoolTransportRoutesTable.capacityOverride,
+      }).from(schoolTransportRoutesTable).where(and(
+        eq(schoolTransportRoutesTable.companyId, companyId),
+        eq(schoolTransportRoutesTable.vehicleId, values.id),
+        eq(schoolTransportRoutesTable.isActive, true),
+      ));
+      for (const route of activeRoutes) {
+        if (values.status !== "active") {
+          res.status(409).json({ error: "أوقف مسارات الحافلة النشطة قبل تغيير حالتها التشغيلية" });
+          return false;
+        }
+        const [assigned] = await db.select({ total: count() })
+          .from(schoolTransportAssignmentsTable).where(and(
+            eq(schoolTransportAssignmentsTable.companyId, companyId),
+            eq(schoolTransportAssignmentsTable.routeId, route.id),
+            eq(schoolTransportAssignmentsTable.status, "active"),
+          ));
+        const routeCapacity = Math.min(
+          Number(route.capacityOverride ?? values.capacity),
+          Number(values.capacity),
+        );
+        if (Number(assigned?.total ?? 0) > routeCapacity) {
+          res.status(409).json({ error: "سعة الحافلة لا يمكن أن تقل عن عدد الطلاب المسجلين في مساراتها" });
+          return false;
+        }
+        if (values.ownerType === "rented") {
+          const [year] = await db.select({
+            startDate: schoolAcademicYearsTable.startDate,
+            endDate: schoolAcademicYearsTable.endDate,
+          }).from(schoolAcademicYearsTable).where(and(
+            eq(schoolAcademicYearsTable.id, route.academicYearId),
+            eq(schoolAcademicYearsTable.companyId, companyId),
+          )).limit(1);
+          if (!year
+            || values.leaseStartDate > year.endDate
+            || values.leaseEndDate < year.startDate) {
+            res.status(400).json({ error: "عقد الإيجار لا يغطي فترة أي مسار نشط للحافلة" });
+            return false;
+          }
+          const assignments = await db.select({
+            startDate: schoolTransportAssignmentsTable.startDate,
+            endDate: schoolTransportAssignmentsTable.endDate,
+          }).from(schoolTransportAssignmentsTable).where(and(
+            eq(schoolTransportAssignmentsTable.companyId, companyId),
+            eq(schoolTransportAssignmentsTable.routeId, route.id),
+            eq(schoolTransportAssignmentsTable.status, "active"),
+          ));
+          if (assignments.some((assignment) =>
+            assignment.startDate < values.leaseStartDate
+            || (assignment.endDate ?? year.endDate) > values.leaseEndDate
+          )) {
+            res.status(400).json({ error: "مدة عقد الإيجار لا تغطي اشتراكات الطلاب النشطة" });
+            return false;
+          }
+        }
+      }
+    }
+  }
+  if (name === "transport-routes") {
+    const [year] = await db.select({
+      startDate: schoolAcademicYearsTable.startDate,
+      endDate: schoolAcademicYearsTable.endDate,
+    }).from(schoolAcademicYearsTable).where(and(
+      eq(schoolAcademicYearsTable.id, values.academicYearId),
+      eq(schoolAcademicYearsTable.companyId, companyId),
+    )).limit(1);
+    const [vehicle] = await db.select().from(schoolTransportVehiclesTable).where(and(
+      eq(schoolTransportVehiclesTable.id, values.vehicleId),
+      eq(schoolTransportVehiclesTable.companyId, companyId),
+    )).limit(1);
+    if (!year || !vehicle) {
+      res.status(400).json({ error: "السنة الدراسية أو الباص غير موجود" });
+      return false;
+    }
+    if (values.isActive !== false && vehicle.status !== "active") {
+      res.status(400).json({ error: "لا يمكن تشغيل مسار بباص غير نشط أو خارج الخدمة" });
+      return false;
+    }
+    const capacity = values.capacityOverride == null ? vehicle.capacity : Number(values.capacityOverride);
+    if (capacity < 1 || capacity > vehicle.capacity) {
+      res.status(400).json({ error: "سعة المسار يجب أن تكون أكبر من صفر ولا تتجاوز سعة الباص" });
+      return false;
+    }
+    if (values.isActive !== false && vehicle.ownerType === "rented") {
+      const leaseStartDate = vehicle.leaseStartDate;
+      const leaseEndDate = vehicle.leaseEndDate;
+      if (!leaseStartDate || !leaseEndDate
+        || leaseStartDate > year.endDate || leaseEndDate < year.startDate) {
+        res.status(400).json({ error: "مدة عقد إيجار الباص لا تتداخل مع العام الدراسي المحدد" });
+        return false;
+      }
+      if (values.id != null) {
+        const assignments = await db.select({
+          startDate: schoolTransportAssignmentsTable.startDate,
+          endDate: schoolTransportAssignmentsTable.endDate,
+        }).from(schoolTransportAssignmentsTable).where(and(
+          eq(schoolTransportAssignmentsTable.companyId, companyId),
+          eq(schoolTransportAssignmentsTable.routeId, values.id),
+          eq(schoolTransportAssignmentsTable.status, "active"),
+        ));
+        if (assignments.some((assignment) =>
+          assignment.startDate < leaseStartDate
+          || (assignment.endDate ?? year.endDate) > leaseEndDate
+        )) {
+          res.status(400).json({ error: "عقد إيجار الباص لا يغطي اشتراكات الطلاب النشطة في المسار" });
+          return false;
+        }
+      }
+    }
+    const [assigned] = await db.select({ total: count() }).from(schoolTransportAssignmentsTable)
+      .where(and(
+        eq(schoolTransportAssignmentsTable.companyId, companyId),
+        eq(schoolTransportAssignmentsTable.routeId, values.id ?? -1),
+        eq(schoolTransportAssignmentsTable.status, "active"),
+      ));
+    if (Number(assigned?.total ?? 0) > capacity) {
+      res.status(409).json({ error: "لا يمكن خفض السعة عن عدد الطلاب المسجلين حاليًا في المسار" });
+      return false;
+    }
+  }
+  if (name === "transport-stops") {
+    if (Number(values.sequence) < 1) {
+      res.status(400).json({ error: "ترتيب المحطة يجب أن يبدأ من 1" });
+      return false;
+    }
+    for (const field of ["pickupTime", "dropoffTime"]) {
+      if (values[field] != null && !/^([01]\d|2[0-3]):[0-5]\d$/.test(values[field])) {
+        res.status(400).json({ error: "وقت المحطة يجب أن يكون بصيغة ساعة:دقيقة" });
+        return false;
+      }
+    }
+  }
+  if (name === "transport-assignments") {
+    const [year] = await db.select({
+      startDate: schoolAcademicYearsTable.startDate,
+      endDate: schoolAcademicYearsTable.endDate,
+    }).from(schoolAcademicYearsTable).where(and(
+      eq(schoolAcademicYearsTable.id, values.academicYearId),
+      eq(schoolAcademicYearsTable.companyId, companyId),
+    )).limit(1);
+    const [enrollment] = await db.select({
+      academicYearId: schoolEnrollmentsTable.academicYearId,
+      status: schoolEnrollmentsTable.status,
+    }).from(schoolEnrollmentsTable).where(and(
+      eq(schoolEnrollmentsTable.id, values.enrollmentId),
+      eq(schoolEnrollmentsTable.companyId, companyId),
+    )).limit(1);
+    const [route] = await db.select({
+      academicYearId: schoolTransportRoutesTable.academicYearId,
+      isActive: schoolTransportRoutesTable.isActive,
+      vehicleId: schoolTransportRoutesTable.vehicleId,
+    }).from(schoolTransportRoutesTable).where(and(
+      eq(schoolTransportRoutesTable.id, values.routeId),
+      eq(schoolTransportRoutesTable.companyId, companyId),
+    )).limit(1);
+    if (!year || !enrollment || !route
+      || enrollment.academicYearId !== values.academicYearId
+      || route.academicYearId !== values.academicYearId) {
+      res.status(400).json({ error: "الطالب والمسار يجب أن يتبعا السنة الدراسية نفسها" });
+      return false;
+    }
+    if (enrollment.status !== "active" || !route.isActive) {
+      res.status(400).json({ error: "يجب اختيار قيد طالب نشط ومسار نقل نشط" });
+      return false;
+    }
+    if (values.startDate < year.startDate || values.startDate > year.endDate
+      || (values.endDate && (
+        values.endDate < values.startDate || values.endDate > year.endDate
+      ))) {
+      res.status(400).json({ error: "فترة اشتراك النقل يجب أن تقع داخل السنة الدراسية" });
+      return false;
+    }
+    const stopIds = [values.pickupStopId, values.dropoffStopId].filter((id) => id != null);
+    if (values.serviceType === "round_trip" && stopIds.length !== 2) {
+      res.status(400).json({ error: "الاشتراك ذهابًا وإيابًا يتطلب تحديد محطتي الركوب والإنزال" });
+      return false;
+    }
+    if (values.serviceType === "pickup_only"
+      && (values.pickupStopId == null || values.dropoffStopId != null)) {
+      res.status(400).json({ error: "خدمة الصعود فقط تتطلب محطة ركوب واحدة دون محطة إنزال" });
+      return false;
+    }
+    if (values.serviceType === "dropoff_only"
+      && (values.dropoffStopId == null || values.pickupStopId != null)) {
+      res.status(400).json({ error: "خدمة الإنزال فقط تتطلب محطة إنزال واحدة دون محطة ركوب" });
+      return false;
+    }
+    if (stopIds.length) {
+      const matchingStops = await db.select({ id: schoolTransportStopsTable.id })
+        .from(schoolTransportStopsTable).where(and(
+          eq(schoolTransportStopsTable.companyId, companyId),
+          eq(schoolTransportStopsTable.routeId, values.routeId),
+          inArray(schoolTransportStopsTable.id, stopIds),
+        ));
+      if (matchingStops.length !== stopIds.length) {
+        res.status(400).json({ error: "محطات الطالب يجب أن تكون ضمن المسار المحدد" });
+        return false;
+      }
+    }
+    const [vehicle] = await db.select({
+      ownerType: schoolTransportVehiclesTable.ownerType,
+      leaseStartDate: schoolTransportVehiclesTable.leaseStartDate,
+      leaseEndDate: schoolTransportVehiclesTable.leaseEndDate,
+    }).from(schoolTransportVehiclesTable).where(and(
+      eq(schoolTransportVehiclesTable.id, route.vehicleId),
+      eq(schoolTransportVehiclesTable.companyId, companyId),
+    )).limit(1);
+    if (vehicle?.ownerType === "rented"
+      && (!vehicle.leaseStartDate || !vehicle.leaseEndDate
+        || values.startDate < vehicle.leaseStartDate
+        || (values.endDate ?? year.endDate) > vehicle.leaseEndDate)) {
+      res.status(400).json({ error: "فترة اشتراك الطالب يجب أن تكون ضمن مدة عقد إيجار الباص" });
+      return false;
     }
   }
   return true;
@@ -973,6 +1474,24 @@ router.get("/lookups/:resource", async (req, res) => {
   }
 });
 
+const TRANSPORT_RESOURCES = [
+  "transport-vehicles",
+  "transport-routes",
+  "transport-stops",
+  "transport-assignments",
+] as const;
+
+for (const name of TRANSPORT_RESOURCES) {
+  router.use(`/${name}`, async (_req, _res, next) => {
+    try {
+      await ensureSchoolTransportSchema();
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
+}
+
 for (const [name, config] of Object.entries(ENTITIES)) {
   if (name === "exams" || name === "results") {
     router.use(`/${name}`, async (_req, _res, next) => {
@@ -991,6 +1510,18 @@ for (const [name, config] of Object.entries(ENTITIES)) {
       const page = Math.max(1, Math.min(100_000, Math.trunc(Number(queryValue(req, "page")) || 1)));
       const pageSize = Math.max(1, Math.min(100, Math.trunc(Number(queryValue(req, "limit")) || 50)));
       const conditions: any[] = [eq(config.table.companyId, companyId)];
+      if (name === "fixed-assets") {
+        conditions.push(inArray(fixedAssetsTable.status, ["active", "in_maintenance", "fully_depreciated"]));
+      }
+      if (name === "transport-suppliers") {
+        conditions.push(
+          eq(suppliersTable.isActive, true),
+          or(
+            isNull(suppliersTable.partyClassification),
+            inArray(suppliersTable.partyClassification, ["supplier", "both"]),
+          ),
+        );
+      }
       const q = queryValue(req, "q")?.trim().slice(0, 120);
       if (q && config.searchFields.length) {
         conditions.push(or(...config.searchFields.map((field) => ilike(config.table[field], `%${q}%`))));
@@ -1028,8 +1559,11 @@ for (const [name, config] of Object.entries(ENTITIES)) {
         ? requestedSort
         : "id";
       const sortDirection = queryValue(req, "dir") === "asc" ? asc : desc;
+      const rowsQuery: any = config.selection
+        ? db.select(config.selection).from(config.table)
+        : db.select().from(config.table);
       const [items, totals] = await Promise.all([
-        db.select().from(config.table).where(where)
+        rowsQuery.where(where)
           .orderBy(sortDirection(config.table[sortField]))
           .limit(pageSize).offset((page - 1) * pageSize),
         db.select({ total: count() }).from(config.table).where(where),
@@ -1042,6 +1576,10 @@ for (const [name, config] of Object.entries(ENTITIES)) {
 
   router.post(`/${name}`, requirePermission("school", "create"), async (req, res) => {
     try {
+      if (config.readOnly) {
+        res.status(405).json({ error: "هذه القائمة للعرض فقط" });
+        return;
+      }
       const companyId = companyIdFor(req, res, req.body?.companyId);
       if (!companyId) return;
       const normalized = normalizeBody(req.body, config, false);
@@ -1063,6 +1601,14 @@ for (const [name, config] of Object.entries(ENTITIES)) {
         return;
       }
       const saved = await db.transaction(async (tx: any) => {
+        if (name === "transport-assignments" && values.status === "active"
+          && !await hasTransportAssignmentCapacity(tx, companyId, values.routeId, {
+            academicYearId: values.academicYearId,
+            startDate: values.startDate,
+            endDate: values.endDate ?? null,
+          })) {
+          return null;
+        }
         if (name === "academic-years" && values.isCurrent === true) {
           await tx.update(schoolAcademicYearsTable)
             .set({ isCurrent: false, updatedAt: new Date() })
@@ -1087,6 +1633,10 @@ for (const [name, config] of Object.entries(ENTITIES)) {
         }
         return row;
       });
+      if (!saved) {
+        res.status(409).json({ error: "سعة المسار ممتلئة أو أن الباص لم يعد متاحًا لهذا المسار" });
+        return;
+      }
       res.status(201).json(saved);
     } catch (error) {
       fail(res, error);
@@ -1095,6 +1645,10 @@ for (const [name, config] of Object.entries(ENTITIES)) {
 
   router.put(`/${name}/:id`, requirePermission("school", "edit"), async (req, res) => {
     try {
+      if (config.readOnly) {
+        res.status(405).json({ error: "هذه القائمة للعرض فقط" });
+        return;
+      }
       const companyId = companyIdFor(req, res, req.body?.companyId);
       if (!companyId) return;
       const id = Number(req.params.id);
@@ -1133,6 +1687,39 @@ for (const [name, config] of Object.entries(ENTITIES)) {
         return;
       }
       const saved = await db.transaction(async (tx: any) => {
+        if (name === "transport-vehicles"
+          && !await transportVehicleFitsActiveRoutes(tx, companyId, id, merged)) {
+          return null;
+        }
+        if (name === "transport-routes") {
+          await lockTransportRouteCapacity(tx, companyId, id);
+          const [vehicle] = await tx.select({ capacity: schoolTransportVehiclesTable.capacity })
+            .from(schoolTransportVehiclesTable).where(and(
+              eq(schoolTransportVehiclesTable.id, merged.vehicleId),
+              eq(schoolTransportVehiclesTable.companyId, companyId),
+            )).limit(1);
+          const [occupied] = await tx.select({ total: count() })
+            .from(schoolTransportAssignmentsTable).where(and(
+              eq(schoolTransportAssignmentsTable.companyId, companyId),
+              eq(schoolTransportAssignmentsTable.routeId, id),
+              eq(schoolTransportAssignmentsTable.status, "active"),
+            ));
+          const maxCapacity = vehicle
+            ? Math.min(Number(merged.capacityOverride ?? vehicle.capacity), Number(vehicle.capacity))
+            : 0;
+          if (Number(occupied?.total ?? 0) > 0
+            && (!merged.isActive || Number(occupied.total) > maxCapacity)) {
+            return null;
+          }
+        }
+        if (name === "transport-assignments" && merged.status === "active"
+          && !await hasTransportAssignmentCapacity(tx, companyId, merged.routeId, {
+            academicYearId: merged.academicYearId,
+            startDate: merged.startDate,
+            endDate: merged.endDate ?? null,
+          }, id)) {
+          return null;
+        }
         if (name === "academic-years" && values.isCurrent === true) {
           await tx.update(schoolAcademicYearsTable)
             .set({ isCurrent: false, updatedAt: new Date() })
@@ -1162,6 +1749,16 @@ for (const [name, config] of Object.entries(ENTITIES)) {
         }
         return row;
       });
+      if (!saved) {
+        res.status(409).json({
+          error: name === "transport-routes"
+            ? "لا يمكن تعطيل المسار أو خفض سعته قبل معالجة إسنادات الطلاب النشطة"
+            : name === "transport-vehicles"
+              ? "لا يمكن تغيير حالة الحافلة أو سعتها بما يخالف المسارات والاشتراكات النشطة"
+              : "سعة المسار ممتلئة أو أن الباص لم يعد متاحًا لهذا المسار",
+        });
+        return;
+      }
       res.json(saved);
     } catch (error) {
       fail(res, error);
@@ -1170,6 +1767,10 @@ for (const [name, config] of Object.entries(ENTITIES)) {
 
   router.delete(`/${name}/:id`, requirePermission("school", "delete"), async (req, res) => {
     try {
+      if (config.readOnly) {
+        res.status(405).json({ error: "هذه القائمة للعرض فقط" });
+        return;
+      }
       const companyId = companyIdFor(req, res);
       if (!companyId) return;
       const id = Number(req.params.id);

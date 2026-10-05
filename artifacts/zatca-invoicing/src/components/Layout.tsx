@@ -16,7 +16,7 @@ import { appRouteHref } from "@/lib/appRouteHref";
 import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import AgentServerUpdateDialog from "@/components/AgentServerUpdateDialog";
 import {
-  LayoutDashboard, Building2, FileText, FileSpreadsheet, Users, Settings, Hotel, BedDouble, UserSquare2, BrushCleaning,
+  LayoutDashboard, Building2, FileText, FileSpreadsheet, Users, Settings, Hotel, BedDouble, UserSquare2, BrushCleaning, BusFront,
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
   Package, PackagePlus, PackageMinus, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2, ListTree,
@@ -367,6 +367,7 @@ const schoolSubNav: NavDef[] = [
   { nameKey: "nav.schoolAttendance",  href: "/school/attendance",   icon: CalendarRange, permKey: "school" },
   { nameKey: "nav.schoolAssessments", href: "/school/assessments",  icon: ClipboardList, permKey: "school" },
   { nameKey: "nav.schoolFees",        href: "/school/fees",         icon: Wallet,        permKey: "school" },
+  { nameKey: "nav.schoolTransport",   href: "/school/transport",    icon: BusFront,      permKey: "school" },
   { nameKey: "nav.schoolResources",   href: "/school/resources",    icon: Link2,         permKey: "school" },
 ];
 const SCHOOL_GROUP_PERMS = ["school"];
