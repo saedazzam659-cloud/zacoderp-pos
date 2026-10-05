@@ -5,6 +5,7 @@ import { ArrowRight, KeyRound, Link2, Plus, RefreshCw, Search, ShieldCheck, User
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import SchoolExportMenu from "./SchoolExportMenu";
 import { useCreateSchoolGuardianPortalAccount, useGetSchoolGuardianPortalAccounts, useUpdateSchoolGuardianPortalAccount, getGetSchoolGuardianPortalAccountsQueryKey } from "@workspace/api-client-react";
 import type { SchoolGuardianPortalAccount } from "@workspace/api-client-react";
 import { useSchoolList, type Row } from "./schoolApi";
@@ -36,6 +37,21 @@ export default function GuardianAccounts() {
     student: studentById.get(Number(g.studentId)),
   })), [guardians.data?.items, studentById]);
   const rows = (accounts.data ?? []).filter(a => `${a.displayName} ${a.username}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+  const accountColumns = [
+    { key: "displayName", header: "اسم العرض", width: 24 },
+    { key: "username", header: "اسم المستخدم", width: 22 },
+    { key: "status", header: "الحالة", width: 14 },
+    { key: "guardians", header: "أولياء الأمور والطلاب", width: 44 },
+    { key: "createdAt", header: "تاريخ الإنشاء", width: 18 },
+  ];
+  const toAccountExportRow = (account: SchoolGuardianPortalAccount) => ({
+    displayName: account.displayName,
+    username: account.username,
+    status: account.isActive ? "نشط" : "موقوف",
+    guardians: account.guardians.map(link => `${link.studentNameAr} · ولي أمر #${link.guardianId}`).join("، ") || "—",
+    createdAt: account.createdAt,
+  });
+  const accountExportRows = rows.map(toAccountExportRow);
 
   function openCreate() {
     setEditing(null); setDraft(initialDraft); setError(""); setNotice(""); setFormOpen(true);
@@ -91,7 +107,10 @@ export default function GuardianAccounts() {
     <section className="overflow-hidden rounded-xl border bg-card">
       <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
         <div><h2 className="font-bold">سجل الحسابات</h2><p className="mt-1 text-xs text-muted-foreground">تظهر هنا روابط الحساب بسجلات ولي الأمر والطالب.</p></div>
-        <label className="relative block w-full sm:w-72"><Search className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={search} onChange={e => setSearch(e.target.value)} className="pr-9" placeholder="بحث بالاسم أو اسم المستخدم" data-testid="input-account-search" /></label>
+        <div className="flex flex-wrap items-center gap-2">
+          <SchoolExportMenu rows={accountExportRows} columns={accountColumns} filename="school-guardian-portal-accounts" title="حسابات أولياء الأمور" subtitle="بيانات الدخول وروابط سجلات ولي الأمر والطالب. لا يتضمن المستند كلمات مرور." disabled={accounts.isLoading || accounts.isError} />
+          <label className="relative block w-full sm:w-72"><Search className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={search} onChange={e => setSearch(e.target.value)} className="pr-9" placeholder="بحث بالاسم أو اسم المستخدم" data-testid="input-account-search" /></label>
+        </div>
       </div>
       {accounts.isLoading ? (
         <div className="space-y-3 p-5" aria-label="تحميل الحسابات">
@@ -132,6 +151,7 @@ export default function GuardianAccounts() {
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap gap-2">
+                <SchoolExportMenu rows={[toAccountExportRow(account)]} columns={accountColumns} filename={`school-guardian-portal-account-${account.id}`} title={`حساب ولي الأمر: ${account.displayName}`} subtitle="بيانات الحساب وروابط السجلات المرتبطة." label="مستند" />
                 <Button size="sm" variant="outline" onClick={() => openEdit(account)} data-testid={`button-edit-account-${account.id}`}>
                   <UserRoundCog className="ms-2 h-4 w-4" />تعديل / كلمة المرور
                 </Button>
@@ -172,7 +192,7 @@ function AccountForm({ open, editing, draft, setDraft, linkedRows, guardiansLoad
 }) {
   if (!open) return null;
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#173b34]/35 p-0 backdrop-blur-[2px] sm:items-center sm:p-5" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-    <form onSubmit={onSubmit} className="max-h-[92dvh] w-full overflow-y-auto rounded-t-2xl border bg-background p-5 shadow-2xl sm:max-w-2xl sm:rounded-2xl" aria-label={editing ? "تعديل حساب ولي الأمر" : "إنشاء حساب ولي أمر"}>
+    <form onSubmit={onSubmit} className="max-h-[92dvh] w-full overflow-y-auto rounded-t-2xl border bg-background p-5 shadow-2xl sm:w-[calc(100vw-2rem)] sm:max-w-none sm:rounded-2xl" aria-label={editing ? "تعديل حساب ولي الأمر" : "إنشاء حساب ولي أمر"}>
       <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-wide text-primary">إعداد وصول البوابة</p><h2 className="mt-1 text-xl font-bold">{editing ? "تعديل الحساب" : "حساب ولي أمر جديد"}</h2><p className="mt-1 text-sm text-muted-foreground">اربط الحساب بسجل واحد أو أكثر من سجلات أولياء الأمور.</p></div><Button type="button" variant="ghost" onClick={onClose}>إغلاق</Button></div>
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <label className="space-y-1.5 text-sm font-semibold">اسم العرض<Input required maxLength={160} value={draft.displayName} onChange={e => setDraft(v => ({ ...v, displayName: e.target.value }))} data-testid="input-account-display-name" /></label>

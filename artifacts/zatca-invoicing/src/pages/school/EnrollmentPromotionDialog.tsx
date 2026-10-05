@@ -203,7 +203,7 @@ export function EnrollmentPromotionDialog({
   };
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="max-h-[94vh] max-w-6xl overflow-y-auto" dir="rtl">
+    <DialogContent className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-h-[94dvh] max-w-none overflow-y-auto" dir="rtl">
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2"><GraduationCap className="h-5 w-5 text-primary" />ترحيل الطلاب إلى سنة دراسية جديدة</DialogTitle>
         <DialogDescription>

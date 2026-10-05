@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2, Printer } from "lucide-react";
 import { exportToExcelBranded, exportToPDF, type ExportColumn, type ExportExtraSection, type ExportCompanyInfo } from "@/lib/export";
+import { exportToWordBranded } from "@/lib/exportWord";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
@@ -42,10 +43,12 @@ interface ExportButtonsProps {
   pdfFitOneLine?: boolean;
   /** Also show a one-click print action beside the export menu. */
   showPrintButton?: boolean;
+  /** Add an editable, branded Microsoft Word document to the export menu. */
+  showWordButton?: boolean;
 }
 
 export default function ExportButtons({
-  rows, loadRows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections, label, pdfFitOneLine, showPrintButton = false,
+  rows, loadRows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections, label, pdfFitOneLine, showPrintButton = false, showWordButton = false,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
   const gate = useDemoActionGate();
@@ -74,7 +77,7 @@ export default function ExportButtons({
       }
     : null;
 
-  async function handleExport(type: "excel" | "pdf" | "print") {
+  async function handleExport(type: "excel" | "pdf" | "print" | "word") {
     setBusy(true);
     try {
       if (!(await gate(type === "print" ? "print" : "export"))) return;
@@ -137,6 +140,15 @@ export default function ExportButtons({
         // saves as `${filename}.pdf`. Must await so the busy spinner
         // stays visible until the file dialog appears.
         await exportToPDF(resolvedRows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo, extraSections, company, { fitOneLine: pdfFitOneLine });
+      } else if (type === "word") {
+        await exportToWordBranded(resolvedRows, columns, filename, {
+          company,
+          title,
+          subtitle,
+          totalsRow,
+          summaryFooter: summaryFooter ?? undefined,
+          extraSections,
+        });
       } else {
         // Print: open the formatted HTML and trigger window.print() automatically
         await exportToPDF(resolvedRows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo, extraSections, company, { fitOneLine: pdfFitOneLine });
@@ -164,7 +176,7 @@ export default function ExportButtons({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">
           <DropdownMenuLabel className="text-xs text-muted-foreground">
-            {rows.length === 0 ? "لا توجد بيانات" : `${rows.length} سجل`}
+            {loadRows ? "السجلات المطابقة" : rows.length === 0 ? "لا توجد بيانات" : `${rows.length} سجل`}
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("excel")}>
@@ -175,6 +187,10 @@ export default function ExportButtons({
             <FileText className="h-4 w-4 text-red-500" />
             <span>PDF (.pdf)</span>
           </DropdownMenuItem>
+          {showWordButton && <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("word")}>
+            <FileText className="h-4 w-4 text-emerald-700" />
+            <span>Word (.docx)</span>
+          </DropdownMenuItem>}
           <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("print")}>
             <Printer className="h-4 w-4 text-blue-600" />
             <span>طباعة</span>

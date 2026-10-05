@@ -9,6 +9,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import ExportButtons from "@/components/ExportButtons";
+import type { ExportColumn, ExportExtraSection } from "@/lib/export";
 import type { Row } from "./schoolApi";
 import { useSchoolContext } from "./schoolApi";
 
@@ -124,9 +126,56 @@ export function StudentAcademicHistoryDialog({
       },
     },
   );
+  const enrollmentColumns: ExportColumn[] = [
+    { key: "yearName", header: "السنة الدراسية", width: 24 },
+    { key: "className", header: "الفصل", width: 22 },
+    { key: "enrollmentDate", header: "تاريخ القيد", width: 18 },
+    { key: "status", header: "حالة القيد", width: 16 },
+    { key: "attendanceTotal", header: "إجمالي الحضور", width: 16 },
+    { key: "present", header: "حاضر", width: 12 },
+    { key: "absent", header: "غائب", width: 12 },
+    { key: "late", header: "متأخر", width: 12 },
+    { key: "excused", header: "بعذر", width: 12 },
+  ];
+  const historyRows = (history.data?.enrollments ?? []).map(enrollment => ({
+    yearName: enrollment.yearName,
+    className: enrollment.className,
+    enrollmentDate: formatDate(enrollment.enrollmentDate),
+    status: enrollmentStatus(enrollment.status),
+    attendanceTotal: enrollment.attendance.total,
+    present: enrollment.attendance.present,
+    absent: enrollment.attendance.absent,
+    late: enrollment.attendance.late,
+    excused: enrollment.attendance.excused,
+  }));
+  const resultColumns: ExportColumn[] = [
+    { key: "yearName", header: "السنة الدراسية", width: 22 },
+    { key: "examName", header: "الاختبار", width: 24 },
+    { key: "subjectName", header: "المادة", width: 20 },
+    { key: "examDate", header: "التاريخ", width: 16 },
+    { key: "score", header: "الدرجة", width: 14 },
+    { key: "maxScore", header: "من", width: 10 },
+    { key: "percentage", header: "النسبة", width: 14 },
+  ];
+  const resultRows = (history.data?.enrollments ?? []).flatMap(enrollment =>
+    enrollment.results.map(result => ({
+      yearName: enrollment.yearName,
+      examName: result.examName,
+      subjectName: result.subjectName,
+      examDate: formatDate(result.examDate),
+      score: result.score,
+      maxScore: result.maxScore,
+      percentage: result.percentage == null ? "—" : `${result.percentage}%`,
+    })),
+  );
+  const historyExtraSections: ExportExtraSection[] = [{
+    title: "نتائج الاختبارات",
+    rows: resultRows,
+    columns: resultColumns,
+  }];
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto" dir="rtl">
+    <DialogContent className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-h-[90dvh] max-w-none overflow-y-auto" dir="rtl">
       <DialogHeader>
         <DialogTitle>السجل الدراسي للطالب</DialogTitle>
         <DialogDescription>
@@ -145,7 +194,19 @@ export function StudentAcademicHistoryDialog({
             <Button className="mt-3" size="sm" variant="outline" onClick={() => void history.refetch()}>إعادة المحاولة</Button>
           </div>
           : history.data
-            ? <HistoryContent history={history.data} />
+           ? <div className="space-y-4">
+             <ExportButtons
+               rows={historyRows}
+               columns={enrollmentColumns}
+               filename={`school-student-history-${student?.id ?? "record"}`}
+               title={`السجل الدراسي: ${student?.fullNameAr || student?.studentNumber || `#${student?.id}`}`}
+               subtitle="ملخص القيود الدراسية والحضور ونتائج الاختبارات المسجلة."
+               extraSections={historyExtraSections}
+               disabled={history.isLoading}
+               showWordButton
+             />
+             <HistoryContent history={history.data} />
+           </div>
             : <div className="py-8 text-center text-sm text-muted-foreground">اختر طالباً لعرض سجله الدراسي.</div>}
     </DialogContent>
   </Dialog>;

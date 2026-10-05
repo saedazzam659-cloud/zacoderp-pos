@@ -1588,6 +1588,10 @@ for (const [name, config] of Object.entries(ENTITIES)) {
         return;
       }
       const values = normalized.values!;
+      if (name === "guardians" && values.customerId == null) {
+        res.status(400).json({ error: "يجب ربط ولي الأمر بعميل في الشركة نفسها" });
+        return;
+      }
       if (!await validateReferences(res, config, values, companyId)) return;
       if (!await validateBusinessRules(res, name, values, companyId)) return;
       if (name === "results" && await isExamResultLocked(companyId, values.examId, values.enrollmentId)) {

@@ -1,4 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCreateCustomer } from "@workspace/api-client-react";
 import { AlertCircle, ArrowDownUp, Plus, Pencil, Trash2, Search, RotateCw, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +12,12 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useSchoolContext, useSchoolCrud, useSchoolList, useSchoolLists, type Row } from "./schoolApi";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import ExportButtons from "@/components/ExportButtons";
+import type { ExportColumn } from "@/lib/export";
+import { fetchAllSchoolRows, useSchoolContext, useSchoolCrud, useSchoolList, useSchoolLists, type Row } from "./schoolApi";
 
 export type FieldDef = { key: string; label: string; type?: "text" | "number" | "date" | "email" | "textarea" | "select" | "relation"; options?: [string, string][]; resource?: string; labelKey?: string; required?: boolean; clearable?: boolean; showWhen?: { key: string; value: string | string[] } };
 export type ColumnDef = { key: string; label: string; type?: "status" | "date" | "number" | "relation"; options?: [string, string][]; resource?: string; labelKey?: string };
@@ -71,12 +78,19 @@ export function SchoolCrudPage({
   const [del, setDel] = useState<Row | null>(null);
   const [form, setForm] = useState<Record<string, any>>({});
   const [formValidationError, setFormValidationError] = useState("");
+  const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
+  const [customerDraft, setCustomerDraft] = useState({ nameAr: "", phone: "", email: "" });
+  const [customerCreateError, setCustomerCreateError] = useState("");
+  const [createdCustomer, setCreatedCustomer] = useState<Row | null>(null);
+  const queryClient = useQueryClient();
+  const createCustomer = useCreateCustomer();
   const { data, isLoading, isError, error, refetch } = useSchoolList<Row>(config.resource, { page, limit: config.pageSize ?? 20, q, sort, dir });
   const { save, remove } = useSchoolCrud(config.resource);
   const canCreate = usePermission("school", "create");
   const canEdit = usePermission("school", "edit");
   const canDelete = usePermission("school", "delete");
-  const { companyId, companyName } = useSchoolContext();
+  const canCreateCustomer = usePermission("customers", "create");
+  const { companyId, companyName, token } = useSchoolContext();
   const rows = data?.items ?? [];
   const visibleFields = config.fields.filter(f => matchesShowWhen(form, f));
   const relationFields = [...config.fields, ...config.columns].filter(field => field.type === "relation" && field.resource);
@@ -87,10 +101,57 @@ export function SchoolCrudPage({
   if (relationFields.some(field => field.resource === "classes")) nestedResources.add("grades");
   const lookupResources = Array.from(new Set([...relationFields.map(field => field.resource!), ...nestedResources]));
   const lookupQueries = useSchoolLists<Row>(lookupResources, { page: 1, limit: 100 });
+  const customerOptionsQuery = useQuery({
+    queryKey: ["school", companyId, "customers", "guardian-selector"],
+    queryFn: () => fetchAllSchoolRows<Row>("customers", companyId, token),
+    enabled: config.resource === "guardians" && formOpen && !!companyId && !!token,
+    staleTime: 60_000,
+  });
   const lookups = Object.fromEntries(lookupResources.map((resource, index) => [
     resource,
     lookupQueries[index]?.data?.items ?? [],
   ])) as Record<string, Row[]>;
+  const effectiveLookups: Record<string, Row[]> = {
+    ...lookups,
+    customers: [
+      ...(config.resource === "guardians" && customerOptionsQuery.data
+        ? customerOptionsQuery.data
+        : lookups.customers ?? []),
+      ...(createdCustomer && !(customerOptionsQuery.data ?? lookups.customers ?? []).some(row => row.id === createdCustomer.id) ? [createdCustomer] : []),
+    ],
+  };
+  const exportColumns: ExportColumn[] = config.columns.map(column => ({
+    key: column.key,
+    header: column.label,
+    width: 22,
+  }));
+  const exportRow = (row: Row, availableLookups: Record<string, Row[]>) =>
+    Object.fromEntries(config.columns.map(column => {
+      const value = row[column.key];
+      if (column.type === "relation") {
+        return [column.key, labelFor(column, value, availableLookups[column.resource || ""], availableLookups)];
+      }
+      if (column.type === "status") {
+        return [column.key, column.options?.find(([key]) => String(key) === String(value))?.[1] ?? value ?? "—"];
+      }
+      return [column.key, value ?? "—"];
+    }));
+  const exportVisibleRows = rows.map(row => exportRow(row, effectiveLookups));
+  const loadExportRows = async (specificRows?: Row[]) => {
+    if (specificRows) return specificRows.map(row => exportRow(row, effectiveLookups));
+    const related = await Promise.all(lookupResources.map(async resource => [
+      resource,
+      await fetchAllSchoolRows<Row>(resource, companyId, token),
+    ] as const));
+    const exportLookups = Object.fromEntries(related) as Record<string, Row[]>;
+    const exportSourceRows = specificRows ?? await fetchAllSchoolRows<Row>(
+      config.resource,
+      companyId,
+      token,
+      { q: q || undefined, sort, dir },
+    );
+    return exportSourceRows.map(row => exportRow(row, exportLookups));
+  };
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / (data?.pageSize || config.pageSize || 20)));
 
   const openNew = () => {
@@ -104,6 +165,42 @@ export function SchoolCrudPage({
     setEditing(row);
     setForm(Object.fromEntries(config.fields.map(f => [f.key, row[f.key] == null ? "" : String(row[f.key])])));
     setFormOpen(true);
+  };
+  const openCustomerDialog = () => {
+    setCustomerDraft({
+      nameAr: String(form.name ?? ""),
+      phone: String(form.phone ?? ""),
+      email: String(form.email ?? ""),
+    });
+    setCustomerCreateError("");
+    createCustomer.reset();
+    setCustomerDialogOpen(true);
+  };
+  const createAndLinkCustomer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCustomerCreateError("");
+    if (!companyId || !canCreateCustomer) {
+      setCustomerCreateError("لا تتوفر صلاحية إنشاء عميل لهذه الشركة.");
+      return;
+    }
+    try {
+      const customer = await createCustomer.mutateAsync({
+        data: {
+          companyId,
+          nameAr: customerDraft.nameAr.trim(),
+          ...(customerDraft.phone.trim() ? { phone: customerDraft.phone.trim() } : {}),
+          ...(customerDraft.email.trim() ? { email: customerDraft.email.trim() } : {}),
+        },
+      });
+      const linkedCustomer = customer as unknown as Row;
+      setCreatedCustomer(linkedCustomer);
+      setForm(previous => ({ ...previous, customerId: String(linkedCustomer.id) }));
+      setFormValidationError("");
+      setCustomerDialogOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["school", companyId, "customers"] });
+    } catch (error) {
+      setCustomerCreateError(error instanceof Error ? error.message : "تعذر إنشاء العميل وربطه.");
+    }
   };
   const saveRow = () => {
     const missing = visibleFields.filter(f => f.required && (form[f.key] == null || String(form[f.key]).trim() === ""));
@@ -133,17 +230,35 @@ export function SchoolCrudPage({
           <span className="mt-1 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"><BookOpen className="h-5 w-5" /></span>
           <div><h1 className="text-xl font-bold tracking-tight sm:text-2xl">{config.title}</h1><p className="mt-1 text-sm text-muted-foreground">{config.description}</p></div>
         </div>
-         <div className="flex items-center gap-2">{headingExtra}{canCreate && <Button onClick={openNew} className="gap-2"><Plus className="h-4 w-4" />إضافة {config.singular}</Button>}</div>
+          <div className="flex items-center gap-2">{headingExtra}<ExportButtons
+            rows={exportVisibleRows}
+            loadRows={() => loadExportRows()}
+            columns={exportColumns}
+            filename={`school-${config.resource}`}
+            title={config.title}
+            subtitle={config.description}
+            disabled={isLoading || isError || !data || exportColumns.length === 0}
+            showWordButton
+          />{canCreate && <Button onClick={openNew} className="gap-2"><Plus className="h-4 w-4" />إضافة {config.singular}</Button>}</div>
       </header>
       <section className="rounded-xl border bg-card shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/20 p-3">
           <div className="relative w-full max-w-sm"><Search className="absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input aria-label="بحث" placeholder={`بحث في ${config.title}...`} value={q} onChange={e => { setQ(e.target.value); setPage(1); }} className="pe-9" /></div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><span>{data?.total ?? 0} سجل</span><Button variant="outline" size="sm" onClick={() => refetch()} aria-label="تحديث"><RotateCw className="h-3.5 w-3.5" /></Button></div>
         </div>
-        {formOpen && <div className="p-3 sm:p-4"><FormPanel icon={editing ? Pencil : Plus} title={editing ? `تعديل ${config.singular}` : `إضافة ${config.singular}`} subtitle={config.title} width="4xl" onClose={() => setFormOpen(false)} onSave={saveRow} saving={save.isPending} saveLabel="حفظ" cancelLabel="إلغاء">
+        {formOpen && <div className="p-3 sm:p-4"><FormPanel icon={editing ? Pencil : Plus} title={editing ? `تعديل ${config.singular}` : `إضافة ${config.singular}`} subtitle={config.title} width="full" onClose={() => setFormOpen(false)} onSave={saveRow} saving={save.isPending} saveLabel="حفظ" cancelLabel="إلغاء">
            {(formValidationError || save.isError) && <div role="alert" className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{formValidationError || (save.error as Error).message || "تعذر حفظ البيانات"}</div>}
-           <FormGrid cols={2}>{visibleFields.map(f => <Field key={f.key} label={f.label} required={f.required} className={f.type === "textarea" ? "md:col-span-2" : ""}>
-             {f.type === "relation" ? <SearchCombobox items={(lookups[f.resource!] ?? []).map((r: Row) => ({ value: String(r.id), label: relatedRowLabel(f, r, lookups), description: r.code || r.jobTitle || r.phone || r.city || r.invoiceDate || "" }))} value={String(form[f.key] ?? "")} onValueChange={v => { setForm(prev => ({ ...prev, [f.key]: v })); setFormValidationError(""); }} placeholder="اختر من القائمة" searchPlaceholder="ابحث..." clearable />
+            <FormGrid cols={2}>{visibleFields.map(f => <Field key={f.key} label={f.label} required={f.required} className={f.type === "textarea" || f.key === "customerId" ? "md:col-span-2" : ""}>
+              {f.type === "relation" ? <div className="space-y-2">
+                <SearchCombobox items={(effectiveLookups[f.resource!] ?? []).map((r: Row) => ({ value: String(r.id), label: relatedRowLabel(f, r, effectiveLookups), description: r.code || r.jobTitle || r.phone || r.city || r.invoiceDate || "" }))} value={String(form[f.key] ?? "")} onValueChange={v => { setForm(prev => ({ ...prev, [f.key]: v })); setFormValidationError(""); }} placeholder={f.resource === "customers" && customerOptionsQuery.isLoading ? "جار تحميل العملاء..." : "اختر من القائمة"} searchPlaceholder="ابحث..." clearable disabled={f.resource === "customers" && customerOptionsQuery.isLoading} />
+                {f.resource === "customers" && <div className="flex flex-wrap items-center gap-2">
+                  {canCreateCustomer
+                    ? <Button type="button" size="sm" variant="outline" onClick={openCustomerDialog} data-testid="button-create-guardian-customer"><Plus className="ms-2 h-3.5 w-3.5" />إنشاء عميل جديد وربطه</Button>
+                    : <span className="text-xs text-muted-foreground">اختر عميلاً موجوداً، أو اطلب صلاحية إنشاء العملاء لإنشاء حساب جديد.</span>}
+                  <span className="text-xs text-muted-foreground">يمكن إعادة اختيار العميل نفسه لأولياء أمور الإخوة لتجنب تكرار الحسابات.</span>
+                  {customerOptionsQuery.isError && <span role="alert" className="w-full text-xs text-destructive">تعذر تحميل جميع العملاء. أعد المحاولة أو اختر من العملاء الظاهرين حالياً.</span>}
+                </div>}
+              </div>
               : f.type === "select" ? <select aria-label={f.label} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={form[f.key] ?? ""} onChange={e => { const value = e.target.value; setForm(prev => { const next = { ...prev, [f.key]: value }; config.fields.filter(field => field.showWhen && field.showWhen.key === f.key && !matchesShowWhen(next, field)).forEach(field => { next[field.key] = ""; }); return next; }); setFormValidationError(""); }}><option value="">— اختر —</option>{f.options?.map(([v, l]) => <option value={v} key={v}>{l}</option>)}</select>
              : f.type === "textarea" ? <textarea aria-label={f.label} className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form[f.key] ?? ""} onChange={e => { setForm(prev => ({ ...prev, [f.key]: e.target.value })); setFormValidationError(""); }} />
              : <Input aria-label={f.label} type={f.type || "text"} value={form[f.key] ?? ""} onChange={e => { setForm(prev => ({ ...prev, [f.key]: e.target.value })); setFormValidationError(""); }} required={f.required} />}</Field>)}</FormGrid>
@@ -160,10 +275,20 @@ export function SchoolCrudPage({
                   {c.type === "status" ? <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${["active", "enrolled", "present", "passed", "current", "paid", "true"].includes(String(row[c.key])) ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{c.options?.find(([k]) => k === String(row[c.key]))?.[1] ?? row[c.key] ?? "—"}</span>
                    : c.type === "date" ? (row[c.key] ? new Date(row[c.key]).toLocaleDateString("ar-SA") : "—")
                   : c.type === "number" ? (row[c.key] ?? "—")
-                   : c.type === "relation" ? labelFor(c, row[c.key], lookups[c.resource || ""], lookups)
+                    : c.type === "relation" ? labelFor(c, row[c.key], effectiveLookups[c.resource || ""], effectiveLookups)
                   : String(row[c.key] ?? "—")}</td>)}
                   <td className="px-3 py-2 text-center"><JournalScanArchive compact canEdit={canEdit} companyName={companyName} screenKey="school_records" jeKey={`school:${companyId ?? "none"}:${config.resource}:${row.id}`} /></td>
-                   <td className="px-3 py-2"><div className="flex justify-center gap-1">{rowAction?.(row)}{canEdit && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(row)} aria-label="تعديل"><Pencil className="h-4 w-4" /></Button>}{canDelete && <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => setDel(row)} aria-label="حذف"><Trash2 className="h-4 w-4" /></Button>}</div></td>
+                    <td className="px-3 py-2"><div className="flex justify-center gap-1">{rowAction?.(row)}<ExportButtons
+                      rows={[exportRow(row, effectiveLookups)]}
+                      loadRows={() => loadExportRows([row])}
+                      columns={exportColumns}
+                      filename={`school-${config.resource}-${row.id}`}
+                      title={`${config.singular}: ${String(row.name || row.nameAr || row.fullNameAr || row.studentNumber || row.id)}`}
+                      subtitle={config.title}
+                      size="sm"
+                      label="مستند"
+                      showWordButton
+                    />{canEdit && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(row)} aria-label="تعديل"><Pencil className="h-4 w-4" /></Button>}{canDelete && <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => setDel(row)} aria-label="حذف"><Trash2 className="h-4 w-4" /></Button>}</div></td>
               </tr>)}
             </tbody>
           </table>
@@ -171,6 +296,27 @@ export function SchoolCrudPage({
         <div className="flex items-center justify-between border-t px-3 py-2 text-xs"><span className="text-muted-foreground">صفحة {page} من {totalPages}</span><div className="flex gap-2"><Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>السابق</Button><Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>التالي</Button></div></div>
       </section>
       <AlertDialog open={!!del} onOpenChange={open => !open && setDel(null)}><AlertDialogContent dir="rtl"><AlertDialogHeader><AlertDialogTitle>تأكيد الحذف</AlertDialogTitle><AlertDialogDescription>سيتم حذف السجل المحدد نهائياً. هل تريد المتابعة؟</AlertDialogDescription></AlertDialogHeader>{remove.isError && <p role="alert" className="text-sm text-destructive">{(remove.error as Error).message || "تعذر حذف السجل"}</p>}<AlertDialogFooter><AlertDialogCancel>إلغاء</AlertDialogCancel><AlertDialogAction className="bg-destructive text-destructive-foreground" disabled={remove.isPending} onClick={() => del && remove.mutate(del.id, { onSuccess: () => setDel(null) })}>حذف السجل</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <Dialog open={customerDialogOpen} onOpenChange={setCustomerDialogOpen}>
+        <DialogContent dir="rtl" className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>إنشاء عميل وربطه بولي الأمر</DialogTitle>
+            <DialogDescription>سيُنشأ سجل العميل عبر مسار العملاء المعتاد، ثم يُختار تلقائياً في نموذج ولي الأمر.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={createAndLinkCustomer} className="space-y-4">
+            <FormGrid cols={2}>
+              <Field label="اسم العميل" required><Input required maxLength={160} value={customerDraft.nameAr} onChange={event => setCustomerDraft(current => ({ ...current, nameAr: event.target.value }))} data-testid="input-guardian-customer-name" /></Field>
+              <Field label="الهاتف"><Input type="tel" value={customerDraft.phone} onChange={event => setCustomerDraft(current => ({ ...current, phone: event.target.value }))} data-testid="input-guardian-customer-phone" /></Field>
+              <Field label="البريد الإلكتروني"><Input type="email" value={customerDraft.email} onChange={event => setCustomerDraft(current => ({ ...current, email: event.target.value }))} data-testid="input-guardian-customer-email" /></Field>
+            </FormGrid>
+            <p className="text-xs text-muted-foreground">إذا كان ولي الأمر مسجلاً من قبل، اختر العميل الموجود بدلاً من إنشاء سجل مكرر. يمكن ربط حساب واحد بأكثر من سجل ولي أمر.</p>
+            {customerCreateError && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{customerCreateError}</p>}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCustomerDialogOpen(false)}>إلغاء</Button>
+              <Button type="submit" disabled={createCustomer.isPending || !customerDraft.nameAr.trim()} data-testid="button-save-guardian-customer">{createCustomer.isPending ? "جارٍ الإنشاء..." : "إنشاء العميل وربطه"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

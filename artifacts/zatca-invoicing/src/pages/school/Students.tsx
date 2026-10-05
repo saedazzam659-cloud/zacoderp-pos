@@ -26,12 +26,12 @@ const guardianConfig: CrudConfig = {
     { key: "studentId", label: "الطالب", type: "relation", resource: "students", labelKey: "fullNameAr", required: true },
     { key: "name", label: "اسم ولي الأمر", required: true }, { key: "relationship", label: "صلة القرابة", required: true },
     { key: "phone", label: "الهاتف" }, { key: "email", label: "البريد الإلكتروني", type: "email" },
-    { key: "customerId", label: "حساب ولي الأمر في العملاء", type: "relation", resource: "customers", labelKey: "nameAr" },
+    { key: "customerId", label: "حساب ولي الأمر في العملاء", type: "relation", resource: "customers", labelKey: "nameAr", required: true },
     { key: "isPrimary", label: "جهة الاتصال الأساسية", type: "select", options: [["true", "نعم"], ["false", "لا"]] },
     { key: "isInvoicePayer", label: "مسؤول الفاتورة", type: "select", options: [["true", "نعم"], ["false", "لا"]] },
     { key: "notes", label: "ملاحظات", type: "textarea" },
   ],
-  columns: [{ key: "name", label: "ولي الأمر" }, { key: "studentId", label: "الطالب", type: "relation", resource: "students", labelKey: "fullNameAr" }, { key: "relationship", label: "صلة القرابة" }, { key: "phone", label: "الهاتف" }, { key: "isInvoicePayer", label: "مسؤول الفاتورة", type: "status", options: [["true", "نعم"], ["false", "لا"]] }],
+  columns: [{ key: "name", label: "ولي الأمر" }, { key: "studentId", label: "الطالب", type: "relation", resource: "students", labelKey: "fullNameAr" }, { key: "relationship", label: "صلة القرابة" }, { key: "phone", label: "الهاتف" }, { key: "customerId", label: "حساب العميل", type: "relation", resource: "customers", labelKey: "nameAr" }, { key: "isInvoicePayer", label: "مسؤول الفاتورة", type: "status", options: [["true", "نعم"], ["false", "لا"]] }],
 };
 export default function Students() {
   const [tab, setTab] = useState<"students" | "guardians">("students");

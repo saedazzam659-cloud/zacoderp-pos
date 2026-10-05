@@ -4,6 +4,13 @@ import { useAuth } from "@/contexts/AuthContext";
 export type Row = Record<string, any> & { id: number; companyId?: number };
 export type PageResult<T> = { items: T[]; total: number; page: number; pageSize: number };
 export const SCHOOL_API = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/school`;
+export const SCHOOL_LOOKUP_RESOURCES = ["company-branches", "employees", "customers", "sales-invoices"] as const;
+
+function resourcePath(resource: string) {
+  return (SCHOOL_LOOKUP_RESOURCES as readonly string[]).includes(resource)
+    ? `/lookups/${resource}`
+    : `/${resource}`;
+}
 
 export function useSchoolContext() {
   const { user, token } = useAuth();
@@ -27,7 +34,7 @@ export function useSchoolList<T extends Row>(resource: string, params: Record<st
   const query = new URLSearchParams({ companyId: String(companyId ?? ""), page: String(params.page ?? 1), limit: String(params.limit ?? 20), ...Object.fromEntries(Object.entries(params).filter(([k, v]) => k !== "page" && k !== "limit" && v !== undefined).map(([k, v]) => [k, String(v)])) });
   return useQuery<PageResult<T>>({
     queryKey: ["school", companyId, resource, params],
-    queryFn: () => request<PageResult<T>>(`/${resource}?${query}`, token),
+    queryFn: () => request<PageResult<T>>(`${resourcePath(resource)}?${query}`, token),
     enabled: !!companyId && !!token,
     staleTime: 15_000,
   });
@@ -47,12 +54,41 @@ export function useSchoolLists<T extends Row>(resources: string[], params: Recor
       });
       return {
         queryKey: ["school", companyId, resource, params],
-        queryFn: () => request<PageResult<T>>(`/${resource}?${query}`, token),
+        queryFn: () => request<PageResult<T>>(`${resourcePath(resource)}?${query}`, token),
         enabled: !!companyId && !!token,
         staleTime: 15_000,
       };
     }),
   });
+}
+
+export async function fetchAllSchoolRows<T extends Row = Row>(
+  resource: string,
+  companyId: number | null,
+  token: string | null,
+  params: Record<string, string | number | undefined> = {},
+): Promise<T[]> {
+  if (!companyId || !token) throw new Error("يجب تسجيل الدخول واختيار الشركة قبل تصدير السجلات");
+  const pageSize = 100;
+  const items: T[] = [];
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
+  while (items.length < total) {
+    const query = new URLSearchParams({
+      companyId: String(companyId),
+      page: String(page),
+      limit: String(pageSize),
+      ...Object.fromEntries(Object.entries(params)
+        .filter(([, value]) => value !== undefined && value !== "")
+        .map(([key, value]) => [key, String(value)])),
+    });
+    const result = await request<PageResult<T>>(`${resourcePath(resource)}?${query}`, token);
+    items.push(...result.items);
+    total = result.total;
+    if (result.items.length === 0 || items.length >= total) break;
+    page += 1;
+  }
+  return items;
 }
 
 export function useSchoolDashboard() {
