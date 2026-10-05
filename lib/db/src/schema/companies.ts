@@ -73,6 +73,11 @@ export const companiesTable = pgTable("companies", {
   // items grid grow taller. Purely presentational — items are still added via
   // the in-grid "إضافة صنف" button.
   hideQuickAddBar: boolean("hide_quick_add_bar").notNull().default(false),
+  // Cross-type account-note screens are hidden by default. These flags affect
+  // only menu links and invoice tabs; note records and accounting behavior are
+  // unchanged.
+  showCustomerDebitNotes: boolean("show_customer_debit_notes").notNull().default(false),
+  showSupplierCreditNotes: boolean("show_supplier_credit_notes").notNull().default(false),
   // Menu visibility permissions (JSON): { invoices, customers, suppliers, zatca }
   menuPermissions: text("menu_permissions").default('{"invoices":true,"customers":true,"suppliers":true,"zatca":true}'),
   // Windows desktop-app module visibility (JSON): { <windows module key>: boolean }.

@@ -59,6 +59,7 @@ import {
 import { cn } from "@/lib/utils";
 import { companyAllowsModule, companyAllowsScreen } from "@/lib/companyModuleGate";
 import { LEGACY_DEFAULT_ON_MENU_KEYS } from "@/lib/menuItems";
+import { isAccountNoteVisible } from "@/lib/accountNoteVisibility";
 import { productionSubNav } from "@/lib/productionNavigation";
 import {
   companyAllowsPermissionGroup,
@@ -78,6 +79,7 @@ import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
 type NavDef = { nameKey: string; name?: string; href: string; icon: any; exact?: boolean; permKey?: string; companyGateKey?: string;
+  noteVisibilityKey?: "showCustomerDebitNotes" | "showSupplierCreditNotes";
   /** Country-specific entries are only visible for the matching tenant. */
   country?: "EG" | "JO";
   /** When true, hide this entry from non-admin users even if they were granted the matching permission.
@@ -104,6 +106,7 @@ type NavDef = { nameKey: string; name?: string; href: string; icon: any; exact?:
 // Centralized so leaf-level (NavItem) and group-level filtering stay in sync.
 function navItemAllowed(item: NavDef, user: any): boolean {
   if (!user) return false;
+  if (item.noteVisibilityKey && !isAccountNoteVisible(user, item.noteVisibilityKey)) return false;
   // Superadmin-only items: visible only to platform operators (even while
   // they're acting inside a tenant). Company admins never see them.
   if (item.requireSuperadmin && user.role !== "superadmin") return false;
@@ -530,7 +533,7 @@ const purchasingSubNav: NavDef[] = [
   { nameKey: "nav.purchaseOrders",       href: "/purchasing/orders",          icon: ClipboardList, permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseInvoices",     href: "/purchasing/invoices",        icon: ShoppingCart, permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseReturns",      href: "/purchasing/returns",         icon: RotateCcw,    permKey: "purchase_returns" },
-  { nameKey: "nav.supplierCreditNotes",  href: "/purchasing/supplier-credit-notes", icon: FileText, permKey: "supplier_notes" },
+  { nameKey: "nav.supplierCreditNotes",  href: "/purchasing/supplier-credit-notes", icon: FileText, permKey: "supplier_notes", noteVisibilityKey: "showSupplierCreditNotes" },
   { nameKey: "nav.supplierDebitNotes",   href: "/purchasing/supplier-debit-notes",  icon: FileText, permKey: "supplier_notes" },
   { nameKey: "nav.supplierSettlements",  href: "/purchasing/settlements",     icon: Banknote,     permKey: "supplier_settlements" },
   // سند الصرف العادي — moved here from النقد والبنوك per the user's request
@@ -549,7 +552,7 @@ const salesSubNav: NavDef[] = [
   { nameKey: "nav.salesInvoices",        href: "/sales/invoices",    icon: ShoppingBag,     permKey: "sales_invoices" },
   { nameKey: "nav.salesReturns",         href: "/sales/returns",     icon: RotateCcw,       permKey: "sales_returns" },
   { nameKey: "nav.customerCreditNotes",  href: "/sales/customer-credit-notes", icon: FileText, permKey: "customer_notes" },
-  { nameKey: "nav.customerDebitNotes",   href: "/sales/customer-debit-notes",  icon: FileText, permKey: "customer_notes" },
+  { nameKey: "nav.customerDebitNotes",   href: "/sales/customer-debit-notes",  icon: FileText, permKey: "customer_notes", noteVisibilityKey: "showCustomerDebitNotes" },
   { nameKey: "nav.customerSettlements",  href: "/sales/settlements", icon: ArrowDownCircle, permKey: "sales_settlements" },
   // سند القبض العادي — moved here from النقد والبنوك per the user's request
   // (easier for sales users). Same route + permKey, no logic change; the

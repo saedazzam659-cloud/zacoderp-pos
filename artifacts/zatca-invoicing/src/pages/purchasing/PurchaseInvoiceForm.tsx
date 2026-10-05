@@ -11,6 +11,7 @@ import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { isAccountNoteVisible } from "@/lib/accountNoteVisibility";
 import { usePermission } from "@/hooks/usePermission";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { renameArchivedKey } from "@/lib/localArchive";
@@ -146,6 +147,7 @@ function PurchaseInvoiceFormContent() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
+  const showSupplierCreditNotes = isAccountNoteVisible(user, "showSupplierCreditNotes");
   const { toast } = useToast();
   const qc = useQueryClient();
   const [, navigate] = useLocation();
@@ -192,6 +194,11 @@ function PurchaseInvoiceFormContent() {
   // let the items grid grow ~2 rows taller in its place.
   const hideQuickAdd = !!_co?.hideQuickAddBar;
   const [activeTab, setActiveTab] = useState<"basic" | "items" | "industrialCosts" | "debitNote" | "creditNote" | "payments" | "returns" | "archive" | "details" | "deferred" | "expenses">("basic");
+  useEffect(() => {
+    if (!showSupplierCreditNotes && activeTab === "creditNote") {
+      setActiveTab(viewMode ? "details" : "basic");
+    }
+  }, [showSupplierCreditNotes, activeTab, viewMode]);
   // مصروف يوزع على فترات — سطر الحوار المفتوح لتحرير خطة التوزيع
   const [deferredDialogLineId, setDeferredDialogLineId] = useState<string | null>(null);
   useEffect(() => { if (viewMode) setActiveTab("details"); }, [viewMode]);
@@ -1425,9 +1432,9 @@ function PurchaseInvoiceFormContent() {
                   <TabsTrigger value="debitNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("debitNote", colorfulInvoiceTabs))}>
                     <FileText className="h-3.5 w-3.5" />إشعار مدين
                   </TabsTrigger>
-                  <TabsTrigger value="creditNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("creditNote", colorfulInvoiceTabs))}>
+                  {showSupplierCreditNotes && <TabsTrigger value="creditNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("creditNote", colorfulInvoiceTabs))}>
                     <FileText className="h-3.5 w-3.5" />إشعار دائن
-                  </TabsTrigger>
+                  </TabsTrigger>}
                   <TabsTrigger value="payments" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("payments", colorfulInvoiceTabs))}>
                     <Wallet className="h-3.5 w-3.5" />السداد
                   </TabsTrigger>
@@ -2270,7 +2277,7 @@ function PurchaseInvoiceFormContent() {
                 })()}
               </TabsContent>
             )}
-            {editId && (
+            {editId && showSupplierCreditNotes && (
               <TabsContent value="creditNote" className="mt-0">
                 {(() => {
                   const sup = (suppliers as any[]).find((s: any) => String(s.id) === String(supplierId));

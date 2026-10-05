@@ -16,7 +16,7 @@ const tiles: HubTile[] = [
   { nameKey: "nav.salesInvoices",       href: "/sales/invoices",    icon: ShoppingBag,     tone: "amber",   permKey: "sales_invoices" },
   { nameKey: "nav.salesReturns",        href: "/sales/returns",     icon: RotateCcw,       tone: "rose",    permKey: "sales_returns" },
   { nameKey: "nav.customerCreditNotes", href: "/sales/customer-credit-notes", icon: FileText, tone: "orange", permKey: "customer_notes" },
-  { nameKey: "nav.customerDebitNotes",  href: "/sales/customer-debit-notes",  icon: FileText, tone: "fuchsia", permKey: "customer_notes" },
+  { nameKey: "nav.customerDebitNotes",  href: "/sales/customer-debit-notes",  icon: FileText, tone: "fuchsia", permKey: "customer_notes", noteVisibilityKey: "showCustomerDebitNotes" },
   { nameKey: "nav.customerSettlements", href: "/sales/settlements", icon: ArrowDownCircle, tone: "teal",    permKey: "sales_settlements" },
   { nameKey: "nav.zatcaBridge",         href: "/zatca-bridge",      icon: Link2,           tone: "cyan",    permKey: "zatca_bridge" },
   { nameKey: "nav.zatcaReport",         href: "/zatca-report",      icon: BarChart3,       tone: "sky",     permKey: "zatca_report" },

@@ -13,7 +13,7 @@ const tiles: HubTile[] = [
   { nameKey: "nav.purchaseOrders",       href: "/purchasing/orders",          icon: ClipboardList, tone: "indigo",  permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseInvoices",     href: "/purchasing/invoices",        icon: ShoppingCart,  tone: "amber",   permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseReturns",      href: "/purchasing/returns",         icon: RotateCcw,     tone: "rose",    permKey: "purchase_returns" },
-  { nameKey: "nav.supplierCreditNotes",  href: "/purchasing/supplier-credit-notes", icon: FileText, tone: "cyan",   permKey: "supplier_notes" },
+  { nameKey: "nav.supplierCreditNotes",  href: "/purchasing/supplier-credit-notes", icon: FileText, tone: "cyan",   permKey: "supplier_notes", noteVisibilityKey: "showSupplierCreditNotes" },
   { nameKey: "nav.supplierDebitNotes",   href: "/purchasing/supplier-debit-notes",  icon: FileText, tone: "violet", permKey: "supplier_notes" },
   { nameKey: "nav.supplierSettlements",  href: "/purchasing/settlements",     icon: Banknote,      tone: "emerald", permKey: "supplier_settlements" },
   { nameKey: "navExtra.purchaseReportsGroup", href: "/purchasing/reports",    icon: BarChart2,     tone: "slate",   permKey: "purchase_invoices" },

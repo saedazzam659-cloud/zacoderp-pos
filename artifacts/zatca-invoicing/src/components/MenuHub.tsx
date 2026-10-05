@@ -7,6 +7,7 @@ import { companyAllowsModule } from "@/lib/companyModuleGate";
 import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 import { appRouteHref } from "@/lib/appRouteHref";
+import { isAccountNoteVisible, type AccountNoteVisibilityKey } from "@/lib/accountNoteVisibility";
 
 export type HubTone =
   | "blue" | "indigo" | "violet" | "fuchsia" | "rose"
@@ -43,6 +44,8 @@ export type HubTile = {
   tone: HubTone;
   /** Permission key required to see this tile (matches user.permissions.<permKey>.view). */
   permKey?: string;
+  /** Company-level opt-in required for cross-type account-note tiles. */
+  noteVisibilityKey?: AccountNoteVisibilityKey;
   /** When true, hide from non-admin users even if perm is granted. */
   requireAdmin?: boolean;
 };
@@ -54,6 +57,7 @@ export type HubTile = {
 // the company gate. Keep in sync with Layout.navItemAllowed and usePermission.
 function tileAllowed(tile: HubTile, user: any): boolean {
   if (!user) return false;
+  if (tile.noteVisibilityKey && !isAccountNoteVisible(user, tile.noteVisibilityKey)) return false;
   if (user.role === "superadmin") return true;
   if (tile.requireAdmin && user.role !== "admin") return false;
   if (!companyAllowsModule(user, tile.permKey)) return false;

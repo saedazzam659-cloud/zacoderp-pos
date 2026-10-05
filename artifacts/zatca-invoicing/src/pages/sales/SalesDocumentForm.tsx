@@ -9,6 +9,7 @@ import { useRoute, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { isAccountNoteVisible } from "@/lib/accountNoteVisibility";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { usePermission } from "@/hooks/usePermission";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
@@ -265,6 +266,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const usageScreenKey = isInvoice ? "sales_invoices" : isOrder ? "sales_orders" : "sales_quotations";
 
   const { user, token } = useAuth() as any;
+  const showCustomerDebitNotes = isAccountNoteVisible(user, "showCustomerDebitNotes");
   const { toast } = useToast();
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
@@ -342,6 +344,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const dateBounds = fp.dateBounds("date") ?? {};
 
   const [activeTab, setActiveTab]       = useState("basic");
+  useEffect(() => {
+    if (!showCustomerDebitNotes && activeTab === "debitNote") {
+      setActiveTab(viewMode ? "details" : "basic");
+    }
+  }, [showCustomerDebitNotes, activeTab, viewMode]);
   // Land a view-only open straight on the التفاصيل tab.
   useEffect(() => {
     if (viewMode) setActiveTab("details");
@@ -3485,7 +3492,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </TabsTrigger>
                   {/* Linked-ops tabs stay VISIBLE on a new invoice but disabled
                       until it is saved (they need a persisted invoice id). */}
-                  {isInvoice && (
+                  {isInvoice && showCustomerDebitNotes && (
                     <TabsTrigger value="debitNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("debitNote", colorInvoiceTabs))}>
                       <FileText className="h-3.5 w-3.5" />إشعار مدين
                     </TabsTrigger>
@@ -3897,7 +3904,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     />
                   </CardContent>
                 </TabsContent>
-                <TabsContent value="debitNote" className="mt-0">
+                {showCustomerDebitNotes && <TabsContent value="debitNote" className="mt-0">
                   {(() => {
                     const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
                     return (
@@ -3914,7 +3921,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       />
                     );
                   })()}
-                </TabsContent>
+                </TabsContent>}
                 <TabsContent value="creditNote" className="mt-0">
                   {(() => {
                     const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));

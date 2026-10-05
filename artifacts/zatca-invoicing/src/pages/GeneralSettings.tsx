@@ -1542,6 +1542,64 @@ export default function GeneralSettings() {
             </span>
           </span>
         </label>
+        <div className="space-y-3 border-t pt-4">
+          <div>
+            <h3 className="text-sm font-semibold">{t("pages.generalSettings.accountNotesVisibilityTitle")}</h3>
+            <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+              {t("pages.generalSettings.accountNotesVisibilityDescription")}
+            </p>
+          </div>
+          <label
+            data-testid="show-customer-debit-notes-toggle"
+            className={cn(
+              "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+              user?.company?.showCustomerDebitNotes
+                ? "border-primary bg-primary/5 shadow-sm"
+                : "border-border hover:border-primary/40 hover:bg-muted/30"
+            )}
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+              checked={user?.company?.showCustomerDebitNotes === true}
+              disabled={postingSaving}
+              onChange={e => togglePostingMode({ showCustomerDebitNotes: e.target.checked })}
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-semibold">
+                {t("pages.generalSettings.showCustomerDebitNotes")}
+              </span>
+              <span className="block text-xs text-muted-foreground leading-relaxed">
+                {t("pages.generalSettings.showCustomerDebitNotesDescription")}
+              </span>
+            </span>
+          </label>
+          <label
+            data-testid="show-supplier-credit-notes-toggle"
+            className={cn(
+              "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+              user?.company?.showSupplierCreditNotes
+                ? "border-primary bg-primary/5 shadow-sm"
+                : "border-border hover:border-primary/40 hover:bg-muted/30"
+            )}
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+              checked={user?.company?.showSupplierCreditNotes === true}
+              disabled={postingSaving}
+              onChange={e => togglePostingMode({ showSupplierCreditNotes: e.target.checked })}
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-semibold">
+                {t("pages.generalSettings.showSupplierCreditNotes")}
+              </span>
+              <span className="block text-xs text-muted-foreground leading-relaxed">
+                {t("pages.generalSettings.showSupplierCreditNotesDescription")}
+              </span>
+            </span>
+          </label>
+        </div>
       </div>
       )}
 

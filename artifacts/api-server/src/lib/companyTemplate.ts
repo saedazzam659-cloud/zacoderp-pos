@@ -152,6 +152,8 @@ async function cloneDisplaySettings(companyId: number, templateId: number): Prom
   const [tpl] = await centralDb.select({
     menuLayout:              companiesTable.menuLayout,
     invoiceFormLayout:       companiesTable.invoiceFormLayout,
+    showCustomerDebitNotes:  companiesTable.showCustomerDebitNotes,
+    showSupplierCreditNotes: companiesTable.showSupplierCreditNotes,
     printTemplateSales:      companiesTable.printTemplateSales,
     printTemplateReceipt:    companiesTable.printTemplateReceipt,
     printTemplatePayment:    companiesTable.printTemplatePayment,
