@@ -11,6 +11,7 @@
 
 - [POS Desktop index](pos-desktop-index.md) — POS Desktop shell, local data, fiscal, inventory, printing, licensing, and offline/ZATCA implementation notes.
 - [Accounting and ZATCA index](accounting-zatca-index.md) — accounting, numbering, settlement, reports, documents, imports, and ZATCA implementation notes.
+- [Account-note visibility defaults](account-note-visibility-defaults.md) — show customer credit and supplier debit notes; hide the opposite types unless each company opts in.
 - [Source-linked JE reuse](je-number-reuse-on-repost.md) — protected unpost/repost keeps the same linked JE row and number; reservations remain for legacy paths.
 - [Journal-entry reversals](journal-entry-reversal-boundary.md) — create independent drafts for manual entries; keep source-document entries on their native reversal paths.
 - [Document lifecycle locking](document-lifecycle-locking.md) — use PostgreSQL advisory locks keyed by type, tenant, and document across posting and cancel/restore.
