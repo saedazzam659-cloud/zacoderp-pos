@@ -45,7 +45,15 @@ const labelFor = (field: FieldDef | ColumnDef, value: any, options?: Row[], look
   return field.options?.find(([key]) => String(key) === String(value))?.[1] || value || "—";
 };
 
-export function SchoolCrudPage({ config, headingExtra }: { config: CrudConfig; headingExtra?: ReactNode }) {
+export function SchoolCrudPage({
+  config,
+  headingExtra,
+  rowAction,
+}: {
+  config: CrudConfig;
+  headingExtra?: ReactNode;
+  rowAction?: (row: Row) => ReactNode;
+}) {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState(config.columns[0]?.key || "id");
@@ -141,7 +149,7 @@ export function SchoolCrudPage({ config, headingExtra }: { config: CrudConfig; h
                    : c.type === "relation" ? labelFor(c, row[c.key], lookups[c.resource || ""], lookups)
                   : String(row[c.key] ?? "—")}</td>)}
                   <td className="px-3 py-2 text-center"><JournalScanArchive compact canEdit={canEdit} companyName={companyName} screenKey="school_records" jeKey={`school:${companyId ?? "none"}:${config.resource}:${row.id}`} /></td>
-                  <td className="px-3 py-2"><div className="flex justify-center gap-1">{canEdit && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(row)} aria-label="تعديل"><Pencil className="h-4 w-4" /></Button>}{canDelete && <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => setDel(row)} aria-label="حذف"><Trash2 className="h-4 w-4" /></Button>}</div></td>
+                   <td className="px-3 py-2"><div className="flex justify-center gap-1">{rowAction?.(row)}{canEdit && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(row)} aria-label="تعديل"><Pencil className="h-4 w-4" /></Button>}{canDelete && <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => setDel(row)} aria-label="حذف"><Trash2 className="h-4 w-4" /></Button>}</div></td>
               </tr>)}
             </tbody>
           </table>

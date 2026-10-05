@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SchoolCrudPage, type CrudConfig } from "./SchoolCrud";
+import { StudentAcademicHistoryDialog } from "./StudentAcademicHistoryDialog";
+import type { Row } from "./schoolApi";
 
 const studentConfig: CrudConfig = {
   resource: "students", title: "سجلات الطلاب", singular: "طالب", description: "ملف موحّد للطلاب وبيانات الاتصال الأساسية.",
@@ -30,5 +33,27 @@ const guardianConfig: CrudConfig = {
 };
 export default function Students() {
   const [tab, setTab] = useState<"students" | "guardians">("students");
-  return <div dir="rtl"><div className="flex gap-2 px-4 pt-4 sm:px-5"><Button variant={tab === "students" ? "default" : "outline"} size="sm" onClick={() => setTab("students")}>الطلاب</Button><Button variant={tab === "guardians" ? "default" : "outline"} size="sm" onClick={() => setTab("guardians")}>أولياء الأمور</Button></div><SchoolCrudPage key={tab} config={tab === "students" ? studentConfig : guardianConfig} /></div>;
+  const [historyStudent, setHistoryStudent] = useState<Row | null>(null);
+  return <>
+    <div dir="rtl">
+      <div className="flex gap-2 px-4 pt-4 sm:px-5">
+        <Button variant={tab === "students" ? "default" : "outline"} size="sm" onClick={() => setTab("students")}>الطلاب</Button>
+        <Button variant={tab === "guardians" ? "default" : "outline"} size="sm" onClick={() => { setHistoryStudent(null); setTab("guardians"); }}>أولياء الأمور</Button>
+      </div>
+      <SchoolCrudPage
+        key={tab}
+        config={tab === "students" ? studentConfig : guardianConfig}
+        rowAction={tab === "students" ? (row) => (
+          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setHistoryStudent(row)} aria-label="السجل الدراسي" title="السجل الدراسي">
+            <History className="h-4 w-4" />
+          </Button>
+        ) : undefined}
+      />
+    </div>
+    <StudentAcademicHistoryDialog
+      student={historyStudent}
+      open={!!historyStudent}
+      onOpenChange={(open) => !open && setHistoryStudent(null)}
+    />
+  </>;
 }

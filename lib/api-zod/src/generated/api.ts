@@ -8,6 +8,172 @@
 import * as zod from "zod";
 
 /**
+ * @summary Preview eligible student enrollments for transfer to another academic year
+ */
+
+export const GetSchoolEnrollmentPromotionPlanQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1),
+  sourceYearId: zod.coerce.number().min(1),
+  targetYearId: zod.coerce.number().min(1),
+});
+
+export const getSchoolEnrollmentPromotionPlanResponseCandidatesMax = 5000;
+
+export const GetSchoolEnrollmentPromotionPlanResponse = zod.object({
+  sourceYearId: zod.number(),
+  sourceYearName: zod.string(),
+  targetYearId: zod.number(),
+  targetYearName: zod.string(),
+  targetYearStartDate: zod.coerce.date(),
+  candidates: zod
+    .array(
+      zod.object({
+        enrollmentId: zod.number(),
+        studentId: zod.number(),
+        studentNumber: zod.string(),
+        studentName: zod.string(),
+        studentStatus: zod.string(),
+        enrollmentStatus: zod.string(),
+        sourceClassId: zod.number(),
+        sourceClassName: zod.string(),
+        sourceCampusId: zod.number().nullable(),
+        sourceGradeId: zod.number(),
+        sourceGradeName: zod.string(),
+        sourceGradeOrderNo: zod.number(),
+        sourceStage: zod.string(),
+        annualFee: zod.number(),
+        discountAmount: zod.number(),
+        alreadyEnrolledTargetYear: zod.boolean(),
+        eligible: zod.boolean(),
+      }),
+    )
+    .max(getSchoolEnrollmentPromotionPlanResponseCandidatesMax),
+});
+
+/**
+ * @summary Read a student's yearly enrollment, attendance, and exam-result history
+ */
+
+export const GetSchoolStudentAcademicHistoryParams = zod.object({
+  studentId: zod.coerce.number().min(1),
+});
+
+export const GetSchoolStudentAcademicHistoryQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1),
+});
+
+export const getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceTotalMin = 0;
+
+export const getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendancePresentMin = 0;
+
+export const getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceAbsentMin = 0;
+
+export const getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceLateMin = 0;
+
+export const getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceExcusedMin = 0;
+
+export const getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceOtherMin = 0;
+
+export const GetSchoolStudentAcademicHistoryResponse = zod.object({
+  studentId: zod.number(),
+  studentNumber: zod.string(),
+  studentName: zod.string(),
+  studentStatus: zod.string(),
+  enrollments: zod.array(
+    zod.object({
+      id: zod.number(),
+      yearId: zod.number(),
+      yearName: zod.string(),
+      className: zod.string(),
+      gradeName: zod.string(),
+      enrollmentDate: zod.coerce.date(),
+      status: zod.string(),
+      attendance: zod.object({
+        total: zod
+          .number()
+          .min(
+            getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceTotalMin,
+          ),
+        present: zod
+          .number()
+          .min(
+            getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendancePresentMin,
+          ),
+        absent: zod
+          .number()
+          .min(
+            getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceAbsentMin,
+          ),
+        late: zod
+          .number()
+          .min(
+            getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceLateMin,
+          ),
+        excused: zod
+          .number()
+          .min(
+            getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceExcusedMin,
+          ),
+        other: zod
+          .number()
+          .min(
+            getSchoolStudentAcademicHistoryResponseEnrollmentsItemAttendanceOtherMin,
+          ),
+      }),
+      results: zod.array(
+        zod.object({
+          examId: zod.number(),
+          examName: zod.string(),
+          subjectName: zod.string(),
+          examDate: zod.coerce.date(),
+          score: zod.number(),
+          maxScore: zod.number(),
+          percentage: zod.number().nullable(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/**
+ * @summary Create new target-year enrollments without changing source-year records
+ */
+
+export const promoteSchoolEnrollmentsBodyAssignmentsMax = 5000;
+
+export const PromoteSchoolEnrollmentsBody = zod.object({
+  companyId: zod.number().min(1),
+  sourceYearId: zod.number().min(1),
+  targetYearId: zod.number().min(1),
+  enrollmentDate: zod.coerce.date(),
+  copyFeeValues: zod
+    .boolean()
+    .describe(
+      "Copy prior enrollment fee and discount as editable starting values only; no fee charge or invoice is created.",
+    ),
+  assignments: zod
+    .array(
+      zod.object({
+        enrollmentId: zod.number().min(1),
+        targetClassId: zod.number().min(1),
+      }),
+    )
+    .min(1)
+    .max(promoteSchoolEnrollmentsBodyAssignmentsMax),
+});
+
+export const promoteSchoolEnrollmentsResponseCreatedMin = 0;
+
+export const promoteSchoolEnrollmentsResponseSkippedExistingMin = 0;
+
+export const PromoteSchoolEnrollmentsResponse = zod.object({
+  created: zod.number().min(promoteSchoolEnrollmentsResponseCreatedMin),
+  skippedExisting: zod
+    .number()
+    .min(promoteSchoolEnrollmentsResponseSkippedExistingMin),
+});
+
+/**
  * @summary Create a draft reversal of an eligible manually-created journal entry
  */
 

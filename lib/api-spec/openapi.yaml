@@ -23,7 +23,93 @@ tags:
     description: Central SuperAdmin security operations
   - name: journalEntries
     description: Manual accounting journal entries
+  - name: school
+    description: School enrollment history and academic-year promotion
 paths:
+  /school/enrollments/promotion-plan:
+    get:
+      operationId: getSchoolEnrollmentPromotionPlan
+      tags: [school]
+      summary: Preview eligible student enrollments for transfer to another academic year
+      parameters:
+        - name: companyId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: sourceYearId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: targetYearId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Source enrollments and student eligibility for the selected target year
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchoolEnrollmentPromotionPlan"
+        "400":
+          description: Invalid or identical academic years
+        "403":
+          description: School access or view permission is denied
+        "404":
+          description: An academic year does not exist in the current company
+        "413":
+          description: Source year has more than 5000 enrollments
+  /school/students/{studentId}/academic-history:
+    get:
+      operationId: getSchoolStudentAcademicHistory
+      tags: [school]
+      summary: Read a student's yearly enrollment, attendance, and exam-result history
+      parameters:
+        - name: studentId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: companyId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Student history from the current company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchoolStudentAcademicHistory"
+        "403":
+          description: School access or view permission is denied
+        "404":
+          description: Student does not exist in the current company
+  /school/enrollments/promote:
+    post:
+      operationId: promoteSchoolEnrollments
+      tags: [school]
+      summary: Create new target-year enrollments without changing source-year records
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchoolEnrollmentPromotionInput"
+      responses:
+        "200":
+          description: New enrollments created; existing target-year enrollments are skipped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchoolEnrollmentPromotionResult"
+        "400":
+          description: Invalid source enrollments, target classes, or request values
+        "403":
+          description: School create permission is denied
+        "404":
+          description: An academic year or target class does not exist in the current company
+        "409":
+          description: Enrollment data changed during promotion; refresh the preview
   /journal-entries/{id}/reverse:
     post:
       operationId: reverseJournalEntry
@@ -1854,6 +1940,158 @@ paths:
 
 components:
   schemas:
+    SchoolStudentAttendanceSummary:
+      type: object
+      required: [total, present, absent, late, excused, other]
+      properties:
+        total: { type: integer, minimum: 0 }
+        present: { type: integer, minimum: 0 }
+        absent: { type: integer, minimum: 0 }
+        late: { type: integer, minimum: 0 }
+        excused: { type: integer, minimum: 0 }
+        other: { type: integer, minimum: 0 }
+    SchoolStudentExamResult:
+      type: object
+      required: [examId, examName, subjectName, examDate, score, maxScore, percentage]
+      properties:
+        examId: { type: integer }
+        examName: { type: string }
+        subjectName: { type: string }
+        examDate: { type: string, format: date }
+        score: { type: number }
+        maxScore: { type: number }
+        percentage: { type: ["number", "null"] }
+    SchoolStudentAcademicHistoryEnrollment:
+      type: object
+      required:
+        - id
+        - yearId
+        - yearName
+        - className
+        - gradeName
+        - enrollmentDate
+        - status
+        - attendance
+        - results
+      properties:
+        id: { type: integer }
+        yearId: { type: integer }
+        yearName: { type: string }
+        className: { type: string }
+        gradeName: { type: string }
+        enrollmentDate: { type: string, format: date }
+        status: { type: string }
+        attendance:
+          $ref: "#/components/schemas/SchoolStudentAttendanceSummary"
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchoolStudentExamResult"
+    SchoolStudentAcademicHistory:
+      type: object
+      required: [studentId, studentNumber, studentName, studentStatus, enrollments]
+      properties:
+        studentId: { type: integer }
+        studentNumber: { type: string }
+        studentName: { type: string }
+        studentStatus: { type: string }
+        enrollments:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchoolStudentAcademicHistoryEnrollment"
+    SchoolEnrollmentPromotionCandidate:
+      type: object
+      required:
+        - enrollmentId
+        - studentId
+        - studentNumber
+        - studentName
+        - studentStatus
+        - enrollmentStatus
+        - sourceClassId
+        - sourceClassName
+        - sourceCampusId
+        - sourceGradeId
+        - sourceGradeName
+        - sourceGradeOrderNo
+        - sourceStage
+        - annualFee
+        - discountAmount
+        - alreadyEnrolledTargetYear
+        - eligible
+      properties:
+        enrollmentId: { type: integer }
+        studentId: { type: integer }
+        studentNumber: { type: string }
+        studentName: { type: string }
+        studentStatus: { type: string }
+        enrollmentStatus: { type: string }
+        sourceClassId: { type: integer }
+        sourceClassName: { type: string }
+        sourceCampusId: { type: ["integer", "null"] }
+        sourceGradeId: { type: integer }
+        sourceGradeName: { type: string }
+        sourceGradeOrderNo: { type: integer }
+        sourceStage: { type: string }
+        annualFee: { type: number }
+        discountAmount: { type: number }
+        alreadyEnrolledTargetYear: { type: boolean }
+        eligible: { type: boolean }
+    SchoolEnrollmentPromotionPlan:
+      type: object
+      required:
+        - sourceYearId
+        - sourceYearName
+        - targetYearId
+        - targetYearName
+        - targetYearStartDate
+        - candidates
+      properties:
+        sourceYearId: { type: integer }
+        sourceYearName: { type: string }
+        targetYearId: { type: integer }
+        targetYearName: { type: string }
+        targetYearStartDate: { type: string, format: date }
+        candidates:
+          type: array
+          maxItems: 5000
+          items:
+            $ref: "#/components/schemas/SchoolEnrollmentPromotionCandidate"
+    SchoolEnrollmentPromotionAssignment:
+      type: object
+      required: [enrollmentId, targetClassId]
+      properties:
+        enrollmentId: { type: integer, minimum: 1 }
+        targetClassId: { type: integer, minimum: 1 }
+    SchoolEnrollmentPromotionInput:
+      type: object
+      required:
+        - companyId
+        - sourceYearId
+        - targetYearId
+        - enrollmentDate
+        - copyFeeValues
+        - assignments
+      properties:
+        companyId: { type: integer, minimum: 1 }
+        sourceYearId: { type: integer, minimum: 1 }
+        targetYearId: { type: integer, minimum: 1 }
+        enrollmentDate: { type: string, format: date }
+        copyFeeValues:
+          type: boolean
+          description: Copy prior enrollment fee and discount as editable starting values only; no fee charge or invoice is created.
+        assignments:
+          type: array
+          minItems: 1
+          maxItems: 5000
+          items:
+            $ref: "#/components/schemas/SchoolEnrollmentPromotionAssignment"
+    SchoolEnrollmentPromotionResult:
+      type: object
+      required: [created, skippedExisting]
+      properties:
+        created: { type: integer, minimum: 0 }
+        skippedExisting: { type: integer, minimum: 0 }
     BundleComponentInput:
       type: object
       required: [childItemId, qty, unitId]

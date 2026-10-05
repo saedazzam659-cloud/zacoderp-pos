@@ -5,6 +5,114 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export interface SchoolStudentAttendanceSummary {
+  /** @minimum 0 */
+  total: number;
+  /** @minimum 0 */
+  present: number;
+  /** @minimum 0 */
+  absent: number;
+  /** @minimum 0 */
+  late: number;
+  /** @minimum 0 */
+  excused: number;
+  /** @minimum 0 */
+  other: number;
+}
+
+export interface SchoolStudentExamResult {
+  examId: number;
+  examName: string;
+  subjectName: string;
+  examDate: string;
+  score: number;
+  maxScore: number;
+  /** @nullable */
+  percentage: number | null;
+}
+
+export interface SchoolStudentAcademicHistoryEnrollment {
+  id: number;
+  yearId: number;
+  yearName: string;
+  className: string;
+  gradeName: string;
+  enrollmentDate: string;
+  status: string;
+  attendance: SchoolStudentAttendanceSummary;
+  results: SchoolStudentExamResult[];
+}
+
+export interface SchoolStudentAcademicHistory {
+  studentId: number;
+  studentNumber: string;
+  studentName: string;
+  studentStatus: string;
+  enrollments: SchoolStudentAcademicHistoryEnrollment[];
+}
+
+export interface SchoolEnrollmentPromotionCandidate {
+  enrollmentId: number;
+  studentId: number;
+  studentNumber: string;
+  studentName: string;
+  studentStatus: string;
+  enrollmentStatus: string;
+  sourceClassId: number;
+  sourceClassName: string;
+  /** @nullable */
+  sourceCampusId: number | null;
+  sourceGradeId: number;
+  sourceGradeName: string;
+  sourceGradeOrderNo: number;
+  sourceStage: string;
+  annualFee: number;
+  discountAmount: number;
+  alreadyEnrolledTargetYear: boolean;
+  eligible: boolean;
+}
+
+export interface SchoolEnrollmentPromotionPlan {
+  sourceYearId: number;
+  sourceYearName: string;
+  targetYearId: number;
+  targetYearName: string;
+  targetYearStartDate: string;
+  /** @maxItems 5000 */
+  candidates: SchoolEnrollmentPromotionCandidate[];
+}
+
+export interface SchoolEnrollmentPromotionAssignment {
+  /** @minimum 1 */
+  enrollmentId: number;
+  /** @minimum 1 */
+  targetClassId: number;
+}
+
+export interface SchoolEnrollmentPromotionInput {
+  /** @minimum 1 */
+  companyId: number;
+  /** @minimum 1 */
+  sourceYearId: number;
+  /** @minimum 1 */
+  targetYearId: number;
+  enrollmentDate: string;
+  /** Copy prior enrollment fee and discount as editable starting values only; no fee charge or invoice is created. */
+  copyFeeValues: boolean;
+  /**
+   * @minItems 1
+   * @maxItems 5000
+   */
+  assignments: SchoolEnrollmentPromotionAssignment[];
+}
+
+export interface SchoolEnrollmentPromotionResult {
+  /** @minimum 0 */
+  created: number;
+  /** @minimum 0 */
+  skippedExisting: number;
+}
+
 export interface BundleComponentInput {
   /** @minimum 1 */
   childItemId: number;
@@ -1521,6 +1629,28 @@ export interface SafetyKpis {
   risks: SafetyKpisRisks;
   capa: SafetyKpisCapa;
 }
+
+export type GetSchoolEnrollmentPromotionPlanParams = {
+  /**
+   * @minimum 1
+   */
+  companyId: number;
+  /**
+   * @minimum 1
+   */
+  sourceYearId: number;
+  /**
+   * @minimum 1
+   */
+  targetYearId: number;
+};
+
+export type GetSchoolStudentAcademicHistoryParams = {
+  /**
+   * @minimum 1
+   */
+  companyId: number;
+};
 
 export type ListSecurityActiveCompaniesParams = {
   source?: string;

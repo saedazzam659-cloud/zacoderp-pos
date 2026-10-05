@@ -48,6 +48,8 @@ import type {
   GetMonthlyStatsParams,
   GetRecentInvoicesParams,
   GetSafetyKpisParams,
+  GetSchoolEnrollmentPromotionPlanParams,
+  GetSchoolStudentAcademicHistoryParams,
   GetSecurityActiveCompanySessionsParams,
   HealthStatus,
   HistoricalOwnerBoqPriceReference,
@@ -80,6 +82,10 @@ import type {
   SafetyKpis,
   SaveOwnerBillTaxMapping200,
   SaveOwnerBillTaxMappingBody,
+  SchoolEnrollmentPromotionInput,
+  SchoolEnrollmentPromotionPlan,
+  SchoolEnrollmentPromotionResult,
+  SchoolStudentAcademicHistory,
   SecurityActiveCompaniesResponse,
   SecurityActiveCompanyEndInput,
   SecurityActiveCompanyEndResult,
@@ -108,6 +114,330 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+/**
+ * @summary Preview eligible student enrollments for transfer to another academic year
+ */
+export const getGetSchoolEnrollmentPromotionPlanUrl = (
+  params: GetSchoolEnrollmentPromotionPlanParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/enrollments/promotion-plan?${stringifiedParams}`
+    : `/api/school/enrollments/promotion-plan`;
+};
+
+export const getSchoolEnrollmentPromotionPlan = async (
+  params: GetSchoolEnrollmentPromotionPlanParams,
+  options?: RequestInit,
+): Promise<SchoolEnrollmentPromotionPlan> => {
+  return customFetch<SchoolEnrollmentPromotionPlan>(
+    getGetSchoolEnrollmentPromotionPlanUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolEnrollmentPromotionPlanQueryKey = (
+  params?: GetSchoolEnrollmentPromotionPlanParams,
+) => {
+  return [
+    `/api/school/enrollments/promotion-plan`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolEnrollmentPromotionPlanQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolEnrollmentPromotionPlan>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolEnrollmentPromotionPlanParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolEnrollmentPromotionPlan>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetSchoolEnrollmentPromotionPlanQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolEnrollmentPromotionPlan>>
+  > = ({ signal }) =>
+    getSchoolEnrollmentPromotionPlan(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolEnrollmentPromotionPlan>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolEnrollmentPromotionPlanQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolEnrollmentPromotionPlan>>
+>;
+export type GetSchoolEnrollmentPromotionPlanQueryError = ErrorType<void>;
+
+/**
+ * @summary Preview eligible student enrollments for transfer to another academic year
+ */
+
+export function useGetSchoolEnrollmentPromotionPlan<
+  TData = Awaited<ReturnType<typeof getSchoolEnrollmentPromotionPlan>>,
+  TError = ErrorType<void>,
+>(
+  params: GetSchoolEnrollmentPromotionPlanParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolEnrollmentPromotionPlan>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolEnrollmentPromotionPlanQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read a student's yearly enrollment, attendance, and exam-result history
+ */
+export const getGetSchoolStudentAcademicHistoryUrl = (
+  studentId: number,
+  params: GetSchoolStudentAcademicHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/school/students/${studentId}/academic-history?${stringifiedParams}`
+    : `/api/school/students/${studentId}/academic-history`;
+};
+
+export const getSchoolStudentAcademicHistory = async (
+  studentId: number,
+  params: GetSchoolStudentAcademicHistoryParams,
+  options?: RequestInit,
+): Promise<SchoolStudentAcademicHistory> => {
+  return customFetch<SchoolStudentAcademicHistory>(
+    getGetSchoolStudentAcademicHistoryUrl(studentId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolStudentAcademicHistoryQueryKey = (
+  studentId: number,
+  params?: GetSchoolStudentAcademicHistoryParams,
+) => {
+  return [
+    `/api/school/students/${studentId}/academic-history`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSchoolStudentAcademicHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolStudentAcademicHistory>>,
+  TError = ErrorType<void>,
+>(
+  studentId: number,
+  params: GetSchoolStudentAcademicHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolStudentAcademicHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetSchoolStudentAcademicHistoryQueryKey(studentId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolStudentAcademicHistory>>
+  > = ({ signal }) =>
+    getSchoolStudentAcademicHistory(studentId, params, {
+      signal,
+      ...requestOptions,
+    });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!studentId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolStudentAcademicHistory>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolStudentAcademicHistoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolStudentAcademicHistory>>
+>;
+export type GetSchoolStudentAcademicHistoryQueryError = ErrorType<void>;
+
+/**
+ * @summary Read a student's yearly enrollment, attendance, and exam-result history
+ */
+
+export function useGetSchoolStudentAcademicHistory<
+  TData = Awaited<ReturnType<typeof getSchoolStudentAcademicHistory>>,
+  TError = ErrorType<void>,
+>(
+  studentId: number,
+  params: GetSchoolStudentAcademicHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSchoolStudentAcademicHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolStudentAcademicHistoryQueryOptions(
+    studentId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create new target-year enrollments without changing source-year records
+ */
+export const getPromoteSchoolEnrollmentsUrl = () => {
+  return `/api/school/enrollments/promote`;
+};
+
+export const promoteSchoolEnrollments = async (
+  schoolEnrollmentPromotionInput: SchoolEnrollmentPromotionInput,
+  options?: RequestInit,
+): Promise<SchoolEnrollmentPromotionResult> => {
+  return customFetch<SchoolEnrollmentPromotionResult>(
+    getPromoteSchoolEnrollmentsUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolEnrollmentPromotionInput),
+    },
+  );
+};
+
+export const getPromoteSchoolEnrollmentsMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof promoteSchoolEnrollments>>,
+    TError,
+    { data: BodyType<SchoolEnrollmentPromotionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof promoteSchoolEnrollments>>,
+  TError,
+  { data: BodyType<SchoolEnrollmentPromotionInput> },
+  TContext
+> => {
+  const mutationKey = ["promoteSchoolEnrollments"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof promoteSchoolEnrollments>>,
+    { data: BodyType<SchoolEnrollmentPromotionInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return promoteSchoolEnrollments(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PromoteSchoolEnrollmentsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof promoteSchoolEnrollments>>
+>;
+export type PromoteSchoolEnrollmentsMutationBody =
+  BodyType<SchoolEnrollmentPromotionInput>;
+export type PromoteSchoolEnrollmentsMutationError = ErrorType<void>;
+
+/**
+ * @summary Create new target-year enrollments without changing source-year records
+ */
+export const usePromoteSchoolEnrollments = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof promoteSchoolEnrollments>>,
+    TError,
+    { data: BodyType<SchoolEnrollmentPromotionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof promoteSchoolEnrollments>>,
+  TError,
+  { data: BodyType<SchoolEnrollmentPromotionInput> },
+  TContext
+> => {
+  return useMutation(getPromoteSchoolEnrollmentsMutationOptions(options));
+};
 
 /**
  * @summary Create a draft reversal of an eligible manually-created journal entry

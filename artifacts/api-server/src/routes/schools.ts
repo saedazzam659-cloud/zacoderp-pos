@@ -21,6 +21,15 @@ import {
   schoolSubjectsTable,
 } from "@workspace/db/schema";
 import {
+  GetSchoolEnrollmentPromotionPlanQueryParams,
+  GetSchoolEnrollmentPromotionPlanResponse,
+  GetSchoolStudentAcademicHistoryParams,
+  GetSchoolStudentAcademicHistoryQueryParams,
+  GetSchoolStudentAcademicHistoryResponse,
+  PromoteSchoolEnrollmentsBody,
+  PromoteSchoolEnrollmentsResponse,
+} from "@workspace/api-zod";
+import {
   and, asc, count, desc, eq, gte, ilike, inArray, or, sql,
 } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -440,6 +449,428 @@ const LOOKUPS: Record<string, { table: any; columns: Record<string, any>; search
     sortField: "id",
   },
 };
+
+router.get("/students/:studentId/academic-history", async (req, res): Promise<void> => {
+  try {
+    const rawStudentId = Array.isArray(req.params.studentId) ? req.params.studentId[0] : req.params.studentId;
+    const studentParams = GetSchoolStudentAcademicHistoryParams.safeParse({ studentId: rawStudentId });
+    const queryParams = GetSchoolStudentAcademicHistoryQueryParams.safeParse({
+      companyId: queryValue(req, "companyId"),
+    });
+    if (!studentParams.success || !queryParams.success) {
+      res.status(400).json({ error: "رقم الطالب أو الشركة غير صالح" });
+      return;
+    }
+    const companyId = companyIdFor(req, res, queryParams.data.companyId);
+    if (!companyId) return;
+    const studentId = studentParams.data.studentId;
+    const students = await db.select({
+      studentId: schoolStudentsTable.id,
+      studentNumber: schoolStudentsTable.studentNumber,
+      studentName: schoolStudentsTable.fullNameAr,
+      studentStatus: schoolStudentsTable.status,
+    }).from(schoolStudentsTable).where(and(
+      eq(schoolStudentsTable.companyId, companyId),
+      eq(schoolStudentsTable.id, studentId),
+    )).limit(1);
+    const student = students[0];
+    if (!student) {
+      res.status(404).json({ error: "الطالب غير موجود في الشركة الحالية" });
+      return;
+    }
+
+    const enrollmentRows = await db.select({
+      id: schoolEnrollmentsTable.id,
+      yearId: schoolAcademicYearsTable.id,
+      yearName: schoolAcademicYearsTable.name,
+      yearStartDate: schoolAcademicYearsTable.startDate,
+      className: schoolClassesTable.name,
+      gradeName: schoolGradesTable.nameAr,
+      enrollmentDate: schoolEnrollmentsTable.enrollmentDate,
+      status: schoolEnrollmentsTable.status,
+    }).from(schoolEnrollmentsTable)
+      .innerJoin(schoolAcademicYearsTable, and(
+        eq(schoolAcademicYearsTable.id, schoolEnrollmentsTable.academicYearId),
+        eq(schoolAcademicYearsTable.companyId, companyId),
+      ))
+      .innerJoin(schoolClassesTable, and(
+        eq(schoolClassesTable.id, schoolEnrollmentsTable.classId),
+        eq(schoolClassesTable.companyId, companyId),
+      ))
+      .innerJoin(schoolGradesTable, and(
+        eq(schoolGradesTable.id, schoolClassesTable.gradeId),
+        eq(schoolGradesTable.companyId, companyId),
+      ))
+      .where(and(
+        eq(schoolEnrollmentsTable.companyId, companyId),
+        eq(schoolEnrollmentsTable.studentId, studentId),
+      ))
+      .orderBy(desc(schoolAcademicYearsTable.startDate), desc(schoolEnrollmentsTable.id));
+    const enrollmentIds = enrollmentRows.map((row) => row.id);
+    const [attendanceRows, resultRows] = enrollmentIds.length
+      ? await Promise.all([
+        db.select({
+          enrollmentId: schoolAttendanceTable.enrollmentId,
+          status: schoolAttendanceTable.status,
+          total: count(),
+        }).from(schoolAttendanceTable).where(and(
+          eq(schoolAttendanceTable.companyId, companyId),
+          inArray(schoolAttendanceTable.enrollmentId, enrollmentIds),
+        )).groupBy(schoolAttendanceTable.enrollmentId, schoolAttendanceTable.status),
+        db.select({
+          enrollmentId: schoolExamResultsTable.enrollmentId,
+          examId: schoolExamsTable.id,
+          examName: schoolExamsTable.name,
+          subjectName: schoolSubjectsTable.nameAr,
+          examDate: schoolExamsTable.examDate,
+          score: schoolExamResultsTable.score,
+          maxScore: schoolExamsTable.maxScore,
+        }).from(schoolExamResultsTable)
+          .innerJoin(schoolExamsTable, and(
+            eq(schoolExamsTable.id, schoolExamResultsTable.examId),
+            eq(schoolExamsTable.companyId, companyId),
+          ))
+          .innerJoin(schoolSubjectsTable, and(
+            eq(schoolSubjectsTable.id, schoolExamsTable.subjectId),
+            eq(schoolSubjectsTable.companyId, companyId),
+          ))
+          .where(and(
+            eq(schoolExamResultsTable.companyId, companyId),
+            inArray(schoolExamResultsTable.enrollmentId, enrollmentIds),
+          ))
+          .orderBy(desc(schoolExamsTable.examDate), asc(schoolExamsTable.name)),
+      ])
+      : [[], []];
+
+    const attendanceByEnrollment = new Map<number, {
+      total: number;
+      present: number;
+      absent: number;
+      late: number;
+      excused: number;
+      other: number;
+    }>();
+    for (const row of attendanceRows) {
+      const summary = attendanceByEnrollment.get(row.enrollmentId) ?? {
+        total: 0, present: 0, absent: 0, late: 0, excused: 0, other: 0,
+      };
+      const quantity = Number(row.total ?? 0);
+      summary.total += quantity;
+      if (row.status === "present") summary.present += quantity;
+      else if (row.status === "absent") summary.absent += quantity;
+      else if (row.status === "late") summary.late += quantity;
+      else if (row.status === "excused") summary.excused += quantity;
+      else summary.other += quantity;
+      attendanceByEnrollment.set(row.enrollmentId, summary);
+    }
+    const resultsByEnrollment = new Map<number, Array<{
+      examId: number;
+      examName: string;
+      subjectName: string;
+      examDate: string;
+      score: number;
+      maxScore: number;
+      percentage: number | null;
+    }>>();
+    for (const row of resultRows) {
+      const score = Number(row.score ?? 0);
+      const maxScore = Number(row.maxScore ?? 0);
+      const results = resultsByEnrollment.get(row.enrollmentId) ?? [];
+      results.push({
+        examId: row.examId,
+        examName: row.examName,
+        subjectName: row.subjectName,
+        examDate: row.examDate,
+        score,
+        maxScore,
+        percentage: maxScore > 0 ? Math.round((score / maxScore) * 10000) / 100 : null,
+      });
+      resultsByEnrollment.set(row.enrollmentId, results);
+    }
+    const response = {
+      ...student,
+      enrollments: enrollmentRows.map((row) => ({
+        id: row.id,
+        yearId: row.yearId,
+        yearName: row.yearName,
+        className: `${row.gradeName} · ${row.className}`,
+        gradeName: row.gradeName,
+        enrollmentDate: row.enrollmentDate,
+        status: row.status,
+        attendance: attendanceByEnrollment.get(row.id) ?? {
+          total: 0, present: 0, absent: 0, late: 0, excused: 0, other: 0,
+        },
+        results: resultsByEnrollment.get(row.id) ?? [],
+      })),
+    };
+    const validation = GetSchoolStudentAcademicHistoryResponse.safeParse(response);
+    if (!validation.success) {
+      throw new Error("تعذر التحقق من السجل الدراسي للطالب");
+    }
+    res.json(response);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+router.get("/enrollments/promotion-plan", async (req, res): Promise<void> => {
+  try {
+    const parsed = GetSchoolEnrollmentPromotionPlanQueryParams.safeParse({
+      companyId: queryValue(req, "companyId"),
+      sourceYearId: queryValue(req, "sourceYearId"),
+      targetYearId: queryValue(req, "targetYearId"),
+    });
+    if (!parsed.success) {
+      res.status(400).json({ error: "بيانات السنة الدراسية غير صالحة" });
+      return;
+    }
+    const companyId = companyIdFor(req, res, parsed.data.companyId);
+    if (!companyId) return;
+    const { sourceYearId, targetYearId } = parsed.data;
+    if (sourceYearId === targetYearId) {
+      res.status(400).json({ error: "يجب اختيار سنة دراسية مختلفة للترحيل" });
+      return;
+    }
+
+    const [sourceYears, targetYears] = await Promise.all([
+      db.select({ id: schoolAcademicYearsTable.id, name: schoolAcademicYearsTable.name })
+        .from(schoolAcademicYearsTable).where(and(
+          eq(schoolAcademicYearsTable.companyId, companyId),
+          eq(schoolAcademicYearsTable.id, sourceYearId),
+        )).limit(1),
+      db.select({
+        id: schoolAcademicYearsTable.id,
+        name: schoolAcademicYearsTable.name,
+        startDate: schoolAcademicYearsTable.startDate,
+      }).from(schoolAcademicYearsTable).where(and(
+        eq(schoolAcademicYearsTable.companyId, companyId),
+        eq(schoolAcademicYearsTable.id, targetYearId),
+      )).limit(1),
+    ]);
+    const sourceYear = sourceYears[0];
+    const targetYear = targetYears[0];
+    if (!sourceYear || !targetYear) {
+      res.status(404).json({ error: "السنة الدراسية غير موجودة في الشركة الحالية" });
+      return;
+    }
+
+    const sourceRows = await db.select({
+      enrollmentId: schoolEnrollmentsTable.id,
+      studentId: schoolStudentsTable.id,
+      studentNumber: schoolStudentsTable.studentNumber,
+      studentName: schoolStudentsTable.fullNameAr,
+      studentStatus: schoolStudentsTable.status,
+      enrollmentStatus: schoolEnrollmentsTable.status,
+      sourceClassId: schoolClassesTable.id,
+      sourceClassName: schoolClassesTable.name,
+      sourceCampusId: schoolClassesTable.campusId,
+      sourceGradeId: schoolGradesTable.id,
+      sourceGradeName: schoolGradesTable.nameAr,
+      sourceGradeOrderNo: schoolGradesTable.orderNo,
+      sourceStage: schoolGradesTable.stage,
+      annualFee: schoolEnrollmentsTable.annualFee,
+      discountAmount: schoolEnrollmentsTable.discountAmount,
+    }).from(schoolEnrollmentsTable)
+      .innerJoin(schoolStudentsTable, and(
+        eq(schoolStudentsTable.id, schoolEnrollmentsTable.studentId),
+        eq(schoolStudentsTable.companyId, companyId),
+      ))
+      .innerJoin(schoolClassesTable, and(
+        eq(schoolClassesTable.id, schoolEnrollmentsTable.classId),
+        eq(schoolClassesTable.companyId, companyId),
+      ))
+      .innerJoin(schoolGradesTable, and(
+        eq(schoolGradesTable.id, schoolClassesTable.gradeId),
+        eq(schoolGradesTable.companyId, companyId),
+      ))
+      .where(and(
+        eq(schoolEnrollmentsTable.companyId, companyId),
+        eq(schoolEnrollmentsTable.academicYearId, sourceYearId),
+      ))
+      .orderBy(asc(schoolGradesTable.orderNo), asc(schoolClassesTable.name), asc(schoolStudentsTable.fullNameAr))
+      .limit(5001);
+    if (sourceRows.length > 5000) {
+      res.status(413).json({ error: "يتجاوز عدد الطلاب حد المعاينة البالغ 5000 طالب" });
+      return;
+    }
+
+    const targetEnrollments = sourceRows.length
+      ? await db.select({ studentId: schoolEnrollmentsTable.studentId })
+        .from(schoolEnrollmentsTable)
+        .where(and(
+          eq(schoolEnrollmentsTable.companyId, companyId),
+          eq(schoolEnrollmentsTable.academicYearId, targetYearId),
+          inArray(schoolEnrollmentsTable.studentId, sourceRows.map((row) => row.studentId)),
+        ))
+      : [];
+    const alreadyEnrolled = new Set(targetEnrollments.map((row) => row.studentId));
+    const response = {
+      sourceYearId: sourceYear.id,
+      sourceYearName: sourceYear.name,
+      targetYearId: targetYear.id,
+      targetYearName: targetYear.name,
+      targetYearStartDate: targetYear.startDate,
+      candidates: sourceRows.map((row) => {
+        const alreadyEnrolledTargetYear = alreadyEnrolled.has(row.studentId);
+        return {
+          ...row,
+          annualFee: Number(row.annualFee ?? 0),
+          discountAmount: Number(row.discountAmount ?? 0),
+          alreadyEnrolledTargetYear,
+          eligible: row.enrollmentStatus === "active"
+            && row.studentStatus === "active"
+            && !alreadyEnrolledTargetYear,
+        };
+      }),
+    };
+    const validation = GetSchoolEnrollmentPromotionPlanResponse.safeParse(response);
+    if (!validation.success) {
+      throw new Error("تعذر التحقق من بيانات معاينة الترحيل");
+    }
+    res.json(response);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+router.post(
+  "/enrollments/promote",
+  requirePermission("school", "create"),
+  async (req, res): Promise<void> => {
+    try {
+      const parsed = PromoteSchoolEnrollmentsBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "بيانات الترحيل غير صالحة" });
+        return;
+      }
+      const companyId = companyIdFor(req, res, parsed.data.companyId);
+      if (!companyId) return;
+      const { sourceYearId, targetYearId, assignments, copyFeeValues } = parsed.data;
+      const parsedEnrollmentDate = parseField(req.body?.enrollmentDate, D(true));
+      if (!parsedEnrollmentDate.valid) {
+        res.status(400).json({ error: "تاريخ القيد غير صالح" });
+        return;
+      }
+      if (sourceYearId === targetYearId) {
+        res.status(400).json({ error: "يجب اختيار سنة دراسية مختلفة للترحيل" });
+        return;
+      }
+      const enrollmentIds = assignments.map((item) => item.enrollmentId);
+      const targetClassIds = [...new Set(assignments.map((item) => item.targetClassId))];
+      if (new Set(enrollmentIds).size !== enrollmentIds.length) {
+        res.status(400).json({ error: "يوجد طالب مكرر في قائمة الترحيل" });
+        return;
+      }
+
+      const outcome = await db.transaction(async (tx: any) => {
+        const [sourceYear] = await tx.select({ id: schoolAcademicYearsTable.id })
+          .from(schoolAcademicYearsTable).where(and(
+            eq(schoolAcademicYearsTable.companyId, companyId),
+            eq(schoolAcademicYearsTable.id, sourceYearId),
+          )).limit(1);
+        const [targetYear] = await tx.select({ id: schoolAcademicYearsTable.id })
+          .from(schoolAcademicYearsTable).where(and(
+            eq(schoolAcademicYearsTable.companyId, companyId),
+            eq(schoolAcademicYearsTable.id, targetYearId),
+          )).limit(1);
+        if (!sourceYear || !targetYear) {
+          return { error: { status: 404, message: "السنة الدراسية غير موجودة في الشركة الحالية" } };
+        }
+
+        const sourceRows = await tx.select({
+          enrollmentId: schoolEnrollmentsTable.id,
+          studentId: schoolStudentsTable.id,
+          studentStatus: schoolStudentsTable.status,
+          enrollmentStatus: schoolEnrollmentsTable.status,
+          annualFee: schoolEnrollmentsTable.annualFee,
+          discountAmount: schoolEnrollmentsTable.discountAmount,
+        }).from(schoolEnrollmentsTable)
+          .innerJoin(schoolStudentsTable, and(
+            eq(schoolStudentsTable.id, schoolEnrollmentsTable.studentId),
+            eq(schoolStudentsTable.companyId, companyId),
+          ))
+          .where(and(
+            eq(schoolEnrollmentsTable.companyId, companyId),
+            eq(schoolEnrollmentsTable.academicYearId, sourceYearId),
+            inArray(schoolEnrollmentsTable.id, enrollmentIds),
+          ));
+        if (sourceRows.length !== enrollmentIds.length
+          || sourceRows.some((row: any) => row.enrollmentStatus !== "active" || row.studentStatus !== "active")) {
+          return { error: { status: 400, message: "تغيرت أهلية بعض الطلاب؛ أعد تحميل المعاينة" } };
+        }
+
+        const targetClasses = await tx.select({
+          id: schoolClassesTable.id,
+          academicYearId: schoolClassesTable.academicYearId,
+          isActive: schoolClassesTable.isActive,
+        }).from(schoolClassesTable).where(and(
+          eq(schoolClassesTable.companyId, companyId),
+          inArray(schoolClassesTable.id, targetClassIds),
+        ));
+        if (targetClasses.length !== targetClassIds.length
+          || targetClasses.some((row: any) => row.academicYearId !== targetYearId || !row.isActive)) {
+          return { error: { status: 400, message: "يجب اختيار فصول نشطة من السنة الدراسية المستهدفة" } };
+        }
+
+        const existing = await tx.select({ studentId: schoolEnrollmentsTable.studentId })
+          .from(schoolEnrollmentsTable).where(and(
+            eq(schoolEnrollmentsTable.companyId, companyId),
+            eq(schoolEnrollmentsTable.academicYearId, targetYearId),
+            inArray(schoolEnrollmentsTable.studentId, sourceRows.map((row: any) => row.studentId)),
+          ));
+        const alreadyEnrolled = new Set(existing.map((row: any) => row.studentId));
+        const assignmentByEnrollment = new Map(assignments.map((item) => [item.enrollmentId, item]));
+        const rowsToCreate = sourceRows
+          .filter((row: any) => !alreadyEnrolled.has(row.studentId))
+          .map((row: any) => {
+            const assignment = assignmentByEnrollment.get(row.enrollmentId)!;
+            return {
+              companyId,
+              studentId: row.studentId,
+              academicYearId: targetYearId,
+              classId: assignment.targetClassId,
+              enrollmentDate: parsedEnrollmentDate.value,
+              status: "active",
+              annualFee: copyFeeValues ? String(row.annualFee ?? "0") : "0",
+              discountAmount: copyFeeValues ? String(row.discountAmount ?? "0") : "0",
+              notes: null,
+            };
+          });
+        const created = rowsToCreate.length
+          ? await tx.insert(schoolEnrollmentsTable).values(rowsToCreate)
+            .onConflictDoNothing({
+              target: [
+                schoolEnrollmentsTable.companyId,
+                schoolEnrollmentsTable.studentId,
+                schoolEnrollmentsTable.academicYearId,
+              ],
+            })
+            .returning({ id: schoolEnrollmentsTable.id })
+          : [];
+        return {
+          result: {
+            created: created.length,
+            skippedExisting: assignments.length - created.length,
+          },
+        };
+      });
+      if ("error" in outcome && outcome.error) {
+        res.status(outcome.error.status).json({ error: outcome.error.message });
+        return;
+      }
+      if (!("result" in outcome)) {
+        throw new Error("تعذر تحديد نتيجة الترحيل");
+      }
+      const validation = PromoteSchoolEnrollmentsResponse.safeParse(outcome.result);
+      if (!validation.success) {
+        throw new Error("تعذر التحقق من نتيجة الترحيل");
+      }
+      res.json(outcome.result);
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 router.get("/lookups/:resource", async (req, res) => {
   try {

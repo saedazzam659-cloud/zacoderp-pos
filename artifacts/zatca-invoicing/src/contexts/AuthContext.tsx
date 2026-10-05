@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
-import { setAuthTokenGetter, setSessionIdGetter, setActingCompanyIdGetter } from "@workspace/api-client-react";
+import { setBaseUrl, setAuthTokenGetter, setSessionIdGetter, setActingCompanyIdGetter } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { emitCall } from "@/lib/callSignal";
@@ -7,6 +7,7 @@ import { emitCall } from "@/lib/callSignal";
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // Register auth token getter for the generated API client so all hooks automatically include Bearer token
+setBaseUrl(API_BASE);
 setAuthTokenGetter(() => localStorage.getItem("zatca_token"));
 // Register a manual-session header so every generated API call carries the
 // user's currently-selected session id. Server only honours it when it matches
