@@ -14,6 +14,7 @@ import {
   parseBundleAssemblyRequestId,
 } from "../lib/bundleAssemblyCost.js";
 import { db, pool } from "@workspace/db";
+import { manufacturingSettingsTable, productionOrdersTable } from "@workspace/db/schema";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   warehouseGroupsTable, warehousesTable, itemGroupsTable, unitsTable,

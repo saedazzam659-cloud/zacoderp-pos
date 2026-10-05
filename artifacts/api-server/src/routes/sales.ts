@@ -27,6 +27,7 @@ import {
   accountsTable,
   salesLineProductionCostAttributionsTable,
   documentExpensesTable,
+  schoolFeesTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte, ilike, or, ne } from "drizzle-orm";
@@ -3850,13 +3851,21 @@ async function postSalesInvoiceHandler(
     // sales when desired. Falls back to `sales_invoice` for any role left
     // unconfigured under POS so a missing POS mapping never breaks posting.
     const isPos = !!inv.posSessionId;
-    const [mapSi, mapPos] = await Promise.all([
+    const [linkedSchoolFee] = await tx.select({ id: schoolFeesTable.id })
+      .from(schoolFeesTable).where(and(
+        eq(schoolFeesTable.companyId, cid),
+        eq(schoolFeesTable.salesInvoiceId, inv.id),
+      )).limit(1);
+    const [mapSi, mapPos, mapSchoolFee] = await Promise.all([
       loadMappings(cid, "sales_invoice"),
       isPos ? loadMappings(cid, "pos_invoice") : Promise.resolve(null),
+      linkedSchoolFee ? loadMappings(cid, "school_fee_invoice") : Promise.resolve(null),
     ]);
     timing?.mark("account-mappings");
     const pick = (role: string): number | null =>
-      (mapPos ? mapPos("pos_invoice", role) : null) ?? mapSi("sales_invoice", role);
+      (mapPos ? mapPos("pos_invoice", role) : null) ??
+      (mapSchoolFee ? mapSchoolFee("school_fee_invoice", role) : null) ??
+      mapSi("sales_invoice", role);
     const restoredAccountCandidates = {
       revenue: [inv.salesAccountId, pick("revenue")],
       cogs: [inv.cogsAccountId, pick("cogs")],

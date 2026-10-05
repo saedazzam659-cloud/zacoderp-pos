@@ -193,7 +193,7 @@ router.get("/requests", requireSuperAdmin, async (req, res) => {
 
 // POST /api/admin/requests/:id/approve
 router.post("/requests/:id/approve", requireSuperAdmin, async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   const [company] = await db.update(companiesTable).set({
     status: "active",
     rejectionReason: null,
@@ -211,7 +211,7 @@ router.post("/requests/:id/approve", requireSuperAdmin, async (req, res) => {
 
 // POST /api/admin/requests/:id/reject
 router.post("/requests/:id/reject", requireSuperAdmin, async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   const { reason } = req.body;
   const [company] = await db.update(companiesTable).set({
     status: "rejected",
@@ -337,7 +337,7 @@ async function deleteCompanyWithRelations(id: number) {
 // DELETE /api/admin/requests/:id — delete request + all relations
 router.delete("/requests/:id", requireSuperAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(String(req.params.id), 10);
     await deleteCompanyWithRelations(id);
     res.status(204).send();
   } catch (err: any) {
@@ -399,7 +399,7 @@ const toBoundedInt = (v: any, min: number, max: number): number | null => {
 router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
   const { plan, maxUsers, maxBranches, maxWarehouses, maxInvoices, maxHrUsers, billingCycle, startDate, endDate, isActive, price } = req.body ?? {};
 
@@ -468,13 +468,13 @@ function sqlRows<T>(result: SqlExecuteResult<T>): T[] {
   return Array.isArray(result) ? result : (result.rows ?? []);
 }
 
-interface ExtendedRow      { id: number; company_id: number; end_date: string }
-interface LatestSubRow {
+interface ExtendedRow extends Record<string, unknown> { id: number; company_id: number; end_date: string }
+interface LatestSubRow extends Record<string, unknown> {
   id: number; company_id: number; plan: string; billing_cycle: string;
   max_users: number; max_branches: number; max_warehouses: number;
   max_invoices: number; start_date: string; end_date: string; is_active: boolean;
 }
-interface InvoiceCountRow  { companyId: number; n: number }
+interface InvoiceCountRow extends Record<string, unknown> { companyId: number; n: number }
 
 function addMonthsISO(dateISO: string, months: number): string {
   // Anchor on the existing endDate (or today if invalid), then add N months.
@@ -504,7 +504,7 @@ function normalizeCycle(c: string): "monthly" | "yearly" | null {
 router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
   const months = Number(req.body?.months);
   if (!ALLOWED_EXTEND_MONTHS.has(months)) {
@@ -567,7 +567,7 @@ router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => 
 router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
   const planKey = String(req.body?.planKey ?? "");
   const cycleRaw = String(req.body?.billingCycle ?? "monthly");
@@ -1437,7 +1437,7 @@ router.get("/companies/deleted", requireSuperAdmin, async (_req, res) => {
 router.post("/companies/:id/restore", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (!Number.isFinite(id) || id <= 0) {
     res.status(400).json({ error: "معرّف الشركة غير صالح" }); return;
   }
@@ -1461,7 +1461,7 @@ router.delete("/companies/:id/permanent", requireSuperAdmin, async (req, res) =>
   try {
     const { runWithAgentScope } = await import("../lib/agentScope.js");
     await runWithAgentScope(req, res, async () => {
-    const id = parseInt(req.params.id);
+    const id = parseInt(String(req.params.id), 10);
     if (!Number.isFinite(id) || id <= 0) {
       res.status(400).json({ error: "معرّف الشركة غير صالح" }); return;
     }
@@ -1538,7 +1538,7 @@ async function ensureUsersSecurityNoticeColumn(): Promise<void> {
 router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   // Older agent DBs may predate newer users columns — heal additively
   // before selecting them (runWithAgentScope does not run ensureSchema).
   if (req.query?.agent) await ensureUsersSecurityNoticeColumn();
@@ -3078,7 +3078,7 @@ router.put("/companies/:id/journal-sequence-control", requireSuperAdmin, async (
 router.post("/companies/:id/users", requireSuperAdmin, async (req, res) => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
-  const companyId = parseInt(req.params.id);
+  const companyId = parseInt(String(req.params.id), 10);
   const { username, email, password, role = "admin" } = req.body;
   if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
 
@@ -4086,7 +4086,7 @@ router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
     for (const r of allTimeRows) sizeAll.set(Number(r.companyId), Number(r.total));
 
     // 4. Latest snapshot per company via DISTINCT ON. Selects metadata only.
-    interface LatestRow {
+    interface LatestRow extends Record<string, unknown> {
       id: number; company_id: number; created_at: Date; reason: string;
       size_bytes: number; counts: Record<string, number> | null;
     }
@@ -4364,7 +4364,7 @@ router.post("/backups/run-all", requireSuperAdmin, async (req, res) => {
 
 // GET /api/admin/backups/run-all/:jobId — poll progress / final results
 router.get("/backups/run-all/:jobId", requireSuperAdmin, async (req, res) => {
-  const job = bulkJobs.get(req.params.jobId);
+  const job = bulkJobs.get(String(req.params.jobId));
   if (!job) { res.status(404).json({ error: "المهمة غير موجودة أو انتهت صلاحيتها" }); return; }
   res.json(job);
 });
@@ -5716,8 +5716,8 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
 // (tracked as follow-up: geo-IP enrichment for security anomalies).
 router.get("/security/anomalies", requireSuperAdmin, async (_req, res) => {
   try {
-    interface DeniedSpikeRow { user_id: number | null; username: string | null; n: number }
-    interface NewIpRow {
+    interface DeniedSpikeRow extends Record<string, unknown> { user_id: number | null; username: string | null; n: number }
+    interface NewIpRow extends Record<string, unknown> {
       user_id: number; username: string; role: string;
       ip: string; created_at: string;
     }
@@ -5776,7 +5776,7 @@ router.get("/security/anomalies", requireSuperAdmin, async (_req, res) => {
     //    2× their 7-day daily average gets flagged as a "wide-spread login".
     //  - Per user, today's denied count vs the prior-7-day daily average; flag
     //    when today is ≥5 AND ≥3× the baseline.
-    interface BaselineRow {
+    interface BaselineRow extends Record<string, unknown> {
       user_id: number; username: string; role: string;
       today_ips: number; baseline_ips: number;
       today_denied: number; baseline_denied: number;
@@ -5875,7 +5875,7 @@ router.get("/security/permissions-matrix", requireSuperAdmin, async (_req, res) 
     }
 
     // Role distribution per company (every role, not just admin-tier).
-    interface RoleCountRow { company_id: number | null; role: string; n: number }
+    interface RoleCountRow extends Record<string, unknown> { company_id: number | null; role: string; n: number }
     const roleResult = await db.execute<RoleCountRow>(sql`
       SELECT company_id, role, count(*)::int AS n
         FROM users
@@ -6093,7 +6093,7 @@ function streamCsv(
 }
 
 // ─── Search helper (case-insensitive name match) ──────────────────────────
-function applySearch(rows: { companyName: string }[], search: string | undefined): typeof rows {
+function applySearch<T extends { companyName: string }>(rows: T[], search: string | undefined): T[] {
   if (!search) return rows;
   const needle = search.trim().toLowerCase();
   if (!needle) return rows;
@@ -6101,8 +6101,8 @@ function applySearch(rows: { companyName: string }[], search: string | undefined
 }
 
 // ─── Shared row interfaces ────────────────────────────────────────────────
-interface RevenueRow      { company_id: number; revenue: string; invoice_count: number }
-interface OperationalRow  {
+interface RevenueRow extends Record<string, unknown> { company_id: number; revenue: string; invoice_count: number }
+interface OperationalRow extends Record<string, unknown> {
   company_id: number; customers: number; suppliers: number; items: number;
   open_pos_sessions: number; last_activity_at: string | null;
   audit_events_period: number; denied_period: number;
@@ -6113,15 +6113,15 @@ interface OperationalRow  {
 // auto_backups doesn't track an explicit "status" column — every persisted row
 // represents a successful backup (failures aren't recorded). We derive a
 // human-readable status from the trailing reason and timestamp.
-interface BackupOverviewRow { company_id: number; reason: string; created_at: string | null }
-interface PlanUsageRow {
+interface BackupOverviewRow extends Record<string, unknown> { company_id: number; reason: string; created_at: string | null }
+interface PlanUsageRow extends Record<string, unknown> {
   subscription_id: number; company_id: number; plan: string; billing_cycle: string;
   max_users: number; max_branches: number; max_warehouses: number; max_invoices: number;
   start_date: string; end_date: string; price: string; is_active: boolean;
   actual_users: number; actual_branches: number; actual_warehouses: number;
   actual_invoices_period: number;
 }
-interface RevenueByPlanRow {
+interface RevenueByPlanRow extends Record<string, unknown> {
   plan: string; billing_cycle: string; subscription_count: number; total_billed: string;
 }
 
@@ -6136,8 +6136,8 @@ router.get("/reports/summary", requireSuperAdmin, async (_req, res) => {
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
     const monthEnd   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
 
-    interface SumRow  { v: string | null }
-    interface CountRow { n: number }
+    interface SumRow extends Record<string, unknown> { v: string | null }
+    interface CountRow extends Record<string, unknown> { n: number }
 
     const [revenueResult, billedResult, activeCompaniesResult, overLimitResult] = await Promise.all([
       // Posted (non-draft) sales invoices in the current month, restricted to
@@ -7350,7 +7350,7 @@ router.get("/email-channels", requireSuperAdmin, async (_req, res) => {
 //   body: { email, host, port, password } — empty password = keep existing.
 router.put("/email-channels/:channel", requireSuperAdmin, async (req, res) => {
   try {
-    const ch = parseChannelParam(req.params.channel);
+    const ch = parseChannelParam(String(req.params.channel));
     if (!ch) { res.status(400).json({ error: "قناة غير معروفة" }); return; }
     const body = req.body ?? {};
     const email = typeof body.email === "string" ? body.email.trim() : "";

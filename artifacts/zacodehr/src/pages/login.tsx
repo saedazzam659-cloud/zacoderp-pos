@@ -4,6 +4,8 @@ import { Building2, KeyRound, UserRound, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Link } from "wouter";
+import { UsersRound } from "lucide-react";
 
 export default function Login() {
   const login = useLogin();
@@ -89,6 +91,10 @@ export default function Login() {
             <ArrowRight className="w-5 h-5 rotate-180" />
           </Button>
         </form>
+        <div className="employee-family-link">
+          <span>لست موظفاً؟</span>
+          <Link href="/guardian/login" data-testid="link-guardian-login"><UsersRound className="w-4 h-4" /> دخول ولي الأمر <ArrowRight className="w-4 h-4 rotate-180" /></Link>
+        </div>
       </div>
     </div>
   );

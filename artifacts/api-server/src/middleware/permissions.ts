@@ -721,6 +721,8 @@ interface WriteRow {
   ip?: string | null;
   userAgent?: string | null;
   metadata?: any;
+  success?: boolean;
+  message?: string;
 }
 
 export async function writeAudit(row: WriteRow): Promise<void> {
@@ -739,7 +741,15 @@ export async function writeAudit(row: WriteRow): Promise<void> {
       statusCode: row.statusCode ?? null,
       ip:         row.ip ?? null,
       userAgent:  row.userAgent ?? null,
-      metadata:   row.metadata ?? null,
+      metadata: row.success === undefined && row.message === undefined
+        ? row.metadata ?? null
+        : {
+            ...(row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+              ? row.metadata
+              : row.metadata == null ? {} : { value: row.metadata }),
+            ...(row.success === undefined ? {} : { success: row.success }),
+            ...(row.message === undefined ? {} : { message: row.message }),
+          },
     }).returning({ id: auditLogTable.id });
     // Observation runs after the audit insert, outside the business transaction.
     // Dynamic import avoids a permission/engine dependency cycle; rejection is

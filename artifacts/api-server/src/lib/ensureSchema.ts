@@ -932,16 +932,19 @@ async function execTypeDDL(stmt: string): Promise<void> {
   }
 }
 
-interface ExistingColumn {
+interface ExistingColumn extends Record<string, unknown> {
+  [key: string]: unknown;
   table_name: string;
   column_name: string;
 }
 
-interface ExistingTable {
+interface ExistingTable extends Record<string, unknown> {
+  [key: string]: unknown;
   table_name: string;
 }
 
-interface ExistingEnum {
+interface ExistingEnum extends Record<string, unknown> {
+  [key: string]: unknown;
   typname: string;
 }
 
@@ -1161,7 +1164,7 @@ async function ensureColumns(
           ?? (col as unknown as { enum?: { enumName?: string } }).enum?.enumName;
         if (enumName) typeForSql = qid(enumName);
       } else if ((col as unknown) instanceof PgEnumColumn) {
-        const e = (col as PgEnumColumn).enum as unknown as { enumName?: string };
+        const e = (col as PgEnumColumn<any>).enum as unknown as { enumName?: string };
         if (e?.enumName) typeForSql = qid(e.enumName);
       }
 

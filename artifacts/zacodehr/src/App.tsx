@@ -20,6 +20,8 @@ import Attendance from '@/pages/attendance';
 import Requests from '@/pages/requests';
 import Payslips from '@/pages/payslips';
 import Profile from '@/pages/profile';
+import GuardianLogin from '@/pages/guardian-login';
+import GuardianPortal from '@/pages/guardian-portal';
 
 const queryClient = new QueryClient();
 
@@ -41,6 +43,8 @@ function Router() {
     <RoutedErrorBoundary>
       <Switch>
         <Route path="/login" component={Login} />
+        <Route path="/guardian/login" component={GuardianLogin} />
+        <Route path="/guardian" component={GuardianPortal} />
         <ProtectedRoute path="/" component={Dashboard} />
         <ProtectedRoute path="/attendance" component={Attendance} />
         <ProtectedRoute path="/requests" component={Requests} />

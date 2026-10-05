@@ -1630,6 +1630,257 @@ export interface SafetyKpis {
   capa: SafetyKpisCapa;
 }
 
+export interface GuardianPortalLoginInput {
+  /**
+   * @minLength 1
+   * @maxLength 80
+   */
+  companyCode: string;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  username: string;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  password: string;
+}
+
+export type GuardianPortalLoginResultAccount = {
+  displayName: string;
+  username: string;
+  /** @minimum 0 */
+  childrenCount: number;
+};
+
+export interface GuardianPortalLoginResult {
+  token: string;
+  account: GuardianPortalLoginResultAccount;
+}
+
+export interface GuardianPortalAttendanceRow {
+  date: string;
+  period: string;
+  status: string;
+}
+
+export interface GuardianPortalExamRow {
+  id: number;
+  name: string;
+  subject: string;
+  examDate: string;
+  score: number;
+  maxScore: number;
+}
+
+export interface GuardianPortalFeeRow {
+  id: number;
+  description: string;
+  amount: number;
+  /** @nullable */
+  dueDate: string | null;
+  status: string;
+  /** @nullable */
+  invoiceNumber: string | null;
+}
+
+export type GuardianPortalChildAttendanceSummary = {
+  /** @minimum 0 */
+  present: number;
+  /** @minimum 0 */
+  late: number;
+  /** @minimum 0 */
+  absent: number;
+  /** @minimum 0 */
+  excused: number;
+  /** @minimum 0 */
+  total: number;
+};
+
+export interface GuardianPortalChild {
+  id: number;
+  studentNumber: string;
+  fullNameAr: string;
+  /** @nullable */
+  fullNameEn: string | null;
+  status: string;
+  /** @nullable */
+  academicYear: string | null;
+  /** @nullable */
+  className: string | null;
+  /** @nullable */
+  gradeName: string | null;
+  attendanceSummary: GuardianPortalChildAttendanceSummary;
+  recentAttendance: GuardianPortalAttendanceRow[];
+  recentExams: GuardianPortalExamRow[];
+  fees: GuardianPortalFeeRow[];
+  biometricConsentActive: boolean;
+  faceEnrolled: boolean;
+}
+
+export interface GuardianBiometricConsentInput {
+  consented: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  policyVersion: string;
+}
+
+export interface GuardianBiometricConsentResult {
+  ok: boolean;
+  consented: boolean;
+}
+
+export interface SchoolGuardianPortalLinkView {
+  guardianId: number;
+  studentId: number;
+  studentNameAr: string;
+}
+
+export interface SchoolGuardianPortalAccount {
+  id: number;
+  username: string;
+  displayName: string;
+  isActive: boolean;
+  guardians: SchoolGuardianPortalLinkView[];
+  /** @nullable */
+  createdAt: string | null;
+}
+
+export interface SchoolGuardianPortalAccountInput {
+  /**
+   * @minLength 3
+   * @maxLength 120
+   */
+  username: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  displayName: string;
+  /**
+   * @minLength 10
+   * @maxLength 200
+   */
+  password: string;
+  /**
+   * @minItems 1
+   * @maxItems 30
+   */
+  guardianIds: number[];
+}
+
+export interface SchoolGuardianPortalAccountUpdate {
+  /**
+   * @minLength 3
+   * @maxLength 120
+   */
+  username?: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  displayName?: string;
+  /**
+   * @minLength 10
+   * @maxLength 200
+   */
+  password?: string;
+  isActive?: boolean;
+  /**
+   * @minItems 1
+   * @maxItems 30
+   */
+  guardianIds?: number[];
+}
+
+export interface SchoolStudentFaceEnrollmentInput {
+  /**
+   * @minItems 128
+   * @maxItems 128
+   */
+  descriptor: number[];
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  qualityScore: number;
+  livenessPassed: boolean;
+}
+
+export interface SchoolStudentFaceRecognitionInput {
+  /**
+   * @minItems 128
+   * @maxItems 128
+   */
+  descriptor: number[];
+  livenessPassed: boolean;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  cameraId?: number | null;
+}
+
+export interface SchoolStudentFaceEnrollmentResult {
+  ok: boolean;
+  enrolled: boolean;
+  /** @nullable */
+  enrolledAt?: string | null;
+}
+
+/**
+ * @nullable
+ */
+export type SchoolStudentFaceRecognitionResultEventType =
+  | (typeof SchoolStudentFaceRecognitionResultEventType)[keyof typeof SchoolStudentFaceRecognitionResultEventType]
+  | null;
+
+export const SchoolStudentFaceRecognitionResultEventType = {
+  arrival: "arrival",
+  departure: "departure",
+} as const;
+
+/**
+ * @nullable
+ */
+export type SchoolStudentFaceRecognitionResultAttendanceStatus =
+  | (typeof SchoolStudentFaceRecognitionResultAttendanceStatus)[keyof typeof SchoolStudentFaceRecognitionResultAttendanceStatus]
+  | null;
+
+export const SchoolStudentFaceRecognitionResultAttendanceStatus = {
+  present: "present",
+  late: "late",
+} as const;
+
+export interface SchoolStudentFaceRecognitionResult {
+  matched: boolean;
+  message: string;
+  /** @nullable */
+  studentId: number | null;
+  /** @nullable */
+  studentNameAr: string | null;
+  /** @nullable */
+  eventType: SchoolStudentFaceRecognitionResultEventType;
+  /** @nullable */
+  occurredAt: string | null;
+  /** @nullable */
+  attendanceStatus: SchoolStudentFaceRecognitionResultAttendanceStatus;
+}
+
+export interface SchoolStudentFaceEnrollmentStatus {
+  studentId: number;
+  studentNumber: string;
+  fullNameAr: string;
+  consentActive: boolean;
+  enrolled: boolean;
+  /** @nullable */
+  enrolledAt: string | null;
+}
+
 export type GetSchoolEnrollmentPromotionPlanParams = {
   /**
    * @minimum 1

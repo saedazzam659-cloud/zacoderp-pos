@@ -270,7 +270,7 @@ export function buildSchedule(input: AssetCalcInput): ScheduleRow[] {
     const periodInput = method === "declining_balance"
       ? { ...input, accumulatedDepreciation: startAccum + cumulative }
       : input;
-    const { amount, days } = computePeriodDepreciation(periodInput, m, y);
+    const { amount, daysCharged: days } = computePeriodDepreciation(periodInput, m, y);
     const isLast = y === endY && m === endM;
     let charge = amount;
     if (isLast) {

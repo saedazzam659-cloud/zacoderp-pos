@@ -11,7 +11,7 @@ export type RoleDef = {
 export type DocumentTypeDef = {
   key: string;
   /** Company menu-permissions module key (not a per-user role permission). */
-  moduleKey: "purchases_module" | "sales_module" | "cash_module" | "pos" | "inventory_reports" | "accounts" | "contracting";
+  moduleKey: "purchases_module" | "sales_module" | "cash_module" | "pos" | "inventory_reports" | "accounts" | "contracting" | "school";
   label: string;
   icon?: string;
   description: string;
@@ -83,6 +83,18 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "cogs",       label: "تكلفة البضاعة المباعة (مدين)", description: "تسجيل تكلفة المخزون المباع.", defaultHintCode: "5110", accountType: "expense" },
       { key: "inventory",  label: "المخزون (دائن لأجل COGS)", description: "تخفيض المخزون بمقدار تكلفة المباع.", defaultHintCode: "1220", accountType: "asset" },
       { key: "discount",   label: "خصم مسموح به (مدين)", description: "الحساب المدين لقيمة الخصم الممنوح للعميل على الفاتورة (طبيعته مصروف).", defaultHintCode: "5103", accountType: "expense" },
+    ],
+  },
+  {
+    key: "school_fee_invoice",
+    moduleKey: "school",
+    label: "فواتير الرسوم المدرسية",
+    description: "روابط مخصصة لفواتير المبيعات المرتبطة برسوم مدرسية؛ يظل إنشاء الفاتورة وتحصيلها وترحيلها ضمن مسار ERP المعتاد.",
+    roles: [
+      { key: "receivable", label: "ذمم ولي الأمر (مدين)", description: "يُستخدم في فاتورة المبيعات المرتبطة برسوم مدرسية.", defaultHintCode: "11031", accountType: "asset" },
+      { key: "revenue", label: "إيرادات الرسوم المدرسية (دائن)", description: "يُستخدم لإيراد الفاتورة المدرسية عند ترحيل فاتورة المبيعات.", defaultHintCode: "4101", accountType: "revenue" },
+      { key: "vat_output", label: "ضريبة المخرجات (دائن)", description: "يُستخدم فقط إذا تضمنت الفاتورة المدرسية ضريبة مستحقة.", defaultHintCode: "21041", accountType: "liability" },
+      { key: "discount", label: "خصومات الرسوم (مدين)", description: "يُستخدم عند وجود خصم على فاتورة الرسوم المدرسية.", defaultHintCode: "5103", accountType: "expense" },
     ],
   },
   {

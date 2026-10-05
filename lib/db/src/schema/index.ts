@@ -70,6 +70,7 @@ export * from "./maintenance";
 export * from "./hotel";
 export * from "./hospital";
 export * from "./schools";
+export * from "./schoolPortal";
 export * from "./crm";
 export * from "./fixedAssets";
 export * from "./securityActions";

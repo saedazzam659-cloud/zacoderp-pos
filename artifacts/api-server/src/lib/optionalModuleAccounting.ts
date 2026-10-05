@@ -1,6 +1,7 @@
 import { db, accountsTable, accountingMappingsTable, companiesTable, manufacturingSettingsTable, invoicesTable, journalEntriesTable } from "@workspace/db";
 import { and, eq, isNull } from "drizzle-orm";
 import { DEFAULT_CHART_OF_ACCOUNTS } from "./defaultChartOfAccounts.js";
+import { SCHOOL_FEE_DEFAULT_MAPPINGS } from "./accountingMappings.js";
 
 type Kind = "asset" | "liability" | "revenue" | "expense";
 type AccountRow = typeof accountsTable.$inferSelect;
@@ -168,18 +169,18 @@ export function missingManufacturingFields(
     .filter(([field]) => existing?.[field as keyof typeof MANUFACTURING_FIELDS] == null));
 }
 
-export type AccountingModules = { contracting?: boolean; production?: boolean; simple_manufacturing?: boolean };
+export type AccountingModules = { contracting?: boolean; production?: boolean; simple_manufacturing?: boolean; school?: boolean };
 export function accountingModulesFromMenu(menu: string | null | undefined): AccountingModules {
   if (!menu) return {};
   const parsed = JSON.parse(menu);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid module permissions");
   return { contracting: parsed.contracting === true, production: parsed.production === true,
-    simple_manufacturing: parsed.simple_manufacturing === true };
+    simple_manufacturing: parsed.simple_manufacturing === true, school: parsed.school === true };
 }
 
 /** Called only for new tenants or a disabled→enabled transition, never at startup. */
 export async function seedOptionalModuleAccounting(companyId: number, modules: AccountingModules) {
-  if (!modules.contracting && !modules.production && !modules.simple_manufacturing) return { accountsInserted: 0, mappingsInserted: 0 };
+  if (!modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school) return { accountsInserted: 0, mappingsInserted: 0 };
   return db.transaction((tx) => seedOptionalModuleAccountingTx(tx, companyId, modules));
 }
 
@@ -238,7 +239,7 @@ export async function seedOptionalAccountingForFreshCompany(
 }
 
 export async function seedOptionalModuleAccountingTx(tx: any, companyId: number, modules: AccountingModules) {
-  if (!modules.contracting && !modules.production && !modules.simple_manufacturing) return { accountsInserted: 0, mappingsInserted: 0 };
+  if (!modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school) return { accountsInserted: 0, mappingsInserted: 0 };
   {
     // Serialize simultaneous activation requests for this tenant.
     const [company] = await tx.select({ id: companiesTable.id }).from(companiesTable)
@@ -321,6 +322,35 @@ export async function seedOptionalModuleAccountingTx(tx: any, companyId: number,
       } else {
         await tx.insert(manufacturingSettingsTable).values({ companyId, ...defaults })
           .onConflictDoNothing({ target: manufacturingSettingsTable.companyId });
+      }
+    }
+    if (modules.school) {
+      const schoolRoles = await tx.select({
+        documentType: accountingMappingsTable.documentType,
+        roleKey: accountingMappingsTable.roleKey,
+      }).from(accountingMappingsTable).where(eq(accountingMappingsTable.companyId, companyId));
+      const existingSchoolKeys = new Set(
+        schoolRoles.map((row: { documentType: string; roleKey: string }) => `${row.documentType}::${row.roleKey}`),
+      );
+      for (const mapping of SCHOOL_FEE_DEFAULT_MAPPINGS) {
+        const key = `${mapping.documentType}::${mapping.roleKey}`;
+        if (existingSchoolKeys.has(key)) continue;
+        const account = byCode.get(mapping.accountCode);
+        if (!account) continue;
+        const expectedType: Record<string, string> = {
+          receivable: "asset",
+          revenue: "revenue",
+          vat_output: "liability",
+          discount: "expense",
+        };
+        if (account.accountType !== expectedType[mapping.roleKey]) continue;
+        const inserted = await tx.insert(accountingMappingsTable).values({
+          companyId,
+          documentType: mapping.documentType,
+          roleKey: mapping.roleKey,
+          accountId: account.id,
+        }).onConflictDoNothing().returning({ id: accountingMappingsTable.id });
+        mappingsInserted += inserted.length;
       }
     }
     return { accountsInserted, mappingsInserted };

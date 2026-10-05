@@ -114,7 +114,7 @@ router.post("/", requirePermission("sessions", "create"), async (req, res) => {
 router.patch("/:id", requirePermission("sessions", "edit"), async (req, res) => {
   const cid = getCid(req);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(String(req.params.id), 10);
   if (!id) { res.status(400).json({ error: "id غير صالح" }); return; }
 
   const patch: any = { updatedAt: new Date() };
@@ -153,7 +153,7 @@ router.patch("/:id", requirePermission("sessions", "edit"), async (req, res) => 
 router.delete("/:id", requirePermission("sessions", "delete"), async (req, res) => {
   const cid = getCid(req);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(String(req.params.id), 10);
   if (!id) { res.status(400).json({ error: "id غير صالح" }); return; }
 
   const [row] = await db.update(sessionsTable).set({
@@ -180,7 +180,7 @@ router.delete("/:id", requirePermission("sessions", "delete"), async (req, res) 
 router.get("/:id/users", requirePermission("sessions", "view"), async (req, res) => {
   const cid = getCid(req);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(String(req.params.id), 10);
   if (!id) { res.status(400).json({ error: "id غير صالح" }); return; }
 
   // Verify the session belongs to the same company
@@ -208,7 +208,7 @@ router.get("/:id/users", requirePermission("sessions", "view"), async (req, res)
 router.post("/:id/users", requirePermission("sessions", "edit"), async (req, res) => {
   const cid = getCid(req);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(String(req.params.id), 10);
   if (!id) { res.status(400).json({ error: "id غير صالح" }); return; }
   const userIds: number[] = Array.isArray(req.body?.userIds)
     ? req.body.userIds.map((x: any) => parseInt(x, 10)).filter((n: number) => Number.isFinite(n) && n > 0)
@@ -250,8 +250,8 @@ router.post("/:id/users", requirePermission("sessions", "edit"), async (req, res
 router.delete("/:id/users/:userId", requirePermission("sessions", "edit"), async (req, res) => {
   const cid = getCid(req);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
-  const id = parseInt(req.params.id, 10);
-  const userId = parseInt(req.params.userId, 10);
+  const id = parseInt(String(req.params.id), 10);
+  const userId = parseInt(String(req.params.userId), 10);
   if (!id || !userId) { res.status(400).json({ error: "id/userId غير صالح" }); return; }
 
   const [session] = await db.select().from(sessionsTable)

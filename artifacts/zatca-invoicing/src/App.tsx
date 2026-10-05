@@ -228,6 +228,8 @@ import SchoolAttendance from "@/pages/school/Attendance";
 import SchoolAssessments from "@/pages/school/Assessments";
 import SchoolFees from "@/pages/school/Fees";
 import SchoolResources from "@/pages/school/Resources";
+import SchoolGuardianAccounts from "@/pages/school/GuardianAccounts";
+import SchoolFaceAttendance from "@/pages/school/FaceAttendance";
 import CrmHub from "@/pages/crm/CrmHub";
 import CrmLeads from "@/pages/crm/CrmLeads";
 import CrmOpportunities from "@/pages/crm/CrmOpportunities";
@@ -1131,6 +1133,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/school/campuses"     module="school" component={SchoolCampuses} />}
             {!isSuperAdmin && <PermRoute path="/school/academic"     module="school" component={SchoolAcademic} />}
             {!isSuperAdmin && <PermRoute path="/school/students"     module="school" component={SchoolStudents} />}
+            {!isSuperAdmin && <PermRoute path="/school/guardian-accounts" module="school" component={SchoolGuardianAccounts} />}
+            {!isSuperAdmin && <PermRoute path="/school/face-attendance" module="school" component={SchoolFaceAttendance} />}
             {!isSuperAdmin && <PermRoute path="/school/enrollments"  module="school" component={SchoolEnrollments} />}
             {!isSuperAdmin && <PermRoute path="/school/attendance"   module="school" component={SchoolAttendance} />}
             {!isSuperAdmin && <PermRoute path="/school/assessments"  module="school" component={SchoolAssessments} />}

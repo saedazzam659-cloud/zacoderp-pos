@@ -34,6 +34,7 @@ import {
 } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requirePermission } from "../middleware/permissions.js";
+import schoolPortalAdminRouter from "./schoolPortalAdmin.js";
 
 type FieldKind = "string" | "integer" | "number" | "boolean" | "date";
 type FieldSpec = {
@@ -55,6 +56,7 @@ router.use(extractAuth);
 router.use(requireModulePermission("school"));
 router.use(requirePermission("school", "view"));
 router.use(moduleAudit("school"));
+router.use("/portal", schoolPortalAdminRouter);
 
 const S = (required = false, values?: readonly string[]): FieldSpec => ({ kind: "string", required, values });
 const I = (required = false): FieldSpec => ({ kind: "integer", required });

@@ -8,6 +8,334 @@
 import * as zod from "zod";
 
 /**
+ * @summary Sign a guardian into the ZacodeHR family portal
+ */
+export const guardianPortalLoginBodyCompanyCodeMax = 80;
+
+export const guardianPortalLoginBodyUsernameMax = 120;
+
+export const guardianPortalLoginBodyPasswordMax = 200;
+
+export const GuardianPortalLoginBody = zod.object({
+  companyCode: zod.string().min(1).max(guardianPortalLoginBodyCompanyCodeMax),
+  username: zod.string().min(1).max(guardianPortalLoginBodyUsernameMax),
+  password: zod.string().min(1).max(guardianPortalLoginBodyPasswordMax),
+});
+
+export const guardianPortalLoginResponseAccountChildrenCountMin = 0;
+
+export const GuardianPortalLoginResponse = zod.object({
+  token: zod.string(),
+  account: zod.object({
+    displayName: zod.string(),
+    username: zod.string(),
+    childrenCount: zod
+      .number()
+      .min(guardianPortalLoginResponseAccountChildrenCountMin),
+  }),
+});
+
+/**
+ * @summary Read children linked to the signed-in guardian
+ */
+export const getGuardianPortalChildrenResponseAttendanceSummaryPresentMin = 0;
+
+export const getGuardianPortalChildrenResponseAttendanceSummaryLateMin = 0;
+
+export const getGuardianPortalChildrenResponseAttendanceSummaryAbsentMin = 0;
+
+export const getGuardianPortalChildrenResponseAttendanceSummaryExcusedMin = 0;
+
+export const getGuardianPortalChildrenResponseAttendanceSummaryTotalMin = 0;
+
+export const GetGuardianPortalChildrenResponseItem = zod.object({
+  id: zod.number(),
+  studentNumber: zod.string(),
+  fullNameAr: zod.string(),
+  fullNameEn: zod.string().nullable(),
+  status: zod.string(),
+  academicYear: zod.string().nullable(),
+  className: zod.string().nullable(),
+  gradeName: zod.string().nullable(),
+  attendanceSummary: zod.object({
+    present: zod
+      .number()
+      .min(getGuardianPortalChildrenResponseAttendanceSummaryPresentMin),
+    late: zod
+      .number()
+      .min(getGuardianPortalChildrenResponseAttendanceSummaryLateMin),
+    absent: zod
+      .number()
+      .min(getGuardianPortalChildrenResponseAttendanceSummaryAbsentMin),
+    excused: zod
+      .number()
+      .min(getGuardianPortalChildrenResponseAttendanceSummaryExcusedMin),
+    total: zod
+      .number()
+      .min(getGuardianPortalChildrenResponseAttendanceSummaryTotalMin),
+  }),
+  recentAttendance: zod.array(
+    zod.object({
+      date: zod.coerce.date(),
+      period: zod.string(),
+      status: zod.string(),
+    }),
+  ),
+  recentExams: zod.array(
+    zod.object({
+      id: zod.number(),
+      name: zod.string(),
+      subject: zod.string(),
+      examDate: zod.coerce.date(),
+      score: zod.number(),
+      maxScore: zod.number(),
+    }),
+  ),
+  fees: zod.array(
+    zod.object({
+      id: zod.number(),
+      description: zod.string(),
+      amount: zod.number(),
+      dueDate: zod.coerce.date().nullable(),
+      status: zod.string(),
+      invoiceNumber: zod.string().nullable(),
+    }),
+  ),
+  biometricConsentActive: zod.boolean(),
+  faceEnrolled: zod.boolean(),
+});
+export const GetGuardianPortalChildrenResponse = zod.array(
+  GetGuardianPortalChildrenResponseItem,
+);
+
+/**
+ * @summary Grant or revoke face-attendance consent for a linked child
+ */
+
+export const SetGuardianStudentBiometricConsentParams = zod.object({
+  studentId: zod.coerce.number().min(1),
+});
+
+export const setGuardianStudentBiometricConsentBodyPolicyVersionMax = 40;
+
+export const SetGuardianStudentBiometricConsentBody = zod.object({
+  consented: zod.boolean(),
+  policyVersion: zod
+    .string()
+    .min(1)
+    .max(setGuardianStudentBiometricConsentBodyPolicyVersionMax),
+});
+
+export const SetGuardianStudentBiometricConsentResponse = zod.object({
+  ok: zod.boolean(),
+  consented: zod.boolean(),
+});
+
+/**
+ * @summary List guardian portal accounts for the current company
+ */
+export const GetSchoolGuardianPortalAccountsResponseItem = zod.object({
+  id: zod.number(),
+  username: zod.string(),
+  displayName: zod.string(),
+  isActive: zod.boolean(),
+  guardians: zod.array(
+    zod.object({
+      guardianId: zod.number(),
+      studentId: zod.number(),
+      studentNameAr: zod.string(),
+    }),
+  ),
+  createdAt: zod.coerce.date().nullable(),
+});
+export const GetSchoolGuardianPortalAccountsResponse = zod.array(
+  GetSchoolGuardianPortalAccountsResponseItem,
+);
+
+/**
+ * @summary Create a guardian portal account and link guardian records
+ */
+export const createSchoolGuardianPortalAccountBodyUsernameMin = 3;
+export const createSchoolGuardianPortalAccountBodyUsernameMax = 120;
+
+export const createSchoolGuardianPortalAccountBodyDisplayNameMax = 160;
+
+export const createSchoolGuardianPortalAccountBodyPasswordMin = 10;
+export const createSchoolGuardianPortalAccountBodyPasswordMax = 200;
+
+export const createSchoolGuardianPortalAccountBodyGuardianIdsMax = 30;
+
+export const CreateSchoolGuardianPortalAccountBody = zod.object({
+  username: zod
+    .string()
+    .min(createSchoolGuardianPortalAccountBodyUsernameMin)
+    .max(createSchoolGuardianPortalAccountBodyUsernameMax),
+  displayName: zod
+    .string()
+    .min(1)
+    .max(createSchoolGuardianPortalAccountBodyDisplayNameMax),
+  password: zod
+    .string()
+    .min(createSchoolGuardianPortalAccountBodyPasswordMin)
+    .max(createSchoolGuardianPortalAccountBodyPasswordMax),
+  guardianIds: zod
+    .array(zod.number().min(1))
+    .min(1)
+    .max(createSchoolGuardianPortalAccountBodyGuardianIdsMax),
+});
+
+/**
+ * @summary Update guardian access, password, or linked guardian records
+ */
+
+export const UpdateSchoolGuardianPortalAccountParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const updateSchoolGuardianPortalAccountBodyUsernameMin = 3;
+export const updateSchoolGuardianPortalAccountBodyUsernameMax = 120;
+
+export const updateSchoolGuardianPortalAccountBodyDisplayNameMax = 160;
+
+export const updateSchoolGuardianPortalAccountBodyPasswordMin = 10;
+export const updateSchoolGuardianPortalAccountBodyPasswordMax = 200;
+
+export const updateSchoolGuardianPortalAccountBodyGuardianIdsMax = 30;
+
+export const UpdateSchoolGuardianPortalAccountBody = zod.object({
+  username: zod
+    .string()
+    .min(updateSchoolGuardianPortalAccountBodyUsernameMin)
+    .max(updateSchoolGuardianPortalAccountBodyUsernameMax)
+    .optional(),
+  displayName: zod
+    .string()
+    .min(1)
+    .max(updateSchoolGuardianPortalAccountBodyDisplayNameMax)
+    .optional(),
+  password: zod
+    .string()
+    .min(updateSchoolGuardianPortalAccountBodyPasswordMin)
+    .max(updateSchoolGuardianPortalAccountBodyPasswordMax)
+    .optional(),
+  isActive: zod.boolean().optional(),
+  guardianIds: zod
+    .array(zod.number().min(1))
+    .min(1)
+    .max(updateSchoolGuardianPortalAccountBodyGuardianIdsMax)
+    .optional(),
+});
+
+export const UpdateSchoolGuardianPortalAccountResponse = zod.object({
+  id: zod.number(),
+  username: zod.string(),
+  displayName: zod.string(),
+  isActive: zod.boolean(),
+  guardians: zod.array(
+    zod.object({
+      guardianId: zod.number(),
+      studentId: zod.number(),
+      studentNameAr: zod.string(),
+    }),
+  ),
+  createdAt: zod.coerce.date().nullable(),
+});
+
+/**
+ * @summary List current guardian consent and encrypted face-enrollment status
+ */
+export const GetSchoolStudentFaceEnrollmentStatusResponseItem = zod.object({
+  studentId: zod.number(),
+  studentNumber: zod.string(),
+  fullNameAr: zod.string(),
+  consentActive: zod.boolean(),
+  enrolled: zod.boolean(),
+  enrolledAt: zod.coerce.date().nullable(),
+});
+export const GetSchoolStudentFaceEnrollmentStatusResponse = zod.array(
+  GetSchoolStudentFaceEnrollmentStatusResponseItem,
+);
+
+/**
+ * @summary Store an encrypted face descriptor when active guardian consent exists
+ */
+
+export const EnrollSchoolStudentFaceParams = zod.object({
+  studentId: zod.coerce.number().min(1),
+});
+
+export const enrollSchoolStudentFaceBodyDescriptorMin = 128;
+export const enrollSchoolStudentFaceBodyDescriptorMax = 128;
+
+export const enrollSchoolStudentFaceBodyQualityScoreMin = 0;
+export const enrollSchoolStudentFaceBodyQualityScoreMax = 1;
+
+export const EnrollSchoolStudentFaceBody = zod.object({
+  descriptor: zod
+    .array(zod.number())
+    .min(enrollSchoolStudentFaceBodyDescriptorMin)
+    .max(enrollSchoolStudentFaceBodyDescriptorMax),
+  qualityScore: zod
+    .number()
+    .min(enrollSchoolStudentFaceBodyQualityScoreMin)
+    .max(enrollSchoolStudentFaceBodyQualityScoreMax),
+  livenessPassed: zod.literal(true),
+});
+
+export const EnrollSchoolStudentFaceResponse = zod.object({
+  ok: zod.boolean(),
+  enrolled: zod.boolean(),
+  enrolledAt: zod.coerce.date().nullish(),
+});
+
+/**
+ * @summary Remove the student's encrypted face descriptor
+ */
+
+export const RemoveSchoolStudentFaceEnrollmentParams = zod.object({
+  studentId: zod.coerce.number().min(1),
+});
+
+export const RemoveSchoolStudentFaceEnrollmentResponse = zod.object({
+  ok: zod.boolean(),
+  enrolled: zod.boolean(),
+  enrolledAt: zod.coerce.date().nullish(),
+});
+
+/**
+ * @summary Match a consented student and record one daily face attendance event
+ */
+export const recognizeSchoolStudentFaceBodyDescriptorMin = 128;
+export const recognizeSchoolStudentFaceBodyDescriptorMax = 128;
+
+export const RecognizeSchoolStudentFaceBody = zod.object({
+  descriptor: zod
+    .array(zod.number())
+    .min(recognizeSchoolStudentFaceBodyDescriptorMin)
+    .max(recognizeSchoolStudentFaceBodyDescriptorMax),
+  livenessPassed: zod.literal(true),
+  cameraId: zod.number().min(1).nullish(),
+});
+
+export const RecognizeSchoolStudentFaceResponse = zod.object({
+  matched: zod.boolean(),
+  message: zod.string(),
+  studentId: zod.number().nullable(),
+  studentNameAr: zod.string().nullable(),
+  eventType: zod
+    .union([
+      zod.literal("arrival"),
+      zod.literal("departure"),
+      zod.literal(null),
+    ])
+    .nullable(),
+  occurredAt: zod.coerce.date().nullable(),
+  attendanceStatus: zod
+    .union([zod.literal("present"), zod.literal("late"), zod.literal(null)])
+    .nullable(),
+});
+
+/**
  * @summary Preview eligible student enrollments for transfer to another academic year
  */
 

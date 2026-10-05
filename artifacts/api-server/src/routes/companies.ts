@@ -169,7 +169,7 @@ router.post("/", async (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   // Soft-deleted companies are off-limits to every regular consumer; only
   // /admin/companies/deleted exposes them.
   const [company] = await db
@@ -296,7 +296,7 @@ router.put("/:id/code", async (req, res) => {
 });
 
 router.put("/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   const isHomingOnly =
     (req.body as any)?.homeDomainId !== undefined &&
     Object.keys(req.body ?? {}).every((k) => k === "homeDomainId");
@@ -382,7 +382,7 @@ router.put("/:id", async (req, res) => {
 
 // PATCH /:id/general-settings — update logo + decimal places + auto-posting toggle
 router.patch("/:id/general-settings", async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   // Authorization: only a SuperAdmin or an admin of THIS company may change
   // tenant-wide settings. Without this guard, any authenticated user (even
   // from a different company) could PATCH another tenant's logo, decimals,
@@ -830,7 +830,7 @@ router.patch("/:id/general-settings", async (req, res) => {
 // the client — only a hasPassword flag.
 
 function senderSettingsGuard(req: Request, res: Response): number | null {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف غير صالح" }); return null; }
   const u = (req as any).authUser;
   if (!u) { res.status(401).json({ error: "غير مصرّح" }); return null; }
@@ -1057,6 +1057,7 @@ router.patch("/:id/menu-permissions", async (req, res) => {
           contracting: next.contracting && !previous.contracting,
           production: next.production && !previous.production,
           simple_manufacturing: next.simple_manufacturing && !previous.simple_manufacturing,
+          school: next.school && !previous.school,
         };
         await seedOptionalModuleAccountingTx(tx, id, enabled);
         const [updated] = await tx.update(companiesTable).set({

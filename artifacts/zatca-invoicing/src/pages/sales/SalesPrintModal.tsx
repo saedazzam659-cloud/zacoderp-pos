@@ -564,7 +564,7 @@ function customerBlock(cu: any, d?: PrintData) {
     </div>`;
 }
 
-function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "", inc = false) {
+function linesTable(doc: any, lines: any[], headerStyle = "", rowEvenStyle = "", inc = false) {
   // Discount column appears when ANY line has either a percentage discount
   // (`discount`) OR a value-based discount (`discountAmount`). Previously
   // only the % path was checked, so amount-only discounts were hidden in
@@ -588,7 +588,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "", inc = fal
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
-        <td>${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}${renderInventoryPrintDetailsHtml(l, d.type, (d as any)._lang === "en" ? "en" : "ar")}</td>
+        <td>${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}${renderInventoryPrintDetailsHtml(l, doc.type, (doc as any)._lang === "en" ? "en" : "ar")}</td>
         <td class="mono">${Math.round(Number(l.qty) || 0)}</td>
         ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td>${l.unit ?? "—"}</td>
@@ -680,7 +680,7 @@ function template1(d: PrintData): string {
   </div>
   <div class="section">
     <h4>بنود ${docTitle(d.type)}</h4>
-    ${linesTable(lines, "", "background:#eff6ff", !!doc.priceIncludesVat)}
+    ${linesTable(doc, lines, "", "background:#eff6ff", !!doc.priceIncludesVat)}
   </div>
   <br>
   ${totalsBlock({ ...doc, _qrDataUrl: (d as any)._qrDataUrl }, lines)}
@@ -741,7 +741,7 @@ function template2(d: PrintData): string {
   </div>
   <div class="card">
     <h4>البنود</h4>
-    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+    ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
   </div>
   <br>
   ${totalsBlock({ ...doc, _qrDataUrl: (d as any)._qrDataUrl }, lines, "left")}
@@ -803,7 +803,7 @@ function template3(d: PrintData): string {
       <div class="party-box"><h4>العميل</h4>${customerBlock(customer, d)}</div>
       <div class="party-box"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
-    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+    ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
     <div style="display:flex;justify-content:space-between;margin-top:16px;gap:14px;align-items:flex-start;">
       ${shouldShowQr(d) ? `<div style="text-align:center;">
         ${qrImgHtml(d, { size: 110 })}
@@ -880,7 +880,7 @@ function template4(d: PrintData): string {
   </div>
   <div class="box">
     <div class="section-title">أصناف ${docTitle(d.type)}</div>
-    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+    ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
   </div>
   <div style="display:flex;justify-content:space-between;margin-top:12px;gap:14px;align-items:flex-start;">
     ${shouldShowQr(d) ? `<div style="text-align:center;">
@@ -973,7 +973,7 @@ function template5(d: PrintData): string {
     </div>
   </div>
 
-  ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+  ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
 
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:16px;gap:14px;">
     ${shouldShowQr(d) ? `<div style="text-align:center;">
@@ -1338,7 +1338,7 @@ function template8(d: PrintData): string {
     <div class="party"><h4>إلى</h4>${customerBlock(customer, d)}</div>
     <div class="party"><h4>من</h4>${companyBlock(company)}</div>
   </div>
-  ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+  ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
   <div class="totals" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
     ${shouldShowQr(d) ? `<div style="text-align:center;">
       ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
@@ -1423,7 +1423,7 @@ function template9(d: PrintData): string {
         <div class="panel"><h4>العميل</h4>${customerBlock(customer, d)}</div>
         <div class="panel"><h4>المنشأة</h4>${companyBlock(company)}</div>
       </div>
-      ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+      ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
       <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
         ${shouldShowQr(d) ? `<div style="text-align:center;">
           ${qrImgHtml(d, { size: 110, border: "1px solid #d4af37", bg: "#fff" })}
@@ -1503,7 +1503,7 @@ function template10(d: PrintData): string {
       <div class="card"><h4>العميل</h4>${customerBlock(customer, d)}</div>
       <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
-    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+    ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
     <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
       ${shouldShowQr(d) ? `<div style="text-align:center;">
         ${qrImgHtml(d, { size: 110, bg: "#fff" })}
@@ -1581,7 +1581,7 @@ function template11(d: PrintData): string {
       <div class="card"><h4>العميل</h4>${customerBlock(customer, d)}</div>
       <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
     </div>
-    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+    ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
     <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-top:14px;">
       ${shouldShowQr(d) ? `<div style="text-align:center;">
         ${qrImgHtml(d, { size: 110, bg: "#fff" })}
@@ -1679,7 +1679,7 @@ function template12(d: PrintData): string {
         <h4>العميل</h4>
         ${customerBlock(customer, d)}
       </div>
-      ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+      ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
       <div class="totals-area" style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;">
         ${shouldShowQr(d) ? `<div style="text-align:center;">
           ${qrImgHtml(d, { size: 110, border: "1px solid #0f172a", bg: "#fff" })}
@@ -1883,7 +1883,7 @@ function template13(d: PrintData): string {
       </div>
     </div>
 
-    ${linesTable(lines, "", "", !!doc.priceIncludesVat)}
+    ${linesTable(doc, lines, "", "", !!doc.priceIncludesVat)}
 
     <div class="bottom">
       <div>

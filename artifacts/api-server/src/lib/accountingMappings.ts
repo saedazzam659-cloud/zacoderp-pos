@@ -260,6 +260,17 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "letter_of_credit",     roleKey: "bank",                   accountCode: "1150"  },
 ];
 
+// School fees are still invoiced and posted through the normal sales-invoice
+// lifecycle. These optional mappings only override the relevant GL roles for
+// invoices explicitly linked to school fee records. Provisioning reuses an
+// existing account code and deliberately never creates a chart account.
+export const SCHOOL_FEE_DEFAULT_MAPPINGS: DefaultMapping[] = [
+  { documentType: "school_fee_invoice", roleKey: "receivable", accountCode: "11031" },
+  { documentType: "school_fee_invoice", roleKey: "revenue", accountCode: "4101" },
+  { documentType: "school_fee_invoice", roleKey: "vat_output", accountCode: "21041" },
+  { documentType: "school_fee_invoice", roleKey: "discount", accountCode: "5103" },
+];
+
 export interface SeedDefaultsResult {
   /** Mappings actually inserted (a row that didn't exist before). */
   inserted: number;

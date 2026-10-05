@@ -72,7 +72,7 @@ function basicAuth(token: string, secret: string): string {
 
 // ─── 1. Generate CSR ─────────────────────────────────────────────────────────
 router.post("/companies/:id/generate-csr", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) {
     res.status(400).json({ error: "معرف الشركة غير صالح" });
     return;
@@ -148,7 +148,7 @@ router.post("/companies/:id/generate-csr", requirePermission("zatca_setup", "cre
 
 // ─── 2. Compliance (CSID) ────────────────────────────────────────────────────
 router.post("/companies/:id/compliance", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   const { otp } = req.body as { otp: string };
 
   if (!otp) {
@@ -238,7 +238,7 @@ router.post("/companies/:id/compliance", requirePermission("zatca_setup", "creat
 
 // ─── 3. Production CSID (Onboarding) ─────────────────────────────────────────
 router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   // ZATCA's /production/csids expects `compliance_request_id` = the `requestID`
   // returned by the earlier /compliance call (NOT the binary security token).
   // The client forwards it from the compliance step.
@@ -333,7 +333,7 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
 // ─── 3.5 Compliance Check — فاتورة تجريبية ──────────────────────────────────
 // يُستخدم للتحقق من صحة الفاتورة مقابل شهادة الامتثال CSID قبل الانتقال للإنتاج
 router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
   if (!company) {
     res.status(404).json({ error: "Company not found" });
@@ -502,7 +502,7 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
 // submits every required sample in one server-side pass so the operator does not
 // have to hand-craft them. Sample documents are synthetic — never persisted.
 router.post("/companies/:id/auto-compliance-check", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) {
     res.status(400).json({ error: "معرف الشركة غير صالح" });
     return;
@@ -574,7 +574,7 @@ router.post("/companies/:id/auto-compliance-check", requirePermission("zatca_set
 
 // ─── 4. Submit Invoice to ZATCA ───────────────────────────────────────────────
 async function submitLegacyInvoiceToZatcaUnlocked(req: any, res: any) {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id), 10);
 
   const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
   if (!invoice) {

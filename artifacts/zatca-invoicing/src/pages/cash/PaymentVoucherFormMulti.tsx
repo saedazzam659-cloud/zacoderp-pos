@@ -271,7 +271,7 @@ export default function PaymentVoucherForm() {
   const NS = "paymentVouchers";
   const cid = user?.companyId;
   const { data: projectOptions } = useQuery({
-    queryKey: contractingOptionsKey(user?.id, cid, undefined, token ?? undefined),
+    queryKey: contractingOptionsKey(user?.id, cid ?? undefined, undefined, token ?? undefined),
     queryFn: () => fetchContractingProjectOptions(token!),
     enabled: !!token && !!cid,
   });

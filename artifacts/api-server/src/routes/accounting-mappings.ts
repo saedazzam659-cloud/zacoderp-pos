@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { accountingMappingsTable, accountsTable } from "@workspace/db";
+import { accountingMappingsTable, accountsTable, companiesTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit } from "../middleware/permissions.js";
@@ -28,6 +28,7 @@ const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   contracting_taxable_advance_invoice: ["advance_receivable"],
   contracting_advance_payment: ["advance_asset"],
   contracting_advance_application: ["advance_liability", "receivable", "payable", "advance_asset"],
+  school_fee_invoice: ["receivable", "revenue", "vat_output", "discount"],
   contracting_retention_receipt: ["retention_receivable"],
   contracting_retention_payment: ["retention_payable"],
   contracting_material_movement: ["inventory", "wip"],
@@ -76,6 +77,17 @@ router.get("/", async (req, res) => {
     const raw = req.query.companyId ? Number(req.query.companyId) : undefined;
     const companyId = resolveCompanyId(req, raw);
     if (!companyId) { res.json([]); return; }
+    const [company] = await db.select({ menuPermissions: companiesTable.menuPermissions })
+      .from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+    let schoolEnabled = false;
+    try {
+      const menu = company?.menuPermissions ? JSON.parse(company.menuPermissions) : null;
+      schoolEnabled = !!menu && typeof menu === "object" && menu.school === true;
+    } catch { /* invalid or missing menu settings fail closed */ }
+    if (schoolEnabled) {
+      const { seedOptionalModuleAccounting } = await import("../lib/optionalModuleAccounting.js");
+      await seedOptionalModuleAccounting(companyId, { school: true });
+    }
     let rows = await db.select().from(accountingMappingsTable)
       .where(eq(accountingMappingsTable.companyId, companyId));
     // Config reads also repair tenants that reached the screen before the

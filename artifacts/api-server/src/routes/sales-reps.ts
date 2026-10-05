@@ -287,7 +287,7 @@ router.post("/:id/onboard-user", async (req, res) => {
 // ─── VISITS ─────────────────────────────────────────────────────────────────
 router.get("/:id/visits", async (req, res) => {
   try {
-    const cid = getCid(req);
+    const cid = requireCid(req, res);
     const repId = Number(req.params.id);
     if (!cid) { res.json([]); return; }
     const rows = await db.select().from(salesRepVisitsTable)
@@ -351,7 +351,7 @@ router.delete("/visits/:vid", async (req, res) => {
 // Sales + commissions per rep, optionally filtered by date range.
 router.get("/reports/sales", async (req, res) => {
   try {
-    const cid = getCid(req);
+    const cid = requireCid(req, res);
     if (!cid) { res.json([]); return; }
     const from = req.query.from ? String(req.query.from) : null;
     const to   = req.query.to   ? String(req.query.to)   : null;

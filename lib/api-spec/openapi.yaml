@@ -26,6 +26,234 @@ tags:
   - name: school
     description: School enrollment history and academic-year promotion
 paths:
+  /hr-portal/guardian/login:
+    post:
+      operationId: guardianPortalLogin
+      tags: [school]
+      summary: Sign a guardian into the ZacodeHR family portal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuardianPortalLoginInput"
+      responses:
+        "200":
+          description: Guardian portal session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuardianPortalLoginResult"
+        "401":
+          description: Invalid credentials or disabled school module
+  /hr-portal/guardian/children:
+    get:
+      operationId: getGuardianPortalChildren
+      tags: [school]
+      summary: Read children linked to the signed-in guardian
+      responses:
+        "200":
+          description: Children and school records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GuardianPortalChild"
+        "401":
+          description: Guardian session is invalid
+        "403":
+          description: School access is disabled or no longer linked
+  /hr-portal/guardian/children/{studentId}/biometric-consent:
+    post:
+      operationId: setGuardianStudentBiometricConsent
+      tags: [school]
+      summary: Grant or revoke face-attendance consent for a linked child
+      parameters:
+        - name: studentId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuardianBiometricConsentInput"
+      responses:
+        "200":
+          description: Consent state updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuardianBiometricConsentResult"
+        "401":
+          description: Guardian session is invalid
+        "403":
+          description: Child is not linked to this guardian
+        "404":
+          description: Child was not found
+  /school/portal/guardian-accounts:
+    get:
+      operationId: getSchoolGuardianPortalAccounts
+      tags: [school]
+      summary: List guardian portal accounts for the current company
+      responses:
+        "200":
+          description: Guardian accounts without credential hashes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SchoolGuardianPortalAccount"
+        "403":
+          description: School access or view permission is denied
+    post:
+      operationId: createSchoolGuardianPortalAccount
+      tags: [school]
+      summary: Create a guardian portal account and link guardian records
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchoolGuardianPortalAccountInput"
+      responses:
+        "201":
+          description: Guardian account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchoolGuardianPortalAccount"
+        "400":
+          description: Invalid account or guardian links
+        "403":
+          description: School create permission is denied
+        "409":
+          description: Username or guardian link is already in use
+  /school/portal/guardian-accounts/{id}:
+    patch:
+      operationId: updateSchoolGuardianPortalAccount
+      tags: [school]
+      summary: Update guardian access, password, or linked guardian records
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchoolGuardianPortalAccountUpdate"
+      responses:
+        "200":
+          description: Guardian account updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchoolGuardianPortalAccount"
+        "400":
+          description: Invalid account update
+        "403":
+          description: School edit permission is denied
+        "404":
+          description: Guardian account was not found
+        "409":
+          description: Username or guardian link is already in use
+  /school/portal/face-enrollment-status:
+    get:
+      operationId: getSchoolStudentFaceEnrollmentStatus
+      tags: [school]
+      summary: List current guardian consent and encrypted face-enrollment status
+      responses:
+        "200":
+          description: Student biometric status for the current company
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SchoolStudentFaceEnrollmentStatus"
+        "403":
+          description: School access or view permission is denied
+  /school/portal/students/{studentId}/face-enrollment:
+    post:
+      operationId: enrollSchoolStudentFace
+      tags: [school]
+      summary: Store an encrypted face descriptor when active guardian consent exists
+      parameters:
+        - name: studentId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchoolStudentFaceEnrollmentInput"
+      responses:
+        "200":
+          description: Student face enrollment saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchoolStudentFaceEnrollmentResult"
+        "400":
+          description: Descriptor or liveness check is invalid
+        "403":
+          description: School edit permission is denied or guardian consent is missing
+        "404":
+          description: Student was not found
+    delete:
+      operationId: removeSchoolStudentFaceEnrollment
+      tags: [school]
+      summary: Remove the student's encrypted face descriptor
+      parameters:
+        - name: studentId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Student face enrollment removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchoolStudentFaceEnrollmentResult"
+        "403":
+          description: School edit permission is denied
+        "404":
+          description: Student or enrollment was not found
+  /school/portal/face-attendance/recognize:
+    post:
+      operationId: recognizeSchoolStudentFace
+      tags: [school]
+      summary: Match a consented student and record one daily face attendance event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchoolStudentFaceRecognitionInput"
+      responses:
+        "200":
+          description: Recognition and attendance outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchoolStudentFaceRecognitionResult"
+        "400":
+          description: Descriptor or liveness check is invalid
+        "403":
+          description: School attendance edit permission is denied
+        "404":
+          description: No enrolled student matched or no active enrollment exists
+        "409":
+          description: Daily arrival and departure have already been recorded
   /school/enrollments/promotion-plan:
     get:
       operationId: getSchoolEnrollmentPromotionPlan
@@ -3799,3 +4027,201 @@ components:
         - rates
         - risks
         - capa
+    GuardianPortalLoginInput:
+      type: object
+      required: [companyCode, username, password]
+      properties:
+        companyCode: { type: string, minLength: 1, maxLength: 80 }
+        username: { type: string, minLength: 1, maxLength: 120 }
+        password: { type: string, minLength: 1, maxLength: 200 }
+    GuardianPortalLoginResult:
+      type: object
+      required: [token, account]
+      properties:
+        token: { type: string }
+        account:
+          type: object
+          required: [displayName, username, childrenCount]
+          properties:
+            displayName: { type: string }
+            username: { type: string }
+            childrenCount: { type: integer, minimum: 0 }
+    GuardianPortalAttendanceRow:
+      type: object
+      required: [date, period, status]
+      properties:
+        date: { type: string, format: date }
+        period: { type: string }
+        status: { type: string }
+    GuardianPortalExamRow:
+      type: object
+      required: [id, name, subject, examDate, score, maxScore]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        subject: { type: string }
+        examDate: { type: string, format: date }
+        score: { type: number }
+        maxScore: { type: number }
+    GuardianPortalFeeRow:
+      type: object
+      required: [id, description, amount, dueDate, status, invoiceNumber]
+      properties:
+        id: { type: integer }
+        description: { type: string }
+        amount: { type: number }
+        dueDate: { type: ["string", "null"], format: date }
+        status: { type: string }
+        invoiceNumber: { type: ["string", "null"] }
+    GuardianPortalChild:
+      type: object
+      required:
+        - id
+        - studentNumber
+        - fullNameAr
+        - fullNameEn
+        - status
+        - academicYear
+        - className
+        - gradeName
+        - attendanceSummary
+        - recentAttendance
+        - recentExams
+        - fees
+        - biometricConsentActive
+        - faceEnrolled
+      properties:
+        id: { type: integer }
+        studentNumber: { type: string }
+        fullNameAr: { type: string }
+        fullNameEn: { type: ["string", "null"] }
+        status: { type: string }
+        academicYear: { type: ["string", "null"] }
+        className: { type: ["string", "null"] }
+        gradeName: { type: ["string", "null"] }
+        attendanceSummary:
+          type: object
+          required: [present, late, absent, excused, total]
+          properties:
+            present: { type: integer, minimum: 0 }
+            late: { type: integer, minimum: 0 }
+            absent: { type: integer, minimum: 0 }
+            excused: { type: integer, minimum: 0 }
+            total: { type: integer, minimum: 0 }
+        recentAttendance:
+          type: array
+          items: { $ref: "#/components/schemas/GuardianPortalAttendanceRow" }
+        recentExams:
+          type: array
+          items: { $ref: "#/components/schemas/GuardianPortalExamRow" }
+        fees:
+          type: array
+          items: { $ref: "#/components/schemas/GuardianPortalFeeRow" }
+        biometricConsentActive: { type: boolean }
+        faceEnrolled: { type: boolean }
+    GuardianBiometricConsentInput:
+      type: object
+      required: [consented, policyVersion]
+      properties:
+        consented: { type: boolean }
+        policyVersion: { type: string, minLength: 1, maxLength: 40 }
+    GuardianBiometricConsentResult:
+      type: object
+      required: [ok, consented]
+      properties:
+        ok: { type: boolean }
+        consented: { type: boolean }
+    SchoolGuardianPortalLinkView:
+      type: object
+      required: [guardianId, studentId, studentNameAr]
+      properties:
+        guardianId: { type: integer }
+        studentId: { type: integer }
+        studentNameAr: { type: string }
+    SchoolGuardianPortalAccount:
+      type: object
+      required: [id, username, displayName, isActive, guardians, createdAt]
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        displayName: { type: string }
+        isActive: { type: boolean }
+        guardians:
+          type: array
+          items: { $ref: "#/components/schemas/SchoolGuardianPortalLinkView" }
+        createdAt: { type: ["string", "null"], format: date-time }
+    SchoolGuardianPortalAccountInput:
+      type: object
+      required: [username, displayName, password, guardianIds]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 120 }
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+        password: { type: string, minLength: 10, maxLength: 200 }
+        guardianIds:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items: { type: integer, minimum: 1 }
+    SchoolGuardianPortalAccountUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        username: { type: string, minLength: 3, maxLength: 120 }
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+        password: { type: string, minLength: 10, maxLength: 200 }
+        isActive: { type: boolean }
+        guardianIds:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items: { type: integer, minimum: 1 }
+    SchoolStudentFaceEnrollmentInput:
+      type: object
+      required: [descriptor, qualityScore, livenessPassed]
+      properties:
+        descriptor:
+          type: array
+          minItems: 128
+          maxItems: 128
+          items: { type: number, format: float }
+        qualityScore: { type: number, minimum: 0, maximum: 1 }
+        livenessPassed: { type: boolean, enum: [true] }
+    SchoolStudentFaceRecognitionInput:
+      type: object
+      required: [descriptor, livenessPassed]
+      properties:
+        descriptor:
+          type: array
+          minItems: 128
+          maxItems: 128
+          items: { type: number, format: float }
+        livenessPassed: { type: boolean, enum: [true] }
+        cameraId: { type: ["integer", "null"], minimum: 1 }
+    SchoolStudentFaceEnrollmentResult:
+      type: object
+      required: [ok, enrolled]
+      properties:
+        ok: { type: boolean }
+        enrolled: { type: boolean }
+        enrolledAt: { type: ["string", "null"], format: date-time }
+    SchoolStudentFaceRecognitionResult:
+      type: object
+      required: [matched, message, studentId, studentNameAr, eventType, occurredAt, attendanceStatus]
+      properties:
+        matched: { type: boolean }
+        message: { type: string }
+        studentId: { type: ["integer", "null"] }
+        studentNameAr: { type: ["string", "null"] }
+        eventType: { type: ["string", "null"], enum: [arrival, departure, null] }
+        occurredAt: { type: ["string", "null"], format: date-time }
+        attendanceStatus: { type: ["string", "null"], enum: [present, late, null] }
+    SchoolStudentFaceEnrollmentStatus:
+      type: object
+      required: [studentId, studentNumber, fullNameAr, consentActive, enrolled, enrolledAt]
+      properties:
+        studentId: { type: integer }
+        studentNumber: { type: string }
+        fullNameAr: { type: string }
+        consentActive: { type: boolean }
+        enrolled: { type: boolean }
+        enrolledAt: { type: ["string", "null"], format: date-time }

@@ -51,6 +51,11 @@ import type {
   GetSchoolEnrollmentPromotionPlanParams,
   GetSchoolStudentAcademicHistoryParams,
   GetSecurityActiveCompanySessionsParams,
+  GuardianBiometricConsentInput,
+  GuardianBiometricConsentResult,
+  GuardianPortalChild,
+  GuardianPortalLoginInput,
+  GuardianPortalLoginResult,
   HealthStatus,
   HistoricalOwnerBoqPriceReference,
   Incident,
@@ -85,7 +90,15 @@ import type {
   SchoolEnrollmentPromotionInput,
   SchoolEnrollmentPromotionPlan,
   SchoolEnrollmentPromotionResult,
+  SchoolGuardianPortalAccount,
+  SchoolGuardianPortalAccountInput,
+  SchoolGuardianPortalAccountUpdate,
   SchoolStudentAcademicHistory,
+  SchoolStudentFaceEnrollmentInput,
+  SchoolStudentFaceEnrollmentResult,
+  SchoolStudentFaceEnrollmentStatus,
+  SchoolStudentFaceRecognitionInput,
+  SchoolStudentFaceRecognitionResult,
   SecurityActiveCompaniesResponse,
   SecurityActiveCompanyEndInput,
   SecurityActiveCompanyEndResult,
@@ -114,6 +127,878 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+/**
+ * @summary Sign a guardian into the ZacodeHR family portal
+ */
+export const getGuardianPortalLoginUrl = () => {
+  return `/api/hr-portal/guardian/login`;
+};
+
+export const guardianPortalLogin = async (
+  guardianPortalLoginInput: GuardianPortalLoginInput,
+  options?: RequestInit,
+): Promise<GuardianPortalLoginResult> => {
+  return customFetch<GuardianPortalLoginResult>(getGuardianPortalLoginUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(guardianPortalLoginInput),
+  });
+};
+
+export const getGuardianPortalLoginMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof guardianPortalLogin>>,
+    TError,
+    { data: BodyType<GuardianPortalLoginInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof guardianPortalLogin>>,
+  TError,
+  { data: BodyType<GuardianPortalLoginInput> },
+  TContext
+> => {
+  const mutationKey = ["guardianPortalLogin"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof guardianPortalLogin>>,
+    { data: BodyType<GuardianPortalLoginInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return guardianPortalLogin(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GuardianPortalLoginMutationResult = NonNullable<
+  Awaited<ReturnType<typeof guardianPortalLogin>>
+>;
+export type GuardianPortalLoginMutationBody =
+  BodyType<GuardianPortalLoginInput>;
+export type GuardianPortalLoginMutationError = ErrorType<void>;
+
+/**
+ * @summary Sign a guardian into the ZacodeHR family portal
+ */
+export const useGuardianPortalLogin = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof guardianPortalLogin>>,
+    TError,
+    { data: BodyType<GuardianPortalLoginInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof guardianPortalLogin>>,
+  TError,
+  { data: BodyType<GuardianPortalLoginInput> },
+  TContext
+> => {
+  return useMutation(getGuardianPortalLoginMutationOptions(options));
+};
+
+/**
+ * @summary Read children linked to the signed-in guardian
+ */
+export const getGetGuardianPortalChildrenUrl = () => {
+  return `/api/hr-portal/guardian/children`;
+};
+
+export const getGuardianPortalChildren = async (
+  options?: RequestInit,
+): Promise<GuardianPortalChild[]> => {
+  return customFetch<GuardianPortalChild[]>(getGetGuardianPortalChildrenUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetGuardianPortalChildrenQueryKey = () => {
+  return [`/api/hr-portal/guardian/children`] as const;
+};
+
+export const getGetGuardianPortalChildrenQueryOptions = <
+  TData = Awaited<ReturnType<typeof getGuardianPortalChildren>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getGuardianPortalChildren>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetGuardianPortalChildrenQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getGuardianPortalChildren>>
+  > = ({ signal }) => getGuardianPortalChildren({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getGuardianPortalChildren>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetGuardianPortalChildrenQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getGuardianPortalChildren>>
+>;
+export type GetGuardianPortalChildrenQueryError = ErrorType<void>;
+
+/**
+ * @summary Read children linked to the signed-in guardian
+ */
+
+export function useGetGuardianPortalChildren<
+  TData = Awaited<ReturnType<typeof getGuardianPortalChildren>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getGuardianPortalChildren>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetGuardianPortalChildrenQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Grant or revoke face-attendance consent for a linked child
+ */
+export const getSetGuardianStudentBiometricConsentUrl = (studentId: number) => {
+  return `/api/hr-portal/guardian/children/${studentId}/biometric-consent`;
+};
+
+export const setGuardianStudentBiometricConsent = async (
+  studentId: number,
+  guardianBiometricConsentInput: GuardianBiometricConsentInput,
+  options?: RequestInit,
+): Promise<GuardianBiometricConsentResult> => {
+  return customFetch<GuardianBiometricConsentResult>(
+    getSetGuardianStudentBiometricConsentUrl(studentId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(guardianBiometricConsentInput),
+    },
+  );
+};
+
+export const getSetGuardianStudentBiometricConsentMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setGuardianStudentBiometricConsent>>,
+    TError,
+    { studentId: number; data: BodyType<GuardianBiometricConsentInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof setGuardianStudentBiometricConsent>>,
+  TError,
+  { studentId: number; data: BodyType<GuardianBiometricConsentInput> },
+  TContext
+> => {
+  const mutationKey = ["setGuardianStudentBiometricConsent"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof setGuardianStudentBiometricConsent>>,
+    { studentId: number; data: BodyType<GuardianBiometricConsentInput> }
+  > = (props) => {
+    const { studentId, data } = props ?? {};
+
+    return setGuardianStudentBiometricConsent(studentId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SetGuardianStudentBiometricConsentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof setGuardianStudentBiometricConsent>>
+>;
+export type SetGuardianStudentBiometricConsentMutationBody =
+  BodyType<GuardianBiometricConsentInput>;
+export type SetGuardianStudentBiometricConsentMutationError = ErrorType<void>;
+
+/**
+ * @summary Grant or revoke face-attendance consent for a linked child
+ */
+export const useSetGuardianStudentBiometricConsent = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setGuardianStudentBiometricConsent>>,
+    TError,
+    { studentId: number; data: BodyType<GuardianBiometricConsentInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof setGuardianStudentBiometricConsent>>,
+  TError,
+  { studentId: number; data: BodyType<GuardianBiometricConsentInput> },
+  TContext
+> => {
+  return useMutation(
+    getSetGuardianStudentBiometricConsentMutationOptions(options),
+  );
+};
+
+/**
+ * @summary List guardian portal accounts for the current company
+ */
+export const getGetSchoolGuardianPortalAccountsUrl = () => {
+  return `/api/school/portal/guardian-accounts`;
+};
+
+export const getSchoolGuardianPortalAccounts = async (
+  options?: RequestInit,
+): Promise<SchoolGuardianPortalAccount[]> => {
+  return customFetch<SchoolGuardianPortalAccount[]>(
+    getGetSchoolGuardianPortalAccountsUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolGuardianPortalAccountsQueryKey = () => {
+  return [`/api/school/portal/guardian-accounts`] as const;
+};
+
+export const getGetSchoolGuardianPortalAccountsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolGuardianPortalAccounts>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolGuardianPortalAccounts>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolGuardianPortalAccountsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolGuardianPortalAccounts>>
+  > = ({ signal }) =>
+    getSchoolGuardianPortalAccounts({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolGuardianPortalAccounts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolGuardianPortalAccountsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolGuardianPortalAccounts>>
+>;
+export type GetSchoolGuardianPortalAccountsQueryError = ErrorType<void>;
+
+/**
+ * @summary List guardian portal accounts for the current company
+ */
+
+export function useGetSchoolGuardianPortalAccounts<
+  TData = Awaited<ReturnType<typeof getSchoolGuardianPortalAccounts>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolGuardianPortalAccounts>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSchoolGuardianPortalAccountsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a guardian portal account and link guardian records
+ */
+export const getCreateSchoolGuardianPortalAccountUrl = () => {
+  return `/api/school/portal/guardian-accounts`;
+};
+
+export const createSchoolGuardianPortalAccount = async (
+  schoolGuardianPortalAccountInput: SchoolGuardianPortalAccountInput,
+  options?: RequestInit,
+): Promise<SchoolGuardianPortalAccount> => {
+  return customFetch<SchoolGuardianPortalAccount>(
+    getCreateSchoolGuardianPortalAccountUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolGuardianPortalAccountInput),
+    },
+  );
+};
+
+export const getCreateSchoolGuardianPortalAccountMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSchoolGuardianPortalAccount>>,
+    TError,
+    { data: BodyType<SchoolGuardianPortalAccountInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createSchoolGuardianPortalAccount>>,
+  TError,
+  { data: BodyType<SchoolGuardianPortalAccountInput> },
+  TContext
+> => {
+  const mutationKey = ["createSchoolGuardianPortalAccount"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createSchoolGuardianPortalAccount>>,
+    { data: BodyType<SchoolGuardianPortalAccountInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createSchoolGuardianPortalAccount(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateSchoolGuardianPortalAccountMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createSchoolGuardianPortalAccount>>
+>;
+export type CreateSchoolGuardianPortalAccountMutationBody =
+  BodyType<SchoolGuardianPortalAccountInput>;
+export type CreateSchoolGuardianPortalAccountMutationError = ErrorType<void>;
+
+/**
+ * @summary Create a guardian portal account and link guardian records
+ */
+export const useCreateSchoolGuardianPortalAccount = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSchoolGuardianPortalAccount>>,
+    TError,
+    { data: BodyType<SchoolGuardianPortalAccountInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createSchoolGuardianPortalAccount>>,
+  TError,
+  { data: BodyType<SchoolGuardianPortalAccountInput> },
+  TContext
+> => {
+  return useMutation(
+    getCreateSchoolGuardianPortalAccountMutationOptions(options),
+  );
+};
+
+/**
+ * @summary Update guardian access, password, or linked guardian records
+ */
+export const getUpdateSchoolGuardianPortalAccountUrl = (id: number) => {
+  return `/api/school/portal/guardian-accounts/${id}`;
+};
+
+export const updateSchoolGuardianPortalAccount = async (
+  id: number,
+  schoolGuardianPortalAccountUpdate: SchoolGuardianPortalAccountUpdate,
+  options?: RequestInit,
+): Promise<SchoolGuardianPortalAccount> => {
+  return customFetch<SchoolGuardianPortalAccount>(
+    getUpdateSchoolGuardianPortalAccountUrl(id),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolGuardianPortalAccountUpdate),
+    },
+  );
+};
+
+export const getUpdateSchoolGuardianPortalAccountMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSchoolGuardianPortalAccount>>,
+    TError,
+    { id: number; data: BodyType<SchoolGuardianPortalAccountUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSchoolGuardianPortalAccount>>,
+  TError,
+  { id: number; data: BodyType<SchoolGuardianPortalAccountUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateSchoolGuardianPortalAccount"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSchoolGuardianPortalAccount>>,
+    { id: number; data: BodyType<SchoolGuardianPortalAccountUpdate> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateSchoolGuardianPortalAccount(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSchoolGuardianPortalAccountMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSchoolGuardianPortalAccount>>
+>;
+export type UpdateSchoolGuardianPortalAccountMutationBody =
+  BodyType<SchoolGuardianPortalAccountUpdate>;
+export type UpdateSchoolGuardianPortalAccountMutationError = ErrorType<void>;
+
+/**
+ * @summary Update guardian access, password, or linked guardian records
+ */
+export const useUpdateSchoolGuardianPortalAccount = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSchoolGuardianPortalAccount>>,
+    TError,
+    { id: number; data: BodyType<SchoolGuardianPortalAccountUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSchoolGuardianPortalAccount>>,
+  TError,
+  { id: number; data: BodyType<SchoolGuardianPortalAccountUpdate> },
+  TContext
+> => {
+  return useMutation(
+    getUpdateSchoolGuardianPortalAccountMutationOptions(options),
+  );
+};
+
+/**
+ * @summary List current guardian consent and encrypted face-enrollment status
+ */
+export const getGetSchoolStudentFaceEnrollmentStatusUrl = () => {
+  return `/api/school/portal/face-enrollment-status`;
+};
+
+export const getSchoolStudentFaceEnrollmentStatus = async (
+  options?: RequestInit,
+): Promise<SchoolStudentFaceEnrollmentStatus[]> => {
+  return customFetch<SchoolStudentFaceEnrollmentStatus[]>(
+    getGetSchoolStudentFaceEnrollmentStatusUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSchoolStudentFaceEnrollmentStatusQueryKey = () => {
+  return [`/api/school/portal/face-enrollment-status`] as const;
+};
+
+export const getGetSchoolStudentFaceEnrollmentStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSchoolStudentFaceEnrollmentStatus>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolStudentFaceEnrollmentStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSchoolStudentFaceEnrollmentStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSchoolStudentFaceEnrollmentStatus>>
+  > = ({ signal }) =>
+    getSchoolStudentFaceEnrollmentStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolStudentFaceEnrollmentStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSchoolStudentFaceEnrollmentStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSchoolStudentFaceEnrollmentStatus>>
+>;
+export type GetSchoolStudentFaceEnrollmentStatusQueryError = ErrorType<void>;
+
+/**
+ * @summary List current guardian consent and encrypted face-enrollment status
+ */
+
+export function useGetSchoolStudentFaceEnrollmentStatus<
+  TData = Awaited<ReturnType<typeof getSchoolStudentFaceEnrollmentStatus>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSchoolStudentFaceEnrollmentStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions =
+    getGetSchoolStudentFaceEnrollmentStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Store an encrypted face descriptor when active guardian consent exists
+ */
+export const getEnrollSchoolStudentFaceUrl = (studentId: number) => {
+  return `/api/school/portal/students/${studentId}/face-enrollment`;
+};
+
+export const enrollSchoolStudentFace = async (
+  studentId: number,
+  schoolStudentFaceEnrollmentInput: SchoolStudentFaceEnrollmentInput,
+  options?: RequestInit,
+): Promise<SchoolStudentFaceEnrollmentResult> => {
+  return customFetch<SchoolStudentFaceEnrollmentResult>(
+    getEnrollSchoolStudentFaceUrl(studentId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolStudentFaceEnrollmentInput),
+    },
+  );
+};
+
+export const getEnrollSchoolStudentFaceMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enrollSchoolStudentFace>>,
+    TError,
+    { studentId: number; data: BodyType<SchoolStudentFaceEnrollmentInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof enrollSchoolStudentFace>>,
+  TError,
+  { studentId: number; data: BodyType<SchoolStudentFaceEnrollmentInput> },
+  TContext
+> => {
+  const mutationKey = ["enrollSchoolStudentFace"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof enrollSchoolStudentFace>>,
+    { studentId: number; data: BodyType<SchoolStudentFaceEnrollmentInput> }
+  > = (props) => {
+    const { studentId, data } = props ?? {};
+
+    return enrollSchoolStudentFace(studentId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EnrollSchoolStudentFaceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof enrollSchoolStudentFace>>
+>;
+export type EnrollSchoolStudentFaceMutationBody =
+  BodyType<SchoolStudentFaceEnrollmentInput>;
+export type EnrollSchoolStudentFaceMutationError = ErrorType<void>;
+
+/**
+ * @summary Store an encrypted face descriptor when active guardian consent exists
+ */
+export const useEnrollSchoolStudentFace = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enrollSchoolStudentFace>>,
+    TError,
+    { studentId: number; data: BodyType<SchoolStudentFaceEnrollmentInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof enrollSchoolStudentFace>>,
+  TError,
+  { studentId: number; data: BodyType<SchoolStudentFaceEnrollmentInput> },
+  TContext
+> => {
+  return useMutation(getEnrollSchoolStudentFaceMutationOptions(options));
+};
+
+/**
+ * @summary Remove the student's encrypted face descriptor
+ */
+export const getRemoveSchoolStudentFaceEnrollmentUrl = (studentId: number) => {
+  return `/api/school/portal/students/${studentId}/face-enrollment`;
+};
+
+export const removeSchoolStudentFaceEnrollment = async (
+  studentId: number,
+  options?: RequestInit,
+): Promise<SchoolStudentFaceEnrollmentResult> => {
+  return customFetch<SchoolStudentFaceEnrollmentResult>(
+    getRemoveSchoolStudentFaceEnrollmentUrl(studentId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getRemoveSchoolStudentFaceEnrollmentMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeSchoolStudentFaceEnrollment>>,
+    TError,
+    { studentId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeSchoolStudentFaceEnrollment>>,
+  TError,
+  { studentId: number },
+  TContext
+> => {
+  const mutationKey = ["removeSchoolStudentFaceEnrollment"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeSchoolStudentFaceEnrollment>>,
+    { studentId: number }
+  > = (props) => {
+    const { studentId } = props ?? {};
+
+    return removeSchoolStudentFaceEnrollment(studentId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveSchoolStudentFaceEnrollmentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeSchoolStudentFaceEnrollment>>
+>;
+
+export type RemoveSchoolStudentFaceEnrollmentMutationError = ErrorType<void>;
+
+/**
+ * @summary Remove the student's encrypted face descriptor
+ */
+export const useRemoveSchoolStudentFaceEnrollment = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeSchoolStudentFaceEnrollment>>,
+    TError,
+    { studentId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeSchoolStudentFaceEnrollment>>,
+  TError,
+  { studentId: number },
+  TContext
+> => {
+  return useMutation(
+    getRemoveSchoolStudentFaceEnrollmentMutationOptions(options),
+  );
+};
+
+/**
+ * @summary Match a consented student and record one daily face attendance event
+ */
+export const getRecognizeSchoolStudentFaceUrl = () => {
+  return `/api/school/portal/face-attendance/recognize`;
+};
+
+export const recognizeSchoolStudentFace = async (
+  schoolStudentFaceRecognitionInput: SchoolStudentFaceRecognitionInput,
+  options?: RequestInit,
+): Promise<SchoolStudentFaceRecognitionResult> => {
+  return customFetch<SchoolStudentFaceRecognitionResult>(
+    getRecognizeSchoolStudentFaceUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(schoolStudentFaceRecognitionInput),
+    },
+  );
+};
+
+export const getRecognizeSchoolStudentFaceMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recognizeSchoolStudentFace>>,
+    TError,
+    { data: BodyType<SchoolStudentFaceRecognitionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof recognizeSchoolStudentFace>>,
+  TError,
+  { data: BodyType<SchoolStudentFaceRecognitionInput> },
+  TContext
+> => {
+  const mutationKey = ["recognizeSchoolStudentFace"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof recognizeSchoolStudentFace>>,
+    { data: BodyType<SchoolStudentFaceRecognitionInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return recognizeSchoolStudentFace(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RecognizeSchoolStudentFaceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof recognizeSchoolStudentFace>>
+>;
+export type RecognizeSchoolStudentFaceMutationBody =
+  BodyType<SchoolStudentFaceRecognitionInput>;
+export type RecognizeSchoolStudentFaceMutationError = ErrorType<void>;
+
+/**
+ * @summary Match a consented student and record one daily face attendance event
+ */
+export const useRecognizeSchoolStudentFace = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recognizeSchoolStudentFace>>,
+    TError,
+    { data: BodyType<SchoolStudentFaceRecognitionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof recognizeSchoolStudentFace>>,
+  TError,
+  { data: BodyType<SchoolStudentFaceRecognitionInput> },
+  TContext
+> => {
+  return useMutation(getRecognizeSchoolStudentFaceMutationOptions(options));
+};
 
 /**
  * @summary Preview eligible student enrollments for transfer to another academic year

@@ -21,6 +21,13 @@ import {
   exitPermissionsTable, employeeLeavesTable,
   payrollRunsTable, payrollLinesTable,
   employeeFaceEnrollmentsTable,
+  schoolAcademicYearsTable, schoolAttendanceTable, schoolClassesTable,
+  schoolBiometricConsentEventsTable,
+  schoolExamResultsTable, schoolExamsTable, schoolFeesTable, schoolGradesTable,
+  schoolEnrollmentsTable,
+  schoolGuardianPortalAccountsTable, schoolGuardianPortalLinksTable,
+  schoolStudentBiometricConsentsTable, schoolStudentFaceTemplatesTable,
+  schoolStudentGuardiansTable, schoolStudentsTable, schoolSubjectsTable,
 } from "@workspace/db";
 // Face logic reused from the admin face-attendance module — single source of
 // truth for descriptors/matching/settings (no duplication).
@@ -37,6 +44,8 @@ import {
   scheduleCrossesMidnight,
   zonedDateAndTime,
 } from "../lib/portalAttendanceState.js";
+import { companyAllowsModule } from "../middleware/permissions.js";
+import { ensureSchoolPortalSchema, lockStudentBiometrics } from "../lib/schoolPortalSchema.js";
 
 const router = Router();
 
@@ -710,5 +719,455 @@ router.get("/payslips", async (req, res) => {
     res.json({ rows });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
+
+const guardianRouter = Router();
+const GUARDIAN_TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 14;
+const SCHOOL_BIOMETRIC_POLICY_VERSION = "school-face-v1";
+
+function parseCompanyMenuPermissions(raw: unknown): Record<string, unknown> | null {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const value = JSON.parse(raw);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function signGuardianToken(accountId: number, companyId: number): string {
+  if (!SECRET) throw new Error("SESSION_SECRET غير مضبوط");
+  const payload = Buffer.from(JSON.stringify({
+    k: "school_guardian",
+    a: accountId,
+    c: companyId,
+    x: Date.now() + GUARDIAN_TOKEN_TTL_MS,
+  })).toString("base64url");
+  const mac = crypto.createHmac("sha256", SECRET).update(payload).digest("base64url");
+  return `${payload}.${mac}`;
+}
+
+function verifyGuardianToken(token: string): { accountId: number; companyId: number } | null {
+  if (!SECRET) return null;
+  const dot = token.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const payload = token.slice(0, dot);
+  const mac = token.slice(dot + 1);
+  const expected = crypto.createHmac("sha256", SECRET).update(payload).digest("base64url");
+  const actualBytes = Buffer.from(mac);
+  const expectedBytes = Buffer.from(expected);
+  if (actualBytes.length !== expectedBytes.length || !crypto.timingSafeEqual(actualBytes, expectedBytes)) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (claims?.k !== "school_guardian" || !Number(claims.a) || !Number(claims.c)) return null;
+    if (!Number.isFinite(claims.x) || Date.now() > claims.x) return null;
+    return { accountId: Number(claims.a), companyId: Number(claims.c) };
+  } catch {
+    return null;
+  }
+}
+
+type GuardianPortalContext = {
+  account: any;
+  accountId: number;
+  companyId: number;
+};
+
+async function guardianPortalAuth(req: any, res: any): Promise<GuardianPortalContext | null> {
+  const authorization = String(req.headers.authorization ?? "");
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  const claims = token ? verifyGuardianToken(token) : null;
+  if (!claims) {
+    res.status(401).json({ error: "انتهت جلسة ولي الأمر — يرجى تسجيل الدخول من جديد" });
+    return null;
+  }
+  const [account, company] = await Promise.all([
+    db.select().from(schoolGuardianPortalAccountsTable).where(and(
+      eq(schoolGuardianPortalAccountsTable.id, claims.accountId),
+      eq(schoolGuardianPortalAccountsTable.companyId, claims.companyId),
+    )).limit(1).then((rows) => rows[0]),
+    db.select({
+      menuPermissions: companiesTable.menuPermissions,
+    }).from(companiesTable).where(eq(companiesTable.id, claims.companyId)).limit(1).then((rows) => rows[0]),
+  ]);
+  if (!account || !account.isActive) {
+    res.status(401).json({ error: "تم إيقاف حساب ولي الأمر — تواصل مع إدارة المدرسة" });
+    return null;
+  }
+  if (!companyAllowsModule({
+    role: "guardian",
+    companyMenuPermissions: parseCompanyMenuPermissions(company?.menuPermissions),
+  }, "school")) {
+    res.status(403).json({ error: "بوابة المدرسة غير مفعّلة لهذه الشركة" });
+    return null;
+  }
+  return { account, accountId: claims.accountId, companyId: claims.companyId };
+}
+
+function isoDateOnly(value: unknown): string | null {
+  if (typeof value === "string") return value.slice(0, 10);
+  return value instanceof Date ? value.toISOString().slice(0, 10) : null;
+}
+
+function isoTimestamp(value: unknown): string | null {
+  if (value instanceof Date) return value.toISOString();
+  return typeof value === "string" ? value : null;
+}
+
+async function validGuardianConsentStudents(queryDb: any, companyId: number): Promise<Set<number>> {
+  const rows = await queryDb.select({
+    studentId: schoolStudentBiometricConsentsTable.studentId,
+  }).from(schoolStudentBiometricConsentsTable)
+    .innerJoin(schoolGuardianPortalAccountsTable, and(
+      eq(schoolGuardianPortalAccountsTable.id, schoolStudentBiometricConsentsTable.guardianAccountId),
+      eq(schoolGuardianPortalAccountsTable.companyId, companyId),
+      eq(schoolGuardianPortalAccountsTable.isActive, true),
+    ))
+    .innerJoin(schoolGuardianPortalLinksTable, and(
+      eq(schoolGuardianPortalLinksTable.accountId, schoolGuardianPortalAccountsTable.id),
+      eq(schoolGuardianPortalLinksTable.companyId, companyId),
+    ))
+    .innerJoin(schoolStudentGuardiansTable, and(
+      eq(schoolStudentGuardiansTable.id, schoolGuardianPortalLinksTable.guardianId),
+      eq(schoolStudentGuardiansTable.companyId, companyId),
+      eq(schoolStudentGuardiansTable.studentId, schoolStudentBiometricConsentsTable.studentId),
+    ))
+    .where(and(
+      eq(schoolStudentBiometricConsentsTable.companyId, companyId),
+      eq(schoolStudentBiometricConsentsTable.isActive, true),
+    ));
+  return new Set(rows.map((row: { studentId: number }) => row.studentId));
+}
+
+guardianRouter.use(async (_req, res, next) => {
+  try {
+    await ensureSchoolPortalSchema();
+    next();
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "بوابة المدرسة غير جاهزة" });
+  }
+});
+
+guardianRouter.post("/login", async (req, res) => {
+  try {
+    const companyCode = String(req.body?.companyCode ?? "").trim().toUpperCase();
+    const username = String(req.body?.username ?? "").trim().toLowerCase();
+    const password = String(req.body?.password ?? "");
+    if (!companyCode || !username || !password) {
+      res.status(400).json({ error: "كود الشركة واسم المستخدم وكلمة المرور مطلوبة" });
+      return;
+    }
+    if (!SECRET) { res.status(500).json({ error: "إعداد الخادم غير مكتمل" }); return; }
+    const ip = String(req.headers["x-forwarded-for"] ?? req.socket?.remoteAddress ?? "")
+      .split(",")[0].trim();
+    const ipKey = `ip:guardian:${ip}`;
+    const userKey = `u:guardian:${companyCode}:${username}`;
+    if (loginBlocked(ipKey) || loginBlocked(userKey)) {
+      res.status(429).json({ error: "محاولات كثيرة — انتظر 10 دقائق ثم أعد المحاولة" });
+      return;
+    }
+    const fail = () => {
+      noteLoginFail(ipKey);
+      noteLoginFail(userKey);
+      res.status(401).json({ error: "بيانات الدخول غير صحيحة" });
+    };
+    const [company] = await db.select({
+      id: companiesTable.id,
+      code: companiesTable.code,
+      menuPermissions: companiesTable.menuPermissions,
+    }).from(companiesTable).where(sql`upper(${companiesTable.code}) = ${companyCode}`).limit(1);
+    if (!company) { fail(); return; }
+    if (!companyAllowsModule({
+      role: "guardian",
+      companyMenuPermissions: parseCompanyMenuPermissions(company.menuPermissions),
+    }, "school")) {
+      res.status(403).json({ error: "بوابة المدرسة غير مفعّلة لهذه الشركة" });
+      return;
+    }
+    const [account] = await db.select({
+      id: schoolGuardianPortalAccountsTable.id,
+      companyId: schoolGuardianPortalAccountsTable.companyId,
+      username: schoolGuardianPortalAccountsTable.username,
+      displayName: schoolGuardianPortalAccountsTable.displayName,
+      passwordHash: schoolGuardianPortalAccountsTable.passwordHash,
+      isActive: schoolGuardianPortalAccountsTable.isActive,
+    }).from(schoolGuardianPortalAccountsTable).where(and(
+      eq(schoolGuardianPortalAccountsTable.companyId, company.id),
+      eq(schoolGuardianPortalAccountsTable.username, username),
+    )).limit(1);
+    if (!account || !account.isActive || !(await bcrypt.compare(password, account.passwordHash))) {
+      fail();
+      return;
+    }
+    const [countRow] = await db.select({
+      count: sql<number>`count(DISTINCT ${schoolStudentGuardiansTable.studentId})::int`,
+    }).from(schoolGuardianPortalLinksTable)
+      .innerJoin(schoolStudentGuardiansTable, and(
+        eq(schoolStudentGuardiansTable.id, schoolGuardianPortalLinksTable.guardianId),
+        eq(schoolStudentGuardiansTable.companyId, company.id),
+      ))
+      .where(and(
+        eq(schoolGuardianPortalLinksTable.companyId, company.id),
+        eq(schoolGuardianPortalLinksTable.accountId, account.id),
+      ));
+    await db.update(schoolGuardianPortalAccountsTable).set({ lastLoginAt: new Date() })
+      .where(eq(schoolGuardianPortalAccountsTable.id, account.id));
+    res.json({
+      token: signGuardianToken(account.id, company.id),
+      account: {
+        displayName: account.displayName,
+        username: account.username,
+        childrenCount: Number(countRow?.count ?? 0),
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "تعذر تسجيل الدخول" });
+  }
+});
+
+guardianRouter.get("/children", async (req, res) => {
+  try {
+    const ctx = await guardianPortalAuth(req, res);
+    if (!ctx) return;
+    const linkedRows = await db.select({
+      studentId: schoolStudentsTable.id,
+      studentNumber: schoolStudentsTable.studentNumber,
+      fullNameAr: schoolStudentsTable.fullNameAr,
+      fullNameEn: schoolStudentsTable.fullNameEn,
+      status: schoolStudentsTable.status,
+    }).from(schoolGuardianPortalLinksTable)
+      .innerJoin(schoolStudentGuardiansTable, and(
+        eq(schoolStudentGuardiansTable.id, schoolGuardianPortalLinksTable.guardianId),
+        eq(schoolStudentGuardiansTable.companyId, ctx.companyId),
+      ))
+      .innerJoin(schoolStudentsTable, and(
+        eq(schoolStudentsTable.id, schoolStudentGuardiansTable.studentId),
+        eq(schoolStudentsTable.companyId, ctx.companyId),
+      ))
+      .where(and(
+        eq(schoolGuardianPortalLinksTable.companyId, ctx.companyId),
+        eq(schoolGuardianPortalLinksTable.accountId, ctx.accountId),
+      ))
+      .orderBy(asc(schoolStudentsTable.fullNameAr));
+    const studentsById = new Map(linkedRows.map((row) => [row.studentId, row]));
+    const students = [...studentsById.values()];
+    const validConsentStudentIds = await validGuardianConsentStudents(db, ctx.companyId);
+    const children = await Promise.all(students.map(async (student) => {
+      const [enrollment] = await db.select({
+        id: schoolEnrollmentsTable.id,
+        academicYear: schoolAcademicYearsTable.name,
+        academicYearId: schoolAcademicYearsTable.id,
+        className: schoolClassesTable.name,
+        gradeName: schoolGradesTable.nameAr,
+      }).from(schoolEnrollmentsTable)
+        .innerJoin(schoolAcademicYearsTable, and(
+          eq(schoolAcademicYearsTable.id, schoolEnrollmentsTable.academicYearId),
+          eq(schoolAcademicYearsTable.companyId, ctx.companyId),
+        ))
+        .innerJoin(schoolClassesTable, and(
+          eq(schoolClassesTable.id, schoolEnrollmentsTable.classId),
+          eq(schoolClassesTable.companyId, ctx.companyId),
+        ))
+        .innerJoin(schoolGradesTable, and(
+          eq(schoolGradesTable.id, schoolClassesTable.gradeId),
+          eq(schoolGradesTable.companyId, ctx.companyId),
+        ))
+        .where(and(
+          eq(schoolEnrollmentsTable.companyId, ctx.companyId),
+          eq(schoolEnrollmentsTable.studentId, student.studentId),
+          eq(schoolEnrollmentsTable.status, "active"),
+          or(
+            eq(schoolAcademicYearsTable.isCurrent, true),
+            eq(schoolAcademicYearsTable.status, "active"),
+          ),
+        ))
+        .orderBy(desc(schoolAcademicYearsTable.isCurrent), desc(schoolAcademicYearsTable.startDate))
+        .limit(1);
+      let attendanceRows: any[] = [];
+      let recentExams: any[] = [];
+      let fees: any[] = [];
+      if (enrollment) {
+        attendanceRows = await db.select({
+          date: schoolAttendanceTable.attendanceDate,
+          period: schoolAttendanceTable.period,
+          status: schoolAttendanceTable.status,
+        }).from(schoolAttendanceTable).where(and(
+          eq(schoolAttendanceTable.companyId, ctx.companyId),
+          eq(schoolAttendanceTable.enrollmentId, enrollment.id),
+        )).orderBy(desc(schoolAttendanceTable.attendanceDate)).limit(366);
+        recentExams = await db.select({
+          id: schoolExamsTable.id,
+          name: schoolExamsTable.name,
+          subject: schoolSubjectsTable.nameAr,
+          examDate: schoolExamsTable.examDate,
+          score: schoolExamResultsTable.score,
+          maxScore: schoolExamsTable.maxScore,
+        }).from(schoolExamResultsTable)
+          .innerJoin(schoolExamsTable, and(
+            eq(schoolExamsTable.id, schoolExamResultsTable.examId),
+            eq(schoolExamsTable.companyId, ctx.companyId),
+          ))
+          .innerJoin(schoolSubjectsTable, and(
+            eq(schoolSubjectsTable.id, schoolExamsTable.subjectId),
+            eq(schoolSubjectsTable.companyId, ctx.companyId),
+          ))
+          .where(and(
+            eq(schoolExamResultsTable.companyId, ctx.companyId),
+            eq(schoolExamResultsTable.enrollmentId, enrollment.id),
+          ))
+          .orderBy(desc(schoolExamsTable.examDate))
+          .limit(10);
+        fees = await db.select({
+          id: schoolFeesTable.id,
+          description: schoolFeesTable.description,
+          amount: schoolFeesTable.amount,
+          dueDate: schoolFeesTable.dueDate,
+          status: schoolFeesTable.status,
+        }).from(schoolFeesTable).where(and(
+          eq(schoolFeesTable.companyId, ctx.companyId),
+          eq(schoolFeesTable.enrollmentId, enrollment.id),
+        )).orderBy(desc(schoolFeesTable.dueDate)).limit(24);
+      }
+      const [ownConsent] = await db.select({
+        isActive: schoolStudentBiometricConsentsTable.isActive,
+      }).from(schoolStudentBiometricConsentsTable).where(and(
+        eq(schoolStudentBiometricConsentsTable.companyId, ctx.companyId),
+        eq(schoolStudentBiometricConsentsTable.studentId, student.studentId),
+        eq(schoolStudentBiometricConsentsTable.guardianAccountId, ctx.accountId),
+        eq(schoolStudentBiometricConsentsTable.isActive, true),
+      )).limit(1);
+      const [template] = await db.select({ id: schoolStudentFaceTemplatesTable.id })
+        .from(schoolStudentFaceTemplatesTable).where(and(
+          eq(schoolStudentFaceTemplatesTable.companyId, ctx.companyId),
+          eq(schoolStudentFaceTemplatesTable.studentId, student.studentId),
+        )).limit(1);
+      const countStatus = (status: string) => attendanceRows.filter((row) => row.status === status).length;
+      return {
+        id: student.studentId,
+        studentNumber: student.studentNumber,
+        fullNameAr: student.fullNameAr,
+        fullNameEn: student.fullNameEn,
+        status: student.status,
+        academicYear: enrollment?.academicYear ?? null,
+        className: enrollment?.className ?? null,
+        gradeName: enrollment?.gradeName ?? null,
+        attendanceSummary: {
+          present: countStatus("present"),
+          late: countStatus("late"),
+          absent: countStatus("absent"),
+          excused: countStatus("excused"),
+          total: attendanceRows.length,
+        },
+        recentAttendance: attendanceRows.slice(0, 14).map((row) => ({
+          date: isoDateOnly(row.date),
+          period: row.period,
+          status: row.status,
+        })),
+        recentExams: recentExams.map((row) => ({
+          id: row.id,
+          name: row.name,
+          subject: row.subject,
+          examDate: isoDateOnly(row.examDate),
+          score: Number(row.score),
+          maxScore: Number(row.maxScore),
+        })),
+        fees: fees.map((row) => ({
+          id: row.id,
+          description: row.description,
+          amount: Number(row.amount),
+          dueDate: row.dueDate ? isoDateOnly(row.dueDate) : null,
+          status: row.status,
+          invoiceNumber: null,
+        })),
+        biometricConsentActive: !!ownConsent?.isActive,
+        faceEnrolled: !!template && validConsentStudentIds.has(student.studentId),
+      };
+    }));
+    res.json(children);
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "تعذر تحميل بيانات الأبناء" });
+  }
+});
+
+guardianRouter.post("/children/:studentId/biometric-consent", async (req, res) => {
+  try {
+    const ctx = await guardianPortalAuth(req, res);
+    if (!ctx) return;
+    const studentId = Number(req.params.studentId);
+    const consented = req.body?.consented;
+    const policyVersion = String(req.body?.policyVersion ?? "");
+    if (!Number.isInteger(studentId) || studentId < 1 || typeof consented !== "boolean") {
+      res.status(400).json({ error: "بيانات الموافقة غير صالحة" });
+      return;
+    }
+    if (policyVersion !== SCHOOL_BIOMETRIC_POLICY_VERSION) {
+      res.status(400).json({ error: "نسخة سياسة الموافقة غير مدعومة" });
+      return;
+    }
+    const [linkedStudent] = await db.select({ id: schoolStudentsTable.id })
+      .from(schoolGuardianPortalLinksTable)
+      .innerJoin(schoolStudentGuardiansTable, and(
+        eq(schoolStudentGuardiansTable.id, schoolGuardianPortalLinksTable.guardianId),
+        eq(schoolStudentGuardiansTable.companyId, ctx.companyId),
+      ))
+      .innerJoin(schoolStudentsTable, and(
+        eq(schoolStudentsTable.id, schoolStudentGuardiansTable.studentId),
+        eq(schoolStudentsTable.companyId, ctx.companyId),
+      ))
+      .where(and(
+        eq(schoolGuardianPortalLinksTable.companyId, ctx.companyId),
+        eq(schoolGuardianPortalLinksTable.accountId, ctx.accountId),
+        eq(schoolStudentsTable.id, studentId),
+      )).limit(1);
+    if (!linkedStudent) { res.status(403).json({ error: "هذا الطالب غير مرتبط بحساب ولي الأمر" }); return; }
+
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await lockStudentBiometrics(tx, ctx.companyId, studentId);
+      await tx.insert(schoolStudentBiometricConsentsTable).values({
+        companyId: ctx.companyId,
+        studentId,
+        guardianAccountId: ctx.accountId,
+        isActive: consented,
+        policyVersion,
+        consentedAt: consented ? now : null,
+        revokedAt: consented ? null : now,
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoUpdate({
+        target: [
+          schoolStudentBiometricConsentsTable.companyId,
+          schoolStudentBiometricConsentsTable.studentId,
+          schoolStudentBiometricConsentsTable.guardianAccountId,
+        ],
+        set: consented
+          ? { isActive: true, policyVersion, consentedAt: now, revokedAt: null, updatedAt: now }
+          : { isActive: false, policyVersion, revokedAt: now, updatedAt: now },
+      });
+      await tx.insert(schoolBiometricConsentEventsTable).values({
+        companyId: ctx.companyId,
+        studentId,
+        guardianAccountId: ctx.accountId,
+        action: consented ? "granted" : "revoked",
+        policyVersion,
+        occurredAt: now,
+      });
+      if (!consented) {
+        const activeStudents = await validGuardianConsentStudents(tx, ctx.companyId);
+        if (!activeStudents.has(studentId)) {
+          await tx.delete(schoolStudentFaceTemplatesTable).where(and(
+            eq(schoolStudentFaceTemplatesTable.companyId, ctx.companyId),
+            eq(schoolStudentFaceTemplatesTable.studentId, studentId),
+          ));
+        }
+      }
+    });
+    res.json({ ok: true, consented });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "تعذر حفظ موافقة ولي الأمر" });
+  }
+});
+
+router.use("/guardian", guardianRouter);
 
 export default router;
