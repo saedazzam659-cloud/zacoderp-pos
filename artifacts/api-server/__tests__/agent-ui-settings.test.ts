@@ -8,6 +8,22 @@ test("public agent UI settings keep the compact invoice selector disabled by def
   assert.equal(sanitizeAgentUiSettings({}).compactInvoiceTypeSelector, false);
   assert.equal(sanitizeAgentUiSettings(null).colorfulInvoiceTabs, false);
   assert.equal(sanitizeAgentUiSettings({}).colorfulInvoiceTabs, false);
+  assert.deepEqual(sanitizeAgentUiSettings({}).moduleScreensAsTiles, []);
+});
+
+test("public agent UI settings accept the additional module tile hubs only when selected", () => {
+  assert.deepEqual(
+    sanitizeAgentUiSettings({
+      moduleScreensAsTiles: [
+        "simpleManufacturing",
+        "contracting",
+        "school",
+        "school",
+        "unknown",
+      ],
+    }).moduleScreensAsTiles,
+    ["simpleManufacturing", "contracting", "school"],
+  );
 });
 
 test("public agent UI settings expose compact invoice selector only when explicitly enabled", () => {

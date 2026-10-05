@@ -1,7 +1,7 @@
 export const AGENT_MODULE_SCREEN_TILE_IDS = [
   "sales", "purchasing", "inventory", "cash", "accounting", "hr", "production",
-  "maintenance", "installments", "hotel", "hospital", "crm", "fixedAssets",
-  "pos", "security",
+  "simpleManufacturing", "contracting", "maintenance", "installments", "hotel",
+  "hospital", "school", "crm", "fixedAssets", "pos", "security",
 ] as const;
 
 export type AgentUiSettings = {
