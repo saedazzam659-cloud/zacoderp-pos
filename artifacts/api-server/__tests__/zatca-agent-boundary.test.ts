@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { after, test } from "node:test";
+import { test } from "node:test";
 import type { Server } from "node:http";
 import bcrypt from "bcryptjs";
 import {
@@ -13,6 +13,7 @@ import {
   invoicesTable,
   usersTable,
 } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import app from "../src/app.ts";
 import { encryptSecret } from "../src/lib/encryption.ts";
 import { evictAgentDb } from "../src/lib/agentDb.ts";
