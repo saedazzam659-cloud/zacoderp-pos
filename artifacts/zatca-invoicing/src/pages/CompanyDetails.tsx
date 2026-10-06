@@ -347,9 +347,22 @@ export default function CompanyDetails() {
             <p className="text-xs text-muted-foreground mt-0.5 font-mono">{company.vatNumber}</p>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
-          <RefreshCw className="h-3.5 w-3.5" />تحديث
-        </Button>
+        <div className="flex w-full gap-2 sm:w-auto">
+          {!agentId && (
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setTab("zatca")}
+              data-testid="button-company-zatca-setup"
+              className="min-h-10 flex-1 gap-1.5 sm:flex-none"
+            >
+              <ShieldCheck className="h-4 w-4" /> ربط زاتكا
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={() => refetch()} className="min-h-10 flex-1 gap-1.5 sm:flex-none">
+            <RefreshCw className="h-3.5 w-3.5" />تحديث
+          </Button>
+        </div>
       </div>
 
       {/* Stats row */}
@@ -535,7 +548,7 @@ export default function CompanyDetails() {
                 <p className="text-xs text-muted-foreground mt-1">أضف أول مستخدم للشركة</p>
               </div>
             ) : (
-              <div className="divide-y">
+              <div className="hidden divide-y lg:block">
                 {/* Header */}
                 <div className="grid items-center gap-3 px-4 py-2.5 bg-muted/40 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
                   style={{ gridTemplateColumns: "1fr 1fr 0.7fr 0.7fr 1.2fr auto" }}>
@@ -618,11 +631,15 @@ export default function CompanyDetails() {
                       />
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground"
                         title="تغيير كلمة المرور"
+                        aria-label={`تغيير كلمة مرور ${u.username}`}
+                        data-testid={`button-reset-password-user-${u.id}`}
                         onClick={() => { setResetPassDialog(u); setNewPass(""); }}>
                         <Key className="h-3.5 w-3.5" />
                       </Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
                         title="حذف المستخدم"
+                        aria-label={`حذف المستخدم ${u.username}`}
+                        data-testid={`button-delete-user-${u.id}`}
                         onClick={() => {
                           if (confirm(`حذف المستخدم ${u.username}؟`)) deleteUserMutation.mutate(u.id);
                         }}>
@@ -630,6 +647,128 @@ export default function CompanyDetails() {
                       </Button>
                     </div>
                   </div>
+                ))}
+              </div>
+              <div className="divide-y lg:hidden">
+                {users.map((u: any) => (
+                  <article
+                    key={`mobile-${u.id}`}
+                    data-testid={`card-company-user-mobile-${u.id}`}
+                    className={cn("space-y-3 p-4", !u.isActive && "bg-muted/10")}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-bold text-primary">
+                          {u.username?.[0]?.toUpperCase() ?? "م"}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold" data-testid={`text-company-user-mobile-${u.id}`}>{u.username}</p>
+                          <p className="mt-0.5 text-[11px] text-muted-foreground">
+                            آخر دخول: {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn") : "لم يدخل بعد"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Switch
+                          checked={u.isActive}
+                          onCheckedChange={v => toggleUserMutation.mutate({ userId: u.id, isActive: v })}
+                          aria-label={`${u.isActive ? "إيقاف" : "تفعيل"} المستخدم ${u.username}`}
+                          data-testid={`switch-company-user-mobile-${u.id}`}
+                        />
+                        <span className={cn("text-xs", u.isActive ? "text-green-700" : "text-muted-foreground")}>
+                          {u.isActive ? "نشط" : "موقوف"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 rounded-lg bg-muted/30 p-3 text-xs sm:grid-cols-2">
+                      <div className="min-w-0">
+                        <span className="mb-1 block text-[10px] font-semibold text-muted-foreground">البريد</span>
+                        <p className="truncate font-mono" dir="ltr">{u.email || "—"}</p>
+                      </div>
+                      <div>
+                        <span className="mb-1 block text-[10px] font-semibold text-muted-foreground">الصلاحية</span>
+                        <Badge variant="outline" className="text-xs">{u.role === "admin" ? "مدير" : "مستخدم"}</Badge>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 rounded-lg border p-3">
+                      <label className="flex min-h-10 items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-primary"
+                          title="يعزل كل متصفح في مساحة ديمو مستقلة خاصة به"
+                          checked={u.demoDeviceIsolation === true}
+                          disabled={demoIsolationMutation.isPending}
+                          onChange={e => demoIsolationMutation.mutate({ userId: u.id, enabled: e.target.checked })}
+                          data-testid={`demo-device-isolation-mobile-${u.id}`}
+                        />
+                        عزل كل جهاز في مساحة ديمو مستقلة
+                      </label>
+                      <label className="flex min-h-10 items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-primary"
+                          checked={u.demoOperationalAdmin === true}
+                          disabled={!u.demoDeviceIsolation || demoOperationalMutation.isPending}
+                          onChange={e => demoOperationalMutation.mutate({ userId: u.id, enabled: e.target.checked })}
+                          data-testid={`demo-operational-admin-mobile-${u.id}`}
+                        />
+                        مدير عمليات الديمو
+                      </label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-h-10 w-full justify-start gap-2"
+                        disabled={!u.demoDeviceIsolation}
+                        data-testid={`button-manage-demo-devices-mobile-${u.id}`}
+                        onClick={() => setDemoDevicesUser(u)}
+                      >
+                        <MonitorSmartphone className="h-4 w-4" />
+                        إدارة أجهزة الديمو
+                      </Button>
+                    </div>
+
+                    <label className="flex min-h-10 items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-emerald-600"
+                        title="عدم إظهار التنبيه الأمني عند تسجيل الدخول"
+                        checked={u.securityNoticeExempt === true}
+                        onChange={e => exemptNoticeMutation.mutate({ userId: u.id, exempt: e.target.checked })}
+                        data-testid={`checkbox-security-notice-exempt-mobile-${u.id}`}
+                      />
+                      عدم إظهار التنبيه الأمني عند تسجيل الدخول
+                    </label>
+
+                    <div className="flex gap-2 border-t pt-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11 flex-1 gap-2"
+                        data-testid={`button-reset-password-mobile-${u.id}`}
+                        onClick={() => { setResetPassDialog(u); setNewPass(""); }}
+                      >
+                        <Key className="h-4 w-4" />
+                        تغيير كلمة المرور
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-11 w-11 shrink-0 text-destructive hover:text-destructive"
+                        title="حذف المستخدم"
+                        aria-label={`حذف المستخدم ${u.username}`}
+                        data-testid={`button-delete-user-mobile-${u.id}`}
+                        onClick={() => {
+                          if (confirm(`حذف المستخدم ${u.username}؟`)) deleteUserMutation.mutate(u.id);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </article>
                 ))}
               </div>
             )}
@@ -923,8 +1062,13 @@ export default function CompanyDetails() {
                   dir="ltr"
                   className="pl-9"
                 />
-                <button type="button" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-                  onClick={() => setShowPass(v => !v)}>
+                <button
+                  type="button"
+                  className="absolute left-0.5 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
+                  onClick={() => setShowPass(v => !v)}
+                  aria-label={showPass ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
+                  data-testid="button-toggle-password-visibility"
+                >
                   {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>

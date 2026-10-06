@@ -194,20 +194,23 @@ export default function InvoiceDetails() {
                     : <><Upload className="h-4 w-4" />إرسال لـ ZATCA</>}
                 </Button>
               )}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  // Early gate so the user sees the "no printer" message
-                  // immediately without the print template dialog flashing open.
-                  if (!ensurePrinterReady(toast, navigate)) return;
-                  setPrintOpen(true);
-                }}
-                className="gap-1.5"
-              >
-                <Printer className="h-4 w-4" />طباعة
-              </Button>
             </>
+          )}
+          {(invoice.status === "draft" || invoice.status === "issued") && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                // Keep the existing printer check and template dialog for both
+                // newly saved drafts and issued invoices.
+                if (!ensurePrinterReady(toast, navigate)) return;
+                setPrintOpen(true);
+              }}
+              className="gap-1.5"
+              data-testid="button-print-invoice"
+            >
+              <Printer className="h-4 w-4" />طباعة
+            </Button>
           )}
         </div>
       </div>

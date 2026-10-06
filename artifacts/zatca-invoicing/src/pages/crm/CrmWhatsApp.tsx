@@ -458,7 +458,7 @@ export default function CrmWhatsApp() {
                 </div>}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="hidden overflow-x-auto lg:block">
                 <table className="w-full min-w-[760px] text-right">
                   <thead className="bg-[#f7faf8] text-[11px] font-bold text-[#82978e]">
                     <tr>
@@ -491,6 +491,103 @@ export default function CrmWhatsApp() {
                     </tr>)}
                   </tbody>
                 </table>
+              </div>
+              <div className="space-y-3 p-3 lg:hidden">
+                <label className="flex min-h-11 items-center gap-2 rounded-lg border border-[#e3ede7] bg-[#f7faf8] px-3 text-xs font-semibold text-[#547166]">
+                  <input
+                    type="checkbox"
+                    aria-label="تحديد كل جهات الاتصال"
+                    checked={allVisibleSelected}
+                    onChange={toggleAllVisible}
+                    data-testid="checkbox-select-all-mobile"
+                    className="h-4 w-4 accent-[#14836c]"
+                  />
+                  تحديد كل الجهات الظاهرة
+                </label>
+                {filteredContacts.map((contact) => (
+                  <article
+                    key={contact.id}
+                    data-testid={`card-whatsapp-contact-${contact.id}`}
+                    className="rounded-xl border border-[#e3ede7] bg-white p-3.5 shadow-sm"
+                  >
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(contact.id)}
+                        onChange={() => toggleContact(contact.id)}
+                        aria-label={`تحديد ${contact.name}`}
+                        data-testid={`checkbox-contact-mobile-${contact.id}`}
+                        className="mt-1 h-4 w-4 shrink-0 accent-[#14836c]"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <h3 className="truncate text-sm font-bold text-[#2b4d41]" data-testid={`text-contact-name-mobile-${contact.id}`}>
+                              {contact.name}
+                            </h3>
+                            <p className="mt-0.5 text-[11px] text-[#98aaa2]">أضيف {dateLabel(contact.createdAt)}</p>
+                          </div>
+                          {contact.customerId ? (
+                            <span
+                              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#eef5f0] px-2 py-1 text-[10px] font-bold text-[#527563]"
+                              data-testid={`status-contact-customer-mobile-${contact.id}`}
+                            >
+                              <Check className="h-3 w-3" /> عميل #{contact.customerId}
+                            </span>
+                          ) : (
+                            <span className="shrink-0 rounded-full bg-[#f4f5ed] px-2 py-1 text-[10px] font-semibold text-[#817c5b]">
+                              جهة واتساب
+                            </span>
+                          )}
+                        </div>
+                        <p dir="ltr" className="mt-2 text-left font-mono text-sm font-medium text-[#49675c]" data-testid={`text-contact-phone-mobile-${contact.id}`}>
+                          {contact.phone}
+                        </p>
+                        {contact.notes && (
+                          <p className="mt-2 break-words text-xs leading-5 text-[#83968d]" data-testid={`text-contact-notes-mobile-${contact.id}`}>
+                            {contact.notes}
+                          </p>
+                        )}
+                        {!contact.customerId && (
+                          <button
+                            disabled={convertingId === contact.id}
+                            onClick={() => convertToCustomer(contact)}
+                            data-testid={`button-convert-contact-mobile-${contact.id}`}
+                            className="mt-2 min-h-10 w-full rounded-lg border border-[#d2e2da] px-3 text-xs font-bold text-[#16816b] hover:bg-[#f4faf6] disabled:opacity-50"
+                          >
+                            {convertingId === contact.id ? "جارٍ التحويل..." : "تحويل إلى عميل"}
+                          </button>
+                        )}
+                        <div className="mt-3 flex items-center gap-2 border-t border-[#edf2ef] pt-3">
+                          <button
+                            onClick={() => openWhatsApp(contact.phone, "")}
+                            data-testid={`button-open-chat-mobile-${contact.id}`}
+                            aria-label={`فتح محادثة واتساب مع ${contact.name}`}
+                            className="flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-[#eaf5ef] px-3 text-xs font-bold text-[#397c63]"
+                          >
+                            <ArrowUpRight className="h-4 w-4" /> فتح واتساب
+                          </button>
+                          <button
+                            onClick={() => openEditContact(contact)}
+                            data-testid={`button-edit-contact-mobile-${contact.id}`}
+                            aria-label={`تعديل ${contact.name}`}
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#eff5f1] text-[#758d82]"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setContactToDelete(contact)}
+                            data-testid={`button-delete-contact-mobile-${contact.id}`}
+                            aria-label={`حذف ${contact.name}`}
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#fcf0ed] text-[#a06b62]"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                ))}
               </div>
             )}
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e8f0ec] px-5 py-3 text-[11px] text-[#8a9c94]">
