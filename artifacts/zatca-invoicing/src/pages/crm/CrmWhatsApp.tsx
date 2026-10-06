@@ -458,6 +458,7 @@ export default function CrmWhatsApp() {
                 </div>}
               </div>
             ) : (
+              <>
               <div className="hidden overflow-x-auto lg:block">
                 <table className="w-full min-w-[760px] text-right">
                   <thead className="bg-[#f7faf8] text-[11px] font-bold text-[#82978e]">
@@ -589,6 +590,7 @@ export default function CrmWhatsApp() {
                   </article>
                 ))}
               </div>
+              </>
             )}
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e8f0ec] px-5 py-3 text-[11px] text-[#8a9c94]">
               <span data-testid="text-contact-list-count">عرض {filteredContacts.length} من {contacts.length} جهة</span>

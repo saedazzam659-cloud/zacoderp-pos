@@ -206,7 +206,7 @@ export default function InvoiceDetails() {
                 if (!ensurePrinterReady(toast, navigate)) return;
                 setPrintOpen(true);
               }}
-              className="gap-1.5"
+              className="min-h-11 w-full gap-1.5 sm:min-h-9 sm:w-auto"
               data-testid="button-print-invoice"
             >
               <Printer className="h-4 w-4" />طباعة

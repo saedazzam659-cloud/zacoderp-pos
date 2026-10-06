@@ -548,6 +548,7 @@ export default function CompanyDetails() {
                 <p className="text-xs text-muted-foreground mt-1">أضف أول مستخدم للشركة</p>
               </div>
             ) : (
+              <>
               <div className="hidden divide-y lg:block">
                 {/* Header */}
                 <div className="grid items-center gap-3 px-4 py-2.5 bg-muted/40 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
@@ -771,6 +772,7 @@ export default function CompanyDetails() {
                   </article>
                 ))}
               </div>
+              </>
             )}
           </div>
 
