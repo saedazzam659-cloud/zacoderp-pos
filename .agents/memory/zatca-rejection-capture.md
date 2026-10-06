@@ -35,19 +35,20 @@ text-first + dual-shape + fallback pattern. (As of this writing the sales path
 has it; the legacy `zatca.ts` path still reads only top-level `errorMessages`
 and would benefit from the same treatment.)
 
-## Bridge UI status contract: approved/rejected/pending only
+## Invoice-grid status contract: approved/rejected/pending only
 
-The ZATCA bridge screen (`ZatcaBridge.tsx`) renders badges, stat counters AND
-the filter off `zatcaStatus ∈ {approved, rejected, pending, null}`. But the
-submit handler persists the DETAILED success status `cleared`/`reported` to
-`sales_invoices.zatca_status`. A cleared invoice therefore showed NO badge and
-was counted in NEITHER the approved nor rejected totals (looked like "nothing
-happened").
+ZATCA persists the precise success verdicts `cleared` and `reported`, while
+invoice grids, reports, and filters need a stable display vocabulary.
 
-**Rule:** the bridge GET (`/sales-invoices-zatca-bridge`) MUST normalize each
-row's status to the 3 UI buckets (`cleared|reported|approved → approved`,
-`rejected → rejected`, else `pending`) before responding; and the submit
-success response's top-level `status` must be `"approved"` (the detailed
-cleared/reported value travels in a separate `zatcaStatus` field).
-**Why:** the DB keeps the precise ZATCA verdict, but the UI speaks a coarser
-3-state vocabulary — never leak the DB enum straight to this screen.
+**Rule:** normalize `cleared`, `reported`, and `approved` to `approved`;
+preserve `rejected`; treat absent or unrecognized values as `pending` where a
+complete three-state display is required. Keep precise gateway verdicts in the
+database and use the normalized value for badges, counters, filters, exports,
+and DOM status attributes.
+
+**Why:** otherwise an accepted invoice has no badge and is counted in neither
+the approved nor rejected totals, making a successful submission look like
+nothing happened.
+
+**How to apply:** normalize at the UI/API boundary for every invoice display
+surface; do not change the stored gateway result or the payload sent to ZATCA.

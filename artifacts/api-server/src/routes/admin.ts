@@ -1532,6 +1532,18 @@ async function ensureUsersSecurityNoticeColumn(): Promise<void> {
   } catch { /* best-effort — the query below will surface a real failure */ }
 }
 
+const AGENT_COMPANY_ZATCA_SECRET_FIELDS = new Set([
+  "zatcaCsr",
+  "zatcaPrivateKey",
+  "zatcaCsid",
+  "zatcaCsidToken",
+  "zatcaCsidSecret",
+  "zatcaPcsid",
+  "zatcaPcsidToken",
+  "zatcaPcsidSecret",
+  "zatcaComplianceRequestId",
+]);
+
 // GET /api/admin/companies/:id — full company profile for superadmin
 // `?agent=<id>` re-routes into that agent's DB (companies created on
 // full_shell agent servers live there, not centrally).
@@ -1571,22 +1583,11 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
     db.select({ supplierCount: count() }).from(suppliersTable).where(eq(suppliersTable.companyId, id)),
   ]);
 
-  let companyResponse = company;
-  if (req.query.agent !== undefined) {
-    const {
-      zatcaCsr,
-      zatcaPrivateKey,
-      zatcaCsid,
-      zatcaCsidToken,
-      zatcaCsidSecret,
-      zatcaPcsid,
-      zatcaPcsidToken,
-      zatcaPcsidSecret,
-      zatcaComplianceRequestId,
-      ...safeCompany
-    } = company;
-    companyResponse = safeCompany as typeof company;
-  }
+  const companyResponse = req.query.agent === undefined
+    ? company
+    : Object.fromEntries(
+        Object.entries(company).filter(([key]) => !AGENT_COMPANY_ZATCA_SECRET_FIELDS.has(key)),
+      );
   res.json({ company: companyResponse, subscription: subscription ?? null, users, counts: { invoices: invoiceCount, customers: customerCount, suppliers: supplierCount } });
   });
 });
