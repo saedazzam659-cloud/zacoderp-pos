@@ -699,6 +699,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/crm/opportunities", label: "الفرص" },
       { path: "/crm/activities", label: "الأنشطة" },
       { path: "/crm/campaigns", label: "الحملات" },
+      { path: "/crm/whatsapp", label: "التسويق عبر واتساب" },
       { path: "/crm/pipeline", label: "خط الأنابيب" },
       { path: "/crm/ai", label: "الذكاء الاصطناعي للـ CRM" },
     ],

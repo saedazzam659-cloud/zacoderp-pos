@@ -25,6 +25,8 @@ tags:
     description: Manual accounting journal entries
   - name: school
     description: School enrollment history and academic-year promotion
+  - name: crm
+    description: CRM WhatsApp marketing contacts and campaigns
 paths:
   /hr-portal/guardian/login:
     post:
@@ -2589,9 +2591,339 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /crm/whatsapp/contacts:
+    get:
+      operationId: listWhatsAppContacts
+      tags: [crm]
+      summary: List active WhatsApp marketing contacts for a company
+      parameters:
+        - name: companyId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Active WhatsApp contacts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WhatsAppContact" }
+    post:
+      operationId: createWhatsAppContact
+      tags: [crm]
+      summary: Add a WhatsApp marketing contact without creating a CRM customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WhatsAppContactInput" }
+      responses:
+        "201":
+          description: Contact created or restored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WhatsAppContact" }
+        "409":
+          description: The phone number is already active in the company contact book
+  /crm/whatsapp/contacts/import:
+    post:
+      operationId: importWhatsAppContacts
+      tags: [crm]
+      summary: Import a batch of WhatsApp contacts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WhatsAppContactsImportInput" }
+      responses:
+        "200":
+          description: Import counts for added, duplicate, restored, and invalid rows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WhatsAppContactsImportResult" }
+  /crm/whatsapp/contacts/{contactId}:
+    put:
+      operationId: updateWhatsAppContact
+      tags: [crm]
+      summary: Update a WhatsApp marketing contact
+      parameters:
+        - name: contactId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WhatsAppContactUpdate" }
+      responses:
+        "200":
+          description: Updated contact
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WhatsAppContact" }
+        "404":
+          description: Contact not found
+    delete:
+      operationId: deleteWhatsAppContact
+      tags: [crm]
+      summary: Remove a contact from the active book while keeping campaign history
+      parameters:
+        - name: contactId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Contact removed from the active book
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+        "404":
+          description: Contact not found
+  /crm/whatsapp/contacts/{contactId}/convert:
+    post:
+      operationId: convertWhatsAppContact
+      tags: [crm]
+      summary: Explicitly convert a WhatsApp contact into a CRM customer
+      parameters:
+        - name: contactId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WhatsAppContactConversionInput" }
+      responses:
+        "200":
+          description: Linked existing or newly created CRM customer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WhatsAppContactConversionResult" }
+        "404":
+          description: Contact not found
+  /crm/whatsapp/campaigns:
+    get:
+      operationId: listWhatsAppCampaigns
+      tags: [crm]
+      summary: List WhatsApp campaigns and delivery progress
+      parameters:
+        - name: companyId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: WhatsApp campaigns
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WhatsAppCampaign" }
+    post:
+      operationId: createWhatsAppCampaign
+      tags: [crm]
+      summary: Save a message and selected contacts as a reusable campaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WhatsAppCampaignInput" }
+      responses:
+        "201":
+          description: Campaign and recipient snapshots created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WhatsAppCampaign" }
+  /crm/whatsapp/campaigns/{campaignId}:
+    get:
+      operationId: getWhatsAppCampaign
+      tags: [crm]
+      summary: Read a WhatsApp campaign and recipient statuses
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Campaign with recipients
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WhatsAppCampaignDetail" }
+        "404":
+          description: Campaign not found
+    delete:
+      operationId: deleteWhatsAppCampaign
+      tags: [crm]
+      summary: Delete a WhatsApp campaign and its recipient history
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Campaign deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+        "404":
+          description: Campaign not found
+  /crm/whatsapp/campaigns/{campaignId}/recipients/{recipientId}:
+    patch:
+      operationId: updateWhatsAppCampaignRecipient
+      tags: [crm]
+      summary: Mark a campaign recipient as sent or not sent
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: recipientId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WhatsAppCampaignRecipientUpdate" }
+      responses:
+        "200":
+          description: Recipient delivery status updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WhatsAppCampaignRecipient" }
+        "404":
+          description: Campaign recipient not found
 
 components:
   schemas:
+    WhatsAppContact:
+      type: object
+      required: [id, companyId, name, phone, normalizedPhone, notes, customerId, deletedAt, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        name: { type: string }
+        phone: { type: string }
+        normalizedPhone: { type: string }
+        notes: { type: ["string", "null"] }
+        customerId: { type: ["integer", "null"] }
+        deletedAt: { type: ["string", "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    WhatsAppContactInput:
+      type: object
+      required: [companyId, name, phone]
+      properties:
+        companyId: { type: integer, minimum: 1 }
+        name: { type: string, minLength: 1, maxLength: 160 }
+        phone: { type: string, minLength: 7, maxLength: 32 }
+        notes: { type: ["string", "null"], maxLength: 2000 }
+    WhatsAppContactUpdate:
+      type: object
+      required: [companyId]
+      properties:
+        companyId: { type: integer, minimum: 1 }
+        name: { type: string, minLength: 1, maxLength: 160 }
+        phone: { type: string, minLength: 7, maxLength: 32 }
+        notes: { type: ["string", "null"], maxLength: 2000 }
+    WhatsAppContactsImportInput:
+      type: object
+      required: [companyId, contacts]
+      properties:
+        companyId: { type: integer, minimum: 1 }
+        contacts:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/WhatsAppContactImportRow"
+    WhatsAppContactImportRow:
+      type: object
+      required: [name, phone]
+      properties:
+        name: { type: string, maxLength: 160 }
+        phone: { type: string, maxLength: 32 }
+        notes: { type: ["string", "null"], maxLength: 2000 }
+    WhatsAppContactsImportResult:
+      type: object
+      required: [created, duplicates, revived, invalid]
+      properties:
+        created: { type: integer }
+        duplicates: { type: integer }
+        revived: { type: integer }
+        invalid: { type: integer }
+    WhatsAppContactConversionInput:
+      type: object
+      required: [companyId]
+      properties:
+        companyId: { type: integer, minimum: 1 }
+    WhatsAppContactConversionResult:
+      type: object
+      required: [contact, customerId, created]
+      properties:
+        contact: { $ref: "#/components/schemas/WhatsAppContact" }
+        customerId: { type: integer }
+        created: { type: boolean }
+    WhatsAppCampaign:
+      type: object
+      required: [id, companyId, name, message, createdAt, totalRecipients, sentCount, notSentCount]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        name: { type: string }
+        message: { type: string }
+        createdAt: { type: string, format: date-time }
+        totalRecipients: { type: integer }
+        sentCount: { type: integer }
+        notSentCount: { type: integer }
+    WhatsAppCampaignInput:
+      type: object
+      required: [companyId, name, message, contactIds]
+      properties:
+        companyId: { type: integer, minimum: 1 }
+        name: { type: string, minLength: 1, maxLength: 160 }
+        message: { type: string, minLength: 1, maxLength: 4096 }
+        contactIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { type: integer, minimum: 1 }
+    WhatsAppCampaignRecipient:
+      type: object
+      required: [id, contactId, name, phone, status, sentAt, createdAt]
+      properties:
+        id: { type: integer }
+        contactId: { type: ["integer", "null"] }
+        name: { type: string }
+        phone: { type: string }
+        status: { type: string, enum: [sent, not_sent] }
+        sentAt: { type: ["string", "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+    WhatsAppCampaignDetail:
+      type: object
+      required: [id, companyId, name, message, createdAt, recipients]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        name: { type: string }
+        message: { type: string }
+        createdAt: { type: string, format: date-time }
+        recipients:
+          type: array
+          items: { $ref: "#/components/schemas/WhatsAppCampaignRecipient" }
+    WhatsAppCampaignRecipientUpdate:
+      type: object
+      required: [companyId, status]
+      properties:
+        companyId: { type: integer, minimum: 1 }
+        status: { type: string, enum: [sent, not_sent] }
     SchoolAcademicPeriod:
       type: object
       required: [id, academicYearId, name, periodType, startDate, endDate, sortOrder, isActive]

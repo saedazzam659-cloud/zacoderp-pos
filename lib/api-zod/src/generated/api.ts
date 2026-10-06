@@ -4551,3 +4551,269 @@ export const GetAdditionalPurchaseReportResponse = zod.object({
   rows: zod.array(zod.record(zod.string(), zod.unknown())),
   limitations: zod.array(zod.string()).optional(),
 });
+
+/**
+ * @summary List active WhatsApp marketing contacts for a company
+ */
+
+export const ListWhatsAppContactsQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1),
+});
+
+export const ListWhatsAppContactsResponseItem = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  name: zod.string(),
+  phone: zod.string(),
+  normalizedPhone: zod.string(),
+  notes: zod.string().nullable(),
+  customerId: zod.number().nullable(),
+  deletedAt: zod.coerce.date().nullable(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+export const ListWhatsAppContactsResponse = zod.array(
+  ListWhatsAppContactsResponseItem,
+);
+
+/**
+ * @summary Add a WhatsApp marketing contact without creating a CRM customer
+ */
+
+export const createWhatsAppContactBodyNameMax = 160;
+
+export const createWhatsAppContactBodyPhoneMin = 7;
+export const createWhatsAppContactBodyPhoneMax = 32;
+
+export const createWhatsAppContactBodyNotesMax = 2000;
+
+export const CreateWhatsAppContactBody = zod.object({
+  companyId: zod.number().min(1),
+  name: zod.string().min(1).max(createWhatsAppContactBodyNameMax),
+  phone: zod
+    .string()
+    .min(createWhatsAppContactBodyPhoneMin)
+    .max(createWhatsAppContactBodyPhoneMax),
+  notes: zod.string().max(createWhatsAppContactBodyNotesMax).nullish(),
+});
+
+/**
+ * @summary Import a batch of WhatsApp contacts
+ */
+
+export const importWhatsAppContactsBodyContactsItemNameMax = 160;
+
+export const importWhatsAppContactsBodyContactsItemPhoneMax = 32;
+
+export const importWhatsAppContactsBodyContactsItemNotesMax = 2000;
+
+export const importWhatsAppContactsBodyContactsMax = 1000;
+
+export const ImportWhatsAppContactsBody = zod.object({
+  companyId: zod.number().min(1),
+  contacts: zod
+    .array(
+      zod.object({
+        name: zod.string().max(importWhatsAppContactsBodyContactsItemNameMax),
+        phone: zod.string().max(importWhatsAppContactsBodyContactsItemPhoneMax),
+        notes: zod
+          .string()
+          .max(importWhatsAppContactsBodyContactsItemNotesMax)
+          .nullish(),
+      }),
+    )
+    .min(1)
+    .max(importWhatsAppContactsBodyContactsMax),
+});
+
+export const ImportWhatsAppContactsResponse = zod.object({
+  created: zod.number(),
+  duplicates: zod.number(),
+  revived: zod.number(),
+  invalid: zod.number(),
+});
+
+/**
+ * @summary Update a WhatsApp marketing contact
+ */
+
+export const UpdateWhatsAppContactParams = zod.object({
+  contactId: zod.coerce.number().min(1),
+});
+
+export const updateWhatsAppContactBodyNameMax = 160;
+
+export const updateWhatsAppContactBodyPhoneMin = 7;
+export const updateWhatsAppContactBodyPhoneMax = 32;
+
+export const updateWhatsAppContactBodyNotesMax = 2000;
+
+export const UpdateWhatsAppContactBody = zod.object({
+  companyId: zod.number().min(1),
+  name: zod.string().min(1).max(updateWhatsAppContactBodyNameMax).optional(),
+  phone: zod
+    .string()
+    .min(updateWhatsAppContactBodyPhoneMin)
+    .max(updateWhatsAppContactBodyPhoneMax)
+    .optional(),
+  notes: zod.string().max(updateWhatsAppContactBodyNotesMax).nullish(),
+});
+
+export const UpdateWhatsAppContactResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  name: zod.string(),
+  phone: zod.string(),
+  normalizedPhone: zod.string(),
+  notes: zod.string().nullable(),
+  customerId: zod.number().nullable(),
+  deletedAt: zod.coerce.date().nullable(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Remove a contact from the active book while keeping campaign history
+ */
+
+export const DeleteWhatsAppContactParams = zod.object({
+  contactId: zod.coerce.number().min(1),
+});
+
+export const DeleteWhatsAppContactResponse = zod.object({
+  ok: zod.boolean(),
+});
+
+/**
+ * @summary Explicitly convert a WhatsApp contact into a CRM customer
+ */
+
+export const ConvertWhatsAppContactParams = zod.object({
+  contactId: zod.coerce.number().min(1),
+});
+
+export const ConvertWhatsAppContactBody = zod.object({
+  companyId: zod.number().min(1),
+});
+
+export const ConvertWhatsAppContactResponse = zod.object({
+  contact: zod.object({
+    id: zod.number(),
+    companyId: zod.number(),
+    name: zod.string(),
+    phone: zod.string(),
+    normalizedPhone: zod.string(),
+    notes: zod.string().nullable(),
+    customerId: zod.number().nullable(),
+    deletedAt: zod.coerce.date().nullable(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  customerId: zod.number(),
+  created: zod.boolean(),
+});
+
+/**
+ * @summary List WhatsApp campaigns and delivery progress
+ */
+
+export const ListWhatsAppCampaignsQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1),
+});
+
+export const ListWhatsAppCampaignsResponseItem = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  name: zod.string(),
+  message: zod.string(),
+  createdAt: zod.coerce.date(),
+  totalRecipients: zod.number(),
+  sentCount: zod.number(),
+  notSentCount: zod.number(),
+});
+export const ListWhatsAppCampaignsResponse = zod.array(
+  ListWhatsAppCampaignsResponseItem,
+);
+
+/**
+ * @summary Save a message and selected contacts as a reusable campaign
+ */
+
+export const createWhatsAppCampaignBodyNameMax = 160;
+
+export const createWhatsAppCampaignBodyMessageMax = 4096;
+
+export const createWhatsAppCampaignBodyContactIdsMax = 1000;
+
+export const CreateWhatsAppCampaignBody = zod.object({
+  companyId: zod.number().min(1),
+  name: zod.string().min(1).max(createWhatsAppCampaignBodyNameMax),
+  message: zod.string().min(1).max(createWhatsAppCampaignBodyMessageMax),
+  contactIds: zod
+    .array(zod.number().min(1))
+    .min(1)
+    .max(createWhatsAppCampaignBodyContactIdsMax),
+});
+
+/**
+ * @summary Read a WhatsApp campaign and recipient statuses
+ */
+
+export const GetWhatsAppCampaignParams = zod.object({
+  campaignId: zod.coerce.number().min(1),
+});
+
+export const GetWhatsAppCampaignResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  name: zod.string(),
+  message: zod.string(),
+  createdAt: zod.coerce.date(),
+  recipients: zod.array(
+    zod.object({
+      id: zod.number(),
+      contactId: zod.number().nullable(),
+      name: zod.string(),
+      phone: zod.string(),
+      status: zod.enum(["sent", "not_sent"]),
+      sentAt: zod.coerce.date().nullable(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Delete a WhatsApp campaign and its recipient history
+ */
+
+export const DeleteWhatsAppCampaignParams = zod.object({
+  campaignId: zod.coerce.number().min(1),
+});
+
+export const DeleteWhatsAppCampaignResponse = zod.object({
+  ok: zod.boolean(),
+});
+
+/**
+ * @summary Mark a campaign recipient as sent or not sent
+ */
+
+export const UpdateWhatsAppCampaignRecipientParams = zod.object({
+  campaignId: zod.coerce.number().min(1),
+  recipientId: zod.coerce.number().min(1),
+});
+
+export const UpdateWhatsAppCampaignRecipientBody = zod.object({
+  companyId: zod.number().min(1),
+  status: zod.enum(["sent", "not_sent"]),
+});
+
+export const UpdateWhatsAppCampaignRecipientResponse = zod.object({
+  id: zod.number(),
+  contactId: zod.number().nullable(),
+  name: zod.string(),
+  phone: zod.string(),
+  status: zod.enum(["sent", "not_sent"]),
+  sentAt: zod.coerce.date().nullable(),
+  createdAt: zod.coerce.date(),
+});

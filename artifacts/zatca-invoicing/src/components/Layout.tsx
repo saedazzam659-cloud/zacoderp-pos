@@ -419,6 +419,7 @@ const crmSubNav: NavDef[] = [
   { nameKey: "nav.crmOpportunities", href: "/crm/opportunities", icon: Target,        permKey: "crm" },
   { nameKey: "nav.crmActivities",    href: "/crm/activities",    icon: CalendarRange, permKey: "crm" },
   { nameKey: "nav.crmCampaigns",     href: "/crm/campaigns",     icon: Megaphone,     permKey: "crm" },
+  { nameKey: "nav.crmWhatsApp",      href: "/crm/whatsapp",      icon: MessageSquare, permKey: "crm" },
   { nameKey: "nav.crmPipeline",      href: "/crm/pipeline",      icon: TrendingUp,    permKey: "crm" },
   { nameKey: "nav.crmAI",            href: "/crm/ai",            icon: Sparkles,      permKey: "crm" },
 ];

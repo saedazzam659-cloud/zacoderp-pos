@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import {
-  Users, UserSquare2, Target, CalendarRange, Megaphone, TrendingUp, Sparkles,
+  Users, UserSquare2, Target, CalendarRange, Megaphone, MessageSquare, TrendingUp, Sparkles,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 
@@ -9,6 +9,7 @@ const tiles: HubTile[] = [
   { nameKey: "nav.crmOpportunities", href: "/crm/opportunities", icon: Target,        tone: "amber",   permKey: "crm" },
   { nameKey: "nav.crmActivities",    href: "/crm/activities",    icon: CalendarRange, tone: "emerald", permKey: "crm" },
   { nameKey: "nav.crmCampaigns",     href: "/crm/campaigns",     icon: Megaphone,     tone: "violet",  permKey: "crm" },
+  { nameKey: "nav.crmWhatsApp",      href: "/crm/whatsapp",      icon: MessageSquare, tone: "emerald", permKey: "crm" },
   { nameKey: "nav.crmPipeline",      href: "/crm/pipeline",      icon: TrendingUp,    tone: "indigo",  permKey: "crm" },
   { nameKey: "nav.crmAI",            href: "/crm/ai",            icon: Sparkles,      tone: "pink",    permKey: "crm" },
 ];

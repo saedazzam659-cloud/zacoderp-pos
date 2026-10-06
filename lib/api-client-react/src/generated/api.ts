@@ -87,6 +87,8 @@ import type {
   ListSecurityActiveCompaniesParams,
   ListSuppliersParams,
   ListTaxIntegrationSubmissionsParams,
+  ListWhatsAppCampaignsParams,
+  ListWhatsAppContactsParams,
   ManufacturingDeliveryEvidence,
   MonthlyStat,
   OkResponse,
@@ -143,6 +145,18 @@ import type {
   UpdateIncidentBody,
   UpdateRiskAssessmentBody,
   UpdateRiskControlBody,
+  WhatsAppCampaign,
+  WhatsAppCampaignDetail,
+  WhatsAppCampaignInput,
+  WhatsAppCampaignRecipient,
+  WhatsAppCampaignRecipientUpdate,
+  WhatsAppContact,
+  WhatsAppContactConversionInput,
+  WhatsAppContactConversionResult,
+  WhatsAppContactInput,
+  WhatsAppContactUpdate,
+  WhatsAppContactsImportInput,
+  WhatsAppContactsImportResult,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -10273,3 +10287,1026 @@ export function useGetAdditionalPurchaseReport<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List active WhatsApp marketing contacts for a company
+ */
+export const getListWhatsAppContactsUrl = (
+  params: ListWhatsAppContactsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/crm/whatsapp/contacts?${stringifiedParams}`
+    : `/api/crm/whatsapp/contacts`;
+};
+
+export const listWhatsAppContacts = async (
+  params: ListWhatsAppContactsParams,
+  options?: RequestInit,
+): Promise<WhatsAppContact[]> => {
+  return customFetch<WhatsAppContact[]>(getListWhatsAppContactsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListWhatsAppContactsQueryKey = (
+  params?: ListWhatsAppContactsParams,
+) => {
+  return [`/api/crm/whatsapp/contacts`, ...(params ? [params] : [])] as const;
+};
+
+export const getListWhatsAppContactsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listWhatsAppContacts>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListWhatsAppContactsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listWhatsAppContacts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListWhatsAppContactsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listWhatsAppContacts>>
+  > = ({ signal }) =>
+    listWhatsAppContacts(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listWhatsAppContacts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListWhatsAppContactsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listWhatsAppContacts>>
+>;
+export type ListWhatsAppContactsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List active WhatsApp marketing contacts for a company
+ */
+
+export function useListWhatsAppContacts<
+  TData = Awaited<ReturnType<typeof listWhatsAppContacts>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListWhatsAppContactsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listWhatsAppContacts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListWhatsAppContactsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Add a WhatsApp marketing contact without creating a CRM customer
+ */
+export const getCreateWhatsAppContactUrl = () => {
+  return `/api/crm/whatsapp/contacts`;
+};
+
+export const createWhatsAppContact = async (
+  whatsAppContactInput: WhatsAppContactInput,
+  options?: RequestInit,
+): Promise<WhatsAppContact> => {
+  return customFetch<WhatsAppContact>(getCreateWhatsAppContactUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(whatsAppContactInput),
+  });
+};
+
+export const getCreateWhatsAppContactMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createWhatsAppContact>>,
+    TError,
+    { data: BodyType<WhatsAppContactInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createWhatsAppContact>>,
+  TError,
+  { data: BodyType<WhatsAppContactInput> },
+  TContext
+> => {
+  const mutationKey = ["createWhatsAppContact"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createWhatsAppContact>>,
+    { data: BodyType<WhatsAppContactInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createWhatsAppContact(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateWhatsAppContactMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createWhatsAppContact>>
+>;
+export type CreateWhatsAppContactMutationBody = BodyType<WhatsAppContactInput>;
+export type CreateWhatsAppContactMutationError = ErrorType<void>;
+
+/**
+ * @summary Add a WhatsApp marketing contact without creating a CRM customer
+ */
+export const useCreateWhatsAppContact = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createWhatsAppContact>>,
+    TError,
+    { data: BodyType<WhatsAppContactInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createWhatsAppContact>>,
+  TError,
+  { data: BodyType<WhatsAppContactInput> },
+  TContext
+> => {
+  return useMutation(getCreateWhatsAppContactMutationOptions(options));
+};
+
+/**
+ * @summary Import a batch of WhatsApp contacts
+ */
+export const getImportWhatsAppContactsUrl = () => {
+  return `/api/crm/whatsapp/contacts/import`;
+};
+
+export const importWhatsAppContacts = async (
+  whatsAppContactsImportInput: WhatsAppContactsImportInput,
+  options?: RequestInit,
+): Promise<WhatsAppContactsImportResult> => {
+  return customFetch<WhatsAppContactsImportResult>(
+    getImportWhatsAppContactsUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(whatsAppContactsImportInput),
+    },
+  );
+};
+
+export const getImportWhatsAppContactsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof importWhatsAppContacts>>,
+    TError,
+    { data: BodyType<WhatsAppContactsImportInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof importWhatsAppContacts>>,
+  TError,
+  { data: BodyType<WhatsAppContactsImportInput> },
+  TContext
+> => {
+  const mutationKey = ["importWhatsAppContacts"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof importWhatsAppContacts>>,
+    { data: BodyType<WhatsAppContactsImportInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return importWhatsAppContacts(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ImportWhatsAppContactsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof importWhatsAppContacts>>
+>;
+export type ImportWhatsAppContactsMutationBody =
+  BodyType<WhatsAppContactsImportInput>;
+export type ImportWhatsAppContactsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Import a batch of WhatsApp contacts
+ */
+export const useImportWhatsAppContacts = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof importWhatsAppContacts>>,
+    TError,
+    { data: BodyType<WhatsAppContactsImportInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof importWhatsAppContacts>>,
+  TError,
+  { data: BodyType<WhatsAppContactsImportInput> },
+  TContext
+> => {
+  return useMutation(getImportWhatsAppContactsMutationOptions(options));
+};
+
+/**
+ * @summary Update a WhatsApp marketing contact
+ */
+export const getUpdateWhatsAppContactUrl = (contactId: number) => {
+  return `/api/crm/whatsapp/contacts/${contactId}`;
+};
+
+export const updateWhatsAppContact = async (
+  contactId: number,
+  whatsAppContactUpdate: WhatsAppContactUpdate,
+  options?: RequestInit,
+): Promise<WhatsAppContact> => {
+  return customFetch<WhatsAppContact>(getUpdateWhatsAppContactUrl(contactId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(whatsAppContactUpdate),
+  });
+};
+
+export const getUpdateWhatsAppContactMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateWhatsAppContact>>,
+    TError,
+    { contactId: number; data: BodyType<WhatsAppContactUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateWhatsAppContact>>,
+  TError,
+  { contactId: number; data: BodyType<WhatsAppContactUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateWhatsAppContact"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateWhatsAppContact>>,
+    { contactId: number; data: BodyType<WhatsAppContactUpdate> }
+  > = (props) => {
+    const { contactId, data } = props ?? {};
+
+    return updateWhatsAppContact(contactId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateWhatsAppContactMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateWhatsAppContact>>
+>;
+export type UpdateWhatsAppContactMutationBody = BodyType<WhatsAppContactUpdate>;
+export type UpdateWhatsAppContactMutationError = ErrorType<void>;
+
+/**
+ * @summary Update a WhatsApp marketing contact
+ */
+export const useUpdateWhatsAppContact = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateWhatsAppContact>>,
+    TError,
+    { contactId: number; data: BodyType<WhatsAppContactUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateWhatsAppContact>>,
+  TError,
+  { contactId: number; data: BodyType<WhatsAppContactUpdate> },
+  TContext
+> => {
+  return useMutation(getUpdateWhatsAppContactMutationOptions(options));
+};
+
+/**
+ * @summary Remove a contact from the active book while keeping campaign history
+ */
+export const getDeleteWhatsAppContactUrl = (contactId: number) => {
+  return `/api/crm/whatsapp/contacts/${contactId}`;
+};
+
+export const deleteWhatsAppContact = async (
+  contactId: number,
+  options?: RequestInit,
+): Promise<OkResponse> => {
+  return customFetch<OkResponse>(getDeleteWhatsAppContactUrl(contactId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteWhatsAppContactMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteWhatsAppContact>>,
+    TError,
+    { contactId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteWhatsAppContact>>,
+  TError,
+  { contactId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteWhatsAppContact"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteWhatsAppContact>>,
+    { contactId: number }
+  > = (props) => {
+    const { contactId } = props ?? {};
+
+    return deleteWhatsAppContact(contactId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteWhatsAppContactMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteWhatsAppContact>>
+>;
+
+export type DeleteWhatsAppContactMutationError = ErrorType<void>;
+
+/**
+ * @summary Remove a contact from the active book while keeping campaign history
+ */
+export const useDeleteWhatsAppContact = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteWhatsAppContact>>,
+    TError,
+    { contactId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteWhatsAppContact>>,
+  TError,
+  { contactId: number },
+  TContext
+> => {
+  return useMutation(getDeleteWhatsAppContactMutationOptions(options));
+};
+
+/**
+ * @summary Explicitly convert a WhatsApp contact into a CRM customer
+ */
+export const getConvertWhatsAppContactUrl = (contactId: number) => {
+  return `/api/crm/whatsapp/contacts/${contactId}/convert`;
+};
+
+export const convertWhatsAppContact = async (
+  contactId: number,
+  whatsAppContactConversionInput: WhatsAppContactConversionInput,
+  options?: RequestInit,
+): Promise<WhatsAppContactConversionResult> => {
+  return customFetch<WhatsAppContactConversionResult>(
+    getConvertWhatsAppContactUrl(contactId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(whatsAppContactConversionInput),
+    },
+  );
+};
+
+export const getConvertWhatsAppContactMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertWhatsAppContact>>,
+    TError,
+    { contactId: number; data: BodyType<WhatsAppContactConversionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof convertWhatsAppContact>>,
+  TError,
+  { contactId: number; data: BodyType<WhatsAppContactConversionInput> },
+  TContext
+> => {
+  const mutationKey = ["convertWhatsAppContact"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof convertWhatsAppContact>>,
+    { contactId: number; data: BodyType<WhatsAppContactConversionInput> }
+  > = (props) => {
+    const { contactId, data } = props ?? {};
+
+    return convertWhatsAppContact(contactId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConvertWhatsAppContactMutationResult = NonNullable<
+  Awaited<ReturnType<typeof convertWhatsAppContact>>
+>;
+export type ConvertWhatsAppContactMutationBody =
+  BodyType<WhatsAppContactConversionInput>;
+export type ConvertWhatsAppContactMutationError = ErrorType<void>;
+
+/**
+ * @summary Explicitly convert a WhatsApp contact into a CRM customer
+ */
+export const useConvertWhatsAppContact = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertWhatsAppContact>>,
+    TError,
+    { contactId: number; data: BodyType<WhatsAppContactConversionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof convertWhatsAppContact>>,
+  TError,
+  { contactId: number; data: BodyType<WhatsAppContactConversionInput> },
+  TContext
+> => {
+  return useMutation(getConvertWhatsAppContactMutationOptions(options));
+};
+
+/**
+ * @summary List WhatsApp campaigns and delivery progress
+ */
+export const getListWhatsAppCampaignsUrl = (
+  params: ListWhatsAppCampaignsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/crm/whatsapp/campaigns?${stringifiedParams}`
+    : `/api/crm/whatsapp/campaigns`;
+};
+
+export const listWhatsAppCampaigns = async (
+  params: ListWhatsAppCampaignsParams,
+  options?: RequestInit,
+): Promise<WhatsAppCampaign[]> => {
+  return customFetch<WhatsAppCampaign[]>(getListWhatsAppCampaignsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListWhatsAppCampaignsQueryKey = (
+  params?: ListWhatsAppCampaignsParams,
+) => {
+  return [`/api/crm/whatsapp/campaigns`, ...(params ? [params] : [])] as const;
+};
+
+export const getListWhatsAppCampaignsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listWhatsAppCampaigns>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListWhatsAppCampaignsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listWhatsAppCampaigns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListWhatsAppCampaignsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listWhatsAppCampaigns>>
+  > = ({ signal }) =>
+    listWhatsAppCampaigns(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listWhatsAppCampaigns>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListWhatsAppCampaignsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listWhatsAppCampaigns>>
+>;
+export type ListWhatsAppCampaignsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List WhatsApp campaigns and delivery progress
+ */
+
+export function useListWhatsAppCampaigns<
+  TData = Awaited<ReturnType<typeof listWhatsAppCampaigns>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListWhatsAppCampaignsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listWhatsAppCampaigns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListWhatsAppCampaignsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Save a message and selected contacts as a reusable campaign
+ */
+export const getCreateWhatsAppCampaignUrl = () => {
+  return `/api/crm/whatsapp/campaigns`;
+};
+
+export const createWhatsAppCampaign = async (
+  whatsAppCampaignInput: WhatsAppCampaignInput,
+  options?: RequestInit,
+): Promise<WhatsAppCampaign> => {
+  return customFetch<WhatsAppCampaign>(getCreateWhatsAppCampaignUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(whatsAppCampaignInput),
+  });
+};
+
+export const getCreateWhatsAppCampaignMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createWhatsAppCampaign>>,
+    TError,
+    { data: BodyType<WhatsAppCampaignInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createWhatsAppCampaign>>,
+  TError,
+  { data: BodyType<WhatsAppCampaignInput> },
+  TContext
+> => {
+  const mutationKey = ["createWhatsAppCampaign"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createWhatsAppCampaign>>,
+    { data: BodyType<WhatsAppCampaignInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createWhatsAppCampaign(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateWhatsAppCampaignMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createWhatsAppCampaign>>
+>;
+export type CreateWhatsAppCampaignMutationBody =
+  BodyType<WhatsAppCampaignInput>;
+export type CreateWhatsAppCampaignMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Save a message and selected contacts as a reusable campaign
+ */
+export const useCreateWhatsAppCampaign = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createWhatsAppCampaign>>,
+    TError,
+    { data: BodyType<WhatsAppCampaignInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createWhatsAppCampaign>>,
+  TError,
+  { data: BodyType<WhatsAppCampaignInput> },
+  TContext
+> => {
+  return useMutation(getCreateWhatsAppCampaignMutationOptions(options));
+};
+
+/**
+ * @summary Read a WhatsApp campaign and recipient statuses
+ */
+export const getGetWhatsAppCampaignUrl = (campaignId: number) => {
+  return `/api/crm/whatsapp/campaigns/${campaignId}`;
+};
+
+export const getWhatsAppCampaign = async (
+  campaignId: number,
+  options?: RequestInit,
+): Promise<WhatsAppCampaignDetail> => {
+  return customFetch<WhatsAppCampaignDetail>(
+    getGetWhatsAppCampaignUrl(campaignId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetWhatsAppCampaignQueryKey = (campaignId: number) => {
+  return [`/api/crm/whatsapp/campaigns/${campaignId}`] as const;
+};
+
+export const getGetWhatsAppCampaignQueryOptions = <
+  TData = Awaited<ReturnType<typeof getWhatsAppCampaign>>,
+  TError = ErrorType<void>,
+>(
+  campaignId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getWhatsAppCampaign>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetWhatsAppCampaignQueryKey(campaignId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getWhatsAppCampaign>>
+  > = ({ signal }) =>
+    getWhatsAppCampaign(campaignId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!campaignId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getWhatsAppCampaign>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetWhatsAppCampaignQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getWhatsAppCampaign>>
+>;
+export type GetWhatsAppCampaignQueryError = ErrorType<void>;
+
+/**
+ * @summary Read a WhatsApp campaign and recipient statuses
+ */
+
+export function useGetWhatsAppCampaign<
+  TData = Awaited<ReturnType<typeof getWhatsAppCampaign>>,
+  TError = ErrorType<void>,
+>(
+  campaignId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getWhatsAppCampaign>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetWhatsAppCampaignQueryOptions(campaignId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Delete a WhatsApp campaign and its recipient history
+ */
+export const getDeleteWhatsAppCampaignUrl = (campaignId: number) => {
+  return `/api/crm/whatsapp/campaigns/${campaignId}`;
+};
+
+export const deleteWhatsAppCampaign = async (
+  campaignId: number,
+  options?: RequestInit,
+): Promise<OkResponse> => {
+  return customFetch<OkResponse>(getDeleteWhatsAppCampaignUrl(campaignId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteWhatsAppCampaignMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteWhatsAppCampaign>>,
+    TError,
+    { campaignId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteWhatsAppCampaign>>,
+  TError,
+  { campaignId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteWhatsAppCampaign"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteWhatsAppCampaign>>,
+    { campaignId: number }
+  > = (props) => {
+    const { campaignId } = props ?? {};
+
+    return deleteWhatsAppCampaign(campaignId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteWhatsAppCampaignMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteWhatsAppCampaign>>
+>;
+
+export type DeleteWhatsAppCampaignMutationError = ErrorType<void>;
+
+/**
+ * @summary Delete a WhatsApp campaign and its recipient history
+ */
+export const useDeleteWhatsAppCampaign = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteWhatsAppCampaign>>,
+    TError,
+    { campaignId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteWhatsAppCampaign>>,
+  TError,
+  { campaignId: number },
+  TContext
+> => {
+  return useMutation(getDeleteWhatsAppCampaignMutationOptions(options));
+};
+
+/**
+ * @summary Mark a campaign recipient as sent or not sent
+ */
+export const getUpdateWhatsAppCampaignRecipientUrl = (
+  campaignId: number,
+  recipientId: number,
+) => {
+  return `/api/crm/whatsapp/campaigns/${campaignId}/recipients/${recipientId}`;
+};
+
+export const updateWhatsAppCampaignRecipient = async (
+  campaignId: number,
+  recipientId: number,
+  whatsAppCampaignRecipientUpdate: WhatsAppCampaignRecipientUpdate,
+  options?: RequestInit,
+): Promise<WhatsAppCampaignRecipient> => {
+  return customFetch<WhatsAppCampaignRecipient>(
+    getUpdateWhatsAppCampaignRecipientUrl(campaignId, recipientId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(whatsAppCampaignRecipientUpdate),
+    },
+  );
+};
+
+export const getUpdateWhatsAppCampaignRecipientMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateWhatsAppCampaignRecipient>>,
+    TError,
+    {
+      campaignId: number;
+      recipientId: number;
+      data: BodyType<WhatsAppCampaignRecipientUpdate>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateWhatsAppCampaignRecipient>>,
+  TError,
+  {
+    campaignId: number;
+    recipientId: number;
+    data: BodyType<WhatsAppCampaignRecipientUpdate>;
+  },
+  TContext
+> => {
+  const mutationKey = ["updateWhatsAppCampaignRecipient"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateWhatsAppCampaignRecipient>>,
+    {
+      campaignId: number;
+      recipientId: number;
+      data: BodyType<WhatsAppCampaignRecipientUpdate>;
+    }
+  > = (props) => {
+    const { campaignId, recipientId, data } = props ?? {};
+
+    return updateWhatsAppCampaignRecipient(
+      campaignId,
+      recipientId,
+      data,
+      requestOptions,
+    );
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateWhatsAppCampaignRecipientMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateWhatsAppCampaignRecipient>>
+>;
+export type UpdateWhatsAppCampaignRecipientMutationBody =
+  BodyType<WhatsAppCampaignRecipientUpdate>;
+export type UpdateWhatsAppCampaignRecipientMutationError = ErrorType<void>;
+
+/**
+ * @summary Mark a campaign recipient as sent or not sent
+ */
+export const useUpdateWhatsAppCampaignRecipient = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateWhatsAppCampaignRecipient>>,
+    TError,
+    {
+      campaignId: number;
+      recipientId: number;
+      data: BodyType<WhatsAppCampaignRecipientUpdate>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateWhatsAppCampaignRecipient>>,
+  TError,
+  {
+    campaignId: number;
+    recipientId: number;
+    data: BodyType<WhatsAppCampaignRecipientUpdate>;
+  },
+  TContext
+> => {
+  return useMutation(
+    getUpdateWhatsAppCampaignRecipientMutationOptions(options),
+  );
+};

@@ -5,7 +5,10 @@
 // ─────────────────────────────────────────────────────────────────────────
 import {
   pgTable, serial, text, integer, numeric, timestamp, boolean, pgEnum, date,
+  index, uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
 import { customersTable } from "./customers";
@@ -126,3 +129,65 @@ export const crmActivitiesTable = pgTable("crm_activities", {
 });
 export type CrmActivity       = typeof crmActivitiesTable.$inferSelect;
 export type InsertCrmActivity = typeof crmActivitiesTable.$inferInsert;
+
+// 6) WhatsApp marketing contacts. These are deliberately separate from CRM
+// customers; `customerId` is populated only by the explicit convert action.
+export const crmWhatsAppContactsTable = pgTable("crm_whatsapp_contacts", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  phone: text("phone").notNull(),
+  normalizedPhone: text("normalized_phone").notNull(),
+  notes: text("notes"),
+  customerId: integer("customer_id").references(() => customersTable.id, { onDelete: "set null" }),
+  deletedAt: timestamp("deleted_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  companyPhoneUnique: uniqueIndex("crm_whatsapp_contacts_company_phone_uq").on(t.companyId, t.normalizedPhone),
+  companyActiveIndex: index("crm_whatsapp_contacts_company_active_idx").on(t.companyId, t.deletedAt),
+}));
+export const insertCrmWhatsAppContactSchema = createInsertSchema(crmWhatsAppContactsTable).omit({
+  id: true, normalizedPhone: true, customerId: true, deletedAt: true, createdAt: true, updatedAt: true,
+});
+export type CrmWhatsAppContact = typeof crmWhatsAppContactsTable.$inferSelect;
+export type InsertCrmWhatsAppContact = z.infer<typeof insertCrmWhatsAppContactSchema>;
+
+// 7) Campaigns save one reusable message for many separately opened chats.
+export const crmWhatsAppCampaignsTable = pgTable("crm_whatsapp_campaigns", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export const insertCrmWhatsAppCampaignSchema = createInsertSchema(crmWhatsAppCampaignsTable).omit({
+  id: true, createdAt: true, updatedAt: true,
+});
+export type CrmWhatsAppCampaign = typeof crmWhatsAppCampaignsTable.$inferSelect;
+export type InsertCrmWhatsAppCampaign = z.infer<typeof insertCrmWhatsAppCampaignSchema>;
+
+// Recipient phone/name snapshots preserve campaign history even if the
+// contact is later removed or edited in the reusable address book.
+export const crmWhatsAppCampaignRecipientsTable = pgTable("crm_whatsapp_campaign_recipients", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  campaignId: integer("campaign_id").notNull().references(() => crmWhatsAppCampaignsTable.id, { onDelete: "cascade" }),
+  contactId: integer("contact_id").references(() => crmWhatsAppContactsTable.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  phone: text("phone").notNull(),
+  normalizedPhone: text("normalized_phone").notNull(),
+  status: text("status").notNull().default("not_sent"),
+  sentAt: timestamp("sent_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  campaignPhoneUnique: uniqueIndex("crm_whatsapp_recipients_campaign_phone_uq")
+    .on(t.companyId, t.campaignId, t.normalizedPhone),
+  campaignIndex: index("crm_whatsapp_recipients_campaign_idx").on(t.companyId, t.campaignId),
+}));
+export const insertCrmWhatsAppCampaignRecipientSchema = createInsertSchema(crmWhatsAppCampaignRecipientsTable).omit({
+  id: true, sentAt: true, createdAt: true,
+});
+export type CrmWhatsAppCampaignRecipient = typeof crmWhatsAppCampaignRecipientsTable.$inferSelect;
+export type InsertCrmWhatsAppCampaignRecipient = z.infer<typeof insertCrmWhatsAppCampaignRecipientSchema>;

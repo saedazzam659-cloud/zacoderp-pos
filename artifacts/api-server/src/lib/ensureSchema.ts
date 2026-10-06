@@ -25,6 +25,7 @@ import { ensureDocumentExpenseSchema } from "./documentExpenses.js";
 import { ensureContractingLocalTaxMappingTables } from "./contracting-local-tax-mapping-service.js";
 import { ensureSequenceProtectionSchema } from "./sequenceProtection.js";
 import { ensureAgentSchoolSchema } from "./agentSchoolSchema.js";
+import { ensureCrmWhatsAppSchema } from "./crmWhatsAppSchema.js";
 
 async function ensureTaxIntegrationSchema(): Promise<void> {
   await db.execute(sql.raw(`
@@ -4685,6 +4686,7 @@ async function runHeal(options: {
   await ensureInternalControlSchema();
   await ensureDocumentExpenseSchema();
   await ensureTaxIntegrationSchema();
+  await ensureCrmWhatsAppSchema();
   logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
 
   // Run this compatibility DDL before generic inspection. Purchase-invoice

@@ -5,6 +5,176 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export interface WhatsAppContact {
+  id: number;
+  companyId: number;
+  name: string;
+  phone: string;
+  normalizedPhone: string;
+  /** @nullable */
+  notes: string | null;
+  /** @nullable */
+  customerId: number | null;
+  /** @nullable */
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WhatsAppContactInput {
+  /** @minimum 1 */
+  companyId: number;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  /**
+   * @minLength 7
+   * @maxLength 32
+   */
+  phone: string;
+  /**
+   * @maxLength 2000
+   * @nullable
+   */
+  notes?: string | null;
+}
+
+export interface WhatsAppContactUpdate {
+  /** @minimum 1 */
+  companyId: number;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name?: string;
+  /**
+   * @minLength 7
+   * @maxLength 32
+   */
+  phone?: string;
+  /**
+   * @maxLength 2000
+   * @nullable
+   */
+  notes?: string | null;
+}
+
+export interface WhatsAppContactImportRow {
+  /** @maxLength 160 */
+  name: string;
+  /** @maxLength 32 */
+  phone: string;
+  /**
+   * @maxLength 2000
+   * @nullable
+   */
+  notes?: string | null;
+}
+
+export interface WhatsAppContactsImportInput {
+  /** @minimum 1 */
+  companyId: number;
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  contacts: WhatsAppContactImportRow[];
+}
+
+export interface WhatsAppContactsImportResult {
+  created: number;
+  duplicates: number;
+  revived: number;
+  invalid: number;
+}
+
+export interface WhatsAppContactConversionInput {
+  /** @minimum 1 */
+  companyId: number;
+}
+
+export interface WhatsAppContactConversionResult {
+  contact: WhatsAppContact;
+  customerId: number;
+  created: boolean;
+}
+
+export interface WhatsAppCampaign {
+  id: number;
+  companyId: number;
+  name: string;
+  message: string;
+  createdAt: string;
+  totalRecipients: number;
+  sentCount: number;
+  notSentCount: number;
+}
+
+export interface WhatsAppCampaignInput {
+  /** @minimum 1 */
+  companyId: number;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 4096
+   */
+  message: string;
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  contactIds: number[];
+}
+
+export type WhatsAppCampaignRecipientStatus =
+  (typeof WhatsAppCampaignRecipientStatus)[keyof typeof WhatsAppCampaignRecipientStatus];
+
+export const WhatsAppCampaignRecipientStatus = {
+  sent: "sent",
+  not_sent: "not_sent",
+} as const;
+
+export interface WhatsAppCampaignRecipient {
+  id: number;
+  /** @nullable */
+  contactId: number | null;
+  name: string;
+  phone: string;
+  status: WhatsAppCampaignRecipientStatus;
+  /** @nullable */
+  sentAt: string | null;
+  createdAt: string;
+}
+
+export interface WhatsAppCampaignDetail {
+  id: number;
+  companyId: number;
+  name: string;
+  message: string;
+  createdAt: string;
+  recipients: WhatsAppCampaignRecipient[];
+}
+
+export type WhatsAppCampaignRecipientUpdateStatus =
+  (typeof WhatsAppCampaignRecipientUpdateStatus)[keyof typeof WhatsAppCampaignRecipientUpdateStatus];
+
+export const WhatsAppCampaignRecipientUpdateStatus = {
+  sent: "sent",
+  not_sent: "not_sent",
+} as const;
+
+export interface WhatsAppCampaignRecipientUpdate {
+  /** @minimum 1 */
+  companyId: number;
+  status: WhatsAppCampaignRecipientUpdateStatus;
+}
+
 export type SchoolAcademicPeriodPeriodType =
   (typeof SchoolAcademicPeriodPeriodType)[keyof typeof SchoolAcademicPeriodPeriodType];
 
@@ -2842,3 +3012,17 @@ export const GetAdditionalPurchaseReportGroupBy = {
   quarter: "quarter",
   year: "year",
 } as const;
+
+export type ListWhatsAppContactsParams = {
+  /**
+   * @minimum 1
+   */
+  companyId: number;
+};
+
+export type ListWhatsAppCampaignsParams = {
+  /**
+   * @minimum 1
+   */
+  companyId: number;
+};

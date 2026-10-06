@@ -236,6 +236,7 @@ import CrmLeads from "@/pages/crm/CrmLeads";
 import CrmOpportunities from "@/pages/crm/CrmOpportunities";
 import CrmActivities from "@/pages/crm/CrmActivities";
 import CrmCampaigns from "@/pages/crm/CrmCampaigns";
+import CrmWhatsApp from "@/pages/crm/CrmWhatsApp";
 import CrmPipeline from "@/pages/crm/CrmPipeline";
 import CrmAI from "@/pages/crm/CrmAI";
 import FixedAssetsHub from "@/pages/fixed-assets/FixedAssetsHub";
@@ -1149,6 +1150,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/crm/opportunities"              module="crm"            component={CrmOpportunities} />}
             {!isSuperAdmin && <PermRoute path="/crm/activities"                 module="crm"            component={CrmActivities} />}
             {!isSuperAdmin && <PermRoute path="/crm/campaigns"                  module="crm"            component={CrmCampaigns} />}
+            {!isSuperAdmin && <PermRoute path="/crm/whatsapp"                   module="crm"            component={CrmWhatsApp} />}
             {!isSuperAdmin && <PermRoute path="/crm/pipeline"                   module="crm"            component={CrmPipeline} />}
             {!isSuperAdmin && <PermRoute path="/crm/ai"                         module="crm"            component={CrmAI} />}
 
