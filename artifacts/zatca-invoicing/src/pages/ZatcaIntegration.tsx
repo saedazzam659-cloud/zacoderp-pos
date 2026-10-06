@@ -125,15 +125,21 @@ function ErrorAlert({ message, details }: { message: string; details?: string })
 
 interface ZatcaIntegrationProps {
   companyId?: number;
+  agentInstanceId?: number;
 }
 
-export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaIntegrationProps) {
+export default function ZatcaIntegration({ companyId: propCompanyId, agentInstanceId }: ZatcaIntegrationProps) {
   const { user, token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const { t } = useTranslation();
 
   const companyId = propCompanyId ?? user?.companyId;
+  const agentQuery = agentInstanceId ? `?agent=${encodeURIComponent(String(agentInstanceId))}` : "";
+  const companyQueryKey = ["company-zatca", companyId, agentInstanceId ?? null] as const;
+  const invoicesQueryKey = ["zatca-testable-invoices", companyId, agentInstanceId ?? null] as const;
+  const complianceRequestStorageKey =
+    `zatca_compliance_reqid_${agentInstanceId ? `agent_${agentInstanceId}_` : ""}${companyId ?? ""}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token ?? ""}`,
     "Content-Type": "application/json",
@@ -150,15 +156,19 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const seeded = useRef(false);
 
   const { data: company, isLoading, refetch } = useQuery({
-    queryKey: ["company-zatca", companyId],
+    queryKey: companyQueryKey,
     queryFn: async () => {
       if (!companyId) throw new Error(t("zatcaIntegration.companyIdMissing"));
-      const res = await fetch(`${API}/api/companies/${companyId}`, { headers });
+      const url = agentInstanceId
+        ? `${API}/api/admin/companies/${companyId}/zatca-config${agentQuery}`
+        : `${API}/api/companies/${companyId}`;
+      const res = await fetch(url, { headers });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error ?? t("zatcaIntegration.loadCompanyError"));
       }
-      return res.json();
+      const payload = await res.json();
+      return agentInstanceId ? payload.company : payload;
     },
     enabled: !!companyId,
     retry: 1,
@@ -169,8 +179,13 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   // never have to guess the internal database id. A draft is auto-issued right
   // before the check so ZATCA always validates a real, signed document.
   const { data: allInvoices = [], isLoading: invoicesLoading } = useQuery<any[]>({
-    queryKey: ["zatca-testable-invoices", companyId],
-    queryFn: () => fetchJsonArray(`${API}/api/invoices?companyId=${companyId}`, headers),
+    queryKey: invoicesQueryKey,
+    queryFn: () => fetchJsonArray(
+      agentInstanceId
+        ? `${API}/api/admin/companies/${companyId}/zatca-invoices${agentQuery}`
+        : `${API}/api/invoices?companyId=${companyId}`,
+      headers,
+    ),
     enabled: !!companyId,
   });
   // Both drafts and issued invoices can feed the compliance test: a selected
@@ -249,7 +264,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
 
   const saveDeviceMutation = useMutation({
     mutationFn: async (f: DeviceForm) => {
-      const res = await fetch(`${API}/api/companies/${companyId}/zatca-settings`, {
+      const res = await fetch(`${API}/api/companies/${companyId}/zatca-settings${agentQuery}`, {
         method: "PATCH",
         headers,
         body: JSON.stringify(f),
@@ -261,7 +276,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     onSuccess: () => {
       toast({ title: t("zatcaIntegration.settingsSaved") });
       setIsDirty(false);
-      qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
+      qc.invalidateQueries({ queryKey: companyQueryKey });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -274,7 +289,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       if (validationError) throw new Error(validationError);
 
       if (isDirty) {
-        const saveRes = await fetch(`${API}/api/companies/${companyId}/zatca-settings`, {
+        const saveRes = await fetch(`${API}/api/companies/${companyId}/zatca-settings${agentQuery}`, {
           method: "PATCH",
           headers,
           body: JSON.stringify(form),
@@ -285,7 +300,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         }
       }
 
-      const res = await fetch(`${API}/api/companies/${companyId}/generate-csr`, {
+      const res = await fetch(`${API}/api/companies/${companyId}/generate-csr${agentQuery}`, {
         method: "POST",
         headers,
         body: JSON.stringify({}),
@@ -305,7 +320,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         title: t("zatcaIntegration.csrSuccessTitle"),
         description: t("zatcaIntegration.csrSuccessDesc"),
       });
-      qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
+      qc.invalidateQueries({ queryKey: companyQueryKey });
     },
     onError: (e: any) => {
       setStep1Error({ message: e.message, details: e.details });
@@ -316,7 +331,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   async function handleOtpSubmit(otp: string) {
     setComplianceLoading(true);
     try {
-      const res = await fetch(`${API}/api/companies/${companyId}/compliance`, {
+      const res = await fetch(`${API}/api/companies/${companyId}/compliance${agentQuery}`, {
         method: "POST",
         headers,
         body: JSON.stringify({ otp }),
@@ -326,14 +341,14 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       // ZATCA's production-csid step needs the compliance `requestID`. Persist it
       // (localStorage survives a page reload between the two onboarding steps).
       if (json.requestID) {
-        try { localStorage.setItem(`zatca_compliance_reqid_${companyId}`, String(json.requestID)); } catch {}
+        try { localStorage.setItem(complianceRequestStorageKey, String(json.requestID)); } catch {}
       }
       toast({
         title: t("zatcaIntegration.csidSuccessTitle"),
         description: t("zatcaIntegration.csidSuccessDesc"),
       });
       setOtpOpen(false);
-      qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
+      qc.invalidateQueries({ queryKey: companyQueryKey });
     } catch (e: any) {
       toast({ title: e.message, variant: "destructive" });
     } finally {
@@ -349,7 +364,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       // Issue it first (generates UBL + QR, flips status to "issued") so ZATCA
       // has a real document to validate.
       if (selected?.status === "draft") {
-        const issueRes = await fetch(`${API}/api/invoices/${id}/issue`, { method: "POST", headers });
+        const issueRes = await fetch(`${API}/api/invoices/${id}/issue${agentQuery}`, { method: "POST", headers });
         // 400 = "only drafts can be issued": the invoice was already issued (another
         // tab, or a stale client-side status) so it already has XML — fall through
         // to the compliance check. Only genuine failures (404/500) abort.
@@ -358,7 +373,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
           throw new Error(issueJson.error ?? t("zatcaIntegration.errIssueFailed"));
         }
       }
-      const res = await fetch(`${API}/api/companies/${companyId}/compliance-check`, {
+      const res = await fetch(`${API}/api/companies/${companyId}/compliance-check${agentQuery}`, {
         method: "POST",
         headers,
         body: JSON.stringify({ invoiceId: id }),
@@ -369,7 +384,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       return json;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["zatca-testable-invoices", companyId] });
+      qc.invalidateQueries({ queryKey: invoicesQueryKey });
       toast({
         title: t("zatcaIntegration.checkSuccessTitle"),
         description: t("zatcaIntegration.checkSuccessDesc"),
@@ -378,14 +393,14 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     onError: (e: any) => {
       // The invoice may have been issued before the check failed — refresh so the
       // picker reflects its new status.
-      qc.invalidateQueries({ queryKey: ["zatca-testable-invoices", companyId] });
+      qc.invalidateQueries({ queryKey: invoicesQueryKey });
       toast({ title: e.message, variant: "destructive" });
     },
   });
 
   const autoComplianceCheckMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API}/api/companies/${companyId}/auto-compliance-check`, {
+      const res = await fetch(`${API}/api/companies/${companyId}/auto-compliance-check${agentQuery}`, {
         method: "POST",
         headers,
         body: JSON.stringify({}),
@@ -420,8 +435,8 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const productionCsidMutation = useMutation({
     mutationFn: async () => {
       let complianceRequestId: string | null = null;
-      try { complianceRequestId = localStorage.getItem(`zatca_compliance_reqid_${companyId}`); } catch {}
-      const res = await fetch(`${API}/api/companies/${companyId}/production-csid`, {
+      try { complianceRequestId = localStorage.getItem(complianceRequestStorageKey); } catch {}
+      const res = await fetch(`${API}/api/companies/${companyId}/production-csid${agentQuery}`, {
         method: "POST",
         headers,
         body: JSON.stringify({ complianceRequestId }),
@@ -435,7 +450,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         title: t("zatcaIntegration.pcsidSuccessTitle"),
         description: t("zatcaIntegration.pcsidSuccessDesc"),
       });
-      qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
+      qc.invalidateQueries({ queryKey: companyQueryKey });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -450,9 +465,9 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
 
   if (!form) return null;
 
-  const hasCsr   = !!company.zatcaCsr;
-  const hasCsid  = !!company.zatcaCsidToken;
-  const hasPcsid = !!company.zatcaPcsidToken;
+  const hasCsr   = agentInstanceId ? !!company.hasCsr : !!company.zatcaCsr;
+  const hasCsid  = agentInstanceId ? !!company.hasCsid : !!company.zatcaCsidToken;
+  const hasPcsid = agentInstanceId ? !!company.hasPcsid : !!company.zatcaPcsidToken;
 
   const envLabel = ENV_LABELS[form.zatcaEnvironment] ?? ENV_LABELS.sandbox;
 
@@ -520,12 +535,16 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
           <div className="space-y-1.5 border-t pt-3">
             <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">{t("zatcaIntegration.csidEncrypted")}</span>
-              <span className="font-mono text-muted-foreground" dir="ltr">{mask(company.zatcaCsidToken)}</span>
+              <span className="font-mono text-muted-foreground" dir="ltr">
+                {agentInstanceId ? "محفوظ" : mask(company.zatcaCsidToken)}
+              </span>
             </div>
             {hasPcsid && (
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">{t("zatcaIntegration.pcsidEncrypted")}</span>
-                <span className="font-mono text-muted-foreground" dir="ltr">{mask(company.zatcaPcsidToken)}</span>
+                <span className="font-mono text-muted-foreground" dir="ltr">
+                  {agentInstanceId ? "محفوظ" : mask(company.zatcaPcsidToken)}
+                </span>
               </div>
             )}
           </div>

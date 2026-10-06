@@ -1571,7 +1571,97 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
     db.select({ supplierCount: count() }).from(suppliersTable).where(eq(suppliersTable.companyId, id)),
   ]);
 
-  res.json({ company, subscription: subscription ?? null, users, counts: { invoices: invoiceCount, customers: customerCount, suppliers: supplierCount } });
+  let companyResponse = company;
+  if (req.query.agent !== undefined) {
+    const {
+      zatcaCsr,
+      zatcaPrivateKey,
+      zatcaCsid,
+      zatcaCsidToken,
+      zatcaCsidSecret,
+      zatcaPcsid,
+      zatcaPcsidToken,
+      zatcaPcsidSecret,
+      zatcaComplianceRequestId,
+      ...safeCompany
+    } = company;
+    companyResponse = safeCompany as typeof company;
+  }
+  res.json({ company: companyResponse, subscription: subscription ?? null, users, counts: { invoices: invoiceCount, customers: customerCount, suppliers: supplierCount } });
+  });
+});
+
+// Agent-company ZATCA setup uses an explicit safe projection: never serialize
+// private keys, CSID secrets, or credential tokens to the SuperAdmin browser.
+router.get("/companies/:id/zatca-config", requireSuperAdmin, async (req, res): Promise<void> => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const id = Number(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف الشركة غير صحيح" });
+      return;
+    }
+    const [row] = await db.select({
+      id: companiesTable.id,
+      nameAr: companiesTable.nameAr,
+      nameEn: companiesTable.nameEn,
+      vatNumber: companiesTable.vatNumber,
+      serialNumber: companiesTable.serialNumber,
+      deviceSerial1: companiesTable.deviceSerial1,
+      deviceSerial2: companiesTable.deviceSerial2,
+      deviceSerial3: companiesTable.deviceSerial3,
+      isSandbox: companiesTable.isSandbox,
+      zatcaEnvironment: companiesTable.zatcaEnvironment,
+      zatcaCsr: companiesTable.zatcaCsr,
+      zatcaCsidToken: companiesTable.zatcaCsidToken,
+      zatcaPcsidToken: companiesTable.zatcaPcsidToken,
+    }).from(companiesTable).where(and(
+      eq(companiesTable.id, id),
+      eq(companiesTable.isInternalDemoWorkspace, false),
+    ));
+    if (!row) {
+      res.status(404).json({ error: "الشركة غير موجودة" });
+      return;
+    }
+    const { zatcaCsr, zatcaCsidToken, zatcaPcsidToken, ...company } = row;
+    res.json({
+      company: {
+        ...company,
+        hasCsr: Boolean(zatcaCsr),
+        hasCsid: Boolean(zatcaCsidToken),
+        hasPcsid: Boolean(zatcaPcsidToken),
+      },
+    });
+  });
+});
+
+// Draft + issued invoice picker for the agent-company ZATCA compliance test.
+// Keep this response small and avoid exposing XML or customer/accounting data.
+router.get("/companies/:id/zatca-invoices", requireSuperAdmin, async (req, res): Promise<void> => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const id = Number(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف الشركة غير صحيح" });
+      return;
+    }
+    const [company] = await db.select({ id: companiesTable.id }).from(companiesTable).where(and(
+      eq(companiesTable.id, id),
+      eq(companiesTable.isInternalDemoWorkspace, false),
+    ));
+    if (!company) {
+      res.status(404).json({ error: "الشركة غير موجودة" });
+      return;
+    }
+    const invoices = await db.select({
+      id: invoicesTable.id,
+      invoiceNumber: invoicesTable.invoiceNumber,
+      status: invoicesTable.status,
+    }).from(invoicesTable)
+      .where(and(eq(invoicesTable.companyId, id), inArray(invoicesTable.status, ["draft", "issued"])))
+      .orderBy(desc(invoicesTable.id))
+      .limit(200);
+    res.json(invoices);
   });
 });
 

@@ -1123,17 +1123,41 @@ router.patch("/:id/zatca-settings", async (req, res) => {
   // ZATCA gateway URL; keep the legacy `isSandbox` boolean in sync so older
   // readers (admin status derivation) stay correct — only "production" is live.
   const validEnv = zatcaEnvironment === "sandbox" || zatcaEnvironment === "simulation" || zatcaEnvironment === "production";
-  const [company] = await db.update(companiesTable).set({
-    ...(serialNumber !== undefined && { serialNumber }),
-    ...(deviceSerial1 !== undefined && { deviceSerial1 }),
-    ...(deviceSerial2 !== undefined && { deviceSerial2 }),
-    ...(deviceSerial3 !== undefined && { deviceSerial3 }),
-    ...(validEnv && { zatcaEnvironment, isSandbox: zatcaEnvironment !== "production" }),
-    ...(!validEnv && isSandbox !== undefined && { isSandbox }),
-    updatedAt: new Date(),
-  }).where(eq(companiesTable.id, id)).returning();
-  if (!company) { res.status(404).json({ error: "Company not found" }); return; }
-  res.json(company);
+  const agentScoped = req.query.agent !== undefined;
+  const updateSettings = async () => {
+    const [company] = await db.update(companiesTable).set({
+      ...(serialNumber !== undefined && { serialNumber }),
+      ...(deviceSerial1 !== undefined && { deviceSerial1 }),
+      ...(deviceSerial2 !== undefined && { deviceSerial2 }),
+      ...(deviceSerial3 !== undefined && { deviceSerial3 }),
+      ...(validEnv && { zatcaEnvironment, isSandbox: zatcaEnvironment !== "production" }),
+      ...(!validEnv && isSandbox !== undefined && { isSandbox }),
+      updatedAt: new Date(),
+    }).where(eq(companiesTable.id, id)).returning();
+    if (!company) { res.status(404).json({ error: "Company not found" }); return; }
+    if (agentScoped) {
+      // The agent onboarding UI only needs the updated device settings. Do not
+      // serialize any existing ZATCA credentials from the company row.
+      res.json({
+        id: company.id,
+        serialNumber: company.serialNumber,
+        deviceSerial1: company.deviceSerial1,
+        deviceSerial2: company.deviceSerial2,
+        deviceSerial3: company.deviceSerial3,
+        isSandbox: company.isSandbox,
+        zatcaEnvironment: company.zatcaEnvironment,
+      });
+      return;
+    }
+    res.json(company);
+  };
+
+  if (agentScoped) {
+    const { runWithAgentScope } = await import("../lib/agentScope.js");
+    await runWithAgentScope(req, res, updateSettings);
+    return;
+  }
+  await updateSettings();
 });
 
 // Authorization helper: only superadmin or an admin of this same company.

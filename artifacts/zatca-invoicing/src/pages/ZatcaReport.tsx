@@ -24,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
 import { fmt2 } from "@/lib/format";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { normalizeZatcaStatus } from "@/lib/zatca-status";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -81,7 +82,13 @@ export default function ZatcaReport() {
     queryFn: async () => {
       const r = await fetch(url, { headers: authH });
       if (!r.ok) return [];
-      return r.json();
+      const payload = await r.json();
+      return Array.isArray(payload)
+        ? payload.map((row: any) => ({
+            ...row,
+            zatcaStatus: normalizeZatcaStatus(row.zatcaStatus) ?? "pending",
+          }))
+        : [];
     },
   });
 

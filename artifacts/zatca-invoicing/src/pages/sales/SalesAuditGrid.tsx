@@ -19,6 +19,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { saveUiPrefs } from "@/lib/uiPrefsApi";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters } from "@/lib/format";
+import { normalizeZatcaStatus } from "@/lib/zatca-status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
@@ -1403,7 +1404,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           case "commission": cellValue = inv.commissionAmount ?? 0; break;
           case "settle":     cellValue = inv.paymentSettlement?.code ?? ""; break;
           case "je":         cellValue = inv.journalEntryId ? `JE-${inv.journalEntryId}` : ""; break;
-          case "zatca":      cellValue = inv.zatcaStatus ?? ""; break;
+          case "zatca":      cellValue = normalizeZatcaStatus(inv.zatcaStatus) ?? ""; break;
           case "status":     cellValue = STATUS_AR[inv.status] ?? inv.status ?? ""; break;
           case "source":     cellValue = docSourceLabel(inv); break;
           case "notes":      cellValue = inv.notes ?? ""; break;
@@ -1441,7 +1442,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       case "commission": return { v: Number(inv.commissionAmount ?? 0),              isNum: true  };
       case "settle":     return { v: inv.paymentSettlement?.code ?? "",              isNum: false };
       case "je":         return { v: Number(inv.journalEntryId ?? 0),                isNum: true  };
-      case "zatca":      return { v: inv.zatcaStatus ?? "",                          isNum: false };
+      case "zatca":      return { v: normalizeZatcaStatus(inv.zatcaStatus) ?? "",    isNum: false };
       case "status":     return { v: inv.status ?? "",                               isNum: false };
       case "source":     return { v: docSourceLabel(inv),                            isNum: false };
       case "createdBy":  return { v: inv.createdByName ?? "",                        isNum: false };
@@ -1729,7 +1730,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
         vatAmount: inv.vatAmount,
         totalAmount: inv.totalAmount,
         status: inv.status,
-        zatcaStatus: inv.zatcaStatus,
+        zatcaStatus: normalizeZatcaStatus(inv.zatcaStatus),
         zatcaResponseCode: inv.zatcaResponseCode,
         journalEntryId: inv.journalEntryId,
         paymentSettlement: inv.paymentSettlement ? { code: inv.paymentSettlement.code } : null,
@@ -1784,7 +1785,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       Number(inv.commissionAmount ?? 0).toFixed(2),
       inv.paymentSettlement ? `سُدِّد (${inv.paymentSettlement.code})` : "—",
       inv.journalEntryId ? `JE-${inv.journalEntryId}` : "—",
-      inv.zatcaStatus ?? "—",
+      normalizeZatcaStatus(inv.zatcaStatus) ?? "—",
       inv.status,
       docSourceLabel(inv),
       (inv.notes ?? "").replace(/[\r\n,]/g, " "),
@@ -2736,8 +2737,8 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           posted:    filtered.filter((i: any) => i.status === "posted").length,
           cancelled: filtered.filter((i: any) => i.status === "cancelled").length,
           returned:  filtered.filter((i: any) => returnedInvoiceIds.has(Number(i.id))).length,
-          zatcaOk:   filtered.filter((i: any) => i.zatcaStatus === "approved").length,
-          zatcaBad:  filtered.filter((i: any) => i.zatcaStatus === "rejected").length,
+          zatcaOk:   filtered.filter((i: any) => normalizeZatcaStatus(i.zatcaStatus) === "approved").length,
+          zatcaBad:  filtered.filter((i: any) => normalizeZatcaStatus(i.zatcaStatus) === "rejected").length,
         };
         // Legend now reuses the shared DocColorLegend so colors/labels/tooltips
         // stay in lockstep with every other audit grid in the app. The vertical
@@ -2896,7 +2897,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                   const absIdx = (page - 1) * pageSize + idx;
                   const cus = cusMap[inv.customerId];
                   const st = STATUS[inv.status] ?? STATUS.draft;
-                  const z = ZATCA[String(inv.zatcaStatus ?? "pending")] ?? null;
+                  const z = ZATCA[normalizeZatcaStatus(inv.zatcaStatus) ?? "pending"] ?? null;
                   const payLabel = inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل";
                   const isSel = selected.has(inv.id);
                   const canDelete = inv.status !== "posted";
@@ -3159,7 +3160,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                   const rowTitle = buildToneTooltip({
                     status: inv.status,
                     hasReturn,
-                    zatcaStatus: inv.zatcaStatus,
+                    zatcaStatus: normalizeZatcaStatus(inv.zatcaStatus),
                   });
                   return (
                     <tr
@@ -3167,7 +3168,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                       data-testid={`row-invoice-${inv.id}`}
                       data-status={inv.status}
                       data-has-return={hasReturn ? "1" : "0"}
-                      data-zatca={inv.zatcaStatus ?? "pending"}
+                      data-zatca={normalizeZatcaStatus(inv.zatcaStatus) ?? "pending"}
                       className={cn(
                         "transition-colors cursor-pointer select-none",
                         // Selection wins — preserves the previous bulk-select feel.
@@ -3176,7 +3177,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                           : rowToneFor({
                               status: inv.status,
                               hasReturn,
-                              zatcaStatus: inv.zatcaStatus,
+                              zatcaStatus: normalizeZatcaStatus(inv.zatcaStatus),
                             }),
                       )}
                       onClick={(e) => {

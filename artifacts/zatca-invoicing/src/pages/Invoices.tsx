@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
 import { useTranslation } from "react-i18next";
+import { normalizeZatcaStatus } from "@/lib/zatca-status";
 
 import {
   AlertDialog,
@@ -75,9 +76,8 @@ export default function Invoices() {
   };
 
   const getZatcaStyle = (status?: string) => {
-    switch (status) {
-      case "cleared":
-      case "reported":  return { cls: "bg-blue-50 text-blue-700 border-blue-200", label: t("pages.invoices.zatcaCleared") };
+    switch (normalizeZatcaStatus(status)) {
+      case "approved":  return { cls: "bg-blue-50 text-blue-700 border-blue-200", label: t("pages.invoices.zatcaCleared") };
       case "rejected":  return { cls: "bg-red-50 text-red-700 border-red-200", label: t("pages.invoices.zatcaRejected") };
       case "pending":   return { cls: "bg-yellow-50 text-yellow-700 border-yellow-200", label: t("pages.invoices.zatcaPending") };
       default:          return null;
@@ -139,7 +139,7 @@ export default function Invoices() {
               vatTotal:      Number(inv.vatTotal).toFixed(dp),
               grandTotal:    Number(inv.grandTotal).toFixed(dp),
               status:        getStatusLabel(inv.status),
-              zatcaStatus:   inv.zatcaStatus ?? "—",
+               zatcaStatus:   getZatcaStyle(inv.zatcaStatus)?.label ?? "—",
             }))}
             columns={INVOICE_EXPORT_COLS}
             filename={`فواتير-${new Date().toISOString().slice(0, 10)}`}

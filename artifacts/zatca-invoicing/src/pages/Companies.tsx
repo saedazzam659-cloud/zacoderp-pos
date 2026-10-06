@@ -723,10 +723,7 @@ export default function Companies() {
                         onClick={() => openCodeEditor(company)} data-testid={`button-change-company-code-${company.id}`}>
                         <Pencil className="h-3.5 w-3.5" />تغيير كود الشركة
                       </Button>}
-                      {/* ZATCA onboarding endpoints are not agent-DB-scoped —
-                          hide the shortcut for agent companies to avoid
-                          touching a colliding central company ID. */}
-                      {(company.status ?? "active") === "active" && !company.zatcaPcsid && !company.agentInstanceId && (
+                      {(company.status ?? "active") === "active" && !company.zatcaPcsid && (
                         <Button asChild size="sm" className="gap-1.5 h-8">
                           <Link href={`/companies/${company.id}?tab=zatca${company.agentInstanceId ? `&agent=${company.agentInstanceId}` : ""}`}>
                             <ShieldCheck className="h-3.5 w-3.5" />ربط ZATCA

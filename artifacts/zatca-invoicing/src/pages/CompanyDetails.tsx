@@ -348,17 +348,15 @@ export default function CompanyDetails() {
           </div>
         </div>
         <div className="flex w-full gap-2 sm:w-auto">
-          {!agentId && (
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setTab("zatca")}
-              data-testid="button-company-zatca-setup"
-              className="min-h-10 flex-1 gap-1.5 sm:flex-none"
-            >
-              <ShieldCheck className="h-4 w-4" /> ربط زاتكا
-            </Button>
-          )}
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => setTab("zatca")}
+            data-testid="button-company-zatca-setup"
+            className="min-h-10 flex-1 gap-1.5 sm:flex-none"
+          >
+            <ShieldCheck className="h-4 w-4" /> ربط زاتكا
+          </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()} className="min-h-10 flex-1 gap-1.5 sm:flex-none">
             <RefreshCw className="h-3.5 w-3.5" />تحديث
           </Button>
@@ -388,11 +386,9 @@ export default function CompanyDetails() {
         <TabBtn active={tab === "packages"} onClick={() => setTab("packages")}>
           <ShieldCheck className="h-4 w-4" />الحزم
         </TabBtn>
-        {/* ZATCA onboarding endpoints are not agent-DB-scoped — hiding the
-            tab for agent companies avoids touching a colliding central ID. */}
-        {!agentId && <TabBtn active={tab === "zatca"} onClick={() => setTab("zatca")}>
+        <TabBtn active={tab === "zatca"} onClick={() => setTab("zatca")}>
           <Link2 className="h-4 w-4" />ربط ZATCA
-        </TabBtn>}
+        </TabBtn>
         <TabBtn active={tab === "data"} onClick={() => setTab("data")}>
           <BarChart3 className="h-4 w-4" />البيانات
         </TabBtn>
@@ -436,7 +432,7 @@ export default function CompanyDetails() {
           </div>
           {/* Homing is a CENTRAL-DB concept — agent-DB companies are already
               isolated to their agent domain, so the card is hidden there. */}
-          {!agentId && <div className="rounded-xl border bg-card p-5 md:col-span-2">
+          <div className="rounded-xl border bg-card p-5 md:col-span-2">
             <h3 className="font-semibold mb-1 flex items-center gap-2 text-sm">
               <Link2 className="h-4 w-4 text-primary" />النطاق الموطن (عزل الدخول)
             </h3>
@@ -468,7 +464,7 @@ export default function CompanyDetails() {
                 </Badge>
               )}
             </div>
-          </div>}
+          </div>
         </div>
       )}
 
@@ -968,8 +964,8 @@ export default function CompanyDetails() {
       )}
 
       {/* ─── ZATCA Tab ─── */}
-      {tab === "zatca" && !agentId && (
-        <ZatcaIntegration companyId={id} />
+      {tab === "zatca" && (
+        <ZatcaIntegration key={`${agentId ?? "central"}-${id}`} companyId={id} agentInstanceId={agentId ?? undefined} />
       )}
 
       {/* ─── Data Tab ─── */}

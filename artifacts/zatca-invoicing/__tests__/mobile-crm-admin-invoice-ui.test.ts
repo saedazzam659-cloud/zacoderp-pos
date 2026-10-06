@@ -10,6 +10,10 @@ const companyDetails = readFileSync(
   new URL("../src/pages/CompanyDetails.tsx", import.meta.url),
   "utf8",
 );
+const zatcaIntegration = readFileSync(
+  new URL("../src/pages/ZatcaIntegration.tsx", import.meta.url),
+  "utf8",
+);
 const invoiceNew = readFileSync(
   new URL("../src/pages/InvoiceNew.tsx", import.meta.url),
   "utf8",
@@ -46,11 +50,15 @@ test("company users get phone-sized controls and a clearly labeled password rese
   assert.ok(companyDetails.includes('aria-label={showPass ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}'));
 });
 
-test("company ZATCA setup is directly reachable but stays hidden for agent companies", () => {
+test("company ZATCA setup is reachable for central and agent companies", () => {
   assert.ok(companyDetails.includes('data-testid="button-company-zatca-setup"'));
   assert.match(companyDetails, /onClick=\{\(\) => setTab\("zatca"\)\}/);
-  assert.match(companyDetails, /\{!agentId && \([\s\S]*?button-company-zatca-setup/);
-  assert.match(companyDetails, /!\s*agentId && <TabBtn active=\{tab === "zatca"\}/);
+  assert.doesNotMatch(companyDetails, /!agentId/);
+  assert.match(companyDetails, /agentInstanceId=\{agentId \?\? undefined\}/);
+  assert.ok(zatcaIntegration.includes("/zatca-config${agentQuery}"));
+  assert.ok(zatcaIntegration.includes("/zatca-invoices${agentQuery}"));
+  assert.ok(zatcaIntegration.includes("/compliance-check${agentQuery}"));
+  assert.ok(zatcaIntegration.includes("/production-csid${agentQuery}"));
 });
 
 test("saving an invoice reaches details with the existing print dialog for drafts and issued invoices", () => {

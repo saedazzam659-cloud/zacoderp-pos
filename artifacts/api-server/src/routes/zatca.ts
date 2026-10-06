@@ -39,19 +39,37 @@ router.use(requireAuthed);
 // This middleware intentionally excludes /invoices/:id/submit, whose company
 // namespace is resolved from the invoice and locked by its dedicated wrapper.
 router.use("/companies/:id", async (req, res, next) => {
-  if (req.method !== "POST") { next(); return; }
-  const companyId = Number(req.params.id);
-  if (!Number.isInteger(companyId) || companyId <= 0) { next(); return; }
-  try {
+  const agentScoped = req.query.agent !== undefined;
+  const waitForResponse = () => new Promise<void>((resolve, reject) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    res.once("finish", finish);
+    res.once("close", finish);
+    try { next(); } catch (e) { reject(e); }
+  });
+  const continueRequest = async () => {
+    if (req.method !== "POST") {
+      if (agentScoped) await waitForResponse();
+      else next();
+      return;
+    }
+    const companyId = Number(req.params.id);
+    if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+      await waitForResponse();
+      return;
+    }
     await withZatcaChainLock(companyId, async () => {
       await assertZatcaSubmissionAllowed(companyId);
-      await new Promise<void>((resolve, reject) => {
-        let done = false;
-        const finish = () => { if (!done) { done = true; resolve(); } };
-        res.once("finish", finish); res.once("close", finish);
-        try { next(); } catch (e) { reject(e); }
-      });
+      await waitForResponse();
     });
+  };
+  try {
+    if (agentScoped) {
+      const { runWithAgentScope } = await import("../lib/agentScope.js");
+      await runWithAgentScope(req, res, continueRequest);
+    } else {
+      await continueRequest();
+    }
   } catch (err: any) {
     if (res.headersSent) return;
     if (err?.code === "ZATCA_TRANSFER_LOCKED") {
@@ -68,6 +86,28 @@ router.use("/companies/:id", async (req, res, next) => {
 
 function basicAuth(token: string, secret: string): string {
   return "Basic " + Buffer.from(`${token}:${secret}`).toString("base64");
+}
+
+function safeAgentZatcaResponse(agentScoped: boolean, value: unknown): unknown {
+  if (!agentScoped) return value;
+  if (Array.isArray(value)) return value.map(item => safeAgentZatcaResponse(true, item));
+  if (!value || typeof value !== "object") return value;
+  const sensitiveKeys = new Set([
+    "binarysecuritytoken",
+    "secret",
+    "privatekey",
+    "privatekeypem",
+    "zatcaprivatekey",
+    "zatcacsidsecret",
+    "zatcapcsidsecret",
+    "zatcacsidtoken",
+    "zatcapcsidtoken",
+  ]);
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !sensitiveKeys.has(key.toLowerCase()))
+      .map(([key, item]) => [key, safeAgentZatcaResponse(true, item)]),
+  );
 }
 
 // ─── 1. Generate CSR ─────────────────────────────────────────────────────────
@@ -193,12 +233,15 @@ router.post("/companies/:id/compliance", requirePermission("zatca_setup", "creat
 
     if (!response.ok) {
       req.log.warn(
-        { companyId: id, status: response.status, environment: env, zatcaResponse: data },
+        {
+          companyId: id, status: response.status, environment: env,
+          zatcaResponse: safeAgentZatcaResponse(req.query.agent !== undefined, data),
+        },
         "ZATCA compliance request rejected",
       );
       res.status(response.status).json({
         error: "فشل استدعاء ZATCA Compliance API",
-        zatcaResponse: data,
+        zatcaResponse: safeAgentZatcaResponse(req.query.agent !== undefined, data),
         hint: "تأكد من صحة OTP وأن CSR صالح. OTP صالح لمدة ساعة واحدة فقط.",
       });
       return;
@@ -219,7 +262,7 @@ router.post("/companies/:id/compliance", requirePermission("zatca_setup", "creat
       success: true,
       requestID: data.requestID,
       dispositionMessage: data.dispositionMessage,
-      binarySecurityToken: data.binarySecurityToken,
+      ...(req.query.agent === undefined ? { binarySecurityToken: data.binarySecurityToken } : {}),
       message: "تم الحصول على CSID بنجاح. الشركة جاهزة لإصدار الفواتير التجريبية.",
     });
   } catch (err) {
@@ -298,14 +341,18 @@ router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "
 
     if (!response.ok) {
       req.log.warn(
-        { companyId: id, status: response.status, environment: env, endpoint: `${baseUrl}/production/csids`, zatcaResponse: data },
+        {
+          companyId: id, status: response.status, environment: env,
+          endpoint: `${baseUrl}/production/csids`,
+          zatcaResponse: safeAgentZatcaResponse(req.query.agent !== undefined, data),
+        },
         "ZATCA production-csid request rejected",
       );
       res.status(response.status).json({
         error: "فشل استدعاء ZATCA Production CSID API",
         zatcaStatus: response.status,
         environment: env,
-        zatcaResponse: data,
+        zatcaResponse: safeAgentZatcaResponse(req.query.agent !== undefined, data),
       });
       return;
     }
@@ -459,7 +506,7 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
         {
           companyId: id, invoiceId, invoiceType: invoice.invoiceType,
           status: response.status, environment: env,
-          endpoint, zatcaResponse: data,
+          endpoint, zatcaResponse: safeAgentZatcaResponse(req.query.agent !== undefined, data),
         },
         "ZATCA compliance-check rejected",
       );
@@ -474,7 +521,7 @@ router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", 
         zatcaStatus: response.status,
         environment: env,
         endpoint,
-        zatcaResponse: data,
+        zatcaResponse: safeAgentZatcaResponse(req.query.agent !== undefined, data),
         hint: isGatewayError
           ? `رفضت بوابة ZATCA الطلب (رمز ${response.status}) قبل التحقق من الفاتورة. تأكد أن وضع الربط الحالي (${envAr}) مطابق للبيئة التي حصلت منها على شهادة CSID — يجب أن يتم الإعداد (CSR + CSID) والفحص التجريبي على نفس البيئة.`
           : "الفاتورة التجريبية فشلت في التحقق. راجع رسائل الخطأ وصحح البيانات قبل الانتقال للإنتاج.",
@@ -733,7 +780,7 @@ async function submitLegacyInvoiceToZatcaUnlocked(req: any, res: any) {
         zatcaStatus: newStatus,
         clearanceStatus: data.clearanceStatus,
         reportingStatus: data.reportingStatus,
-        zatcaResponse: data,
+        zatcaResponse: safeAgentZatcaResponse(req.query.agent !== undefined, data),
         hint: response.ok
           ? "قبلت بوابة ZATCA الطلب لكن لم يتم تخليص/إبلاغ الفاتورة. راجع رسائل التحقق وصحّح البيانات."
           : "راجع رسائل الخطأ من ZATCA وتحقق من صحة بيانات الفاتورة.",

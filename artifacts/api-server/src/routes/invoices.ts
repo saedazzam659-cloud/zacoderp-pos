@@ -326,7 +326,22 @@ router.delete("/:id", async (req, res) => {
   res.status(204).send();
 });
 
-router.post("/:id/issue", documentMutationLock("zatca_invoice", async (req, res) => {
+router.post("/:id/issue", async (req, res, next) => {
+  if (req.query.agent === undefined) {
+    next();
+    return;
+  }
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    await new Promise<void>((resolve, reject) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      res.once("finish", finish);
+      res.once("close", finish);
+      try { next(); } catch (err) { reject(err); }
+    });
+  });
+}, documentMutationLock("zatca_invoice", async (req, res) => {
   const id = parseInt(String(req.params.id), 10);
   const [existing] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
   if (!existing) {

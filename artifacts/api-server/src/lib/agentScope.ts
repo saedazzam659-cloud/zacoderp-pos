@@ -19,8 +19,15 @@ export async function runWithAgentScope<T>(
   fn: () => Promise<T>,
 ): Promise<T | undefined> {
   const raw = req.query?.agent;
-  const agentId = Number(Array.isArray(raw) ? raw[0] : raw);
-  if (!raw || !Number.isFinite(agentId) || agentId <= 0) return fn();
+  if (raw === undefined) return fn();
+  const value = Array.isArray(raw) && raw.length === 1 ? raw[0] : raw;
+  const text = typeof value === "string" ? value : "";
+  const agentId = Number(text);
+  // A malformed ?agent= must never silently fall back to the central DB.
+  if (!/^[1-9]\d*$/.test(text) || !Number.isSafeInteger(agentId)) {
+    res.status(400).json({ error: "معرّف الوكيل غير صالح" });
+    return undefined;
+  }
 
   // Admin routes gate via requireSuperAdmin (sets req.adminUser); tenant
   // routes gate via extractAuth (sets req.authUser). Accept either verified
