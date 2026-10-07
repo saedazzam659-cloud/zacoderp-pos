@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Linking, Pressable, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
+  Pressable,
+  Text,
+  View,
+} from 'react-native';
 
 // في نسخ الإنتاج: أي خطأ JS قاتل يغلق التطبيق فورًا بلا رسالة — نلتقطه
 // ونعرضه في تنبيه حتى يمكن تشخيصه من جهاز المستخدم مباشرة.
@@ -32,6 +40,8 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { BottomBar } from '@/components/BottomBar';
+import { useColors } from '@/hooks/useColors';
+import * as Updates from 'expo-updates';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -70,33 +80,100 @@ AppState.addEventListener('change', (s) => {
 setInterval(trySyncOffline, 60_000);
 
 // Forced-update gate sits ABOVE the router so deep links can't bypass it.
-// Fail-open (offline/server error ⇒ app works normally); while checking we
-// render the router immediately — the gate replaces it only when required.
+// Fail-open (offline/server error ⇒ app works normally). The Expo OTA check
+// below is separate and only blocks while checking briefly or downloading.
 function UpdateGate({ children }: { children: React.ReactNode }) {
+  const colors = useColors();
   const [update, setUpdate] = useState<UpdateCheck | null>(null);
+  const [otaStatus, setOtaStatus] = useState<'idle' | 'checking' | 'downloading'>(
+    Platform.OS !== 'web' && !__DEV__ && Updates.isEnabled ? 'checking' : 'idle',
+  );
+  const forcedUpdateRequired = React.useRef(false);
+
   useEffect(() => {
     let alive = true;
-    checkForcedUpdate().then((r) => { if (alive) setUpdate(r); });
+    checkForcedUpdate().then((r) => {
+      if (!alive) return;
+      forcedUpdateRequired.current = r.required;
+      setUpdate(r);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    if (Platform.OS === 'web' || __DEV__ || !Updates.isEnabled) {
+      setOtaStatus('idle');
+      return () => { alive = false; };
+    }
+
+    const applyAvailableUpdate = async () => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        // Don't hold the app at startup indefinitely if the device is offline.
+        const checkResult = await Promise.race([
+          Updates.checkForUpdateAsync(),
+          new Promise<null>((resolve) => {
+            timeout = setTimeout(() => resolve(null), 5_000);
+          }),
+        ]);
+        if (timeout) clearTimeout(timeout);
+        if (!alive || !checkResult || !checkResult.isAvailable) return;
+        if (forcedUpdateRequired.current) return;
+
+        setOtaStatus('downloading');
+        const fetchResult = await Updates.fetchUpdateAsync();
+        if (!alive || !fetchResult.isNew || forcedUpdateRequired.current) return;
+
+        await Updates.reloadAsync();
+      } catch (error) {
+        // OTA failures must not block sign-in or offline work.
+        console.warn('Expo update check failed; continuing with the installed version.', error);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+        if (alive) setOtaStatus('idle');
+      }
+    };
+
+    void applyAvailableUpdate();
     return () => { alive = false; };
   }, []);
 
   if (update?.required) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', padding: 32, gap: 12 }}>
-        <Text style={{ fontSize: 20, fontWeight: '700', color: '#111', textAlign: 'center' }}>يتوفر تحديث مطلوب</Text>
-        <Text style={{ fontSize: 14, color: '#555', textAlign: 'center', lineHeight: 22 }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, padding: 32, gap: 12 }}>
+        <Text style={{ fontSize: 20, fontWeight: '700', color: colors.foreground, textAlign: 'center' }}>يتوفر تحديث مطلوب</Text>
+        <Text style={{ fontSize: 14, color: colors.mutedForeground, textAlign: 'center', lineHeight: 22 }}>
           إصدارك الحالي ({currentAppVersion()}) لم يعد مدعوماً.{'\n'}
           حدّث التطبيق إلى الإصدار {update.latestVersion} للمتابعة.
         </Text>
         <Pressable
           onPress={() => Linking.openURL(update.downloadUrl)}
-          style={{ backgroundColor: '#0f766e', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32, marginTop: 8 }}
+          style={{ backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32, marginTop: 8 }}
         >
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>تحديث التطبيق الآن</Text>
+          <Text style={{ color: colors.primaryForeground, fontSize: 16, fontWeight: '700' }}>تحديث التطبيق الآن</Text>
         </Pressable>
       </View>
     );
   }
+
+  if (otaStatus !== 'idle') {
+    const downloading = otaStatus === 'downloading';
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, padding: 32, gap: 16 }}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={{ fontSize: 20, fontWeight: '700', color: colors.foreground, textAlign: 'center' }}>
+          {downloading ? 'جارٍ تنزيل تحديث التطبيق' : 'جارٍ التحقق من التحديثات'}
+        </Text>
+        <Text style={{ fontSize: 14, color: colors.mutedForeground, textAlign: 'center', lineHeight: 22 }}>
+          {downloading
+            ? 'سيُعاد تشغيل التطبيق تلقائياً بعد اكتمال التنزيل.'
+            : 'لحظات، نتحقق من توفر إصدار أحدث.'}
+        </Text>
+      </View>
+    );
+  }
+
   return <>{children}</>;
 }
 
