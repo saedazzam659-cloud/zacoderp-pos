@@ -48,6 +48,25 @@ router.use(async (_req, res, next) => {
   try { await ensureProjectFinancialLinks(); next(); }
   catch (error) { logger.error({ error }, "project link readiness failed"); res.status(503).json({ error: "تعذر تجهيز ربط المشاريع" }); }
 });
+// Cash-expense records share this table for accounting, but must never be
+// reachable through ordinary payment-voucher detail or lifecycle routes.
+router.param("id", async (_req, res, next, rawId) => {
+  const id = Number(rawId);
+  if (!Number.isSafeInteger(id) || id <= 0) { next(); return; }
+  try {
+    const [row] = await db.select({ sourceType: paymentVouchersTable.sourceType })
+      .from(paymentVouchersTable)
+      .where(eq(paymentVouchersTable.id, id))
+      .limit(1);
+    if (row?.sourceType === "cash_expense") {
+      res.status(404).json({ error: "سند الصرف غير موجود" });
+      return;
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get("/contracting-options", async (req, res) => {
   try {
@@ -74,7 +93,7 @@ router.get("/contracting-options", async (req, res) => {
 // The legacy per-voucher `accountId` override is no longer exposed in
 // the UI; it remains in the table as a still-honored escape hatch for
 // older rows so existing data continues to post correctly.
-async function buildPaymentJournal(cid: number, v: any, req: any, outerTx?: any): Promise<number> {
+export async function buildPaymentJournal(cid: number, v: any, req: any, outerTx?: any): Promise<number> {
   const amount = parseFloat(v.amount || "0");
   if (amount <= 0) throw new Error("المبلغ يجب أن يكون أكبر من صفر");
 
@@ -314,10 +333,19 @@ router.get("/", async (req, res) => {
   }
   const rows = cid
     ? await db.select().from(paymentVouchersTable)
-        .where(and(eq(paymentVouchersTable.companyId, cid), ...branchScope, ...piFilter))
+        .where(and(
+          eq(paymentVouchersTable.companyId, cid),
+          sql`${paymentVouchersTable.sourceType} IS DISTINCT FROM 'cash_expense'`,
+          ...branchScope,
+          ...piFilter,
+        ))
         .orderBy(desc(paymentVouchersTable.createdAt))
     : await db.select().from(paymentVouchersTable)
-        .where((branchScope.length || piFilter.length) ? and(...branchScope, ...piFilter) : undefined)
+        .where(and(
+          sql`${paymentVouchersTable.sourceType} IS DISTINCT FROM 'cash_expense'`,
+          ...branchScope,
+          ...piFilter,
+        ))
         .orderBy(desc(paymentVouchersTable.createdAt));
 
   // A voucher is MULTI iff it actually has allocation LINES — the header

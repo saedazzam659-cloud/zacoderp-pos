@@ -127,6 +127,13 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "hr_attendance_view", labelKey: "users.mobHrAttendanceView" },
   { key: "offline_controls", labelKey: "users.mobOfflineControls" },
   { key: "server_settings", labelKey: "users.mobServerSettings" },
+  { key: "cash_expenses_create", labelKey: "users.mobCashExpenseCreate" },
+  { key: "cash_expenses_view_own", labelKey: "users.mobCashExpenseViewOwn" },
+  { key: "cash_expenses_view_all", labelKey: "users.mobCashExpenseViewAll" },
+  { key: "cash_expenses_edit", labelKey: "users.mobCashExpenseEdit" },
+  { key: "cash_expenses_post", labelKey: "users.mobCashExpensePost" },
+  { key: "cash_expenses_cancel", labelKey: "users.mobCashExpenseCancel" },
+  { key: "cash_expenses_report", labelKey: "users.mobCashExpenseReport" },
 ];
 
 // Every storable key (feature keys + edit/delete keys) — keep deny-all and
@@ -136,10 +143,23 @@ const ALL_MOBILE_KEYS: string[] = MOBILE_PERM_KEYS.flatMap(d =>
 
 type MobilePerms = Record<string, boolean>;
 
-// Seed the matrix: every feature checked (allowed) unless explicitly denied.
-const seedMobilePerms = (stored?: Record<string, boolean> | null): MobilePerms => {
+const CASH_EXPENSE_PERMISSION_KEYS = new Set([
+  "cash_expenses_create",
+  "cash_expenses_view_own",
+  "cash_expenses_view_all",
+  "cash_expenses_edit",
+  "cash_expenses_post",
+  "cash_expenses_cancel",
+  "cash_expenses_report",
+]);
+
+// Legacy permissions retain their allow-by-default behavior; this new module
+// stays denied until an admin explicitly checks each permission.
+const seedMobilePerms = (stored?: Record<string, boolean> | null, allowNewModule = false): MobilePerms => {
   const out: MobilePerms = {};
-  for (const k of ALL_MOBILE_KEYS) out[k] = stored?.[k] !== false;
+  for (const k of ALL_MOBILE_KEYS) {
+    out[k] = stored?.[k] ?? (CASH_EXPENSE_PERMISSION_KEYS.has(k) ? allowNewModule : true);
+  }
   return out;
 };
 
@@ -1427,7 +1447,7 @@ export default function Users() {
 
                 <div className="flex gap-2 text-xs">
                   <Button type="button" variant="outline" size="sm" data-testid="btn-mobile-all"
-                    onClick={() => setForm(f => ({ ...f, mobilePermissions: seedMobilePerms() }))}>
+                    onClick={() => setForm(f => ({ ...f, mobilePermissions: seedMobilePerms(undefined, true) }))}>
                     {t("users.postingAllowAll")}
                   </Button>
                   <Button type="button" variant="outline" size="sm" data-testid="btn-mobile-none"

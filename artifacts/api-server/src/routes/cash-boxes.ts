@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { cashBoxesTable, receiptVouchersTable, paymentVouchersTable } from "@workspace/db";
+import { cashBoxesTable, receiptVouchersTable, paymentVouchersTable, usersTable } from "@workspace/db";
 import { eq, and, sql, or, isNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, getAllowedBranchIds, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -103,6 +103,24 @@ const toStr = (v: any) => (v === "" || v === null || v === undefined ? null : St
 const toDec = (v: any, def: string | null = null) =>
   v === "" || v === null || v === undefined || isNaN(Number(v)) ? def : String(v);
 
+async function validateCashExpenseManager(value: unknown, companyId: number, req: any) {
+  if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") {
+    return { ok: false as const, status: 403, error: "إسناد مسؤول مصروفات الخزنة متاح للمدير فقط" };
+  }
+  if (value === null || value === "") return { ok: true as const, value: null };
+  const managerId = Number(value);
+  if (!Number.isSafeInteger(managerId) || managerId <= 0) {
+    return { ok: false as const, status: 400, error: "معرّف مسؤول مصروفات الخزنة غير صالح" };
+  }
+  const [manager] = await db.select({ id: usersTable.id }).from(usersTable).where(and(
+    eq(usersTable.id, managerId),
+    eq(usersTable.companyId, companyId),
+    eq(usersTable.isActive, true),
+  )).limit(1);
+  if (!manager) return { ok: false as const, status: 400, error: "اختر مستخدماً نشطاً من الشركة نفسها" };
+  return { ok: true as const, value: managerId };
+}
+
 // Auto-generate next available code like CB-0001 (scoped to company).
 async function nextCashBoxCode(cid: number): Promise<string> {
   const rows = await db.select({ code: cashBoxesTable.code })
@@ -120,6 +138,12 @@ router.post("/", async (req, res) => {
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
   if (!d.nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
+  let cashExpenseManagerUserId: number | null | undefined;
+  if (Object.prototype.hasOwnProperty.call(d, "cashExpenseManagerUserId")) {
+    const manager = await validateCashExpenseManager(d.cashExpenseManagerUserId, cid, req);
+    if (!manager.ok) { res.status(manager.status).json({ error: manager.error }); return; }
+    cashExpenseManagerUserId = manager.value;
+  }
 
   // Uniqueness checks scoped to the company
   const existing = await db.select().from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid));
@@ -153,6 +177,7 @@ router.post("/", async (req, res) => {
     nameEn:     toStr(d.nameEn),
     currencyId: toInt(d.currencyId),
     accountId,
+    ...(cashExpenseManagerUserId !== undefined ? { cashExpenseManagerUserId } : {}),
     minBalance: toDec(d.minBalance, "0")!,
     maxBalance: toDec(d.maxBalance, null),
     isActive:   d.isActive ?? true,
@@ -176,6 +201,15 @@ router.put("/:id", async (req, res) => {
     res.status(409).json({ error: "هذا الحساب مرتبط بخزنة أخرى — اختر حساباً آخر" });
     return;
   }
+  let cashExpenseManagerUserId: number | null | undefined;
+  if (Object.prototype.hasOwnProperty.call(d, "cashExpenseManagerUserId")) {
+    if (req.authUser?.role !== "superadmin" && Number(req.authUser?.companyId) !== current.companyId) {
+      res.status(404).json({ error: "الخزنة غير موجودة" }); return;
+    }
+    const manager = await validateCashExpenseManager(d.cashExpenseManagerUserId, current.companyId, req);
+    if (!manager.ok) { res.status(manager.status).json({ error: manager.error }); return; }
+    cashExpenseManagerUserId = manager.value;
+  }
 
   const [row] = await db.update(cashBoxesTable).set({
     branchId:   toInt(d.branchId),
@@ -184,6 +218,7 @@ router.put("/:id", async (req, res) => {
     nameEn:     toStr(d.nameEn),
     currencyId: toInt(d.currencyId),
     accountId:  toInt(d.accountId),
+    ...(cashExpenseManagerUserId !== undefined ? { cashExpenseManagerUserId } : {}),
     minBalance: toDec(d.minBalance, "0")!,
     maxBalance: toDec(d.maxBalance, null),
     isActive:   d.isActive ?? true,

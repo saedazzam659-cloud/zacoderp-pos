@@ -7,6 +7,16 @@ export type PermUser = {
   mobilePermissions?: Record<string, boolean> | null;
 };
 
+const EXPLICIT_OPT_IN_KEYS = new Set([
+  'cash_expenses_create',
+  'cash_expenses_view_own',
+  'cash_expenses_view_all',
+  'cash_expenses_edit',
+  'cash_expenses_post',
+  'cash_expenses_cancel',
+  'cash_expenses_report',
+]);
+
 export function mobilePermsQueryKey(generation: number, user: { id: number; companyId: number | null } | null) {
   return ['me-mobile-perms', generation, user?.companyId ?? null, user?.id ?? null] as const;
 }
@@ -49,6 +59,7 @@ export function effectiveMobilePermission(
 ): boolean {
   if (!user || !verifiedInCurrentSession || !fresh || fresh.id !== user.id ||
       (fresh.companyId ?? null) !== (user.companyId ?? null)) return false;
+  if (EXPLICIT_OPT_IN_KEYS.has(key)) return fresh.mobilePermissions?.[key] === true;
   if (fresh.role === 'admin' || fresh.role === 'superadmin') return true;
   // The server treats NULL and absent keys as allowed for backwards compatibility.
   // The fresh response is authoritative, even when its map is null.

@@ -126,6 +126,8 @@ export function canReadPrivateObjectPath(
   wildcardPath: string,
   auth: { role?: string | null; companyId?: number | null } | null | undefined,
 ): boolean {
+  const normalizedPath = wildcardPath.replace(/^\/+/, "");
+  if (normalizedPath === "cash-expenses" || normalizedPath.startsWith("cash-expenses/")) return false;
   if (wildcardPath.startsWith("company-backup-packages/")) return false;
   const restoredMatch = /^company-backup-files\/(\d+)\//.exec(wildcardPath);
   if (!restoredMatch) return true;

@@ -17,6 +17,7 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _requestHeadersGetter: (() => Record<string, string>) | null = null;
 let _sessionIdGetter: (() => string | number | null) | null = null;
 let _actingCompanyIdGetter: (() => string | number | null) | null = null;
 
@@ -44,6 +45,11 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+/** Add low-priority headers for clients such as Expo that share this package. */
+export function setRequestHeadersGetter(getter: (() => Record<string, string>) | null): void {
+  _requestHeadersGetter = getter;
 }
 
 /**
@@ -362,7 +368,6 @@ export async function customFetch<T = unknown>(
   input: RequestInfo | URL,
   options: CustomFetchOptions = {},
 ): Promise<T> {
-  input = applyBaseUrl(input);
   const { responseType = "auto", headers: headersInit, ...init } = options;
 
   const method = resolveMethod(input, init.method);
@@ -372,6 +377,19 @@ export async function customFetch<T = unknown>(
   }
 
   const headers = mergeHeaders(isRequest(input) ? input.headers : undefined, headersInit);
+  // A token getter may also resolve dynamic client configuration (e.g. the
+  // selected Expo server domain), so run it before applying the base URL.
+  let authToken: string | null = null;
+  if (_authTokenGetter && !headers.has("authorization")) {
+    authToken = await _authTokenGetter();
+  }
+  input = applyBaseUrl(input);
+
+  if (_requestHeadersGetter) {
+    for (const [key, value] of Object.entries(_requestHeadersGetter())) {
+      if (!headers.has(key)) headers.set(key, value);
+    }
+  }
 
   if (
     typeof init.body === "string" &&
@@ -387,11 +405,8 @@ export async function customFetch<T = unknown>(
 
   // Attach bearer token when an auth getter is configured and no
   // Authorization header has been explicitly provided.
-  if (_authTokenGetter && !headers.has("authorization")) {
-    const token = await _authTokenGetter();
-    if (token) {
-      headers.set("authorization", `Bearer ${token}`);
-    }
+  if (authToken && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${authToken}`);
   }
 
   // Attach the user's currently-selected manual session id, if any.

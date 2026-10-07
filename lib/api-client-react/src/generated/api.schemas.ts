@@ -2578,6 +2578,191 @@ export interface SchoolStudentFaceEnrollmentStatus {
   enrolledAt: string | null;
 }
 
+export type CashExpenseStatus =
+  (typeof CashExpenseStatus)[keyof typeof CashExpenseStatus];
+
+export const CashExpenseStatus = {
+  draft: "draft",
+  posted: "posted",
+  cancelled: "cancelled",
+} as const;
+
+export interface CashExpense {
+  id: number;
+  companyId: number;
+  code: string;
+  date: string;
+  /** @nullable */
+  branchId: number | null;
+  cashBoxId: number;
+  cashBoxName: string;
+  /** @nullable */
+  currencyCode: string | null;
+  expenseAccountId: number;
+  expenseAccountName: string;
+  amount: number;
+  description: string;
+  status: CashExpenseStatus;
+  /** @nullable */
+  journalEntryId: number | null;
+  createdByUserId: number;
+  employeeName: string;
+  /** @nullable */
+  salesRepId: number | null;
+  /** @nullable */
+  salesRepName: string | null;
+  receiptAvailable: boolean;
+  createdAt: string;
+  isMine: boolean;
+  /** @nullable */
+  cancelledAt: string | null;
+}
+
+export type CashExpenseList = CashExpense[];
+
+export interface CashExpenseInput {
+  date: string;
+  /** @minimum 1 */
+  cashBoxId: number;
+  /** @minimum 1 */
+  expenseAccountId: number;
+  /**
+   * @maximum 999999999999.99
+   * @exclusiveMinimum 0
+   */
+  amount: number;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  description: string;
+  /**
+   * @maxLength 300
+   * @nullable
+   */
+  receiptPath?: string | null;
+}
+
+export interface CashExpenseUpdate {
+  date?: string;
+  /** @minimum 1 */
+  cashBoxId?: number;
+  /** @minimum 1 */
+  expenseAccountId?: number;
+  /**
+   * @maximum 999999999999.99
+   * @exclusiveMinimum 0
+   */
+  amount?: number;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  description?: string;
+  /**
+   * @maxLength 300
+   * @nullable
+   */
+  receiptPath?: string | null;
+}
+
+export interface CashExpenseCashBoxOption {
+  id: number;
+  code: string;
+  name: string;
+  /** @nullable */
+  branchId: number | null;
+  /** @nullable */
+  currencyId: number | null;
+  /** @nullable */
+  currencyCode: string | null;
+}
+
+export interface CashExpenseAccountOption {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface CashExpenseOptions {
+  cashBoxes: CashExpenseCashBoxOption[];
+  expenseAccounts: CashExpenseAccountOption[];
+  /** @nullable */
+  defaultCashBoxId: number | null;
+  employeeName: string;
+  /** @nullable */
+  salesRepId: number | null;
+  /** @nullable */
+  salesRepName: string | null;
+}
+
+export interface CashExpenseReportRow {
+  cashBoxId: number;
+  cashBoxName: string;
+  expenseAccountId: number;
+  expenseAccountName: string;
+  /** @nullable */
+  currencyCode: string | null;
+  amount: number;
+  count: number;
+}
+
+export interface CashExpenseReport {
+  from: string;
+  to: string;
+  /** @nullable */
+  totalAmount: number | null;
+  /** @nullable */
+  currencyCode: string | null;
+  count: number;
+  rows: CashExpenseReportRow[];
+}
+
+export type CashExpenseReceiptUploadInputMimeType =
+  (typeof CashExpenseReceiptUploadInputMimeType)[keyof typeof CashExpenseReceiptUploadInputMimeType];
+
+export const CashExpenseReceiptUploadInputMimeType = {
+  "image/jpeg": "image/jpeg",
+  "image/png": "image/png",
+  "image/webp": "image/webp",
+} as const;
+
+export interface CashExpenseReceiptUploadInput {
+  mimeType: CashExpenseReceiptUploadInputMimeType;
+  /**
+   * @minLength 1
+   * @maxLength 7000000
+   */
+  base64: string;
+}
+
+export type CashExpenseReceiptUploadMimeType =
+  (typeof CashExpenseReceiptUploadMimeType)[keyof typeof CashExpenseReceiptUploadMimeType];
+
+export const CashExpenseReceiptUploadMimeType = {
+  "image/jpeg": "image/jpeg",
+  "image/png": "image/png",
+  "image/webp": "image/webp",
+} as const;
+
+export interface CashExpenseReceiptUpload {
+  objectPath: string;
+  sizeBytes: number;
+  mimeType: CashExpenseReceiptUploadMimeType;
+}
+
+export interface CashExpenseReceiptDeleteInput {
+  /**
+   * @minLength 1
+   * @maxLength 300
+   */
+  objectPath: string;
+}
+
+export interface CashExpenseReceiptDelete {
+  deleted: boolean;
+}
+
 export type GetSchoolEnrollmentPromotionPlanParams = {
   /**
    * @minimum 1
@@ -3025,4 +3210,24 @@ export type ListWhatsAppCampaignsParams = {
    * @minimum 1
    */
   companyId: number;
+};
+
+export type GetCashExpensesParams = {
+  from?: string;
+  to?: string;
+  status?: GetCashExpensesStatus;
+};
+
+export type GetCashExpensesStatus =
+  (typeof GetCashExpensesStatus)[keyof typeof GetCashExpensesStatus];
+
+export const GetCashExpensesStatus = {
+  draft: "draft",
+  posted: "posted",
+  cancelled: "cancelled",
+} as const;
+
+export type GetCashExpenseReportParams = {
+  from: string;
+  to: string;
 };

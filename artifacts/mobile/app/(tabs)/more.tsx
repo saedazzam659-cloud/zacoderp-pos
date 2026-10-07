@@ -13,6 +13,16 @@ import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { Card } from '@/components/ui';
 
+const CASH_EXPENSE_PERMISSION_KEYS = [
+  'cash_expenses_create',
+  'cash_expenses_view_own',
+  'cash_expenses_view_all',
+  'cash_expenses_edit',
+  'cash_expenses_post',
+  'cash_expenses_cancel',
+  'cash_expenses_report',
+];
+
 export default function More() {
   const { user, logout } = useAuth();
   const { mp, refetch: refreshPerms, status: permsStatus, updatedAt, errorAt } = useMobilePerms();
@@ -155,6 +165,12 @@ export default function More() {
           {mp('vouchers_view') ? (
             <>
               <RowItem icon="file-text" title="سندات القبض" onPress={() => router.push('/voucher/list' as any)} testID="row-vouchers" />
+              <View style={{ height: 1, backgroundColor: c.border }} />
+            </>
+          ) : null}
+          {CASH_EXPENSE_PERMISSION_KEYS.some(mp) ? (
+            <>
+              <RowItem icon="credit-card" title="مصروفات الصندوق" onPress={() => router.push('/cash-expenses' as any)} testID="row-cash-expenses" />
               <View style={{ height: 1, backgroundColor: c.border }} />
             </>
           ) : null}

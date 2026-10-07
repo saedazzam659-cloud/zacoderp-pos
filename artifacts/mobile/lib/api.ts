@@ -1,10 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { cacheGet, cachePut, enqueue, isOfflineEnabled, isQueueablePost, offlineOperationsBusy, allOutboxCounts } from './offline';
+import { setAuthTokenGetter, setBaseUrl, setRequestHeadersGetter } from '@workspace/api-client-react';
 
 const DOMAIN_KEY = 'zacod_server_domain';
 const TOKEN_KEY = 'zacod_token';
 const TOKEN_DOMAIN_KEY = 'zacod_token_domain';
 const CENTRAL_DOMAIN = 'zacoderp.com';
+setAuthTokenGetter(getToken);
+setRequestHeadersGetter(() => ({ 'x-app-channel': 'mobile' }));
+setBaseUrl(`https://${defaultDomain()}`);
 let cachedDomain: string | null = null;
 let cachedToken: string | null = null;
 let tokenLoaded = false;
@@ -44,11 +48,18 @@ export function normalizeDomain(input: string): string {
 }
 
 export async function getDomain(): Promise<string> {
-  if (cachedDomain !== null) return cachedDomain;
+  if (cachedDomain !== null) {
+    setBaseUrl(`https://${cachedDomain}`);
+    return cachedDomain;
+  }
   const stored = await AsyncStorage.getItem(DOMAIN_KEY);
-  if (cachedDomain !== null) return cachedDomain;
+  if (cachedDomain !== null) {
+    setBaseUrl(`https://${cachedDomain}`);
+    return cachedDomain;
+  }
   try { cachedDomain = normalizeDomain(stored ?? ''); }
   catch { throw new Error('نطاق الخادم المحفوظ غير صالح — صححه من إعدادات الخادم'); }
+  setBaseUrl(`https://${cachedDomain}`);
   return cachedDomain;
 }
 
@@ -116,6 +127,7 @@ export async function setDomain(domain: string): Promise<void> {
       else await AsyncStorage.setItem(DOMAIN_KEY, clean);
     });
     cachedDomain = clean;
+    setBaseUrl(`https://${clean}`);
   } finally {
     switching = false;
   }

@@ -24,6 +24,9 @@ export const cashBoxesTable = pgTable("cash_boxes", {
   nameEn:       text("name_en"),
   currencyId:   integer("currency_id").references(() => currenciesTable.id),
   accountId:    integer("account_id").references(() => accountsTable.id),
+  // Optional user who manages cash-expense access for this existing cashbox.
+  // Null keeps every existing cashbox unchanged.
+  cashExpenseManagerUserId: integer("cash_expense_manager_user_id"),
   minBalance:   numeric("min_balance", { precision: 15, scale: 2 }).default("0"),
   maxBalance:   numeric("max_balance", { precision: 15, scale: 2 }),
   isActive:     boolean("is_active").notNull().default(true),
@@ -121,6 +124,14 @@ export const paymentVouchersTable = pgTable("payment_vouchers", {
   purchaseInvoiceId: integer("purchase_invoice_id").references(() => purchaseInvoicesTable.id, { onDelete: "set null" }),
   description:   text("description"),
   notes:         text("notes"),
+  // Cash expenses reuse the payment-voucher posting lifecycle, but remain
+  // isolated from ordinary payment-voucher screens and actions.
+  sourceType:    text("source_type"),
+  cashExpenseCreatedByUserId: integer("cash_expense_created_by_user_id"),
+  cashExpenseSalesRepId: integer("cash_expense_sales_rep_id"),
+  cashExpenseReceiptPath: text("cash_expense_receipt_path"),
+  cashExpenseCancelledByUserId: integer("cash_expense_cancelled_by_user_id"),
+  cashExpenseCancelledAt: timestamp("cash_expense_cancelled_at"),
   // Optional cost-center code propagated to JE lines on /post.
   costCenter:    text("cost_center"),
   status:        cashVoucherStatusEnum("status").notNull().default("draft"),

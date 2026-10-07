@@ -7,6 +7,8 @@ const { effectiveMobilePermission, mobilePermsQueryKey, normalizeMe, verifiedMeF
 
 const ordinary = 'customer_statement_view';
 const detailed = 'customer_statement_detailed_view';
+const cashExpenseCreate = 'cash_expenses_create';
+const cashExpenseViewAll = 'cash_expenses_view_all';
 const identity = { id: 7, companyId: 3, role: 'user' };
 
 test('direct and wrapped /me responses both normalize', () => {
@@ -55,4 +57,13 @@ test('response belonging to another user or server company cannot grant rights',
   assert.notDeepEqual(mobilePermsQueryKey(2, identity), mobilePermsQueryKey(3, identity));
   assert.notDeepEqual(mobilePermsQueryKey(2, identity), mobilePermsQueryKey(2, { ...identity, id: 8 }));
   assert.notDeepEqual(mobilePermsQueryKey(2, identity), mobilePermsQueryKey(2, { ...identity, companyId: 4 }));
+});
+
+test('cash-expense permissions require an explicit grant, including for administrators', () => {
+  const legacyAdmin = normalizeMe({ ...identity, role: 'admin', mobilePermissions: null });
+  const ordinaryUser = normalizeMe({ ...identity, mobilePermissions: null });
+  const granted = normalizeMe({ ...identity, role: 'admin', mobilePermissions: { [cashExpenseCreate]: true } });
+  assert.equal(effectiveMobilePermission(identity, legacyAdmin, true, cashExpenseCreate), false);
+  assert.equal(effectiveMobilePermission(identity, ordinaryUser, true, cashExpenseViewAll), false);
+  assert.equal(effectiveMobilePermission(identity, granted, true, cashExpenseCreate), true);
 });

@@ -4817,3 +4817,305 @@ export const UpdateWhatsAppCampaignRecipientResponse = zod.object({
   sentAt: zod.coerce.date().nullable(),
   createdAt: zod.coerce.date(),
 });
+
+/**
+ * @summary Get cashboxes and expense accounts available to the current mobile user
+ */
+export const GetCashExpenseOptionsResponse = zod.object({
+  cashBoxes: zod.array(
+    zod.object({
+      id: zod.number(),
+      code: zod.string(),
+      name: zod.string(),
+      branchId: zod.number().nullable(),
+      currencyId: zod.number().nullable(),
+      currencyCode: zod.string().nullable(),
+    }),
+  ),
+  expenseAccounts: zod.array(
+    zod.object({
+      id: zod.number(),
+      code: zod.string(),
+      name: zod.string(),
+    }),
+  ),
+  defaultCashBoxId: zod.number().nullable(),
+  employeeName: zod.string(),
+  salesRepId: zod.number().nullable(),
+  salesRepName: zod.string().nullable(),
+});
+
+/**
+ * @summary List cash expenses visible to the current mobile user
+ */
+export const GetCashExpensesQueryParams = zod.object({
+  from: zod.date().optional(),
+  to: zod.date().optional(),
+  status: zod.enum(["draft", "posted", "cancelled"]).optional(),
+});
+
+export const GetCashExpensesResponseItem = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  date: zod.coerce.date(),
+  branchId: zod.number().nullable(),
+  cashBoxId: zod.number(),
+  cashBoxName: zod.string(),
+  currencyCode: zod.string().nullable(),
+  expenseAccountId: zod.number(),
+  expenseAccountName: zod.string(),
+  amount: zod.number(),
+  description: zod.string(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  journalEntryId: zod.number().nullable(),
+  createdByUserId: zod.number(),
+  employeeName: zod.string(),
+  salesRepId: zod.number().nullable(),
+  salesRepName: zod.string().nullable(),
+  receiptAvailable: zod.boolean(),
+  createdAt: zod.coerce.date(),
+  isMine: zod.boolean(),
+  cancelledAt: zod.coerce.date().nullable(),
+});
+export const GetCashExpensesResponse = zod.array(GetCashExpensesResponseItem);
+
+/**
+ * @summary Save a cash expense as a draft
+ */
+
+export const createCashExpenseBodyAmountExclusiveMin = 0;
+export const createCashExpenseBodyAmountMax = 999999999999.99;
+
+export const createCashExpenseBodyDescriptionMax = 500;
+
+export const createCashExpenseBodyReceiptPathMax = 300;
+
+export const CreateCashExpenseBody = zod.object({
+  date: zod.coerce.date(),
+  cashBoxId: zod.number().min(1),
+  expenseAccountId: zod.number().min(1),
+  amount: zod
+    .number()
+    .gt(createCashExpenseBodyAmountExclusiveMin)
+    .max(createCashExpenseBodyAmountMax),
+  description: zod.string().min(1).max(createCashExpenseBodyDescriptionMax),
+  receiptPath: zod.string().max(createCashExpenseBodyReceiptPathMax).nullish(),
+});
+
+/**
+ * @summary Summarize posted cash expenses in the current user's permitted scope
+ */
+export const GetCashExpenseReportQueryParams = zod.object({
+  from: zod.date(),
+  to: zod.date(),
+});
+
+export const GetCashExpenseReportResponse = zod.object({
+  from: zod.coerce.date(),
+  to: zod.coerce.date(),
+  totalAmount: zod.number().nullable(),
+  currencyCode: zod.string().nullable(),
+  count: zod.number(),
+  rows: zod.array(
+    zod.object({
+      cashBoxId: zod.number(),
+      cashBoxName: zod.string(),
+      expenseAccountId: zod.number(),
+      expenseAccountName: zod.string(),
+      currencyCode: zod.string().nullable(),
+      amount: zod.number(),
+      count: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * @summary Store an optional receipt image in private object storage
+ */
+export const uploadCashExpenseReceiptBodyBase64Max = 7000000;
+
+export const UploadCashExpenseReceiptBody = zod.object({
+  mimeType: zod.enum(["image/jpeg", "image/png", "image/webp"]),
+  base64: zod.string().min(1).max(uploadCashExpenseReceiptBodyBase64Max),
+});
+
+/**
+ * @summary Delete a staged private receipt that was not attached to an expense
+ */
+export const deleteCashExpenseReceiptUploadBodyObjectPathMax = 300;
+
+export const DeleteCashExpenseReceiptUploadBody = zod.object({
+  objectPath: zod
+    .string()
+    .min(1)
+    .max(deleteCashExpenseReceiptUploadBodyObjectPathMax),
+});
+
+export const DeleteCashExpenseReceiptUploadResponse = zod.object({
+  deleted: zod.boolean(),
+});
+
+/**
+ * @summary Get one cash expense after checking its scope
+ */
+
+export const GetCashExpenseParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const GetCashExpenseResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  date: zod.coerce.date(),
+  branchId: zod.number().nullable(),
+  cashBoxId: zod.number(),
+  cashBoxName: zod.string(),
+  currencyCode: zod.string().nullable(),
+  expenseAccountId: zod.number(),
+  expenseAccountName: zod.string(),
+  amount: zod.number(),
+  description: zod.string(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  journalEntryId: zod.number().nullable(),
+  createdByUserId: zod.number(),
+  employeeName: zod.string(),
+  salesRepId: zod.number().nullable(),
+  salesRepName: zod.string().nullable(),
+  receiptAvailable: zod.boolean(),
+  createdAt: zod.coerce.date(),
+  isMine: zod.boolean(),
+  cancelledAt: zod.coerce.date().nullable(),
+});
+
+/**
+ * @summary Edit a draft cash expense
+ */
+
+export const UpdateCashExpenseParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const updateCashExpenseBodyAmountExclusiveMin = 0;
+export const updateCashExpenseBodyAmountMax = 999999999999.99;
+
+export const updateCashExpenseBodyDescriptionMax = 500;
+
+export const updateCashExpenseBodyReceiptPathMax = 300;
+
+export const UpdateCashExpenseBody = zod.object({
+  date: zod.coerce.date().optional(),
+  cashBoxId: zod.number().min(1).optional(),
+  expenseAccountId: zod.number().min(1).optional(),
+  amount: zod
+    .number()
+    .gt(updateCashExpenseBodyAmountExclusiveMin)
+    .max(updateCashExpenseBodyAmountMax)
+    .optional(),
+  description: zod
+    .string()
+    .min(1)
+    .max(updateCashExpenseBodyDescriptionMax)
+    .optional(),
+  receiptPath: zod.string().max(updateCashExpenseBodyReceiptPathMax).nullish(),
+});
+
+export const UpdateCashExpenseResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  date: zod.coerce.date(),
+  branchId: zod.number().nullable(),
+  cashBoxId: zod.number(),
+  cashBoxName: zod.string(),
+  currencyCode: zod.string().nullable(),
+  expenseAccountId: zod.number(),
+  expenseAccountName: zod.string(),
+  amount: zod.number(),
+  description: zod.string(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  journalEntryId: zod.number().nullable(),
+  createdByUserId: zod.number(),
+  employeeName: zod.string(),
+  salesRepId: zod.number().nullable(),
+  salesRepName: zod.string().nullable(),
+  receiptAvailable: zod.boolean(),
+  createdAt: zod.coerce.date(),
+  isMine: zod.boolean(),
+  cancelledAt: zod.coerce.date().nullable(),
+});
+
+/**
+ * @summary Post a cash expense through the existing payment-voucher journal builder
+ */
+
+export const PostCashExpenseParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const PostCashExpenseResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  date: zod.coerce.date(),
+  branchId: zod.number().nullable(),
+  cashBoxId: zod.number(),
+  cashBoxName: zod.string(),
+  currencyCode: zod.string().nullable(),
+  expenseAccountId: zod.number(),
+  expenseAccountName: zod.string(),
+  amount: zod.number(),
+  description: zod.string(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  journalEntryId: zod.number().nullable(),
+  createdByUserId: zod.number(),
+  employeeName: zod.string(),
+  salesRepId: zod.number().nullable(),
+  salesRepName: zod.string().nullable(),
+  receiptAvailable: zod.boolean(),
+  createdAt: zod.coerce.date(),
+  isMine: zod.boolean(),
+  cancelledAt: zod.coerce.date().nullable(),
+});
+
+/**
+ * @summary Cancel a draft or unpost and cancel a posted cash expense through its source-document lifecycle
+ */
+
+export const CancelCashExpenseParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const CancelCashExpenseResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  date: zod.coerce.date(),
+  branchId: zod.number().nullable(),
+  cashBoxId: zod.number(),
+  cashBoxName: zod.string(),
+  currencyCode: zod.string().nullable(),
+  expenseAccountId: zod.number(),
+  expenseAccountName: zod.string(),
+  amount: zod.number(),
+  description: zod.string(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  journalEntryId: zod.number().nullable(),
+  createdByUserId: zod.number(),
+  employeeName: zod.string(),
+  salesRepId: zod.number().nullable(),
+  salesRepName: zod.string().nullable(),
+  receiptAvailable: zod.boolean(),
+  createdAt: zod.coerce.date(),
+  isMine: zod.boolean(),
+  cancelledAt: zod.coerce.date().nullable(),
+});
+
+/**
+ * @summary Stream a receipt only after verifying expense and branch access
+ */
+
+export const GetCashExpenseReceiptParams = zod.object({
+  id: zod.coerce.number().min(1),
+});

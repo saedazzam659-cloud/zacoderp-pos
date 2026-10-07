@@ -339,6 +339,13 @@ const CENTRAL_ONLY_ZATCA_TRANSFER_TABLES = ["zatca_registration_transfers"] as c
 // rolling-upgrade window so saving a purchase invoice cannot fail while an
 // agent is moving between those package generations.
 const SUPPLIER_METADATA_COMPATIBILITY_DDL = [
+  `ALTER TABLE IF EXISTS cash_boxes ADD COLUMN IF NOT EXISTS cash_expense_manager_user_id INTEGER`,
+  `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS source_type TEXT`,
+  `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_created_by_user_id INTEGER`,
+  `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_sales_rep_id INTEGER`,
+  `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_receipt_path TEXT`,
+  `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_cancelled_by_user_id INTEGER`,
+  `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_cancelled_at TIMESTAMP`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_name TEXT`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_tax_number TEXT`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_vat_number TEXT`,

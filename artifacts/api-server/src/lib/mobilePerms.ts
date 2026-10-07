@@ -1,8 +1,7 @@
 // ─── Per-user MOBILE APP rights (صلاحيات تطبيق الموبايل) ────────────────────
 // users.mobile_permissions JSONB: { "<key>": boolean } | null
-// Semantics mirror posting_permissions: NULL / missing key = ALLOWED
-// (back-compat — existing users keep full access); explicit false = denied.
-// Admin/superadmin always bypass.
+// Legacy mobile rights remain allow-by-default and admins bypass them. The
+// cash-expense keys below are an explicit opt-in exception, including admins.
 //
 // Known keys (kept in lockstep with MOBILE_PERM_KEYS in the web Users screen —
 // unknown keys are preserved for forward-compat):
@@ -52,8 +51,21 @@
 //   return_unpost     فك ترحيل مرتجع مبيعات
 //   voucher_post      ترحيل سند قبض
 //   voucher_unpost    فك ترحيل سند قبض
+//   cash_expenses_create/view_own/view_all/edit/post/cancel/report
 
 export type MobilePerms = Record<string, boolean> | null;
+
+export const CASH_EXPENSE_MOBILE_PERMISSION_KEYS = [
+  "cash_expenses_create",
+  "cash_expenses_view_own",
+  "cash_expenses_view_all",
+  "cash_expenses_edit",
+  "cash_expenses_post",
+  "cash_expenses_cancel",
+  "cash_expenses_report",
+] as const;
+
+const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set<string>(CASH_EXPENSE_MOBILE_PERMISSION_KEYS);
 
 /** Clamp the client payload: coerce values to booleans, cap key length. */
 export function sanitizeMobilePermissions(raw: any): Record<string, boolean> | null {
@@ -72,6 +84,11 @@ export function mobilePermAllowed(
   key: string,
 ): boolean {
   if (!user) return false;
+  // This new module is opt-in even for admins and even when the stored map is
+  // null/legacy. Do not change the allow-by-default rule for older features.
+  if (EXPLICIT_MOBILE_PERMISSION_KEYS.has(key)) {
+    return user.mobilePermissions?.[key] === true;
+  }
   if (user.role === "admin" || user.role === "superadmin") return true;
   const map = user.mobilePermissions;
   if (map == null || typeof map !== "object") return true;

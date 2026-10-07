@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const EMPTY = { code: "", nameAr: "", nameEn: "", currencyId: "", branchId: "", accountId: "", minBalance: "", maxBalance: "", notes: "", isActive: true };
+const EMPTY = { code: "", nameAr: "", nameEn: "", currencyId: "", branchId: "", accountId: "", cashExpenseManagerUserId: "", minBalance: "", maxBalance: "", notes: "", isActive: true };
 
 export default function CashBoxes() {
   const { user, token } = useAuth();
@@ -29,6 +29,7 @@ export default function CashBoxes() {
   const qc = useQueryClient();
   const h = { Authorization: `Bearer ${token}` };
   const cid = user?.companyId;
+  const canAssignExpenseManager = user?.role === "admin" || user?.role === "superadmin";
 
   const [search,  setSearch]  = useState("");
   const [branchIds, setBranchIds] = useState<number[]>([]);
@@ -66,6 +67,15 @@ export default function CashBoxes() {
     queryFn: () => fetch(`${API}/api/org/branches?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
   });
+  const { data: companyUsers = [] } = useQuery({
+    queryKey: ["cash-expense-managers", cid],
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/users?companyId=${cid}`, { headers: h });
+      if (!response.ok) throw new Error("تعذّر تحميل مستخدمي الشركة");
+      return response.json();
+    },
+    enabled: !!cid && canAssignExpenseManager,
+  });
   const defaultCurrencyId = (currencies as any[]).find((c: any) => c.isDefault)?.id ?? (currencies as any[])[0]?.id ?? null;
   const defaultBranchId   = (branches   as any[]).find((b: any) => b.isMain)?.id   ?? (branches   as any[])[0]?.id ?? null;
 
@@ -92,7 +102,7 @@ export default function CashBoxes() {
   }
   function openEdit(r: any) {
     setEditing(r);
-    setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", branchId: r.branchId ? String(r.branchId) : "", accountId: "", minBalance: r.minBalance ?? "", maxBalance: r.maxBalance ?? "", notes: r.notes ?? "", isActive: r.isActive ?? true });
+    setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", branchId: r.branchId ? String(r.branchId) : "", accountId: "", cashExpenseManagerUserId: r.cashExpenseManagerUserId ? String(r.cashExpenseManagerUserId) : "", minBalance: r.minBalance ?? "", maxBalance: r.maxBalance ?? "", notes: r.notes ?? "", isActive: r.isActive ?? true });
     setAcctId(r.accountId ? String(r.accountId) : "");
     setErrors({});
     setTab("basic");
@@ -126,6 +136,9 @@ export default function CashBoxes() {
         accountId: acctId ? parseInt(acctId) : null,
         currencyId: form.currencyId ? parseInt(form.currencyId) : null,
         branchId:   form.branchId   ? parseInt(form.branchId)   : null,
+        ...(canAssignExpenseManager ? {
+          cashExpenseManagerUserId: form.cashExpenseManagerUserId ? Number(form.cashExpenseManagerUserId) : null,
+        } : {}),
       };
       const url  = editing ? `${API}/api/cash-boxes/${editing.id}` : `${API}/api/cash-boxes`;
       const res  = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -272,6 +285,20 @@ export default function CashBoxes() {
                 <Field label={t("cashCommon.account")} className="md:col-span-2">
                   <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder={t("cashCommon.selectAccount")} filterTypes={["asset"]} grouped={false} />
                 </Field>
+                {canAssignExpenseManager ? (
+                  <Field label={t("cashBoxes.expenseManager", "Cash expense manager")} className="md:col-span-2">
+                    <select
+                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                      value={form.cashExpenseManagerUserId}
+                      onChange={e => setForm(p => ({ ...p, cashExpenseManagerUserId: e.target.value }))}
+                    >
+                      <option value="">{t("cashBoxes.noExpenseManager", "No assigned manager")}</option>
+                      {(companyUsers as any[]).filter((u: any) => u.isActive).map((u: any) => (
+                        <option key={u.id} value={u.id}>{u.nameAr || u.username || `#${u.id}`}{u.nameEn ? ` — ${u.nameEn}` : ""}</option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : null}
               </FormGrid>
             </TabsContent>
 
