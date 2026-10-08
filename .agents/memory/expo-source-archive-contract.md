@@ -16,3 +16,15 @@ The local Launch CLI also rejected the injected `EXPO_TOKEN` robot identity for 
 **Why:** This environment's local Launch packaging and auth behavior differs from a normal EAS upload: ignore files were not applied to the size scan, and the workspace robot identity was not the user's Expo account.
 
 **How to apply:** Stage only the app and required workspace packages in a temporary snapshot, keep archived binaries and unrelated monorepo exports out, and run personal Launch login with `EXPO_TOKEN` omitted for that process only.
+
+Do not use the stripped Launch bundle as an EAS CLI working directory. It omits the pnpm workspace root and lockfile, so local Expo config resolution fails before EAS can query or build the project. For EAS, package the workspace manifests and lockfile with the app and its required workspace dependencies, then install the filtered workspace dependencies before invoking EAS CLI.
+
+**Why:** EAS CLI resolves Expo config plugins locally, while the Launch handoff archive is intentionally optimized for Launch upload and is not a complete installable pnpm workspace.
+
+**How to apply:** Keep Launch and EAS source bundles distinct. For EAS work, include the workspace root metadata and required local packages; exclude secrets, node_modules, and unrelated monorepo source.
+
+For an app already published to Play, confirm EAS's remote Android version code before a production build. If no remote value or local `android.versionCode` exists, EAS may initialize the sequence at 1; seed it from the last Play Console version before auto-incrementing.
+
+**Why:** EAS remote versioning is independent of Play Console and cannot infer an existing store version when the app config omits it.
+
+**How to apply:** Run the read-only remote version query first; if the value is behind the store, synchronize the remote value to the last published version before creating the next AAB.
