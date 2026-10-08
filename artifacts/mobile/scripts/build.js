@@ -24,6 +24,13 @@ function findWorkspaceRoot(startDir) {
 const workspaceRoot = findWorkspaceRoot(projectRoot);
 const basePath = (process.env.BASE_PATH || '/').replace(/\/+$/, '');
 
+function timeoutFromEnv(name, fallbackMs) {
+  const configuredMs = Number(process.env[name]);
+  return Number.isFinite(configuredMs) && configuredMs >= 1000
+    ? Math.floor(configuredMs)
+    : fallbackMs;
+}
+
 function exitWithError(message) {
   console.error(message);
   if (metroProcess) {
@@ -188,8 +195,11 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
 
 async function downloadFile(url, outputPath) {
   const controller = new AbortController();
-  const fiveMinMS = 5 * 60 * 1_000;
-  const timeoutId = setTimeout(() => controller.abort(), fiveMinMS);
+  const timeoutMs = timeoutFromEnv(
+    'EXPO_BUNDLE_DOWNLOAD_TIMEOUT_MS',
+    10 * 60 * 1_000,
+  );
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     console.log(`Downloading: ${url}`);
@@ -214,7 +224,9 @@ async function downloadFile(url, outputPath) {
     }
 
     if (error.name === 'AbortError') {
-      throw new Error(`Download timeout after 5m: ${url}`);
+      throw new Error(
+        `Download timeout after ${Math.ceil(timeoutMs / 60_000)}m: ${url}`,
+      );
     }
     throw error;
   } finally {
@@ -536,7 +548,10 @@ async function main() {
 
   await startMetro(domain, expoPublicReplId);
 
-  const downloadTimeout = 600000;
+  const downloadTimeout = timeoutFromEnv(
+    'EXPO_OVERALL_DOWNLOAD_TIMEOUT_MS',
+    25 * 60 * 1_000,
+  );
   const downloadPromise = downloadBundlesAndManifests(timestamp);
   const timeoutPromise = new Promise((_, reject) => {
     setTimeout(() => {
