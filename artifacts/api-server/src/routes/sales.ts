@@ -1,4 +1,8 @@
 import { Router } from "express";
+import {
+  LookupSalesOrderSourceDocumentQueryParams,
+  LookupSalesOrderSourceDocumentResponse,
+} from "@workspace/api-zod";
 import { expenseJournalLines, expenseWhere, installExpenseDocumentTransactions } from "../lib/documentExpenses.js";
 import { canPostDoc, requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { randomUUID } from "node:crypto";
@@ -6525,6 +6529,47 @@ router.get("/sales-orders", async (req, res) => {
       .orderBy(desc(salesOrdersTable.orderDate), desc(salesOrdersTable.id));
     res.json(rows);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.get("/sales-orders/source-lookup", async (req, res): Promise<void> => {
+  try {
+    const parsedQuery = LookupSalesOrderSourceDocumentQueryParams.safeParse(req.query);
+    if (!parsedQuery.success) {
+      res.status(400).json({ error: "رقم أمر البيع غير صالح" });
+      return;
+    }
+    const cid = getCid(req);
+    if (!cid) {
+      res.status(401).json({ error: "غير مصرح" });
+      return;
+    }
+    const { docNumber, branchId } = parsedQuery.data;
+    const matches = await db.select().from(salesOrdersTable).where(and(
+      eq(salesOrdersTable.companyId, cid),
+      ilike(salesOrdersTable.docNumber, docNumber),
+      eq(salesOrdersTable.status, "confirmed"),
+      isNull(salesOrdersTable.convertedInvoiceId),
+      ...branchScopeSpread(req, salesOrdersTable.branchId, branchId),
+    )).limit(2);
+    if (matches.length > 1) {
+      res.status(409).json({ error: "يوجد أكثر من أمر بيع بهذا الرقم؛ يرجى استخدام رقم فريد" });
+      return;
+    }
+    const order = matches[0];
+    if (!order) {
+      res.status(404).json({ error: "أمر البيع المؤكد غير المحوّل غير موجود" });
+      return;
+    }
+    res.json(LookupSalesOrderSourceDocumentResponse.parse({
+      sourceType: "sales-order",
+      id: order.id,
+      docNumber: order.docNumber,
+      documentDate: order.orderDate,
+      branchId: order.branchId,
+    }));
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 router.get("/sales-orders/:id", async (req, res) => {

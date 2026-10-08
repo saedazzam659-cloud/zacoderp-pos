@@ -2854,6 +2854,37 @@ export interface SalesDeliverySourceDocument {
   lines: PurchaseSourceDocumentLine[];
 }
 
+export type SalesOrderSourceDocumentSourceType =
+  (typeof SalesOrderSourceDocumentSourceType)[keyof typeof SalesOrderSourceDocumentSourceType];
+
+export const SalesOrderSourceDocumentSourceType = {
+  "sales-order": "sales-order",
+} as const;
+
+export interface SalesOrderSourceDocument {
+  sourceType: SalesOrderSourceDocumentSourceType;
+  id: number;
+  docNumber: string;
+  documentDate: string;
+  /** @nullable */
+  branchId?: number | null;
+}
+
+export type SalesOrderConversionResultOrder = {
+  id: number;
+  [key: string]: unknown;
+};
+
+export type SalesOrderConversionResultInvoice = {
+  id: number;
+  [key: string]: unknown;
+};
+
+export interface SalesOrderConversionResult {
+  order: SalesOrderConversionResultOrder;
+  invoice: SalesOrderConversionResultInvoice;
+}
+
 export type PurchaseOrderReceiptOptionStatus =
   (typeof PurchaseOrderReceiptOptionStatus)[keyof typeof PurchaseOrderReceiptOptionStatus];
 
@@ -3549,6 +3580,22 @@ export type GetPurchaseReceiptFollowUpParams = {
 };
 
 export type LookupSalesDeliverySourceDocumentParams = {
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  docNumber: string;
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
+};
+
+export type LookupSalesOrderSourceDocumentParams = {
   /**
    * @minLength 1
    * @maxLength 120

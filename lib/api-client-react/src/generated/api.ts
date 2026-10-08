@@ -107,6 +107,7 @@ import type {
   ListWhatsAppContactsParams,
   LookupPurchaseSourceDocumentParams,
   LookupSalesDeliverySourceDocumentParams,
+  LookupSalesOrderSourceDocumentParams,
   ManufacturingDeliveryEvidence,
   MonthlyStat,
   OkResponse,
@@ -122,6 +123,8 @@ import type {
   SalesDeliverySourceDocument,
   SalesInvoiceConversionInput,
   SalesInvoiceDraft,
+  SalesOrderConversionResult,
+  SalesOrderSourceDocument,
   SaveOwnerBillTaxMapping200,
   SaveOwnerBillTaxMappingBody,
   SchoolAcademicPeriod,
@@ -12848,6 +12851,202 @@ export function useLookupSalesDeliverySourceDocument<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Find a confirmed, unconverted sales order by document number
+ */
+export const getLookupSalesOrderSourceDocumentUrl = (
+  params: LookupSalesOrderSourceDocumentParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sales/sales-orders/source-lookup?${stringifiedParams}`
+    : `/api/sales/sales-orders/source-lookup`;
+};
+
+export const lookupSalesOrderSourceDocument = async (
+  params: LookupSalesOrderSourceDocumentParams,
+  options?: RequestInit,
+): Promise<SalesOrderSourceDocument> => {
+  return customFetch<SalesOrderSourceDocument>(
+    getLookupSalesOrderSourceDocumentUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getLookupSalesOrderSourceDocumentQueryKey = (
+  params?: LookupSalesOrderSourceDocumentParams,
+) => {
+  return [
+    `/api/sales/sales-orders/source-lookup`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getLookupSalesOrderSourceDocumentQueryOptions = <
+  TData = Awaited<ReturnType<typeof lookupSalesOrderSourceDocument>>,
+  TError = ErrorType<void>,
+>(
+  params: LookupSalesOrderSourceDocumentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupSalesOrderSourceDocument>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getLookupSalesOrderSourceDocumentQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof lookupSalesOrderSourceDocument>>
+  > = ({ signal }) =>
+    lookupSalesOrderSourceDocument(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof lookupSalesOrderSourceDocument>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type LookupSalesOrderSourceDocumentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof lookupSalesOrderSourceDocument>>
+>;
+export type LookupSalesOrderSourceDocumentQueryError = ErrorType<void>;
+
+/**
+ * @summary Find a confirmed, unconverted sales order by document number
+ */
+
+export function useLookupSalesOrderSourceDocument<
+  TData = Awaited<ReturnType<typeof lookupSalesOrderSourceDocument>>,
+  TError = ErrorType<void>,
+>(
+  params: LookupSalesOrderSourceDocumentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupSalesOrderSourceDocument>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getLookupSalesOrderSourceDocumentQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a sales-invoice draft from a confirmed sales order
+ */
+export const getConvertSalesOrderToInvoiceUrl = (id: number) => {
+  return `/api/sales/sales-orders/${id}/convert`;
+};
+
+export const convertSalesOrderToInvoice = async (
+  id: number,
+  options?: RequestInit,
+): Promise<SalesOrderConversionResult> => {
+  return customFetch<SalesOrderConversionResult>(
+    getConvertSalesOrderToInvoiceUrl(id),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConvertSalesOrderToInvoiceMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertSalesOrderToInvoice>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof convertSalesOrderToInvoice>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["convertSalesOrderToInvoice"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof convertSalesOrderToInvoice>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return convertSalesOrderToInvoice(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConvertSalesOrderToInvoiceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof convertSalesOrderToInvoice>>
+>;
+
+export type ConvertSalesOrderToInvoiceMutationError = ErrorType<void>;
+
+/**
+ * @summary Create a sales-invoice draft from a confirmed sales order
+ */
+export const useConvertSalesOrderToInvoice = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertSalesOrderToInvoice>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof convertSalesOrderToInvoice>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getConvertSalesOrderToInvoiceMutationOptions(options));
+};
 
 /**
  * @summary Create a purchase-invoice draft from a confirmed purchase order

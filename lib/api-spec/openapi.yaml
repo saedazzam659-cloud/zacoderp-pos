@@ -3114,6 +3114,49 @@ paths:
         "400": { description: Invalid document number }
         "404": { description: Eligible delivery not found }
         "409": { description: More than one eligible delivery has this number }
+  /sales/sales-orders/source-lookup:
+    get:
+      operationId: lookupSalesOrderSourceDocument
+      tags: [sales]
+      summary: Find a confirmed, unconverted sales order by document number
+      parameters:
+        - name: docNumber
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 120 }
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Eligible sales-order header
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesOrderSourceDocument" }
+        "400": { description: Invalid document number }
+        "404": { description: Eligible sales order not found }
+        "409": { description: More than one eligible order has this number }
+  /sales/sales-orders/{id}/convert:
+    post:
+      operationId: convertSalesOrderToInvoice
+      tags: [sales]
+      summary: Create a sales-invoice draft from a confirmed sales order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Created sales invoice draft and linked order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesOrderConversionResult" }
+        "400": { description: Order is not confirmed or was already converted }
+        "404": { description: Sales order not found }
   /purchasing/purchase-orders/{id}/convert:
     post:
       operationId: convertPurchaseOrderToInvoice
@@ -5903,6 +5946,31 @@ components:
         lines:
           type: array
           items: { $ref: "#/components/schemas/PurchaseSourceDocumentLine" }
+    SalesOrderSourceDocument:
+      type: object
+      required: [sourceType, id, docNumber, documentDate]
+      properties:
+        sourceType: { type: string, enum: [sales-order] }
+        id: { type: integer }
+        docNumber: { type: string }
+        documentDate: { type: string }
+        branchId: { type: ["integer", "null"] }
+    SalesOrderConversionResult:
+      type: object
+      required: [order, invoice]
+      properties:
+        order:
+          type: object
+          required: [id]
+          properties:
+            id: { type: integer }
+          additionalProperties: true
+        invoice:
+          type: object
+          required: [id]
+          properties:
+            id: { type: integer }
+          additionalProperties: true
     PurchaseOrderReceiptOption:
       type: object
       required: [id, docNumber, orderDate, status, supplierId, supplierNameAr, supplierNameEn, branchId]

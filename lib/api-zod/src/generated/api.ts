@@ -5298,6 +5298,45 @@ export const LookupSalesDeliverySourceDocumentResponse = zod.object({
 });
 
 /**
+ * @summary Find a confirmed, unconverted sales order by document number
+ */
+export const lookupSalesOrderSourceDocumentQueryDocNumberMax = 120;
+
+export const LookupSalesOrderSourceDocumentQueryParams = zod.object({
+  docNumber: zod.coerce
+    .string()
+    .min(1)
+    .max(lookupSalesOrderSourceDocumentQueryDocNumberMax),
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+});
+
+export const LookupSalesOrderSourceDocumentResponse = zod.object({
+  sourceType: zod.enum(["sales-order"]),
+  id: zod.number(),
+  docNumber: zod.string(),
+  documentDate: zod.string(),
+  branchId: zod.number().nullish(),
+});
+
+/**
+ * @summary Create a sales-invoice draft from a confirmed sales order
+ */
+
+export const ConvertSalesOrderToInvoiceParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const ConvertSalesOrderToInvoiceResponse = zod.object({
+  order: zod.object({
+    id: zod.number(),
+  }),
+  invoice: zod.object({
+    id: zod.number(),
+  }),
+});
+
+/**
  * @summary Create a purchase-invoice draft from a confirmed purchase order
  */
 
