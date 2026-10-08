@@ -34,6 +34,7 @@ node_modules
 
 # misc
 /.sass-cache
+/attached_assets/zacode-launch-bundle.zip
 /connect.lock
 /coverage
 /libpeerconnection.log
