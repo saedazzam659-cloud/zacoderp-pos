@@ -58,6 +58,8 @@ import type {
   GetCashExpensesParams,
   GetDashboardSummaryParams,
   GetMonthlyStatsParams,
+  GetPurchaseOrderReceiptOptionsParams,
+  GetPurchaseReceiptFollowUpParams,
   GetRecentInvoicesParams,
   GetSafetyKpisParams,
   GetSchoolAcademicPeriodsParams,
@@ -101,12 +103,23 @@ import type {
   ListTaxIntegrationSubmissionsParams,
   ListWhatsAppCampaignsParams,
   ListWhatsAppContactsParams,
+  LookupPurchaseSourceDocumentParams,
+  LookupSalesDeliverySourceDocumentParams,
   ManufacturingDeliveryEvidence,
   MonthlyStat,
   OkResponse,
+  PurchaseInvoiceConversionInput,
+  PurchaseInvoiceConversionResult,
+  PurchaseInvoiceDraft,
+  PurchaseOrderReceiptOption,
+  PurchaseReceiptFollowUpReport,
+  PurchaseSourceDocument,
   RiskAssessment,
   RiskControl,
   SafetyKpis,
+  SalesDeliverySourceDocument,
+  SalesInvoiceConversionInput,
+  SalesInvoiceDraft,
   SaveOwnerBillTaxMapping200,
   SaveOwnerBillTaxMappingBody,
   SchoolAcademicPeriod,
@@ -12287,3 +12300,711 @@ export function useGetCashExpenseReceipt<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Find an eligible purchase order or posted goods receipt by document number
+ */
+export const getLookupPurchaseSourceDocumentUrl = (
+  params: LookupPurchaseSourceDocumentParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/purchasing/source-documents/lookup?${stringifiedParams}`
+    : `/api/purchasing/source-documents/lookup`;
+};
+
+export const lookupPurchaseSourceDocument = async (
+  params: LookupPurchaseSourceDocumentParams,
+  options?: RequestInit,
+): Promise<PurchaseSourceDocument> => {
+  return customFetch<PurchaseSourceDocument>(
+    getLookupPurchaseSourceDocumentUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getLookupPurchaseSourceDocumentQueryKey = (
+  params?: LookupPurchaseSourceDocumentParams,
+) => {
+  return [
+    `/api/purchasing/source-documents/lookup`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getLookupPurchaseSourceDocumentQueryOptions = <
+  TData = Awaited<ReturnType<typeof lookupPurchaseSourceDocument>>,
+  TError = ErrorType<void>,
+>(
+  params: LookupPurchaseSourceDocumentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupPurchaseSourceDocument>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getLookupPurchaseSourceDocumentQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof lookupPurchaseSourceDocument>>
+  > = ({ signal }) =>
+    lookupPurchaseSourceDocument(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof lookupPurchaseSourceDocument>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type LookupPurchaseSourceDocumentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof lookupPurchaseSourceDocument>>
+>;
+export type LookupPurchaseSourceDocumentQueryError = ErrorType<void>;
+
+/**
+ * @summary Find an eligible purchase order or posted goods receipt by document number
+ */
+
+export function useLookupPurchaseSourceDocument<
+  TData = Awaited<ReturnType<typeof lookupPurchaseSourceDocument>>,
+  TError = ErrorType<void>,
+>(
+  params: LookupPurchaseSourceDocumentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupPurchaseSourceDocument>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getLookupPurchaseSourceDocumentQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List non-cancelled purchase orders that can be linked to goods receipts
+ */
+export const getGetPurchaseOrderReceiptOptionsUrl = (
+  params?: GetPurchaseOrderReceiptOptionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/purchasing/purchase-orders/receipt-options?${stringifiedParams}`
+    : `/api/purchasing/purchase-orders/receipt-options`;
+};
+
+export const getPurchaseOrderReceiptOptions = async (
+  params?: GetPurchaseOrderReceiptOptionsParams,
+  options?: RequestInit,
+): Promise<PurchaseOrderReceiptOption[]> => {
+  return customFetch<PurchaseOrderReceiptOption[]>(
+    getGetPurchaseOrderReceiptOptionsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPurchaseOrderReceiptOptionsQueryKey = (
+  params?: GetPurchaseOrderReceiptOptionsParams,
+) => {
+  return [
+    `/api/purchasing/purchase-orders/receipt-options`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetPurchaseOrderReceiptOptionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPurchaseOrderReceiptOptions>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetPurchaseOrderReceiptOptionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPurchaseOrderReceiptOptions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPurchaseOrderReceiptOptionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPurchaseOrderReceiptOptions>>
+  > = ({ signal }) =>
+    getPurchaseOrderReceiptOptions(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPurchaseOrderReceiptOptions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPurchaseOrderReceiptOptionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPurchaseOrderReceiptOptions>>
+>;
+export type GetPurchaseOrderReceiptOptionsQueryError = ErrorType<void>;
+
+/**
+ * @summary List non-cancelled purchase orders that can be linked to goods receipts
+ */
+
+export function useGetPurchaseOrderReceiptOptions<
+  TData = Awaited<ReturnType<typeof getPurchaseOrderReceiptOptions>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetPurchaseOrderReceiptOptionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPurchaseOrderReceiptOptions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPurchaseOrderReceiptOptionsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read ordered, stock-effective received, and remaining quantities by purchase-order item
+ */
+export const getGetPurchaseReceiptFollowUpUrl = (
+  params?: GetPurchaseReceiptFollowUpParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/purchasing/reports/receipt-follow-up?${stringifiedParams}`
+    : `/api/purchasing/reports/receipt-follow-up`;
+};
+
+export const getPurchaseReceiptFollowUp = async (
+  params?: GetPurchaseReceiptFollowUpParams,
+  options?: RequestInit,
+): Promise<PurchaseReceiptFollowUpReport> => {
+  return customFetch<PurchaseReceiptFollowUpReport>(
+    getGetPurchaseReceiptFollowUpUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPurchaseReceiptFollowUpQueryKey = (
+  params?: GetPurchaseReceiptFollowUpParams,
+) => {
+  return [
+    `/api/purchasing/reports/receipt-follow-up`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetPurchaseReceiptFollowUpQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPurchaseReceiptFollowUp>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetPurchaseReceiptFollowUpParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPurchaseReceiptFollowUp>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPurchaseReceiptFollowUpQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPurchaseReceiptFollowUp>>
+  > = ({ signal }) =>
+    getPurchaseReceiptFollowUp(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPurchaseReceiptFollowUp>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPurchaseReceiptFollowUpQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPurchaseReceiptFollowUp>>
+>;
+export type GetPurchaseReceiptFollowUpQueryError = ErrorType<void>;
+
+/**
+ * @summary Read ordered, stock-effective received, and remaining quantities by purchase-order item
+ */
+
+export function useGetPurchaseReceiptFollowUp<
+  TData = Awaited<ReturnType<typeof getPurchaseReceiptFollowUp>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetPurchaseReceiptFollowUpParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPurchaseReceiptFollowUp>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPurchaseReceiptFollowUpQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Find an unlinked posted goods delivery by document number
+ */
+export const getLookupSalesDeliverySourceDocumentUrl = (
+  params: LookupSalesDeliverySourceDocumentParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/goods-deliveries/source-lookup?${stringifiedParams}`
+    : `/api/goods-deliveries/source-lookup`;
+};
+
+export const lookupSalesDeliverySourceDocument = async (
+  params: LookupSalesDeliverySourceDocumentParams,
+  options?: RequestInit,
+): Promise<SalesDeliverySourceDocument> => {
+  return customFetch<SalesDeliverySourceDocument>(
+    getLookupSalesDeliverySourceDocumentUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getLookupSalesDeliverySourceDocumentQueryKey = (
+  params?: LookupSalesDeliverySourceDocumentParams,
+) => {
+  return [
+    `/api/goods-deliveries/source-lookup`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getLookupSalesDeliverySourceDocumentQueryOptions = <
+  TData = Awaited<ReturnType<typeof lookupSalesDeliverySourceDocument>>,
+  TError = ErrorType<void>,
+>(
+  params: LookupSalesDeliverySourceDocumentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupSalesDeliverySourceDocument>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getLookupSalesDeliverySourceDocumentQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof lookupSalesDeliverySourceDocument>>
+  > = ({ signal }) =>
+    lookupSalesDeliverySourceDocument(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof lookupSalesDeliverySourceDocument>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type LookupSalesDeliverySourceDocumentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof lookupSalesDeliverySourceDocument>>
+>;
+export type LookupSalesDeliverySourceDocumentQueryError = ErrorType<void>;
+
+/**
+ * @summary Find an unlinked posted goods delivery by document number
+ */
+
+export function useLookupSalesDeliverySourceDocument<
+  TData = Awaited<ReturnType<typeof lookupSalesDeliverySourceDocument>>,
+  TError = ErrorType<void>,
+>(
+  params: LookupSalesDeliverySourceDocumentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupSalesDeliverySourceDocument>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getLookupSalesDeliverySourceDocumentQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a purchase-invoice draft from a confirmed purchase order
+ */
+export const getConvertPurchaseOrderToInvoiceUrl = (id: number) => {
+  return `/api/purchasing/purchase-orders/${id}/convert`;
+};
+
+export const convertPurchaseOrderToInvoice = async (
+  id: number,
+  options?: RequestInit,
+): Promise<PurchaseInvoiceConversionResult> => {
+  return customFetch<PurchaseInvoiceConversionResult>(
+    getConvertPurchaseOrderToInvoiceUrl(id),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConvertPurchaseOrderToInvoiceMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertPurchaseOrderToInvoice>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof convertPurchaseOrderToInvoice>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["convertPurchaseOrderToInvoice"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof convertPurchaseOrderToInvoice>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return convertPurchaseOrderToInvoice(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConvertPurchaseOrderToInvoiceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof convertPurchaseOrderToInvoice>>
+>;
+
+export type ConvertPurchaseOrderToInvoiceMutationError = ErrorType<void>;
+
+/**
+ * @summary Create a purchase-invoice draft from a confirmed purchase order
+ */
+export const useConvertPurchaseOrderToInvoice = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertPurchaseOrderToInvoice>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof convertPurchaseOrderToInvoice>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getConvertPurchaseOrderToInvoiceMutationOptions(options));
+};
+
+/**
+ * @summary Create a purchase-invoice draft from an unlinked posted goods receipt
+ */
+export const getConvertGoodsReceiptToInvoiceUrl = (id: number) => {
+  return `/api/goods-receipts/${id}/convert-to-invoice`;
+};
+
+export const convertGoodsReceiptToInvoice = async (
+  id: number,
+  purchaseInvoiceConversionInput?: PurchaseInvoiceConversionInput,
+  options?: RequestInit,
+): Promise<PurchaseInvoiceDraft> => {
+  return customFetch<PurchaseInvoiceDraft>(
+    getConvertGoodsReceiptToInvoiceUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(purchaseInvoiceConversionInput),
+    },
+  );
+};
+
+export const getConvertGoodsReceiptToInvoiceMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertGoodsReceiptToInvoice>>,
+    TError,
+    { id: number; data: BodyType<PurchaseInvoiceConversionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof convertGoodsReceiptToInvoice>>,
+  TError,
+  { id: number; data: BodyType<PurchaseInvoiceConversionInput> },
+  TContext
+> => {
+  const mutationKey = ["convertGoodsReceiptToInvoice"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof convertGoodsReceiptToInvoice>>,
+    { id: number; data: BodyType<PurchaseInvoiceConversionInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return convertGoodsReceiptToInvoice(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConvertGoodsReceiptToInvoiceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof convertGoodsReceiptToInvoice>>
+>;
+export type ConvertGoodsReceiptToInvoiceMutationBody =
+  BodyType<PurchaseInvoiceConversionInput>;
+export type ConvertGoodsReceiptToInvoiceMutationError = ErrorType<void>;
+
+/**
+ * @summary Create a purchase-invoice draft from an unlinked posted goods receipt
+ */
+export const useConvertGoodsReceiptToInvoice = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertGoodsReceiptToInvoice>>,
+    TError,
+    { id: number; data: BodyType<PurchaseInvoiceConversionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof convertGoodsReceiptToInvoice>>,
+  TError,
+  { id: number; data: BodyType<PurchaseInvoiceConversionInput> },
+  TContext
+> => {
+  return useMutation(getConvertGoodsReceiptToInvoiceMutationOptions(options));
+};
+
+/**
+ * @summary Create a sales-invoice draft from an unlinked posted goods delivery
+ */
+export const getConvertGoodsDeliveryToSalesInvoiceUrl = (id: number) => {
+  return `/api/goods-deliveries/${id}/convert-to-invoice`;
+};
+
+export const convertGoodsDeliveryToSalesInvoice = async (
+  id: number,
+  salesInvoiceConversionInput?: SalesInvoiceConversionInput,
+  options?: RequestInit,
+): Promise<SalesInvoiceDraft> => {
+  return customFetch<SalesInvoiceDraft>(
+    getConvertGoodsDeliveryToSalesInvoiceUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(salesInvoiceConversionInput),
+    },
+  );
+};
+
+export const getConvertGoodsDeliveryToSalesInvoiceMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertGoodsDeliveryToSalesInvoice>>,
+    TError,
+    { id: number; data: BodyType<SalesInvoiceConversionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof convertGoodsDeliveryToSalesInvoice>>,
+  TError,
+  { id: number; data: BodyType<SalesInvoiceConversionInput> },
+  TContext
+> => {
+  const mutationKey = ["convertGoodsDeliveryToSalesInvoice"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof convertGoodsDeliveryToSalesInvoice>>,
+    { id: number; data: BodyType<SalesInvoiceConversionInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return convertGoodsDeliveryToSalesInvoice(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConvertGoodsDeliveryToSalesInvoiceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof convertGoodsDeliveryToSalesInvoice>>
+>;
+export type ConvertGoodsDeliveryToSalesInvoiceMutationBody =
+  BodyType<SalesInvoiceConversionInput>;
+export type ConvertGoodsDeliveryToSalesInvoiceMutationError = ErrorType<void>;
+
+/**
+ * @summary Create a sales-invoice draft from an unlinked posted goods delivery
+ */
+export const useConvertGoodsDeliveryToSalesInvoice = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof convertGoodsDeliveryToSalesInvoice>>,
+    TError,
+    { id: number; data: BodyType<SalesInvoiceConversionInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof convertGoodsDeliveryToSalesInvoice>>,
+  TError,
+  { id: number; data: BodyType<SalesInvoiceConversionInput> },
+  TContext
+> => {
+  return useMutation(
+    getConvertGoodsDeliveryToSalesInvoiceMutationOptions(options),
+  );
+};

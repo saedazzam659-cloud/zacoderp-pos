@@ -2763,6 +2763,257 @@ export interface CashExpenseReceiptDelete {
   deleted: boolean;
 }
 
+export interface PurchaseSourceDocumentLine {
+  id?: number;
+  /** @nullable */
+  itemId?: number | null;
+  itemName: string;
+  /** @nullable */
+  itemCode?: string | null;
+  /** @nullable */
+  unit?: string | null;
+  /** @nullable */
+  unitId?: number | null;
+  /** @nullable */
+  conversionFactor?: string | number | null;
+  qty: string | number;
+  /** @nullable */
+  freeQty?: string | number | null;
+  /** @nullable */
+  unitPrice?: string | number | null;
+  /** @nullable */
+  discount?: string | number | null;
+  /** @nullable */
+  vatRate?: string | number | null;
+  /** @nullable */
+  lineTotal?: string | number | null;
+  /** @nullable */
+  warehouseId?: number | null;
+  /** @nullable */
+  notes?: string | null;
+}
+
+export type PurchaseSourceDocumentSourceType =
+  (typeof PurchaseSourceDocumentSourceType)[keyof typeof PurchaseSourceDocumentSourceType];
+
+export const PurchaseSourceDocumentSourceType = {
+  "purchase-order": "purchase-order",
+  "goods-receipt": "goods-receipt",
+} as const;
+
+export interface PurchaseSourceDocument {
+  sourceType: PurchaseSourceDocumentSourceType;
+  id: number;
+  docNumber: string;
+  documentDate: string;
+  /** @nullable */
+  supplierId?: number | null;
+  /** @nullable */
+  supplierNameAr?: string | null;
+  /** @nullable */
+  supplierNameEn?: string | null;
+  /** @nullable */
+  branchId?: number | null;
+  /** @nullable */
+  currencyCode?: string | null;
+  /** @nullable */
+  exchangeRate?: string | number | null;
+  priceIncludesVat?: boolean;
+  /** @nullable */
+  discountAmount?: string | number | null;
+  /** @nullable */
+  notes?: string | null;
+  lines: PurchaseSourceDocumentLine[];
+}
+
+export type SalesDeliverySourceDocumentSourceType =
+  (typeof SalesDeliverySourceDocumentSourceType)[keyof typeof SalesDeliverySourceDocumentSourceType];
+
+export const SalesDeliverySourceDocumentSourceType = {
+  "goods-delivery": "goods-delivery",
+} as const;
+
+export interface SalesDeliverySourceDocument {
+  sourceType: SalesDeliverySourceDocumentSourceType;
+  id: number;
+  docNumber: string;
+  documentDate: string;
+  /** @nullable */
+  customerId?: number | null;
+  /** @nullable */
+  branchId?: number | null;
+  /** @nullable */
+  currencyCode?: string | null;
+  /** @nullable */
+  exchangeRate?: string | number | null;
+  priceIncludesVat?: boolean;
+  /** @nullable */
+  discountAmount?: string | number | null;
+  /** @nullable */
+  notes?: string | null;
+  lines: PurchaseSourceDocumentLine[];
+}
+
+export type PurchaseOrderReceiptOptionStatus =
+  (typeof PurchaseOrderReceiptOptionStatus)[keyof typeof PurchaseOrderReceiptOptionStatus];
+
+export const PurchaseOrderReceiptOptionStatus = {
+  draft: "draft",
+  confirmed: "confirmed",
+  converted: "converted",
+} as const;
+
+export interface PurchaseOrderReceiptOption {
+  id: number;
+  /** @nullable */
+  docNumber: string | null;
+  orderDate: string;
+  status: PurchaseOrderReceiptOptionStatus;
+  /** @nullable */
+  supplierId: number | null;
+  /** @nullable */
+  supplierNameAr: string | null;
+  /** @nullable */
+  supplierNameEn: string | null;
+  /** @nullable */
+  branchId: number | null;
+}
+
+export type PurchaseReceiptFollowUpRowStatus =
+  (typeof PurchaseReceiptFollowUpRowStatus)[keyof typeof PurchaseReceiptFollowUpRowStatus];
+
+export const PurchaseReceiptFollowUpRowStatus = {
+  confirmed: "confirmed",
+  converted: "converted",
+} as const;
+
+export interface PurchaseReceiptFollowUpRow {
+  purchaseOrderId: number;
+  /** @nullable */
+  orderNumber: string | null;
+  orderDate: string;
+  status: PurchaseReceiptFollowUpRowStatus;
+  /** @nullable */
+  supplierId: number | null;
+  /** @nullable */
+  supplierNameAr: string | null;
+  /** @nullable */
+  supplierNameEn: string | null;
+  /** @nullable */
+  branchId: number | null;
+  itemKey: string;
+  /** @nullable */
+  itemId?: number | null;
+  /** @nullable */
+  itemCode?: string | null;
+  itemName: string;
+  /** @nullable */
+  unit: string | null;
+  orderedQuantity: number;
+  receivedQuantity: number;
+  remainingQuantity: number;
+  overReceivedQuantity: number;
+  receiptCount?: number;
+}
+
+export interface PurchaseReceiptFollowUpReport {
+  rows: PurchaseReceiptFollowUpRow[];
+  orderCount: number;
+  openLineCount: number;
+  fullyReceivedLineCount: number;
+  generatedAt: string;
+}
+
+export type PurchaseInvoiceConversionInputPaymentType =
+  (typeof PurchaseInvoiceConversionInputPaymentType)[keyof typeof PurchaseInvoiceConversionInputPaymentType];
+
+export const PurchaseInvoiceConversionInputPaymentType = {
+  credit: "credit",
+  cash: "cash",
+  bank: "bank",
+} as const;
+
+export interface PurchaseInvoiceConversionInput {
+  paymentType?: PurchaseInvoiceConversionInputPaymentType;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  supplierId?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  cashBoxId?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  bankAccountId?: number | null;
+}
+
+export type SalesInvoiceConversionInputPaymentType =
+  (typeof SalesInvoiceConversionInputPaymentType)[keyof typeof SalesInvoiceConversionInputPaymentType];
+
+export const SalesInvoiceConversionInputPaymentType = {
+  credit: "credit",
+  cash: "cash",
+  bank: "bank",
+} as const;
+
+export interface SalesInvoiceConversionInput {
+  paymentType?: SalesInvoiceConversionInputPaymentType;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  customerId?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  cashBoxId?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  bankAccountId?: number | null;
+}
+
+export type PurchaseInvoiceDraftStatus =
+  (typeof PurchaseInvoiceDraftStatus)[keyof typeof PurchaseInvoiceDraftStatus];
+
+export const PurchaseInvoiceDraftStatus = {
+  draft: "draft",
+} as const;
+
+export interface PurchaseInvoiceDraft {
+  id: number;
+  companyId: number;
+  invoiceDate: string;
+  status: PurchaseInvoiceDraftStatus;
+}
+
+export type SalesInvoiceDraftStatus =
+  (typeof SalesInvoiceDraftStatus)[keyof typeof SalesInvoiceDraftStatus];
+
+export const SalesInvoiceDraftStatus = {
+  draft: "draft",
+} as const;
+
+export interface SalesInvoiceDraft {
+  id: number;
+  companyId: number;
+  invoiceDate: string;
+  status: SalesInvoiceDraftStatus;
+}
+
+export interface PurchaseInvoiceConversionResult {
+  orderId: number;
+  invoiceId: number;
+  invoice: PurchaseInvoiceDraft;
+}
+
 export type GetSchoolEnrollmentPromotionPlanParams = {
   /**
    * @minimum 1
@@ -3230,4 +3481,67 @@ export const GetCashExpensesStatus = {
 export type GetCashExpenseReportParams = {
   from: string;
   to: string;
+};
+
+export type LookupPurchaseSourceDocumentParams = {
+  kind: LookupPurchaseSourceDocumentKind;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  docNumber: string;
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
+};
+
+export type LookupPurchaseSourceDocumentKind =
+  (typeof LookupPurchaseSourceDocumentKind)[keyof typeof LookupPurchaseSourceDocumentKind];
+
+export const LookupPurchaseSourceDocumentKind = {
+  "purchase-order": "purchase-order",
+  "goods-receipt": "goods-receipt",
+} as const;
+
+export type GetPurchaseOrderReceiptOptionsParams = {
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
+};
+
+export type GetPurchaseReceiptFollowUpParams = {
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
+};
+
+export type LookupSalesDeliverySourceDocumentParams = {
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  docNumber: string;
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
 };

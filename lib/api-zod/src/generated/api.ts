@@ -5119,3 +5119,199 @@ export const CancelCashExpenseResponse = zod.object({
 export const GetCashExpenseReceiptParams = zod.object({
   id: zod.coerce.number().min(1),
 });
+
+/**
+ * @summary Find an eligible purchase order or posted goods receipt by document number
+ */
+export const lookupPurchaseSourceDocumentQueryDocNumberMax = 120;
+
+export const LookupPurchaseSourceDocumentQueryParams = zod.object({
+  kind: zod.enum(["purchase-order", "goods-receipt"]),
+  docNumber: zod.coerce
+    .string()
+    .min(1)
+    .max(lookupPurchaseSourceDocumentQueryDocNumberMax),
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+});
+
+export const LookupPurchaseSourceDocumentResponse = zod.object({
+  sourceType: zod.enum(["purchase-order", "goods-receipt"]),
+  id: zod.number(),
+  docNumber: zod.string(),
+  documentDate: zod.string(),
+  supplierId: zod.number().nullish(),
+  supplierNameAr: zod.string().nullish(),
+  supplierNameEn: zod.string().nullish(),
+  branchId: zod.number().nullish(),
+  currencyCode: zod.string().nullish(),
+  exchangeRate: zod.union([zod.string(), zod.number()]).nullish(),
+  priceIncludesVat: zod.boolean().optional(),
+  discountAmount: zod.union([zod.string(), zod.number()]).nullish(),
+  notes: zod.string().nullish(),
+  lines: zod.array(
+    zod.object({
+      id: zod.number().optional(),
+      itemId: zod.number().nullish(),
+      itemName: zod.string(),
+      itemCode: zod.string().nullish(),
+      unit: zod.string().nullish(),
+      unitId: zod.number().nullish(),
+      conversionFactor: zod.union([zod.string(), zod.number()]).nullish(),
+      qty: zod.union([zod.string(), zod.number()]),
+      freeQty: zod.union([zod.string(), zod.number()]).nullish(),
+      unitPrice: zod.union([zod.string(), zod.number()]).nullish(),
+      discount: zod.union([zod.string(), zod.number()]).nullish(),
+      vatRate: zod.union([zod.string(), zod.number()]).nullish(),
+      lineTotal: zod.union([zod.string(), zod.number()]).nullish(),
+      warehouseId: zod.number().nullish(),
+      notes: zod.string().nullish(),
+    }),
+  ),
+});
+
+/**
+ * @summary List non-cancelled purchase orders that can be linked to goods receipts
+ */
+
+export const GetPurchaseOrderReceiptOptionsQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+});
+
+export const GetPurchaseOrderReceiptOptionsResponseItem = zod.object({
+  id: zod.number(),
+  docNumber: zod.string().nullable(),
+  orderDate: zod.string(),
+  status: zod.enum(["draft", "confirmed", "converted"]),
+  supplierId: zod.number().nullable(),
+  supplierNameAr: zod.string().nullable(),
+  supplierNameEn: zod.string().nullable(),
+  branchId: zod.number().nullable(),
+});
+export const GetPurchaseOrderReceiptOptionsResponse = zod.array(
+  GetPurchaseOrderReceiptOptionsResponseItem,
+);
+
+/**
+ * @summary Read ordered, stock-effective received, and remaining quantities by purchase-order item
+ */
+
+export const GetPurchaseReceiptFollowUpQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+});
+
+export const GetPurchaseReceiptFollowUpResponse = zod.object({
+  rows: zod.array(
+    zod.object({
+      purchaseOrderId: zod.number(),
+      orderNumber: zod.string().nullable(),
+      orderDate: zod.string(),
+      status: zod.enum(["confirmed", "converted"]),
+      supplierId: zod.number().nullable(),
+      supplierNameAr: zod.string().nullable(),
+      supplierNameEn: zod.string().nullable(),
+      branchId: zod.number().nullable(),
+      itemKey: zod.string(),
+      itemId: zod.number().nullish(),
+      itemCode: zod.string().nullish(),
+      itemName: zod.string(),
+      unit: zod.string().nullable(),
+      orderedQuantity: zod.number(),
+      receivedQuantity: zod.number(),
+      remainingQuantity: zod.number(),
+      overReceivedQuantity: zod.number(),
+      receiptCount: zod.number().optional(),
+    }),
+  ),
+  orderCount: zod.number(),
+  openLineCount: zod.number(),
+  fullyReceivedLineCount: zod.number(),
+  generatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Find an unlinked posted goods delivery by document number
+ */
+export const lookupSalesDeliverySourceDocumentQueryDocNumberMax = 120;
+
+export const LookupSalesDeliverySourceDocumentQueryParams = zod.object({
+  docNumber: zod.coerce
+    .string()
+    .min(1)
+    .max(lookupSalesDeliverySourceDocumentQueryDocNumberMax),
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+});
+
+export const LookupSalesDeliverySourceDocumentResponse = zod.object({
+  sourceType: zod.enum(["goods-delivery"]),
+  id: zod.number(),
+  docNumber: zod.string(),
+  documentDate: zod.string(),
+  customerId: zod.number().nullish(),
+  branchId: zod.number().nullish(),
+  currencyCode: zod.string().nullish(),
+  exchangeRate: zod.union([zod.string(), zod.number()]).nullish(),
+  priceIncludesVat: zod.boolean().optional(),
+  discountAmount: zod.union([zod.string(), zod.number()]).nullish(),
+  notes: zod.string().nullish(),
+  lines: zod.array(
+    zod.object({
+      id: zod.number().optional(),
+      itemId: zod.number().nullish(),
+      itemName: zod.string(),
+      itemCode: zod.string().nullish(),
+      unit: zod.string().nullish(),
+      unitId: zod.number().nullish(),
+      conversionFactor: zod.union([zod.string(), zod.number()]).nullish(),
+      qty: zod.union([zod.string(), zod.number()]),
+      freeQty: zod.union([zod.string(), zod.number()]).nullish(),
+      unitPrice: zod.union([zod.string(), zod.number()]).nullish(),
+      discount: zod.union([zod.string(), zod.number()]).nullish(),
+      vatRate: zod.union([zod.string(), zod.number()]).nullish(),
+      lineTotal: zod.union([zod.string(), zod.number()]).nullish(),
+      warehouseId: zod.number().nullish(),
+      notes: zod.string().nullish(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create a purchase-invoice draft from a confirmed purchase order
+ */
+
+export const ConvertPurchaseOrderToInvoiceParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+/**
+ * @summary Create a purchase-invoice draft from an unlinked posted goods receipt
+ */
+
+export const ConvertGoodsReceiptToInvoiceParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const ConvertGoodsReceiptToInvoiceBody = zod.object({
+  paymentType: zod.enum(["credit", "cash", "bank"]).optional(),
+  supplierId: zod.number().min(1).nullish(),
+  cashBoxId: zod.number().min(1).nullish(),
+  bankAccountId: zod.number().min(1).nullish(),
+});
+
+/**
+ * @summary Create a sales-invoice draft from an unlinked posted goods delivery
+ */
+
+export const ConvertGoodsDeliveryToSalesInvoiceParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const ConvertGoodsDeliveryToSalesInvoiceBody = zod.object({
+  paymentType: zod.enum(["credit", "cash", "bank"]).optional(),
+  customerId: zod.number().min(1).nullish(),
+  cashBoxId: zod.number().min(1).nullish(),
+  bankAccountId: zod.number().min(1).nullish(),
+});

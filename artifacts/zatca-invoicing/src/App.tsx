@@ -411,6 +411,7 @@ import PurchaseInvoicePaymentStatus from "@/pages/purchasing/reports/PurchaseInv
 import SupplierAgingReport     from "@/pages/purchasing/reports/SupplierAgingReport";
 import PurchasesBySupplier     from "@/pages/purchasing/reports/PurchasesBySupplier";
 import PurchasesByItem         from "@/pages/purchasing/reports/PurchasesByItem";
+import PurchaseReceiptFollowUp from "@/pages/purchasing/reports/PurchaseReceiptFollowUp";
 import PurchasesByPeriod       from "@/pages/purchasing/reports/PurchasesByPeriod";
 import PurchasesVatRegister    from "@/pages/purchasing/reports/PurchasesVatRegister";
 import TopSuppliers            from "@/pages/purchasing/reports/TopSuppliers";
@@ -1359,6 +1360,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/aging"                module="purchase_invoices"  component={SupplierAgingReport} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-supplier" module="purchase_invoices" component={PurchasesBySupplier} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-item"    module="purchase_invoices"  component={PurchasesByItem} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/receipt-follow-up"    module="purchase_invoices"  component={PurchaseReceiptFollowUp} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-period"  module="purchase_invoices"  component={PurchasesByPeriod} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/top-suppliers"        module="suppliers"          component={TopSuppliers} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/returns"              module="purchase_returns"   component={PurchaseReturnsReport} />}

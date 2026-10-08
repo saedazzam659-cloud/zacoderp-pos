@@ -63,6 +63,11 @@ import {
   useAgentCompactInvoiceTypeSelector,
 } from "@/lib/agentBranding";
 import { COLORFUL_INVOICE_TAB_LIST_CLASS, getInvoiceTabColorClass } from "@/lib/invoiceTabColors";
+import { DocumentQuantityWarnings } from "@/components/DocumentQuantityWarnings";
+import {
+  convertGoodsDeliveryToSalesInvoice,
+  lookupSalesDeliverySourceDocument,
+} from "@workspace/api-client-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -366,6 +371,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // when isInvoice && isNew. Cleared on save/navigation alongside the rest
   // of the form state.
   const [sourceQuotationId, setSourceQuotationId] = useState("");
+  const [sourceDeliveryNumber, setSourceDeliveryNumber] = useState("");
+  const [sourceDeliveryLoading, setSourceDeliveryLoading] = useState(false);
   const [branchId,  setBranchId]        = useState("");
   const [paymentType,setPaymentType]    = useState("credit");
   const [cashBoxId, setCashBoxId]       = useState("");
@@ -581,6 +588,36 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       toast({ title: t("salesDocForm.basedOnQuotationLoaded", { num: src.docNumber ?? `SQ-${qid}` }) });
     } catch (e: any) {
       toast({ title: e?.message || t("salesDocForm.basedOnQuotationLoadError"), variant: "destructive" });
+    }
+  }
+
+  async function loadFromGoodsDelivery() {
+    const docNumber = sourceDeliveryNumber.trim();
+    if (!docNumber || !isInvoice || !isNew || sourceDeliveryLoading) return;
+    setSourceDeliveryLoading(true);
+    try {
+      const source = await lookupSalesDeliverySourceDocument({
+        docNumber,
+        companyId: cid,
+        branchId: branchId ? Number(branchId) : undefined,
+      });
+      const invoice = await convertGoodsDeliveryToSalesInvoice(source.id, {
+        paymentType,
+        cashBoxId: cashBoxId ? Number(cashBoxId) : undefined,
+        bankAccountId: bankAccountId ? Number(bankAccountId) : undefined,
+      } as any);
+      if (!invoice?.id) throw new Error(t("salesDocForm.goodsDeliveryLoadError"));
+      qc.invalidateQueries({ queryKey: ["sales-invoices"] });
+      qc.invalidateQueries({ queryKey: ["goods-deliveries"] });
+      toast({ title: t("salesDocForm.goodsDeliveryLoaded", { num: source.docNumber }) });
+      navigate(`${basePath}/${invoice.id}`);
+    } catch (error: any) {
+      toast({
+        title: error?.message || t("salesDocForm.goodsDeliveryLoadError"),
+        variant: "destructive",
+      });
+    } finally {
+      setSourceDeliveryLoading(false);
     }
   }
 
@@ -3680,6 +3717,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     />
                   </div>
                 )}
+                {isInvoice && isNew && (
+                  <div className="col-span-full space-y-1.5" data-testid="sales-delivery-source-loader">
+                    <Label className="text-xs">{t("salesDocForm.goodsDeliverySourceTitle")}</Label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        className="h-9 flex-1"
+                        value={sourceDeliveryNumber}
+                        onChange={event => setSourceDeliveryNumber(event.target.value)}
+                        onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void loadFromGoodsDelivery(); } }}
+                        placeholder={t("salesDocForm.goodsDeliveryNumberPlaceholder")}
+                        aria-label={t("salesDocForm.goodsDeliveryNumber")}
+                        data-testid="sales-delivery-source-number"
+                      />
+                      <Button type="button" className="h-9" onClick={() => void loadFromGoodsDelivery()}
+                        disabled={!sourceDeliveryNumber.trim() || sourceDeliveryLoading} data-testid="sales-delivery-source-load">
+                        {sourceDeliveryLoading ? t("salesDocForm.loadingGoodsDelivery") : t("salesDocForm.loadGoodsDelivery")}
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 {usesBranch && fp.isVisible("branch") && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.branch")}<span className="text-destructive"> *</span></Label>
@@ -3870,6 +3927,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
               {!useTabbedLayout && (
                 <>
+                  {existing?.sourceDocument?.lines && (
+                    <DocumentQuantityWarnings
+                      sourceLabel={t("salesDocForm.goodsDelivery")}
+                      sourceNumber={existing.sourceDocument.docNumber}
+                      sourceLines={existing.sourceDocument.lines}
+                      invoiceLines={lines}
+                    />
+                  )}
                   {linesHeaderBlock}
                   {linesSection}
                 </>
@@ -3883,6 +3948,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             <>
               <TabsContent value="items" className="mt-0">
                 <CardContent className="pt-5 pb-5 space-y-4">
+                  {existing?.sourceDocument?.lines && (
+                    <DocumentQuantityWarnings
+                      sourceLabel={t("salesDocForm.goodsDelivery")}
+                      sourceNumber={existing.sourceDocument.docNumber}
+                      sourceLines={existing.sourceDocument.lines}
+                      invoiceLines={lines}
+                    />
+                  )}
                   {topActionBar}
                   <fieldset disabled={editLock} className="contents">
                     {linesHeaderBlock}

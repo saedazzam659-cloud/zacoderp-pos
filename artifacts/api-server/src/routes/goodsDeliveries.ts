@@ -12,7 +12,7 @@ import {
   itemsTable, branchesTable, cashBoxesTable, bankAccountsTable,
 } from "@workspace/db";
 import { inArray } from "drizzle-orm";
-import { eq, and, asc, desc, sql } from "drizzle-orm";
+import { eq, and, asc, desc, sql, ilike, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
@@ -338,6 +338,45 @@ router.get("/", async (req, res) => {
       createdByName: r.createdById != null ? (uMap.get(r.createdById) ?? null) : null,
       postedByName:  r.postedById  != null ? (uMap.get(r.postedById)  ?? null) : null,
     })));
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.get("/source-lookup", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const docNumber = String(req.query.docNumber ?? "").trim();
+    if (!docNumber || docNumber.length > 120) {
+      res.status(400).json({ error: "رقم إذن التسليم غير صالح" });
+      return;
+    }
+    const matches = await db.select().from(goodsDeliveriesTable).where(and(
+      eq(goodsDeliveriesTable.companyId, cid),
+      ilike(goodsDeliveriesTable.docNumber, docNumber),
+      eq(goodsDeliveriesTable.status, "posted"),
+      isNull(goodsDeliveriesTable.linkedInvoiceId),
+      ...branchScopeSpread(req, goodsDeliveriesTable.branchId, req.query.branchId),
+    )).limit(2);
+    if (matches.length > 1) { res.status(409).json({ error: "يوجد أكثر من إذن تسليم بهذا الرقم؛ يرجى استخدام رقم فريد" }); return; }
+    const delivery = matches[0];
+    if (!delivery) { res.status(404).json({ error: "إذن التسليم المرحّل غير مرتبط بفاتورة" }); return; }
+    const lines = await db.select().from(goodsDeliveryLinesTable)
+      .where(and(eq(goodsDeliveryLinesTable.deliveryId, delivery.id), eq(goodsDeliveryLinesTable.companyId, cid)))
+      .orderBy(asc(goodsDeliveryLinesTable.id));
+    res.json({
+      sourceType: "goods-delivery",
+      id: delivery.id,
+      docNumber: delivery.docNumber,
+      documentDate: delivery.deliveryDate,
+      customerId: delivery.customerId,
+      branchId: delivery.branchId,
+      currencyCode: delivery.currencyCode,
+      exchangeRate: delivery.exchangeRate,
+      priceIncludesVat: delivery.priceIncludesVat,
+      discountAmount: delivery.discountAmount,
+      notes: delivery.notes,
+      lines,
+    });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 

@@ -4,6 +4,7 @@ import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { db } from "@workspace/db";
 import {
   goodsReceiptsTable, goodsReceiptLinesTable,
+  purchaseOrdersTable,
   costCentersTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
   suppliersTable, accountsTable, warehousesTable,
@@ -219,6 +220,7 @@ async function findStrayIds(table: any, cid: number, ids: number[]): Promise<num
 // Returns null on success, or an error message string on the first violation.
 async function validateGrnTenantRefs(cid: number, payload: {
   branchId?: number | null; supplierId?: number | null;
+  purchaseOrderId?: number | null;
   cashBoxId?: number | null; bankAccountId?: number | null;
   itemIds?: number[]; warehouseIds?: number[];
 }): Promise<string | null> {
@@ -229,6 +231,21 @@ async function validateGrnTenantRefs(cid: number, payload: {
   if (payload.supplierId) {
     const stray = await findStrayIds(suppliersTable, cid, [payload.supplierId]);
     if (stray.length) return "المورد المحدد لا ينتمي لهذه الشركة";
+  }
+  if (payload.purchaseOrderId) {
+    const [order] = await db.select({
+      id: purchaseOrdersTable.id,
+      status: purchaseOrdersTable.status,
+      supplierId: purchaseOrdersTable.supplierId,
+      branchId: purchaseOrdersTable.branchId,
+    }).from(purchaseOrdersTable).where(and(
+      eq(purchaseOrdersTable.id, payload.purchaseOrderId),
+      eq(purchaseOrdersTable.companyId, cid),
+    )).limit(1);
+    if (!order) return "أمر الشراء المحدد لا ينتمي لهذه الشركة";
+    if (order.status === "cancelled") return "لا يمكن ربط إذن الاستلام بأمر شراء ملغي";
+    if ((order.branchId ?? null) !== (payload.branchId ?? null)) return "يجب أن يكون الفرع مطابقاً لأمر الشراء";
+    if (order.supplierId != null && order.supplierId !== (payload.supplierId ?? null)) return "يجب أن يكون المورد مطابقاً لأمر الشراء";
   }
   if (payload.cashBoxId) {
     const stray = await findStrayIds(cashBoxesTable, cid, [payload.cashBoxId]);
@@ -388,6 +405,7 @@ router.post("/", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const {
       docNumber, supplierInvoiceNumber, receiptDate, supplierId, branchId,
+      purchaseOrderId,
       currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
       totalAmount, priceIncludesVat, notes, lines, taxId,
     } = req.body;
@@ -403,6 +421,7 @@ router.post("/", async (req, res) => {
     const tenantErr = await validateGrnTenantRefs(cid, {
       branchId:   branchId   ? Number(branchId)   : null,
       supplierId: supplierId ? Number(supplierId) : null,
+      purchaseOrderId: purchaseOrderId ? Number(purchaseOrderId) : null,
       itemIds:      (lines ?? []).map((l: any) => l.itemId      ? Number(l.itemId)      : null).filter((x: any): x is number => !!x),
       warehouseIds: (lines ?? []).map((l: any) => l.warehouseId ? Number(l.warehouseId) : null).filter((x: any): x is number => !!x),
     });
@@ -434,6 +453,7 @@ router.post("/", async (req, res) => {
     const [gr] = await tx.insert(goodsReceiptsTable).values({
       costCenterId: req.body.costCenterId,
       companyId: cid, branchId: branchId ? Number(branchId) : null,
+      purchaseOrderId: purchaseOrderId ? Number(purchaseOrderId) : null,
       projectId: await resolveProjectLink(cid, req.body.projectId, branchId, req.authUser),
       docNumber: resolvedDocNumber,
       supplierInvoiceNumber: supplierInvoiceNumber || null,
@@ -499,10 +519,14 @@ router.put("/:id", async (req, res) => {
       currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
       totalAmount, priceIncludesVat, notes, lines, taxId,
     } = req.body;
+    const linkedPurchaseOrderId = req.body.purchaseOrderId === undefined
+      ? existing.purchaseOrderId
+      : req.body.purchaseOrderId ? Number(req.body.purchaseOrderId) : null;
 
     const tenantErr = await validateGrnTenantRefs(cid, {
       branchId:   branchId   ? Number(branchId)   : null,
       supplierId: supplierId ? Number(supplierId) : null,
+      purchaseOrderId: linkedPurchaseOrderId,
       itemIds:      (lines ?? []).map((l: any) => l.itemId      ? Number(l.itemId)      : null).filter((x: any): x is number => !!x),
       warehouseIds: (lines ?? []).map((l: any) => l.warehouseId ? Number(l.warehouseId) : null).filter((x: any): x is number => !!x),
     });
@@ -513,6 +537,7 @@ router.put("/:id", async (req, res) => {
     const [gr] = await tx.update(goodsReceiptsTable).set({
       costCenterId: req.body.costCenterId,
       branchId: branchId ? Number(branchId) : null,
+      purchaseOrderId: linkedPurchaseOrderId,
       projectId: await resolveProjectLink(cid, req.body.projectId === undefined ? existing.projectId : req.body.projectId, branchId, req.authUser),
       supplierInvoiceNumber: supplierInvoiceNumber || null,
       receiptDate,

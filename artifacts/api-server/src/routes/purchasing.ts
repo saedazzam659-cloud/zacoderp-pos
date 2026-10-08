@@ -27,8 +27,9 @@ import {
   accountsTable,
   unitsTable,
   taxesTable,
+  goodsReceiptsTable, goodsReceiptLinesTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, sql, inArray, notInArray, isNull, or } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray, notInArray, isNull, or, ilike } from "drizzle-orm";
 import {
   extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread,
   multiBranchScopeSpread, effectiveBranchCondition,
@@ -39,7 +40,6 @@ import { upsertBalance, getBalance, addStockLedgerEntry, refreshItemCost, lockSt
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber, nextSequenceForPayment, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
-import { goodsReceiptsTable } from "@workspace/db";
 import { getReceivingClearingAccountId } from "./goodsReceipts.js";
 import { assertInvoiceEditKeepsSettlementsCovered } from "../lib/invoiceSettlement.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
@@ -667,6 +667,8 @@ router.use(async (_req, res, next) => {
 router.use(pathRbac([
   ["/purchase-invoices",      "purchase_invoices"],
   ["/purchase-orders",        "purchase_invoices"],
+  ["/source-documents",       "purchase_invoices"],
+  ["/reports/receipt-follow-up", "purchase_invoices"],
   ["/purchase-returns",       "purchase_returns"],
   ["/supplier-settlements",   "supplier_settlements"],
   ["/letters-of-credit",      "purchase_invoices"],
@@ -1573,7 +1575,43 @@ router.get("/purchase-invoices/:id", async (req, res) => {
     const lines = await db.select().from(purchaseInvoiceLinesTable)
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id))
       .orderBy(asc(purchaseInvoiceLinesTable.id));
-    res.json({ ...inv, lines });
+    let sourceDocument: any = null;
+    if (inv.sourceGrnId) {
+      const [receipt] = await db.select().from(goodsReceiptsTable).where(and(
+        eq(goodsReceiptsTable.id, inv.sourceGrnId),
+        eq(goodsReceiptsTable.companyId, cid),
+        ...branchScopeSpread(req, goodsReceiptsTable.branchId, undefined),
+      ));
+      if (receipt) {
+        const sourceLines = await db.select().from(goodsReceiptLinesTable)
+          .where(and(eq(goodsReceiptLinesTable.receiptId, receipt.id), eq(goodsReceiptLinesTable.companyId, cid)))
+          .orderBy(asc(goodsReceiptLinesTable.id));
+        sourceDocument = {
+          sourceType: "goods-receipt",
+          docNumber: receipt.docNumber,
+          documentDate: receipt.receiptDate,
+          lines: sourceLines,
+        };
+      }
+    } else {
+      const [order] = await db.select().from(purchaseOrdersTable).where(and(
+        eq(purchaseOrdersTable.companyId, cid),
+        eq(purchaseOrdersTable.convertedInvoiceId, id),
+        ...branchScopeSpread(req, purchaseOrdersTable.branchId, undefined),
+      ));
+      if (order) {
+        const sourceLines = await db.select().from(purchaseOrderLinesTable)
+          .where(and(eq(purchaseOrderLinesTable.orderId, order.id), eq(purchaseOrderLinesTable.companyId, cid)))
+          .orderBy(asc(purchaseOrderLinesTable.id));
+        sourceDocument = {
+          sourceType: "purchase-order",
+          docNumber: order.docNumber,
+          documentDate: order.orderDate,
+          lines: sourceLines,
+        };
+      }
+    }
+    res.json({ ...inv, lines, sourceDocument });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
@@ -3156,6 +3194,240 @@ router.get("/purchase-orders", async (req, res) => {
       ))
       .orderBy(desc(purchaseOrdersTable.orderDate));
     res.json(rows);
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.get("/source-documents/lookup", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const kind = String(req.query.kind ?? "");
+    const docNumber = String(req.query.docNumber ?? "").trim();
+    if (!docNumber || docNumber.length > 120 || !["purchase-order", "goods-receipt"].includes(kind)) {
+      res.status(400).json({ error: "نوع المستند أو رقمه غير صالح" });
+      return;
+    }
+
+    if (kind === "purchase-order") {
+      const matches = await db.select().from(purchaseOrdersTable).where(and(
+        eq(purchaseOrdersTable.companyId, cid),
+        ilike(purchaseOrdersTable.docNumber, docNumber),
+        eq(purchaseOrdersTable.status, "confirmed"),
+        isNull(purchaseOrdersTable.convertedInvoiceId),
+        ...branchScopeSpread(req, purchaseOrdersTable.branchId, req.query.branchId),
+      )).limit(2);
+      if (matches.length > 1) { res.status(409).json({ error: "يوجد أكثر من أمر شراء بهذا الرقم؛ يرجى استخدام رقم فريد" }); return; }
+      const order = matches[0];
+      if (!order) { res.status(404).json({ error: "أمر الشراء المؤكد غير موجود" }); return; }
+      const lines = await db.select().from(purchaseOrderLinesTable)
+        .where(and(eq(purchaseOrderLinesTable.orderId, order.id), eq(purchaseOrderLinesTable.companyId, cid)))
+        .orderBy(asc(purchaseOrderLinesTable.id));
+      const supplier = order.supplierId
+        ? (await db.select({ nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+            .from(suppliersTable)
+            .where(and(eq(suppliersTable.id, order.supplierId), eq(suppliersTable.companyId, cid)))
+            .limit(1))[0]
+        : undefined;
+      res.json({
+        sourceType: "purchase-order",
+        id: order.id,
+        docNumber: order.docNumber,
+        documentDate: order.orderDate,
+        supplierId: order.supplierId,
+        supplierNameAr: supplier?.nameAr ?? null,
+        supplierNameEn: supplier?.nameEn ?? null,
+        branchId: order.branchId,
+        currencyCode: order.currencyCode,
+        exchangeRate: order.exchangeRate,
+        priceIncludesVat: order.priceIncludesVat,
+        discountAmount: order.discountAmount,
+        notes: order.notes,
+        lines,
+      });
+      return;
+    }
+
+    const matches = await db.select().from(goodsReceiptsTable).where(and(
+      eq(goodsReceiptsTable.companyId, cid),
+      ilike(goodsReceiptsTable.docNumber, docNumber),
+      eq(goodsReceiptsTable.status, "posted"),
+      isNull(goodsReceiptsTable.linkedInvoiceId),
+      ...branchScopeSpread(req, goodsReceiptsTable.branchId, req.query.branchId),
+    )).limit(2);
+    if (matches.length > 1) { res.status(409).json({ error: "يوجد أكثر من إذن استلام بهذا الرقم؛ يرجى استخدام رقم فريد" }); return; }
+    const receipt = matches[0];
+    if (!receipt) { res.status(404).json({ error: "إذن الاستلام المرحّل غير موجود" }); return; }
+    const lines = await db.select().from(goodsReceiptLinesTable)
+      .where(and(eq(goodsReceiptLinesTable.receiptId, receipt.id), eq(goodsReceiptLinesTable.companyId, cid)))
+      .orderBy(asc(goodsReceiptLinesTable.id));
+    const supplier = receipt.supplierId
+      ? (await db.select({ nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+          .from(suppliersTable)
+          .where(and(eq(suppliersTable.id, receipt.supplierId), eq(suppliersTable.companyId, cid)))
+          .limit(1))[0]
+      : undefined;
+    res.json({
+      sourceType: "goods-receipt",
+      id: receipt.id,
+      docNumber: receipt.docNumber,
+      documentDate: receipt.receiptDate,
+      supplierId: receipt.supplierId,
+      supplierNameAr: supplier?.nameAr ?? null,
+      supplierNameEn: supplier?.nameEn ?? null,
+      branchId: receipt.branchId,
+      currencyCode: receipt.currencyCode,
+      exchangeRate: receipt.exchangeRate,
+      priceIncludesVat: receipt.priceIncludesVat,
+      discountAmount: receipt.discountAmount,
+      notes: receipt.notes,
+      lines,
+    });
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.get("/purchase-orders/receipt-options", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const orders = await db.select().from(purchaseOrdersTable).where(and(
+      eq(purchaseOrdersTable.companyId, cid),
+      notInArray(purchaseOrdersTable.status, ["cancelled"]),
+      ...branchScopeSpread(req, purchaseOrdersTable.branchId, req.query.branchId),
+    )).orderBy(desc(purchaseOrdersTable.orderDate), desc(purchaseOrdersTable.id)).limit(5000);
+    const supplierIds = [...new Set(orders.map(order => order.supplierId).filter((id): id is number => id != null))];
+    const suppliers = supplierIds.length
+      ? await db.select({ id: suppliersTable.id, nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+          .from(suppliersTable)
+          .where(and(eq(suppliersTable.companyId, cid), inArray(suppliersTable.id, supplierIds)))
+      : [];
+    const supplierById = new Map(suppliers.map(supplier => [supplier.id, supplier]));
+    res.json(orders.map(order => ({
+      id: order.id,
+      docNumber: order.docNumber,
+      orderDate: order.orderDate,
+      status: order.status,
+      supplierId: order.supplierId,
+      supplierNameAr: order.supplierId ? supplierById.get(order.supplierId)?.nameAr ?? null : null,
+      supplierNameEn: order.supplierId ? supplierById.get(order.supplierId)?.nameEn ?? null : null,
+      branchId: order.branchId,
+    })));
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.get("/reports/receipt-follow-up", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const orders = await db.select().from(purchaseOrdersTable).where(and(
+      eq(purchaseOrdersTable.companyId, cid),
+      inArray(purchaseOrdersTable.status, ["confirmed", "converted"]),
+      ...branchScopeSpread(req, purchaseOrdersTable.branchId, req.query.branchId),
+    )).orderBy(desc(purchaseOrdersTable.orderDate), desc(purchaseOrdersTable.id)).limit(5001);
+    if (orders.length > 5000) { res.status(413).json({ error: "تقرير المتابعة يتجاوز 5000 أمر شراء؛ يرجى تحديد الفرع" }); return; }
+    const orderIds = orders.map(order => order.id);
+    if (!orderIds.length) {
+      res.json({ rows: [], orderCount: 0, openLineCount: 0, fullyReceivedLineCount: 0, generatedAt: new Date().toISOString() });
+      return;
+    }
+    const [orderLines, receipts] = await Promise.all([
+      db.select().from(purchaseOrderLinesTable)
+        .where(and(eq(purchaseOrderLinesTable.companyId, cid), inArray(purchaseOrderLinesTable.orderId, orderIds)))
+        .orderBy(asc(purchaseOrderLinesTable.orderId), asc(purchaseOrderLinesTable.id)),
+      db.select().from(goodsReceiptsTable).where(and(
+        eq(goodsReceiptsTable.companyId, cid),
+        inArray(goodsReceiptsTable.purchaseOrderId, orderIds),
+        inArray(goodsReceiptsTable.status, ["posted", "invoiced"]),
+        ...branchScopeSpread(req, goodsReceiptsTable.branchId, undefined),
+      )),
+    ]);
+    if (orderLines.length > 20000) { res.status(413).json({ error: "تقرير المتابعة يتجاوز 20000 بند؛ يرجى تحديد الفرع" }); return; }
+    const receiptIds = receipts.map(receipt => receipt.id);
+    const receiptLines = receiptIds.length
+      ? await db.select().from(goodsReceiptLinesTable)
+          .where(and(eq(goodsReceiptLinesTable.companyId, cid), inArray(goodsReceiptLinesTable.receiptId, receiptIds)))
+      : [];
+    const supplierIds = [...new Set(orders.map(order => order.supplierId).filter((id): id is number => id != null))];
+    const suppliers = supplierIds.length
+      ? await db.select({ id: suppliersTable.id, nameAr: suppliersTable.nameAr, nameEn: suppliersTable.nameEn })
+          .from(suppliersTable)
+          .where(and(eq(suppliersTable.companyId, cid), inArray(suppliersTable.id, supplierIds)))
+      : [];
+    const supplierById = new Map(suppliers.map(supplier => [supplier.id, supplier]));
+    const orderById = new Map(orders.map(order => [order.id, order]));
+    const receiptById = new Map(receipts.map(receipt => [receipt.id, receipt]));
+    const itemKey = (line: any) => line.itemId != null
+      ? `item:${line.itemId}`
+      : line.itemCode?.trim()
+        ? `code:${String(line.itemCode).trim().toLocaleLowerCase()}`
+        : `line:${line.id}`;
+    const receivedByOrderItem = new Map<string, { baseQuantity: number; receiptIds: Set<number> }>();
+    for (const line of receiptLines) {
+      const receipt = receiptById.get(line.receiptId);
+      if (!receipt?.purchaseOrderId) continue;
+      const key = `${receipt.purchaseOrderId}:${itemKey(line)}`;
+      const current = receivedByOrderItem.get(key) ?? { baseQuantity: 0, receiptIds: new Set<number>() };
+      current.baseQuantity += (Number(line.qty) || 0) * (Number(line.conversionFactor) || 1);
+      current.receiptIds.add(receipt.id);
+      receivedByOrderItem.set(key, current);
+    }
+    const grouped = new Map<string, any>();
+    for (const line of orderLines) {
+      const order = orderById.get(line.orderId);
+      if (!order) continue;
+      const key = `${order.id}:${itemKey(line)}`;
+      const factor = Number(line.conversionFactor) || 1;
+      const current = grouped.get(key) ?? {
+        purchaseOrderId: order.id,
+        orderNumber: order.docNumber,
+        orderDate: order.orderDate,
+        status: order.status,
+        supplierId: order.supplierId,
+        supplierNameAr: order.supplierId ? supplierById.get(order.supplierId)?.nameAr ?? null : null,
+        supplierNameEn: order.supplierId ? supplierById.get(order.supplierId)?.nameEn ?? null : null,
+        branchId: order.branchId,
+        itemKey: itemKey(line),
+        itemId: line.itemId,
+        itemCode: line.itemCode,
+        itemName: line.itemName,
+        unit: line.unit,
+        factor,
+        orderedBaseQuantity: 0,
+      };
+      current.orderedBaseQuantity += ((Number(line.qty) || 0) + (Number(line.freeQty) || 0)) * factor;
+      grouped.set(key, current);
+    }
+    const rows = [...grouped.entries()].map(([key, row]) => {
+      const received = receivedByOrderItem.get(key);
+      const orderedQuantity = row.orderedBaseQuantity / row.factor;
+      const receivedQuantity = (received?.baseQuantity ?? 0) / row.factor;
+      return {
+        purchaseOrderId: row.purchaseOrderId,
+        orderNumber: row.orderNumber,
+        orderDate: row.orderDate,
+        status: row.status,
+        supplierId: row.supplierId,
+        supplierNameAr: row.supplierNameAr,
+        supplierNameEn: row.supplierNameEn,
+        branchId: row.branchId,
+        itemKey: row.itemKey,
+        itemId: row.itemId,
+        itemCode: row.itemCode,
+        itemName: row.itemName,
+        unit: row.unit,
+        orderedQuantity,
+        receivedQuantity,
+        remainingQuantity: Math.max(0, orderedQuantity - receivedQuantity),
+        overReceivedQuantity: Math.max(0, receivedQuantity - orderedQuantity),
+        receiptCount: received?.receiptIds.size ?? 0,
+      };
+    });
+    res.json({
+      rows,
+      orderCount: new Set(rows.map(row => row.purchaseOrderId)).size,
+      openLineCount: rows.filter(row => row.remainingQuantity > 0.0001).length,
+      fullyReceivedLineCount: rows.filter(row => row.remainingQuantity <= 0.0001).length,
+      generatedAt: new Date().toISOString(),
+    });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 

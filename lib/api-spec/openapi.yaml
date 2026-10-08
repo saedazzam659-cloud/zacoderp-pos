@@ -27,6 +27,10 @@ tags:
     description: School enrollment history and academic-year promotion
   - name: crm
     description: CRM WhatsApp marketing contacts and campaigns
+  - name: purchasing
+    description: Purchase documents and receipt follow-up
+  - name: inventory
+    description: Inventory delivery documents
 paths:
   /hr-portal/guardian/login:
     post:
@@ -2996,6 +3000,165 @@ paths:
               schema: { type: string, format: binary }
         "404":
           description: Expense or receipt not found
+  /purchasing/source-documents/lookup:
+    get:
+      operationId: lookupPurchaseSourceDocument
+      tags: [purchasing]
+      summary: Find an eligible purchase order or posted goods receipt by document number
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          schema: { type: string, enum: [purchase-order, goods-receipt] }
+        - name: docNumber
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 120 }
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Source document header and item lines
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PurchaseSourceDocument" }
+        "400": { description: Invalid document number or source type }
+        "404": { description: Eligible source document not found }
+        "409": { description: More than one eligible document has this number }
+  /purchasing/purchase-orders/receipt-options:
+    get:
+      operationId: getPurchaseOrderReceiptOptions
+      tags: [purchasing]
+      summary: List non-cancelled purchase orders that can be linked to goods receipts
+      parameters:
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Tenant-scoped purchase-order options
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PurchaseOrderReceiptOption" }
+        "403": { description: Purchase-order access is denied }
+  /purchasing/reports/receipt-follow-up:
+    get:
+      operationId: getPurchaseReceiptFollowUp
+      tags: [purchasing]
+      summary: Read ordered, stock-effective received, and remaining quantities by purchase-order item
+      parameters:
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Purchase-order receipt follow-up report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PurchaseReceiptFollowUpReport" }
+        "403": { description: Purchasing report access is denied }
+  /goods-deliveries/source-lookup:
+    get:
+      operationId: lookupSalesDeliverySourceDocument
+      tags: [inventory]
+      summary: Find an unlinked posted goods delivery by document number
+      parameters:
+        - name: docNumber
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 120 }
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Delivery header and item lines
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesDeliverySourceDocument" }
+        "400": { description: Invalid document number }
+        "404": { description: Eligible delivery not found }
+        "409": { description: More than one eligible delivery has this number }
+  /purchasing/purchase-orders/{id}/convert:
+    post:
+      operationId: convertPurchaseOrderToInvoice
+      tags: [purchasing]
+      summary: Create a purchase-invoice draft from a confirmed purchase order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "201":
+          description: Created purchase invoice draft and linked order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PurchaseInvoiceConversionResult" }
+        "403": { description: Purchase-invoice create permission is denied }
+        "404": { description: Purchase order not found }
+        "409": { description: Order is not confirmed or was already converted }
+  /goods-receipts/{id}/convert-to-invoice:
+    post:
+      operationId: convertGoodsReceiptToInvoice
+      tags: [inventory]
+      summary: Create a purchase-invoice draft from an unlinked posted goods receipt
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PurchaseInvoiceConversionInput" }
+      responses:
+        "201":
+          description: Created purchase invoice draft and linked receipt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PurchaseInvoiceDraft" }
+        "400": { description: Receipt is not posted or payment details are invalid }
+        "404": { description: Receipt not found }
+  /goods-deliveries/{id}/convert-to-invoice:
+    post:
+      operationId: convertGoodsDeliveryToSalesInvoice
+      tags: [inventory]
+      summary: Create a sales-invoice draft from an unlinked posted goods delivery
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SalesInvoiceConversionInput" }
+      responses:
+        "201":
+          description: Created sales invoice draft and linked delivery
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesInvoiceDraft" }
+        "400": { description: Delivery is not posted or payment details are invalid }
+        "404": { description: Delivery not found }
 
 components:
   schemas:
@@ -5663,3 +5826,142 @@ components:
       required: [deleted]
       properties:
         deleted: { type: boolean }
+    PurchaseSourceDocumentLine:
+      type: object
+      required: [itemName, qty]
+      properties:
+        id: { type: integer }
+        itemId: { type: ["integer", "null"] }
+        itemName: { type: string }
+        itemCode: { type: ["string", "null"] }
+        unit: { type: ["string", "null"] }
+        unitId: { type: ["integer", "null"] }
+        conversionFactor: { type: ["string", "number", "null"] }
+        qty: { type: ["string", "number"] }
+        freeQty: { type: ["string", "number", "null"] }
+        unitPrice: { type: ["string", "number", "null"] }
+        discount: { type: ["string", "number", "null"] }
+        vatRate: { type: ["string", "number", "null"] }
+        lineTotal: { type: ["string", "number", "null"] }
+        warehouseId: { type: ["integer", "null"] }
+        notes: { type: ["string", "null"] }
+    PurchaseSourceDocument:
+      type: object
+      required: [sourceType, id, docNumber, documentDate, lines]
+      properties:
+        sourceType: { type: string, enum: [purchase-order, goods-receipt] }
+        id: { type: integer }
+        docNumber: { type: string }
+        documentDate: { type: string }
+        supplierId: { type: ["integer", "null"] }
+        supplierNameAr: { type: ["string", "null"] }
+        supplierNameEn: { type: ["string", "null"] }
+        branchId: { type: ["integer", "null"] }
+        currencyCode: { type: ["string", "null"] }
+        exchangeRate: { type: ["string", "number", "null"] }
+        priceIncludesVat: { type: boolean }
+        discountAmount: { type: ["string", "number", "null"] }
+        notes: { type: ["string", "null"] }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PurchaseSourceDocumentLine" }
+    SalesDeliverySourceDocument:
+      type: object
+      required: [sourceType, id, docNumber, documentDate, lines]
+      properties:
+        sourceType: { type: string, enum: [goods-delivery] }
+        id: { type: integer }
+        docNumber: { type: string }
+        documentDate: { type: string }
+        customerId: { type: ["integer", "null"] }
+        branchId: { type: ["integer", "null"] }
+        currencyCode: { type: ["string", "null"] }
+        exchangeRate: { type: ["string", "number", "null"] }
+        priceIncludesVat: { type: boolean }
+        discountAmount: { type: ["string", "number", "null"] }
+        notes: { type: ["string", "null"] }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PurchaseSourceDocumentLine" }
+    PurchaseOrderReceiptOption:
+      type: object
+      required: [id, docNumber, orderDate, status, supplierId, supplierNameAr, supplierNameEn, branchId]
+      properties:
+        id: { type: integer }
+        docNumber: { type: ["string", "null"] }
+        orderDate: { type: string }
+        status: { type: string, enum: [draft, confirmed, converted] }
+        supplierId: { type: ["integer", "null"] }
+        supplierNameAr: { type: ["string", "null"] }
+        supplierNameEn: { type: ["string", "null"] }
+        branchId: { type: ["integer", "null"] }
+    PurchaseReceiptFollowUpRow:
+      type: object
+      required: [purchaseOrderId, orderNumber, orderDate, status, supplierId, supplierNameAr, supplierNameEn, branchId, itemKey, itemName, orderedQuantity, receivedQuantity, remainingQuantity, overReceivedQuantity, unit]
+      properties:
+        purchaseOrderId: { type: integer }
+        orderNumber: { type: ["string", "null"] }
+        orderDate: { type: string }
+        status: { type: string, enum: [confirmed, converted] }
+        supplierId: { type: ["integer", "null"] }
+        supplierNameAr: { type: ["string", "null"] }
+        supplierNameEn: { type: ["string", "null"] }
+        branchId: { type: ["integer", "null"] }
+        itemKey: { type: string }
+        itemId: { type: ["integer", "null"] }
+        itemCode: { type: ["string", "null"] }
+        itemName: { type: string }
+        unit: { type: ["string", "null"] }
+        orderedQuantity: { type: number, format: double }
+        receivedQuantity: { type: number, format: double }
+        remainingQuantity: { type: number, format: double }
+        overReceivedQuantity: { type: number, format: double }
+        receiptCount: { type: integer }
+    PurchaseReceiptFollowUpReport:
+      type: object
+      required: [rows, orderCount, openLineCount, fullyReceivedLineCount, generatedAt]
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/PurchaseReceiptFollowUpRow" }
+        orderCount: { type: integer }
+        openLineCount: { type: integer }
+        fullyReceivedLineCount: { type: integer }
+        generatedAt: { type: string, format: date-time }
+    PurchaseInvoiceConversionInput:
+      type: object
+      properties:
+        paymentType: { type: string, enum: [credit, cash, bank] }
+        supplierId: { type: ["integer", "null"], minimum: 1 }
+        cashBoxId: { type: ["integer", "null"], minimum: 1 }
+        bankAccountId: { type: ["integer", "null"], minimum: 1 }
+    SalesInvoiceConversionInput:
+      type: object
+      properties:
+        paymentType: { type: string, enum: [credit, cash, bank] }
+        customerId: { type: ["integer", "null"], minimum: 1 }
+        cashBoxId: { type: ["integer", "null"], minimum: 1 }
+        bankAccountId: { type: ["integer", "null"], minimum: 1 }
+    PurchaseInvoiceDraft:
+      type: object
+      required: [id, companyId, invoiceDate, status]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        invoiceDate: { type: string }
+        status: { type: string, enum: [draft] }
+    SalesInvoiceDraft:
+      type: object
+      required: [id, companyId, invoiceDate, status]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        invoiceDate: { type: string }
+        status: { type: string, enum: [draft] }
+    PurchaseInvoiceConversionResult:
+      type: object
+      required: [orderId, invoiceId, invoice]
+      properties:
+        orderId: { type: integer }
+        invoiceId: { type: integer }
+        invoice: { $ref: "#/components/schemas/PurchaseInvoiceDraft" }

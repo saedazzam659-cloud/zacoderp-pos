@@ -17,7 +17,7 @@ import {
   journalEntriesTable, journalEntryLinesTable,
   receiptVouchersTable, paymentVouchersTable,
   salesRepsTable, offersTable,
-  goodsDeliveriesTable,
+  goodsDeliveriesTable, goodsDeliveryLinesTable,
   subscriptionsTable,
   itemsTable,
   itemUnitPricesTable,
@@ -1982,6 +1982,25 @@ router.get("/sales-invoices/:id", async (req, res) => {
       appliedOfferName: l.appliedOfferId ? (offerNameById.get(l.appliedOfferId) ?? null) : null,
       productionCostAttributions: attributionByLine.get(l.id) ?? [],
     }));
+    let sourceDocument: any = null;
+    if (inv.sourceGdnId) {
+      const [delivery] = await db.select().from(goodsDeliveriesTable).where(and(
+        eq(goodsDeliveriesTable.id, inv.sourceGdnId),
+        eq(goodsDeliveriesTable.companyId, cid),
+        ...branchScopeSpread(req, goodsDeliveriesTable.branchId, undefined),
+      ));
+      if (delivery) {
+        const sourceLines = await db.select().from(goodsDeliveryLinesTable)
+          .where(and(eq(goodsDeliveryLinesTable.deliveryId, delivery.id), eq(goodsDeliveryLinesTable.companyId, cid)))
+          .orderBy(asc(goodsDeliveryLinesTable.id));
+        sourceDocument = {
+          sourceType: "goods-delivery",
+          docNumber: delivery.docNumber,
+          documentDate: delivery.deliveryDate,
+          lines: sourceLines,
+        };
+      }
+    }
     // Resolve `createdByName` / `postedByName` so the print templates (and
     // the read-only view) can show "أنشأ بواسطة" + "رحّل بواسطة" without
     // requiring an extra users round-trip from the client.
@@ -2002,6 +2021,7 @@ router.get("/sales-invoices/:id", async (req, res) => {
       postedByName:  inv.postedById  != null ? (auditMap.get(inv.postedById)  ?? null) : null,
       customer: customerRows[0] ?? null,
       lines: linesWithOfferName,
+      sourceDocument,
     });
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });

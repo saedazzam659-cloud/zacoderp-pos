@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
   ChevronLeft, ChevronRight, FileText, Wallet, AlertTriangle, Truck, Package,
-  CalendarRange, TrendingUp, RotateCcw, ShoppingCart, CreditCard,
+  CalendarRange, TrendingUp, RotateCcw, ShoppingCart, CreditCard, ClipboardList,
 } from "lucide-react";
 
 export default function PurchaseReportsHub() {
@@ -10,6 +10,7 @@ export default function PurchaseReportsHub() {
   const isRtl = i18n.language === "ar";
 
   const REPORTS = [
+    { href: "/purchasing/reports/receipt-follow-up", title: t("purchasingReports.hub.receiptFollowUp"), desc: t("purchasingReports.hub.receiptFollowUpDesc"), icon: ClipboardList, color: "from-lime-50 to-lime-100/40 text-lime-800 border-lime-200" },
     { href: "/purchasing/reports/supplier-statement",     title: t("purchasingReports.hub.supplierStatement"),     desc: t("purchasingReports.hub.supplierStatementDesc"),     icon: FileText,       color: "from-sky-50 to-sky-100/40 text-sky-700 border-sky-200" },
     { href: "/purchasing/reports/supplier-balances",      title: t("purchasingReports.hub.supplierBalances"),      desc: t("purchasingReports.hub.supplierBalancesDesc"),      icon: Wallet,         color: "from-emerald-50 to-emerald-100/40 text-emerald-700 border-emerald-200" },
     { href: "/purchasing/reports/aging",                  title: t("purchasingReports.hub.agingPayables"),         desc: t("purchasingReports.hub.agingPayablesDesc"),         icon: AlertTriangle,  color: "from-amber-50 to-amber-100/40 text-amber-700 border-amber-200" },

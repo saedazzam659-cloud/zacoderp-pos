@@ -51,6 +51,12 @@ import {
   itemUnitsWithHistoricalSelection,
   serializeDocumentLine,
 } from "@/lib/documentLineUnits";
+import { DocumentQuantityWarnings } from "@/components/DocumentQuantityWarnings";
+import {
+  convertGoodsReceiptToInvoice,
+  convertPurchaseOrderToInvoice,
+  lookupPurchaseSourceDocument,
+} from "@workspace/api-client-react";
 import { useAgentColorfulInvoiceTabs } from "@/lib/agentBranding";
 import { COLORFUL_INVOICE_TAB_LIST_CLASS, getInvoiceTabColorClass } from "@/lib/invoiceTabColors";
 
@@ -209,6 +215,9 @@ function PurchaseInvoiceFormContent() {
   const [supplierId,   setSupplierId]   = useState("");
   const [manualPrintPartyName, setManualPrintPartyName] = useState("");
   const [branchId,     setBranchId]     = useState("");
+  const [sourceLookupKind, setSourceLookupKind] = useState<"purchase-order" | "goods-receipt">("purchase-order");
+  const [sourceLookupNumber, setSourceLookupNumber] = useState("");
+  const [sourceLookupLoading, setSourceLookupLoading] = useState(false);
 
   // Peek the NEXT number for the SAME branch the form will submit — counters
   // are per-(sequence, branch), so omitting branchId reads the empty branch-0
@@ -230,6 +239,36 @@ function PurchaseInvoiceFormContent() {
   const stickyPriceIncl = useStickyPriceIncludesVat();
   const [priceIncludesVat, setPriceIncludesVat] = useState(stickyPriceIncl.initial);
   const [lines,        setLines]        = useState<InvoiceLine[]>([newLine()]);
+  async function loadFromPurchaseSource() {
+    const docNumber = sourceLookupNumber.trim();
+    if (!docNumber || !isNew || sourceLookupLoading) return;
+    setSourceLookupLoading(true);
+    try {
+      const source = await lookupPurchaseSourceDocument({
+        kind: sourceLookupKind,
+        docNumber,
+        companyId: cid,
+        branchId: branchId ? Number(branchId) : undefined,
+      });
+      const invoiceId = sourceLookupKind === "purchase-order"
+        ? (await convertPurchaseOrderToInvoice(source.id)).invoiceId
+        : (await convertGoodsReceiptToInvoice(source.id, {
+            paymentType,
+            cashBoxId: cashBoxId ? Number(cashBoxId) : undefined,
+            bankAccountId: bankAccountId ? Number(bankAccountId) : undefined,
+          } as any)).id;
+      if (!invoiceId) throw new Error(isRtl ? "تعذر إنشاء الفاتورة من المستند" : "The invoice could not be created from this document");
+      toast({ title: isRtl ? "تم إنشاء مسودة الفاتورة" : "Invoice draft created" });
+      navigate(`/purchasing/invoices/${invoiceId}`);
+    } catch (error: any) {
+      toast({
+        title: error?.message || (isRtl ? "تعذر تحميل مستند الشراء" : "Could not load the purchase document"),
+        variant: "destructive",
+      });
+    } finally {
+      setSourceLookupLoading(false);
+    }
+  }
   const [focusLineId, setFocusLineId] = useState<string>(() => "");
   useEffect(() => {
     if (lines.length > 0 && !lines.some(l => l._id === focusLineId)) {
@@ -1900,6 +1939,44 @@ function PurchaseInvoiceFormContent() {
               })()}
 
             </fieldset>
+              {isNew && (
+                <section className="mt-4 rounded-lg border bg-muted/20 p-4" data-testid="purchase-source-loader">
+                  <div className="mb-2 text-sm font-semibold">
+                    {isRtl ? "إنشاء فاتورة من مستند شراء" : "Create an invoice from a purchase document"}
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Select value={sourceLookupKind} onValueChange={value => setSourceLookupKind(value as any)}>
+                      <SelectTrigger className="h-9 sm:w-52" data-testid="purchase-source-kind">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="purchase-order">{isRtl ? "أمر شراء" : "Purchase order"}</SelectItem>
+                        <SelectItem value="goods-receipt">{isRtl ? "إذن استلام" : "Goods receipt"}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      className="h-9 flex-1"
+                      value={sourceLookupNumber}
+                      onChange={event => setSourceLookupNumber(event.target.value)}
+                      onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void loadFromPurchaseSource(); } }}
+                      placeholder={isRtl ? "أدخل رقم المستند" : "Enter the document number"}
+                      aria-label={isRtl ? "رقم مستند الشراء" : "Purchase document number"}
+                      data-testid="purchase-source-number"
+                    />
+                    <Button type="button" className="h-9" onClick={() => void loadFromPurchaseSource()}
+                      disabled={!sourceLookupNumber.trim() || sourceLookupLoading} data-testid="purchase-source-load">
+                      {sourceLookupLoading
+                        ? (isRtl ? "جاري التحميل…" : "Loading…")
+                        : (isRtl ? "تحميل وإنشاء الفاتورة" : "Load and create invoice")}
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {isRtl
+                      ? "سيتم إنشاء مسودة فاتورة من أمر شراء مؤكد أو إذن استلام مرحّل غير مرتبط."
+                      : "Creates a draft from a confirmed purchase order or an unlinked posted goods receipt."}
+                  </p>
+                </section>
+              )}
               {useTabbedLayout && nextButtonBlock}
             </CardContent>
           </TabsContent>
@@ -1907,6 +1984,16 @@ function PurchaseInvoiceFormContent() {
           <TabsContent value={useTabbedLayout ? "items" : "header"} className="mt-0">
             <CardContent className="pt-2 pb-5 border-t">
               {useTabbedLayout && topActionBar}
+              {(existing as any)?.sourceDocument?.lines && (
+                <DocumentQuantityWarnings
+                  sourceLabel={(existing as any).sourceDocument.sourceType === "purchase-order"
+                    ? (isRtl ? "أمر الشراء" : "Purchase order")
+                    : (isRtl ? "إذن الاستلام" : "Goods receipt")}
+                  sourceNumber={(existing as any).sourceDocument.docNumber}
+                  sourceLines={(existing as any).sourceDocument.lines}
+                  invoiceLines={lines}
+                />
+              )}
               <fieldset disabled={editLock} className="contents">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground/80">
                 <ListOrdered className="h-4 w-4" />

@@ -4,7 +4,7 @@ import {
 import { companiesTable } from "./companies";
 import { suppliersTable } from "./suppliers";
 import { accountsTable } from "./accounts";
-import { purchaseInvoicesTable } from "./purchasing";
+import { purchaseInvoicesTable, purchaseOrdersTable } from "./purchasing";
 
 export const goodsReceiptStatusEnum = pgEnum("goods_receipt_status", [
   "draft", "posted", "invoiced", "cancelled",
@@ -16,6 +16,7 @@ export const goodsReceiptsTable = pgTable("goods_receipts", {
   projectId:                   integer("project_id"),
   costCenterId:                integer("cost_center_id"),
   branchId:                    integer("branch_id"),
+  purchaseOrderId:             integer("purchase_order_id").references(() => purchaseOrdersTable.id, { onDelete: "set null" }),
   docNumber:                   text("doc_number"),
   supplierInvoiceNumber:       text("supplier_invoice_number"),
   receiptDate:                 text("receipt_date").notNull(),

@@ -12,6 +12,10 @@ import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/con
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
+import {
+  getGetPurchaseOrderReceiptOptionsQueryKey,
+  useGetPurchaseOrderReceiptOptions,
+} from "@workspace/api-client-react";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -104,7 +108,7 @@ function hasLineEntry(line: ReceiptLine) {
 const EMPTY = {
   costCenterId: "",
   docNumber: "", supplierInvoiceNumber: "", receiptDate: today(),
-  supplierId: "", branchId: "", projectId: "",
+  supplierId: "", branchId: "", projectId: "", purchaseOrderId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
   discountAmount: "0",
   priceIncludesVat: false,
@@ -143,6 +147,16 @@ export default function GoodsReceipts() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
+  const receiptOrderParams = {
+    companyId: cid,
+    branchId: form.branchId ? Number(form.branchId) : undefined,
+  };
+  const { data: purchaseOrderOptions = [] } = useGetPurchaseOrderReceiptOptions(receiptOrderParams, {
+    query: {
+      enabled: !!cid,
+      queryKey: getGetPurchaseOrderReceiptOptionsQueryKey(receiptOrderParams),
+    },
+  });
   const [lines, setLines] = useState<ReceiptLine[]>([newLine()]);
   const [revealedEmptyLineIds, setRevealedEmptyLineIds] = useState<string[]>([]);
   const visibleLines = hideQuickAddBar
@@ -476,6 +490,7 @@ export default function GoodsReceipts() {
         costCenterId: full.costCenterId == null ? "" : String(full.costCenterId),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
+        purchaseOrderId: full.purchaseOrderId ? String(full.purchaseOrderId) : "",
         projectId: full.projectId == null ? "" : String(full.projectId),
         currencyCode: full.currencyCode ?? "",
         exchangeRate: full.exchangeRate ? String(full.exchangeRate) : "1",
@@ -531,6 +546,7 @@ export default function GoodsReceipts() {
         costCenterId: full.costCenterId == null ? "" : String(full.costCenterId),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
+        purchaseOrderId: full.purchaseOrderId ? String(full.purchaseOrderId) : "",
         projectId: full.projectId == null ? "" : String(full.projectId),
         currencyCode: full.currencyCode ?? "",
         exchangeRate: full.exchangeRate ? String(full.exchangeRate) : "1",
@@ -687,6 +703,7 @@ export default function GoodsReceipts() {
       ...form,
       supplierId: form.supplierId || null,
       branchId:   form.branchId   || null,
+      purchaseOrderId: form.purchaseOrderId ? Number(form.purchaseOrderId) : null,
       discountAmount: docDiscountAmt.toFixed(2),
       subtotal:    subtotalNet.toFixed(2),
       totalAmount: totalAmount.toFixed(2),
@@ -1262,6 +1279,37 @@ ${sections}
                     <SearchCombobox items={supplierItems} value={form.supplierId}
                       onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))}
                       placeholder={tr("supplierPh")} />
+                  </Field>
+                  <Field label={tr("purchaseOrder")}>
+                    <SearchCombobox
+                      items={[
+                        { value: "", label: tr("purchaseOrderNone") },
+                        ...purchaseOrderOptions.map(order => {
+                          const supplier = isRtl
+                            ? (order.supplierNameAr ?? order.supplierNameEn)
+                            : (order.supplierNameEn ?? order.supplierNameAr);
+                          return {
+                            value: String(order.id),
+                            code: order.docNumber ?? `PO-${order.id}`,
+                            label: `${order.docNumber ?? `PO-${order.id}`} — ${supplier || tr("supplierPh")} — ${order.orderDate}`,
+                          };
+                        }),
+                      ]}
+                      value={form.purchaseOrderId}
+                      onValueChange={value => {
+                        const selected = purchaseOrderOptions.find(order => String(order.id) === value);
+                        setForm((previous: any) => ({
+                          ...previous,
+                          purchaseOrderId: value,
+                          ...(selected ? {
+                            supplierId: selected.supplierId ? String(selected.supplierId) : "",
+                            branchId: selected.branchId ? String(selected.branchId) : "",
+                          } : {}),
+                        }));
+                      }}
+                      placeholder={tr("purchaseOrderPh")}
+                      data-testid="combo-goods-receipt-purchase-order"
+                    />
                   </Field>
                   <Field label={tr("supplierInvoiceNumber")}>
                     <Input value={form.supplierInvoiceNumber}
