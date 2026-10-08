@@ -65,7 +65,9 @@ import {
 import { COLORFUL_INVOICE_TAB_LIST_CLASS, getInvoiceTabColorClass } from "@/lib/invoiceTabColors";
 import { DocumentQuantityWarnings } from "@/components/DocumentQuantityWarnings";
 import {
+  convertSalesOrderToInvoice,
   convertGoodsDeliveryToSalesInvoice,
+  lookupSalesOrderSourceDocument,
   lookupSalesDeliverySourceDocument,
 } from "@workspace/api-client-react";
 
@@ -371,8 +373,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // when isInvoice && isNew. Cleared on save/navigation alongside the rest
   // of the form state.
   const [sourceQuotationId, setSourceQuotationId] = useState("");
-  const [sourceDeliveryNumber, setSourceDeliveryNumber] = useState("");
-  const [sourceDeliveryLoading, setSourceDeliveryLoading] = useState(false);
+  const [sourceDocumentKind, setSourceDocumentKind] = useState<"sales-order" | "goods-delivery">("sales-order");
+  const [sourceDocumentNumber, setSourceDocumentNumber] = useState("");
+  const [sourceDocumentLoading, setSourceDocumentLoading] = useState(false);
   const [branchId,  setBranchId]        = useState("");
   const [paymentType,setPaymentType]    = useState("credit");
   const [cashBoxId, setCashBoxId]       = useState("");
@@ -591,33 +594,59 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     }
   }
 
-  async function loadFromGoodsDelivery() {
-    const docNumber = sourceDeliveryNumber.trim();
-    if (!docNumber || !isInvoice || !isNew || sourceDeliveryLoading) return;
-    setSourceDeliveryLoading(true);
+  async function loadFromSalesSourceDocument() {
+    const docNumber = sourceDocumentNumber.trim();
+    if (!docNumber || !isInvoice || !isNew || sourceDocumentLoading) return;
+    setSourceDocumentLoading(true);
     try {
-      const source = await lookupSalesDeliverySourceDocument({
-        docNumber,
-        companyId: cid,
-        branchId: branchId ? Number(branchId) : undefined,
-      });
-      const invoice = await convertGoodsDeliveryToSalesInvoice(source.id, {
-        paymentType,
-        cashBoxId: cashBoxId ? Number(cashBoxId) : undefined,
-        bankAccountId: bankAccountId ? Number(bankAccountId) : undefined,
-      } as any);
-      if (!invoice?.id) throw new Error(t("salesDocForm.goodsDeliveryLoadError"));
+      let invoiceId: number | undefined;
+      let sourceDocNumber = docNumber;
+      if (sourceDocumentKind === "sales-order") {
+        const source = await lookupSalesOrderSourceDocument({
+          docNumber,
+          companyId: cid,
+          branchId: branchId ? Number(branchId) : undefined,
+        });
+        const result = await convertSalesOrderToInvoice(source.id);
+        invoiceId = result?.invoice?.id;
+        sourceDocNumber = source.docNumber;
+        qc.invalidateQueries({ queryKey: ["sales-orders"] });
+      } else {
+        const source = await lookupSalesDeliverySourceDocument({
+          docNumber,
+          companyId: cid,
+          branchId: branchId ? Number(branchId) : undefined,
+        });
+        const invoice = await convertGoodsDeliveryToSalesInvoice(source.id, {
+          paymentType,
+          cashBoxId: cashBoxId ? Number(cashBoxId) : undefined,
+          bankAccountId: bankAccountId ? Number(bankAccountId) : undefined,
+        } as any);
+        invoiceId = invoice?.id;
+        sourceDocNumber = source.docNumber;
+        qc.invalidateQueries({ queryKey: ["goods-deliveries"] });
+      }
+      if (!invoiceId) {
+        throw new Error(sourceDocumentKind === "sales-order"
+          ? t("salesDocForm.salesOrderLoadError")
+          : t("salesDocForm.goodsDeliveryLoadError"));
+      }
       qc.invalidateQueries({ queryKey: ["sales-invoices"] });
-      qc.invalidateQueries({ queryKey: ["goods-deliveries"] });
-      toast({ title: t("salesDocForm.goodsDeliveryLoaded", { num: source.docNumber }) });
-      navigate(`${basePath}/${invoice.id}`);
+      toast({
+        title: sourceDocumentKind === "sales-order"
+          ? t("salesDocForm.salesOrderLoaded", { num: sourceDocNumber })
+          : t("salesDocForm.goodsDeliveryLoaded", { num: sourceDocNumber }),
+      });
+      navigate(`${basePath}/${invoiceId}`);
     } catch (error: any) {
       toast({
-        title: error?.message || t("salesDocForm.goodsDeliveryLoadError"),
+        title: error?.message || (sourceDocumentKind === "sales-order"
+          ? t("salesDocForm.salesOrderLoadError")
+          : t("salesDocForm.goodsDeliveryLoadError")),
         variant: "destructive",
       });
     } finally {
-      setSourceDeliveryLoading(false);
+      setSourceDocumentLoading(false);
     }
   }
 
@@ -3718,23 +3747,60 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                 )}
                 {isInvoice && isNew && (
-                  <div className="col-span-full space-y-1.5" data-testid="sales-delivery-source-loader">
-                    <Label className="text-xs">{t("salesDocForm.goodsDeliverySourceTitle")}</Label>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <Input
-                        className="h-9 flex-1"
-                        value={sourceDeliveryNumber}
-                        onChange={event => setSourceDeliveryNumber(event.target.value)}
-                        onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void loadFromGoodsDelivery(); } }}
-                        placeholder={t("salesDocForm.goodsDeliveryNumberPlaceholder")}
-                        aria-label={t("salesDocForm.goodsDeliveryNumber")}
-                        data-testid="sales-delivery-source-number"
-                      />
-                      <Button type="button" className="h-9" onClick={() => void loadFromGoodsDelivery()}
-                        disabled={!sourceDeliveryNumber.trim() || sourceDeliveryLoading} data-testid="sales-delivery-source-load">
-                        {sourceDeliveryLoading ? t("salesDocForm.loadingGoodsDelivery") : t("salesDocForm.loadGoodsDelivery")}
-                      </Button>
-                    </div>
+                  <div className="col-span-full" data-testid="sales-delivery-source-loader">
+                    <section className="rounded-lg border bg-muted/20 p-4">
+                      <div className="mb-3 text-sm font-semibold">{t("salesDocForm.sourceDocumentTitle")}</div>
+                      <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-4">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">{t("salesDocForm.sourceDocumentKind")}</Label>
+                          <Select value={sourceDocumentKind} onValueChange={value => setSourceDocumentKind(value as "sales-order" | "goods-delivery")}>
+                            <SelectTrigger className="h-9 text-sm" data-testid="sales-invoice-source-kind">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="sales-order">{t("salesDocForm.salesOrderSource")}</SelectItem>
+                              <SelectItem value="goods-delivery">{t("salesDocForm.goodsDelivery")}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5 lg:col-span-2">
+                          <Label className="text-xs">
+                            {sourceDocumentKind === "sales-order"
+                              ? t("salesDocForm.salesOrderNumber")
+                              : t("salesDocForm.goodsDeliveryNumber")}
+                          </Label>
+                          <Input
+                            className="h-9 text-sm"
+                            value={sourceDocumentNumber}
+                            onChange={event => setSourceDocumentNumber(event.target.value)}
+                            onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void loadFromSalesSourceDocument(); } }}
+                            placeholder={sourceDocumentKind === "sales-order"
+                              ? t("salesDocForm.salesOrderNumberPlaceholder")
+                              : t("salesDocForm.goodsDeliveryNumberPlaceholder")}
+                            aria-label={sourceDocumentKind === "sales-order"
+                              ? t("salesDocForm.salesOrderNumber")
+                              : t("salesDocForm.goodsDeliveryNumber")}
+                            data-testid="sales-delivery-source-number"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          className="h-9 w-full text-sm"
+                          onClick={() => void loadFromSalesSourceDocument()}
+                          disabled={!sourceDocumentNumber.trim() || sourceDocumentLoading}
+                          data-testid="sales-delivery-source-load"
+                        >
+                          {sourceDocumentLoading
+                            ? (sourceDocumentKind === "sales-order"
+                              ? t("salesDocForm.loadingSalesOrder")
+                              : t("salesDocForm.loadingGoodsDelivery"))
+                            : (sourceDocumentKind === "sales-order"
+                              ? t("salesDocForm.loadSalesOrder")
+                              : t("salesDocForm.loadGoodsDelivery"))}
+                        </Button>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">{t("salesDocForm.sourceDocumentHint")}</p>
+                    </section>
                   </div>
                 )}
                 {usesBranch && fp.isVisible("branch") && (

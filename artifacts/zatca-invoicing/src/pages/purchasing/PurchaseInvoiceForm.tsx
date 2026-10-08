@@ -1944,26 +1944,32 @@ function PurchaseInvoiceFormContent() {
                   <div className="mb-2 text-sm font-semibold">
                     {isRtl ? "إنشاء فاتورة من مستند شراء" : "Create an invoice from a purchase document"}
                   </div>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <Select value={sourceLookupKind} onValueChange={value => setSourceLookupKind(value as any)}>
-                      <SelectTrigger className="h-9 sm:w-52" data-testid="purchase-source-kind">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="purchase-order">{isRtl ? "أمر شراء" : "Purchase order"}</SelectItem>
-                        <SelectItem value="goods-receipt">{isRtl ? "إذن استلام" : "Goods receipt"}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      className="h-9 flex-1"
-                      value={sourceLookupNumber}
-                      onChange={event => setSourceLookupNumber(event.target.value)}
-                      onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void loadFromPurchaseSource(); } }}
-                      placeholder={isRtl ? "أدخل رقم المستند" : "Enter the document number"}
-                      aria-label={isRtl ? "رقم مستند الشراء" : "Purchase document number"}
-                      data-testid="purchase-source-number"
-                    />
-                    <Button type="button" className="h-9" onClick={() => void loadFromPurchaseSource()}
+                  <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-4">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">{isRtl ? "نوع المستند" : "Source type"}</Label>
+                      <Select value={sourceLookupKind} onValueChange={value => setSourceLookupKind(value as any)}>
+                        <SelectTrigger className="h-9 text-sm" data-testid="purchase-source-kind">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="purchase-order">{isRtl ? "أمر شراء" : "Purchase order"}</SelectItem>
+                          <SelectItem value="goods-receipt">{isRtl ? "إذن استلام" : "Goods receipt"}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5 lg:col-span-2">
+                      <Label className="text-xs">{isRtl ? "رقم المستند" : "Document number"}</Label>
+                      <Input
+                        className="h-9 text-sm"
+                        value={sourceLookupNumber}
+                        onChange={event => setSourceLookupNumber(event.target.value)}
+                        onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void loadFromPurchaseSource(); } }}
+                        placeholder={isRtl ? "أدخل رقم المستند" : "Enter the document number"}
+                        aria-label={isRtl ? "رقم مستند الشراء" : "Purchase document number"}
+                        data-testid="purchase-source-number"
+                      />
+                    </div>
+                    <Button type="button" className="h-9 w-full text-sm" onClick={() => void loadFromPurchaseSource()}
                       disabled={!sourceLookupNumber.trim() || sourceLookupLoading} data-testid="purchase-source-load">
                       {sourceLookupLoading
                         ? (isRtl ? "جاري التحميل…" : "Loading…")
