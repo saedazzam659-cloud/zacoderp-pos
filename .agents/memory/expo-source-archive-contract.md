@@ -19,7 +19,7 @@ The local Launch CLI also rejected the injected `EXPO_TOKEN` robot identity for 
 
 Do not use the stripped Launch bundle as an EAS CLI working directory. It omits the pnpm workspace root and lockfile, so local Expo config resolution fails before EAS can query or build the project. For EAS, package the workspace manifests and lockfile with the app and its required workspace dependencies, then install the filtered workspace dependencies before invoking EAS CLI.
 
-**Why:** EAS CLI resolves Expo config plugins locally, while the Launch handoff archive is intentionally optimized for Launch upload and is not a complete installable pnpm workspace.
+**Why:** EAS resolves Expo config plugins locally, while the Launch handoff archive is intentionally optimized for Launch upload and is not a complete installable pnpm workspace. An app-only Expo upload without the root pnpm lockfile was detected as Yarn 1 and failed to resolve pnpm `catalog:` dependencies.
 
 **How to apply:** Keep Launch and EAS source bundles distinct. For EAS work, include the workspace root metadata and required local packages; exclude secrets, node_modules, and unrelated monorepo source.
 
