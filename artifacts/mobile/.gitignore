@@ -33,6 +33,8 @@ yarn-error.*
 
 # local env files
 .env*.local
+# Archived Play Store bundles are build artifacts, not Launch source files.
+releases/*.aab
 
 # typescript
 *.tsbuildinfo
