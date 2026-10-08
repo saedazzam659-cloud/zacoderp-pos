@@ -18,6 +18,13 @@ import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { AccountCascadePicker } from "@/components/ui/account-cascade-picker";
+import { InvoiceSettlementPicker, type InvoiceSettlementOption } from "@/components/cash/InvoiceSettlementPicker";
+import {
+  buildInvoiceAllocationDraft,
+  defaultInvoicePercentages,
+  invoicePercentagesFromAmounts,
+  isInvoicePercentageTotalValid,
+} from "@/lib/cashInvoiceAllocations";
 import {
   ArrowDownCircle, ArrowRight, ChevronLeft, Search,
   Loader2, Save, Send, Lock, FileText, Banknote,
@@ -145,6 +152,10 @@ export default function ReceiptVoucherFormSimple() {
 
   const [form, setForm] = useState<FormState>(EMPTY);
   const [linkInvoice, setLinkInvoice] = useState(false);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
+  const [invoicePercentages, setInvoicePercentages] = useState<Record<string, string>>({});
+  const [invoiceAllocationTouched, setInvoiceAllocationTouched] = useState(false);
+  const [existingPartialAllocations, setExistingPartialAllocations] = useState<Array<{ invoiceId: number; amount: string | number }>>([]);
   // "party"   → settle against a supplier (default, legacy behaviour)
   // "account" → settle against a general GL account picked from the tree
   const [entityMode, setEntityMode] = useState<"party" | "account">("party");
@@ -192,6 +203,10 @@ export default function ReceiptVoucherFormSimple() {
     prefillDone.current = true;
     setEntityMode("party");
     setLinkInvoice(true);
+    setSelectedInvoiceIds([prefill.salesInvoiceId]);
+    setInvoicePercentages({});
+    setInvoiceAllocationTouched(false);
+    setExistingPartialAllocations([]);
     setForm(p => ({
       ...p,
       paymentType:   prefill.paymentType,
@@ -308,6 +323,20 @@ export default function ReceiptVoucherFormSimple() {
   useEffect(() => {
     if (!existing) return;
     if (Array.isArray(existing.lines) && existing.lines.length > 0) return;
+    const existingAllocations = Array.isArray(existing.invoiceAllocations) ? existing.invoiceAllocations : [];
+    const allocatedTotal = existingAllocations.reduce((sum: number, allocation: any) => sum + (Number(allocation.amount) || 0), 0);
+    const isFullMultiAllocation = !existing.salesInvoiceId
+      && existingAllocations.length > 1
+      && Math.abs(allocatedTotal - (Number(existing.amount) || 0)) <= 0.01;
+    const selectedIds = isFullMultiAllocation
+      ? existingAllocations.map((allocation: any) => String(allocation.invoiceId))
+      : existing.salesInvoiceId ? [String(existing.salesInvoiceId)] : [];
+    setSelectedInvoiceIds(selectedIds);
+    setInvoicePercentages(isFullMultiAllocation
+      ? invoicePercentagesFromAmounts(selectedIds, existingAllocations)
+      : {});
+    setInvoiceAllocationTouched(false);
+    setExistingPartialAllocations(isFullMultiAllocation ? [] : existingAllocations);
     setForm({
       date: existing.date ?? today(),
       paymentType: (existing.paymentType ?? "cash") as "cash" | "bank",
@@ -327,7 +356,7 @@ export default function ReceiptVoucherFormSimple() {
       notes: existing.notes ?? "",
       costCenter: existing.costCenter ?? "",
     });
-    setLinkInvoice(!!existing.salesInvoiceId);
+    setLinkInvoice(!!existing.salesInvoiceId || isFullMultiAllocation);
     setEntityMode(existing.accountId && !existing.entityId ? "account" : "party");
   }, [existing]);
 
@@ -337,6 +366,10 @@ export default function ReceiptVoucherFormSimple() {
     setEntityMode(m);
     if (m === "account") {
       setLinkInvoice(false);
+      setSelectedInvoiceIds([]);
+      setInvoicePercentages({});
+      setInvoiceAllocationTouched(true);
+      setExistingPartialAllocations([]);
       setForm(p => ({ ...p, entityId: "", salesInvoiceId: "", entityName: "" }));
     } else {
       setForm(p => ({ ...p, accountId: "", entityName: "" }));
@@ -398,35 +431,75 @@ export default function ReceiptVoucherFormSimple() {
   // and exclude cancelled ones; if the form is editing an existing
   // voucher whose linked invoice was since cancelled, we still surface
   // it so the user can see the (stale) link.
-  const invoiceItems: ComboboxItem[] = useMemo(() => {
+  function remainingBeforeCurrentVoucher(inv: any): number {
+    if (!inv) return 0;
+    let remaining = Number(inv.remainingAmount ?? inv.totalAmount ?? 0);
+    if (editId != null && existing?.status === "draft") {
+      const sourceRate = Number(existing.exchangeRate ?? 1) || 1;
+      const linkedAmount = (Array.isArray(existing.invoiceAllocations) ? existing.invoiceAllocations : [])
+        .filter((allocation: any) => Number(allocation.invoiceId) === Number(inv.id))
+        .reduce((sum: number, allocation: any) => sum + (Number(allocation.amount) || 0), 0);
+      const headerAmount = Number(existing.salesInvoiceId) === Number(inv.id)
+        ? Number(existing.amount) || 0
+        : 0;
+      remaining += (linkedAmount + headerAmount) * sourceRate;
+    }
+    return Math.max(0, remaining);
+  }
+
+  const invoiceItems: InvoiceSettlementOption[] = useMemo(() => {
     if (!form.entityId) return [];
     const sid = Number(form.entityId);
+    const selected = new Set(selectedInvoiceIds);
     const list = (salesInvoices as any[])
       .filter((inv: any) =>
         Number(inv.customerId) === sid && inv.status !== "cancelled"
         // الفواتير المسدَّدة بالكامل (سندات + قيود سداد) لا تُعرض للتحصيل مجدداً.
-        && !(inv.remainingAmount != null && Number(inv.remainingAmount) <= 0.01))
+        && (!(inv.remainingAmount != null && Number(inv.remainingAmount) <= 0.01) || selected.has(String(inv.id))))
       .map((inv: any) => ({
-        value: String(inv.id),
+        id: String(inv.id),
         label: inv.docNumber ?? `SI-${inv.id}`,
         description: `${inv.invoiceDate} • ${fmt2(inv.totalAmount || 0)} ${inv.currencyCode || "SAR"}`,
-        code: inv.status,
+        currencyCode: String(inv.currencyCode || "SAR"),
+        remainingAmount: remainingBeforeCurrentVoucher(inv),
       }));
-    // Make sure the currently-linked invoice is always selectable, even
-    // if it's owned by a different supplier or is cancelled.
-    if (form.salesInvoiceId && !list.some(i => i.value === form.salesInvoiceId)) {
-      const inv = (salesInvoices as any[]).find((x: any) => String(x.id) === form.salesInvoiceId);
+    // Keep current links visible even when an invoice is no longer open.
+    for (const invoiceId of selectedInvoiceIds) {
+      if (list.some((item) => item.id === invoiceId)) continue;
+      const inv = (salesInvoices as any[]).find((x: any) => String(x.id) === invoiceId);
       if (inv) {
         list.unshift({
-          value: String(inv.id),
+          id: String(inv.id),
           label: inv.docNumber ?? `SI-${inv.id}`,
           description: `${inv.invoiceDate} • ${fmt2(inv.totalAmount || 0)} ${inv.currencyCode || "SAR"}`,
-          code: inv.status,
+          currencyCode: String(inv.currencyCode || "SAR"),
+          remainingAmount: remainingBeforeCurrentVoucher(inv),
         });
       }
     }
     return list;
-  }, [salesInvoices, form.entityId, form.salesInvoiceId]);
+  }, [salesInvoices, form.entityId, selectedInvoiceIds, existing, editId]);
+
+  function handleInvoiceSelectionChange(nextIds: string[]) {
+    const next = [...new Set(nextIds)];
+    setSelectedInvoiceIds(next);
+    setInvoicePercentages(defaultInvoicePercentages(next, (id) => {
+      const invoice = (salesInvoices as any[]).find((item: any) => String(item.id) === id);
+      return remainingBeforeCurrentVoucher(invoice);
+    }));
+    setInvoiceAllocationTouched(true);
+    setExistingPartialAllocations([]);
+    setForm((previous) => ({
+      ...previous,
+      salesInvoiceId: next.length === 1 ? next[0] : "",
+      ...(next.length ? {
+        amount: next.reduce((sum, id) => {
+          const invoice = (salesInvoices as any[]).find((item: any) => String(item.id) === id);
+          return sum + remainingBeforeCurrentVoucher(invoice);
+        }, 0).toFixed(2),
+      } : {}),
+    }));
+  }
 
   // ── Live Journal-Entry preview (mirrors backend posting logic) ──
   function jePreview() {
@@ -473,6 +546,13 @@ export default function ReceiptVoucherFormSimple() {
       }
 
       const isAccountMode = entityMode === "account";
+      const isMultiInvoiceAllocation = entityMode === "party" && linkInvoice && selectedInvoiceIds.length > 1;
+      if (isMultiInvoiceAllocation && !isInvoicePercentageTotalValid(selectedInvoiceIds, invoicePercentages)) {
+        throw new Error(t("cashInvoiceAllocation.percentagesMustTotal"));
+      }
+      const invoiceAllocationPayload = isMultiInvoiceAllocation
+        ? buildInvoiceAllocationDraft(selectedInvoiceIds, invoicePercentages)
+        : undefined;
       const body = {
         ...form,
         amount: amtNum.toFixed(2),
@@ -487,8 +567,11 @@ export default function ReceiptVoucherFormSimple() {
         accountId:    isAccountMode && form.accountId ? parseInt(form.accountId) : null,
         entityId:     isAccountMode ? null : (form.entityId ? parseInt(form.entityId) : null),
         currencyId:   form.currencyId   ? parseInt(form.currencyId)   : null,
-        salesInvoiceId: !isAccountMode && linkInvoice && form.salesInvoiceId
-          ? parseInt(form.salesInvoiceId) : null,
+        salesInvoiceId: !isAccountMode && linkInvoice && selectedInvoiceIds.length === 1
+          ? parseInt(selectedInvoiceIds[0]) : null,
+        ...(isMultiInvoiceAllocation
+          ? { invoiceAllocations: invoiceAllocationPayload }
+          : invoiceAllocationTouched ? { invoiceAllocations: [] } : {}),
       };
 
       const url = isNew
@@ -1013,6 +1096,10 @@ export default function ReceiptVoucherFormSimple() {
                       value={form.entityId}
                       onValueChange={v => {
                         const found = (customers as any[]).find((x: any) => String(x.id) === v);
+                        setSelectedInvoiceIds([]);
+                        setInvoicePercentages({});
+                        setInvoiceAllocationTouched(true);
+                        setExistingPartialAllocations([]);
                         setForm(p => ({
                           ...p,
                           entityId: v,
@@ -1070,14 +1157,14 @@ export default function ReceiptVoucherFormSimple() {
                   </div>
                 </div>
 
-                {/* Optional: link to a purchase invoice (party mode only) */}
+                {/* Optional: settle one or more sales invoices (party mode only) */}
                 {entityMode === "party" && (
-                <div className="rounded-lg border border-dashed border-red-200 bg-red-50/30 p-3 space-y-3">
+                <div className="rounded-lg border border-dashed border-emerald-200 bg-emerald-50/30 p-3 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
-                      <Link2 className="h-4 w-4 text-red-700" />
-                      <Label htmlFor="pv-link-toggle" className="text-xs font-semibold text-red-900 cursor-pointer">
-                        {t(`${NS}.linkInvoiceTitle`, "سداد مقابل فاتورة شراء (اختياري)")}
+                      <Link2 className="h-4 w-4 text-emerald-700" />
+                      <Label htmlFor="pv-link-toggle" className="text-xs font-semibold text-emerald-900 cursor-pointer">
+                        {t(`${NS}.linkInvoiceTitle`, "تحصيل مقابل فواتير مبيعات (اختياري)")}
                       </Label>
                     </div>
                     <Switch
@@ -1085,55 +1172,58 @@ export default function ReceiptVoucherFormSimple() {
                       checked={linkInvoice}
                       onCheckedChange={(v) => {
                         setLinkInvoice(v);
-                        if (!v) setForm(p => ({ ...p, salesInvoiceId: "" }));
+                        if (!v) {
+                          setInvoiceAllocationTouched(true);
+                          setSelectedInvoiceIds([]);
+                          setInvoicePercentages({});
+                          setExistingPartialAllocations([]);
+                          setForm(p => ({ ...p, salesInvoiceId: "" }));
+                        }
                       }}
+                      disabled={isLockedSourceEntry}
                       data-testid="rv-link-toggle"
                     />
                   </div>
                   {linkInvoice && (
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium">
-                        {t(`${NS}.selectInvoiceToLink`, "اختر فاتورة الشراء")}
+                        {t(`${NS}.selectInvoiceToLink`, "اختر فواتير المبيعات")}
                       </Label>
-                      <div className="flex gap-2 items-stretch">
-                        <div className="flex-1">
-                          <SearchCombobox
-                            items={invoiceItems}
-                            value={form.salesInvoiceId}
-                            onValueChange={v => {
-                              // اختيار الفاتورة يعبّئ المبلغ تلقائياً من إجمالي
-                              // الفاتورة (أو المتبقي إن توفر) لتفادي أخطاء الإدخال.
-                              const inv = (salesInvoices as any[]).find((x: any) => String(x.id) === v);
-                              const auto = Number(inv?.remainingAmount ?? inv?.totalAmount ?? 0);
-                              setForm(p => ({
-                                ...p,
-                                salesInvoiceId: v,
-                                ...(v && auto > 0 ? { amount: auto.toFixed(2) } : {}),
-                              }));
-                            }}
-                            placeholder={form.entityId
-                              ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
-                              : t(`${NS}.pickCustomerFirst`, "اختر المورد أولاً")}
-                            searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
-                            emptyText={form.entityId
-                              ? t(`${NS}.noOpenInvoices`, "لا توجد فواتير لهذا المورد")
-                              : t(`${NS}.pickCustomerFirst`, "اختر المورد أولاً")}
-                          />
-                        </div>
-                        {form.salesInvoiceId && (
-                          <Button
-                            type="button" variant="ghost" size="icon"
-                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                            onClick={() => setForm(p => ({ ...p, salesInvoiceId: "" }))}
-                            title={t(`${NS}.clearLink`, "إلغاء الربط")}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
+                      <InvoiceSettlementPicker
+                        options={invoiceItems}
+                        selectedIds={selectedInvoiceIds}
+                        percentages={invoicePercentages}
+                        voucherAmount={form.amount}
+                        onSelectionChange={handleInvoiceSelectionChange}
+                        onPercentageChange={(invoiceId, value) => {
+                          setInvoiceAllocationTouched(true);
+                          setInvoicePercentages((previous) => ({ ...previous, [invoiceId]: value }));
+                        }}
+                        disabled={isLockedSourceEntry}
+                        tone="receipt"
+                      />
                       <p className="text-[11px] text-muted-foreground mt-1">
-                        {t(`${NS}.linkHint`, "عند الربط ستظهر فاتورة الشراء «مسددة» في قائمة فواتير المشتريات بنوع السداد المحدد.")}
+                        {t(`${NS}.linkHint`, "يُوزّع المبلغ على الفواتير المحددة، ويظل قيد الخزنة أو البنك واحداً.")}
                       </p>
+                    </div>
+                  )}
+                  {existingPartialAllocations.length > 0 && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50/70 p-2.5 text-[11px]">
+                      <p className="font-semibold text-amber-900">{t("cashInvoiceAllocation.previousLinks")}</p>
+                      <p className="mt-0.5 text-amber-800">{t("cashInvoiceAllocation.previousLinksHint")}</p>
+                      <ul className="mt-1 space-y-0.5 text-amber-900">
+                        {existingPartialAllocations.map((allocation, index) => {
+                          const invoice = (salesInvoices as any[]).find((item: any) => Number(item.id) === Number(allocation.invoiceId));
+                          return (
+                            <li key={`${allocation.invoiceId}-${index}`}>
+                              {t("cashInvoiceAllocation.previousLinkAmount", {
+                                invoice: invoice?.docNumber ?? `SI-${allocation.invoiceId}`,
+                                amount: fmt2(allocation.amount),
+                              })}
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </div>
                   )}
                 </div>

@@ -18,6 +18,13 @@ import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { AccountCascadePicker } from "@/components/ui/account-cascade-picker";
+import { InvoiceSettlementPicker, type InvoiceSettlementOption } from "@/components/cash/InvoiceSettlementPicker";
+import {
+  buildInvoiceAllocationDraft,
+  defaultInvoicePercentages,
+  isInvoicePercentageTotalValid,
+  invoicePercentagesFromAmounts,
+} from "@/lib/cashInvoiceAllocations";
 import {
   ArrowUpCircle, ArrowRight, ChevronLeft, Search,
   Loader2, Save, Send, Lock, FileText, Banknote,
@@ -158,6 +165,10 @@ export default function PaymentVoucherForm() {
 
   const [form, setForm] = useState<FormState>(EMPTY);
   const [linkInvoice, setLinkInvoice] = useState(false);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
+  const [invoicePercentages, setInvoicePercentages] = useState<Record<string, string>>({});
+  const [invoiceAllocationTouched, setInvoiceAllocationTouched] = useState(false);
+  const [existingPartialAllocations, setExistingPartialAllocations] = useState<Array<{ invoiceId: number; amount: string | number }>>([]);
   // "party"   → settle against a supplier (default, legacy behaviour)
   // "account" → settle against a general GL account picked from the tree
   const [entityMode, setEntityMode] = useState<"party" | "account">("party");
@@ -205,6 +216,10 @@ export default function PaymentVoucherForm() {
     prefillDone.current = true;
     setEntityMode("party");
     setLinkInvoice(true);
+    setSelectedInvoiceIds([prefill.purchaseInvoiceId]);
+    setInvoicePercentages({});
+    setInvoiceAllocationTouched(false);
+    setExistingPartialAllocations([]);
     setForm(p => ({
       ...p,
       paymentType:   prefill.paymentType,
@@ -321,6 +336,20 @@ export default function PaymentVoucherForm() {
   useEffect(() => {
     if (!existing) return;
     if (Array.isArray(existing.lines) && existing.lines.length > 0) return;
+    const existingAllocations = Array.isArray(existing.invoiceAllocations) ? existing.invoiceAllocations : [];
+    const allocatedTotal = existingAllocations.reduce((sum: number, allocation: any) => sum + (Number(allocation.amount) || 0), 0);
+    const isFullMultiAllocation = !existing.purchaseInvoiceId
+      && existingAllocations.length > 1
+      && Math.abs(allocatedTotal - (Number(existing.amount) || 0)) <= 0.01;
+    const selectedIds = isFullMultiAllocation
+      ? existingAllocations.map((allocation: any) => String(allocation.invoiceId))
+      : existing.purchaseInvoiceId ? [String(existing.purchaseInvoiceId)] : [];
+    setSelectedInvoiceIds(selectedIds);
+    setInvoicePercentages(isFullMultiAllocation
+      ? invoicePercentagesFromAmounts(selectedIds, existingAllocations)
+      : {});
+    setInvoiceAllocationTouched(false);
+    setExistingPartialAllocations(isFullMultiAllocation ? [] : existingAllocations);
     setForm({
       date: existing.date ?? today(),
       paymentType: (existing.paymentType ?? "cash") as "cash" | "bank",
@@ -345,7 +374,7 @@ export default function PaymentVoucherForm() {
       deferredEndDate: "",
       deferredPeriodicity: "monthly",
     });
-    setLinkInvoice(!!existing.purchaseInvoiceId);
+    setLinkInvoice(!!existing.purchaseInvoiceId || isFullMultiAllocation);
     setEntityMode(existing.accountId && !existing.entityId ? "account" : "party");
   }, [existing]);
 
@@ -355,6 +384,10 @@ export default function PaymentVoucherForm() {
     setEntityMode(m);
     if (m === "account") {
       setLinkInvoice(false);
+      setSelectedInvoiceIds([]);
+      setInvoicePercentages({});
+      setInvoiceAllocationTouched(true);
+      setExistingPartialAllocations([]);
       setForm(p => ({ ...p, entityId: "", purchaseInvoiceId: "", entityName: "" }));
     } else {
       setForm(p => ({ ...p, accountId: "", entityName: "" }));
@@ -433,35 +466,76 @@ export default function PaymentVoucherForm() {
   // and exclude cancelled ones; if the form is editing an existing
   // voucher whose linked invoice was since cancelled, we still surface
   // it so the user can see the (stale) link.
-  const invoiceItems: ComboboxItem[] = useMemo(() => {
+  function remainingBeforeCurrentVoucher(inv: any): number {
+    if (!inv) return 0;
+    let remaining = Number(inv.remainingAmount ?? inv.totalAmount ?? 0);
+    if (editId != null && existing?.status === "draft") {
+      const sourceRate = Number(existing.exchangeRate ?? 1) || 1;
+      const linkedAmount = (Array.isArray(existing.invoiceAllocations) ? existing.invoiceAllocations : [])
+        .filter((allocation: any) => Number(allocation.invoiceId) === Number(inv.id))
+        .reduce((sum: number, allocation: any) => sum + (Number(allocation.amount) || 0), 0);
+      const headerAmount = Number(existing.purchaseInvoiceId) === Number(inv.id)
+        ? Number(existing.amount) || 0
+        : 0;
+      remaining += (linkedAmount + headerAmount) * sourceRate;
+    }
+    return Math.max(0, remaining);
+  }
+
+  const invoiceItems: InvoiceSettlementOption[] = useMemo(() => {
     if (!form.entityId) return [];
     const sid = Number(form.entityId);
+    const selected = new Set(selectedInvoiceIds);
     const list = (purchaseInvoices as any[])
       .filter((inv: any) =>
         Number(inv.supplierId) === sid && inv.status !== "cancelled"
         // الفواتير المسدَّدة بالكامل (سندات + قيود سداد) لا تُعرض للسداد مجدداً.
-        && !(inv.remainingAmount != null && Number(inv.remainingAmount) <= 0.01))
+        && (!(inv.remainingAmount != null && Number(inv.remainingAmount) <= 0.01) || selected.has(String(inv.id))))
       .map((inv: any) => ({
-        value: String(inv.id),
+        id: String(inv.id),
         label: inv.docNumber ?? `PI-${inv.id}`,
         description: `${inv.invoiceDate} • ${fmt2(inv.totalAmount || 0)} ${inv.currencyCode || "SAR"}`,
-        code: inv.status,
+        currencyCode: String(inv.currencyCode || "SAR"),
+        remainingAmount: remainingBeforeCurrentVoucher(inv),
       }));
-    // Make sure the currently-linked invoice is always selectable, even
-    // if it's owned by a different supplier or is cancelled.
-    if (form.purchaseInvoiceId && !list.some(i => i.value === form.purchaseInvoiceId)) {
-      const inv = (purchaseInvoices as any[]).find((x: any) => String(x.id) === form.purchaseInvoiceId);
+    // Keep every invoice already linked to this draft visible, including a
+    // stale/cancelled historical link that the user must be able to inspect.
+    for (const invoiceId of selectedInvoiceIds) {
+      if (list.some((item) => item.id === invoiceId)) continue;
+      const inv = (purchaseInvoices as any[]).find((x: any) => String(x.id) === invoiceId);
       if (inv) {
         list.unshift({
-          value: String(inv.id),
+          id: String(inv.id),
           label: inv.docNumber ?? `PI-${inv.id}`,
           description: `${inv.invoiceDate} • ${fmt2(inv.totalAmount || 0)} ${inv.currencyCode || "SAR"}`,
-          code: inv.status,
+          currencyCode: String(inv.currencyCode || "SAR"),
+          remainingAmount: remainingBeforeCurrentVoucher(inv),
         });
       }
     }
     return list;
-  }, [purchaseInvoices, form.entityId, form.purchaseInvoiceId]);
+  }, [purchaseInvoices, form.entityId, selectedInvoiceIds, existing, editId]);
+
+  function handleInvoiceSelectionChange(nextIds: string[]) {
+    const next = [...new Set(nextIds)];
+    setSelectedInvoiceIds(next);
+    setInvoicePercentages(defaultInvoicePercentages(next, (id) => {
+      const invoice = (purchaseInvoices as any[]).find((item: any) => String(item.id) === id);
+      return remainingBeforeCurrentVoucher(invoice);
+    }));
+    setInvoiceAllocationTouched(true);
+    setExistingPartialAllocations([]);
+    setForm((previous) => ({
+      ...previous,
+      purchaseInvoiceId: next.length === 1 ? next[0] : "",
+      ...(next.length ? {
+        amount: next.reduce((sum, id) => {
+          const invoice = (purchaseInvoices as any[]).find((item: any) => String(item.id) === id);
+          return sum + remainingBeforeCurrentVoucher(invoice);
+        }, 0).toFixed(2),
+      } : {}),
+    }));
+  }
 
   // ── Live Journal-Entry preview (mirrors backend posting logic) ──
   function jePreview() {
@@ -514,6 +588,13 @@ export default function PaymentVoucherForm() {
         if (!form.deferredStartDate || !form.deferredEndDate || form.deferredEndDate < form.deferredStartDate)
           throw new Error(t(`${NS}.prepaidPeriodRequired`, "مصروف مقدم: فترة الاستهلاك (من/إلى) مطلوبة وبتواريخ صحيحة"));
       }
+      const isMultiInvoiceAllocation = entityMode === "party" && linkInvoice && selectedInvoiceIds.length > 1;
+      if (isMultiInvoiceAllocation && !isInvoicePercentageTotalValid(selectedInvoiceIds, invoicePercentages)) {
+        throw new Error(t("cashInvoiceAllocation.percentagesMustTotal"));
+      }
+      const invoiceAllocationPayload = isMultiInvoiceAllocation
+        ? buildInvoiceAllocationDraft(selectedInvoiceIds, invoicePercentages)
+        : undefined;
       const body = {
         ...form,
         amount: amtNum.toFixed(2),
@@ -528,8 +609,11 @@ export default function PaymentVoucherForm() {
         accountId:    isAccountMode && form.accountId ? parseInt(form.accountId) : null,
         entityId:     isAccountMode ? null : (form.entityId ? parseInt(form.entityId) : null),
         currencyId:   form.currencyId   ? parseInt(form.currencyId)   : null,
-        purchaseInvoiceId: !isAccountMode && linkInvoice && form.purchaseInvoiceId
-          ? parseInt(form.purchaseInvoiceId) : null,
+        purchaseInvoiceId: !isAccountMode && linkInvoice && selectedInvoiceIds.length === 1
+          ? parseInt(selectedInvoiceIds[0]) : null,
+        ...(isMultiInvoiceAllocation
+          ? { invoiceAllocations: invoiceAllocationPayload }
+          : invoiceAllocationTouched ? { invoiceAllocations: [] } : {}),
         // مصروف مقدم: submit as ONE allocation line so the shared multi-line
         // backend creates the amortization adjustment on /post. Header
         // accountId is nulled (the line carries the prepaid asset account).
@@ -1077,6 +1161,10 @@ export default function PaymentVoucherForm() {
                       value={form.entityId}
                       onValueChange={v => {
                         const found = (suppliers as any[]).find((x: any) => String(x.id) === v);
+                        setSelectedInvoiceIds([]);
+                        setInvoicePercentages({});
+                        setInvoiceAllocationTouched(true);
+                        setExistingPartialAllocations([]);
                         setForm(p => ({
                           ...p,
                           entityId: v,
@@ -1217,55 +1305,58 @@ export default function PaymentVoucherForm() {
                       checked={linkInvoice}
                       onCheckedChange={(v) => {
                         setLinkInvoice(v);
-                        if (!v) setForm(p => ({ ...p, purchaseInvoiceId: "" }));
+                        if (!v) {
+                          setInvoiceAllocationTouched(true);
+                          setSelectedInvoiceIds([]);
+                          setInvoicePercentages({});
+                          setExistingPartialAllocations([]);
+                          setForm(p => ({ ...p, purchaseInvoiceId: "" }));
+                        }
                       }}
+                      disabled={isLockedSourceEntry}
                       data-testid="pv-link-toggle"
                     />
                   </div>
                   {linkInvoice && (
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium">
-                        {t(`${NS}.selectInvoiceToLink`, "اختر فاتورة الشراء")}
+                        {t(`${NS}.selectInvoiceToLink`, "اختر فواتير الشراء")}
                       </Label>
-                      <div className="flex gap-2 items-stretch">
-                        <div className="flex-1">
-                          <SearchCombobox
-                            items={invoiceItems}
-                            value={form.purchaseInvoiceId}
-                            onValueChange={v => {
-                              // اختيار الفاتورة يعبّئ المبلغ تلقائياً من إجمالي
-                              // الفاتورة (أو المتبقي إن توفر) لتفادي أخطاء الإدخال.
-                              const inv = (purchaseInvoices as any[]).find((x: any) => String(x.id) === v);
-                              const auto = Number(inv?.remainingAmount ?? inv?.totalAmount ?? 0);
-                              setForm(p => ({
-                                ...p,
-                                purchaseInvoiceId: v,
-                                ...(v && auto > 0 ? { amount: auto.toFixed(2) } : {}),
-                              }));
-                            }}
-                            placeholder={form.entityId
-                              ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
-                              : t(`${NS}.pickSupplierFirst`, "اختر المورد أولاً")}
-                            searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
-                            emptyText={form.entityId
-                              ? t(`${NS}.noOpenInvoices`, "لا توجد فواتير لهذا المورد")
-                              : t(`${NS}.pickSupplierFirst`, "اختر المورد أولاً")}
-                          />
-                        </div>
-                        {form.purchaseInvoiceId && (
-                          <Button
-                            type="button" variant="ghost" size="icon"
-                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                            onClick={() => setForm(p => ({ ...p, purchaseInvoiceId: "" }))}
-                            title={t(`${NS}.clearLink`, "إلغاء الربط")}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
+                      <InvoiceSettlementPicker
+                        options={invoiceItems}
+                        selectedIds={selectedInvoiceIds}
+                        percentages={invoicePercentages}
+                        voucherAmount={form.amount}
+                        onSelectionChange={handleInvoiceSelectionChange}
+                        onPercentageChange={(invoiceId, value) => {
+                          setInvoiceAllocationTouched(true);
+                          setInvoicePercentages((previous) => ({ ...previous, [invoiceId]: value }));
+                        }}
+                        disabled={isLockedSourceEntry}
+                        tone="payment"
+                      />
                       <p className="text-[11px] text-muted-foreground mt-1">
-                        {t(`${NS}.linkHint`, "عند الربط ستظهر فاتورة الشراء «مسددة» في قائمة فواتير المشتريات بنوع السداد المحدد.")}
+                        {t(`${NS}.linkHint`, "يُوزّع المبلغ على الفواتير المحددة، ويظل قيد الخزنة أو البنك واحداً.")}
                       </p>
+                    </div>
+                  )}
+                  {existingPartialAllocations.length > 0 && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50/70 p-2.5 text-[11px]">
+                      <p className="font-semibold text-amber-900">{t("cashInvoiceAllocation.previousLinks")}</p>
+                      <p className="mt-0.5 text-amber-800">{t("cashInvoiceAllocation.previousLinksHint")}</p>
+                      <ul className="mt-1 space-y-0.5 text-amber-900">
+                        {existingPartialAllocations.map((allocation, index) => {
+                          const invoice = (purchaseInvoices as any[]).find((item: any) => Number(item.id) === Number(allocation.invoiceId));
+                          return (
+                            <li key={`${allocation.invoiceId}-${index}`}>
+                              {t("cashInvoiceAllocation.previousLinkAmount", {
+                                invoice: invoice?.docNumber ?? `PI-${allocation.invoiceId}`,
+                                amount: fmt2(allocation.amount),
+                              })}
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </div>
                   )}
                 </div>

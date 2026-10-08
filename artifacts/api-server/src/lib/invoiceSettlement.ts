@@ -51,21 +51,24 @@ export async function sumPartialLinksForInvoice(
   kind: SettlementKind,
   invoiceId: number,
   sourceType: SettlementSourceType,
+  excludeSourceId: number | null = null,
 ): Promise<number> {
   const invCol = kind === "sales"
     ? settlementLinksTable.salesInvoiceId
     : settlementLinksTable.purchaseInvoiceId;
+  const linkConditions = [
+    eq(settlementLinksTable.companyId, cid),
+    eq(settlementLinksTable.sourceType, sourceType),
+    eq(invCol, invoiceId),
+  ];
+  if (excludeSourceId != null) linkConditions.push(ne(settlementLinksTable.sourceId, excludeSourceId));
   if (sourceType === "je") {
     const rows = await db.select({
       amount: settlementLinksTable.amount,
       rate:   journalEntriesTable.exchangeRate,
     }).from(settlementLinksTable)
       .innerJoin(journalEntriesTable, eq(settlementLinksTable.sourceId, journalEntriesTable.id))
-      .where(and(
-        eq(settlementLinksTable.companyId, cid),
-        eq(settlementLinksTable.sourceType, "je"),
-        eq(invCol, invoiceId),
-      ));
+      .where(and(...linkConditions));
     return rows.reduce((s, r) => s + (parseFloat(String(r.amount)) || 0) * (parseFloat(String(r.rate)) || 1), 0);
   }
   const vTable = sourceType === "receipt_voucher" ? receiptVouchersTable : paymentVouchersTable;
@@ -74,11 +77,7 @@ export async function sumPartialLinksForInvoice(
     rate:   (vTable as any).exchangeRate,
   }).from(settlementLinksTable)
     .innerJoin(vTable as any, eq(settlementLinksTable.sourceId, (vTable as any).id))
-    .where(and(
-      eq(settlementLinksTable.companyId, cid),
-      eq(settlementLinksTable.sourceType, sourceType),
-      eq(invCol, invoiceId),
-    ));
+    .where(and(...linkConditions));
   return rows.reduce((s, r: any) => s + (parseFloat(String(r.amount)) || 0) * (parseFloat(String(r.rate)) || 1), 0);
 }
 

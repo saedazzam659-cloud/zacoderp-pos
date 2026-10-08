@@ -21,6 +21,7 @@ import { fullAuditFor } from "../lib/journalAudit.js";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { sumSettlementJEs, acquireSettlementLock, acquireSourceLock, sumVouchersForInvoice, sumConsumedFromSource, sumPartialLinksForInvoice, invoiceNetDueBase } from "../lib/invoiceSettlement.js";
 import { settlementLinksTable } from "@workspace/db";
+import { normalizeVoucherInvoiceAllocations, type VoucherInvoiceAllocation } from "../lib/voucher-invoice-allocations.js";
 import { isPrimaryKeyCollision, safeWriteErrorMessage } from "../lib/postRestoreWriteGuard.js";
 import { logger } from "../lib/logger.js";
 import { firstJournalDescription } from "../lib/journalLineDescriptions.js";
@@ -623,7 +624,16 @@ router.get("/:id", async (req, res) => {
   const lines = await db.select().from(receiptVoucherLinesTable)
     .where(eq(receiptVoucherLinesTable.voucherId, row.id))
     .orderBy(asc(receiptVoucherLinesTable.sortOrder), asc(receiptVoucherLinesTable.id));
-  res.json({ ...row, lines: lines.map((l) => ({
+  const invoiceAllocations = await db.select({
+    invoiceId: settlementLinksTable.salesInvoiceId,
+    amount: settlementLinksTable.amount,
+  }).from(settlementLinksTable).where(and(
+    eq(settlementLinksTable.companyId, cid),
+    eq(settlementLinksTable.sourceType, "receipt_voucher"),
+    eq(settlementLinksTable.sourceId, row.id),
+    sql`${settlementLinksTable.salesInvoiceId} IS NOT NULL`,
+  ));
+  res.json({ ...row, invoiceAllocations, lines: lines.map((l) => ({
     ...l,
     contractingAllocation: l.contractingKind ? {
       kind: l.contractingKind, projectId: l.contractingProjectId,
@@ -737,6 +747,32 @@ async function validateSalesInvoiceLink(cid: number, salesInvoiceId: number, cus
   }
 }
 
+async function validateSalesInvoiceAllocations(
+  cid: number,
+  allocations: VoucherInvoiceAllocation[],
+  customerId: number | null,
+): Promise<void> {
+  if (!allocations.length) return;
+  if (!customerId) throw new Error("يجب اختيار العميل قبل توزيع السند على الفواتير");
+  const ids = allocations.map((allocation) => allocation.invoiceId);
+  const invoices = await db.select({
+    id: salesInvoicesTable.id,
+    customerId: salesInvoicesTable.customerId,
+    currencyCode: salesInvoicesTable.currencyCode,
+    status: salesInvoicesTable.status,
+  }).from(salesInvoicesTable)
+    .where(and(eq(salesInvoicesTable.companyId, cid), inArray(salesInvoicesTable.id, ids)));
+  if (invoices.length !== ids.length) throw new Error("إحدى الفواتير المحددة غير موجودة أو لا تنتمي إلى هذه الشركة");
+  if (invoices.some((invoice) => invoice.customerId !== customerId)) {
+    throw new Error("يجب أن تخص جميع الفواتير المحددة العميل نفسه");
+  }
+  if (invoices.some((invoice) => invoice.status === "cancelled")) {
+    throw new Error("لا يمكن توزيع السند على فاتورة ملغاة");
+  }
+  const currencies = new Set(invoices.map((invoice) => String(invoice.currencyCode ?? "").trim().toUpperCase()));
+  if (currencies.size !== 1) throw new Error("يجب أن تكون جميع الفواتير المحددة بالعملة نفسها");
+}
+
 // Overpayment guard — BUSINESS RULE (explicit user decision): DRAFT vouchers
 // count too. The sum of ALL receipt vouchers linked to a sales invoice
 // (draft + posted, header-linked or line-linked) plus the allocation being
@@ -751,10 +787,15 @@ async function assertNoSalesOvercollection(
   headerInvoiceId: number | null,
   headerAmount: number | null, // used only when the voucher has no lines
   excludeVoucherId: number | null,
+  invoiceAllocations: VoucherInvoiceAllocation[] | null = null,
 ): Promise<void> {
   // Allocation this request adds, in base currency, per linked invoice.
   const add = new Map<number, number>();
-  if (lines) {
+  if (invoiceAllocations?.length) {
+    for (const allocation of invoiceAllocations) {
+      add.set(allocation.invoiceId, Number(allocation.amount) * voucherRate);
+    }
+  } else if (lines) {
     for (const l of lines) {
       if (!l.salesInvoiceId) continue;
       add.set(l.salesInvoiceId, (add.get(l.salesInvoiceId) ?? 0) + l.amount * voucherRate);
@@ -817,7 +858,7 @@ async function assertNoSalesOvercollection(
     }
 
     // Plus PARTIAL settlement links from other receipt vouchers (سداد جزئي).
-    existing += await sumPartialLinksForInvoice(cid, "sales", invId, "receipt_voucher");
+    existing += await sumPartialLinksForInvoice(cid, "sales", invId, "receipt_voucher", excludeVoucherId);
 
     // Plus manual journal entries linked as settlements (draft + posted) —
     // sumSettlementJEs already includes JE-sourced partial links.
@@ -843,6 +884,9 @@ router.post("/", async (req, res) => {
   let lines: RawRvLine[] | null;
   try { lines = normalizeReceiptLines(d.lines); }
   catch (e: any) { res.status(400).json({ error: e.message }); return; }
+  let invoiceAllocations: VoucherInvoiceAllocation[] | null;
+  try { invoiceAllocations = normalizeVoucherInvoiceAllocations(d.invoiceAllocations, d.amount); }
+  catch (e: any) { res.status(400).json({ error: e.message }); return; }
   if (lines) {
     try { await validateReceiptLines(cid, lines, entityId, req); }
     catch (e: any) { res.status(400).json({ error: e?.message || "بنود غير صالحة" }); return; }
@@ -851,19 +895,27 @@ router.post("/", async (req, res) => {
     res.status(400).json({ error: "بنود المقاولات تتطلب سعر صرف 1" }); return;
   }
   const headerSalesInvoiceId = d.salesInvoiceId ? parseInt(d.salesInvoiceId) : null;
+  if (invoiceAllocations?.length && (headerSalesInvoiceId || lines?.length)) {
+    res.status(400).json({ error: "توزيع الفواتير في سند القبض البسيط لا يجتمع مع ربط الرأس أو بنود التوزيع" }); return;
+  }
   if (headerSalesInvoiceId && lines?.some((l) => l.contractingAllocation)) {
     res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مبيعات؛ اربط البنود العادية بالفاتورة على مستوى البند" }); return;
   }
   // Prefer an explicit header link; else adopt the first line's invoice so
   // the list view keeps showing a linked-invoice badge.
-  const salesInvoiceId = headerSalesInvoiceId
-    ?? (lines?.find((l) => l.salesInvoiceId)?.salesInvoiceId ?? null);
+  const salesInvoiceId = invoiceAllocations?.length
+    ? null
+    : headerSalesInvoiceId ?? (lines?.find((l) => l.salesInvoiceId)?.salesInvoiceId ?? null);
+  if (invoiceAllocations?.length) {
+    try { await validateSalesInvoiceAllocations(cid, invoiceAllocations, entityId); }
+    catch (e: any) { res.status(400).json({ error: e?.message || "فواتير غير صالحة" }); return; }
+  }
   if (headerSalesInvoiceId) {
     try { await validateSalesInvoiceLink(cid, headerSalesInvoiceId, entityId); }
     catch (e: any) { res.status(400).json({ error: e?.message || "فاتورة غير صالحة" }); return; }
   }
   // Overcollection guard BEFORE consuming a sequence number (no gap on reject).
-  if (salesInvoiceId) {
+  if (salesInvoiceId || invoiceAllocations?.length) {
     try {
       await assertNoSalesOvercollection(
         cid,
@@ -872,6 +924,7 @@ router.post("/", async (req, res) => {
         headerSalesInvoiceId,
         lines ? null : (parseFloat(d.amount || "0") || 0),
         null,
+        invoiceAllocations,
       );
     } catch (e: any) { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return; }
   }
@@ -939,8 +992,13 @@ router.post("/", async (req, res) => {
   // case; this closes the concurrent-saves window (two requests both reading
   // the same "remaining" and jointly exceeding the invoice).
   const insertReceipt = () => db.transaction(async (tx) => {
-    if (salesInvoiceId) {
-      await acquireSettlementLock(tx, cid, "sales", salesInvoiceId);
+    const lockIds = [...new Set([
+      ...(salesInvoiceId ? [salesInvoiceId] : []),
+      ...(lines ?? []).map((line) => line.salesInvoiceId).filter((x): x is number => !!x),
+      ...(invoiceAllocations ?? []).map((allocation) => allocation.invoiceId),
+    ])].sort((a, b) => a - b);
+    if (lockIds.length) {
+      for (const lockId of lockIds) await acquireSettlementLock(tx, cid, "sales", lockId);
       await assertNoSalesOvercollection(
         cid,
         parseFloat(d.exchangeRate || "1") || 1,
@@ -948,6 +1006,7 @@ router.post("/", async (req, res) => {
         headerSalesInvoiceId,
         lines ? null : (parseFloat(d.amount || "0") || 0),
         null,
+        invoiceAllocations,
       );
     }
     const inserted = await tx.insert(receiptVouchersTable).values({
@@ -971,7 +1030,7 @@ router.post("/", async (req, res) => {
     amount:        headerAmount,
     currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
     exchangeRate:  d.exchangeRate  || "1",
-    refType:       d.refType       ?? (salesInvoiceId ? "sales_invoice" : null),
+    refType:       d.refType       ?? (salesInvoiceId || invoiceAllocations?.length ? "sales_invoice" : null),
     refNumber:     d.refNumber     ?? null,
     salesInvoiceId,
     description:   d.description   ?? null,
@@ -988,6 +1047,17 @@ router.post("/", async (req, res) => {
         if (mapped !== l.accountId) throw new Error("تغير ربط حساب المقاولات؛ أعد حفظ السند");
       }
       await replaceReceiptLines(inserted[0].id, lines, tx);
+    }
+    if (invoiceAllocations?.length && inserted[0]) {
+      await tx.insert(settlementLinksTable).values(invoiceAllocations.map((allocation) => ({
+        companyId: cid,
+        sourceType: "receipt_voucher",
+        sourceId: inserted[0].id,
+        salesInvoiceId: allocation.invoiceId,
+        purchaseInvoiceId: null,
+        amount: allocation.amount,
+        createdBy: Number((req as any).authUser?.id) || null,
+      })));
     }
     return inserted;
   });
@@ -1031,6 +1101,9 @@ router.put("/:id", async (req, res) => {
   let lines: RawRvLine[] | null;
   try { lines = normalizeReceiptLines(d.lines); }
   catch (e: any) { res.status(400).json({ error: e.message }); return; }
+  let invoiceAllocations: VoucherInvoiceAllocation[] | null;
+  try { invoiceAllocations = normalizeVoucherInvoiceAllocations(d.invoiceAllocations, d.amount); }
+  catch (e: any) { res.status(400).json({ error: e.message }); return; }
   if (lines == null) {
     const [linked] = await db.select({ id: receiptVoucherLinesTable.id }).from(receiptVoucherLinesTable)
       .where(and(eq(receiptVoucherLinesTable.voucherId, id), sql`${receiptVoucherLinesTable.contractingKind} IS NOT NULL`)).limit(1);
@@ -1044,6 +1117,9 @@ router.put("/:id", async (req, res) => {
     res.status(400).json({ error: "بنود المقاولات تتطلب سعر صرف 1" }); return;
   }
   const headerSalesInvoiceId = d.salesInvoiceId ? parseInt(d.salesInvoiceId) : null;
+  if (invoiceAllocations?.length && (headerSalesInvoiceId || lines?.length)) {
+    res.status(400).json({ error: "توزيع الفواتير في سند القبض البسيط لا يجتمع مع ربط الرأس أو بنود التوزيع" }); return;
+  }
   if (headerSalesInvoiceId && lines?.some((l) => l.contractingAllocation)) {
     res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مبيعات؛ اربط البنود العادية بالفاتورة على مستوى البند" }); return;
   }
@@ -1052,14 +1128,19 @@ router.put("/:id", async (req, res) => {
       .where(and(eq(receiptVoucherLinesTable.voucherId, id), sql`${receiptVoucherLinesTable.contractingKind} IS NOT NULL`)).limit(1);
     if (contracting) { res.status(400).json({ error: "لا يمكن ربط رأس سند المقاولات بفاتورة مبيعات" }); return; }
   }
-  const salesInvoiceId = headerSalesInvoiceId
-    ?? (lines?.find((l) => l.salesInvoiceId)?.salesInvoiceId ?? null);
+  const salesInvoiceId = invoiceAllocations?.length
+    ? null
+    : headerSalesInvoiceId ?? (lines?.find((l) => l.salesInvoiceId)?.salesInvoiceId ?? null);
+  if (invoiceAllocations?.length) {
+    try { await validateSalesInvoiceAllocations(cid, invoiceAllocations, entityId); }
+    catch (e: any) { res.status(400).json({ error: e?.message || "فواتير غير صالحة" }); return; }
+  }
   if (headerSalesInvoiceId) {
     try { await validateSalesInvoiceLink(existing.companyId, headerSalesInvoiceId, entityId); }
     catch (e: any) { res.status(400).json({ error: e?.message || "فاتورة غير صالحة" }); return; }
   }
   // Overcollection guard — exclude THIS voucher's old amounts (being replaced).
-  if (salesInvoiceId) {
+  if (salesInvoiceId || invoiceAllocations?.length) {
     try {
       await assertNoSalesOvercollection(
         cid,
@@ -1068,6 +1149,7 @@ router.put("/:id", async (req, res) => {
         headerSalesInvoiceId,
         lines ? null : (parseFloat(d.amount || "0") || 0),
         id,
+        invoiceAllocations,
       );
     } catch (e: any) { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return; }
   }
@@ -1077,7 +1159,7 @@ router.put("/:id", async (req, res) => {
 
   // سداد جزئي: partial settlement links already consumed from THIS voucher
   // must still fit under the edited amount (net of new invoice-linked lines).
-  {
+  if (invoiceAllocations === null) {
     const linksConsumed = await sumConsumedFromSource(cid, "receipt_voucher", id);
     if (linksConsumed > 0.005) {
       const newTotal = parseFloat(String(headerAmount ?? "0")) || 0;
@@ -1097,8 +1179,21 @@ router.put("/:id", async (req, res) => {
     const [locked] = await tx.select().from(receiptVouchersTable)
       .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).for("update");
     if (!locked || locked.status !== "draft") throw new Error("السند غير موجود أو مرحّل");
-    if (salesInvoiceId) {
-      await acquireSettlementLock(tx, cid, "sales", salesInvoiceId);
+    const oldSettlementRows = await tx.select({
+      invoiceId: settlementLinksTable.salesInvoiceId,
+    }).from(settlementLinksTable).where(and(
+      eq(settlementLinksTable.companyId, cid),
+      eq(settlementLinksTable.sourceType, "receipt_voucher"),
+      eq(settlementLinksTable.sourceId, id),
+    ));
+    const lockIds = [...new Set([
+      ...(salesInvoiceId ? [salesInvoiceId] : []),
+      ...(lines ?? []).map((line) => line.salesInvoiceId).filter((x): x is number => !!x),
+      ...oldSettlementRows.map((row) => row.invoiceId).filter((x): x is number => x != null),
+      ...(invoiceAllocations ?? []).map((allocation) => allocation.invoiceId),
+    ])].sort((a, b) => a - b);
+    if (lockIds.length) {
+      for (const lockId of lockIds) await acquireSettlementLock(tx, cid, "sales", lockId);
       await assertNoSalesOvercollection(
         cid,
         parseFloat(d.exchangeRate || "1") || 1,
@@ -1106,7 +1201,15 @@ router.put("/:id", async (req, res) => {
         headerSalesInvoiceId,
         lines ? null : (parseFloat(d.amount || "0") || 0),
         id,
+        invoiceAllocations,
       );
+    }
+    if (invoiceAllocations !== null) {
+      await tx.delete(settlementLinksTable).where(and(
+        eq(settlementLinksTable.companyId, cid),
+        eq(settlementLinksTable.sourceType, "receipt_voucher"),
+        eq(settlementLinksTable.sourceId, id),
+      ));
     }
     const updated = await tx.update(receiptVouchersTable).set({
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
@@ -1123,7 +1226,7 @@ router.put("/:id", async (req, res) => {
     amount:        headerAmount,
     currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
     exchangeRate:  d.exchangeRate  || "1",
-    refType:       d.refType       ?? (salesInvoiceId ? "sales_invoice" : null),
+    refType:       d.refType       ?? (salesInvoiceId || invoiceAllocations?.length ? "sales_invoice" : null),
     refNumber:     d.refNumber     ?? null,
     salesInvoiceId,
     description:   d.description   ?? null,
@@ -1136,6 +1239,17 @@ router.put("/:id", async (req, res) => {
         if (mapped !== l.accountId) throw new Error("تغير ربط حساب المقاولات؛ أعد حفظ السند");
       }
       await replaceReceiptLines(id, lines, tx);
+    }
+    if (invoiceAllocations?.length) {
+      await tx.insert(settlementLinksTable).values(invoiceAllocations.map((allocation) => ({
+        companyId: cid,
+        sourceType: "receipt_voucher",
+        sourceId: id,
+        salesInvoiceId: allocation.invoiceId,
+        purchaseInvoiceId: null,
+        amount: allocation.amount,
+        createdBy: Number((req as any).authUser?.id) || null,
+      })));
     }
     return updated;
   }).catch((e: any) => { res.status(400).json({ error: e?.message || "تجاوز قيمة الفاتورة" }); return [null as any]; });
@@ -1312,8 +1426,31 @@ router.delete("/:id", async (req, res) => {
   if ((Array.isArray(evidence) ? evidence : (evidence as any).rows ?? []).length) {
     res.status(409).json({ error: "لا يمكن حذف سند له تسويات مقاولات محفوظة في سجل المراجعة" }); return;
   }
-  await db.delete(receiptVouchersTable)
-    .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
+  await db.transaction(async (tx) => {
+    const linkedRows = await tx.select({
+      invoiceId: settlementLinksTable.salesInvoiceId,
+    }).from(settlementLinksTable).where(and(
+      eq(settlementLinksTable.companyId, cid),
+      eq(settlementLinksTable.sourceType, "receipt_voucher"),
+      eq(settlementLinksTable.sourceId, id),
+    ));
+    const lineRows = await tx.select({
+      invoiceId: receiptVoucherLinesTable.salesInvoiceId,
+    }).from(receiptVoucherLinesTable).where(eq(receiptVoucherLinesTable.voucherId, id));
+    const lockIds = [...new Set([
+      ...(existing.salesInvoiceId ? [existing.salesInvoiceId] : []),
+      ...linkedRows.map((row) => row.invoiceId).filter((invoiceId): invoiceId is number => invoiceId != null),
+      ...lineRows.map((row) => row.invoiceId).filter((invoiceId): invoiceId is number => invoiceId != null),
+    ])].sort((a, b) => a - b);
+    for (const invoiceId of lockIds) await acquireSettlementLock(tx, cid, "sales", invoiceId);
+    await tx.delete(settlementLinksTable).where(and(
+      eq(settlementLinksTable.companyId, cid),
+      eq(settlementLinksTable.sourceType, "receipt_voucher"),
+      eq(settlementLinksTable.sourceId, id),
+    ));
+    await tx.delete(receiptVouchersTable)
+      .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
+  });
   res.status(204).send();
 });
 
