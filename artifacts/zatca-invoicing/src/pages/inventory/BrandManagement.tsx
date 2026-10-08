@@ -44,7 +44,10 @@ export default function BrandManagement() {
     queryFn: () => inventoryApi.getBrands(cid),
   });
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["brands"] });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["brands"] });
+    qc.invalidateQueries({ queryKey: ["inventory-report-brand-options"] });
+  };
   const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
   const createMut = useMutation({ mutationFn: inventoryApi.createBrand, onSuccess: () => { invalidate(); reset(); toast({ title: t("common.saved", { defaultValue: "تم الحفظ" }) as string }); }, onError: errToast("تعذّر الحفظ") });
   const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateBrand(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("common.saved", { defaultValue: "تم الحفظ" }) as string }); }, onError: errToast("تعذّر الحفظ") });

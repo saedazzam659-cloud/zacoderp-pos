@@ -796,6 +796,26 @@ paths:
         "404": { description: Original journal entry not found }
         "409": { description: A reversal already exists or the entry changed state }
         "423": { description: Reversal date is in a closed period }
+  /inventory/reports/brand-options:
+    get:
+      operationId: getInventoryReportBrandOptions
+      tags: [inventory]
+      summary: List company brands and their linked inventory item IDs for report filters
+      parameters:
+        - name: companyId
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Brands linked to at least one company item
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InventoryReportBrandOption"
+        "401": { description: Authentication or company scope is required }
   /inventory/stock-transfers:
     get:
       operationId: listInternalStockTransfers
@@ -5965,3 +5985,14 @@ components:
         orderId: { type: integer }
         invoiceId: { type: integer }
         invoice: { $ref: "#/components/schemas/PurchaseInvoiceDraft" }
+    InventoryReportBrandOption:
+      type: object
+      required: [brandId, code, nameAr, nameEn, itemIds]
+      properties:
+        brandId: { type: integer }
+        code: { type: ["string", "null"] }
+        nameAr: { type: ["string", "null"] }
+        nameEn: { type: ["string", "null"] }
+        itemIds:
+          type: array
+          items: { type: integer }

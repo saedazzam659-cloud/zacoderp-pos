@@ -15,6 +15,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { InventoryBrandFilter, filterRowsForInventoryBrand, useInventoryReportBrandOptions } from "@/components/InventoryBrandFilter";
 
 type Row = {
   id: string;
@@ -33,9 +34,11 @@ export default function Stocktake() {
   const { fmt, fmtQty, fmtCost, fmtVal } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const brandOptions = useInventoryReportBrandOptions(cid);
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
 
   const [warehouseId, setWarehouseId] = useState("");
+  const [brandId, setBrandId] = useState("");
   const [search, setSearch] = useState("");
   const [groupByWh, setGroupByWh] = useState(true);
   const [showOnlyVariance, setShowOnlyVariance] = useState(false);
@@ -56,13 +59,13 @@ export default function Stocktake() {
   });
 
   // Apply text search
-  const searched = useMemo(() => rows.filter(r => {
+  const searched = useMemo(() => filterRowsForInventoryBrand(rows, brandId, brandOptions).filter(r => {
     if (!search) return true;
     const s = search.toLowerCase();
     return (r.item?.nameAr ?? "").includes(search) ||
       (r.item?.nameEn ?? "").toLowerCase().includes(s) ||
       (r.item?.code ?? "").toLowerCase().includes(s);
-  }), [rows, search]);
+  }), [rows, search, brandId, brandOptions]);
 
   // Compute variance per row
   const enriched = useMemo(() => searched.map(r => {
@@ -214,11 +217,11 @@ export default function Stocktake() {
 
       {/* Filters */}
       <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 print:hidden">
-        <div className="relative sm:col-span-5">
+        <div className="relative sm:col-span-4">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pr-9" placeholder={t("inventoryReports.stocktake.searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <div className="sm:col-span-4">
+        <div className="sm:col-span-3">
           <SearchCombobox
             items={[{ value: "", label: t("inventoryReports.common.allWarehouses") }, ...(warehouses as any[]).map(w => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))]}
             value={warehouseId}
@@ -226,6 +229,12 @@ export default function Stocktake() {
             placeholder={t("inventoryReports.common.allWarehouses")}
           />
         </div>
+        <InventoryBrandFilter
+          options={brandOptions}
+          value={brandId}
+          onChange={setBrandId}
+          className="sm:col-span-3"
+        />
         <label className="sm:col-span-2 flex items-center gap-2 text-sm rounded-md border px-3 cursor-pointer hover:bg-muted/30 transition">
           <input type="checkbox" checked={groupByWh} onChange={e => setGroupByWh(e.target.checked)} />
           {t("inventoryReports.stocktake.groupByWarehouse")}

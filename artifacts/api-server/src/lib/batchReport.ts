@@ -41,6 +41,7 @@ export function signedBatchQuantities(qties: readonly (number | string)[]) {
 
 export interface BatchFilters {
   itemId?: number;
+  brandId?: number;
   warehouseId?: number;
   batch?: string;
   expiryFrom?: string;
@@ -62,6 +63,12 @@ export async function queryBatchGroups(companyId: number, filters: BatchFilters,
   const where = [
     sql`l.company_id = ${companyId}`,
     filters.itemId != null ? sql`l.item_id = ${filters.itemId}` : sql`true`,
+    filters.brandId != null ? sql`EXISTS (
+      SELECT 1 FROM item_brands ib
+      WHERE ib.company_id = ${companyId}
+        AND ib.item_id = l.item_id
+        AND ib.brand_id = ${filters.brandId}
+    )` : sql`true`,
     filters.warehouseId != null ? sql`l.warehouse_id = ${filters.warehouseId}` : sql`true`,
   ];
   const grouped = sql`

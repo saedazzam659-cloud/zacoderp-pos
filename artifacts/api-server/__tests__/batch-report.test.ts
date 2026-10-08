@@ -73,6 +73,32 @@ test("group report applies tenant, item, warehouse, expiry and status to both to
   assert.ok(calls[1].params.includes(25));
 });
 
+test("brand filter scopes batch totals and rows to linked items", async () => {
+  const calls: ReturnType<typeof dialect.sqlToQuery>[] = [];
+  const executor = {
+    execute: async (statement: any) => {
+      calls.push(dialect.sqlToQuery(statement));
+      return { rows: calls.length === 1 ? [{
+        total: 0, totalReceivedQty: "0", totalIssuedQty: "0", totalRemainingQty: "0",
+        expiredCount: 0, expiringSoonCount: 0, activeCount: 0, noExpiryCount: 0,
+      }] : [] };
+    },
+  };
+  const report = await queryBatchGroups(19, {
+    brandId: 77, nearDays: 30, today: "2026-01-02", page: 1, pageSize: 25,
+  }, executor);
+  assert.equal(report.total, 0);
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.match(call.sql, /EXISTS \(\s*SELECT 1 FROM item_brands ib/);
+    assert.match(call.sql, /ib\.company_id =/);
+    assert.match(call.sql, /ib\.item_id = l\.item_id/);
+    assert.match(call.sql, /ib\.brand_id =/);
+    assert.ok(call.params.includes(19));
+    assert.ok(call.params.includes(77));
+  }
+});
+
 test("omitting onHandOnly preserves depleted history in item and default reports", async () => {
   const calls: ReturnType<typeof dialect.sqlToQuery>[] = [];
   const executor = {
@@ -97,6 +123,7 @@ test("omitting onHandOnly preserves depleted history in item and default reports
   assert.equal(report.rows[0].remainingQty, 0);
   assert.equal(report.summary.expiredCount, 1);
   assert.ok(calls.every(call => !call.sql.includes('g."remainingQty" > 0')));
+  assert.ok(calls.every(call => !call.sql.includes("item_brands")));
 });
 
 test("drilldown selects exact null bucket, tenant and expiry, with one ledger row per id", async () => {

@@ -10,12 +10,14 @@ import { Hourglass, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import { InventoryBrandFilter, filterItemsForInventoryBrand, useInventoryReportBrandOptions } from "@/components/InventoryBrandFilter";
 
 export default function SlowMovingItems() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { fmt, fmtQty } = useFmt();
+  const [brandId, setBrandId] = useState("");
 
   const EXPORT_COLS = [
     { key: "itemCode",     header: t("inventoryReports.slowMoving.exportItemCode"),       width: 16 },
@@ -29,6 +31,7 @@ export default function SlowMovingItems() {
 
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const brandOptions = useInventoryReportBrandOptions(cid);
   const [days, setDays] = useState("90");
   const [search, setSearch] = useState("");
 
@@ -70,7 +73,7 @@ export default function SlowMovingItems() {
   const today = new Date();
   const threshold = Number(days) || 90;
 
-  const enriched = (items as any[])
+  const enriched = filterItemsForInventoryBrand(items as any[], brandId, brandOptions)
     .filter((it: any) => it.itemType !== "service")
     .map((it: any) => {
       const bal = balByItem[it.id] ?? { qty: 0, value: 0 };
@@ -198,7 +201,7 @@ export default function SlowMovingItems() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="space-y-1.5">
           <Label>{t("inventoryReports.slowMoving.minDaysLabel")}</Label>
           <Input type="number" min={1} value={days} onChange={e => setDays(e.target.value)} placeholder="90" />
@@ -210,6 +213,7 @@ export default function SlowMovingItems() {
             <Input className="pr-9" placeholder={t("inventoryReports.slowMoving.searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
+        <InventoryBrandFilter options={brandOptions} value={brandId} onChange={setBrandId} />
       </div>
 
       <div className="w-full min-w-0 overflow-hidden rounded-xl">

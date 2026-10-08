@@ -1498,6 +1498,25 @@ export const ReverseJournalEntryBody = zod.object({
 });
 
 /**
+ * @summary List company brands and their linked inventory item IDs for report filters
+ */
+
+export const GetInventoryReportBrandOptionsQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1).optional(),
+});
+
+export const GetInventoryReportBrandOptionsResponseItem = zod.object({
+  brandId: zod.number(),
+  code: zod.string().nullable(),
+  nameAr: zod.string().nullable(),
+  nameEn: zod.string().nullable(),
+  itemIds: zod.array(zod.number()),
+});
+export const GetInventoryReportBrandOptionsResponse = zod.array(
+  GetInventoryReportBrandOptionsResponseItem,
+);
+
+/**
  * @summary List warehouse transfers and internal manufacturing deliveries in the caller scope
  */
 export const ListInternalStockTransfersResponseItem = zod.object({

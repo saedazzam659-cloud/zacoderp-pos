@@ -9,6 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFmt } from "@/hooks/use-fmt";
 import { Bell, AlertTriangle, Hourglass, Package, ArrowLeft } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  InventoryBrandFilter,
+  filterRowsForInventoryBrand,
+  useInventoryReportBrandOptions,
+} from "@/components/InventoryBrandFilter";
 
 // Tiny local debounce hook — keeps SmartAlerts self-contained.
 function useEffectDebounce(fn: () => void, deps: any[], delay: number) {
@@ -22,6 +28,10 @@ function useEffectDebounce(fn: () => void, deps: any[], delay: number) {
 export default function SmartAlerts() {
   const { t, i18n } = useTranslation();
   const { fmtQty } = useFmt();
+  const { user, actingCompanyId } = useAuth();
+  const cid = user?.role === "superadmin" ? actingCompanyId : (user?.company?.id ?? user?.companyId);
+  const [brandId, setBrandId] = useState("");
+  const brandOptions = useInventoryReportBrandOptions(cid);
   const [idleDaysInput, setIdleDaysInput] = useState("90");
   // Debounced + server-clamp-aligned value used for fetching. Keeps query
   // key stable across keystrokes (200ms) and constrains to server's 1..3650
@@ -45,8 +55,8 @@ export default function SmartAlerts() {
     catch { return iso; }
   };
 
-  const lowStock = data?.lowStock ?? [];
-  const idle = data?.idle ?? [];
+  const lowStock = filterRowsForInventoryBrand(data?.lowStock ?? [], brandId, brandOptions);
+  const idle = filterRowsForInventoryBrand(data?.idle ?? [], brandId, brandOptions);
 
   return (
     <div className="space-y-6" dir={i18n.language === "ar" ? "rtl" : "ltr"}>
@@ -58,7 +68,13 @@ export default function SmartAlerts() {
           </h1>
           <p className="text-muted-foreground text-sm mt-1">{t("pages.alerts.subtitle")}</p>
         </div>
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-2 flex-wrap">
+          <InventoryBrandFilter
+            options={brandOptions}
+            value={brandId}
+            onChange={setBrandId}
+            className="min-w-48"
+          />
           <div className="space-y-1">
             <Label className="text-xs">{t("pages.alerts.idleDaysLabel")}</Label>
             <Input

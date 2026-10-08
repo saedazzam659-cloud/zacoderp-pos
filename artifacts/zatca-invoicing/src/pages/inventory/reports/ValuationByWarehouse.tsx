@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,6 +8,7 @@ import ExportButtons from "@/components/ExportButtons";
 import { Wallet } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import { InventoryBrandFilter, filterRowsForInventoryBrand, useInventoryReportBrandOptions } from "@/components/InventoryBrandFilter";
 
 export default function ValuationByWarehouse() {
   const { t, i18n } = useTranslation();
@@ -15,6 +16,7 @@ export default function ValuationByWarehouse() {
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { fmt, fmtQty, fmtVal } = useFmt();
   const { user } = useAuth();
+  const [brandId, setBrandId] = useState("");
 
   const EXPORT_COLS = [
     { key: "warehouseCode", header: t("inventoryReports.valuation.cols.warehouseCode"), width: 14 },
@@ -25,6 +27,7 @@ export default function ValuationByWarehouse() {
     { key: "share",         header: t("inventoryReports.valuation.cols.share"),          width: 16 },
   ];
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const brandOptions = useInventoryReportBrandOptions(cid);
 
   const { data: warehouses = [] } = useQuery({
     queryKey: ["warehouses", cid],
@@ -42,7 +45,7 @@ export default function ValuationByWarehouse() {
   // Group balances by warehouse
   type Agg = { whId: number; itemCount: number; totalQty: number; totalValue: number };
   const aggMap: Record<number, Agg> = {};
-  (balances as any[]).forEach((b: any) => {
+  filterRowsForInventoryBrand(balances as any[], brandId, brandOptions).forEach((b: any) => {
     const id = Number(b.warehouseId);
     if (!aggMap[id]) aggMap[id] = { whId: id, itemCount: 0, totalQty: 0, totalValue: 0 };
     if (Number(b.qty) !== 0) aggMap[id].itemCount += 1;
@@ -148,6 +151,8 @@ export default function ValuationByWarehouse() {
           subtitle={t("inventoryReports.valuation.exportSubtitle", { value: fmt(grandValue) })}
         />
       </div>
+
+      <InventoryBrandFilter options={brandOptions} value={brandId} onChange={setBrandId} className="max-w-sm" />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">

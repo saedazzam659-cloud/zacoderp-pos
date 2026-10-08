@@ -9,13 +9,18 @@ import { useFmt } from "@/hooks/use-fmt";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  InventoryBrandFilter,
+  filterItemsForInventoryBrand,
+  useInventoryReportBrandOptions,
+} from "@/components/InventoryBrandFilter";
 
 type Filters = {
-  itemId: string; warehouseId: string; batch: string; expiryFrom: string;
+  itemId: string; brandId: string; warehouseId: string; batch: string; expiryFrom: string;
   expiryTo: string; status: string; nearDays: string; search: string; onHandOnly: "true" | "false";
 };
 const defaultFilters = (expiry: boolean): Filters => ({
-  itemId: "", warehouseId: "", batch: "", expiryFrom: "", expiryTo: "",
+  itemId: "", brandId: "", warehouseId: "", batch: "", expiryFrom: "", expiryTo: "",
   status: expiry ? "expiring_soon" : "", nearDays: "30", search: "",
   onHandOnly: expiry ? "true" : "false",
 });
@@ -39,10 +44,12 @@ function BatchExpiryReportContent({ expiry }: { expiry: boolean }) {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<BatchRow | null>(null);
   const [detailPage, setDetailPage] = useState(1);
+  const brandOptions = useInventoryReportBrandOptions(cid);
   const update = (name: keyof Filters, value: string) => { setFilters(prev => ({ ...prev, [name]: value } as Filters)); setPage(1); setSelected(null); };
   const itemsQuery = useQuery({ queryKey: ["items", user?.id, cid], queryFn: () => inventoryApi.getItems(cid!), enabled: !!cid });
   const warehousesQuery = useQuery({ queryKey: ["warehouses", user?.id, cid], queryFn: () => inventoryApi.getWarehouses(cid!), enabled: !!cid });
   const items = itemsQuery.data ?? [];
+  const filteredItems = filterItemsForInventoryBrand(items as any[], filters.brandId, brandOptions);
   const warehouses = warehousesQuery.data ?? [];
   // Report and item detail consume the same server-side batch ledger aggregation.
   const query = useQuery({
@@ -100,9 +107,18 @@ function BatchExpiryReportContent({ expiry }: { expiry: boolean }) {
       <label className="text-sm space-y-1">{label("الصنف", "Item")}
         <select data-testid="select-batch-item" className="w-full h-10 rounded-md border bg-background px-2" value={filters.itemId} onChange={e => update("itemId", e.target.value)}>
           <option value="">{label("كل الأصناف", "All items")}</option>
-          {(items as any[]).map((item: any) => <option key={item.id} value={item.id}>{ar ? item.nameAr : item.nameEn || item.nameAr} ({item.code})</option>)}
+          {filteredItems.map((item: any) => <option key={item.id} value={item.id}>{ar ? item.nameAr : item.nameEn || item.nameAr} ({item.code})</option>)}
         </select>
       </label>
+      <InventoryBrandFilter
+        options={brandOptions}
+        value={filters.brandId}
+        onChange={value => {
+          setFilters(prev => ({ ...prev, brandId: value, itemId: "" }));
+          setPage(1);
+          setSelected(null);
+        }}
+      />
       <label className="text-sm space-y-1">{label("المستودع", "Warehouse")}
         <select data-testid="select-batch-warehouse" className="w-full h-10 rounded-md border bg-background px-2" value={filters.warehouseId} onChange={e => update("warehouseId", e.target.value)}>
           <option value="">{label("كل المستودعات", "All warehouses")}</option>

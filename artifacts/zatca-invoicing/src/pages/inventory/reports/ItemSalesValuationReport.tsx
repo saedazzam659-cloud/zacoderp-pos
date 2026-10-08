@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
 import { DateField } from "@/components/ui/date-field";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import { InventoryBrandFilter, filterItemsForInventoryBrand, filterRowsForInventoryBrand, useInventoryReportBrandOptions } from "@/components/InventoryBrandFilter";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -32,7 +33,7 @@ const BASIS_META: Record<Basis, { labelKey: string; descKey: string; icon: any; 
 
 type Filters = {
   from: string; to: string;
-  warehouseId: string; customerId: string; itemId: string; branchId: string;
+  warehouseId: string; customerId: string; itemId: string; branchId: string; brandId: string;
 };
 
 export default function ItemSalesValuationReport() {
@@ -42,6 +43,7 @@ export default function ItemSalesValuationReport() {
   const { fmt, fmtQty } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const brandOptions = useInventoryReportBrandOptions(cid);
 
   const EXPORT_COLS = [
     { key: "itemCode",      header: t("inventoryReports.itemSalesValuation.cols.itemCode"),      width: 16 },
@@ -58,7 +60,7 @@ export default function ItemSalesValuationReport() {
   const today    = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const empty: Filters = { from: firstDay, to: today, warehouseId: "", customerId: "", itemId: "", branchId: "" };
+  const empty: Filters = { from: firstDay, to: today, warehouseId: "", customerId: "", itemId: "", branchId: "", brandId: "" };
   const [filters, setFilters] = useState<Filters>(empty);
   const [applied, setApplied] = useState<Filters>(empty);
   const [basis,   setBasis]   = useState<Basis>("cost");
@@ -100,7 +102,9 @@ export default function ItemSalesValuationReport() {
     },
   });
 
-  const totals = (rows as any[]).reduce(
+  const filteredRows = filterRowsForInventoryBrand(rows as any[], applied.brandId, brandOptions);
+  const filteredItems = filterItemsForInventoryBrand(items as any[], filters.brandId, brandOptions);
+  const totals = filteredRows.reduce(
     (acc, r) => {
       acc.soldQty       += Number(r.soldQty)       || 0;
       acc.soldValue     += Number(r.soldValue)     || 0;
@@ -113,7 +117,7 @@ export default function ItemSalesValuationReport() {
     { soldQty: 0, soldValue: 0, returnedQty: 0, returnedValue: 0, netQty: 0, netValue: 0 },
   );
 
-  const exportRows = (rows as any[]).map(r => ({
+  const exportRows = filteredRows.map(r => ({
     itemCode:      r.itemCode ?? "",
     itemNameAr:    pickName(r.itemNameAr, r.itemNameEn),
     unitName:      pickName(r.unitName, r.unitNameEn),
@@ -229,7 +233,7 @@ export default function ItemSalesValuationReport() {
   const apply = () => setApplied(filters);
   const reset = () => { setFilters(empty); setApplied(empty); };
   const hasAnyFilter =
-    !!applied.warehouseId || !!applied.customerId || !!applied.itemId || !!applied.branchId;
+    !!applied.warehouseId || !!applied.customerId || !!applied.itemId || !!applied.branchId || !!applied.brandId;
 
   const itemMap = new Map<number, any>((items as any[]).map(i => [i.id, i]));
   const whMap   = new Map<number, any>((warehouses as any[]).map(w => [w.id, w]));
@@ -239,6 +243,7 @@ export default function ItemSalesValuationReport() {
   const appliedWh   = applied.warehouseId ? whMap.get(Number(applied.warehouseId))   : null;
   const appliedCus  = applied.customerId  ? cusMap.get(Number(applied.customerId))   : null;
   const appliedBr   = applied.branchId    ? brMap.get(Number(applied.branchId))      : null;
+  const appliedBrand = applied.brandId ? brandOptions.find(option => String(option.brandId) === applied.brandId) : null;
 
   const basisLabel = t(BASIS_META[basis].labelKey);
 
@@ -249,6 +254,7 @@ export default function ItemSalesValuationReport() {
     appliedCus && t("inventoryReports.itemSalesValuation.subtitleCustomer", { value: pickName(appliedCus.nameAr, appliedCus.nameEn) || appliedCus.name }),
     appliedItem && t("inventoryReports.itemSalesValuation.subtitleItem", { value: pickName(appliedItem.nameAr, appliedItem.nameEn) || appliedItem.code }),
     appliedBr  && t("inventoryReports.itemSalesValuation.subtitleBranch", { value: pickName(appliedBr.nameAr, appliedBr.nameEn) || appliedBr.name }),
+    appliedBrand && `${t("inventoryReports.common.brand")}: ${pickName(appliedBrand.nameAr, appliedBrand.nameEn) || appliedBrand.code}`,
   ].filter(Boolean).join("  •  ");
 
   const BasisIcon = BASIS_META[basis].icon;
@@ -273,7 +279,7 @@ export default function ItemSalesValuationReport() {
           title={`${t("inventoryReports.itemSalesValuation.title")} — ${basisLabel}`}
           subtitle={subtitle}
           totalsRow={totalsRow}
-          disabled={(rows as any[]).length === 0}
+          disabled={filteredRows.length === 0}
         />
       </div>
 
@@ -344,6 +350,11 @@ export default function ItemSalesValuationReport() {
               placeholder={t("inventoryReports.common.allWarehouses")}
             />
           </div>
+          <InventoryBrandFilter
+            options={brandOptions}
+            value={filters.brandId}
+            onChange={value => setFilters(f => ({ ...f, brandId: value, itemId: "" }))}
+          />
           <div className="space-y-1.5">
             <Label className="text-xs">{t("inventoryReports.itemSalesValuation.branch")}</Label>
             <SearchCombobox
@@ -365,7 +376,7 @@ export default function ItemSalesValuationReport() {
           <div className="space-y-1.5">
             <Label className="text-xs">{t("inventoryReports.common.item")}</Label>
             <SearchCombobox
-              items={[{ value: "", label: t("inventoryReports.itemSalesValuation.allItems") }, ...(items as any[]).map(i => ({ value: String(i.id), label: `${pickName(i.nameAr, i.nameEn) || i.code} ${i.code ? `— ${i.code}` : ""}` }))]}
+              items={[{ value: "", label: t("inventoryReports.itemSalesValuation.allItems") }, ...filteredItems.map(i => ({ value: String(i.id), label: `${pickName(i.nameAr, i.nameEn) || i.code} ${i.code ? `— ${i.code}` : ""}` }))]}
               value={filters.itemId}
               onValueChange={v => setFilters(f => ({ ...f, itemId: v }))}
               placeholder={t("inventoryReports.itemSalesValuation.allItems")}
@@ -410,10 +421,10 @@ export default function ItemSalesValuationReport() {
             cid={cid}
             columns={gridColumns}
             rowKey={(row: any) => row.itemId}
-            rows={rows as any[]}
+            rows={filteredRows}
             unitLabel={isRtl ? "صنف" : "item"}
             emptyMessage={t("inventoryReports.itemSalesValuation.noData")}
-            totalsRow={(rows as any[]).length > 0 ? {
+            totalsRow={filteredRows.length > 0 ? {
               __label: t("inventoryReports.itemSalesValuation.total"),
               soldQty: fmtQty(totals.soldQty),
               soldValue: fmt(totals.soldValue),

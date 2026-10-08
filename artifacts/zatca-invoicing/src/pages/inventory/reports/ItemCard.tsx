@@ -15,6 +15,11 @@ import { DateField } from "@/components/ui/date-field";
 import { Link } from "wouter";
 import { TablePagination, type PageSize } from "@/components/TablePagination";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import {
+  InventoryBrandFilter,
+  filterItemsForInventoryBrand,
+  useInventoryReportBrandOptions,
+} from "@/components/InventoryBrandFilter";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 function authHeaders(): Record<string, string> {
@@ -66,6 +71,7 @@ export default function ItemCard() {
     from: firstDay,
     to: today,
     itemId: "",
+    brandId: "",
     warehouseId: "",
     customerId: "",
     txType: "",
@@ -78,6 +84,8 @@ export default function ItemCard() {
 
   const { data: items = [] }      = useQuery({ queryKey: ["items", cid],      queryFn: () => inventoryApi.getItems(cid) });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
+  const brandOptions = useInventoryReportBrandOptions(cid);
+  const filteredItems = filterItemsForInventoryBrand(items as any[], filters.brandId, brandOptions);
   const { data: customers = [] } = useQuery({
     queryKey: ["customers", cid],
     queryFn: async () => {
@@ -116,6 +124,7 @@ export default function ItemCard() {
     if (applied.from)        params.from        = applied.from;
     if (applied.to)          params.to          = applied.to;
     if (applied.itemId)      params.itemId      = applied.itemId;
+    if (applied.brandId)     params.brandId     = applied.brandId;
     if (applied.warehouseId) params.warehouseId = applied.warehouseId;
     if (applied.customerId)  params.customerId  = applied.customerId;
     if (applied.txType)      params.txType      = applied.txType;
@@ -308,12 +317,18 @@ export default function ItemCard() {
           <div className="space-y-1.5 sm:col-span-2">
             <Label>{t("inventoryReports.common.item")} <span className="text-red-500">*</span></Label>
             <SearchCombobox
-              items={(items as any[]).map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn }))}
+              items={filteredItems.map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn }))}
               value={filters.itemId}
               onValueChange={v => setFilters(p => ({ ...p, itemId: v }))}
               placeholder={t("inventoryReports.common.selectItem")}
             />
           </div>
+          <InventoryBrandFilter
+            options={brandOptions}
+            value={filters.brandId}
+            onChange={v => setFilters(p => ({ ...p, brandId: v, itemId: "" }))}
+            className="sm:col-span-2"
+          />
           <div className="space-y-1.5 sm:col-span-2">
             <Label>{t("inventoryReports.itemCard.movementType")}</Label>
             <SearchCombobox

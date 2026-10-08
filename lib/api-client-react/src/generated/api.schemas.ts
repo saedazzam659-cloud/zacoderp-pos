@@ -3014,6 +3014,17 @@ export interface PurchaseInvoiceConversionResult {
   invoice: PurchaseInvoiceDraft;
 }
 
+export interface InventoryReportBrandOption {
+  brandId: number;
+  /** @nullable */
+  code: string | null;
+  /** @nullable */
+  nameAr: string | null;
+  /** @nullable */
+  nameEn: string | null;
+  itemIds: number[];
+}
+
 export type GetSchoolEnrollmentPromotionPlanParams = {
   /**
    * @minimum 1
@@ -3159,6 +3170,13 @@ export type GetSchoolGradeAuditParams = {
    * @maximum 200
    */
   limit?: number;
+};
+
+export type GetInventoryReportBrandOptionsParams = {
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
 };
 
 export type ListSecurityActiveCompaniesParams = {

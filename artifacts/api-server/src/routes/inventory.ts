@@ -133,6 +133,7 @@ router.use(pathRbac([
   ["/reports/free-quantities",      "items"],
   ["/reports/item-sales-valuation", "items"],
   ["/reports/batches",               "items"],
+  ["/reports/brand-options",         "items"],
   // PRO Extension #6 — Smart Alerts: gate on "items" module like other
   // read-only inventory views.
   ["/alerts",                   "items"],
@@ -3430,7 +3431,7 @@ router.delete("/stock-counts/:id", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 router.get("/stock-ledger", async (req, res) => {
   const {
-    itemId, warehouseId, from, to, customerId, txType, costCenter,
+    itemId, warehouseId, from, to, customerId, txType, costCenter, brandId,
     paged, page: pageParam, pageSize: pageSizeParam,
   } = req.query as Record<string, string>;
   const wantsPaged = paged === "1";
@@ -3449,6 +3450,20 @@ router.get("/stock-ledger", async (req, res) => {
   const cid = getCompanyId(req);
   if (!cid) { res.json(wantsPaged ? emptyPage : []); return; }
   const conditions = [eq(stockLedgerTable.companyId, cid)];
+  if (brandId) {
+    const parsedBrandId = Number(brandId);
+    if (!Number.isSafeInteger(parsedBrandId) || parsedBrandId <= 0) {
+      res.status(400).json({ error: "معرّف العلامة التجارية غير صالح" }); return;
+    }
+    const links = await db.select({ itemId: itemBrandsTable.itemId }).from(itemBrandsTable)
+      .where(and(
+        eq(itemBrandsTable.companyId, cid),
+        eq(itemBrandsTable.brandId, parsedBrandId),
+      ));
+    const itemIds = [...new Set(links.map(link => link.itemId))];
+    if (itemIds.length === 0) { res.json(wantsPaged ? emptyPage : []); return; }
+    conditions.push(inArray(stockLedgerTable.itemId, itemIds));
+  }
   if (itemId)      conditions.push(eq(stockLedgerTable.itemId,      Number(itemId)));
   if (warehouseId) conditions.push(eq(stockLedgerTable.warehouseId, Number(warehouseId)));
   if (from)        conditions.push(gte(stockLedgerTable.txDate, from));
@@ -5662,7 +5677,7 @@ router.get("/reports/batches", async (req, res) => {
   const date = (value: unknown) => value === undefined || (typeof value === "string" && validDateOnly(value));
   const nearDays = query.nearDays === undefined ? 30 : Number(query.nearDays);
   const statuses = ["expired", "expiring_soon", "active", "no_expiry"];
-  if (!positiveId(query.itemId) || !positiveId(query.warehouseId) ||
+  if (!positiveId(query.itemId) || !positiveId(query.warehouseId) || !positiveId(query.brandId) ||
       !date(query.expiryFrom) || !date(query.expiryTo) ||
       (query.expiryFrom && query.expiryTo && String(query.expiryFrom) > String(query.expiryTo)) ||
       (query.batch !== undefined && (typeof query.batch !== "string" || query.batch.length > 255)) ||
@@ -5674,6 +5689,7 @@ router.get("/reports/batches", async (req, res) => {
   const report = await queryBatchGroups(cid, {
     ...paging, today: businessDate(), nearDays,
     itemId: query.itemId === undefined ? undefined : Number(query.itemId),
+    brandId: query.brandId === undefined ? undefined : Number(query.brandId),
     warehouseId: query.warehouseId === undefined ? undefined : Number(query.warehouseId),
     batch: query.batch as string | undefined,
     expiryFrom: query.expiryFrom as string | undefined,
@@ -5682,6 +5698,47 @@ router.get("/reports/batches", async (req, res) => {
     onHandOnly: query.onHandOnly === "true",
   });
   res.json(report);
+});
+
+router.get("/reports/brand-options", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const rows = await db.select({
+    brandId: brandsTable.id,
+    code: brandsTable.code,
+    nameAr: brandsTable.nameAr,
+    nameEn: brandsTable.nameEn,
+    itemId: itemBrandsTable.itemId,
+  })
+    .from(itemBrandsTable)
+    .innerJoin(brandsTable, and(
+      eq(brandsTable.id, itemBrandsTable.brandId),
+      eq(brandsTable.companyId, cid),
+    ))
+    .innerJoin(itemsTable, and(
+      eq(itemsTable.id, itemBrandsTable.itemId),
+      eq(itemsTable.companyId, cid),
+    ))
+    .where(eq(itemBrandsTable.companyId, cid))
+    .orderBy(asc(brandsTable.code), asc(itemsTable.id));
+  const grouped = new Map<number, {
+    brandId: number;
+    code: string | null;
+    nameAr: string | null;
+    nameEn: string | null;
+    itemIds: number[];
+  }>();
+  for (const row of rows) {
+    const option = grouped.get(row.brandId) ?? {
+      brandId: row.brandId,
+      code: row.code,
+      nameAr: row.nameAr,
+      nameEn: row.nameEn,
+      itemIds: [],
+    };
+    option.itemIds.push(row.itemId);
+    grouped.set(row.brandId, option);
+  }
+  res.json([...grouped.values()]);
 });
 
 router.get("/reports/batches/movements", async (req, res) => {

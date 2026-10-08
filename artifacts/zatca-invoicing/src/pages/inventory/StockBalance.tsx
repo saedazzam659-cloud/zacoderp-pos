@@ -11,6 +11,11 @@ import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import {
+  InventoryBrandFilter,
+  filterRowsForInventoryBrand,
+  useInventoryReportBrandOptions,
+} from "@/components/InventoryBrandFilter";
 
 export default function StockBalance() {
   const { t, i18n } = useTranslation();
@@ -22,8 +27,10 @@ export default function StockBalance() {
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const [warehouseId, setWarehouseId] = useState("");
+  const [brandId, setBrandId] = useState("");
   const [search, setSearch] = useState("");
   const [showBelowReorder, setShowBelowReorder] = useState(false);
+  const brandOptions = useInventoryReportBrandOptions(cid);
 
   // ─── أساس الحساب (Calculation Basis) ───────────────────────────────
   // يحدد كيف تُحسب "القيمة" + "إجمالي القيمة" في التقرير:
@@ -87,7 +94,8 @@ export default function StockBalance() {
     },
   });
 
-  const matchingRows = rows.filter((r: any) => {
+  const brandRows = filterRowsForInventoryBrand(rows, brandId, brandOptions);
+  const matchingRows = brandRows.filter((r: any) => {
     const matchText = !search || r.item?.nameAr?.includes(search) || r.item?.nameEn?.toLowerCase().includes(search.toLowerCase()) || r.item?.code?.includes(search);
     const matchReorder = !showBelowReorder || Number(r.qty) < Number(r.item?.reorderLevel ?? 0);
     return matchText && matchReorder;
@@ -126,7 +134,7 @@ export default function StockBalance() {
 
   const totalValue = filtered.reduce((s: number, r: any) => s + Number(r.qty) * unitPriceFor(r), 0);
   const totalQty = filtered.reduce((s: number, r: any) => s + Number(r.qty ?? 0), 0);
-  const belowReorderCount = rows.filter((r: any) => Number(r.item?.reorderLevel) > 0 && Number(r.qty) < Number(r.item?.reorderLevel)).length;
+  const belowReorderCount = brandRows.filter((r: any) => Number(r.item?.reorderLevel) > 0 && Number(r.qty) < Number(r.item?.reorderLevel)).length;
 
   // عنوان عمود/كرت "القيمة" يتغيّر حسب أساس الحساب — كي يفهم القارئ
   // ماذا تمثّل الأرقام بدون الحاجة للرجوع للمحدِّد.
@@ -312,6 +320,12 @@ export default function StockBalance() {
             placeholder={t("inventoryReports.common.allWarehouses") as string}
           />
         </div>
+        <InventoryBrandFilter
+          options={brandOptions}
+          value={brandId}
+          onChange={setBrandId}
+          className="w-full sm:w-72"
+        />
       </div>
 
       {/* Table */}

@@ -15,6 +15,11 @@ import { useFmt } from "@/hooks/use-fmt";
 import { DateField } from "@/components/ui/date-field";
 import { TablePagination, type PageSize } from "@/components/TablePagination";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import {
+  InventoryBrandFilter,
+  filterItemsForInventoryBrand,
+  useInventoryReportBrandOptions,
+} from "@/components/InventoryBrandFilter";
 
 const TX_TYPE_COLOR: Record<string, string> = {
   transfer_out: "bg-orange-50 text-orange-700",
@@ -82,13 +87,15 @@ export default function StockLedger() {
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "" });
-  const [applied, setApplied] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "" });
+  const [filters, setFilters] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "", brandId: "" });
+  const [applied, setApplied] = useState({ from: firstDay, to: today, itemId: "", warehouseId: "", brandId: "" });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(25);
 
   const { data: items = [] }      = useQuery({ queryKey: ["items", cid],      queryFn: () => inventoryApi.getItems(cid) });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
+  const brandOptions = useInventoryReportBrandOptions(cid);
+  const filteredItems = filterItemsForInventoryBrand(items as any[], filters.brandId, brandOptions);
   const ledgerParams = (pageNumber: number, size: number) => {
     const params: Record<string, string> = {
       page: String(pageNumber),
@@ -99,6 +106,7 @@ export default function StockLedger() {
     if (applied.to)            params.to          = applied.to;
     if (applied.itemId)        params.itemId      = applied.itemId;
     if (applied.warehouseId)   params.warehouseId = applied.warehouseId;
+    if (applied.brandId)       params.brandId     = applied.brandId;
     return params;
   };
   const emptyLedgerPage = {
@@ -328,12 +336,17 @@ export default function StockLedger() {
           <div className="space-y-1.5">
             <Label>{t("inventoryReports.common.item") as string}</Label>
             <SearchCombobox
-              items={[{ value: "", label: isRtl ? "كل الأصناف" : "All Items" }, ...(items as any[]).map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn }))]}
+              items={[{ value: "", label: isRtl ? "كل الأصناف" : "All Items" }, ...filteredItems.map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn }))]}
               value={filters.itemId}
               onValueChange={v => setFilters(p => ({ ...p, itemId: v }))}
               placeholder={isRtl ? "كل الأصناف" : "All Items"}
             />
           </div>
+          <InventoryBrandFilter
+            options={brandOptions}
+            value={filters.brandId}
+            onChange={v => setFilters(p => ({ ...p, brandId: v, itemId: "" }))}
+          />
           <div className="space-y-1.5">
             <Label>{t("inventoryReports.common.warehouse") as string}</Label>
             <SearchCombobox

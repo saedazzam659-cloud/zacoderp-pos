@@ -1358,6 +1358,7 @@ export default function Items() {
   const [filterType, setFilterType] = useState<"all" | "stock" | "service" | "fixed_asset">("all");
   const [filterNature, setFilterNature] = useState<"all" | "raw" | "semi" | "finished" | "consumable" | "merchandise">("all");
   const [form, setForm] = useState<any>(EMPTY);
+  const [createBrandId, setCreateBrandId] = useState("");
   const [editId, setEditId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [activeItemTab, setActiveItemTab] = useState("basic");
@@ -1386,6 +1387,11 @@ export default function Items() {
   const { data: units = [] } = useQuery({
     queryKey: ["units", cid],
     queryFn: () => inventoryApi.getUnits(cid),
+  });
+  const { data: createBrandOptions = [] } = useQuery({
+    queryKey: ["brands", cid],
+    queryFn: () => inventoryApi.getBrands(cid),
+    enabled: canBrands && showForm && editId === null,
   });
   const { data: itemDetail } = useQuery({
     queryKey: ["item-detail", expandedId],
@@ -1417,8 +1423,33 @@ export default function Items() {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["items"] });
   const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
   const createMut = useMutation({
-    mutationFn: inventoryApi.createItem,
-    onSuccess: async (row: any) => { try { if (row?.id) await persistUsageControls(row.id); } catch { /* usage controls are best-effort */ } invalidate(); reset(); toast({ title: t("pages.items.itemSaved") }); },
+    mutationFn: ({ data }: { data: any; brandId: string }) => inventoryApi.createItem(data),
+    onSuccess: async (row: any, variables: { data: any; brandId: string }) => {
+      try { if (row?.id) await persistUsageControls(row.id); } catch { /* usage controls are best-effort */ }
+      let brandLinkFailed = false;
+      if (variables.brandId) {
+        if (!row?.id) {
+          brandLinkFailed = true;
+        } else {
+          try {
+            await inventoryApi.addItemBrand(row.id, { brandId: Number(variables.brandId) });
+            await qc.invalidateQueries({ queryKey: ["inventory-report-brand-options", cid] });
+          } catch {
+            // The item already exists; do not leave the form open and invite a duplicate retry.
+            brandLinkFailed = true;
+          }
+        }
+      }
+      invalidate();
+      reset();
+      toast(brandLinkFailed
+        ? {
+            title: t("pages.items.brandLinkFailedTitle"),
+            description: t("pages.items.brandLinkFailedDescription"),
+            variant: "destructive",
+          }
+        : { title: t("pages.items.itemSaved") });
+    },
     onError: errToast(t("inventoryMaster.items.saveItemFailed")),
   });
   const updateMut = useMutation({
@@ -1464,8 +1495,9 @@ export default function Items() {
     onError: errToast(t("pages.items.notifyLowStock.failed")),
   });
 
-  function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveItemTab("basic"); setUsageControls({}); }
+  function reset() { setForm(EMPTY); setCreateBrandId(""); setEditId(null); setShowForm(false); setActiveItemTab("basic"); setUsageControls({}); }
   function handleEdit(item: any) {
+    setCreateBrandId("");
     setForm({
       ...item,
       // String coercion is REQUIRED: SearchCombobox option values are strings
@@ -1521,7 +1553,7 @@ export default function Items() {
       revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
     };
     if (editId) updateMut.mutate({ id: editId, data: payload });
-    else        createMut.mutate(payload);
+    else        createMut.mutate({ data: payload, brandId: createBrandId });
   }
   function toggleExpand(id: number) {
     if (expandedId === id) { setExpandedId(null); }
@@ -1781,6 +1813,29 @@ export default function Items() {
                     );
                   })()}
                 </Field>
+                {!editId && canBrands && (createBrandOptions as any[]).some((brand: any) => brand.status !== "inactive") && (
+                  <Field
+                    label={t("pages.items.initialBrandLabel")}
+                    hint={t("pages.items.initialBrandHint")}
+                  >
+                    <SearchCombobox
+                      items={[
+                        { value: "", label: t("pages.items.initialBrandNone") },
+                        ...(createBrandOptions as any[])
+                          .filter((brand: any) => brand.status !== "inactive")
+                          .map((brand: any) => ({
+                            value: String(brand.id),
+                            code: brand.code,
+                            label: brand.nameAr,
+                            labelEn: brand.nameEn,
+                          })),
+                      ]}
+                      value={createBrandId}
+                      onValueChange={setCreateBrandId}
+                      placeholder={t("pages.items.initialBrandNone")}
+                    />
+                  </Field>
+                )}
                 <Field label={`${t("pages.items.baseUnit")} *`} hint={t("inventoryMaster.units.baseRequired")}>
                   <SearchCombobox items={[{ value: "", label: t("pages.items.chooseUnit") }, ...(units as any[]).map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))]} value={form.unitId} onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))} placeholder={t("pages.items.chooseUnit")} />
                 </Field>
@@ -3148,7 +3203,10 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
   const [form, setForm] = useState({ ...emptyForm });
   const resetForm = () => { setForm({ ...emptyForm }); setEditId(null); };
 
-  const inv = () => qc.invalidateQueries({ queryKey: ["item-brands", itemId] });
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: ["item-brands", itemId] });
+    qc.invalidateQueries({ queryKey: ["inventory-report-brand-options"] });
+  };
 
   // Shared body builder — POST (create) and PUT (edit) accept the same
   // whitelisted field set on the server (pickItemBrandBody).

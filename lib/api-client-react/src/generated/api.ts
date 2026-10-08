@@ -57,6 +57,7 @@ import type {
   GetCashExpenseReportParams,
   GetCashExpensesParams,
   GetDashboardSummaryParams,
+  GetInventoryReportBrandOptionsParams,
   GetMonthlyStatsParams,
   GetPurchaseOrderReceiptOptionsParams,
   GetPurchaseReceiptFollowUpParams,
@@ -87,6 +88,7 @@ import type {
   InternalDeliveryPostResult,
   InternalStockTransfer,
   InternalStockTransferInput,
+  InventoryReportBrandOption,
   Invoice,
   JournalEntryReversalInput,
   JournalEntryReversalResult,
@@ -3305,6 +3307,115 @@ export const useReverseJournalEntry = <
 > => {
   return useMutation(getReverseJournalEntryMutationOptions(options));
 };
+
+/**
+ * @summary List company brands and their linked inventory item IDs for report filters
+ */
+export const getGetInventoryReportBrandOptionsUrl = (
+  params?: GetInventoryReportBrandOptionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/inventory/reports/brand-options?${stringifiedParams}`
+    : `/api/inventory/reports/brand-options`;
+};
+
+export const getInventoryReportBrandOptions = async (
+  params?: GetInventoryReportBrandOptionsParams,
+  options?: RequestInit,
+): Promise<InventoryReportBrandOption[]> => {
+  return customFetch<InventoryReportBrandOption[]>(
+    getGetInventoryReportBrandOptionsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetInventoryReportBrandOptionsQueryKey = (
+  params?: GetInventoryReportBrandOptionsParams,
+) => {
+  return [
+    `/api/inventory/reports/brand-options`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetInventoryReportBrandOptionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInventoryReportBrandOptions>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetInventoryReportBrandOptionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInventoryReportBrandOptions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetInventoryReportBrandOptionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getInventoryReportBrandOptions>>
+  > = ({ signal }) =>
+    getInventoryReportBrandOptions(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInventoryReportBrandOptions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInventoryReportBrandOptionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInventoryReportBrandOptions>>
+>;
+export type GetInventoryReportBrandOptionsQueryError = ErrorType<void>;
+
+/**
+ * @summary List company brands and their linked inventory item IDs for report filters
+ */
+
+export function useGetInventoryReportBrandOptions<
+  TData = Awaited<ReturnType<typeof getInventoryReportBrandOptions>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetInventoryReportBrandOptionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInventoryReportBrandOptions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInventoryReportBrandOptionsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary List warehouse transfers and internal manufacturing deliveries in the caller scope

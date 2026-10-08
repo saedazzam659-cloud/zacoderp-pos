@@ -13,6 +13,7 @@ import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import { InventoryBrandFilter, filterItemsForInventoryBrand, filterRowsForInventoryBrand, useInventoryReportBrandOptions } from "@/components/InventoryBrandFilter";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -23,7 +24,7 @@ function authHeaders(): Record<string, string> {
 
 type Filters = {
   from: string; to: string;
-  warehouseId: string; customerId: string; itemId: string; branchId: string;
+  warehouseId: string; customerId: string; itemId: string; branchId: string; brandId: string;
 };
 
 export default function FreeQuantitiesReport() {
@@ -33,6 +34,7 @@ export default function FreeQuantitiesReport() {
   const { fmtQty } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const brandOptions = useInventoryReportBrandOptions(cid);
 
   const EXPORT_COLS = [
     { key: "itemCode",      header: t("inventoryReports.freeQuantities.itemCode"), width: 16 },
@@ -46,7 +48,7 @@ export default function FreeQuantitiesReport() {
   const today    = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const empty: Filters = { from: firstDay, to: today, warehouseId: "", customerId: "", itemId: "", branchId: "" };
+  const empty: Filters = { from: firstDay, to: today, warehouseId: "", customerId: "", itemId: "", branchId: "", brandId: "" };
   const [filters, setFilters] = useState<Filters>(empty);
   const [applied, setApplied] = useState<Filters>(empty);
 
@@ -88,7 +90,9 @@ export default function FreeQuantitiesReport() {
   });
 
   // Totals across rows
-  const totals = (rows as any[]).reduce(
+  const filteredRows = filterRowsForInventoryBrand(rows as any[], applied.brandId, brandOptions);
+  const filteredItems = filterItemsForInventoryBrand(items as any[], filters.brandId, brandOptions);
+  const totals = filteredRows.reduce(
     (acc, r) => {
       acc.sold     += Number(r.soldFreeQty)     || 0;
       acc.returned += Number(r.returnedFreeQty) || 0;
@@ -98,7 +102,7 @@ export default function FreeQuantitiesReport() {
     { sold: 0, returned: 0, net: 0 },
   );
 
-  const exportRows = (rows as any[]).map(r => ({
+  const exportRows = filteredRows.map(r => ({
     itemCode:        r.itemCode ?? "",
     itemNameAr:      pickName(r.itemNameAr, r.itemNameEn),
     unitName:        pickName(r.unitName, r.unitNameEn),
@@ -175,7 +179,7 @@ export default function FreeQuantitiesReport() {
   const apply  = () => setApplied(filters);
   const reset  = () => { setFilters(empty); setApplied(empty); };
   const hasAnyFilter =
-    !!applied.warehouseId || !!applied.customerId || !!applied.itemId || !!applied.branchId;
+    !!applied.warehouseId || !!applied.customerId || !!applied.itemId || !!applied.branchId || !!applied.brandId;
 
   // Build pretty filter chips for the report subtitle
   const itemMap     = new Map<number, any>((items as any[]).map(i => [i.id, i]));
@@ -186,6 +190,7 @@ export default function FreeQuantitiesReport() {
   const appliedWh   = applied.warehouseId ? whMap.get(Number(applied.warehouseId)) : null;
   const appliedCus  = applied.customerId ? cusMap.get(Number(applied.customerId)) : null;
   const appliedBr   = applied.branchId   ? brMap.get(Number(applied.branchId)) : null;
+  const appliedBrand = applied.brandId ? brandOptions.find(option => String(option.brandId) === applied.brandId) : null;
 
   const subtitle = [
     `${t("inventoryReports.freeQuantities.period")}: ${applied.from} → ${applied.to}`,
@@ -193,6 +198,7 @@ export default function FreeQuantitiesReport() {
     appliedCus && `${t("inventoryReports.freeQuantities.customer")}: ${pickName(appliedCus.nameAr, appliedCus.nameEn) || appliedCus.name}`,
     appliedItem && `${t("inventoryReports.common.item")}: ${pickName(appliedItem.nameAr, appliedItem.nameEn) || appliedItem.code}`,
     appliedBr  && `${t("inventoryReports.freeQuantities.branch")}: ${pickName(appliedBr.nameAr, appliedBr.nameEn) || appliedBr.name}`,
+    appliedBrand && `${t("inventoryReports.common.brand")}: ${pickName(appliedBrand.nameAr, appliedBrand.nameEn) || appliedBrand.code}`,
   ].filter(Boolean).join("  •  ");
 
   return (
@@ -215,7 +221,7 @@ export default function FreeQuantitiesReport() {
           title={t("inventoryReports.freeQuantities.title")}
           subtitle={subtitle}
           totalsRow={totalsRow}
-          disabled={(rows as any[]).length === 0}
+          disabled={filteredRows.length === 0}
         />
       </div>
 
@@ -250,6 +256,11 @@ export default function FreeQuantitiesReport() {
               placeholder={t("inventoryReports.common.allWarehouses")}
             />
           </div>
+          <InventoryBrandFilter
+            options={brandOptions}
+            value={filters.brandId}
+            onChange={value => setFilters(f => ({ ...f, brandId: value, itemId: "" }))}
+          />
           <div className="space-y-1.5">
             <Label className="text-xs">{t("inventoryReports.freeQuantities.branch")}</Label>
             <SearchCombobox
@@ -271,7 +282,7 @@ export default function FreeQuantitiesReport() {
           <div className="space-y-1.5">
             <Label className="text-xs">{t("inventoryReports.common.item")}</Label>
             <SearchCombobox
-              items={[{ value: "", label: t("inventoryReports.freeQuantities.allItems") }, ...(items as any[]).map(i => ({ value: String(i.id), label: `${pickName(i.nameAr, i.nameEn) || i.code} ${i.code ? `— ${i.code}` : ""}` }))]}
+              items={[{ value: "", label: t("inventoryReports.freeQuantities.allItems") }, ...filteredItems.map(i => ({ value: String(i.id), label: `${pickName(i.nameAr, i.nameEn) || i.code} ${i.code ? `— ${i.code}` : ""}` }))]}
               value={filters.itemId}
               onValueChange={v => setFilters(f => ({ ...f, itemId: v }))}
               placeholder={t("inventoryReports.freeQuantities.allItems")}
@@ -313,10 +324,10 @@ export default function FreeQuantitiesReport() {
             cid={cid}
             columns={gridColumns}
             rowKey={(row: any) => row.itemId}
-            rows={rows as any[]}
+            rows={filteredRows}
             unitLabel={isRtl ? "صنف" : "item"}
             emptyMessage={t("inventoryReports.freeQuantities.noData")}
-            totalsRow={(rows as any[]).length > 0 ? {
+            totalsRow={filteredRows.length > 0 ? {
               __label: t("inventoryReports.freeQuantities.total"),
               soldFreeQty: fmtQty(totals.sold),
               returnedFreeQty: fmtQty(totals.returned),

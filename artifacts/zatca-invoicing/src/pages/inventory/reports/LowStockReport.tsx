@@ -10,6 +10,7 @@ import { AlertTriangle, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
+import { InventoryBrandFilter, filterItemsForInventoryBrand, useInventoryReportBrandOptions } from "@/components/InventoryBrandFilter";
 
 export default function LowStockReport() {
   const { t, i18n } = useTranslation();
@@ -17,6 +18,7 @@ export default function LowStockReport() {
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { fmtQty } = useFmt();
   const { user } = useAuth();
+  const [brandId, setBrandId] = useState("");
 
   const EXPORT_COLS = [
     { key: "itemCode",     header: t("inventoryReports.lowStock.cols.itemCode"),     width: 16 },
@@ -29,6 +31,7 @@ export default function LowStockReport() {
     { key: "status",       header: t("inventoryReports.lowStock.cols.status"),       width: 14 },
   ];
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const brandOptions = useInventoryReportBrandOptions(cid);
   const [search, setSearch] = useState("");
 
   const { data: items = [] } = useQuery({
@@ -50,7 +53,7 @@ export default function LowStockReport() {
     qtyByItem[b.itemId] = (qtyByItem[b.itemId] ?? 0) + Number(b.qty);
   });
 
-  const enriched = (items as any[])
+  const enriched = filterItemsForInventoryBrand(items as any[], brandId, brandOptions)
     .filter((it: any) => it.itemType !== "service")
     .map((it: any) => {
       const qty = qtyByItem[it.id] ?? 0;
@@ -190,6 +193,7 @@ export default function LowStockReport() {
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input className="pr-9" placeholder={t("inventoryReports.lowStock.searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
       </div>
+      <InventoryBrandFilter options={brandOptions} value={brandId} onChange={setBrandId} />
 
       <div className="w-full min-w-0 overflow-hidden rounded-xl shadow-sm">
         {isLoading ? (

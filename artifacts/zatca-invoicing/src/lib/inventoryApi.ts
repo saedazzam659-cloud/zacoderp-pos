@@ -226,6 +226,10 @@ export const inventoryApi = {
   // Brands (العلامات التجارية) — master CRUD. List coerced to array to avoid a
   // white-screen when a module-gated 403 returns an object instead of a list.
   getBrands:   (cid?: number) => get<any[]>(`/brands${cid ? `?companyId=${cid}` : ""}`).then(arr => Array.isArray(arr) ? arr : []),
+  getInventoryReportBrandOptions: (cid?: number) =>
+    get<Array<{ brandId: number; code: string | null; nameAr: string | null; nameEn: string | null; itemIds: number[] }>>(
+      `/reports/brand-options${cid ? `?companyId=${cid}` : ""}`,
+    ),
   createBrand: (data: any)    => post<any>("/brands", data),
   updateBrand: (id: number, data: any) => put<any>(`/brands/${id}`, data),
   deleteBrand: (id: number)   => del(`/brands/${id}`),
