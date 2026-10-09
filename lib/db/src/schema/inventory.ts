@@ -64,6 +64,11 @@ export const itemGroupsTable = pgTable("item_groups", {
   code:            text("code").notNull(),
   nameAr:          text("name_ar").notNull(),
   nameEn:          text("name_en"),
+  // POS display groups are separate from the accounting item category. They
+  // share this catalog table but are marked explicitly and linked through
+  // items.posGroupId, leaving items.groupId and its accounting semantics intact.
+  isPosGroup:      boolean("is_pos_group").default(false).notNull(),
+  imageUrl:        text("image_url"),
   costAccountId:   integer("cost_account_id"),
   revenueAccountId:integer("revenue_account_id"),
   // ── التوجيه المحاسبي (accounting routing) — additive/optional ──
@@ -146,6 +151,7 @@ export const itemsTable = pgTable("items", {
   id:           serial("id").primaryKey(),
   companyId:    integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
   groupId:      integer("group_id").references(() => itemGroupsTable.id),
+  posGroupId:   integer("pos_group_id"),
   unitId:       integer("unit_id").references(() => unitsTable.id),
   code:         text("code").notNull(),
   nameAr:       text("name_ar").notNull(),
