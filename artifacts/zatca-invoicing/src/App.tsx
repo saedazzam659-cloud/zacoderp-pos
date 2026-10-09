@@ -282,7 +282,9 @@ import HRReportEmployeeCost from "@/pages/hr/reports/EmployeeCostReport";
 import HRReportLeaves from "@/pages/hr/reports/LeavesReport";
 import PosMonitoring from "@/pages/pos/Monitoring";
 import SalesAuditGrid from "@/pages/sales/SalesAuditGrid";
-const PosOperations = () => <SalesAuditGrid source="pos" titleOverride="عمليات نقاط البيع — مراجعة وتدقيق" />;
+import PosOperationsPage from "@/pages/pos/Operations";
+const PosOperations = PosOperationsPage;
+const AllSalesInvoices = () => <SalesAuditGrid source="all" />;
 import Chat from "@/pages/Chat";
 import PosSettings from "@/pages/pos/PosSettings";
 import PosTerminals from "@/pages/pos/PosTerminals";
@@ -1348,7 +1350,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/invoices/:id"   module="sales_invoices"   component={SalesInvoiceForm} />}
             {/* /sales/audit-grid kept as alias for any old links/bookmarks */}
             {!isSuperAdmin && <PermRoute path="/sales/audit-grid"     module="sales_invoices"   component={SalesAuditGrid} />}
-            {!isSuperAdmin && <PermRoute path="/sales/invoices"       module="sales_invoices"   component={SalesAuditGrid} />}
+            {!isSuperAdmin && <PermRoute path="/sales/invoices"       module="sales_invoices"   component={AllSalesInvoices} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations/new" module="sales_quotations" action="create" component={SalesQuotationForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations/:id" module="sales_quotations" component={SalesQuotationForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations"     module="sales_quotations" component={SalesQuotations} />}
