@@ -297,6 +297,7 @@ import { Loader2 } from "lucide-react";
 // Inventory
 import InventoryDashboard from "@/pages/inventory/InventoryDashboard";
 import ClothingModels from "@/pages/inventory/ClothingModels";
+import ClothingStockReport from "@/pages/inventory/reports/ClothingStockReport";
 import WarehouseGroups from "@/pages/inventory/WarehouseGroups";
 import Warehouses from "@/pages/inventory/Warehouses";
 import ItemGroups from "@/pages/inventory/ItemGroups";
@@ -412,6 +413,7 @@ import PurchaseInvoicePaymentStatus from "@/pages/purchasing/reports/PurchaseInv
 import SupplierAgingReport     from "@/pages/purchasing/reports/SupplierAgingReport";
 import PurchasesBySupplier     from "@/pages/purchasing/reports/PurchasesBySupplier";
 import PurchasesByItem         from "@/pages/purchasing/reports/PurchasesByItem";
+import ClothingPurchaseReturnsReport from "@/pages/inventory/reports/ClothingPurchaseReturnsReport";
 import PurchaseReceiptFollowUp from "@/pages/purchasing/reports/PurchaseReceiptFollowUp";
 import PurchasesByPeriod       from "@/pages/purchasing/reports/PurchasesByPeriod";
 import PurchasesVatRegister    from "@/pages/purchasing/reports/PurchasesVatRegister";
@@ -1249,6 +1251,11 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/reports/batches"          module="inventory_reports" component={BatchExpiryReport} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/expiry"           module="inventory_reports" component={BatchExpiryReport} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-balance"    module="inventory_reports" component={StockBalance} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-stock"   module="inventory_reports" companyGateKey="clothing" component={ClothingStockReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-sales"   module="inventory_reports" companyGateKey="clothing" component={() => <ItemSalesValuationReport clothingOnly />} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-purchases" module="inventory_reports" companyGateKey="clothing" component={() => <PurchasesByItem clothingOnly />} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-purchase-returns" module="inventory_reports" companyGateKey="clothing" component={ClothingPurchaseReturnsReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-slow-moving" module="inventory_reports" companyGateKey="clothing" component={() => <SlowMovingItems clothingOnly />} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-ledger"     module="inventory_reports" component={StockLedger} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/item-card"        module="inventory_reports" component={ItemCard} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/low-stock"        module="inventory_reports" component={LowStockReport} />}

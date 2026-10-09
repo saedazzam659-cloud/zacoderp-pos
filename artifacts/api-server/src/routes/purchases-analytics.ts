@@ -12,6 +12,7 @@ import {
   settlementLinksTable,
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, lt, asc, inArray, notInArray, isNull } from "drizzle-orm";
+import { GetPurchaseReturnsByItemResponse } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 import { purchaseSupplierDescription } from "../lib/journalLineDescriptions.js";
 import {
@@ -1241,6 +1242,72 @@ router.get("/returns-by-supplier", async (req, res) => {
       };
     }).sort((a, b) => b.totalAmount - a.totalAmount));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Posted purchase-return quantities and line values grouped by item.
+ */
+router.get("/returns-by-item", async (req, res): Promise<void> => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
+    const { from, to } = req.query as Record<string, string>;
+    const isValidDate = (value: string | undefined) => {
+      if (!value) return true;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(`${value}T00:00:00.000Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    };
+    if (!isValidDate(from) || !isValidDate(to) || (from && to && from > to)) {
+      res.status(400).json({ error: "Invalid return date range" });
+      return;
+    }
+
+    const conds: any[] = [
+      eq(purchaseReturnsTable.companyId, cid),
+      eq(purchaseReturnsTable.status, "posted"),
+      eq(purchaseReturnLinesTable.companyId, cid),
+    ];
+    pushBranchScope(req, conds, purchaseReturnsTable.branchId, bid);
+    if (from) conds.push(gte(purchaseReturnsTable.returnDate, from));
+    if (to) conds.push(lte(purchaseReturnsTable.returnDate, to));
+
+    const rows = await db
+      .select({
+        itemId: purchaseReturnLinesTable.itemId,
+        itemCode: sql<string | null>`min(${purchaseReturnLinesTable.itemCode})`,
+        itemName: sql<string>`min(${purchaseReturnLinesTable.itemName})`,
+        unit: purchaseReturnLinesTable.unit,
+        currencyCode: purchaseReturnsTable.currencyCode,
+        returnedQty: sql<string>`coalesce(sum(${purchaseReturnLinesTable.qty}), 0)`,
+        totalReturns: sql<string>`coalesce(sum(${purchaseReturnLinesTable.lineTotal}), 0)`,
+        returnCount: sql<number>`count(distinct ${purchaseReturnsTable.id})::int`,
+      })
+      .from(purchaseReturnLinesTable)
+      .innerJoin(purchaseReturnsTable, eq(purchaseReturnLinesTable.returnId, purchaseReturnsTable.id))
+      .where(and(...conds))
+      .groupBy(purchaseReturnLinesTable.itemId, purchaseReturnLinesTable.unit, purchaseReturnsTable.currencyCode);
+
+    const response = rows.map((row) => ({
+      itemId: row.itemId,
+      itemCode: row.itemCode,
+      itemName: row.itemName,
+      unit: row.unit,
+      currencyCode: row.currencyCode,
+      returnedQty: Number(row.returnedQty),
+      totalReturns: Number(row.totalReturns),
+      returnCount: row.returnCount,
+    })).sort((a, b) =>
+      a.currencyCode.localeCompare(b.currencyCode)
+      || (a.itemId ?? 0) - (b.itemId ?? 0)
+      || String(a.unit ?? "").localeCompare(String(b.unit ?? "")),
+    );
+
+    res.json(GetPurchaseReturnsByItemResponse.parse(response));
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
 });
 
 /**

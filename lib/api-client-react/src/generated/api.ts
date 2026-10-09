@@ -61,6 +61,7 @@ import type {
   GetMonthlyStatsParams,
   GetPurchaseOrderReceiptOptionsParams,
   GetPurchaseReceiptFollowUpParams,
+  GetPurchaseReturnsByItemParams,
   GetRecentInvoicesParams,
   GetSafetyKpisParams,
   GetSchoolAcademicPeriodsParams,
@@ -116,6 +117,7 @@ import type {
   PurchaseInvoiceDraft,
   PurchaseOrderReceiptOption,
   PurchaseReceiptFollowUpReport,
+  PurchaseReturnsByItemResponse,
   PurchaseSourceDocument,
   RiskAssessment,
   RiskControl,
@@ -12734,6 +12736,113 @@ export function useGetPurchaseReceiptFollowUp<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Aggregate posted purchase returns by item for a date range and branch
+ */
+export const getGetPurchaseReturnsByItemUrl = (
+  params?: GetPurchaseReturnsByItemParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/purchases-analytics/returns-by-item?${stringifiedParams}`
+    : `/api/purchases-analytics/returns-by-item`;
+};
+
+export const getPurchaseReturnsByItem = async (
+  params?: GetPurchaseReturnsByItemParams,
+  options?: RequestInit,
+): Promise<PurchaseReturnsByItemResponse> => {
+  return customFetch<PurchaseReturnsByItemResponse>(
+    getGetPurchaseReturnsByItemUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPurchaseReturnsByItemQueryKey = (
+  params?: GetPurchaseReturnsByItemParams,
+) => {
+  return [
+    `/api/purchases-analytics/returns-by-item`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetPurchaseReturnsByItemQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPurchaseReturnsByItem>>,
+  TError = ErrorType<ErrorResponse | void>,
+>(
+  params?: GetPurchaseReturnsByItemParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPurchaseReturnsByItem>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPurchaseReturnsByItemQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPurchaseReturnsByItem>>
+  > = ({ signal }) =>
+    getPurchaseReturnsByItem(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPurchaseReturnsByItem>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPurchaseReturnsByItemQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPurchaseReturnsByItem>>
+>;
+export type GetPurchaseReturnsByItemQueryError =
+  ErrorType<ErrorResponse | void>;
+
+/**
+ * @summary Aggregate posted purchase returns by item for a date range and branch
+ */
+
+export function useGetPurchaseReturnsByItem<
+  TData = Awaited<ReturnType<typeof getPurchaseReturnsByItem>>,
+  TError = ErrorType<ErrorResponse | void>,
+>(
+  params?: GetPurchaseReturnsByItemParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPurchaseReturnsByItem>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPurchaseReturnsByItemQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

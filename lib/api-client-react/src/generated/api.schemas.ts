@@ -2955,6 +2955,22 @@ export interface PurchaseReceiptFollowUpReport {
   generatedAt: string;
 }
 
+export interface PurchaseReturnsByItemRow {
+  /** @nullable */
+  itemId: number | null;
+  /** @nullable */
+  itemCode: string | null;
+  itemName: string;
+  /** @nullable */
+  unit: string | null;
+  currencyCode: string;
+  returnedQty: number;
+  totalReturns: number;
+  returnCount: number;
+}
+
+export type PurchaseReturnsByItemResponse = PurchaseReturnsByItemRow[];
+
 export type PurchaseInvoiceConversionInputPaymentType =
   (typeof PurchaseInvoiceConversionInputPaymentType)[keyof typeof PurchaseInvoiceConversionInputPaymentType];
 
@@ -3577,6 +3593,19 @@ export type GetPurchaseReceiptFollowUpParams = {
    * @minimum 1
    */
   branchId?: number;
+};
+
+export type GetPurchaseReturnsByItemParams = {
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
+  from?: string;
+  to?: string;
 };
 
 export type LookupSalesDeliverySourceDocumentParams = {

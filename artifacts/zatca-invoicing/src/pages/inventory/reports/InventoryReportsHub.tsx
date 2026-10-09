@@ -1,10 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell,
-  Gift, ReceiptText, ClipboardCheck, Layers3, CalendarClock,
+  Gift, ReceiptText, ClipboardCheck, Layers3, CalendarClock, Shirt, Package, RotateCcw,
 } from "lucide-react";
 import { usePermission } from "@/hooks/usePermission";
+import { companyAllowsMenuModuleKey } from "@/lib/companyModuleGate";
 
 export const INVENTORY_REPORTS = [
   {
@@ -24,6 +26,36 @@ export const INVENTORY_REPORTS = [
     key: "stockBalance",
     icon: BarChart2,
     color: "from-emerald-50 to-emerald-100/40 text-emerald-700 border-emerald-200",
+  },
+  {
+    href: "/inventory/reports/clothing-stock",
+    key: "clothingStock",
+    icon: Shirt,
+    color: "from-green-50 to-green-100/40 text-green-800 border-green-200",
+  },
+  {
+    href: "/inventory/reports/clothing-sales",
+    key: "clothingSales",
+    icon: ReceiptText,
+    color: "from-teal-50 to-teal-100/40 text-teal-800 border-teal-200",
+  },
+  {
+    href: "/inventory/reports/clothing-purchases",
+    key: "clothingPurchases",
+    icon: Package,
+    color: "from-blue-50 to-blue-100/40 text-blue-800 border-blue-200",
+  },
+  {
+    href: "/inventory/reports/clothing-purchase-returns",
+    key: "clothingPurchaseReturns",
+    icon: RotateCcw,
+    color: "from-orange-50 to-orange-100/40 text-orange-800 border-orange-200",
+  },
+  {
+    href: "/inventory/reports/clothing-slow-moving",
+    key: "clothingSlowMoving",
+    icon: Hourglass,
+    color: "from-rose-50 to-rose-100/40 text-rose-800 border-rose-200",
   },
   {
     href: "/inventory/reports/stock-ledger",
@@ -83,11 +115,13 @@ export const INVENTORY_REPORTS = [
 
 export default function InventoryReportsHub() {
   const { t, i18n } = useTranslation();
+  const { user } = useAuth() as any;
   const canViewSmartAlerts = usePermission("items", "view");
+  const canViewClothing = companyAllowsMenuModuleKey(user?.company?.menuPermissions, "clothing");
   const isRtl = i18n.language === "ar";
   const visibleReports = INVENTORY_REPORTS.filter(
     report => report.href !== "/inventory/alerts" || canViewSmartAlerts,
-  );
+  ).filter(report => !report.key.startsWith("clothing") || canViewClothing);
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div>

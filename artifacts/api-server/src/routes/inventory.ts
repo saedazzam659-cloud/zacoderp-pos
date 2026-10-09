@@ -46,7 +46,7 @@ import {
   subscriptionsTable,
   accountingMappingsTable,
 } from "@workspace/db";
-import { eq, ne, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or, count } from "drizzle-orm";
+import { eq, ne, and, sql, desc, asc, gte, lte, lt, inArray, isNull, isNotNull, ilike, or, count } from "drizzle-orm";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { aliasedTable } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
@@ -1204,6 +1204,51 @@ router.delete("/units/:id", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 // ITEMS
 // ═══════════════════════════════════════════════════════════════════
+// Clothing setup needs only root items; returning every variant for this page
+// would make the model picker scale with the full SKU catalogue.
+router.get("/items/clothing-models", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const includeUntagged = String(req.query.includeUntagged ?? "") === "1";
+  const search = String(req.query.search ?? "").trim();
+  const tagPattern = "(^|,)\\s*ملابس وأحذية\\s*(,|$)";
+  const clothingTag = sql`COALESCE(${itemsTable.tags}, '') ~* ${tagPattern}`;
+  const clauses: any[] = [
+    eq(itemsTable.companyId, cid),
+    isNull(itemsTable.parentItemId),
+    eq(itemsTable.isBundle, false),
+    includeUntagged
+      ? sql`NOT (${clothingTag})`
+      : clothingTag,
+  ];
+  if (includeUntagged) {
+    clauses.push(
+      isNotNull(itemsTable.unitId),
+      ne(itemsTable.itemType, "service"),
+      ne(itemsTable.itemType, "fixed_asset"),
+      ne(itemsTable.itemType, "prepaid_expense"),
+    );
+  } else {
+    clauses.push(eq(itemsTable.itemType, "stock"));
+  }
+  if (search) {
+    const pattern = `%${search}%`;
+    clauses.push(or(
+      ilike(itemsTable.code, pattern),
+      ilike(itemsTable.nameAr, pattern),
+      ilike(itemsTable.nameEn, pattern),
+    ));
+  }
+
+  const rows = await db.select({ item: itemsTable, group: itemGroupsTable, unit: unitsTable })
+    .from(itemsTable)
+    .leftJoin(itemGroupsTable, eq(itemsTable.groupId, itemGroupsTable.id))
+    .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
+    .where(and(...clauses))
+    .orderBy(asc(itemsTable.code))
+    .limit(100);
+  res.json(rows.map((row) => ({ ...row.item, group: row.group, unit: row.unit })));
+});
+
 router.get("/items", async (req, res) => {
   const cid = getCompanyId(req);
   // PRO Extension #20 — note: variants ARE returned here. Variants are
@@ -4697,50 +4742,113 @@ router.post("/items/:id/variants", async (req, res) => {
   if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
   const { code, nameAr, nameEn, barcode, costPrice, salePrice, vatRate,
           variantAttributes, description, imageUrl } = req.body ?? {};
-  if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المتغيّر مطلوبان" }); return; }
-
-  const all = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
-  const parent = all.find(i => i.id === id);
-  if (!parent) { res.status(404).json({ error: "الصنف الأب غير موجود" }); return; }
-  try {
-    requireItemUnit(parent.unitId);
-  } catch (error) {
-    res.status(400).json({ error: (error as Error).message }); return;
-  }
-  if (parent.parentItemId) {
-    res.status(400).json({ error: "لا يمكن إنشاء متغيّر لمتغيّر آخر (المتغيّرات لا تتداخل)" }); return;
-  }
-  if (parent.isBundle) {
-    res.status(400).json({ error: "لا يمكن إضافة متغيّرات لصنف من نوع مركّب (Bundle)" }); return;
-  }
-  if (all.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
-    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
-  }
-  if (all.some(i => i.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
-    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لصنف آخر` }); return;
-  }
-  if (barcode && all.some(i => i.barcode?.trim() === String(barcode).trim())) {
-    res.status(409).json({ error: `الباركود "${barcode}" مستخدم لصنف آخر` }); return;
+  const normalizedCode = String(code ?? "").trim();
+  const normalizedName = String(nameAr ?? "").trim();
+  const normalizedBarcode = String(barcode ?? "").trim() || null;
+  if (!normalizedCode || !normalizedName) {
+    res.status(400).json({ error: "كود واسم المتغيّر مطلوبان" }); return;
   }
   const attrsCheck = validateVariantAttributes(variantAttributes);
   if (!attrsCheck.ok) { res.status(400).json({ error: attrsCheck.error }); return; }
+  const attrs = attrsCheck.value;
+  const color = typeof attrs?.["اللون"] === "string" ? attrs["اللون"].trim() : "";
+  const size = typeof attrs?.["المقاس"] === "string" ? attrs["المقاس"].trim() : "";
+  const colorKey = color.toLocaleLowerCase();
+  const sizeKey = size.toLocaleLowerCase();
+  const lockKeys = [
+    `variant-code:${cid}:${normalizedCode.toLocaleLowerCase()}`,
+    `variant-name:${cid}:${normalizedName.toLocaleLowerCase()}`,
+    ...(normalizedBarcode ? [`variant-barcode:${cid}:${normalizedBarcode}`] : []),
+    ...(color && size ? [`variant-pair:${cid}:${id}:${colorKey}:${sizeKey}`] : []),
+  ].sort();
 
-  const [row] = await db.insert(itemsTable).values({
-    companyId: cid, code, nameAr, nameEn: nameEn ?? null,
-    barcode: barcode ?? null,
-    itemType: parent.itemType,
-    groupId:  parent.groupId,
-    unitId:   parent.unitId,
-    costPrice: costPrice ?? parent.costPrice,
-    salePrice: salePrice ?? parent.salePrice,
-    vatRate:   vatRate   ?? parent.vatRate,
-    costMethod: parent.costMethod,
-    description: description ?? null,
-    imageUrl: imageUrl ?? null,
-    parentItemId: id,
-    variantAttributes: attrsCheck.value,
-    isBundle: false,
-  }).returning();
+  const result = await db.transaction(async (tx) => {
+    for (const lockKey of lockKeys) {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+    }
+    await tx.execute(sql`SELECT id FROM ${itemsTable}
+      WHERE id = ${id} AND company_id = ${cid} FOR UPDATE`);
+    const [parent] = await tx.select().from(itemsTable)
+      .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)))
+      .limit(1);
+    if (!parent) return { error: { status: 404, message: "الصنف الأب غير موجود" } };
+    try {
+      requireItemUnit(parent.unitId);
+    } catch (error) {
+      return { error: { status: 400, message: (error as Error).message } };
+    }
+    if (parent.parentItemId) {
+      return { error: { status: 400, message: "لا يمكن إنشاء متغيّر لمتغيّر آخر (المتغيّرات لا تتداخل)" } };
+    }
+    if (parent.isBundle) {
+      return { error: { status: 400, message: "لا يمكن إضافة متغيّرات لصنف من نوع مركّب (Bundle)" } };
+    }
+
+    const [codeCollision] = await tx.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(
+        eq(itemsTable.companyId, cid),
+        sql`lower(btrim(${itemsTable.code})) = ${normalizedCode.toLocaleLowerCase()}`,
+      ))
+      .limit(1);
+    if (codeCollision) {
+      return { error: { status: 409, message: `الكود "${normalizedCode}" مستخدم بالفعل لصنف آخر` } };
+    }
+    const [nameCollision] = await tx.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(
+        eq(itemsTable.companyId, cid),
+        sql`lower(btrim(${itemsTable.nameAr})) = ${normalizedName.toLocaleLowerCase()}`,
+      ))
+      .limit(1);
+    if (nameCollision) {
+      return { error: { status: 409, message: `الاسم "${normalizedName}" مسجَّل بالفعل لصنف آخر` } };
+    }
+    if (normalizedBarcode) {
+      const [barcodeCollision] = await tx.select({ id: itemsTable.id }).from(itemsTable)
+        .where(and(
+          eq(itemsTable.companyId, cid),
+          sql`btrim(coalesce(${itemsTable.barcode}, '')) = ${normalizedBarcode}`,
+        ))
+        .limit(1);
+      if (barcodeCollision) {
+        return { error: { status: 409, message: `الباركود "${normalizedBarcode}" مستخدم لصنف آخر` } };
+      }
+    }
+    if (color && size) {
+      const [pairCollision] = await tx.select({ id: itemsTable.id }).from(itemsTable)
+        .where(and(
+          eq(itemsTable.companyId, cid),
+          eq(itemsTable.parentItemId, id),
+          sql`lower(btrim(coalesce(${itemsTable.variantAttributes}->>'اللون', ''))) = ${colorKey}`,
+          sql`lower(btrim(coalesce(${itemsTable.variantAttributes}->>'المقاس', ''))) = ${sizeKey}`,
+        ))
+        .limit(1);
+      if (pairCollision) {
+        return { error: { status: 409, message: `تركيبة اللون "${color}" والمقاس "${size}" موجودة بالفعل` } };
+      }
+    }
+
+    const [row] = await tx.insert(itemsTable).values({
+      companyId: cid, code: normalizedCode, nameAr: normalizedName, nameEn: nameEn ?? null,
+      barcode: normalizedBarcode,
+      itemType: parent.itemType,
+      groupId: parent.groupId,
+      unitId: parent.unitId,
+      costPrice: costPrice ?? parent.costPrice,
+      salePrice: salePrice ?? parent.salePrice,
+      vatRate: vatRate ?? parent.vatRate,
+      costMethod: parent.costMethod,
+      description: description ?? null,
+      imageUrl: imageUrl ?? null,
+      parentItemId: id,
+      variantAttributes: attrs,
+      isBundle: false,
+    }).returning();
+    return { row };
+  });
+  if (result.error) {
+    res.status(result.error.status).json({ error: result.error.message }); return;
+  }
+  const { row } = result;
   // Audit under module="inventory_items" (not a separate "item_variants"
   // module) so the variant-create event shows up in the parent item's
   // history dialog AND the variant's own history dialog — they share

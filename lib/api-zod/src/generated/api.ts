@@ -5251,6 +5251,31 @@ export const GetPurchaseReceiptFollowUpResponse = zod.object({
 });
 
 /**
+ * @summary Aggregate posted purchase returns by item for a date range and branch
+ */
+
+export const GetPurchaseReturnsByItemQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+  from: zod.date().optional(),
+  to: zod.date().optional(),
+});
+
+export const GetPurchaseReturnsByItemResponseItem = zod.object({
+  itemId: zod.number().nullable(),
+  itemCode: zod.string().nullable(),
+  itemName: zod.string(),
+  unit: zod.string().nullable(),
+  currencyCode: zod.string(),
+  returnedQty: zod.number(),
+  totalReturns: zod.number(),
+  returnCount: zod.number(),
+});
+export const GetPurchaseReturnsByItemResponse = zod.array(
+  GetPurchaseReturnsByItemResponseItem,
+);
+
+/**
  * @summary Find an unlinked posted goods delivery by document number
  */
 export const lookupSalesDeliverySourceDocumentQueryDocNumberMax = 120;

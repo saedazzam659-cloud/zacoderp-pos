@@ -16,6 +16,7 @@ import {
   LoaderCircle,
   Package,
   Plus,
+  Printer,
   RefreshCw,
   Search,
   Shirt,
@@ -23,6 +24,8 @@ import {
   X,
 } from "lucide-react";
 import { inventoryApi, type ItemVariant } from "@/lib/inventoryApi";
+import BulkLabelDialog from "@/components/BulkLabelDialog";
+import { generateClothingVariantIdentifiers } from "@/lib/clothingVariantIdentifiers";
 import {
   Form,
   FormControl,
@@ -65,12 +68,6 @@ type VariantDraft = {
 };
 
 const CLOTHING_MODEL_TAG = "ملابس وأحذية";
-
-function hasClothingModelTag(item: InventoryItem) {
-  return String(item.tags ?? "")
-    .split(",")
-    .some((tag) => tag.trim().toLocaleLowerCase() === CLOTHING_MODEL_TAG.toLocaleLowerCase());
-}
 
 const nonNegativeAmount = (label: string) =>
   z.string().trim().min(1, `أدخل ${label}`).refine(
@@ -162,8 +159,10 @@ export default function ClothingModels() {
   const canEditItems = usePermission("items", "edit");
   const [search, setSearch] = useState("");
   const [activeModelId, setActiveModelId] = useState<number | null>(null);
+  const [activeModelSnapshot, setActiveModelSnapshot] = useState<InventoryItem | null>(null);
   const [showCreateModel, setShowCreateModel] = useState(false);
   const [showAdoptModel, setShowAdoptModel] = useState(false);
+  const [labelsOpen, setLabelsOpen] = useState(false);
   const [adoptSearch, setAdoptSearch] = useState("");
   const [adoptModelId, setAdoptModelId] = useState("");
   const [colorInput, setColorInput] = useState("");
@@ -176,8 +175,13 @@ export default function ClothingModels() {
   const [savingProgress, setSavingProgress] = useState<{ done: number; total: number } | null>(null);
 
   const modelsQuery = useQuery({
-    queryKey: ["items"],
-    queryFn: () => inventoryApi.getItems(),
+    queryKey: ["clothing-models", search.trim()],
+    queryFn: () => inventoryApi.getClothingModels(search, false),
+  });
+  const adoptableQuery = useQuery({
+    queryKey: ["clothing-adoptable-models", adoptSearch.trim()],
+    queryFn: () => inventoryApi.getClothingModels(adoptSearch, true),
+    enabled: showAdoptModel,
   });
   const groupsQuery = useQuery({
     queryKey: ["item-groups"],
@@ -188,27 +192,13 @@ export default function ClothingModels() {
     queryFn: () => inventoryApi.getUnits(),
   });
 
-  const allItems = (modelsQuery.data ?? []) as InventoryItem[];
-  const models = allItems.filter(
-    (item) => item.parentItemId == null && !item.isBundle && hasClothingModelTag(item),
-  );
-  const adoptableModels = allItems.filter(
-    (item) => item.parentItemId == null
-      && !item.isBundle
-      && item.unitId != null
-      && item.itemType !== "service"
-      && item.itemType !== "fixed_asset"
-      && item.itemType !== "prepaid_expense"
-      && !hasClothingModelTag(item),
-  );
-  const filteredAdoptableModels = adoptableModels.filter((item) =>
-    `${item.nameAr ?? ""} ${item.nameEn ?? ""} ${item.code ?? ""}`
-      .toLocaleLowerCase()
-      .includes(adoptSearch.trim().toLocaleLowerCase()),
-  );
+  const models = (modelsQuery.data ?? []) as InventoryItem[];
+  const adoptableModels = (adoptableQuery.data ?? []) as InventoryItem[];
+  const filteredAdoptableModels = adoptableModels.filter((item) => item.unitId != null);
   const groups = (groupsQuery.data ?? []) as ItemGroup[];
   const units = (unitsQuery.data ?? []) as Unit[];
-  const activeModel = models.find((model: InventoryItem) => model.id === activeModelId) ?? null;
+  const activeModel = models.find((model: InventoryItem) => model.id === activeModelId)
+    ?? (activeModelSnapshot?.id === activeModelId ? activeModelSnapshot : null);
   const variantsQuery = useQuery({
     queryKey: ["item-variants", activeModelId],
     queryFn: () => inventoryApi.getItemVariants(activeModelId as number),
@@ -216,13 +206,7 @@ export default function ClothingModels() {
   });
   const variants: ItemVariant[] = variantsQuery.data?.variants ?? [];
 
-  const filteredModels = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase();
-    if (!needle) return models;
-    return models.filter((item: InventoryItem) =>
-      `${item.nameAr ?? ""} ${item.nameEn ?? ""} ${item.code ?? ""}`.toLocaleLowerCase().includes(needle),
-    );
-  }, [models, search]);
+  const filteredModels = models;
 
   const existingPairKeys = useMemo(
     () => new Set(variants.map((variant) => pairKey(String(variant.variantAttributes?.["اللون"] ?? ""), String(variant.variantAttributes?.["المقاس"] ?? "")))),
@@ -252,12 +236,8 @@ export default function ClothingModels() {
         tags: [CLOTHING_MODEL_TAG],
       }),
     onSuccess: async (created: InventoryItem) => {
-      queryClient.setQueryData<InventoryItem[]>(["items"], (current = []) => {
-        const exists = current.some((item) => item.id === created.id);
-        return exists
-          ? current.map((item) => item.id === created.id ? created : item)
-          : [...current, created];
-      });
+      setActiveModelSnapshot(created);
+      void queryClient.invalidateQueries({ queryKey: ["clothing-models"] });
       void queryClient.invalidateQueries({ queryKey: ["items"] });
       setShowCreateModel(false);
       modelForm.reset(defaultModelValues);
@@ -275,9 +255,9 @@ export default function ClothingModels() {
       return inventoryApi.updateItem(itemId, { tags: [...tags, CLOTHING_MODEL_TAG] });
     },
     onSuccess: async (updated: InventoryItem, itemId) => {
-      queryClient.setQueryData<InventoryItem[]>(["items"], (current = []) =>
-        current.map((item) => item.id === itemId ? updated : item),
-      );
+      setActiveModelSnapshot(updated);
+      void queryClient.invalidateQueries({ queryKey: ["clothing-models"] });
+      void queryClient.invalidateQueries({ queryKey: ["clothing-adoptable-models"] });
       void queryClient.invalidateQueries({ queryKey: ["items"] });
       setShowAdoptModel(false);
       setAdoptSearch("");
@@ -326,17 +306,76 @@ export default function ClothingModels() {
     }));
   };
 
+  const generateMissingIdentifiers = () => {
+    if (!activeModel || !chosenPairs.length) return;
+    const knownItems = [...models, ...adoptableModels];
+    const usedCodes = new Set(
+      knownItems.map((item) => String(item.code ?? "").trim().toLocaleLowerCase()).filter(Boolean),
+    );
+    const usedBarcodes = new Set(
+      knownItems.map((item) => String((item as InventoryItem & { barcode?: string | null }).barcode ?? "").trim().toLocaleLowerCase()).filter(Boolean),
+    );
+    for (const draft of Object.values(variantDrafts)) {
+      if (draft.code.trim()) usedCodes.add(draft.code.trim().toLocaleLowerCase());
+      if (draft.barcode.trim()) usedBarcodes.add(draft.barcode.trim().toLocaleLowerCase());
+    }
+
+    let generatedCodes = 0;
+    let generatedBarcodes = 0;
+    const next = { ...variantDrafts };
+    for (const pair of chosenPairs) {
+      const draft = next[pair.key]
+        ? { ...next[pair.key] }
+        : {
+          key: pair.key,
+          color: pair.color,
+          size: pair.size,
+          code: "",
+          barcode: "",
+          costPrice: "",
+          salePrice: "",
+        };
+      if (draft.code.trim() && draft.barcode.trim()) continue;
+
+      const suggested = generateClothingVariantIdentifiers(
+        {
+          parentItemId: activeModel.id,
+          parentCode: activeModel.code,
+          color: pair.color,
+          size: pair.size,
+        },
+        usedCodes,
+        usedBarcodes,
+      );
+      if (!draft.code.trim()) {
+        draft.code = suggested.code;
+        generatedCodes += 1;
+      }
+      if (!draft.barcode.trim()) {
+        draft.barcode = suggested.barcode;
+        generatedBarcodes += 1;
+      }
+      next[pair.key] = draft;
+    }
+    setVariantDrafts(next);
+    toast({
+      title: "تم توليد الرموز",
+      description: `رموز أصناف: ${generatedCodes} · باركود: ${generatedBarcodes}. يمكنك تعديلها قبل الحفظ.`,
+    });
+  };
+
   const createVariantsMutation = useMutation({
     mutationFn: async ({ model, toCreate }: { model: InventoryItem; toCreate: VariantDraft[] }) => {
       let done = 0;
       const total = toCreate.length;
       setSavingProgress({ done, total });
+      const latest = await inventoryApi.getItemVariants(model.id);
+      const latestPairs = new Set((latest.variants ?? []).map((variant) =>
+        pairKey(String(variant.variantAttributes?.["اللون"] ?? ""), String(variant.variantAttributes?.["المقاس"] ?? "")),
+      ));
       for (const draft of toCreate) {
-        const latest = await inventoryApi.getItemVariants(model.id);
-        const latestPairs = new Set((latest.variants ?? []).map((variant) =>
-          pairKey(String(variant.variantAttributes?.["اللون"] ?? ""), String(variant.variantAttributes?.["المقاس"] ?? "")),
-        ));
-        if (latestPairs.has(pairKey(draft.color, draft.size))) {
+        const key = pairKey(draft.color, draft.size);
+        if (latestPairs.has(key)) {
           done += 1;
           setSavingProgress({ done, total });
           continue;
@@ -350,6 +389,7 @@ export default function ClothingModels() {
           salePrice: draft.salePrice.trim() || undefined,
           variantAttributes: { "اللون": draft.color, "المقاس": draft.size },
         });
+        latestPairs.add(key);
         done += 1;
         setSavingProgress({ done, total });
       }
@@ -450,11 +490,13 @@ export default function ClothingModels() {
   };
 
   const selectModel = (model: InventoryItem) => {
+    setActiveModelSnapshot(model);
     setActiveModelId(model.id);
     resetVariantBuilder();
   };
 
-  const anyQueryError = modelsQuery.isError || groupsQuery.isError || unitsQuery.isError;
+  const anyQueryError = modelsQuery.isError || groupsQuery.isError || unitsQuery.isError
+    || (showAdoptModel && adoptableQuery.isError);
   const retryQueries = () => {
     void Promise.all([modelsQuery.refetch(), groupsQuery.refetch(), unitsQuery.refetch()]);
   };
@@ -507,7 +549,7 @@ export default function ClothingModels() {
         <section className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="ملخص التشكيلة">
           <div className="flex items-center gap-3 rounded-2xl border border-[#e0e5df] bg-[#fbfcfa] p-4">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#e5eee8] text-[#16745e]"><Shirt className="h-5 w-5" /></span>
-            <div><p className="text-xs text-[#77857f]">الموديلات الرئيسية</p><p className="mt-0.5 text-xl font-bold tabular-nums" data-testid="stat-model-count">{models.length.toLocaleString("ar-SA")}</p></div>
+            <div><p className="text-xs text-[#77857f]">الموديلات المعروضة</p><p className="mt-0.5 text-xl font-bold tabular-nums" data-testid="stat-model-count">{models.length.toLocaleString("ar-SA")}</p></div>
           </div>
           <div className="flex items-center gap-3 rounded-2xl border border-[#e0e5df] bg-[#fbfcfa] p-4">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#f2eddf] text-[#8b7040]"><Package className="h-5 w-5" /></span>
@@ -531,7 +573,7 @@ export default function ClothingModels() {
             <div className="flex flex-col gap-4 border-b border-[#e8ece7] px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-base font-bold">الموديلات الرئيسية</h2>
-                <p className="mt-1 text-xs text-[#77857f]">اختر موديلًا لعرض أصنافه وإنشاء تركيباته</p>
+                <p className="mt-1 text-xs text-[#77857f]">تظهر حتى 100 نتيجة؛ استخدم البحث للوصول إلى موديل آخر.</p>
               </div>
               <label className="relative block w-full sm:max-w-[220px]">
                 <Search className="absolute right-3 top-2.5 h-4 w-4 text-[#86928c]" />
@@ -539,7 +581,7 @@ export default function ClothingModels() {
               </label>
             </div>
 
-            {modelsQuery.isLoading ? <LoadingRows /> : models.length === 0 ? (
+            {modelsQuery.isLoading ? <LoadingRows /> : models.length === 0 && !search.trim() ? (
               <div className="px-6 py-12 text-center" data-testid="empty-models">
                 <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#eaf0eb] text-[#16745e]"><Shirt className="h-6 w-6" /></div>
                 <p className="mt-4 font-bold">لا توجد موديلات بعد</p>
@@ -638,7 +680,10 @@ export default function ClothingModels() {
                       {canCreateItems ? <div className="border-t border-[#e8ece7] pt-5">
                         <div className="mb-4 flex items-start justify-between gap-3">
                           <div><h3 className="text-sm font-bold">تركيب تشكيلة جديدة</h3><p className="mt-1 text-xs text-[#77857f]">حدد المحاور أولًا، ثم علّم فقط التركيبات المعروضة في متجرك.</p></div>
-                          <span className="rounded-full bg-[#f2eddf] px-2.5 py-1 text-[11px] font-semibold text-[#826d3f]">إنشاء متسلسل</span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {variants.length > 0 && <button className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#d6e1d8] bg-white px-2.5 text-[11px] font-semibold text-[#365447] hover:bg-[#f2f6f2]" onClick={() => setLabelsOpen(true)} data-testid="button-print-variant-labels"><Printer className="h-3.5 w-3.5" /> طباعة ملصقات</button>}
+                            <span className="rounded-full bg-[#f2eddf] px-2.5 py-1 text-[11px] font-semibold text-[#826d3f]">إنشاء متسلسل</span>
+                          </div>
                         </div>
                         <div className="grid gap-4 md:grid-cols-2">
                           <div className="rounded-xl border border-[#e4e9e3] bg-[#f8faf7] p-4">
@@ -697,7 +742,8 @@ export default function ClothingModels() {
                         {chosenPairs.length > 0 && (
                           <div className="mt-5 overflow-hidden rounded-xl border border-[#dfe7df]" data-testid="variant-draft-table">
                             <div className="flex flex-wrap items-center justify-between gap-2 bg-[#f3f7f3] px-4 py-3">
-                              <div><p className="text-xs font-bold">بيانات الأصناف المحددة</p><p className="mt-1 text-[11px] text-[#77857f]">الرمز مطلوب، والباركود والأسعار اختيارية. السعر الفارغ يرث قيمة الموديل.</p></div>
+                              <div><p className="text-xs font-bold">بيانات الأصناف المحددة</p><p className="mt-1 text-[11px] text-[#77857f]">يمكن توليد الرمز والباركود تلقائيًا ثم تعديلهما؛ السعر الفارغ يرث قيمة الموديل.</p></div>
+                              <button type="button" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#cbdcd0] bg-white px-2.5 text-[11px] font-semibold text-[#286347] hover:bg-[#edf5ef]" onClick={generateMissingIdentifiers} data-testid="button-generate-variant-identifiers">توليد الناقص</button>
                               <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-[#16745e]">{chosenPairs.length} تركيبة</span>
                             </div>
                             <div className="divide-y divide-[#e9eee9]">
@@ -709,9 +755,9 @@ export default function ClothingModels() {
                                       <span className="text-sm font-bold text-[#2d493b]">{pair.color} / {pair.size}</span>
                                       <span className="text-[10px] text-[#87938a]">تركيبة {index + 1}</span>
                                     </div>
-                                    <div className="grid grid-cols-2 gap-2 md:grid-cols-1">
-                                      <label className="text-[10px] font-semibold text-[#758279]">رمز الصنف <span className="text-[#a4482d]">*</span><input className="mt-1 h-9 w-full rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f] outline-none focus:border-[#16745e]" value={draft.code} onChange={(event) => setDraftField(pair.key, "code", event.target.value)} placeholder={`${activeModel.code}-${index + 1}`} dir="ltr" data-testid={`input-variant-code-${index}`} /></label>
-                                      <label className="text-[10px] font-semibold text-[#758279]">باركود اختياري<input className="mt-1 h-9 w-full rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f] outline-none focus:border-[#16745e]" value={draft.barcode} onChange={(event) => setDraftField(pair.key, "barcode", event.target.value)} placeholder="يُترك فارغًا عند عدم توفره" dir="ltr" data-testid={`input-variant-barcode-${index}`} /></label>
+                                      <div className="grid grid-cols-2 gap-2 md:grid-cols-1">
+                                       <label className="text-[10px] font-semibold text-[#758279]">رمز الصنف <span className="text-[#a4482d]">*</span><input className="mt-1 h-9 w-full rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f] outline-none focus:border-[#16745e]" value={draft.code} onChange={(event) => setDraftField(pair.key, "code", event.target.value)} placeholder={`${activeModel.code}-${index + 1}`} dir="ltr" data-testid={`input-variant-code-${index}`} /></label>
+                                       <label className="text-[10px] font-semibold text-[#758279]">باركود اختياري<input className="mt-1 h-9 w-full rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f] outline-none focus:border-[#16745e]" value={draft.barcode} onChange={(event) => setDraftField(pair.key, "barcode", event.target.value)} placeholder="يُترك فارغًا عند عدم توفره" dir="ltr" data-testid={`input-variant-barcode-${index}`} /></label>
                                     </div>
                                     <div className="grid grid-cols-2 gap-2">
                                       <label className="text-[10px] font-semibold text-[#758279]">التكلفة <span className="font-normal">— تورث عند الفراغ</span><input className="mt-1 h-9 w-full rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f] outline-none focus:border-[#16745e]" value={draft.costPrice} onChange={(event) => setDraftField(pair.key, "costPrice", event.target.value)} type="number" min="0" step="0.01" placeholder={String(activeModel.costPrice ?? "تكلفة الموديل")} dir="ltr" data-testid={`input-variant-cost-${index}`} /></label>
@@ -805,12 +851,12 @@ export default function ClothingModels() {
                 <Search className="absolute right-3 top-2.5 h-4 w-4 text-[#86928c]" />
                 <input className="h-10 w-full rounded-lg border border-[#dce2dc] bg-white pr-9 pl-3 text-sm outline-none focus:border-[#16745e]" value={adoptSearch} onChange={(event) => setAdoptSearch(event.target.value)} placeholder="ابحث بالاسم أو الرمز" data-testid="input-search-adoptable-models" />
               </label>
-              <FormSelect value={adoptModelId} onChange={setAdoptModelId} testId="select-adopt-model" placeholder={modelsQuery.isLoading ? "جارٍ تحميل الأصناف…" : "اختر صنفًا مخزنيًا رئيسيًا"}>
+              <FormSelect value={adoptModelId} onChange={setAdoptModelId} testId="select-adopt-model" placeholder={adoptableQuery.isLoading ? "جارٍ تحميل الأصناف…" : "اختر صنفًا مخزنيًا رئيسيًا"}>
                 {filteredAdoptableModels.map((item) => <option key={item.id} value={String(item.id)}>{item.nameAr} — {item.code}</option>)}
               </FormSelect>
               {filteredAdoptableModels.length === 0 && (
                 <p className="rounded-lg bg-[#f4f7f3] px-3 py-3 text-xs leading-5 text-[#77857f]" data-testid="empty-adoptable-models">
-                  {modelsQuery.isLoading ? "جارٍ تحميل الأصناف…" : "لا توجد أصناف مخزنية رئيسية تطابق البحث. يمكنك إنشاء موديل جديد بدلًا من ذلك."}
+                  {adoptableQuery.isLoading ? "جارٍ تحميل الأصناف…" : "لا توجد أصناف مخزنية رئيسية تطابق البحث. يمكنك إنشاء موديل جديد بدلًا من ذلك."}
                 </p>
               )}
               <div className="flex flex-col-reverse gap-2 border-t border-[#e8ece7] pt-4 sm:flex-row sm:justify-end">
@@ -823,6 +869,18 @@ export default function ClothingModels() {
           </section>
         </div>
       )}
+      <BulkLabelDialog
+        open={labelsOpen}
+        onOpenChange={setLabelsOpen}
+        items={variants.map((variant) => ({
+          id: variant.id,
+          code: variant.code,
+          nameAr: variant.nameAr,
+          nameEn: variant.nameEn,
+          barcode: variant.barcode,
+          salePrice: variant.salePrice,
+        }))}
+      />
     </main>
   );
 }

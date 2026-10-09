@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { purchaseAnalyticsApi } from "@/lib/purchaseAnalyticsApi";
@@ -11,11 +11,14 @@ import { useTranslation } from "react-i18next";
 import { Package, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { DateField } from "@/components/ui/date-field";
+import { inventoryApi } from "@/lib/inventoryApi";
+import { clothingVariantItemIds } from "@/lib/clothingStockReport";
 
-export default function PurchasesByItem() {
+export default function PurchasesByItem({ clothingOnly = false }: { clothingOnly?: boolean }) {
   const { fmt, fmtQty } = useFmt();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
+  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -29,6 +32,11 @@ export default function PurchasesByItem() {
   const EXPORT_COLS = [
     { key: "itemCode",       header: t("purchasingReports.byItem.itemCode"),       width: 14 },
     { key: "itemName",       header: t("purchasingReports.byItem.itemName"),       width: 30 },
+    ...(clothingOnly ? [
+      { key: "modelName", header: t("inventoryReports.clothingPurchases.model"), width: 24 },
+      { key: "color", header: t("inventoryReports.clothingPurchases.color"), width: 16 },
+      { key: "size", header: t("inventoryReports.clothingPurchases.size"), width: 12 },
+    ] : []),
     { key: "unit",           header: t("purchasingReports.byItem.unit"),           width: 10 },
     { key: "qty",            header: t("purchasingReports.byItem.qty"),            width: 14 },
     { key: "totalPurchases", header: t("purchasingReports.byItem.totalPurchases"), width: 16 },
@@ -41,16 +49,46 @@ export default function PurchasesByItem() {
     queryFn: () => purchaseAnalyticsApi.byItem(cid, from, to, branchId),
   });
 
-  const filtered = (rows as any[]).filter(r =>
-    !search || r.itemName?.includes(search) || r.itemName?.toLowerCase().includes(search.toLowerCase()) || r.itemCode?.includes(search)
+  const itemsQuery = useQuery({
+    queryKey: ["items", cid],
+    queryFn: () => inventoryApi.getItems(cid),
+    enabled: clothingOnly,
+  });
+  const clothingIds = useMemo(() => clothingVariantItemIds(itemsQuery.data ?? []), [itemsQuery.data]);
+  const itemById = useMemo(
+    () => new Map<number, any>((itemsQuery.data ?? []).map((item: any) => [Number(item.id), item])),
+    [itemsQuery.data],
+  );
+  const enrichedRows = (rows as any[])
+    .filter((row) => !clothingOnly || clothingIds.has(Number(row.itemId)))
+    .map((row) => {
+      const item = itemById.get(Number(row.itemId));
+      const model = item?.parentItemId ? itemById.get(Number(item.parentItemId)) : null;
+      const attributes = item?.variantAttributes ?? {};
+      return {
+        ...row,
+        modelName: pickName(model?.nameAr, model?.nameEn),
+        color: String(attributes["اللون"] ?? ""),
+        size: String(attributes["المقاس"] ?? ""),
+      };
+    });
+  const filtered = enrichedRows.filter(r =>
+    !search || r.itemName?.includes(search) || r.itemName?.toLowerCase().includes(search.toLowerCase())
+      || r.itemCode?.includes(search) || r.modelName?.includes(search) || r.color?.includes(search) || r.size?.includes(search)
   );
 
+  const reportTitle = clothingOnly ? t("inventoryReports.clothingPurchases.title") : t("purchasingReports.byItem.title");
+  const reportSubtitle = clothingOnly ? t("inventoryReports.clothingPurchases.subtitle") : t("purchasingReports.byItem.subtitle");
+  const loading = isLoading || (clothingOnly && itemsQuery.isLoading);
   const grandPurchases = filtered.reduce((s, r) => s + r.totalPurchases, 0);
   const grandQty       = filtered.reduce((s, r) => s + r.qty, 0);
 
   const exportRows = filtered.map(r => ({
     itemCode:       r.itemCode ?? "",
-    itemName:       r.itemName,
+    itemName:       clothingOnly ? `${r.modelName} — ${r.color || "—"} — ${r.size || "—"}` : r.itemName,
+    modelName:      r.modelName ?? "",
+    color:          r.color ?? "",
+    size:           r.size ?? "",
     unit:           r.unit ?? "",
     qty:            fmtQty(r.qty),
     totalPurchases: fmt(r.totalPurchases),
@@ -62,15 +100,15 @@ export default function PurchasesByItem() {
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="h-6 w-6 text-primary" />{t("purchasingReports.byItem.title")}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t("purchasingReports.byItem.subtitle")}</p>
+            <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="h-6 w-6 text-primary" />{reportTitle}</h1>
+            <p className="text-muted-foreground text-sm mt-1">{reportSubtitle}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`${t("purchasingReports.byItem.filename")}-${from}-${to}`}
-          title={t("purchasingReports.byItem.exportTitle")}
-          subtitle={t("purchasingReports.byItem.subtitleTotal", { from, to, total: fmt(grandPurchases) })}
+          filename={`${clothingOnly ? t("inventoryReports.clothingPurchases.filename") : t("purchasingReports.byItem.filename")}-${from}-${to}`}
+          title={clothingOnly ? reportTitle : t("purchasingReports.byItem.exportTitle")}
+          subtitle={clothingOnly ? `${reportSubtitle} — ${from} / ${to}` : t("purchasingReports.byItem.subtitleTotal", { from, to, total: fmt(grandPurchases) })}
         />
       </div>
 
@@ -111,6 +149,15 @@ export default function PurchasesByItem() {
         </div>
       </div>
 
+      {clothingOnly && itemsQuery.isError && (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
+          {t("inventoryReports.clothingPurchases.loadError")}
+          <button type="button" className="ms-3 font-semibold underline" onClick={() => void itemsQuery.refetch()}>
+            {t("inventoryReports.clothingPurchases.retry")}
+          </button>
+        </div>
+      )}
+
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[800px]">
@@ -125,7 +172,7 @@ export default function PurchasesByItem() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {isLoading
+              {loading
                 ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : filtered.length === 0
                 ? <tr><td colSpan={6} className="py-12 text-center text-muted-foreground">{t("purchasingReports.byItem.noData")}</td></tr>
@@ -134,8 +181,11 @@ export default function PurchasesByItem() {
                     return (
                       <tr key={`${r.itemId ?? r.itemName}-${i}`} className="hover:bg-muted/20">
                         <td className="px-3 py-3">
-                          <p className="font-medium text-sm">{r.itemName}</p>
-                          {r.itemCode && <p className="text-[10px] text-muted-foreground font-mono">{r.itemCode}</p>}
+                          <p className="font-medium text-sm">{clothingOnly ? (r.modelName || r.itemName) : r.itemName}</p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {clothingOnly ? `${r.color || "—"} / ${r.size || "—"} · ` : ""}
+                            {r.itemCode && <span className="font-mono">{r.itemCode}</span>}
+                          </p>
                         </td>
                         <td className="px-3 py-3 hidden sm:table-cell text-xs text-muted-foreground">{r.unit ?? "—"}</td>
                         <td className="px-3 py-3 text-center tabular-nums text-sm">{fmtQty(r.qty)}</td>
@@ -153,7 +203,7 @@ export default function PurchasesByItem() {
                     );
                   })}
             </tbody>
-            {!isLoading && filtered.length > 0 && (
+            {!loading && filtered.length > 0 && (
               <tfoot className="bg-muted/30 border-t">
                 <tr>
                   <td colSpan={2} className="px-3 py-3 text-xs font-bold">{t("purchasingReports.byItem.total")}</td>

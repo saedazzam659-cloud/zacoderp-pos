@@ -1,3 +1,5 @@
+import type { PurchaseReturnsByItemResponse } from "@workspace/api-client-react";
+
 const API = import.meta.env.VITE_API_URL ?? "";
 
 function authHeaders(): Record<string, string> {
@@ -151,4 +153,6 @@ export const purchaseAnalyticsApi = {
     get<SupplierAgingRow[]>(`/aging${qs({ companyId: cid, asOf, branchId })}`),
   returnsBySupplier: (cid?: number, from?: string, to?: string, branchId?: number) =>
     get<ReturnsBySupplierRow[]>(`/returns-by-supplier${qs({ companyId: cid, from, to, branchId })}`),
+  returnsByItem: (cid?: number, from?: string, to?: string, branchId?: number) =>
+    get<PurchaseReturnsByItemResponse>(`/returns-by-item${qs({ companyId: cid, from, to, branchId })}`),
 };

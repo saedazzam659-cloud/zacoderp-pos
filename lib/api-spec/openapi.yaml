@@ -3089,6 +3089,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PurchaseReceiptFollowUpReport" }
         "403": { description: Purchasing report access is denied }
+  /purchases-analytics/returns-by-item:
+    get:
+      operationId: getPurchaseReturnsByItem
+      tags: [purchasing]
+      summary: Aggregate posted purchase returns by item for a date range and branch
+      parameters:
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Posted return quantities and line values grouped by item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseReturnsByItemResponse"
+        "400":
+          description: Invalid date range
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403": { description: Purchasing report access is denied }
   /goods-deliveries/source-lookup:
     get:
       operationId: lookupSalesDeliverySourceDocument
@@ -6016,6 +6047,21 @@ components:
         openLineCount: { type: integer }
         fullyReceivedLineCount: { type: integer }
         generatedAt: { type: string, format: date-time }
+    PurchaseReturnsByItemRow:
+      type: object
+      required: [itemId, itemCode, itemName, unit, currencyCode, returnedQty, totalReturns, returnCount]
+      properties:
+        itemId: { type: ["integer", "null"] }
+        itemCode: { type: ["string", "null"] }
+        itemName: { type: string }
+        unit: { type: ["string", "null"] }
+        currencyCode: { type: string }
+        returnedQty: { type: number, format: double }
+        totalReturns: { type: number, format: double }
+        returnCount: { type: integer }
+    PurchaseReturnsByItemResponse:
+      type: array
+      items: { $ref: "#/components/schemas/PurchaseReturnsByItemRow" }
     PurchaseInvoiceConversionInput:
       type: object
       properties:

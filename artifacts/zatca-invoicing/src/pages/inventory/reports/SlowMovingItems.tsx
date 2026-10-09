@@ -11,8 +11,9 @@ import { useFmt } from "@/hooks/use-fmt";
 import { useTranslation } from "react-i18next";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 import { InventoryBrandFilter, filterItemsForInventoryBrand, useInventoryReportBrandOptions } from "@/components/InventoryBrandFilter";
+import { clothingVariantItemIds } from "@/lib/clothingStockReport";
 
-export default function SlowMovingItems() {
+export default function SlowMovingItems({ clothingOnly = false }: { clothingOnly?: boolean }) {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
@@ -22,6 +23,11 @@ export default function SlowMovingItems() {
   const EXPORT_COLS = [
     { key: "itemCode",     header: t("inventoryReports.slowMoving.exportItemCode"),       width: 16 },
     { key: "itemNameAr",   header: t("inventoryReports.slowMoving.exportItemName"),       width: 30 },
+    ...(clothingOnly ? [
+      { key: "modelName", header: t("inventoryReports.clothingSlowMoving.model"), width: 24 },
+      { key: "color", header: t("inventoryReports.clothingSlowMoving.color"), width: 16 },
+      { key: "size", header: t("inventoryReports.clothingSlowMoving.size"), width: 12 },
+    ] : []),
     { key: "groupName",    header: t("inventoryReports.slowMoving.exportGroup"),          width: 20 },
     { key: "qty",          header: t("inventoryReports.slowMoving.exportCurrentBalance"), width: 16 },
     { key: "value",        header: t("inventoryReports.slowMoving.exportValue"),          width: 16 },
@@ -35,11 +41,12 @@ export default function SlowMovingItems() {
   const [days, setDays] = useState("90");
   const [search, setSearch] = useState("");
 
-  const { data: items = [] } = useQuery({
+  const itemsQuery = useQuery({
     queryKey: ["items", cid],
     queryFn: () => inventoryApi.getItems(cid),
   });
-  const { data: balances = [], isLoading: bLoad } = useQuery({
+  const items = itemsQuery.data ?? [];
+  const { data: balances = [], isLoading: bLoad, isError: bError, refetch: refetchBalances } = useQuery({
     queryKey: ["stock-balance-all", cid],
     queryFn: () => {
       const params: Record<string, string> = {};
@@ -48,12 +55,15 @@ export default function SlowMovingItems() {
     },
   });
   // Backend-aggregated last movement date per item (handles >500 ledger rows correctly)
-  const { data: lastMoves = [], isLoading: lLoad } = useQuery({
+  const { data: lastMoves = [], isLoading: lLoad, isError: lError, refetch: refetchLastMoves } = useQuery({
     queryKey: ["last-movements", cid],
     queryFn: () => inventoryApi.getLastMovements(cid),
   });
 
-  const isLoading = bLoad || lLoad;
+  const isLoading = bLoad || lLoad || itemsQuery.isLoading;
+  const hasLoadError = itemsQuery.isError || bError || lError;
+  const clothingIds = useMemo(() => clothingVariantItemIds(items as any[]), [items]);
+  const itemById = useMemo(() => new Map<number, any>((items as any[]).map((item) => [Number(item.id), item])), [items]);
 
   const lastMoveByItem: Record<number, string> = {};
   (lastMoves as { itemId: number; lastDate: string }[]).forEach(l => {
@@ -74,18 +84,31 @@ export default function SlowMovingItems() {
   const threshold = Number(days) || 90;
 
   const enriched = filterItemsForInventoryBrand(items as any[], brandId, brandOptions)
+    .filter((it: any) => !clothingOnly || clothingIds.has(Number(it.id)))
     .filter((it: any) => it.itemType !== "service")
     .map((it: any) => {
       const bal = balByItem[it.id] ?? { qty: 0, value: 0 };
       const lastMove = lastMoveByItem[it.id];
+      const model = it.parentItemId ? itemById.get(Number(it.parentItemId)) : null;
+      const attributes = it.variantAttributes ?? {};
       const daysIdle = lastMove
         ? Math.floor((today.getTime() - new Date(lastMove).getTime()) / 86400000)
         : 9999; // Never moved
-      return { ...it, qty: bal.qty, value: bal.value, lastMoveDate: lastMove ?? null, daysIdle };
+      return {
+        ...it,
+        modelName: String(model?.nameAr ?? model?.nameEn ?? ""),
+        color: String(attributes["اللون"] ?? ""),
+        size: String(attributes["المقاس"] ?? ""),
+        qty: bal.qty,
+        value: bal.value,
+        lastMoveDate: lastMove ?? null,
+        daysIdle,
+      };
     })
     .filter((r: any) => r.qty > 0 && r.daysIdle >= threshold)
     .filter((r: any) =>
-      !search || (r.nameAr ?? "").includes(search) || (r.nameEn ?? "").toLowerCase().includes(search.toLowerCase()) || r.code?.includes(search)
+      !search || (r.nameAr ?? "").includes(search) || (r.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
+        || r.code?.includes(search) || r.modelName?.includes(search) || r.color?.includes(search) || r.size?.includes(search)
     )
     .sort((a, b) => b.daysIdle - a.daysIdle);
 
@@ -93,7 +116,10 @@ export default function SlowMovingItems() {
 
   const exportRows = enriched.map((r: any) => ({
     itemCode:     r.code ?? "",
-    itemNameAr:   pickName(r.nameAr, r.nameEn),
+    itemNameAr:   clothingOnly ? `${r.modelName} — ${r.color || "—"} — ${r.size || "—"}` : pickName(r.nameAr, r.nameEn),
+    modelName: r.modelName ?? "",
+    color: r.color ?? "",
+    size: r.size ?? "",
     groupName:    pickName(r.group?.nameAr, r.group?.nameEn),
     qty:          fmtQty(r.qty),
     value:        fmt(r.value),
@@ -107,11 +133,16 @@ export default function SlowMovingItems() {
       label: t("inventoryReports.common.item"),
       type: "text",
       width: 220,
-      value: r => `${pickName(r.nameAr, r.nameEn)} ${r.code ?? ""}`,
+      value: r => clothingOnly
+        ? `${r.modelName ?? ""} ${r.color ?? ""} ${r.size ?? ""} ${r.code ?? ""}`
+        : `${pickName(r.nameAr, r.nameEn)} ${r.code ?? ""}`,
       render: r => (
         <div>
-          <p className="font-medium text-sm">{pickName(r.nameAr, r.nameEn) || "—"}</p>
-          <p className="text-[10px] text-muted-foreground font-mono">{r.code}</p>
+          <p className="font-medium text-sm">{clothingOnly ? (r.modelName || pickName(r.nameAr, r.nameEn) || "—") : (pickName(r.nameAr, r.nameEn) || "—")}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {clothingOnly ? `${r.color || "—"} / ${r.size || "—"} · ` : ""}
+            <span className="font-mono">{r.code}</span>
+          </p>
         </div>
       ),
     },
@@ -167,21 +198,23 @@ export default function SlowMovingItems() {
         </span>
       ),
     },
-  ], [t, isRtl, fmt, fmtQty]);
+  ], [t, isRtl, fmt, fmtQty, clothingOnly]);
 
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Hourglass className="h-6 w-6 text-rose-500" />{t("inventoryReports.slowMoving.title")}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t("inventoryReports.slowMoving.subtitle")}</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Hourglass className="h-6 w-6 text-rose-500" />{clothingOnly ? t("inventoryReports.clothingSlowMoving.title") : t("inventoryReports.slowMoving.title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{clothingOnly ? t("inventoryReports.clothingSlowMoving.subtitle") : t("inventoryReports.slowMoving.subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`${t("inventoryReports.slowMoving.exportFilename", { days })}-${new Date().toISOString().slice(0, 10)}`}
-          title={t("inventoryReports.slowMoving.exportTitle")}
-          subtitle={t("inventoryReports.slowMoving.exportSubtitle", { days: threshold })}
+          filename={`${clothingOnly ? t("inventoryReports.clothingSlowMoving.exportFilename") : t("inventoryReports.slowMoving.exportFilename", { days })}-${new Date().toISOString().slice(0, 10)}`}
+          title={clothingOnly ? t("inventoryReports.clothingSlowMoving.title") : t("inventoryReports.slowMoving.exportTitle")}
+          subtitle={clothingOnly
+            ? t("inventoryReports.clothingSlowMoving.exportSubtitle", { days: threshold })
+            : t("inventoryReports.slowMoving.exportSubtitle", { days: threshold })}
         />
       </div>
 
@@ -215,6 +248,19 @@ export default function SlowMovingItems() {
         </div>
         <InventoryBrandFilter options={brandOptions} value={brandId} onChange={setBrandId} />
       </div>
+
+      {clothingOnly && hasLoadError && (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
+          {t("inventoryReports.clothingSlowMoving.loadError")}
+          <button
+            type="button"
+            className="ms-3 font-semibold underline"
+            onClick={() => void Promise.all([itemsQuery.refetch(), refetchBalances(), refetchLastMoves()])}
+          >
+            {t("inventoryReports.clothingSlowMoving.retry")}
+          </button>
+        </div>
+      )}
 
       <div className="w-full min-w-0 overflow-hidden rounded-xl">
         {isLoading ? (

@@ -15,6 +15,7 @@ import { useFmt } from "@/hooks/use-fmt";
 import { DateField } from "@/components/ui/date-field";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 import { InventoryBrandFilter, filterItemsForInventoryBrand, filterRowsForInventoryBrand, useInventoryReportBrandOptions } from "@/components/InventoryBrandFilter";
+import { clothingVariantItemIds } from "@/lib/clothingStockReport";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -36,7 +37,7 @@ type Filters = {
   warehouseId: string; customerId: string; itemId: string; branchId: string; brandId: string;
 };
 
-export default function ItemSalesValuationReport() {
+export default function ItemSalesValuationReport({ clothingOnly = false }: { clothingOnly?: boolean }) {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
@@ -48,6 +49,12 @@ export default function ItemSalesValuationReport() {
   const EXPORT_COLS = [
     { key: "itemCode",      header: t("inventoryReports.itemSalesValuation.cols.itemCode"),      width: 16 },
     { key: "itemNameAr",    header: t("inventoryReports.itemSalesValuation.cols.itemName"),      width: 30 },
+    ...(clothingOnly ? [
+      { key: "clothingModelName", header: t("inventoryReports.clothingSales.model"), width: 24 },
+      { key: "color", header: t("inventoryReports.clothingSales.color"), width: 16 },
+      { key: "size", header: t("inventoryReports.clothingSales.size"), width: 12 },
+      { key: "grossMargin", header: t("inventoryReports.clothingSales.grossMargin"), width: 18 },
+    ] : []),
     { key: "unitName",      header: t("inventoryReports.itemSalesValuation.cols.unit"),          width: 12 },
     { key: "soldQty",       header: t("inventoryReports.itemSalesValuation.cols.soldQty"),       width: 14 },
     { key: "soldValue",     header: t("inventoryReports.itemSalesValuation.cols.soldValue"),     width: 18 },
@@ -101,9 +108,64 @@ export default function ItemSalesValuationReport() {
       return inventoryApi.getItemSalesValuationReport(params);
     },
   });
+  const marginQuery = useQuery({
+    queryKey: ["clothing-sales-margin", cid, applied],
+    enabled: clothingOnly,
+    queryFn: async () => {
+      const params: Record<string, string> = {};
+      if (cid) params.companyId = String(cid);
+      if (applied.from) params.from = applied.from;
+      if (applied.to) params.to = applied.to;
+      if (applied.warehouseId) params.warehouseId = applied.warehouseId;
+      if (applied.customerId) params.customerId = applied.customerId;
+      if (applied.itemId) params.itemId = applied.itemId;
+      if (applied.branchId) params.branchId = applied.branchId;
+      const [revenueRows, costRows] = await Promise.all([
+        inventoryApi.getItemSalesValuationReport({ ...params, basis: "excl_vat" }),
+        inventoryApi.getItemSalesValuationReport({ ...params, basis: "cost" }),
+      ]);
+      const costByItemId = new Map(costRows.map((row) => [Number(row.itemId), Number(row.netValue)]));
+      return revenueRows.map((row) => ({
+        itemId: Number(row.itemId),
+        grossMargin: costByItemId.has(Number(row.itemId))
+          ? Number(row.netValue) - (costByItemId.get(Number(row.itemId)) ?? 0)
+          : null,
+      }));
+    },
+  });
 
-  const filteredRows = filterRowsForInventoryBrand(rows as any[], applied.brandId, brandOptions);
-  const filteredItems = filterItemsForInventoryBrand(items as any[], filters.brandId, brandOptions);
+  const itemById = useMemo(() => new Map<number, any>((items as any[]).map((item) => [Number(item.id), item])), [items]);
+  const clothingIds = useMemo(
+    () => clothingVariantItemIds(items as any[]),
+    [items],
+  );
+  const clothingDetails = useMemo(() => {
+    const details = new Map<number, { modelName: string; color: string; size: string }>();
+    for (const id of clothingIds) {
+      const item = itemById.get(id);
+      const model = item?.parentItemId ? itemById.get(Number(item.parentItemId)) : null;
+      if (!item || !model) continue;
+      details.set(id, {
+        modelName: String(model.nameAr ?? model.nameEn ?? ""),
+        color: String(item.variantAttributes?.["اللون"] ?? ""),
+        size: String(item.variantAttributes?.["المقاس"] ?? ""),
+      });
+    }
+    return details;
+  }, [clothingIds, itemById]);
+  const marginByItemId = new Map((marginQuery.data ?? []).map((row) => [row.itemId, row.grossMargin]));
+  const brandFilteredRows = filterRowsForInventoryBrand(rows as any[], applied.brandId, brandOptions);
+  const filteredRows = brandFilteredRows
+    .filter((row: any) => !clothingOnly || clothingIds.has(Number(row.itemId)))
+    .map((row: any) => clothingOnly
+      ? {
+        ...row,
+        ...clothingDetails.get(Number(row.itemId)),
+        grossMargin: marginByItemId.get(Number(row.itemId)) ?? null,
+      }
+      : row);
+  const filteredItems = filterItemsForInventoryBrand(items as any[], filters.brandId, brandOptions)
+    .filter((item: any) => !clothingOnly || clothingIds.has(Number(item.id)));
   const totals = filteredRows.reduce(
     (acc, r) => {
       acc.soldQty       += Number(r.soldQty)       || 0;
@@ -116,10 +178,20 @@ export default function ItemSalesValuationReport() {
     },
     { soldQty: 0, soldValue: 0, returnedQty: 0, returnedValue: 0, netQty: 0, netValue: 0 },
   );
+  const totalGrossMargin = filteredRows.reduce(
+    (total: number, row: any) => total + (typeof row.grossMargin === "number" ? row.grossMargin : 0),
+    0,
+  );
 
   const exportRows = filteredRows.map(r => ({
     itemCode:      r.itemCode ?? "",
-    itemNameAr:    pickName(r.itemNameAr, r.itemNameEn),
+    itemNameAr:    clothingOnly
+      ? `${r.clothingModelName ?? ""} — ${r.color || "—"} — ${r.size || "—"}`
+      : pickName(r.itemNameAr, r.itemNameEn),
+    clothingModelName: r.clothingModelName ?? "",
+    color: r.color ?? "",
+    size: r.size ?? "",
+    grossMargin: typeof r.grossMargin === "number" ? fmt(r.grossMargin) : "—",
     unitName:      pickName(r.unitName, r.unitNameEn),
     soldQty:       fmtQty(r.soldQty),
     soldValue:     fmt(r.soldValue),
@@ -137,6 +209,7 @@ export default function ItemSalesValuationReport() {
     returnedValue: fmt(totals.returnedValue),
     netQty:        fmtQty(totals.netQty),
     netValue:      fmt(totals.netValue),
+    grossMargin: clothingOnly ? fmt(totalGrossMargin) : "",
   };
 
   const gridColumns = useMemo<GridColumn<any>[]>(() => [
@@ -145,11 +218,18 @@ export default function ItemSalesValuationReport() {
       label: t("inventoryReports.common.item"),
       type: "text",
       width: 240,
-      value: r => `${pickName(r.itemNameAr, r.itemNameEn)} ${r.itemCode ?? ""}`,
+      value: r => clothingOnly
+        ? `${r.clothingModelName ?? ""} ${r.color ?? ""} ${r.size ?? ""} ${r.itemCode ?? ""}`
+        : `${pickName(r.itemNameAr, r.itemNameEn)} ${r.itemCode ?? ""}`,
       render: r => (
         <div>
-          <p className="font-medium text-sm">{pickName(r.itemNameAr, r.itemNameEn) || "—"}</p>
-          <p className="text-[10px] text-muted-foreground font-mono">{r.itemCode}</p>
+          <p className="font-medium text-sm">{clothingOnly ? (r.clothingModelName || pickName(r.itemNameAr, r.itemNameEn) || "—") : (pickName(r.itemNameAr, r.itemNameEn) || "—")}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {clothingOnly
+              ? `${r.color || "—"} / ${r.size || "—"} · `
+              : ""}
+            <span className="font-mono">{r.itemCode}</span>
+          </p>
         </div>
       ),
     },
@@ -228,18 +308,27 @@ export default function ItemSalesValuationReport() {
       render: r => fmt(r.netValue),
       totalable: true,
     },
-  ], [t, isRtl, fmt, fmtQty]);
+    ...(clothingOnly ? [{
+      key: "grossMargin",
+      label: t("inventoryReports.clothingSales.grossMargin"),
+      type: "num" as const,
+      align: "center" as const,
+      width: 175,
+      className: "tabular-nums text-violet-700 font-semibold",
+      value: (r: any) => r.grossMargin == null ? 0 : Number(r.grossMargin),
+      render: (r: any) => r.grossMargin == null ? "—" : fmt(r.grossMargin),
+    }] : []),
+  ], [t, isRtl, fmt, fmtQty, clothingOnly]);
 
   const apply = () => setApplied(filters);
   const reset = () => { setFilters(empty); setApplied(empty); };
   const hasAnyFilter =
     !!applied.warehouseId || !!applied.customerId || !!applied.itemId || !!applied.branchId || !!applied.brandId;
 
-  const itemMap = new Map<number, any>((items as any[]).map(i => [i.id, i]));
   const whMap   = new Map<number, any>((warehouses as any[]).map(w => [w.id, w]));
   const cusMap  = new Map<number, any>((customers as any[]).map(c => [c.id, c]));
   const brMap   = new Map<number, any>((branches as any[]).map(b => [b.id, b]));
-  const appliedItem = applied.itemId      ? itemMap.get(Number(applied.itemId))      : null;
+  const appliedItem = applied.itemId      ? itemById.get(Number(applied.itemId))      : null;
   const appliedWh   = applied.warehouseId ? whMap.get(Number(applied.warehouseId))   : null;
   const appliedCus  = applied.customerId  ? cusMap.get(Number(applied.customerId))   : null;
   const appliedBr   = applied.branchId    ? brMap.get(Number(applied.branchId))      : null;
@@ -266,17 +355,17 @@ export default function ItemSalesValuationReport() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <ReceiptText className="h-6 w-6 text-teal-600" />
-            {t("inventoryReports.itemSalesValuation.title")}
+            {clothingOnly ? t("inventoryReports.clothingSales.title") : t("inventoryReports.itemSalesValuation.title")}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {t("inventoryReports.itemSalesValuation.subtitle")}
+            {clothingOnly ? t("inventoryReports.clothingSales.subtitle") : t("inventoryReports.itemSalesValuation.subtitle")}
           </p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`${t("inventoryReports.itemSalesValuation.exportFilename")}-${basis}-${applied.from}_${applied.to}`}
-          title={`${t("inventoryReports.itemSalesValuation.title")} — ${basisLabel}`}
+          filename={`${clothingOnly ? t("inventoryReports.clothingSales.exportFilename") : t("inventoryReports.itemSalesValuation.exportFilename")}-${basis}-${applied.from}_${applied.to}`}
+          title={`${clothingOnly ? t("inventoryReports.clothingSales.title") : t("inventoryReports.itemSalesValuation.title")} — ${basisLabel}`}
           subtitle={subtitle}
           totalsRow={totalsRow}
           disabled={filteredRows.length === 0}
@@ -376,7 +465,7 @@ export default function ItemSalesValuationReport() {
           <div className="space-y-1.5">
             <Label className="text-xs">{t("inventoryReports.common.item")}</Label>
             <SearchCombobox
-              items={[{ value: "", label: t("inventoryReports.itemSalesValuation.allItems") }, ...filteredItems.map(i => ({ value: String(i.id), label: `${pickName(i.nameAr, i.nameEn) || i.code} ${i.code ? `— ${i.code}` : ""}` }))]}
+              items={[{ value: "", label: clothingOnly ? t("inventoryReports.clothingSales.allVariants") : t("inventoryReports.itemSalesValuation.allItems") }, ...filteredItems.map(i => ({ value: String(i.id), label: `${pickName(i.nameAr, i.nameEn) || i.code} ${i.code ? `— ${i.code}` : ""}` }))]}
               value={filters.itemId}
               onValueChange={v => setFilters(f => ({ ...f, itemId: v }))}
               placeholder={t("inventoryReports.itemSalesValuation.allItems")}
@@ -391,7 +480,7 @@ export default function ItemSalesValuationReport() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 ${clothingOnly ? "sm:grid-cols-4" : "sm:grid-cols-3"} gap-4`}>
         <div className="rounded-xl border bg-blue-50 border-blue-200 p-4">
           <p className="text-xs text-blue-700">{t("inventoryReports.itemSalesValuation.cols.soldValue")}</p>
           <p className="text-2xl font-bold text-blue-700 tabular-nums mt-1">{fmt(totals.soldValue)}</p>
@@ -407,11 +496,26 @@ export default function ItemSalesValuationReport() {
           <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{fmt(totals.netValue)}</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">{t("inventoryReports.itemSalesValuation.netQtyLabel", { value: fmtQty(totals.netQty) })}</p>
         </div>
+        {clothingOnly && (
+          <div className="rounded-xl border border-violet-200 bg-violet-50 p-4">
+            <p className="text-xs text-violet-800">{t("inventoryReports.clothingSales.grossMargin")}</p>
+            <p className="mt-1 text-2xl font-bold tabular-nums text-violet-900">
+              {marginQuery.isLoading || marginQuery.isFetching ? "…" : marginQuery.isError ? "—" : fmt(totalGrossMargin)}
+            </p>
+            <p className="mt-1 text-[10px] text-violet-800">{t("inventoryReports.clothingSales.marginMethod")}</p>
+          </div>
+        )}
       </div>
+
+      {clothingOnly && marginQuery.isError && (
+        <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          {t("inventoryReports.clothingSales.marginUnavailable")}
+        </div>
+      )}
 
       {/* Results table */}
       <div className="w-full min-w-0 overflow-hidden rounded-xl">
-        {(isLoading || isFetching) ? (
+        {(isLoading || isFetching || (clothingOnly && (marginQuery.isLoading || marginQuery.isFetching))) ? (
           <div className="space-y-2 rounded-xl border bg-card p-4">
             {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
           </div>
