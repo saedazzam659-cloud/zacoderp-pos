@@ -37,6 +37,12 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "additional_purchase_reports", label: "تقارير المشتريات الإضافية", section: "المشتريات" },
 
   { key: "pos",                label: "نقاط البيع",                  section: "نقاط البيع" },
+  // Web cashier and restaurant stations are separate company entitlements.
+  // They are intentionally excluded from the frozen default-on baseline.
+  { key: "pos_cashier",        label: "كاشير نقاط البيع عبر الويب",  section: "نقاط البيع" },
+  { key: "pos_returns",        label: "مرتجعات نقاط البيع",           section: "نقاط البيع" },
+  { key: "pos_waiter",         label: "طلبات الصالة — النادل",       section: "نقاط البيع" },
+  { key: "pos_kitchen",        label: "شاشة المطبخ",                  section: "نقاط البيع" },
 
   { key: "cash_module",        label: "النقد والبنوك",              section: "الحسابات العامة" },
   { key: "cash_reports",       label: "تقارير النقد والبنوك",       section: "الحسابات العامة" },
@@ -157,7 +163,9 @@ export const LEGACY_DEFAULT_ON_MENU_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 // The school module must be enabled only from SuperAdmin Menu Permissions.
-export const REGISTRATION_BLOCKED_MENU_KEYS: ReadonlySet<string> = new Set(["school"]);
+export const REGISTRATION_BLOCKED_MENU_KEYS: ReadonlySet<string> = new Set([
+  "school", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
+]);
 
 export const MENU_ITEM_BY_KEY: Record<string, MenuItem> = Object.fromEntries(
   MENU_ITEMS.map(m => [m.key, m]),
@@ -553,12 +561,17 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
     ],
   },
   {
-    key: "pos", label: "نقاط البيع", emoji: "🧮", moduleKeys: ["pos"],
+    key: "pos", label: "نقاط البيع", emoji: "🧮",
+    moduleKeys: ["pos", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen"],
     screens: [
       { path: "/pos-monitoring", label: "مراقبة نقاط البيع" },
       { path: "/pos-operations", label: "عمليات نقاط البيع" },
       { path: "/pos-terminals", label: "محطات البيع" },
       { path: "/pos-settings", label: "إعدادات نقاط البيع" },
+      { path: "/pos/pos", label: "كاشير نقاط البيع عبر الويب" },
+      { path: "/pos/returns", label: "مرتجعات نقاط البيع" },
+      { path: "/pos/waiter", label: "طلبات الصالة — النادل" },
+      { path: "/pos/kitchen", label: "شاشة المطبخ" },
     ],
   },
   {

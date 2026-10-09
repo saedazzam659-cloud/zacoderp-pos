@@ -68,6 +68,10 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   accounting_maintenance: "accounting_maintenance",
   // POS
   pos: "pos",
+  pos_cashier: "pos_cashier",
+  pos_returns: "pos_returns",
+  pos_waiter: "pos_waiter",
+  pos_kitchen: "pos_kitchen",
   // Inventory
   items: "inventory_reports",
   // Brands (العلامات التجارية) — own per-user permission key, rolls up to the
@@ -191,6 +195,7 @@ const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "additional_accounting_reports",
   "additional_sales_reports",
   "additional_purchase_reports",
+  "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
 ]);
 
 // FROZEN legacy baseline (snapshot 2026-08): gate keys that keep the old
@@ -263,6 +268,43 @@ function userActionAllowed(u: any, module: string, action: PermAction): boolean 
   return false;
 }
 
+// POS-specific permissions may operate on the existing sales records, but
+// only while both the underlying sales module and the matching POS feature are
+// enabled. This keeps the shared invoice/return lifecycle without making a
+// POS user a general sales user or letting a disabled POS feature call it.
+const POS_FEATURE_PERMISSION_BRIDGES: Record<
+  string,
+  Array<{ feature: "pos_cashier" | "pos_returns"; actions: readonly PermAction[] }>
+> = {
+  sales_invoices: [
+    { feature: "pos_cashier", actions: ["view", "create", "post"] },
+    { feature: "pos_returns", actions: ["view"] },
+  ],
+  sales_returns: [
+    { feature: "pos_returns", actions: ["view", "create", "post"] },
+  ],
+  customers: [
+    { feature: "pos_cashier", actions: ["view", "create"] },
+  ],
+  items: [
+    { feature: "pos_cashier", actions: ["view"] },
+  ],
+  warehouses: [
+    { feature: "pos_cashier", actions: ["view"] },
+  ],
+  cash_boxes: [
+    { feature: "pos_cashier", actions: ["view"] },
+  ],
+};
+
+function posFeatureActionAllowed(u: any, module: string, action: PermAction): boolean {
+  return (POS_FEATURE_PERMISSION_BRIDGES[module] ?? []).some(({ feature, actions }) =>
+    actions.includes(action) &&
+    u?.permissions?.[feature]?.[action] === true &&
+    companyAllowsModule(u, feature)
+  );
+}
+
 // Non-middleware boolean form of requirePermission: returns true when the
 // user may perform `action` on `module`, applying the same superadmin
 // bypass + company module gate + per-action map (with bypasses). Used where
@@ -274,6 +316,7 @@ export function canAccessModule(authUser: any, module: string, action: PermActio
   if (!authUser) return false;
   if (authUser.role === "superadmin") return true;
   if (!companyAllowsModule(authUser, module)) return false;
+  if (posFeatureActionAllowed(authUser, module, action)) return true;
   return userActionAllowed(authUser, module, action);
 }
 
@@ -439,6 +482,7 @@ export function requirePermission(module: string, action: PermAction) {
       res.status(403).json({ error: `هذا الموديل غير مفعّل لشركتك — يرجى مراجعة المسؤول` });
       return;
     }
+    if (posFeatureActionAllowed(u, module, action)) { next(); return; }
     // Per-action map + admin / POS / sales-rep bypasses.
     if (userActionAllowed(u, module, action)) { next(); return; }
     // Mobile-channel session → defer to the mobile permission key.

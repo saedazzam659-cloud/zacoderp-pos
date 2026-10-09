@@ -13,12 +13,44 @@ import {
 } from "@workspace/db";
 import { and, eq, sql, desc, asc, isNull, gte, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
 router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرّح" }); return; }
   next();
+});
+// The web waiter and kitchen screens are independently licensed company
+// features. Gate their existing restaurant routes here so direct API calls
+// cannot bypass the POS app's route-level checks.
+router.use((req, res, next) => {
+  const path = req.path.replace(/\/+$/, "") || "/";
+  let module: string | null = null;
+  let action: "view" | "create" | "edit" | "cancel" = "view";
+
+  if (path.startsWith("/kitchen/")) {
+    module = "pos_kitchen";
+    action = req.method === "GET" ? "view" : "edit";
+  } else if (path === "/orders" || path.startsWith("/orders/")) {
+    module = "pos_waiter";
+    if (req.method === "GET") action = "view";
+    else if (path.endsWith("/cancel")) action = "cancel";
+    else if (path === "/orders" && req.method === "POST") action = "create";
+    else action = "edit";
+  } else if (
+    path === "/tables" || path.startsWith("/tables/") ||
+    path.startsWith("/menu/")
+  ) {
+    module = "pos_waiter";
+    action = req.method === "GET" ? "view" : "edit";
+  } else if (path.startsWith("/ai/")) {
+    module = "pos_waiter";
+    action = req.method === "GET" ? "view" : "edit";
+  }
+
+  if (!module) { next(); return; }
+  requirePermission(module, action)(req, res, next);
 });
 
 // ─── helpers ─────────────────────────────────────────────────────────────

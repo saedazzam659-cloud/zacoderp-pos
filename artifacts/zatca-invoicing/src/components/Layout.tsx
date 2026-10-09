@@ -79,6 +79,7 @@ import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
 type NavDef = { nameKey: string; name?: string; href: string; icon: any; exact?: boolean; permKey?: string; companyGateKey?: string;
+  external?: boolean;
   noteVisibilityKey?: "showCustomerDebitNotes" | "showSupplierCreditNotes";
   /** Country-specific entries are only visible for the matching tenant. */
   country?: "EG" | "JO";
@@ -262,8 +263,12 @@ const posSubNav: NavDef[] = [
   { nameKey: "nav.posOperations", href: "/pos-operations", icon: ClipboardList,     permKey: "pos" },
   { nameKey: "nav.posTerminals",  href: "/pos-terminals",  icon: MonitorSmartphone, permKey: "pos" },
   { nameKey: "nav.posSettings",   href: "/pos-settings",   icon: Settings,          permKey: "pos" },
+  { nameKey: "nav.posCashier",    href: "/pos/pos",        icon: Store,             permKey: "pos_cashier", external: true },
+  { nameKey: "nav.posReturns",    href: "/pos/returns",    icon: RotateCcw,         permKey: "pos_returns", external: true },
+  { nameKey: "nav.posWaiter",     href: "/pos/waiter",     icon: Users,             permKey: "pos_waiter", external: true },
+  { nameKey: "nav.posKitchen",    href: "/pos/kitchen",    icon: ClipboardList,     permKey: "pos_kitchen", external: true },
 ];
-const POS_GROUP_PERMS = ["pos"];
+const POS_GROUP_PERMS = ["pos", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen"];
 // HR submenu — sits under the "شؤون الموظفين" (HR) collapsible group.
 const hrSubNav: NavDef[] = [
   { nameKey: "nav.hrEmployeesList", href: "/hr/employees",       icon: UserCog,         permKey: "hr_employees" },
@@ -998,6 +1003,15 @@ const NavItem = React.memo(function NavItem({
   const isActive = item.exact
     ? location === item.href
     : location.startsWith(item.href) && item.href !== "/";
+  const linkContent = (
+    <span className={cn(
+      "flex items-center gap-3 px-3 py-2 text-sm font-medium",
+      indent && !iconOnlyLabels && "ps-8",
+    )}>
+      <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span className={iconOnlyLabels ? "sr-only" : undefined}>{label}</span>
+    </span>
+  );
   // All internal sidebar sub-links (children of every main group) use a
   // purple text color per the user's request. The active row still uses the
   // contrasting "primary pill" highlight so the user always knows where they
@@ -1009,21 +1023,27 @@ const NavItem = React.memo(function NavItem({
         ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
         : "text-purple-700 hover:bg-purple-50 hover:text-purple-900 dark:text-purple-300 dark:hover:bg-purple-950/40 dark:hover:text-purple-100"
     )}>
-      <Link
-        href={item.href}
-        className="block flex-1 min-w-0"
-        onClick={onClick}
-        aria-label={iconOnlyLabels ? label : undefined}
-        title={iconOnlyLabels ? label : undefined}
-      >
-        <span className={cn(
-          "flex items-center gap-3 px-3 py-2 text-sm font-medium",
-          indent && !iconOnlyLabels && "ps-8",
-        )}>
-          <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span className={iconOnlyLabels ? "sr-only" : undefined}>{label}</span>
-        </span>
-      </Link>
+      {item.external ? (
+        <a
+          href={item.href}
+          className="block flex-1 min-w-0"
+          onClick={onClick}
+          aria-label={iconOnlyLabels ? label : undefined}
+          title={iconOnlyLabels ? label : undefined}
+        >
+          {linkContent}
+        </a>
+      ) : (
+        <Link
+          href={item.href}
+          className="block flex-1 min-w-0"
+          onClick={onClick}
+          aria-label={iconOnlyLabels ? label : undefined}
+          title={iconOnlyLabels ? label : undefined}
+        >
+          {linkContent}
+        </Link>
+      )}
       <a
         href={item.href}
         target="_blank"

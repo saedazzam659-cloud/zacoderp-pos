@@ -121,6 +121,10 @@ export const PERMISSION_MODULES: ModuleDef[] = [
 
   // POS group — covers /pos-monitoring, /pos-settings and /pos-terminals.
   { key: "pos",                  label: "perms.modules.pos",                  group: G.pos,        actions: VC },
+  { key: "pos_cashier",          label: "perms.modules.pos_cashier",          group: G.pos,        actions: ["view", "create", "post"] },
+  { key: "pos_returns",          label: "perms.modules.pos_returns",          group: G.pos,        actions: ["view", "create", "post"] },
+  { key: "pos_waiter",           label: "perms.modules.pos_waiter",           group: G.pos,        actions: ["view", "create", "edit", "cancel"] },
+  { key: "pos_kitchen",          label: "perms.modules.pos_kitchen",          group: G.pos,        actions: ["view", "edit"] },
 
   // HR group — one module per logical screen.
   { key: "hr_employees",         label: "perms.modules.hr_employees",         group: G.hr,         actions: ALL },

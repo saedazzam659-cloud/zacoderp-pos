@@ -49,6 +49,10 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "additional_purchase_reports",
   // ── نقاط البيع ──
   "pos",
+  "pos_cashier",
+  "pos_returns",
+  "pos_waiter",
+  "pos_kitchen",
   // ── المحاسبة ──
   "cash_module",
   "cash_reports",
@@ -139,7 +143,9 @@ export function filterCanonicalKeys(input: readonly unknown[]): string[] {
 
 // Some optional products are enabled only by a SuperAdmin on the company
 // permission screen and must never be inherited from public registration.
-export const REGISTRATION_BLOCKED_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set(["school"]);
+export const REGISTRATION_BLOCKED_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
+  "school", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
+]);
 
 export function filterRegistrationMenuKeys(input: readonly unknown[]): string[] {
   return filterCanonicalKeys(input).filter(

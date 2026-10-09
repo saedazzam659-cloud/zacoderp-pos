@@ -49,6 +49,10 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   accounting_maintenance: "accounting_maintenance",
   // POS
   pos: "pos",
+  pos_cashier: "pos_cashier",
+  pos_returns: "pos_returns",
+  pos_waiter: "pos_waiter",
+  pos_kitchen: "pos_kitchen",
   // Inventory
   items: "inventory_reports",
   // Brands (العلامات التجارية) — own per-user permission key, rolls up to the
@@ -161,6 +165,7 @@ const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
   "internal_control", "egypt_tax", "jordan_tax", "school", "additional_accounting_reports",
   "additional_sales_reports", "additional_purchase_reports",
+  "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
 ]);
 
 // FROZEN legacy baseline of gate keys that keep the old "missing = allowed"

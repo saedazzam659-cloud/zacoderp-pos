@@ -1016,6 +1016,17 @@ router.get("/me", async (req, res) => {
     .from(userBranchesTable)
     .where(eq(userBranchesTable.userId, user.id));
 
+  let companyMenuPermissions: Record<string, boolean> = {};
+  try {
+    const rawMenu = (company as any)?.menuPermissions;
+    const parsedMenu = typeof rawMenu === "string" ? JSON.parse(rawMenu) : rawMenu;
+    if (parsedMenu && typeof parsedMenu === "object" && !Array.isArray(parsedMenu)) {
+      companyMenuPermissions = parsedMenu;
+    }
+  } catch {
+    // Fail closed for newly introduced, default-off company modules.
+  }
+
   res.json({
     id: user.id,
     username: user.username,
@@ -1045,6 +1056,7 @@ router.get("/me", async (req, res) => {
     notifyMaintenanceSeverity: (user as any).notifyMaintenanceSeverity ?? "critical",
     branchIds: branchLinks.map(l => l.branchId),
     company,
+    companyMenuPermissions,
     subscription,
     subscriptionNotice,
   });

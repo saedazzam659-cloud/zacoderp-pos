@@ -40,7 +40,7 @@ import { isMobileChannel, mobilePermAllowed } from "../lib/mobilePerms.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { usersTable } from "@workspace/db";
 import { resolveTaxRate } from "../lib/companyTaxes.js";
-import { canAccessModule, pathRbac, requireAdminRole, hasDemoOperationalPrivilege } from "../middleware/permissions.js";
+import { canAccessModule, pathRbac, requireAdminRole, hasDemoOperationalPrivilege, requirePermission } from "../middleware/permissions.js";
 import {
   upsertBalance,
   getBalance,
@@ -1513,7 +1513,7 @@ async function getAvgCost(companyId: number, itemId: number, warehouseId: number
 // ═══════════════════════════════════════════════
 // SALES INVOICES
 // ═══════════════════════════════════════════════
-router.get("/sales-invoices", async (req, res) => {
+router.get("/sales-invoices", requirePermission("sales_invoices", "view"), async (req, res) => {
   try {
     const cid = getCid(req);
     const paged = String(req.query.paged ?? "") === "1";
@@ -1924,7 +1924,7 @@ router.get("/sales-invoices/batch-options", async (req, res) => {
   }
 });
 
-router.get("/sales-invoices/:id", async (req, res) => {
+router.get("/sales-invoices/:id", requirePermission("sales_invoices", "view"), async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
@@ -2036,7 +2036,7 @@ router.get("/sales-invoices/:id", async (req, res) => {
 // (and enforce) "remaining = sold − previously returned" before the user
 // hits Save. ?excludeReturnId=N excludes a return being edited so its own
 // lines don't subtract from their own cap.
-router.get("/sales-invoices/:id/returned-by-item", async (req, res) => {
+router.get("/sales-invoices/:id/returned-by-item", requirePermission("sales_invoices", "view"), async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
@@ -4693,7 +4693,7 @@ router.post("/sales-invoices/:id/unlink-quotation", async (req, res) => {
 // ═══════════════════════════════════════════════
 // SALES RETURNS
 // ═══════════════════════════════════════════════
-router.get("/sales-returns", async (req, res) => {
+router.get("/sales-returns", requirePermission("sales_returns", "view"), async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
@@ -4879,7 +4879,7 @@ router.get("/sales-returns/:invoiceId/batch-options", async (req, res) => {
   }
 });
 
-router.get("/sales-returns/:id", async (req, res) => {
+router.get("/sales-returns/:id", requirePermission("sales_returns", "view"), async (req, res) => {
   try {
     const cid = getCid(req);
     const id = Number(req.params.id);

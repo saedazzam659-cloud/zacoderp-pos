@@ -78,6 +78,11 @@ export type AuthUser = {
   email: string | null;
   role: string;
   companyId: number | null;
+  permissions?: Record<string, Partial<Record<
+    "view" | "create" | "edit" | "delete" | "post" | "cancel",
+    boolean
+  >>>;
+  companyMenuPermissions?: Record<string, boolean>;
   nameAr?: string | null;
   nameEn?: string | null;
   company?: {
@@ -222,6 +227,8 @@ export type SalesInvoice = {
   customerName?: string | null;
   customerId?: number | null;
   branchId?: number | null;
+  cashBoxId?: number | null;
+  bankAccountId?: number | null;
   subtotal?: string;
   vatAmount?: string;
   discountAmount?: string;
@@ -229,6 +236,18 @@ export type SalesInvoice = {
   paymentType?: string;
   currencyCode?: string;
   lines?: SalesInvoiceLine[];
+};
+
+export type SalesReturn = {
+  id: number;
+  docNumber: string | null;
+  returnDate: string;
+  status: string;
+  invoiceId?: number | null;
+  customerId?: number | null;
+  customerName?: string | null;
+  totalAmount: string;
+  currencyCode?: string | null;
 };
 
 export type SalesInvoiceLine = {
@@ -239,6 +258,7 @@ export type SalesInvoiceLine = {
   unit?: string | null;
   unitId?: number | null;
   warehouseId?: number | null;
+  conversionFactor?: string;
   qty: string;
   unitPrice: string;
   discount?: string;
@@ -252,6 +272,7 @@ export type CreateReturnLine = {
   itemCode?: string | null;
   unit?: string | null;
   unitId?: number | null;
+  conversionFactor?: number;
   warehouseId?: number | null;
   qty: number;
   unitPrice: number;
@@ -326,12 +347,25 @@ export const api = {
     req<SalesInvoice>("POST", "/api/sales/sales-invoices", body),
   postSalesInvoice: (id: number) =>
     req<SalesInvoice>("PATCH", `/api/sales/sales-invoices/${id}/post`),
-  listSalesInvoices: (companyId: number, q?: string) =>
-    req<SalesInvoice[]>("GET", `/api/sales/sales-invoices?companyId=${companyId}${q ? `&q=${encodeURIComponent(q)}` : ""}`),
+  listSalesInvoices: (companyId: number, q?: string, source?: "manual" | "pos" | "all") =>
+    req<SalesInvoice[]>(
+      "GET",
+      `/api/sales/sales-invoices?companyId=${companyId}` +
+        `${q ? `&q=${encodeURIComponent(q)}` : ""}` +
+        `${source ? `&source=${source}` : ""}`,
+    ),
   getSalesInvoice: (id: number) =>
     req<SalesInvoice>("GET", `/api/sales/sales-invoices/${id}`),
-  listSalesReturns: (companyId: number) =>
-    req<SalesInvoice[]>("GET", `/api/sales/sales-returns?companyId=${companyId}`),
+  getSalesInvoiceReturnedByItem: (id: number) =>
+    req<{ invoiceId: number; byItem: Record<string, number> }>(
+      "GET",
+      `/api/sales/sales-invoices/${id}/returned-by-item`,
+    ),
+  listSalesReturns: (companyId: number, source?: "manual" | "pos" | "all") =>
+    req<SalesReturn[]>(
+      "GET",
+      `/api/sales/sales-returns?companyId=${companyId}${source ? `&source=${source}` : ""}`,
+    ),
   createSalesReturn: (body: CreateReturnBody) =>
     req<{ id: number; docNumber: string | null }>("POST", "/api/sales/sales-returns", body),
   postSalesReturn: (id: number) =>
