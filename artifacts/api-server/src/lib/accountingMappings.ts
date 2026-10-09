@@ -260,6 +260,81 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "letter_of_credit",     roleKey: "bank",                   accountCode: "1150"  },
 ];
 
+/**
+ * Seed the POS invoice and return links when a company enables POS.
+ * Existing POS mappings always win. For roles shared with sales invoices,
+ * use the company's existing sales mapping when present, so custom charts
+ * stay consistent; otherwise use the standard template account if available.
+ */
+export async function seedPosAccountingMappingsTx(tx: any, companyId: number) {
+  const defaults = DEFAULT_MAPPINGS.filter(
+    (mapping) => mapping.documentType === "pos_invoice" || mapping.documentType === "sales_return",
+  );
+  if (!defaults.length) return { inserted: 0 };
+
+  const accountCodes = [...new Set(defaults.map((mapping) => mapping.accountCode))];
+  const companyAccounts = await tx.select({
+    id: accountsTable.id,
+    code: accountsTable.code,
+  }).from(accountsTable).where(and(
+    eq(accountsTable.companyId, companyId),
+    inArray(accountsTable.code, accountCodes),
+  ));
+  const accountIdByCode = new Map<string, number>(
+    companyAccounts.map((account: { id: number; code: string }) => [account.code, account.id]),
+  );
+  const existingRows = await tx.select({
+    documentType: accountingMappingsTable.documentType,
+    roleKey: accountingMappingsTable.roleKey,
+    accountId: accountingMappingsTable.accountId,
+  }).from(accountingMappingsTable).where(eq(accountingMappingsTable.companyId, companyId));
+  const accountByMapping = new Map<string, number | null>(
+    existingRows.map((mapping: { documentType: string; roleKey: string; accountId: number | null }) => [
+      `${mapping.documentType}::${mapping.roleKey}`,
+      mapping.accountId,
+    ]),
+  );
+
+  let inserted = 0;
+  for (const mapping of defaults) {
+    const key = `${mapping.documentType}::${mapping.roleKey}`;
+    if (accountByMapping.has(key)) continue;
+
+    const sourceDocumentType = mapping.documentType === "pos_invoice" &&
+      (mapping.roleKey === "cash" || mapping.roleKey === "bank")
+      ? "customer_settlement"
+      : "sales_invoice";
+    const sourceRoleKey = mapping.documentType === "sales_return" && mapping.roleKey === "revenue_return"
+      ? "revenue"
+      : mapping.roleKey;
+    const sourceMappingKey = `${sourceDocumentType}::${sourceRoleKey}`;
+    const hasCompatibleSource = (mapping.documentType === "pos_invoice" ||
+      mapping.documentType === "sales_return") && accountByMapping.has(sourceMappingKey);
+    const accountId = hasCompatibleSource
+      ? accountByMapping.get(sourceMappingKey) ?? null
+      : accountIdByCode.get(mapping.accountCode) ?? null;
+    if (accountId == null) continue;
+
+    const created = await tx.insert(accountingMappingsTable).values({
+      companyId,
+      documentType: mapping.documentType,
+      roleKey: mapping.roleKey,
+      accountId,
+    }).onConflictDoNothing({
+      target: [
+        accountingMappingsTable.companyId,
+        accountingMappingsTable.documentType,
+        accountingMappingsTable.roleKey,
+      ],
+    }).returning({ id: accountingMappingsTable.id });
+    if (created.length) {
+      inserted += 1;
+      accountByMapping.set(key, accountId);
+    }
+  }
+  return { inserted };
+}
+
 // School fees are still invoiced and posted through the normal sales-invoice
 // lifecycle. These optional mappings only override the relevant GL roles for
 // invoices explicitly linked to school fee records. Provisioning reuses an

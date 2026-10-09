@@ -1054,6 +1054,7 @@ router.patch("/:id/menu-permissions", async (req, res) => {
         const previous = accountingModulesFromMenu(before.menuPermissions);
         const next = accountingModulesFromMenu(normalizedMenuPermissions);
         const enabled = {
+          pos: next.pos && !previous.pos,
           contracting: next.contracting && !previous.contracting,
           production: next.production && !previous.production,
           simple_manufacturing: next.simple_manufacturing && !previous.simple_manufacturing,

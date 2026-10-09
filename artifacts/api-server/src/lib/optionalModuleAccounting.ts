@@ -1,7 +1,7 @@
 import { db, accountsTable, accountingMappingsTable, companiesTable, manufacturingSettingsTable, invoicesTable, journalEntriesTable } from "@workspace/db";
 import { and, eq, isNull } from "drizzle-orm";
 import { DEFAULT_CHART_OF_ACCOUNTS } from "./defaultChartOfAccounts.js";
-import { SCHOOL_FEE_DEFAULT_MAPPINGS } from "./accountingMappings.js";
+import { SCHOOL_FEE_DEFAULT_MAPPINGS, seedPosAccountingMappingsTx } from "./accountingMappings.js";
 
 type Kind = "asset" | "liability" | "revenue" | "expense";
 type AccountRow = typeof accountsTable.$inferSelect;
@@ -169,18 +169,20 @@ export function missingManufacturingFields(
     .filter(([field]) => existing?.[field as keyof typeof MANUFACTURING_FIELDS] == null));
 }
 
-export type AccountingModules = { contracting?: boolean; production?: boolean; simple_manufacturing?: boolean; school?: boolean };
+export type AccountingModules = { pos?: boolean; contracting?: boolean; production?: boolean; simple_manufacturing?: boolean; school?: boolean };
 export function accountingModulesFromMenu(menu: string | null | undefined): AccountingModules {
   if (!menu) return {};
   const parsed = JSON.parse(menu);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid module permissions");
-  return { contracting: parsed.contracting === true, production: parsed.production === true,
+  return { pos: parsed.pos_cashier === true || parsed.pos_returns === true ||
+      parsed.pos_waiter === true || parsed.pos_kitchen === true,
+    contracting: parsed.contracting === true, production: parsed.production === true,
     simple_manufacturing: parsed.simple_manufacturing === true, school: parsed.school === true };
 }
 
 /** Called only for new tenants or a disabled→enabled transition, never at startup. */
 export async function seedOptionalModuleAccounting(companyId: number, modules: AccountingModules) {
-  if (!modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school) return { accountsInserted: 0, mappingsInserted: 0 };
+  if (!modules.pos && !modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school) return { accountsInserted: 0, mappingsInserted: 0 };
   return db.transaction((tx) => seedOptionalModuleAccountingTx(tx, companyId, modules));
 }
 
@@ -239,7 +241,7 @@ export async function seedOptionalAccountingForFreshCompany(
 }
 
 export async function seedOptionalModuleAccountingTx(tx: any, companyId: number, modules: AccountingModules) {
-  if (!modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school) return { accountsInserted: 0, mappingsInserted: 0 };
+  if (!modules.pos && !modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school) return { accountsInserted: 0, mappingsInserted: 0 };
   {
     // Serialize simultaneous activation requests for this tenant.
     const [company] = await tx.select({ id: companiesTable.id }).from(companiesTable)
@@ -352,6 +354,10 @@ export async function seedOptionalModuleAccountingTx(tx: any, companyId: number,
         }).onConflictDoNothing().returning({ id: accountingMappingsTable.id });
         mappingsInserted += inserted.length;
       }
+    }
+    if (modules.pos) {
+      const seeded = await seedPosAccountingMappingsTx(tx, companyId);
+      mappingsInserted += seeded.inserted;
     }
     return { accountsInserted, mappingsInserted };
   }

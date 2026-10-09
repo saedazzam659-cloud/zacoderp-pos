@@ -42,7 +42,13 @@ const posted = (status?: string | null) => /posted|ترحيل|مرحّل|مرح�
 
 type ReturnLine = SalesInvoiceLine & { returnQty: number };
 
-export default function ReturnsPage() {
+export default function ReturnsPage({
+  embedded = false,
+  onClose,
+}: {
+  embedded?: boolean;
+  onClose?: () => void;
+} = {}) {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | null>(null);
@@ -240,7 +246,19 @@ export default function ReturnsPage() {
   };
 
   return (
-    <main dir="rtl" className="min-h-[100dvh] bg-[#f2f7f5] text-slate-900">
+    <div
+      className={embedded ? "fixed inset-0 z-[70] overflow-y-auto bg-slate-950/60 p-2 sm:p-5" : undefined}
+      role={embedded ? "dialog" : undefined}
+      aria-modal={embedded ? true : undefined}
+      aria-label={embedded ? "إنشاء مرتجع من فاتورة نقاط البيع" : undefined}
+      onMouseDown={embedded ? (event) => {
+        if (event.target === event.currentTarget) onClose?.();
+      } : undefined}
+    >
+    <main
+      dir="rtl"
+      className={`${embedded ? "mx-auto max-w-[1500px] overflow-hidden rounded-2xl shadow-2xl" : "min-h-[100dvh]"} bg-[#f2f7f5] text-slate-900`}
+    >
       <header className="sticky top-0 z-20 border-b border-emerald-950/10 bg-[#f8fbf9]/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-4 py-3 md:px-7">
           <div className="flex items-center gap-3">
@@ -259,6 +277,18 @@ export default function ReturnsPage() {
           <div className="flex size-9 items-center justify-center rounded-xl border border-emerald-950/10 bg-white text-[#087c68] sm:hidden">
             <ShieldCheck size={17} />
           </div>
+          {embedded && onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-emerald-950/10 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50"
+              aria-label="إغلاق نافذة المرتجع"
+              data-testid="button-close-returns-dialog"
+            >
+              <X size={15} />
+              إغلاق
+            </button>
+          )}
         </div>
       </header>
 
@@ -543,5 +573,6 @@ export default function ReturnsPage() {
         </section>
       </div>
     </main>
+    </div>
   );
 }

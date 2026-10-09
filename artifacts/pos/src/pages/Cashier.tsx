@@ -29,9 +29,11 @@ import {
   CookingPot,
   Settings,
   Users,
+  RotateCcw,
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
 import PosAiPanel from "@/components/PosAiPanel";
+import ReturnsPage from "@/pages/Returns";
 import { enqueueInvoice, syncNow, countQueued } from "@/lib/offlineQueue";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -57,7 +59,63 @@ type CartLine = {
   qty: number;
 };
 
+type ParkedCart = {
+  id: string;
+  createdAt: string;
+  cart: CartLine[];
+  discountPct: number;
+};
+
 const VAT_RATE = 15;
+const SERVICE_ACCESS: Record<string, { feature: string; action: "view" | "edit" }> = {
+  waiter: { feature: "pos_waiter", action: "view" },
+  kitchen: { feature: "pos_kitchen", action: "view" },
+  analytics: { feature: "pos_waiter", action: "view" },
+  settings: { feature: "pos_waiter", action: "edit" },
+  supermarket: { feature: "pos_cashier", action: "view" },
+};
+
+function hasPosFeatureAccess(
+  user: AuthUser | null,
+  feature: string,
+  action: "view" | "create" | "edit" = "view",
+) {
+  if (!user) return false;
+  if (user.role === "superadmin") return true;
+  return user.companyMenuPermissions?.[feature] === true &&
+    (user.role === "admin" || user.permissions?.[feature]?.[action] === true);
+}
+
+function isParkedCart(value: unknown): value is ParkedCart {
+  if (!value || typeof value !== "object") return false;
+  const cart = value as ParkedCart;
+  return typeof cart.id === "string" &&
+    Number.isFinite(Date.parse(cart.createdAt)) &&
+    Number.isFinite(Number(cart.discountPct)) &&
+    Array.isArray(cart.cart) &&
+    cart.cart.length > 0 &&
+    cart.cart.every((line) =>
+      !!line?.item &&
+      Number.isInteger(Number(line.item.id)) &&
+      Number.isFinite(Number(line.qty)) &&
+      Number(line.qty) > 0,
+    );
+}
+
+function parkedCartTotal(cart: ParkedCart) {
+  const discountPct = Math.max(0, Math.min(100, Number(cart.discountPct) || 0));
+  const subtotal = cart.cart.reduce(
+    (sum, line) => sum + Number(line.item.salePrice) * line.qty,
+    0,
+  );
+  const discount = subtotal * discountPct / 100;
+  const vat = cart.cart.reduce((sum, line) => {
+    const gross = Number(line.item.salePrice) * line.qty;
+    const net = gross - gross * discountPct / 100;
+    return sum + net * (Number(line.item.vatRate) || VAT_RATE) / 100;
+  }, 0);
+  return subtotal - discount + vat;
+}
 
 function formatSAR(n: number) {
   return new Intl.NumberFormat("ar-SA", {
@@ -133,13 +191,21 @@ export default function CashierPage() {
   const [time, setTime] = useState(new Date());
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [restaurantOpen, setRestaurantOpen] = useState(false);
-  // Service icons visible in the top bar. null = all visible (backwards
-  // compatible default). Resolved per-terminal + per-cashier from the server.
+  const [heldCarts, setHeldCarts] = useState<ParkedCart[]>([]);
+  const [heldCartsOpen, setHeldCartsOpen] = useState(false);
+  const [returnsOpen, setReturnsOpen] = useState(false);
+  // The terminal setting can further hide services, but it never replaces the
+  // company-module and signed-in-user permission checks.
   const [enabledServices, setEnabledServices] = useState<string[] | null>(null);
-  const canShowService = useCallback(
-    (key: string) => enabledServices === null || enabledServices.includes(key),
-    [enabledServices],
-  );
+  const canShowService = useCallback((key: string) => {
+    const access = SERVICE_ACCESS[key];
+    return !!access &&
+      hasPosFeatureAccess(user, access.feature, access.action) &&
+      (enabledServices === null || enabledServices.includes(key));
+  }, [enabledServices, user]);
+  const canCreatePosReturn =
+    hasPosFeatureAccess(user, "pos_returns", "view") &&
+    hasPosFeatureAccess(user, "pos_returns", "create");
 
   // Auth gate
   useEffect(() => {
@@ -202,8 +268,8 @@ export default function CashierPage() {
         setBranches(brs);
         setCashBoxes(cbs);
         setPosSettings(settings);
-        // Resolve which service icons this cashier may see (per-terminal default
-        // + per-cashier override). Best-effort: on failure keep all visible.
+        // Resolve terminal-specific service availability. User grants and
+        // company module access are checked separately before showing controls.
         api.getEffectiveServices()
           .then((r) => { if (alive) setEnabledServices(r?.services ?? null); })
           .catch(() => {});
@@ -224,6 +290,30 @@ export default function CashierPage() {
     if (stored && branches.some((b) => b.id === stored)) return stored;
     return branches[0]?.id ?? null;
   }, [branches]);
+
+  const parkedCartsStorageKey = useMemo(() => {
+    if (!user?.companyId || !user.id) return null;
+    let terminalId = "default";
+    try {
+      terminalId = localStorage.getItem("pos_terminal_id") || "default";
+    } catch {
+      // The branch and cashier still scope parked carts if terminal storage is unavailable.
+    }
+    return `zacode_pos_parked_carts_v1:${user.companyId}:${user.id}:branch-${branchId ?? "default"}:terminal-${terminalId}`;
+  }, [branchId, user?.companyId, user?.id]);
+
+  useEffect(() => {
+    if (!parkedCartsStorageKey) {
+      setHeldCarts([]);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(localStorage.getItem(parkedCartsStorageKey) || "[]");
+      setHeldCarts(Array.isArray(parsed) ? parsed.filter(isParkedCart) : []);
+    } catch {
+      setHeldCarts([]);
+    }
+  }, [parkedCartsStorageKey]);
 
   const defaultWarehouseId = useMemo<number | null>(
     () => warehouses[0]?.id ?? null,
@@ -311,6 +401,73 @@ export default function CashierPage() {
     setPaidMethod(null);
     setLastInvoice(null);
     setSubmitError(null);
+  };
+
+  const persistParkedCarts = (next: ParkedCart[]) => {
+    if (!parkedCartsStorageKey) return false;
+    try {
+      localStorage.setItem(parkedCartsStorageKey, JSON.stringify(next));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const parkCurrentCart = () => {
+    if (cart.length === 0 || submitting || paid) return;
+    const parked: ParkedCart = {
+      id: globalThis.crypto?.randomUUID?.() ??
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+      createdAt: new Date().toISOString(),
+      cart: cart.map((line) => ({ ...line, item: { ...line.item } })),
+      discountPct,
+    };
+    const next = [parked, ...heldCarts];
+    if (!persistParkedCarts(next)) {
+      setSubmitError("تعذّر حفظ الفاتورة المعلّقة على هذا الجهاز. لم يتم إفراغ السلة.");
+      return;
+    }
+    setHeldCarts(next);
+    clearCart();
+  };
+
+  const resumeParkedCart = (id: string) => {
+    const parked = heldCarts.find((entry) => entry.id === id);
+    if (!parked || submitting || paid) return;
+
+    const remaining = heldCarts.filter((entry) => entry.id !== id);
+    const next = cart.length > 0
+      ? [{
+          id: globalThis.crypto?.randomUUID?.() ??
+            `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+          createdAt: new Date().toISOString(),
+          cart: cart.map((line) => ({ ...line, item: { ...line.item } })),
+          discountPct,
+        }, ...remaining]
+      : remaining;
+    if (!persistParkedCarts(next)) {
+      window.alert("تعذّر حفظ السلة الحالية قبل استعادة الفاتورة. لم يتغير محتوى السلة.");
+      return;
+    }
+
+    setHeldCarts(next);
+    setCart(parked.cart);
+    setDiscountPct(Math.max(0, Math.min(100, Number(parked.discountPct) || 0)));
+    setPaid(false);
+    setPaidMethod(null);
+    setLastInvoice(null);
+    setSubmitError(null);
+    setHeldCartsOpen(false);
+  };
+
+  const deleteParkedCart = (id: string) => {
+    if (!window.confirm("هل تريد حذف هذه الفاتورة المعلّقة؟")) return;
+    const next = heldCarts.filter((entry) => entry.id !== id);
+    if (!persistParkedCarts(next)) {
+      window.alert("تعذّر تحديث قائمة الفواتير المعلّقة على هذا الجهاز.");
+      return;
+    }
+    setHeldCarts(next);
   };
 
   const subtotal = cart.reduce(
@@ -551,6 +708,21 @@ export default function CashierPage() {
           >
             <UserIcon className="w-4 h-4" />
           </button>
+          {heldCarts.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setHeldCartsOpen(true)}
+              title={`الفواتير المعلّقة (${heldCarts.length})`}
+              aria-label={`عرض الفواتير المعلّقة، ${heldCarts.length}`}
+              className="relative w-10 h-10 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 grid place-items-center hover-elevate active-elevate-2"
+              data-testid="button-open-parked-carts"
+            >
+              <Pause className="w-4 h-4" />
+              <span className="absolute -top-1 -left-1 min-w-5 h-5 px-1 rounded-full bg-amber-600 text-white text-[10px] font-black grid place-items-center">
+                {heldCarts.length}
+              </span>
+            </button>
+          )}
           {canShowService("waiter") && (
             <>
               <button
@@ -787,7 +959,8 @@ export default function CashierPage() {
             cart={cart}
             updateQty={updateQty}
             removeLine={removeLine}
-            clearCart={clearCart}
+            canCreatePosReturn={canCreatePosReturn}
+            openReturns={() => setReturnsOpen(true)}
             subtotal={subtotal}
             discountPct={discountPct}
             setDiscountPct={setDiscountPct}
@@ -795,6 +968,8 @@ export default function CashierPage() {
             vatAmount={vatAmount}
             grandTotal={grandTotal}
             itemCount={itemCount}
+            parkCurrentCart={parkCurrentCart}
+            paid={paid}
             pay={pay}
             methods={availableMethods}
             submitting={submitting}
@@ -834,7 +1009,8 @@ export default function CashierPage() {
                 cart={cart}
                 updateQty={updateQty}
                 removeLine={removeLine}
-                clearCart={clearCart}
+                canCreatePosReturn={canCreatePosReturn}
+                openReturns={() => setReturnsOpen(true)}
                 subtotal={subtotal}
                 discountPct={discountPct}
                 setDiscountPct={setDiscountPct}
@@ -842,6 +1018,8 @@ export default function CashierPage() {
                 vatAmount={vatAmount}
                 grandTotal={grandTotal}
                 itemCount={itemCount}
+                parkCurrentCart={parkCurrentCart}
+                paid={paid}
                 pay={async (m) => {
                   await pay(m);
                   setMobileCartOpen(false);
@@ -854,6 +1032,117 @@ export default function CashierPage() {
           </>
         )}
       </AnimatePresence>
+
+      {heldCartsOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[60] grid place-items-center bg-black/55 p-3 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setHeldCartsOpen(false);
+          }}
+        >
+          <motion.section
+            initial={{ opacity: 0, y: 14, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            transition={{ duration: 0.16 }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="parked-carts-title"
+            className="w-full max-w-2xl overflow-hidden rounded-3xl border border-border bg-card text-foreground shadow-2xl"
+            data-testid="dialog-parked-carts"
+          >
+            <header className="flex items-center justify-between gap-3 border-b border-border bg-muted/30 px-5 py-4">
+              <div>
+                <h2 id="parked-carts-title" className="text-lg font-black">الفواتير المعلّقة</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  محفوظة على هذا الجهاز، ويمكنك استعادتها أو متابعة أكثر من فاتورة.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHeldCartsOpen(false)}
+                aria-label="إغلاق قائمة الفواتير المعلّقة"
+                className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-card hover-elevate"
+              >
+                <X className="size-4" />
+              </button>
+            </header>
+            {cart.length > 0 && !paid && (
+              <p className="border-b border-border bg-primary/5 px-5 py-2.5 text-xs font-semibold text-primary">
+                عند استعادة فاتورة، ستُحفظ السلة الحالية تلقائياً ضمن القائمة.
+              </p>
+            )}
+            <div className="max-h-[70vh] space-y-3 overflow-y-auto p-4 sm:p-5">
+              {heldCarts.map((parked, index) => (
+                <article
+                  key={parked.id}
+                  className="rounded-2xl border border-border bg-background p-4"
+                  data-testid={`parked-cart-${parked.id}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-extrabold">فاتورة معلّقة {heldCarts.length - index}</p>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        {new Intl.DateTimeFormat("ar-SA", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        }).format(new Date(parked.createdAt))}
+                      </p>
+                    </div>
+                    <p className="shrink-0 text-sm font-black text-primary">
+                      {formatSAR(parkedCartTotal(parked))} ر.س
+                    </p>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {parked.cart.slice(0, 4).map((line) => (
+                      <span
+                        key={`${parked.id}-${line.item.id}`}
+                        className="rounded-lg bg-muted px-2.5 py-1 text-[11px] font-semibold"
+                      >
+                        {line.item.nameAr} × {line.qty}
+                      </span>
+                    ))}
+                    {parked.cart.length > 4 && (
+                      <span className="rounded-lg bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
+                        +{parked.cart.length - 4} أصناف
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => resumeParkedCart(parked.id)}
+                      disabled={submitting || paid}
+                      className="h-10 flex-1 rounded-xl bg-primary px-4 text-sm font-extrabold text-primary-foreground hover-elevate disabled:opacity-50"
+                      data-testid={`button-resume-parked-${parked.id}`}
+                    >
+                      استعادة الفاتورة
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteParkedCart(parked.id)}
+                      disabled={submitting || paid}
+                      className="grid size-10 place-items-center rounded-xl border border-border text-muted-foreground hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                      title="حذف الفاتورة المعلّقة"
+                      aria-label="حذف الفاتورة المعلّقة"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </motion.section>
+        </motion.div>
+      )}
+
+      {returnsOpen && canCreatePosReturn && (
+        <ReturnsPage embedded onClose={() => setReturnsOpen(false)} />
+      )}
 
       {/* Receipt modal */}
       <AnimatePresence>
@@ -875,27 +1164,31 @@ export default function CashierPage() {
         )}
       </AnimatePresence>
 
-      <RestaurantOrdersDialog
-        open={restaurantOpen}
-        onClose={() => setRestaurantOpen(false)}
-        branchId={branchId}
-        cashCashBoxId={posSettings?.posCashCashBoxId ?? defaultCashBoxId ?? null}
-        cardBankAccountId={posSettings?.posCardBankAccountId ?? null}
-        defaultWarehouseId={defaultWarehouseId ?? null}
-      />
+      {canShowService("waiter") && (
+        <RestaurantOrdersDialog
+          open={restaurantOpen}
+          onClose={() => setRestaurantOpen(false)}
+          branchId={branchId}
+          cashCashBoxId={posSettings?.posCashCashBoxId ?? defaultCashBoxId ?? null}
+          cardBankAccountId={posSettings?.posCardBankAccountId ?? null}
+          defaultWarehouseId={defaultWarehouseId ?? null}
+        />
+      )}
 
-      <PosAiPanel
-        cart={cart}
-        totalAmount={grandTotal}
-        discountPct={discountPct}
-        paymentType="cash"
-        allItems={items}
-        onAddItem={(it) => setCart((c) => {
-          const ex = c.find((l) => l.item.id === it.id);
-          return ex ? c.map((l) => l.item.id === it.id ? { ...l, qty: l.qty + 1 } : l) : [...c, { item: it, qty: 1 }];
-        })}
-        onApplyDiscount={(pct) => setDiscountPct(pct)}
-      />
+      {canShowService("analytics") && (
+        <PosAiPanel
+          cart={cart}
+          totalAmount={grandTotal}
+          discountPct={discountPct}
+          paymentType="cash"
+          allItems={items}
+          onAddItem={(it) => setCart((c) => {
+            const ex = c.find((l) => l.item.id === it.id);
+            return ex ? c.map((l) => l.item.id === it.id ? { ...l, qty: l.qty + 1 } : l) : [...c, { item: it, qty: 1 }];
+          })}
+          onApplyDiscount={(pct) => setDiscountPct(pct)}
+        />
+      )}
     </div>
   );
 }
@@ -981,7 +1274,8 @@ function CartPanel(props: {
   cart: CartLine[];
   updateQty: (id: number, delta: number) => void;
   removeLine: (id: number) => void;
-  clearCart: () => void;
+  canCreatePosReturn: boolean;
+  openReturns: () => void;
   subtotal: number;
   discountPct: number;
   setDiscountPct: (n: number) => void;
@@ -989,6 +1283,8 @@ function CartPanel(props: {
   vatAmount: number;
   grandTotal: number;
   itemCount: number;
+  parkCurrentCart: () => void;
+  paid: boolean;
   pay: (method: "cash" | "card" | "apple" | "wallet") => void | Promise<void>;
   methods: { cash: boolean; card: boolean; apple: boolean; wallet: boolean };
   submitting: boolean;
@@ -998,7 +1294,8 @@ function CartPanel(props: {
     cart,
     updateQty,
     removeLine,
-    clearCart,
+    canCreatePosReturn,
+    openReturns,
     subtotal,
     discountPct,
     setDiscountPct,
@@ -1006,6 +1303,8 @@ function CartPanel(props: {
     vatAmount,
     grandTotal,
     itemCount,
+    parkCurrentCart,
+    paid,
     pay,
     methods,
     submitting,
@@ -1022,10 +1321,24 @@ function CartPanel(props: {
             {itemCount} صنف
           </p>
         </div>
-        <button className="px-2.5 h-8 rounded-lg border border-border bg-card text-xs font-bold inline-flex items-center gap-1 hover-elevate active-elevate-2">
-          <UserIcon className="w-3 h-3" />
-          عميل
-        </button>
+        <div className="flex items-center gap-1.5">
+          {canCreatePosReturn && (
+            <button
+              type="button"
+              onClick={openReturns}
+              className="px-2.5 h-8 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-bold inline-flex items-center gap-1 hover-elevate active-elevate-2"
+              title="إنشاء مرتجع من فاتورة نقاط البيع"
+              data-testid="button-open-pos-return"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              مرتجع
+            </button>
+          )}
+          <button className="px-2.5 h-8 rounded-lg border border-border bg-card text-xs font-bold inline-flex items-center gap-1 hover-elevate active-elevate-2">
+            <UserIcon className="w-3 h-3" />
+            عميل
+          </button>
+        </div>
       </div>
 
       {/* Lines */}
@@ -1132,10 +1445,11 @@ function CartPanel(props: {
             <span className="text-xs text-muted-foreground">%</span>
           </div>
           <button
-            onClick={() => clearCart()}
-            disabled={cart.length === 0}
-            className="px-3 h-9 rounded-xl border border-border bg-card text-xs font-bold inline-flex items-center gap-1 disabled:opacity-40 hover-elevate active-elevate-2"
-            title="إفراغ السلة"
+            onClick={parkCurrentCart}
+            disabled={cart.length === 0 || submitting || paid}
+            className="px-3 h-9 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-bold inline-flex items-center gap-1 disabled:opacity-40 hover-elevate active-elevate-2"
+            title="حفظ الفاتورة مؤقتاً واستكمالها لاحقاً"
+            data-testid="button-park-cart"
           >
             <Pause className="w-3.5 h-3.5" />
             تعليق
