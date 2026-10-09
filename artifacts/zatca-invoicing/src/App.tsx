@@ -414,6 +414,7 @@ import SupplierAgingReport     from "@/pages/purchasing/reports/SupplierAgingRep
 import PurchasesBySupplier     from "@/pages/purchasing/reports/PurchasesBySupplier";
 import PurchasesByItem         from "@/pages/purchasing/reports/PurchasesByItem";
 import ClothingPurchaseReturnsReport from "@/pages/inventory/reports/ClothingPurchaseReturnsReport";
+import ClothingVariantNetPurchasesReport from "@/pages/inventory/reports/ClothingVariantNetPurchasesReport";
 import PurchaseReceiptFollowUp from "@/pages/purchasing/reports/PurchaseReceiptFollowUp";
 import PurchasesByPeriod       from "@/pages/purchasing/reports/PurchasesByPeriod";
 import PurchasesVatRegister    from "@/pages/purchasing/reports/PurchasesVatRegister";
@@ -1255,6 +1256,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-sales"   module="inventory_reports" companyGateKey="clothing" component={() => <ItemSalesValuationReport clothingOnly />} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-purchases" module="inventory_reports" companyGateKey="clothing" component={() => <PurchasesByItem clothingOnly />} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-purchase-returns" module="inventory_reports" companyGateKey="clothing" component={ClothingPurchaseReturnsReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-net-purchases" module="inventory_reports" companyGateKey="clothing" component={ClothingVariantNetPurchasesReport} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-slow-moving" module="inventory_reports" companyGateKey="clothing" component={() => <SlowMovingItems clothingOnly />} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-ledger"     module="inventory_reports" component={StockLedger} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/item-card"        module="inventory_reports" component={ItemCard} />}

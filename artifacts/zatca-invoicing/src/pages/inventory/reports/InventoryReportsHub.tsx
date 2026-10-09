@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell,
+  BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell, ArrowLeftRight,
   Gift, ReceiptText, ClipboardCheck, Layers3, CalendarClock, Shirt, Package, RotateCcw,
 } from "lucide-react";
 import { usePermission } from "@/hooks/usePermission";
@@ -50,6 +50,12 @@ export const INVENTORY_REPORTS = [
     key: "clothingPurchaseReturns",
     icon: RotateCcw,
     color: "from-orange-50 to-orange-100/40 text-orange-800 border-orange-200",
+  },
+  {
+    href: "/inventory/reports/clothing-net-purchases",
+    key: "clothingVariantNetPurchases",
+    icon: ArrowLeftRight,
+    color: "from-indigo-50 to-indigo-100/40 text-indigo-800 border-indigo-200",
   },
   {
     href: "/inventory/reports/clothing-slow-moving",
