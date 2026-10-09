@@ -14,6 +14,7 @@ import {
 import { and, eq, sql, gte, lte, lt, asc, inArray, notInArray, isNull } from "drizzle-orm";
 import {
   GetPurchaseReturnsByItemResponse,
+  GetPurchaseVariantNetBySupplierResponse,
   GetPurchaseVariantNetByItemResponse,
 } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
@@ -1449,6 +1450,196 @@ router.get("/variant-net-by-item", async (req, res): Promise<void> => {
     );
 
     res.json(GetPurchaseVariantNetByItemResponse.parse(response));
+  } catch (e: any) {
+    res.status(e?.status ?? 500).json({ error: e.message });
+  }
+});
+
+/**
+ * Net posted purchase activity by supplier and clothing variant dimensions.
+ * Units and native currencies stay separate; returns use their own return date.
+ */
+router.get("/variant-net-by-supplier", async (req, res): Promise<void> => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
+    const { from, to } = req.query as Record<string, string>;
+    const isValidDate = (value: string | undefined) => {
+      if (!value) return true;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(`${value}T00:00:00.000Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    };
+    if (!isValidDate(from) || !isValidDate(to) || (from && to && from > to)) {
+      res.status(400).json({ error: "Invalid purchase activity date range" });
+      return;
+    }
+
+    const invoiceConds: any[] = [
+      eq(purchaseInvoicesTable.companyId, cid),
+      eq(purchaseInvoicesTable.status, "posted"),
+      eq(purchaseInvoiceLinesTable.companyId, cid),
+      sql`${purchaseInvoiceLinesTable.itemId} IS NOT NULL`,
+    ];
+    pushBranchScope(req, invoiceConds, purchaseInvoicesTable.branchId, bid);
+    if (from) invoiceConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
+    if (to) invoiceConds.push(lte(purchaseInvoicesTable.invoiceDate, to));
+
+    const returnConds: any[] = [
+      eq(purchaseReturnsTable.companyId, cid),
+      eq(purchaseReturnsTable.status, "posted"),
+      eq(purchaseReturnLinesTable.companyId, cid),
+      sql`${purchaseReturnLinesTable.itemId} IS NOT NULL`,
+    ];
+    pushBranchScope(req, returnConds, purchaseReturnsTable.branchId, bid);
+    if (from) returnConds.push(gte(purchaseReturnsTable.returnDate, from));
+    if (to) returnConds.push(lte(purchaseReturnsTable.returnDate, to));
+
+    const [purchases, returns] = await Promise.all([
+      db.select({
+        supplierId: purchaseInvoicesTable.supplierId,
+        supplierNameAr: sql<string>`coalesce(min(${suppliersTable.nameAr}), '')`,
+        supplierNameEn: sql<string | null>`min(${suppliersTable.nameEn})`,
+        itemId: purchaseInvoiceLinesTable.itemId,
+        itemCode: sql<string | null>`min(${purchaseInvoiceLinesTable.itemCode})`,
+        itemName: sql<string>`min(${purchaseInvoiceLinesTable.itemName})`,
+        unit: purchaseInvoiceLinesTable.unit,
+        currencyCode: purchaseInvoicesTable.currencyCode,
+        qty: sql<string>`coalesce(sum(${purchaseInvoiceLinesTable.qty}), 0)`,
+        value: sql<string>`coalesce(sum(${purchaseInvoiceLinesTable.lineTotal}), 0)`,
+        documentCount: sql<number>`count(distinct ${purchaseInvoicesTable.id})::int`,
+      }).from(purchaseInvoiceLinesTable)
+        .innerJoin(purchaseInvoicesTable, eq(purchaseInvoiceLinesTable.invoiceId, purchaseInvoicesTable.id))
+        .leftJoin(suppliersTable, and(
+          eq(suppliersTable.id, purchaseInvoicesTable.supplierId),
+          eq(suppliersTable.companyId, cid),
+        ))
+        .where(and(...invoiceConds))
+        .groupBy(
+          purchaseInvoicesTable.supplierId,
+          purchaseInvoiceLinesTable.itemId,
+          purchaseInvoiceLinesTable.unit,
+          purchaseInvoicesTable.currencyCode,
+        ),
+      db.select({
+        supplierId: purchaseReturnsTable.supplierId,
+        supplierNameAr: sql<string>`coalesce(min(${suppliersTable.nameAr}), '')`,
+        supplierNameEn: sql<string | null>`min(${suppliersTable.nameEn})`,
+        itemId: purchaseReturnLinesTable.itemId,
+        itemCode: sql<string | null>`min(${purchaseReturnLinesTable.itemCode})`,
+        itemName: sql<string>`min(${purchaseReturnLinesTable.itemName})`,
+        unit: purchaseReturnLinesTable.unit,
+        currencyCode: purchaseReturnsTable.currencyCode,
+        qty: sql<string>`coalesce(sum(${purchaseReturnLinesTable.qty}), 0)`,
+        value: sql<string>`coalesce(sum(${purchaseReturnLinesTable.lineTotal}), 0)`,
+        documentCount: sql<number>`count(distinct ${purchaseReturnsTable.id})::int`,
+      }).from(purchaseReturnLinesTable)
+        .innerJoin(purchaseReturnsTable, eq(purchaseReturnLinesTable.returnId, purchaseReturnsTable.id))
+        .leftJoin(suppliersTable, and(
+          eq(suppliersTable.id, purchaseReturnsTable.supplierId),
+          eq(suppliersTable.companyId, cid),
+        ))
+        .where(and(...returnConds))
+        .groupBy(
+          purchaseReturnsTable.supplierId,
+          purchaseReturnLinesTable.itemId,
+          purchaseReturnLinesTable.unit,
+          purchaseReturnsTable.currencyCode,
+        ),
+    ]);
+
+    type SupplierNetRow = {
+      supplierId: number | null;
+      supplierNameAr: string;
+      supplierNameEn: string | null;
+      itemId: number;
+      itemCode: string | null;
+      itemName: string;
+      unit: string | null;
+      currencyCode: string;
+      purchasedQty: number;
+      purchaseValue: number;
+      invoiceCount: number;
+      returnedQty: number;
+      returnValue: number;
+      returnCount: number;
+      netQty: number;
+      netValue: number;
+    };
+    const rows = new Map<string, SupplierNetRow>();
+    const ensure = (
+      supplierId: number | null,
+      supplierNameAr: string,
+      supplierNameEn: string | null,
+      itemId: number,
+      itemCode: string | null,
+      itemName: string,
+      unit: string | null,
+      currencyCode: string,
+    ) => {
+      const key = `${supplierId ?? ""}\u0000${itemId}\u0000${unit ?? ""}\u0000${currencyCode}`;
+      let row = rows.get(key);
+      if (!row) {
+        row = {
+          supplierId, supplierNameAr, supplierNameEn, itemId, itemCode, itemName, unit, currencyCode,
+          purchasedQty: 0, purchaseValue: 0, invoiceCount: 0,
+          returnedQty: 0, returnValue: 0, returnCount: 0,
+          netQty: 0, netValue: 0,
+        };
+        rows.set(key, row);
+      } else {
+        if (!row.supplierNameAr && supplierNameAr) row.supplierNameAr = supplierNameAr;
+        if (!row.supplierNameEn && supplierNameEn) row.supplierNameEn = supplierNameEn;
+        if (!row.itemCode && itemCode) row.itemCode = itemCode;
+        if (!row.itemName && itemName) row.itemName = itemName;
+      }
+      return row;
+    };
+
+    for (const purchase of purchases) {
+      const row = ensure(
+        purchase.supplierId == null ? null : Number(purchase.supplierId),
+        purchase.supplierNameAr,
+        purchase.supplierNameEn,
+        Number(purchase.itemId),
+        purchase.itemCode,
+        purchase.itemName,
+        purchase.unit,
+        purchase.currencyCode,
+      );
+      row.purchasedQty += Number(purchase.qty);
+      row.purchaseValue += Number(purchase.value);
+      row.invoiceCount += purchase.documentCount;
+    }
+    for (const returned of returns) {
+      const row = ensure(
+        returned.supplierId == null ? null : Number(returned.supplierId),
+        returned.supplierNameAr,
+        returned.supplierNameEn,
+        Number(returned.itemId),
+        returned.itemCode,
+        returned.itemName,
+        returned.unit,
+        returned.currencyCode,
+      );
+      row.returnedQty += Number(returned.qty);
+      row.returnValue += Number(returned.value);
+      row.returnCount += returned.documentCount;
+    }
+
+    const response = Array.from(rows.values()).map((row) => ({
+      ...row,
+      netQty: row.purchasedQty - row.returnedQty,
+      netValue: row.purchaseValue - row.returnValue,
+    })).sort((a, b) =>
+      a.currencyCode.localeCompare(b.currencyCode)
+      || a.supplierNameAr.localeCompare(b.supplierNameAr)
+      || a.itemId - b.itemId
+      || String(a.unit ?? "").localeCompare(String(b.unit ?? "")),
+    );
+
+    res.json(GetPurchaseVariantNetBySupplierResponse.parse(response));
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e.message });
   }

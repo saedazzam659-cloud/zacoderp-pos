@@ -2975,6 +2975,32 @@ export interface PurchaseVariantNetByItemRow {
 
 export type PurchaseVariantNetByItemResponse = PurchaseVariantNetByItemRow[];
 
+export interface PurchaseVariantNetBySupplierRow {
+  /** @nullable */
+  supplierId: number | null;
+  supplierNameAr: string;
+  /** @nullable */
+  supplierNameEn: string | null;
+  itemId: number;
+  /** @nullable */
+  itemCode: string | null;
+  itemName: string;
+  /** @nullable */
+  unit: string | null;
+  currencyCode: string;
+  purchasedQty: number;
+  purchaseValue: number;
+  invoiceCount: number;
+  returnedQty: number;
+  returnValue: number;
+  returnCount: number;
+  netQty: number;
+  netValue: number;
+}
+
+export type PurchaseVariantNetBySupplierResponse =
+  PurchaseVariantNetBySupplierRow[];
+
 export interface PurchaseReturnsByItemRow {
   /** @nullable */
   itemId: number | null;
@@ -3616,6 +3642,19 @@ export type GetPurchaseReceiptFollowUpParams = {
 };
 
 export type GetPurchaseVariantNetByItemParams = {
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+  /**
+   * @minimum 1
+   */
+  branchId?: number;
+  from?: string;
+  to?: string;
+};
+
+export type GetPurchaseVariantNetBySupplierParams = {
   /**
    * @minimum 1
    */

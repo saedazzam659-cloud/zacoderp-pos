@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell, ArrowLeftRight,
-  Gift, ReceiptText, ClipboardCheck, Layers3, CalendarClock, Shirt, Package, RotateCcw,
+  Gift, ReceiptText, ClipboardCheck, Layers3, CalendarClock, Shirt, Package, RotateCcw, Truck,
 } from "lucide-react";
 import { usePermission } from "@/hooks/usePermission";
 import { companyAllowsMenuModuleKey } from "@/lib/companyModuleGate";
@@ -68,6 +68,12 @@ export const INVENTORY_REPORTS = [
     key: "clothingVariantNetPurchases",
     icon: ArrowLeftRight,
     color: "from-indigo-50 to-indigo-100/40 text-indigo-800 border-indigo-200",
+  },
+  {
+    href: "/inventory/reports/clothing-purchases-by-supplier",
+    key: "clothingVariantSupplierNetPurchases",
+    icon: Truck,
+    color: "from-blue-50 to-blue-100/40 text-blue-800 border-blue-200",
   },
   {
     href: "/inventory/reports/clothing-slow-moving",

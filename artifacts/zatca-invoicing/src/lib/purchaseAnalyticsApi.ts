@@ -1,5 +1,6 @@
 import type {
   PurchaseReturnsByItemResponse,
+  PurchaseVariantNetBySupplierResponse,
   PurchaseVariantNetByItemResponse,
 } from "@workspace/api-client-react";
 
@@ -160,4 +161,6 @@ export const purchaseAnalyticsApi = {
     get<PurchaseReturnsByItemResponse>(`/returns-by-item${qs({ companyId: cid, from, to, branchId })}`),
   variantNetByItem: (cid?: number, from?: string, to?: string, branchId?: number) =>
     get<PurchaseVariantNetByItemResponse>(`/variant-net-by-item${qs({ companyId: cid, from, to, branchId })}`),
+  variantNetBySupplier: (cid?: number, from?: string, to?: string, branchId?: number) =>
+    get<PurchaseVariantNetBySupplierResponse>(`/variant-net-by-supplier${qs({ companyId: cid, from, to, branchId })}`),
 };

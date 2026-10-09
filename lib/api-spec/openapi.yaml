@@ -3120,6 +3120,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "403": { description: Purchasing report access is denied }
+  /purchases-analytics/variant-net-by-supplier:
+    get:
+      operationId: getPurchaseVariantNetBySupplier
+      tags: [purchasing]
+      summary: Aggregate posted purchase invoices and returns by supplier, item, unit, and currency
+      parameters:
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Posted purchases and returns grouped by supplier, item, unit, and native currency
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseVariantNetBySupplierResponse"
+        "400":
+          description: Invalid date range
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403": { description: Purchasing report access is denied }
   /purchases-analytics/returns-by-item:
     get:
       operationId: getPurchaseReturnsByItem
@@ -6098,6 +6129,29 @@ components:
     PurchaseVariantNetByItemResponse:
       type: array
       items: { $ref: "#/components/schemas/PurchaseVariantNetByItemRow" }
+    PurchaseVariantNetBySupplierRow:
+      type: object
+      required: [supplierId, supplierNameAr, supplierNameEn, itemId, itemCode, itemName, unit, currencyCode, purchasedQty, purchaseValue, invoiceCount, returnedQty, returnValue, returnCount, netQty, netValue]
+      properties:
+        supplierId: { type: ["integer", "null"] }
+        supplierNameAr: { type: string }
+        supplierNameEn: { type: ["string", "null"] }
+        itemId: { type: integer }
+        itemCode: { type: ["string", "null"] }
+        itemName: { type: string }
+        unit: { type: ["string", "null"] }
+        currencyCode: { type: string }
+        purchasedQty: { type: number, format: double }
+        purchaseValue: { type: number, format: double }
+        invoiceCount: { type: integer }
+        returnedQty: { type: number, format: double }
+        returnValue: { type: number, format: double }
+        returnCount: { type: integer }
+        netQty: { type: number, format: double }
+        netValue: { type: number, format: double }
+    PurchaseVariantNetBySupplierResponse:
+      type: array
+      items: { $ref: "#/components/schemas/PurchaseVariantNetBySupplierRow" }
     PurchaseReturnsByItemRow:
       type: object
       required: [itemId, itemCode, itemName, unit, currencyCode, returnedQty, totalReturns, returnCount]
