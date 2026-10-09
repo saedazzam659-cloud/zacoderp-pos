@@ -11,8 +11,9 @@ import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 import { InventoryBrandFilter, filterItemsForInventoryBrand, useInventoryReportBrandOptions } from "@/components/InventoryBrandFilter";
+import { clothingVariantItemIds } from "@/lib/clothingStockReport";
 
-export default function LowStockReport() {
+export default function LowStockReport({ clothingOnly = false }: { clothingOnly?: boolean }) {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
@@ -21,8 +22,15 @@ export default function LowStockReport() {
   const [brandId, setBrandId] = useState("");
 
   const EXPORT_COLS = [
-    { key: "itemCode",     header: t("inventoryReports.lowStock.cols.itemCode"),     width: 16 },
-    { key: "itemNameAr",   header: t("inventoryReports.lowStock.cols.itemName"),     width: 30 },
+    ...(clothingOnly ? [
+      { key: "modelName", header: t("inventoryReports.clothingLowStock.model"), width: 24 },
+      { key: "itemCode", header: t("inventoryReports.lowStock.cols.itemCode"), width: 16 },
+      { key: "color", header: t("inventoryReports.clothingLowStock.color"), width: 16 },
+      { key: "size", header: t("inventoryReports.clothingLowStock.size"), width: 12 },
+    ] : [
+      { key: "itemCode", header: t("inventoryReports.lowStock.cols.itemCode"), width: 16 },
+      { key: "itemNameAr", header: t("inventoryReports.lowStock.cols.itemName"), width: 30 },
+    ]),
     { key: "groupName",    header: t("inventoryReports.lowStock.cols.group"),        width: 20 },
     { key: "unitName",     header: t("inventoryReports.lowStock.cols.unit"),         width: 14 },
     { key: "qty",          header: t("inventoryReports.lowStock.cols.currentQty"),   width: 16 },
@@ -34,11 +42,12 @@ export default function LowStockReport() {
   const brandOptions = useInventoryReportBrandOptions(cid);
   const [search, setSearch] = useState("");
 
-  const { data: items = [] } = useQuery({
+  const itemsQuery = useQuery({
     queryKey: ["items", cid],
     queryFn: () => inventoryApi.getItems(cid),
   });
-  const { data: balances = [], isLoading } = useQuery({
+  const items = itemsQuery.data ?? [];
+  const balancesQuery = useQuery({
     queryKey: ["stock-balance-all", cid],
     queryFn: () => {
       const params: Record<string, string> = {};
@@ -46,6 +55,17 @@ export default function LowStockReport() {
       return inventoryApi.getBalance(params);
     },
   });
+  const balances = balancesQuery.data ?? [];
+  const isLoading = itemsQuery.isLoading || balancesQuery.isLoading;
+  const hasLoadError = itemsQuery.isError || balancesQuery.isError;
+  const clothingIds = useMemo(
+    () => clothingOnly ? clothingVariantItemIds(items as any[]) : null,
+    [clothingOnly, items],
+  );
+  const itemById = useMemo(
+    () => new Map<number, any>((items as any[]).map((item) => [Number(item.id), item])),
+    [items],
+  );
 
   // Aggregate balance per item across warehouses
   const qtyByItem: Record<number, number> = {};
@@ -55,18 +75,36 @@ export default function LowStockReport() {
 
   const enriched = filterItemsForInventoryBrand(items as any[], brandId, brandOptions)
     .filter((it: any) => it.itemType !== "service")
+    .filter((it: any) => !clothingOnly || clothingIds?.has(Number(it.id)))
     .map((it: any) => {
       const qty = qtyByItem[it.id] ?? 0;
       const reorder = Number(it.reorderLevel ?? 0);
       const shortage = Math.max(0, reorder - qty);
+      const model = clothingOnly && it.parentItemId ? itemById.get(Number(it.parentItemId)) : null;
+      const attributes = it.variantAttributes ?? {};
       let status: "out" | "low" | "ok" = "ok";
       if (qty <= 0) status = "out";
       else if (reorder > 0 && qty < reorder) status = "low";
-      return { ...it, qty, reorder, shortage, status };
+      return {
+        ...it,
+        modelName: model ? pickName(model.nameAr, model.nameEn) : "",
+        color: String(attributes["اللون"] ?? ""),
+        size: String(attributes["المقاس"] ?? ""),
+        qty,
+        reorder,
+        shortage,
+        status,
+      };
     })
     .filter((r: any) => r.status !== "ok")
     .filter((r: any) =>
-      !search || (r.nameAr ?? "").includes(search) || (r.nameEn ?? "").toLowerCase().includes(search.toLowerCase()) || r.code?.includes(search)
+      !search
+        || (r.nameAr ?? "").includes(search)
+        || (r.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
+        || (r.modelName ?? "").toLowerCase().includes(search.toLowerCase())
+        || (r.color ?? "").toLowerCase().includes(search.toLowerCase())
+        || (r.size ?? "").toLowerCase().includes(search.toLowerCase())
+        || r.code?.includes(search)
     )
     .sort((a, b) => a.qty - b.qty);
 
@@ -76,6 +114,9 @@ export default function LowStockReport() {
   const exportRows = enriched.map((r: any) => ({
     itemCode:     r.code ?? "",
     itemNameAr:   pickName(r.nameAr, r.nameEn) || "",
+    modelName:    r.modelName || "",
+    color:        r.color || "",
+    size:         r.size || "",
     groupName:    pickName(r.group?.nameAr, r.group?.nameEn) || "",
     unitName:     pickName(r.unit?.nameAr, r.unit?.nameEn) || "",
     qty:          fmtQty(r.qty),
@@ -87,17 +128,35 @@ export default function LowStockReport() {
   const gridColumns = useMemo<GridColumn<any>[]>(() => [
     {
       key: "item",
-      label: t("inventoryReports.lowStock.tableItem"),
+      label: clothingOnly ? t("inventoryReports.clothingLowStock.model") : t("inventoryReports.lowStock.tableItem"),
       type: "text",
       width: 260,
-      value: r => `${pickName(r.nameAr, r.nameEn)} ${r.code ?? ""}`,
+      value: r => `${clothingOnly ? r.modelName : pickName(r.nameAr, r.nameEn)} ${r.code ?? ""}`,
       render: r => (
         <>
-          <p className="font-medium text-sm">{pickName(r.nameAr, r.nameEn) || "—"}</p>
+          <p className="font-medium text-sm">{(clothingOnly ? r.modelName : pickName(r.nameAr, r.nameEn)) || "—"}</p>
           <p className="text-[10px] text-muted-foreground font-mono">{r.code}</p>
         </>
       ),
     },
+    ...(clothingOnly ? [
+      {
+        key: "color",
+        label: t("inventoryReports.clothingLowStock.color"),
+        type: "text" as const,
+        width: 120,
+        value: (r: any) => r.color,
+        render: (r: any) => r.color || "—",
+      },
+      {
+        key: "size",
+        label: t("inventoryReports.clothingLowStock.size"),
+        type: "text" as const,
+        width: 100,
+        value: (r: any) => r.size,
+        render: (r: any) => r.size || "—",
+      },
+    ] : []),
     {
       key: "group",
       label: t("inventoryReports.lowStock.cols.group"),
@@ -157,20 +216,27 @@ export default function LowStockReport() {
         ? <span className="text-[10px] bg-red-50 text-red-600 rounded-full px-2 py-0.5 font-medium">{t("inventoryReports.lowStock.badge.out")}</span>
         : <span className="text-[10px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5 font-medium inline-flex items-center gap-1"><AlertTriangle className="h-2.5 w-2.5" />{t("inventoryReports.lowStock.badge.low")}</span>,
     },
-  ], [isRtl, t, fmtQty]);
+  ], [isRtl, t, fmtQty, clothingOnly]);
+
+  const reportTitle = clothingOnly
+    ? t("inventoryReports.clothingLowStock.title")
+    : t("inventoryReports.lowStock.title");
+  const reportSubtitle = clothingOnly
+    ? t("inventoryReports.clothingLowStock.subtitle")
+    : t("inventoryReports.lowStock.subtitle");
 
   return (
     <div className="w-full min-w-0 max-w-none space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><AlertTriangle className="h-6 w-6 text-amber-500" />{t("inventoryReports.lowStock.title")}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t("inventoryReports.lowStock.subtitle")}</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><AlertTriangle className="h-6 w-6 text-amber-500" />{reportTitle}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{reportSubtitle}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`${t("inventoryReports.lowStock.exportFilename")}-${new Date().toISOString().slice(0, 10)}`}
-          title={t("inventoryReports.lowStock.exportTitle")}
+          filename={`${clothingOnly ? t("inventoryReports.clothingLowStock.exportFilename") : t("inventoryReports.lowStock.exportFilename")}-${new Date().toISOString().slice(0, 10)}`}
+          title={clothingOnly ? t("inventoryReports.clothingLowStock.exportTitle") : t("inventoryReports.lowStock.exportTitle")}
         />
       </div>
 
@@ -191,12 +257,23 @@ export default function LowStockReport() {
 
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input className="pr-9" placeholder={t("inventoryReports.lowStock.searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
+        <Input className="pr-9" placeholder={clothingOnly ? t("inventoryReports.clothingLowStock.searchPh") : t("inventoryReports.lowStock.searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <InventoryBrandFilter options={brandOptions} value={brandId} onChange={setBrandId} />
 
       <div className="w-full min-w-0 overflow-hidden rounded-xl shadow-sm">
-        {isLoading ? (
+        {hasLoadError ? (
+          <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <p>{t(clothingOnly ? "inventoryReports.clothingLowStock.loadError" : "inventoryReports.lowStock.loadError")}</p>
+            <button
+              type="button"
+              className="mt-2 underline"
+              onClick={() => { void itemsQuery.refetch(); void balancesQuery.refetch(); }}
+            >
+              {t(clothingOnly ? "inventoryReports.clothingLowStock.retry" : "inventoryReports.lowStock.retry")}
+            </button>
+          </div>
+        ) : isLoading ? (
           <div className="space-y-2 rounded-xl border bg-card p-4">
             {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
           </div>
@@ -207,8 +284,8 @@ export default function LowStockReport() {
             columns={gridColumns}
             rowKey={(row: any) => row.id}
             rows={enriched}
-            unitLabel={isRtl ? "صنف" : "item"}
-            emptyMessage={t("inventoryReports.lowStock.emptyState")}
+            unitLabel={clothingOnly ? t("inventoryReports.clothingLowStock.unitLabel") : (isRtl ? "صنف" : "item")}
+            emptyMessage={clothingOnly ? t("inventoryReports.clothingLowStock.emptyState") : t("inventoryReports.lowStock.emptyState")}
             rowClassName={(r: any) => cn(r.status === "out" ? "bg-red-50/30" : "bg-amber-50/30")}
           />
         )}

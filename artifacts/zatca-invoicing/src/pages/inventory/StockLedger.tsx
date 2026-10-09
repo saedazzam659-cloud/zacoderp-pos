@@ -20,6 +20,7 @@ import {
   filterItemsForInventoryBrand,
   useInventoryReportBrandOptions,
 } from "@/components/InventoryBrandFilter";
+import { clothingVariantItemIds } from "@/lib/clothingStockReport";
 
 const TX_TYPE_COLOR: Record<string, string> = {
   transfer_out: "bg-orange-50 text-orange-700",
@@ -70,7 +71,7 @@ const SOURCE_LABELS: Record<string, [string, string]> = {
   opening_balance: ["رصيد افتتاحي", "Opening balance"],
 };
 
-export default function StockLedger() {
+export default function StockLedger({ clothingOnly = false }: { clothingOnly?: boolean }) {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`inventoryReports.stockLedger.${k}`, opts) as string;
@@ -92,10 +93,32 @@ export default function StockLedger() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(25);
 
-  const { data: items = [] }      = useQuery({ queryKey: ["items", cid],      queryFn: () => inventoryApi.getItems(cid) });
-  const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
+  const itemsQuery = useQuery({ queryKey: ["items", cid], queryFn: () => inventoryApi.getItems(cid) });
+  const warehousesQuery = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
+  const items = itemsQuery.data ?? [];
+  const warehouses = warehousesQuery.data ?? [];
   const brandOptions = useInventoryReportBrandOptions(cid);
-  const filteredItems = filterItemsForInventoryBrand(items as any[], filters.brandId, brandOptions);
+  const clothingIds = useMemo(
+    () => clothingOnly ? clothingVariantItemIds(items as any[]) : null,
+    [clothingOnly, items],
+  );
+  const itemById = useMemo(
+    () => new Map<number, any>((items as any[]).map((item) => [Number(item.id), item])),
+    [items],
+  );
+  const filteredItems = filterItemsForInventoryBrand(items as any[], filters.brandId, brandOptions)
+    .filter((item: any) => !clothingOnly || clothingIds?.has(Number(item.id)));
+  const selectedItem = clothingOnly
+    ? itemById.get(Number(applied.itemId))
+    : undefined;
+  const selectedModel = selectedItem?.parentItemId
+    ? itemById.get(Number(selectedItem.parentItemId))
+    : undefined;
+  const selectedAttributes = selectedItem?.variantAttributes ?? {};
+  const selectedModelName = pickName(selectedModel?.nameAr, selectedModel?.nameEn);
+  const selectedColor = String(selectedAttributes["اللون"] ?? "");
+  const selectedSize = String(selectedAttributes["المقاس"] ?? "");
+  const awaitingVariant = clothingOnly && !applied.itemId;
   const ledgerParams = (pageNumber: number, size: number) => {
     const params: Record<string, string> = {
       page: String(pageNumber),
@@ -120,6 +143,7 @@ export default function StockLedger() {
   const { data: ledgerPage = emptyLedgerPage, isLoading } = useQuery({
     queryKey: ["stock-ledger", cid, applied, page, pageSize],
     queryFn: () => inventoryApi.getLedgerPage(ledgerParams(page, pageSize)),
+    enabled: !awaitingVariant,
   });
   const rows = ledgerPage.rows;
   const sourceLabel = (r: StockLedgerRow) => {
@@ -135,8 +159,13 @@ export default function StockLedger() {
     { key: "txDate",       header: tr("exportDate"),       width: 14 },
     { key: "txType",       header: tr("exportTxType"),     width: 18 },
     { key: "source",       header: isRtl ? "المستند المصدر" : "Source document", width: 26 },
+    ...(clothingOnly ? [
+      { key: "modelName", header: t("inventoryReports.clothingVariantLedger.model"), width: 24 },
+      { key: "color", header: t("inventoryReports.clothingVariantLedger.color"), width: 16 },
+      { key: "size", header: t("inventoryReports.clothingVariantLedger.size"), width: 12 },
+    ] : []),
     { key: "itemCode",     header: tr("exportItemCode"),   width: 16 },
-    { key: "itemName",     header: tr("exportItemName"),   width: 30 },
+    ...(!clothingOnly ? [{ key: "itemName", header: tr("exportItemName"), width: 30 }] : []),
     { key: "warehouseName",header: tr("exportWarehouse"),  width: 22 },
     { key: "qty",          header: tr("exportQty"),        width: 14 },
     { key: "costPrice",    header: tr("exportCostPrice"),  width: 16 },
@@ -151,6 +180,9 @@ export default function StockLedger() {
     source:        sourceLabel(r),
     itemCode:      r.item?.code ?? "",
     itemName:      pickName(r.item?.nameAr, r.item?.nameEn),
+    modelName:     selectedModelName,
+    color:         selectedColor,
+    size:          selectedSize,
     warehouseName: pickName(r.warehouse?.nameAr, r.warehouse?.nameEn),
     qty:           fmtQty(r.qty),
     costPrice:     fmt(r.costPrice),
@@ -215,14 +247,19 @@ export default function StockLedger() {
     },
     {
       key: "item",
-      label: tr("colItem"),
+      label: clothingOnly ? t("inventoryReports.clothingVariantLedger.model") : tr("colItem"),
       type: "text",
       width: 230,
-      value: r => `${pickName(r.item?.nameAr, r.item?.nameEn)} ${r.item?.code ?? ""}`,
+      value: r => clothingOnly
+        ? `${selectedModelName} ${selectedColor} ${selectedSize} ${r.item?.code ?? ""}`
+        : `${pickName(r.item?.nameAr, r.item?.nameEn)} ${r.item?.code ?? ""}`,
       render: r => (
         <>
-          <p className="font-medium text-xs">{pickName(r.item?.nameAr, r.item?.nameEn) || "—"}</p>
-          <p className="text-[10px] text-muted-foreground font-mono">{r.item?.code}</p>
+          <p className="font-medium text-xs">{(clothingOnly ? selectedModelName : pickName(r.item?.nameAr, r.item?.nameEn)) || "—"}</p>
+          <p className="text-[10px] text-muted-foreground">
+            <span className="font-mono">{r.item?.code}</span>
+            {clothingOnly && ` · ${selectedColor || "—"} / ${selectedSize || "—"}`}
+          </p>
         </>
       ),
     },
@@ -299,23 +336,32 @@ export default function StockLedger() {
       value: r => r.expiryDate,
       render: r => r.expiryDate ?? <span className="text-muted-foreground/40">—</span>,
     },
-  ], [t, isRtl, fmt, fmtQty]);
+  ], [t, isRtl, fmt, fmtQty, clothingOnly, selectedModelName, selectedColor, selectedSize]);
+
+  const reportTitle = clothingOnly
+    ? t("inventoryReports.clothingVariantLedger.title")
+    : tr("title");
+  const reportSubtitle = clothingOnly
+    ? t("inventoryReports.clothingVariantLedger.subtitle")
+    : tr("subtitle");
 
   return (
     <div className="w-full min-w-0 max-w-none space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><BookOpen className="h-6 w-6 text-primary" />{tr("title")}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><BookOpen className="h-6 w-6 text-primary" />{reportTitle}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{reportSubtitle}</p>
         </div>
-        <ExportButtons
-          rows={exportRows}
-          loadRows={loadAllExportRows}
-          columns={EXPORT_COLS}
-          filename={`${tr("exportFilename")}-${applied.from}-${applied.to}`}
-          title={tr("exportTitle")}
-          subtitle={tr("exportSubtitleRange", { from: applied.from, to: applied.to })}
-        />
+        {!awaitingVariant && (
+          <ExportButtons
+            rows={exportRows}
+            loadRows={loadAllExportRows}
+            columns={EXPORT_COLS}
+            filename={`${clothingOnly ? t("inventoryReports.clothingVariantLedger.exportFilename") : tr("exportFilename")}-${applied.from}-${applied.to}`}
+            title={clothingOnly ? reportTitle : tr("exportTitle")}
+            subtitle={tr("exportSubtitleRange", { from: applied.from, to: applied.to })}
+          />
+        )}
       </div>
 
       {/* Filters */}
@@ -334,12 +380,30 @@ export default function StockLedger() {
             <DateField value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
-            <Label>{t("inventoryReports.common.item") as string}</Label>
+            <Label>{clothingOnly ? t("inventoryReports.clothingVariantLedger.variant") : t("inventoryReports.common.item") as string}</Label>
             <SearchCombobox
-              items={[{ value: "", label: isRtl ? "كل الأصناف" : "All Items" }, ...filteredItems.map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn }))]}
+              items={[
+                { value: "", label: clothingOnly
+                  ? t("inventoryReports.clothingVariantLedger.selectVariant")
+                  : (isRtl ? "كل الأصناف" : "All Items") },
+                ...filteredItems.map((it: any) => {
+                  const model = clothingOnly && it.parentItemId ? itemById.get(Number(it.parentItemId)) : null;
+                  const attributes = it.variantAttributes ?? {};
+                  return {
+                    value: String(it.id),
+                    code: it.code,
+                    label: clothingOnly
+                      ? `${pickName(model?.nameAr, model?.nameEn) || pickName(it.nameAr, it.nameEn)} — ${String(attributes["اللون"] ?? "—")} — ${String(attributes["المقاس"] ?? "—")}`
+                      : pickName(it.nameAr, it.nameEn),
+                    labelEn: it.nameEn,
+                  };
+                }),
+              ]}
               value={filters.itemId}
               onValueChange={v => setFilters(p => ({ ...p, itemId: v }))}
-              placeholder={isRtl ? "كل الأصناف" : "All Items"}
+              placeholder={clothingOnly
+                ? t("inventoryReports.clothingVariantLedger.selectVariant")
+                : (isRtl ? "كل الأصناف" : "All Items")}
             />
           </div>
           <InventoryBrandFilter
@@ -367,10 +431,12 @@ export default function StockLedger() {
       {/* Table */}
       <div className="w-full min-w-0 overflow-hidden rounded-xl border bg-card shadow-sm">
         <div className="px-4 py-3 border-b bg-muted/20 flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">{isLoading ? "..." : `${ledgerPage.total} ${isRtl ? "حركة" : "movements"}`}</span>
+          <span className="text-xs text-muted-foreground">{isLoading ? "..." : awaitingVariant ? "" : `${ledgerPage.total} ${isRtl ? "حركة" : "movements"}`}</span>
           <span className="text-xs text-muted-foreground">{applied.from} → {applied.to}</span>
         </div>
-        {isLoading ? (
+        {awaitingVariant ? (
+          <p className="p-6 text-center text-sm text-muted-foreground">{t("inventoryReports.clothingVariantLedger.selectVariantHint")}</p>
+        ) : isLoading ? (
           <div className="space-y-2 p-4">
             {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
           </div>
@@ -383,7 +449,7 @@ export default function StockLedger() {
             rows={rows}
             paginate={false}
             unitLabel={isRtl ? "حركة" : "movement"}
-            emptyMessage={tr("noMoves")}
+            emptyMessage={clothingOnly ? t("inventoryReports.clothingVariantLedger.noMoves") : tr("noMoves")}
           />
         )}
         {!isLoading && rows.length > 0 && (

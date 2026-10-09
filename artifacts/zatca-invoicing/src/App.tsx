@@ -1253,6 +1253,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/reports/expiry"           module="inventory_reports" component={BatchExpiryReport} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-balance"    module="inventory_reports" component={StockBalance} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-stock"   module="inventory_reports" companyGateKey="clothing" component={ClothingStockReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-low-stock" module="inventory_reports" companyGateKey="clothing" component={() => <LowStockReport clothingOnly />} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-stock-ledger" module="inventory_reports" companyGateKey="clothing" component={() => <StockLedger clothingOnly />} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-sales"   module="inventory_reports" companyGateKey="clothing" component={() => <ItemSalesValuationReport clothingOnly />} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-purchases" module="inventory_reports" companyGateKey="clothing" component={() => <PurchasesByItem clothingOnly />} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/clothing-purchase-returns" module="inventory_reports" companyGateKey="clothing" component={ClothingPurchaseReturnsReport} />}

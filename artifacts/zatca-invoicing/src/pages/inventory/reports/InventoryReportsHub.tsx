@@ -34,6 +34,18 @@ export const INVENTORY_REPORTS = [
     color: "from-green-50 to-green-100/40 text-green-800 border-green-200",
   },
   {
+    href: "/inventory/reports/clothing-low-stock",
+    key: "clothingLowStock",
+    icon: AlertTriangle,
+    color: "from-amber-50 to-amber-100/40 text-amber-800 border-amber-200",
+  },
+  {
+    href: "/inventory/reports/clothing-stock-ledger",
+    key: "clothingVariantLedger",
+    icon: BookOpen,
+    color: "from-sky-50 to-sky-100/40 text-sky-800 border-sky-200",
+  },
+  {
     href: "/inventory/reports/clothing-sales",
     key: "clothingSales",
     icon: ReceiptText,
