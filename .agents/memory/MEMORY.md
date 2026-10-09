@@ -16,6 +16,7 @@
 - [Drizzle schema sync boundary](drizzle-schema-sync-boundary.md) — avoid forced or subset-schema pushes; they can emit destructive changes for unrelated ERP objects.
 
 - [POS Desktop index](pos-desktop-index.md) — POS Desktop shell, local data, fiscal, inventory, printing, licensing, and offline/ZATCA implementation notes.
+- [Cashier company-login boundary](cashier-main-login-boundary.md) — allow station-linked cashiers through company login only to enter POS; use the station branch without duplicate user-branch links.
 - [Accounting and ZATCA index](accounting-zatca-index.md) — accounting, numbering, settlement, reports, documents, imports, and ZATCA implementation notes.
 - [Cash expense boundary](cash-expense-boundary.md) — explicit mobile grants, per-cashbox assignment, private receipts, and currency-safe reporting.
 - [Account-note visibility defaults](account-note-visibility-defaults.md) — show customer credit and supplier debit notes; hide the opposite types unless each company opts in.

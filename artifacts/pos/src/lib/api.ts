@@ -321,10 +321,9 @@ export type CreateReturnBody = {
 
 export const api = {
   // Auth
-  // `surface: "pos"` tells the backend this sign-in is for the POS screen, so a
-  // cashier-role user is allowed here (and conversely blocked from the main ERP
-  // login). A cashier with no linked station gets the SAME generic 401 as a bad
-  // password, which `handle()` surfaces verbatim.
+  // `surface: "pos"` identifies the POS login page. Cashier-role users may
+  // also authenticate through the company login, but only while linked to an
+  // active terminal; the ERP app immediately redirects them back into POS.
   login: (username: string, password: string, companyCode?: string) =>
     req<LoginResponse>("POST", "/api/auth/login", { username, password, companyCode, surface: "pos" }),
   me: () => req<AuthUser>("GET", "/api/auth/me"),

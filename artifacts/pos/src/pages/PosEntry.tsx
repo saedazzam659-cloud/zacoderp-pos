@@ -4,6 +4,7 @@ import { AlertTriangle, LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   api,
+  clearAuth,
   getPosDeviceId,
   getToken,
   setPosSessionId,
@@ -30,6 +31,7 @@ export default function PosEntry() {
   const [retry, setRetry] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cashierOnly, setCashierOnly] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -44,10 +46,13 @@ export default function PosEntry() {
 
         const user: AuthUser = await api.me();
         if (!active) return;
-        const screen = LANDING_SCREENS[String(user.posDefaultScreen ?? "")];
+        const screen = LANDING_SCREENS[
+          user.role === "cashier" ? "/pos" : String(user.posDefaultScreen ?? "")
+        ];
         if (!screen) {
           throw new Error("لم تُعيّن لك شاشة نقاط بيع افتراضية. اطلب من مدير الشركة ضبطها من ملف المستخدم.");
         }
+        setCashierOnly(user.role === "cashier");
 
         const isSuperAdmin = user.role === "superadmin";
         const companyEnabled = user.companyMenuPermissions?.[screen.feature] === true;
@@ -59,6 +64,53 @@ export default function PosEntry() {
           throw new Error("لا توجد شركة مرتبطة بحسابك.");
         }
         setStoredUser(user);
+
+        if (user.role === "cashier") {
+          // A station-bound cashier gets the branch from their explicitly
+          // assigned terminal; do not require or create a duplicate branch link.
+          const terminals = await api.getPosTerminals({ activeOnly: true });
+          if (!active) return;
+          if (!terminals.length) {
+            throw new Error("هذا الحساب غير مرتبط بمحطة بيع نشطة. اطلب من المدير ربطه بمحطة من إعدادات محطات البيع.");
+          }
+
+          const current = await api.getCurrentPosSession();
+          if (!active) return;
+          if (current) {
+            const linkedTerminal = terminals.find(item => item.id === current.posTerminalId);
+            if (!linkedTerminal || (current.branchId != null && current.branchId !== linkedTerminal.branchId)) {
+              throw new Error("الجلسة المفتوحة ليست على محطة بيع نشطة ومربوطة بحسابك.");
+            }
+            setPosSessionId(current.id);
+            localStorage.setItem("pos_branch_id", String(linkedTerminal.branchId));
+            localStorage.setItem("pos_terminal_id", String(linkedTerminal.id));
+            navigate("/pos");
+            return;
+          }
+
+          const deviceId = getPosDeviceId();
+          const terminal = terminals.find(item => item.machineCode === deviceId && !item.busyUserId)
+            ?? terminals.find(item => !item.busyUserId)
+            ?? null;
+          if (!terminal) {
+            throw new Error("محطة البيع المرتبطة بحسابك مستخدمة حالياً. أعد المحاولة بعد إتاحتها.");
+          }
+
+          const session = await api.openPosSession({
+            branchId: terminal.branchId,
+            cashBoxId: null,
+            openingCash: 0,
+            device: navigator.userAgent.slice(0, 120),
+            posTerminalId: terminal.id,
+            machineCode: deviceId,
+          });
+          if (!active) return;
+          setPosSessionId(session.id);
+          localStorage.setItem("pos_branch_id", String(session.branchId ?? terminal.branchId));
+          localStorage.setItem("pos_terminal_id", String(session.posTerminalId ?? terminal.id));
+          navigate("/pos");
+          return;
+        }
 
         // Strict POS branch scope intentionally applies even to administrators:
         // only existing user-branch links can be used for automatic entry.
@@ -167,9 +219,19 @@ export default function PosEntry() {
                 <RefreshCw className="ml-2 h-4 w-4" />
                 إعادة المحاولة
               </Button>
-              <a href="/" className="inline-flex h-10 items-center rounded-md border px-4 text-sm font-semibold hover:bg-slate-50">
-                العودة إلى النظام الرئيسي
-              </a>
+              {cashierOnly ? (
+                <Button variant="outline" onClick={async () => {
+                  try { await api.logout(); } catch { /* local sign-out still proceeds */ }
+                  clearAuth();
+                  window.location.replace(`${import.meta.env.BASE_URL}login`);
+                }}>
+                  تسجيل الخروج
+                </Button>
+              ) : (
+                <a href="/" className="inline-flex h-10 items-center rounded-md border px-4 text-sm font-semibold hover:bg-slate-50">
+                  العودة إلى النظام الرئيسي
+                </a>
+              )}
             </div>
           </>
         )}

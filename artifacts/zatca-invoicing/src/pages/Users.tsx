@@ -1538,33 +1538,42 @@ export default function Users() {
                 )}
                 <div className="max-w-xl space-y-2">
                   <Label htmlFor="user-pos-default-screen">{t("users.posLandingLabel")}</Label>
-                  <Select
-                    value={form.permissions.__posDefaultScreen ?? "none"}
-                    onValueChange={(value) => setForm(f => {
-                      const permissions = { ...f.permissions };
-                      if (value === "none") delete permissions.__posDefaultScreen;
-                      else permissions.__posDefaultScreen = value as PosDefaultScreen;
-                      return { ...f, permissions };
-                    })}
-                    disabled={form.role === "cashier"}
-                  >
-                    <SelectTrigger id="user-pos-default-screen" data-testid="select-pos-default-screen">
-                      <SelectValue placeholder="لا توجد شاشة افتراضية" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">{t("users.posLandingNone")}</SelectItem>
-                      {POS_DEFAULT_SCREENS.map(screen => {
-                        const companyEnabled = companyAllowsPermissionModule(companyMenuPermsRaw, screen.feature);
-                        const userAllowed = form.role === "admin" || form.permissions[screen.feature]?.view === true;
-                        const enabled = companyEnabled && userAllowed;
-                        return (
-                          <SelectItem key={screen.path} value={screen.path} disabled={!enabled}>
-                            {t(screen.labelKey)}{enabled ? "" : ` ${t("users.posLandingNeedsPermission")}`}
-                          </SelectItem>
-                        );
+                  {form.role === "cashier" ? (
+                    <div
+                      id="user-pos-default-screen"
+                      data-testid="pos-cashier-landing-fixed"
+                      className="rounded-md border bg-muted/40 px-3 py-2 text-sm font-semibold"
+                    >
+                      {t("users.posLandingCashier")}
+                    </div>
+                  ) : (
+                    <Select
+                      value={form.permissions.__posDefaultScreen ?? "none"}
+                      onValueChange={(value) => setForm(f => {
+                        const permissions = { ...f.permissions };
+                        if (value === "none") delete permissions.__posDefaultScreen;
+                        else permissions.__posDefaultScreen = value as PosDefaultScreen;
+                        return { ...f, permissions };
                       })}
-                    </SelectContent>
-                  </Select>
+                    >
+                      <SelectTrigger id="user-pos-default-screen" data-testid="select-pos-default-screen">
+                        <SelectValue placeholder={t("users.posLandingNone")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">{t("users.posLandingNone")}</SelectItem>
+                        {POS_DEFAULT_SCREENS.map(screen => {
+                          const companyEnabled = companyAllowsPermissionModule(companyMenuPermsRaw, screen.feature);
+                          const userAllowed = form.role === "admin" || form.permissions[screen.feature]?.view === true;
+                          const enabled = companyEnabled && userAllowed;
+                          return (
+                            <SelectItem key={screen.path} value={screen.path} disabled={!enabled}>
+                              {t(screen.labelKey)}{enabled ? "" : ` ${t("users.posLandingNeedsPermission")}`}
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     {t("users.posLandingBranchesHint")}
                   </p>

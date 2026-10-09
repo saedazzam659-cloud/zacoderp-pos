@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { effectiveDemoPermissions } from "../lib/demoOperationalPolicy.js";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalUsersTable, traineeRequestsTable, companyDomainsTable, demoDeviceWorkspacesTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalsTable, posTerminalUsersTable, traineeRequestsTable, companyDomainsTable, demoDeviceWorkspacesTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -343,40 +343,33 @@ router.post("/login", async (req, res) => {
     return;
   }
 
-  // ── Cashier surface gating ─────────────────────────────────────────────
-  // The "cashier" role is POS-only. Two rules, both enforced here so the
-  // server is the source of truth (the client cannot bypass by omitting
-  // `surface`):
-  //   1. A cashier may NEVER sign into the back-office ERP surface. The POS
-  //      client sends `surface: "pos"`; the ERP web app sends nothing.
-  //   2. On the POS surface, a cashier must be linked to at least one station
-  //      (pos_terminal_users). If not, fail with the SAME generic credentials
-  //      error — never reveal that the account exists but is unlinked.
+  // ── Cashier station-bound login ────────────────────────────────────────
+  // The company login is also the entry point for a station-bound cashier:
+  // after authentication the ERP client immediately sends them to POS.
+  // Whether the request came from ERP or POS, a cashier must have an explicit
+  // link to an active terminal; the POS bootstrap still enforces screen,
+  // branch, session, and terminal permissions before opening the register.
   if (user.role === "cashier") {
-    const isPos = String(req.body?.surface ?? "").toLowerCase() === "pos";
-    if (!isPos) {
-      await writeAudit({
-        userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
-        module: "auth", action: "denied",
-        method: "POST", path: "/api/auth/login", statusCode: 403,
-        ip, userAgent: ua, metadata: { reason: "cashier_erp_blocked" },
-      });
-      res.status(403).json({ error: "هذا الحساب مخصص لنقاط البيع فقط ولا يمكنه الدخول للنظام الرئيسي." });
-      return;
-    }
-    const [link] = await db.select({ userId: posTerminalUsersTable.userId })
+    const surface = String(req.body?.surface ?? "").toLowerCase();
+    const allowedSurface = surface === "" || surface === "erp" || surface === "pos";
+    const [link] = allowedSurface ? await db.select({ userId: posTerminalUsersTable.userId })
       .from(posTerminalUsersTable)
+      .innerJoin(posTerminalsTable, and(
+        eq(posTerminalsTable.id, posTerminalUsersTable.posTerminalId),
+        eq(posTerminalsTable.companyId, tenantCompanyId),
+        eq(posTerminalsTable.isActive, true),
+      ))
       .where(and(
         eq(posTerminalUsersTable.userId, user.id),
         eq(posTerminalUsersTable.companyId, tenantCompanyId),
       ))
-      .limit(1);
+      .limit(1) : [];
     if (!link) {
       await writeAudit({
         userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
         module: "auth", action: "denied",
         method: "POST", path: "/api/auth/login", statusCode: 401,
-        ip, userAgent: ua, metadata: { reason: "cashier_no_station" },
+        ip, userAgent: ua, metadata: { reason: allowedSurface ? "cashier_no_active_station" : "cashier_invalid_surface" },
       });
       res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
       return;
@@ -739,7 +732,9 @@ router.post("/login", async (req, res) => {
       nameEn: (user as any).nameEn ?? null,
       permissions: effectiveDemoPermissions((sessionUser as any).permissions ?? {},
         !!demoLogin.deviceLinkId && user.demoDeviceIsolation && user.demoOperationalAdmin),
-      posDefaultScreen: (sessionUser as any).permissions?.__posDefaultScreen ?? null,
+      posDefaultScreen: user.role === "cashier"
+        ? "/pos"
+        : (sessionUser as any).permissions?.__posDefaultScreen ?? null,
       viewAllBranches: (sessionUser as any).viewAllBranches ?? true,
       demoSourceUserId: sessionUser.id === user.id ? undefined : user.id,
       demoDeviceIsolation: user.demoDeviceIsolation === true,
@@ -1039,7 +1034,9 @@ router.get("/me", async (req, res) => {
     nameAr: (user as any).nameAr ?? null,
     nameEn: (user as any).nameEn ?? null,
     permissions: (user as any).permissions ?? {},
-    posDefaultScreen: (user as any).permissions?.__posDefaultScreen ?? null,
+    posDefaultScreen: user.role === "cashier"
+      ? "/pos"
+      : (user as any).permissions?.__posDefaultScreen ?? null,
     // Per-user mobile-app rights (صلاحيات تطبيق الموبايل) — null = all
     // allowed. The Expo app re-reads /me on focus so changes apply live.
     mobilePermissions: (user as any).mobilePermissions ?? null,

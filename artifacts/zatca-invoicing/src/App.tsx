@@ -750,6 +750,12 @@ function AppRoutes() {
     return location === p || location.startsWith(p);
   });
 
+  // Cashier-role accounts are station-bound POS users. They may authenticate
+  // through the company login, but must never remain inside the ERP app.
+  if (isAuthenticated && user?.role === "cashier") {
+    return <CrossArtifactRedirect to="/pos/entry" />;
+  }
+
   // Redirect logged-in users away from auth pages. /pricing is left out
   // of this list intentionally — it's a marketing page and should remain
   // viewable even when signed in, so admins can sanity-check the public
@@ -760,8 +766,7 @@ function AppRoutes() {
     try {
       const sp = new URLSearchParams(window.location.search);
       const explicitTarget = safeRedirectTarget(sp.get("redirect"));
-      const hasPosLanding = user?.role !== "cashier"
-        && typeof user?.posDefaultScreen === "string"
+      const hasPosLanding = typeof user?.posDefaultScreen === "string"
         && user.posDefaultScreen.length > 0;
       target = explicitTarget ?? (hasPosLanding ? "/pos/entry" : "/");
     } catch { /* noop */ }
