@@ -296,6 +296,7 @@ import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 // Inventory
 import InventoryDashboard from "@/pages/inventory/InventoryDashboard";
+import ClothingModels from "@/pages/inventory/ClothingModels";
 import WarehouseGroups from "@/pages/inventory/WarehouseGroups";
 import Warehouses from "@/pages/inventory/Warehouses";
 import ItemGroups from "@/pages/inventory/ItemGroups";
@@ -1210,6 +1211,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/units"            module="items"             component={Units} />}
             {!isSuperAdmin && <PermRoute path="/inventory/items"            module="items"             component={Items} />}
             {!isSuperAdmin && <PermRoute path="/inventory/items/new"        module="items" action="create" component={Items} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/clothing-models"  module="items" companyGateKey="clothing" component={ClothingModels} />}
             {!isSuperAdmin && <PermRoute path="/inventory/offers"           module="items"             component={Offers} />}
             {!isSuperAdmin && <PermRoute path="/inventory/offers/new"       module="items" action="create" component={OfferForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/offers/:id/edit"  module="items" action="edit" component={OfferForm} />}

@@ -33,6 +33,8 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   // ── المخازن ──
   "inventory_mobile",
   "inventory_reports",
+  // Clothing & footwear is enabled only by SuperAdmin per company.
+  "clothing",
   // Sister Companies — locked by default; SuperAdmin enables per tenant.
   "sister_companies",
   // Standalone Credit/Debit Notes (إشعارات دائنة ومدينة) — pure accounting
@@ -144,7 +146,7 @@ export function filterCanonicalKeys(input: readonly unknown[]): string[] {
 // Some optional products are enabled only by a SuperAdmin on the company
 // permission screen and must never be inherited from public registration.
 export const REGISTRATION_BLOCKED_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
-  "school", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
+  "school", "clothing", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
 ]);
 
 export function filterRegistrationMenuKeys(input: readonly unknown[]): string[] {

@@ -635,6 +635,7 @@ const cashSubNav: NavDef[] = [
 const inventoryHeader: NavDef = { nameKey: "nav.inventoryDashboard", href: "/inventory", icon: LayoutDashboard, exact: true, permKey: "items" };
 const inventorySubNav: NavDef[] = [
   { nameKey: "nav.items",             href: "/inventory/items",            icon: Package,           permKey: "items" },
+  { nameKey: "nav.clothingModels",    href: "/inventory/clothing-models",  icon: Package,           permKey: "items", companyGateKey: "clothing" },
   // item_groups + units piggy-back on items (no dedicated module key).
   { nameKey: "nav.itemGroups",        href: "/inventory/item-groups",      icon: Tag,               permKey: "items" },
   // العلامات التجارية — own per-user perm key, rolls up to inventory_reports.

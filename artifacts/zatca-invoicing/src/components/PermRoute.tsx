@@ -20,14 +20,15 @@ interface Props {
   path: string;
   module: string;
   action?: PermAction;
+  companyGateKey?: string;
   component: React.ComponentType<any>;
 }
 
-export default function PermRoute({ path, module, action = "view", component: Component }: Props) {
+export default function PermRoute({ path, module, action = "view", companyGateKey, component: Component }: Props) {
   return (
     <Route path={path}>
       {(params: any) => (
-        <RequirePermission module={module} action={action}>
+        <RequirePermission module={module} action={action} companyGateKey={companyGateKey}>
           <Component params={params} />
         </RequirePermission>
       )}

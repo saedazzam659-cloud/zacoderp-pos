@@ -55,6 +55,8 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   pos_kitchen: "pos_kitchen",
   // Inventory
   items: "inventory_reports",
+  // Clothing & footwear — opt-in module on top of existing item variants.
+  clothing: "clothing",
   // Brands (العلامات التجارية) — own per-user permission key, rolls up to the
   // existing inventory company toggle. Mirror of the backend COMPANY_MODULE_GATE.
   brands: "inventory_reports",
@@ -163,7 +165,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
-  "internal_control", "egypt_tax", "jordan_tax", "school", "additional_accounting_reports",
+  "internal_control", "egypt_tax", "jordan_tax", "school", "clothing", "additional_accounting_reports",
   "additional_sales_reports", "additional_purchase_reports",
   "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
 ]);

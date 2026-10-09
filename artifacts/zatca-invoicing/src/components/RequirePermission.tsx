@@ -2,11 +2,16 @@ import { ReactNode } from "react";
 import { ShieldAlert } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermission, type PermAction } from "@/hooks/usePermission";
+import { companyAllowsModule } from "@/lib/companyModuleGate";
 
 interface Props {
   module: string;
   action?: PermAction;
   children: ReactNode;
+  // Optional second company-level entitlement for routes that reuse an
+  // existing per-user permission module but belong to a separately gated
+  // product surface.
+  companyGateKey?: string;
   // Render nothing instead of the deny screen (useful when rendering inline).
   silent?: boolean;
 }
@@ -21,12 +26,13 @@ interface Props {
 // improves UX (no 403 toasts on every page load).
 // ──────────────────────────────────────────────────────────────────────────
 
-export default function RequirePermission({ module, action = "view", children, silent }: Props) {
+export default function RequirePermission({ module, action = "view", children, companyGateKey, silent }: Props) {
   const { user } = useAuth() as any;
   const allowed = usePermission(module, action);
+  const companyAllowed = !companyGateKey || companyAllowsModule(user, companyGateKey);
 
   if (!user) return null;        // AuthContext gate covers redirect
-  if (allowed) return <>{children}</>;
+  if (allowed && companyAllowed) return <>{children}</>;
   if (silent)  return null;
 
   return (

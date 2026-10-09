@@ -5,6 +5,11 @@ import {
   canAccessModule,
   companyAllowsModule,
 } from "../src/middleware/permissions.ts";
+import {
+  CANONICAL_MENU_PERMISSION_KEYS,
+  filterRegistrationMenuKeys,
+  REGISTRATION_BLOCKED_MENU_PERMISSION_KEYS,
+} from "../src/lib/menuPermissionCatalog.ts";
 
 function userWith(
   companyMenuPermissions: Record<string, boolean>,
@@ -57,4 +62,16 @@ test("demo analytics is default-off and needs an explicit company enablement", (
   user.companyMenuPermissions.demo_analytics = true;
   assert.equal(companyAllowsModule(user, "demo_analytics"), true);
   assert.equal(canAccessModule(user, "demo_analytics", "view"), true);
+});
+
+test("clothing module is default-off and cannot be enabled through public registration", () => {
+  const user = userWith({}, { items: { view: true } });
+  assert.equal(companyAllowsModule(user, "clothing"), false);
+
+  user.companyMenuPermissions.clothing = true;
+  assert.equal(companyAllowsModule(user, "clothing"), true);
+
+  assert.equal(CANONICAL_MENU_PERMISSION_KEYS.has("clothing"), true);
+  assert.equal(REGISTRATION_BLOCKED_MENU_PERMISSION_KEYS.has("clothing"), true);
+  assert.deepEqual(filterRegistrationMenuKeys(["clothing"]), []);
 });

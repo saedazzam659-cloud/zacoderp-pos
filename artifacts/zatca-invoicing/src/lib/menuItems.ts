@@ -24,6 +24,9 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "inventory_mobile",   label: "موبيل المخازن",              section: "المخازن" },
   { key: "inventory_reports",  label: "تقارير المخازن",             section: "المخازن" },
+  // الملابس والأحذية — optional company module, explicitly enabled only by
+  // SuperAdmin from صلاحيات القوائم. New and existing companies default OFF.
+  { key: "clothing",           label: "الملابس والأحذية والحقائب",  section: "الملابس والأحذية والحقائب" },
   { key: "sister_companies",   label: "معاملات الشركات الشقيقة",    section: "معاملات الشركات الشقيقة" },
   { key: "customer_notes",     label: "إشعارات دائنة/مدينة (عملاء)", section: "المبيعات" },
   { key: "supplier_notes",     label: "إشعارات دائنة/مدينة (موردين)", section: "المشتريات" },
@@ -164,7 +167,7 @@ export const LEGACY_DEFAULT_ON_MENU_KEYS: ReadonlySet<string> = new Set([
 
 // The school module must be enabled only from SuperAdmin Menu Permissions.
 export const REGISTRATION_BLOCKED_MENU_KEYS: ReadonlySet<string> = new Set([
-  "school", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
+  "school", "clothing", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
 ]);
 
 export const MENU_ITEM_BY_KEY: Record<string, MenuItem> = Object.fromEntries(
@@ -230,6 +233,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   reports:            "zatca",
   inventory_mobile:   "inventory",
   inventory_reports:  "inventory",
+  clothing:           null,           // SuperAdmin enables per company; no registration entitlement
   // Sister-companies module is LOCKED BY DEFAULT (option B): the
   // SuperAdmin must explicitly enable it per company from
   // /admin/menu-permissions. There is no parent billable module — the

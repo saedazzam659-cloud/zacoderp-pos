@@ -74,6 +74,9 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   pos_kitchen: "pos_kitchen",
   // Inventory
   items: "inventory_reports",
+  // Clothing & footwear screens are an optional overlay on the existing
+  // item-variant workflow; generic inventory permissions remain unchanged.
+  clothing: "clothing",
   // Brands (العلامات التجارية) — own per-user permission key, rolls up to the
   // existing inventory company toggle (no new company-level gate). Keep in
   // sync with the frontend COMPANY_MODULE_GATE in companyModuleGate.ts.
@@ -191,7 +194,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "simple_manufacturing", "internal_control",
-  "school",
+  "school", "clothing",
   "additional_accounting_reports",
   "additional_sales_reports",
   "additional_purchase_reports",
