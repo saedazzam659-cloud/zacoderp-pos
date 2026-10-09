@@ -1,4 +1,7 @@
-import type { PurchaseReturnsByItemResponse } from "@workspace/api-client-react";
+import type {
+  PurchaseReturnsByItemResponse,
+  PurchaseVariantNetByItemResponse,
+} from "@workspace/api-client-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -155,4 +158,6 @@ export const purchaseAnalyticsApi = {
     get<ReturnsBySupplierRow[]>(`/returns-by-supplier${qs({ companyId: cid, from, to, branchId })}`),
   returnsByItem: (cid?: number, from?: string, to?: string, branchId?: number) =>
     get<PurchaseReturnsByItemResponse>(`/returns-by-item${qs({ companyId: cid, from, to, branchId })}`),
+  variantNetByItem: (cid?: number, from?: string, to?: string, branchId?: number) =>
+    get<PurchaseVariantNetByItemResponse>(`/variant-net-by-item${qs({ companyId: cid, from, to, branchId })}`),
 };

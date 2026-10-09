@@ -5251,6 +5251,36 @@ export const GetPurchaseReceiptFollowUpResponse = zod.object({
 });
 
 /**
+ * @summary Aggregate posted purchase invoices and returns by item, unit, and currency
+ */
+
+export const GetPurchaseVariantNetByItemQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1).optional(),
+  branchId: zod.coerce.number().min(1).optional(),
+  from: zod.date().optional(),
+  to: zod.date().optional(),
+});
+
+export const GetPurchaseVariantNetByItemResponseItem = zod.object({
+  itemId: zod.number(),
+  itemCode: zod.string().nullable(),
+  itemName: zod.string(),
+  unit: zod.string().nullable(),
+  currencyCode: zod.string(),
+  purchasedQty: zod.number(),
+  purchaseValue: zod.number(),
+  invoiceCount: zod.number(),
+  returnedQty: zod.number(),
+  returnValue: zod.number(),
+  returnCount: zod.number(),
+  netQty: zod.number(),
+  netValue: zod.number(),
+});
+export const GetPurchaseVariantNetByItemResponse = zod.array(
+  GetPurchaseVariantNetByItemResponseItem,
+);
+
+/**
  * @summary Aggregate posted purchase returns by item for a date range and branch
  */
 

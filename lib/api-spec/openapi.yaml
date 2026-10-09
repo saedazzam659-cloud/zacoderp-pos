@@ -3089,6 +3089,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PurchaseReceiptFollowUpReport" }
         "403": { description: Purchasing report access is denied }
+  /purchases-analytics/variant-net-by-item:
+    get:
+      operationId: getPurchaseVariantNetByItem
+      tags: [purchasing]
+      summary: Aggregate posted purchase invoices and returns by item, unit, and currency
+      parameters:
+        - name: companyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: branchId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Posted purchase and return activity netted within each item's unit and currency
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseVariantNetByItemResponse"
+        "400":
+          description: Invalid date range
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403": { description: Purchasing report access is denied }
   /purchases-analytics/returns-by-item:
     get:
       operationId: getPurchaseReturnsByItem
@@ -6047,6 +6078,26 @@ components:
         openLineCount: { type: integer }
         fullyReceivedLineCount: { type: integer }
         generatedAt: { type: string, format: date-time }
+    PurchaseVariantNetByItemRow:
+      type: object
+      required: [itemId, itemCode, itemName, unit, currencyCode, purchasedQty, purchaseValue, invoiceCount, returnedQty, returnValue, returnCount, netQty, netValue]
+      properties:
+        itemId: { type: integer }
+        itemCode: { type: ["string", "null"] }
+        itemName: { type: string }
+        unit: { type: ["string", "null"] }
+        currencyCode: { type: string }
+        purchasedQty: { type: number, format: double }
+        purchaseValue: { type: number, format: double }
+        invoiceCount: { type: integer }
+        returnedQty: { type: number, format: double }
+        returnValue: { type: number, format: double }
+        returnCount: { type: integer }
+        netQty: { type: number, format: double }
+        netValue: { type: number, format: double }
+    PurchaseVariantNetByItemResponse:
+      type: array
+      items: { $ref: "#/components/schemas/PurchaseVariantNetByItemRow" }
     PurchaseReturnsByItemRow:
       type: object
       required: [itemId, itemCode, itemName, unit, currencyCode, returnedQty, totalReturns, returnCount]

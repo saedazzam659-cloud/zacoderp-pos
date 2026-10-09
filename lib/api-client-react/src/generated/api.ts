@@ -62,6 +62,7 @@ import type {
   GetPurchaseOrderReceiptOptionsParams,
   GetPurchaseReceiptFollowUpParams,
   GetPurchaseReturnsByItemParams,
+  GetPurchaseVariantNetByItemParams,
   GetRecentInvoicesParams,
   GetSafetyKpisParams,
   GetSchoolAcademicPeriodsParams,
@@ -119,6 +120,7 @@ import type {
   PurchaseReceiptFollowUpReport,
   PurchaseReturnsByItemResponse,
   PurchaseSourceDocument,
+  PurchaseVariantNetByItemResponse,
   RiskAssessment,
   RiskControl,
   SafetyKpis,
@@ -12733,6 +12735,116 @@ export function useGetPurchaseReceiptFollowUp<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetPurchaseReceiptFollowUpQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Aggregate posted purchase invoices and returns by item, unit, and currency
+ */
+export const getGetPurchaseVariantNetByItemUrl = (
+  params?: GetPurchaseVariantNetByItemParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/purchases-analytics/variant-net-by-item?${stringifiedParams}`
+    : `/api/purchases-analytics/variant-net-by-item`;
+};
+
+export const getPurchaseVariantNetByItem = async (
+  params?: GetPurchaseVariantNetByItemParams,
+  options?: RequestInit,
+): Promise<PurchaseVariantNetByItemResponse> => {
+  return customFetch<PurchaseVariantNetByItemResponse>(
+    getGetPurchaseVariantNetByItemUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPurchaseVariantNetByItemQueryKey = (
+  params?: GetPurchaseVariantNetByItemParams,
+) => {
+  return [
+    `/api/purchases-analytics/variant-net-by-item`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetPurchaseVariantNetByItemQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPurchaseVariantNetByItem>>,
+  TError = ErrorType<ErrorResponse | void>,
+>(
+  params?: GetPurchaseVariantNetByItemParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPurchaseVariantNetByItem>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPurchaseVariantNetByItemQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPurchaseVariantNetByItem>>
+  > = ({ signal }) =>
+    getPurchaseVariantNetByItem(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPurchaseVariantNetByItem>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPurchaseVariantNetByItemQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPurchaseVariantNetByItem>>
+>;
+export type GetPurchaseVariantNetByItemQueryError =
+  ErrorType<ErrorResponse | void>;
+
+/**
+ * @summary Aggregate posted purchase invoices and returns by item, unit, and currency
+ */
+
+export function useGetPurchaseVariantNetByItem<
+  TData = Awaited<ReturnType<typeof getPurchaseVariantNetByItem>>,
+  TError = ErrorType<ErrorResponse | void>,
+>(
+  params?: GetPurchaseVariantNetByItemParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPurchaseVariantNetByItem>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPurchaseVariantNetByItemQueryOptions(
     params,
     options,
   );
