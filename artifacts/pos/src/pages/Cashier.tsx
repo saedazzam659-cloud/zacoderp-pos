@@ -1085,7 +1085,7 @@ function CartPanel(props: {
       {/* Totals + Pay */}
       <div className="shrink-0 border-t border-border bg-gradient-to-b from-card to-muted/30 p-3 space-y-2">
         {submitError && (
-          <div className="text-xs font-semibold text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
+          <div className="max-h-12 overflow-y-auto text-xs font-semibold text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
             {submitError}
           </div>
         )}
@@ -1238,8 +1238,15 @@ function PayButton({
       title={disabledReason || (disabled ? "أضف صنفاً إلى السلة لتفعيل الدفع." : undefined)}
       className="h-10 min-w-0 rounded-xl border border-border bg-card px-1 font-bold text-xs inline-flex items-center justify-center gap-1 disabled:opacity-40 hover-elevate active-elevate-2"
     >
-      {icon}
-      {label}
+      <span className="flex flex-col items-center leading-none">
+        <span className="inline-flex items-center gap-1">
+          {icon}
+          {label}
+        </span>
+        {disabledReason && (
+          <span className="pt-0.5 text-[9px] font-semibold opacity-80">غير مهيأ</span>
+        )}
+      </span>
     </button>
   );
 }
