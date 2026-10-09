@@ -625,9 +625,9 @@ export default function CashierPage() {
         </div>
       </header>
 
-      <div className="flex-1 grid lg:grid-cols-[1fr_22rem] xl:grid-cols-[1fr_24rem] min-h-0">
+      <div className="flex-1 grid lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] 2xl:grid-cols-[minmax(0,1fr)_32rem] min-h-0">
         {/* LEFT — products */}
-        <section className="flex flex-col min-h-0">
+        <section className="flex flex-col min-h-0 min-w-0">
           {/* Categories */}
           {categories.length > 1 && (
             <div className="px-4 lg:px-6 py-3 border-b border-border overflow-x-auto">
@@ -709,7 +709,7 @@ export default function CashierPage() {
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
                 {filtered.map((p) => {
                   const inCart = cart.find((l) => l.item.id === p.id);
                   return (
@@ -759,7 +759,7 @@ export default function CashierPage() {
         </section>
 
         {/* RIGHT — cart panel (desktop) */}
-        <aside className="hidden lg:flex flex-col border-r border-border bg-card/60 backdrop-blur-xl">
+        <aside className="hidden lg:flex min-h-0 min-w-0 flex-col border-r border-border bg-card/60 backdrop-blur-xl">
           <CartPanel
             cart={cart}
             updateQty={updateQty}
@@ -796,7 +796,7 @@ export default function CashierPage() {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 250 }}
-              className="fixed inset-y-0 right-0 w-full max-w-md bg-card z-50 flex flex-col lg:hidden"
+              className="fixed inset-y-0 right-0 w-full max-w-md min-h-0 bg-card z-50 flex flex-col lg:hidden"
             >
               <div className="h-14 px-4 border-b border-border flex items-center justify-between">
                 <p className="font-extrabold">السلة</p>
@@ -992,7 +992,7 @@ function CartPanel(props: {
   return (
     <>
       {/* Header */}
-      <div className="shrink-0 px-4 py-3 border-b border-border flex items-center justify-between">
+      <div className="shrink-0 px-3 py-2 border-b border-border flex items-center justify-between">
         <div>
           <p className="text-sm font-extrabold">فاتورة جديدة</p>
           <p className="text-[11px] text-muted-foreground">
@@ -1083,7 +1083,7 @@ function CartPanel(props: {
       </div>
 
       {/* Totals + Pay */}
-      <div className="shrink-0 border-t border-border bg-gradient-to-b from-card to-muted/30 p-4 space-y-3">
+      <div className="shrink-0 border-t border-border bg-gradient-to-b from-card to-muted/30 p-3 space-y-2">
         {submitError && (
           <div className="text-xs font-semibold text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
             {submitError}
@@ -1120,7 +1120,7 @@ function CartPanel(props: {
         </div>
 
         {/* Totals */}
-        <div className="space-y-1.5 text-sm">
+        <div className="space-y-1 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">المجموع الفرعي</span>
             <span className="font-bold">{formatSAR(subtotal)} ر.س</span>
@@ -1138,53 +1138,60 @@ function CartPanel(props: {
           <div className="h-px bg-border my-2" />
           <div className="flex items-center justify-between">
             <span className="font-extrabold">الإجمالي</span>
-            <span className="text-2xl font-black text-primary">
+            <span className="text-xl font-black text-primary tabular-nums">
               {formatSAR(grandTotal)}
               <span className="text-sm text-muted-foreground font-bold mr-1">ر.س</span>
             </span>
           </div>
         </div>
 
-        {/* Payment buttons — only methods whose account is configured */}
-        <div className="grid grid-cols-2 gap-2 pt-1">
-          {methods.cash && (
-            <PayButton
-              disabled={cart.length === 0 || submitting}
-              onClick={() => pay("cash")}
-              icon={<Banknote className="w-4 h-4" />}
-              label="نقداً"
-            />
-          )}
-          {methods.card && (
-            <PayButton
-              disabled={cart.length === 0 || submitting}
-              onClick={() => pay("card")}
-              icon={<CreditCard className="w-4 h-4" />}
-              label="شبكة"
-            />
-          )}
-          {methods.apple && (
-            <PayButton
-              disabled={cart.length === 0 || submitting}
-              onClick={() => pay("apple")}
-              icon={<Smartphone className="w-4 h-4" />}
-              label="Apple Pay"
-            />
-          )}
-          {methods.wallet && (
-            <PayButton
-              disabled={cart.length === 0 || submitting}
-              onClick={() => pay("wallet")}
-              icon={<Wallet className="w-4 h-4" />}
-              label="محفظة"
-            />
-          )}
+        {/* All payment methods stay visible; only configured methods are actionable. */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-0.5">
+          <PayButton
+            testId="button-pay-cash"
+            disabled={cart.length === 0 || submitting || !methods.cash}
+            disabledReason={!methods.cash ? "اربط صندوقاً نقدياً من إعدادات نقاط البيع." : undefined}
+            onClick={() => pay("cash")}
+            icon={<Banknote className="w-4 h-4" />}
+            label="نقداً"
+          />
+          <PayButton
+            testId="button-pay-card"
+            disabled={cart.length === 0 || submitting || !methods.card}
+            disabledReason={!methods.card ? "اربط حساب الشبكة من إعدادات نقاط البيع." : undefined}
+            onClick={() => pay("card")}
+            icon={<CreditCard className="w-4 h-4" />}
+            label="شبكة"
+          />
+          <PayButton
+            testId="button-pay-apple"
+            disabled={cart.length === 0 || submitting || !methods.apple}
+            disabledReason={!methods.apple ? "اربط حساب Apple Pay من إعدادات نقاط البيع." : undefined}
+            onClick={() => pay("apple")}
+            icon={<Smartphone className="w-4 h-4" />}
+            label="Apple Pay"
+          />
+          <PayButton
+            testId="button-pay-wallet"
+            disabled={cart.length === 0 || submitting || !methods.wallet}
+            disabledReason={!methods.wallet ? "اربط حساب المحفظة من إعدادات نقاط البيع." : undefined}
+            onClick={() => pay("wallet")}
+            icon={<Wallet className="w-4 h-4" />}
+            label="محفظة"
+          />
         </div>
+        {Object.values(methods).some((configured) => !configured) && (
+          <p className="text-[10px] leading-tight text-muted-foreground text-center">
+            الوسائل المعطلة تحتاج ربط حسابها من إعدادات نقاط البيع.
+          </p>
+        )}
 
         <Button
           disabled={cart.length === 0 || submitting || !methods.cash}
           onClick={() => pay("cash")}
-          className="w-full h-13 py-3.5 text-base font-extrabold rounded-xl bg-gradient-to-l from-primary via-primary to-chart-2 text-primary-foreground pos-glow disabled:opacity-50 disabled:pos-glow-none"
+          data-testid="button-complete-cash"
+          title={!methods.cash ? "اربط صندوقاً نقدياً من إعدادات نقاط البيع." : undefined}
+          className="w-full h-11 py-2 text-sm font-extrabold rounded-xl bg-gradient-to-l from-primary via-primary to-chart-2 text-primary-foreground pos-glow disabled:opacity-50 disabled:pos-glow-none"
         >
           <span className="inline-flex items-center gap-2">
             {submitting ? (
@@ -1195,7 +1202,7 @@ function CartPanel(props: {
             ) : (
               <>
                 <Receipt className="w-5 h-5" />
-                إتمام الدفع
+                إتمام الدفع نقداً
                 <ChevronLeft className="w-4 h-4" />
               </>
             )}
@@ -1211,17 +1218,25 @@ function PayButton({
   label,
   onClick,
   disabled,
+  disabledReason,
+  testId,
 }: {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  disabledReason?: string;
+  testId: string;
 }) {
   return (
     <button
+      type="button"
+      data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className="h-11 rounded-xl border border-border bg-card font-bold text-sm inline-flex items-center justify-center gap-1.5 disabled:opacity-40 hover-elevate active-elevate-2"
+      aria-label={disabledReason ? `${label}، ${disabledReason}` : label}
+      title={disabledReason || (disabled ? "أضف صنفاً إلى السلة لتفعيل الدفع." : undefined)}
+      className="h-10 min-w-0 rounded-xl border border-border bg-card px-1 font-bold text-xs inline-flex items-center justify-center gap-1 disabled:opacity-40 hover-elevate active-elevate-2"
     >
       {icon}
       {label}
