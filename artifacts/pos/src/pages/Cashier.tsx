@@ -43,7 +43,7 @@ import {
   getPosSessionId,
   setPosSessionId,
   type Item,
-  type ItemGroup,
+  type PosItemGroup,
   type CashBox,
   type Branch,
   type Warehouse,
@@ -66,14 +66,16 @@ function formatSAR(n: number) {
   }).format(n);
 }
 
-function imageSrc(item: Item): string | null {
-  const u = item.imageUrl;
+function imageSrcFromUrl(u?: string | null): string | null {
   if (!u) return null;
   if (!u.startsWith("/objects/")) return u;
   // <img src="..."> can't send Authorization headers, so pass the bearer
   // token via ?token=… (the storage route promotes it to Authorization).
   const tok = getToken();
   return `/api/storage${u}${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
+}
+function imageSrc(item: Item): string | null {
+  return imageSrcFromUrl(item.imageUrl);
 }
 
 function emojiFor(item: Item): string {
@@ -103,7 +105,7 @@ export default function CashierPage() {
   const [, navigate] = useLocation();
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
   const [items, setItems] = useState<Item[]>([]);
-  const [groups, setGroups] = useState<ItemGroup[]>([]);
+  const [groups, setGroups] = useState<PosItemGroup[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cashBoxes, setCashBoxes] = useState<CashBox[]>([]);
@@ -187,7 +189,7 @@ export default function CashierPage() {
         }
         const [its, grs, whs, brs, cbs, settings] = await Promise.all([
           api.getItems(cid),
-          api.getItemGroups(cid).catch(() => []),
+          api.getPosItemGroups(cid).catch(() => []),
           api.getWarehouses(cid).catch(() => []),
           api.getBranches(cid).catch(() => []),
           api.getCashBoxes(cid).catch(() => []),
@@ -249,16 +251,21 @@ export default function CashierPage() {
     return branches.find((b) => b.id === branchId)?.nameAr || "—";
   }, [branches, branchId]);
 
-  // Build category list from groups actually used by items
+  // Display tabs are driven by the separate POS group assignment, not the
+  // accounting item category (groupId).
   const categories = useMemo(() => {
-    const usedIds = new Set(items.map((i) => i.groupId).filter(Boolean));
+    const usedIds = new Set(
+      items
+        .map((item) => item.posGroupId)
+        .filter((id): id is number => typeof id === "number" && Number.isSafeInteger(id)),
+    );
     const list = groups.filter((g) => usedIds.has(g.id));
-    return [{ id: "all" as const, nameAr: "الكل" }, ...list];
+    return [{ id: "all" as const, nameAr: "الكل", imageUrl: null }, ...list];
   }, [items, groups]);
 
   const filtered = useMemo(() => {
     let list = items;
-    if (activeCat !== "all") list = list.filter((p) => p.groupId === activeCat);
+    if (activeCat !== "all") list = list.filter((p) => p.posGroupId === activeCat);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter(
@@ -638,13 +645,29 @@ export default function CashierPage() {
                     <button
                       key={String(c.id)}
                       onClick={() => setActiveCat(c.id as any)}
+                      aria-pressed={active}
+                      data-testid={`button-pos-display-group-${String(c.id)}`}
                       className={`flex items-center gap-2 px-4 h-11 rounded-xl border font-bold text-sm whitespace-nowrap transition-all hover-elevate active-elevate-2 ${
                         active
                           ? "bg-primary text-primary-foreground border-primary shadow-md shadow-primary/25"
                           : "bg-card border-border text-foreground"
                       }`}
                     >
-                      {c.nameAr}
+                      {c.id !== "all" && (imageSrcFromUrl(c.imageUrl) ? (
+                        <img
+                          src={imageSrcFromUrl(c.imageUrl) ?? undefined}
+                          alt=""
+                          className="h-6 w-6 rounded-md object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span className={`grid h-6 w-6 place-items-center rounded-md text-[10px] font-black ${
+                          active ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
+                        }`} aria-hidden="true">
+                          {c.nameAr.slice(0, 1)}
+                        </span>
+                      ))}
+                      <span>{c.nameAr}</span>
                     </button>
                   );
                 })}

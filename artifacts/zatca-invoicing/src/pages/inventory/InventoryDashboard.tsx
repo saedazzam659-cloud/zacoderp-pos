@@ -24,6 +24,7 @@ import {
 const inventoryHubTiles: HubTile[] = [
   { nameKey: "nav.items",            href: "/inventory/items",            icon: PackageIcon,    tone: "blue",    permKey: "items" },
   { nameKey: "nav.itemGroups",       href: "/inventory/item-groups",      icon: Tag,            tone: "indigo",  permKey: "items" },
+  { nameKey: "nav.posItemGroups",    href: "/inventory/pos-item-groups",  icon: Tag,            tone: "indigo",  permKey: "items" },
   { nameKey: "nav.units",            href: "/inventory/units",            icon: Ruler,          tone: "violet",  permKey: "items" },
   { nameKey: "nav.warehouses",       href: "/inventory/warehouses",       icon: WarehouseIcon,  tone: "emerald", permKey: "warehouses" },
   { nameKey: "nav.warehouseGroups",  href: "/inventory/warehouse-groups", icon: Layers,         tone: "teal",    permKey: "warehouses" },

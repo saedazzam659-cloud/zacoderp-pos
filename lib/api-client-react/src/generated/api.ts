@@ -114,6 +114,8 @@ import type {
   ManufacturingDeliveryEvidence,
   MonthlyStat,
   OkResponse,
+  PosItemGroup,
+  PosItemGroupInput,
   PurchaseInvoiceConversionInput,
   PurchaseInvoiceConversionResult,
   PurchaseInvoiceDraft,
@@ -3425,6 +3427,338 @@ export function useGetInventoryReportBrandOptions<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List the company-specific item groups used as POS display tabs
+ */
+export const getListPosItemGroupsUrl = () => {
+  return `/api/inventory/pos-item-groups`;
+};
+
+export const listPosItemGroups = async (
+  options?: RequestInit,
+): Promise<PosItemGroup[]> => {
+  return customFetch<PosItemGroup[]>(getListPosItemGroupsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListPosItemGroupsQueryKey = () => {
+  return [`/api/inventory/pos-item-groups`] as const;
+};
+
+export const getListPosItemGroupsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPosItemGroups>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listPosItemGroups>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListPosItemGroupsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listPosItemGroups>>
+  > = ({ signal }) => listPosItemGroups({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPosItemGroups>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListPosItemGroupsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listPosItemGroups>>
+>;
+export type ListPosItemGroupsQueryError = ErrorType<void>;
+
+/**
+ * @summary List the company-specific item groups used as POS display tabs
+ */
+
+export function useListPosItemGroups<
+  TData = Awaited<ReturnType<typeof listPosItemGroups>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listPosItemGroups>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListPosItemGroupsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a POS display group without changing the item's accounting category
+ */
+export const getCreatePosItemGroupUrl = () => {
+  return `/api/inventory/pos-item-groups`;
+};
+
+export const createPosItemGroup = async (
+  posItemGroupInput: PosItemGroupInput,
+  options?: RequestInit,
+): Promise<PosItemGroup> => {
+  return customFetch<PosItemGroup>(getCreatePosItemGroupUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(posItemGroupInput),
+  });
+};
+
+export const getCreatePosItemGroupMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPosItemGroup>>,
+    TError,
+    { data: BodyType<PosItemGroupInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createPosItemGroup>>,
+  TError,
+  { data: BodyType<PosItemGroupInput> },
+  TContext
+> => {
+  const mutationKey = ["createPosItemGroup"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createPosItemGroup>>,
+    { data: BodyType<PosItemGroupInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createPosItemGroup(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreatePosItemGroupMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createPosItemGroup>>
+>;
+export type CreatePosItemGroupMutationBody = BodyType<PosItemGroupInput>;
+export type CreatePosItemGroupMutationError = ErrorType<void>;
+
+/**
+ * @summary Create a POS display group without changing the item's accounting category
+ */
+export const useCreatePosItemGroup = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPosItemGroup>>,
+    TError,
+    { data: BodyType<PosItemGroupInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createPosItemGroup>>,
+  TError,
+  { data: BodyType<PosItemGroupInput> },
+  TContext
+> => {
+  return useMutation(getCreatePosItemGroupMutationOptions(options));
+};
+
+/**
+ * @summary Update a POS display group
+ */
+export const getUpdatePosItemGroupUrl = (id: number) => {
+  return `/api/inventory/pos-item-groups/${id}`;
+};
+
+export const updatePosItemGroup = async (
+  id: number,
+  posItemGroupInput: PosItemGroupInput,
+  options?: RequestInit,
+): Promise<PosItemGroup> => {
+  return customFetch<PosItemGroup>(getUpdatePosItemGroupUrl(id), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(posItemGroupInput),
+  });
+};
+
+export const getUpdatePosItemGroupMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updatePosItemGroup>>,
+    TError,
+    { id: number; data: BodyType<PosItemGroupInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updatePosItemGroup>>,
+  TError,
+  { id: number; data: BodyType<PosItemGroupInput> },
+  TContext
+> => {
+  const mutationKey = ["updatePosItemGroup"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updatePosItemGroup>>,
+    { id: number; data: BodyType<PosItemGroupInput> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updatePosItemGroup(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdatePosItemGroupMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updatePosItemGroup>>
+>;
+export type UpdatePosItemGroupMutationBody = BodyType<PosItemGroupInput>;
+export type UpdatePosItemGroupMutationError = ErrorType<void>;
+
+/**
+ * @summary Update a POS display group
+ */
+export const useUpdatePosItemGroup = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updatePosItemGroup>>,
+    TError,
+    { id: number; data: BodyType<PosItemGroupInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updatePosItemGroup>>,
+  TError,
+  { id: number; data: BodyType<PosItemGroupInput> },
+  TContext
+> => {
+  return useMutation(getUpdatePosItemGroupMutationOptions(options));
+};
+
+/**
+ * @summary Delete an unassigned POS display group
+ */
+export const getDeletePosItemGroupUrl = (id: number) => {
+  return `/api/inventory/pos-item-groups/${id}`;
+};
+
+export const deletePosItemGroup = async (
+  id: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeletePosItemGroupUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeletePosItemGroupMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deletePosItemGroup>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deletePosItemGroup>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deletePosItemGroup"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deletePosItemGroup>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deletePosItemGroup(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeletePosItemGroupMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deletePosItemGroup>>
+>;
+
+export type DeletePosItemGroupMutationError = ErrorType<void>;
+
+/**
+ * @summary Delete an unassigned POS display group
+ */
+export const useDeletePosItemGroup = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deletePosItemGroup>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deletePosItemGroup>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeletePosItemGroupMutationOptions(options));
+};
 
 /**
  * @summary List warehouse transfers and internal manufacturing deliveries in the caller scope

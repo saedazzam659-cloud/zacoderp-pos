@@ -1517,6 +1517,79 @@ export const GetInventoryReportBrandOptionsResponse = zod.array(
 );
 
 /**
+ * @summary List the company-specific item groups used as POS display tabs
+ */
+export const ListPosItemGroupsResponseItem = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  nameAr: zod.string(),
+  nameEn: zod.string().nullable(),
+  imageUrl: zod.string().nullable(),
+});
+export const ListPosItemGroupsResponse = zod.array(
+  ListPosItemGroupsResponseItem,
+);
+
+/**
+ * @summary Create a POS display group without changing the item's accounting category
+ */
+export const createPosItemGroupBodyCodeMax = 50;
+
+export const createPosItemGroupBodyNameArMax = 200;
+
+export const createPosItemGroupBodyNameEnMax = 200;
+
+export const createPosItemGroupBodyImageUrlMax = 1024;
+
+export const CreatePosItemGroupBody = zod.object({
+  code: zod.string().max(createPosItemGroupBodyCodeMax).optional(),
+  nameAr: zod.string().min(1).max(createPosItemGroupBodyNameArMax),
+  nameEn: zod.string().max(createPosItemGroupBodyNameEnMax).nullish(),
+  imageUrl: zod.string().max(createPosItemGroupBodyImageUrlMax).nullish(),
+});
+
+/**
+ * @summary Update a POS display group
+ */
+
+export const UpdatePosItemGroupParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const updatePosItemGroupBodyCodeMax = 50;
+
+export const updatePosItemGroupBodyNameArMax = 200;
+
+export const updatePosItemGroupBodyNameEnMax = 200;
+
+export const updatePosItemGroupBodyImageUrlMax = 1024;
+
+export const UpdatePosItemGroupBody = zod.object({
+  code: zod.string().max(updatePosItemGroupBodyCodeMax).optional(),
+  nameAr: zod.string().min(1).max(updatePosItemGroupBodyNameArMax),
+  nameEn: zod.string().max(updatePosItemGroupBodyNameEnMax).nullish(),
+  imageUrl: zod.string().max(updatePosItemGroupBodyImageUrlMax).nullish(),
+});
+
+export const UpdatePosItemGroupResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  nameAr: zod.string(),
+  nameEn: zod.string().nullable(),
+  imageUrl: zod.string().nullable(),
+});
+
+/**
+ * @summary Delete an unassigned POS display group
+ */
+
+export const DeletePosItemGroupParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+/**
  * @summary List warehouse transfers and internal manufacturing deliveries in the caller scope
  */
 export const ListInternalStockTransfersResponseItem = zod.object({

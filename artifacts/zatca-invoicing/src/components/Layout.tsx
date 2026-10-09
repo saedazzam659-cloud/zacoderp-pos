@@ -638,6 +638,7 @@ const inventorySubNav: NavDef[] = [
   { nameKey: "nav.clothingModels",    href: "/inventory/clothing-models",  icon: Package,           permKey: "items", companyGateKey: "clothing" },
   // item_groups + units piggy-back on items (no dedicated module key).
   { nameKey: "nav.itemGroups",        href: "/inventory/item-groups",      icon: Tag,               permKey: "items" },
+  { nameKey: "nav.posItemGroups",     href: "/inventory/pos-item-groups",  icon: Tag,               permKey: "items" },
   // العلامات التجارية — own per-user perm key, rolls up to inventory_reports.
   { nameKey: "nav.brands",            href: "/inventory/brands",           icon: Bookmark,          permKey: "brands" },
   { nameKey: "nav.units",             href: "/inventory/units",            icon: Ruler,             permKey: "items" },

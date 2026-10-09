@@ -301,6 +301,7 @@ import ClothingStockReport from "@/pages/inventory/reports/ClothingStockReport";
 import WarehouseGroups from "@/pages/inventory/WarehouseGroups";
 import Warehouses from "@/pages/inventory/Warehouses";
 import ItemGroups from "@/pages/inventory/ItemGroups";
+import PosItemGroups from "@/pages/inventory/PosItemGroups";
 import BrandManagement from "@/pages/inventory/BrandManagement";
 import Units from "@/pages/inventory/Units";
 import Items from "@/pages/inventory/Items";
@@ -1211,6 +1212,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/warehouse-groups" module="warehouses"        component={WarehouseGroups} />}
             {!isSuperAdmin && <PermRoute path="/inventory/warehouses"       module="warehouses"        component={Warehouses} />}
             {!isSuperAdmin && <PermRoute path="/inventory/item-groups"      module="items"             component={ItemGroups} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/pos-item-groups"  module="items"             component={PosItemGroups} />}
             {!isSuperAdmin && <PermRoute path="/inventory/brands"           module="brands"            component={BrandManagement} />}
             {!isSuperAdmin && <PermRoute path="/inventory/units"            module="items"             component={Units} />}
             {!isSuperAdmin && <PermRoute path="/inventory/items"            module="items"             component={Items} />}

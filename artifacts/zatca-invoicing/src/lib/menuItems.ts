@@ -456,6 +456,7 @@ export const MODULE_GROUPS: ModuleGroupDef[] = [
       { path: "/inventory", label: "لوحة المخازن" },
       { path: "/inventory/items", label: "الأصناف" },
       { path: "/inventory/item-groups", label: "فئات الأصناف" },
+      { path: "/inventory/pos-item-groups", label: "مجموعات عرض نقاط البيع" },
       { path: "/inventory/units", label: "وحدات القياس" },
       { path: "/inventory/warehouses", label: "المخازن" },
       { path: "/inventory/warehouse-groups", label: "مجموعات المخازن" },

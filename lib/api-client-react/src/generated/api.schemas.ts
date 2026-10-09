@@ -3118,6 +3118,37 @@ export interface InventoryReportBrandOption {
   itemIds: number[];
 }
 
+export interface PosItemGroup {
+  id: number;
+  companyId: number;
+  code: string;
+  nameAr: string;
+  /** @nullable */
+  nameEn: string | null;
+  /** @nullable */
+  imageUrl: string | null;
+}
+
+export interface PosItemGroupInput {
+  /** @maxLength 50 */
+  code?: string;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  nameAr: string;
+  /**
+   * @maxLength 200
+   * @nullable
+   */
+  nameEn?: string | null;
+  /**
+   * @maxLength 1024
+   * @nullable
+   */
+  imageUrl?: string | null;
+}
+
 export type GetSchoolEnrollmentPromotionPlanParams = {
   /**
    * @minimum 1

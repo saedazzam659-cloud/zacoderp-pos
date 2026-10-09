@@ -45,6 +45,38 @@ async function apiGet<T>(path: string): Promise<T> {
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
+
+export async function uploadPosItemGroupImage(file: File): Promise<string> {
+  if (!file.type.startsWith("image/")) throw new Error("يُرجى اختيار ملف صورة");
+  if (file.size > 5 * 1024 * 1024) throw new Error("حجم الصورة يجب ألا يتجاوز 5 ميجابايت");
+
+  const token = localStorage.getItem("zatca_token");
+  if (!token) throw new Error("انتهت جلسة الدخول؛ سجّل الدخول من جديد");
+  const request = await fetch(`${API}/api/storage/uploads/request-url`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
+  });
+  if (!request.ok) throw new Error(await request.text());
+  const { uploadURL, objectPath, direct } = await request.json();
+
+  const headers: Record<string, string> = { "Content-Type": file.type };
+  if (direct) {
+    headers.Authorization = `Bearer ${token}`;
+    headers["X-Zacod-Upload-Size"] = String(file.size);
+  }
+  const uploadBase = /^https?:\/\//i.test(API) ? API : `${window.location.origin}${API}`;
+  const resolvedUploadUrl = /^https?:\/\//i.test(uploadURL)
+    ? uploadURL
+    : new URL(uploadURL, `${uploadBase.replace(/\/$/, "")}/`).toString();
+  const upload = await fetch(resolvedUploadUrl, { method: "PUT", headers, body: file });
+  if (!upload.ok) throw new Error(await upload.text());
+  if (typeof objectPath !== "string" || !objectPath.startsWith("/objects/")) {
+    throw new Error("مسار الصورة المرفوعة غير صالح");
+  }
+  return objectPath;
+}
+
 export interface ItemSupplier {
   id: number;
   companyId: number;

@@ -532,12 +532,13 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     for (const item of items) {
       const {
         id: srcId, createdAt, updatedAt, companyId,
-        groupId, unitId, parentItemId, costAccountId, revenueAccountId, ...rest
+        groupId, posGroupId, unitId, parentItemId, costAccountId, revenueAccountId, ...rest
       } = item;
       const [ins] = await tx.insert(itemsTable).values({
         ...rest,
         companyId: newCompanyId,
         groupId: remap(itemGroupMap, groupId),
+        posGroupId: remap(itemGroupMap, posGroupId),
         unitId: remap(unitMap, unitId),
         parentItemId: null,
         costAccountId: remap(accountMap, costAccountId),

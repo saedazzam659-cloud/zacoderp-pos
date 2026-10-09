@@ -816,6 +816,70 @@ paths:
                 items:
                   $ref: "#/components/schemas/InventoryReportBrandOption"
         "401": { description: Authentication or company scope is required }
+  /inventory/pos-item-groups:
+    get:
+      operationId: listPosItemGroups
+      tags: [inventory]
+      summary: List the company-specific item groups used as POS display tabs
+      responses:
+        "200":
+          description: POS display groups with their uploaded image paths
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PosItemGroup" }
+        "401": { description: Authentication or company scope is required }
+    post:
+      operationId: createPosItemGroup
+      tags: [inventory]
+      summary: Create a POS display group without changing the item's accounting category
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PosItemGroupInput" }
+      responses:
+        "201":
+          description: POS display group created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PosItemGroup" }
+        "400": { description: Invalid group data or image path }
+        "409": { description: Duplicate code or group name }
+  /inventory/pos-item-groups/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    put:
+      operationId: updatePosItemGroup
+      tags: [inventory]
+      summary: Update a POS display group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PosItemGroupInput" }
+      responses:
+        "200":
+          description: POS display group updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PosItemGroup" }
+        "400": { description: Invalid group data or image path }
+        "404": { description: POS display group not found }
+        "409": { description: Duplicate code or group name }
+    delete:
+      operationId: deletePosItemGroup
+      tags: [inventory]
+      summary: Delete an unassigned POS display group
+      responses:
+        "200":
+          description: POS display group deleted
+        "404": { description: POS display group not found }
+        "409": { description: Items still use this group }
   /inventory/stock-transfers:
     get:
       operationId: listInternalStockTransfers
@@ -6215,3 +6279,21 @@ components:
         itemIds:
           type: array
           items: { type: integer }
+    PosItemGroup:
+      type: object
+      required: [id, companyId, code, nameAr, nameEn, imageUrl]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        code: { type: string }
+        nameAr: { type: string }
+        nameEn: { type: ["string", "null"] }
+        imageUrl: { type: ["string", "null"] }
+    PosItemGroupInput:
+      type: object
+      required: [nameAr]
+      properties:
+        code: { type: string, maxLength: 50 }
+        nameAr: { type: string, minLength: 1, maxLength: 200 }
+        nameEn: { type: ["string", "null"], maxLength: 200 }
+        imageUrl: { type: ["string", "null"], maxLength: 1024 }

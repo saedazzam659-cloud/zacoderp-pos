@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { AddBundleComponentsBulkBody } from "@workspace/api-zod";
+import {
+  AddBundleComponentsBulkBody,
+  CreatePosItemGroupBody,
+  UpdatePosItemGroupBody,
+} from "@workspace/api-zod";
 import { requireItemUnit } from "../lib/requiredItemUnit.js";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
@@ -113,6 +117,7 @@ router.use(pathRbac([
   ["/warehouse-groups",         "warehouses"],
   ["/warehouses",               "warehouses"],
   ["/item-groups",              "items"],
+  ["/pos-item-groups",          "items"],
   ["/units",                    "items"],
   // Brands master — own module key rolling up to the inventory company gate.
   // Item↔brand links live under /items/:id/brands and stay gated by "items".
@@ -465,9 +470,158 @@ router.delete("/warehouses/:id", async (req, res) => {
 router.get("/item-groups", async (req, res) => {
   const cid = getCompanyId(req);
   const rows = cid
-    ? await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid)).orderBy(asc(itemGroupsTable.code))
-    : await db.select().from(itemGroupsTable).orderBy(asc(itemGroupsTable.code));
+    ? await db.select().from(itemGroupsTable).where(and(
+        eq(itemGroupsTable.companyId, cid),
+        eq(itemGroupsTable.isPosGroup, false),
+      )).orderBy(asc(itemGroupsTable.code))
+    : await db.select().from(itemGroupsTable)
+        .where(eq(itemGroupsTable.isPosGroup, false))
+        .orderBy(asc(itemGroupsTable.code));
   res.json(rows);
+});
+
+const POS_GROUP_COLUMNS = {
+  id: itemGroupsTable.id,
+  companyId: itemGroupsTable.companyId,
+  code: itemGroupsTable.code,
+  nameAr: itemGroupsTable.nameAr,
+  nameEn: itemGroupsTable.nameEn,
+  imageUrl: itemGroupsTable.imageUrl,
+};
+
+function parsePosGroupImageUrl(value: unknown): { value: string | null; error?: string } {
+  if (value == null || value === "") return { value: null };
+  if (typeof value !== "string" || value.length > 1024 || !value.startsWith("/objects/")) {
+    return { value: null, error: "مسار صورة المجموعة غير صالح" };
+  }
+  return { value };
+}
+
+router.get("/pos-item-groups", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const rows = await db.select(POS_GROUP_COLUMNS).from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.companyId, cid),
+    eq(itemGroupsTable.isPosGroup, true),
+  )).orderBy(asc(itemGroupsTable.id));
+  res.json(rows);
+});
+
+router.post("/pos-item-groups", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const parsed = CreatePosItemGroupBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات المجموعة غير صالحة", details: parsed.error.flatten() });
+    return;
+  }
+  const nameAr = parsed.data.nameAr.trim();
+  if (!nameAr) { res.status(400).json({ error: "اسم المجموعة مطلوب" }); return; }
+  const image = parsePosGroupImageUrl(parsed.data.imageUrl);
+  if (image.error) { res.status(400).json({ error: image.error }); return; }
+
+  const allGroups = await db.select().from(itemGroupsTable)
+    .where(eq(itemGroupsTable.companyId, cid));
+  const displayGroups = allGroups.filter((group) => group.isPosGroup);
+  const code = String(parsed.data.code ?? "").trim()
+    || nextEntityCode("POS", allGroups.map((group) => group.code));
+  if (allGroups.some((group) => group.code.trim().toLowerCase() === code.toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` });
+    return;
+  }
+  if (displayGroups.some((group) => group.nameAr.trim().toLowerCase() === nameAr.toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمجموعة أخرى` });
+    return;
+  }
+
+  const [row] = await db.insert(itemGroupsTable).values({
+    companyId: cid,
+    code,
+    nameAr,
+    nameEn: parsed.data.nameEn?.trim() || null,
+    imageUrl: image.value,
+    isPosGroup: true,
+  }).returning(POS_GROUP_COLUMNS);
+  res.status(201).json(row);
+});
+
+router.put("/pos-item-groups/:id", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    res.status(400).json({ error: "معرّف المجموعة غير صالح" });
+    return;
+  }
+  const parsed = UpdatePosItemGroupBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات المجموعة غير صالحة", details: parsed.error.flatten() });
+    return;
+  }
+  const [current] = await db.select(POS_GROUP_COLUMNS).from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, id),
+    eq(itemGroupsTable.companyId, cid),
+    eq(itemGroupsTable.isPosGroup, true),
+  ));
+  if (!current) { res.status(404).json({ error: "مجموعة نقاط البيع غير موجودة" }); return; }
+
+  const nameAr = parsed.data.nameAr.trim();
+  if (!nameAr) { res.status(400).json({ error: "اسم المجموعة مطلوب" }); return; }
+  const allGroups = await db.select().from(itemGroupsTable)
+    .where(eq(itemGroupsTable.companyId, cid));
+  const displayGroups = allGroups.filter((group) => group.isPosGroup);
+  const code = String(parsed.data.code ?? current.code).trim();
+  if (allGroups.some((group) => group.id !== id && group.code.trim().toLowerCase() === code.toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` });
+    return;
+  }
+  if (displayGroups.some((group) => group.id !== id && group.nameAr.trim().toLowerCase() === nameAr.toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمجموعة أخرى` });
+    return;
+  }
+  const image = parsed.data.imageUrl === undefined
+    ? { value: current.imageUrl }
+    : parsePosGroupImageUrl(parsed.data.imageUrl);
+  if (image.error) { res.status(400).json({ error: image.error }); return; }
+
+  const [row] = await db.update(itemGroupsTable).set({
+    code,
+    nameAr,
+    nameEn: parsed.data.nameEn === undefined ? current.nameEn : (parsed.data.nameEn?.trim() || null),
+    imageUrl: image.value,
+  }).where(and(
+    eq(itemGroupsTable.id, id),
+    eq(itemGroupsTable.companyId, cid),
+    eq(itemGroupsTable.isPosGroup, true),
+  )).returning(POS_GROUP_COLUMNS);
+  if (!row) { res.status(404).json({ error: "مجموعة نقاط البيع غير موجودة" }); return; }
+  res.json(row);
+});
+
+router.delete("/pos-item-groups/:id", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    res.status(400).json({ error: "معرّف المجموعة غير صالح" });
+    return;
+  }
+  const [current] = await db.select({ id: itemGroupsTable.id }).from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, id),
+    eq(itemGroupsTable.companyId, cid),
+    eq(itemGroupsTable.isPosGroup, true),
+  ));
+  if (!current) { res.status(404).json({ error: "مجموعة نقاط البيع غير موجودة" }); return; }
+  const [linkedItem] = await db.select({ id: itemsTable.id }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, cid),
+    eq(itemsTable.posGroupId, id),
+  )).limit(1);
+  if (linkedItem) {
+    res.status(409).json({ error: "لا يمكن حذف مجموعة مرتبطة بأصناف؛ أعد تعيين الأصناف أولاً" });
+    return;
+  }
+  await db.delete(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, id),
+    eq(itemGroupsTable.companyId, cid),
+    eq(itemGroupsTable.isPosGroup, true),
+  ));
+  res.json({ ok: true });
 });
 
 // ── التوجيه المحاسبي: normalize + validate routing fields from the body ──
@@ -567,9 +721,10 @@ router.post("/item-groups", async (req, res) => {
   if (!nameAr) { res.status(400).json({ error: "اسم المجموعة مطلوب" }); return; }
   const routing = parseGroupRouting(req.body);
   if (routing.error) { res.status(400).json({ error: routing.error }); return; }
-  const existing = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
-  const code = String(rawCode ?? "").trim() || nextEntityCode("GRP", existing.map(g => g.code));
-  if (existing.some(g => g.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+  const allGroups = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
+  const existing = allGroups.filter((group) => !group.isPosGroup);
+  const code = String(rawCode ?? "").trim() || nextEntityCode("GRP", allGroups.map(g => g.code));
+  if (allGroups.some(g => g.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` }); return;
   }
   if (existing.some(g => g.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
@@ -607,10 +762,11 @@ router.put("/item-groups/:id", async (req, res) => {
   const { code, nameAr, nameEn } = req.body;
   const routing = parseGroupRouting(req.body);
   if (routing.error) { res.status(400).json({ error: routing.error }); return; }
-  const others = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
+  const allGroups = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
+  const others = allGroups.filter((group) => !group.isPosGroup);
   const current = others.find(g => g.id === id);
   if (!current) { res.status(404).json({ error: "غير موجود" }); return; }
-  if (code && others.some(g => g.id !== id && g.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+  if (code && allGroups.some(g => g.id !== id && g.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` }); return;
   }
   if (nameAr && others.some(g => g.id !== id && g.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
@@ -651,14 +807,24 @@ router.put("/item-groups/:id", async (req, res) => {
     code, nameAr, nameEn,
     categoryType: routing.categoryType, parentAccountId: routing.parentAccountId, accountId,
     costAccountId: defAccounts.costAccountId, revenueAccountId: defAccounts.revenueAccountId,
-  }).where(and(eq(itemGroupsTable.id, id), eq(itemGroupsTable.companyId, cid))).returning();
+  }).where(and(
+    eq(itemGroupsTable.id, id),
+    eq(itemGroupsTable.companyId, cid),
+    eq(itemGroupsTable.isPosGroup, false),
+  )).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
 });
 
 router.delete("/item-groups/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  await db.delete(itemGroupsTable).where(and(eq(itemGroupsTable.id, Number(req.params.id)), eq(itemGroupsTable.companyId, cid)));
+  const id = Number(req.params.id);
+  const deleted = await db.delete(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, id),
+    eq(itemGroupsTable.companyId, cid),
+    eq(itemGroupsTable.isPosGroup, false),
+  )).returning({ id: itemGroupsTable.id });
+  if (!deleted.length) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json({ ok: true });
 });
 
@@ -1317,7 +1483,7 @@ router.get("/items/:id", async (req, res) => {
 // columns like id/companyId/createdAt/updatedAt that the user can't change.
 const ITEM_AUDIT_FIELDS = [
   "code", "nameAr", "nameEn", "barcode", "itemType",
-  "groupId", "unitId", "costPrice", "salePrice", "vatRate",
+  "groupId", "posGroupId", "unitId", "costPrice", "salePrice", "vatRate",
   "reorderLevel", "maxLevel", "costMethod", "description",
   "status", "imageUrl", "tags",
   // PRO Extension #3 — per-item default discount
@@ -1469,9 +1635,45 @@ function normalizeDiscount(rawType: unknown, rawValue: unknown): { type: "none"|
   return { type, value: String(n) };
 }
 
+async function parseAndValidatePosGroupId(
+  companyId: number,
+  raw: unknown,
+): Promise<{ id: number | null; error?: string }> {
+  if (raw == null || raw === "") return { id: null };
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return { id: null, error: "مجموعة نقاط البيع غير صالحة" };
+  }
+  const [group] = await db.select({ id: itemGroupsTable.id }).from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, id),
+    eq(itemGroupsTable.companyId, companyId),
+    eq(itemGroupsTable.isPosGroup, true),
+  ));
+  if (!group) return { id: null, error: "مجموعة نقاط البيع لا تنتمي للشركة أو غير موجودة" };
+  return { id };
+}
+
+async function parseAndValidateAccountingItemGroupId(
+  companyId: number,
+  raw: unknown,
+): Promise<{ id: number | null; error?: string }> {
+  if (raw == null || raw === "") return { id: null };
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return { id: null, error: "فئة الصنف غير صالحة" };
+  }
+  const [group] = await db.select({ id: itemGroupsTable.id }).from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, id),
+    eq(itemGroupsTable.companyId, companyId),
+    eq(itemGroupsTable.isPosGroup, false),
+  ));
+  if (!group) return { id: null, error: "فئة الصنف لا تنتمي للشركة أو غير موجودة" };
+  return { id };
+}
+
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code: rawCode, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
+  const { code: rawCode, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
   if (!nameAr) { res.status(400).json({ error: "اسم الصنف مطلوب" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   // كود الصنف اختياري — إن تُرك فارغاً يُولَّد تلقائياً بمتابعة أعلى رقم موجود.
@@ -1525,11 +1727,25 @@ router.post("/items", async (req, res) => {
       .where(and(eq(unitsTable.id, normalizedUnitId), eq(unitsTable.companyId, cid)));
     if (!ownedUnit) { res.status(400).json({ error: "وحدة الصنف لا تنتمي للشركة" }); return; }
   }
+  // POS display groups are intentionally independent of groupId, which remains
+  // the accounting item category. Variants inherit this new field only when
+  // their request omits it.
+  const assignedPosGroup = await parseAndValidatePosGroupId(
+    cid,
+    posGroupId === undefined ? parentRowForVariant?.posGroupId : posGroupId,
+  );
+  if (assignedPosGroup.error) { res.status(400).json({ error: assignedPosGroup.error }); return; }
+  const assignedAccountingGroup = await parseAndValidateAccountingItemGroupId(
+    cid,
+    groupId === undefined ? parentRowForVariant?.groupId : groupId,
+  );
+  if (assignedAccountingGroup.error) { res.status(400).json({ error: assignedAccountingGroup.error }); return; }
   const [row] = await db.insert(itemsTable).values({
     companyId: cid, code, nameAr, nameEn, barcode,
     itemType: itemType || parentRowForVariant?.itemType || "stock",
     itemNature: ["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? itemNature : (parentRowForVariant?.itemNature || "merchandise"),
-    groupId: groupId || parentRowForVariant?.groupId || null,
+    groupId: assignedAccountingGroup.id,
+    posGroupId: assignedPosGroup.id,
     unitId: requiredUnitId,
     costPrice: costPrice || parentRowForVariant?.costPrice || "0",
     salePrice: salePrice || parentRowForVariant?.salePrice || "0",
@@ -1575,7 +1791,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
   // PRO Extension #20 — variantAttributes is editable; parentItemId is
   // set-once at create time (re-parenting requires DELETE + recreate so
   // we don't have to reason about stock-balance migration).
@@ -1598,6 +1814,18 @@ router.put("/items/:id", async (req, res) => {
   // Snapshot the existing row BEFORE mutating so we can compute a precise diff.
   const existing = others.find(i => i.id === id) ?? null;
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  let validatedPosGroupId: number | null | undefined;
+  if (posGroupId !== undefined) {
+    const assignedPosGroup = await parseAndValidatePosGroupId(cid, posGroupId);
+    if (assignedPosGroup.error) { res.status(400).json({ error: assignedPosGroup.error }); return; }
+    validatedPosGroupId = assignedPosGroup.id;
+  }
+  let validatedAccountingGroupId: number | null | undefined;
+  if (groupId !== undefined) {
+    const assignedAccountingGroup = await parseAndValidateAccountingItemGroupId(cid, groupId);
+    if (assignedAccountingGroup.error) { res.status(400).json({ error: assignedAccountingGroup.error }); return; }
+    validatedAccountingGroupId = assignedAccountingGroup.id;
+  }
   let requestedUnitId: number | null | undefined;
   try {
     requireItemUnit(unitId, existing.unitId);
@@ -1653,7 +1881,8 @@ router.put("/items/:id", async (req, res) => {
       return tx.update(itemsTable).set({
         code, nameAr, nameEn, barcode, itemType: itemType || "stock",
         ...(["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? { itemNature } : {}),
-        groupId: groupId || null, unitId: requestedUnitId === undefined ? lockedExisting.unitId : requestedUnitId,
+        groupId: validatedAccountingGroupId ?? null, unitId: requestedUnitId === undefined ? lockedExisting.unitId : requestedUnitId,
+        ...(validatedPosGroupId !== undefined ? { posGroupId: validatedPosGroupId } : {}),
         costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
         reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
         costMethod: costMethod || "weighted_avg", description,
@@ -5010,7 +5239,10 @@ router.post("/import/items", async (req, res) => {
   const rows: any[] = Array.isArray(req.body?.items) ? req.body.items : [];
   if (!rows.length) { res.status(400).json({ error: "لا توجد بيانات" }); return; }
 
-  const groups = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
+  const groups = await db.select().from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.companyId, cid),
+    eq(itemGroupsTable.isPosGroup, false),
+  ));
   const units  = await db.select().from(unitsTable).where(eq(unitsTable.companyId, cid));
   // Fetch FULL existing rows (not just id/code) so we can compute precise
   // before/after diffs for the audit log on each updated row.

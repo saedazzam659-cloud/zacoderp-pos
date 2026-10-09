@@ -1,5 +1,6 @@
 import { useState, Fragment, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useListPosItemGroups } from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocation } from "wouter";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -79,7 +80,7 @@ function CollapsibleSection({
 
 const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock", itemNature: "merchandise",
-  groupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
+  groupId: "", posGroupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
   costAccountId: "", revenueAccountId: "", imageUrl: "",
   // PRO Extension #3 — per-item default discount auto-applied on sales lines.
@@ -1384,6 +1385,7 @@ export default function Items() {
     queryKey: ["item-groups", cid],
     queryFn: () => inventoryApi.getItemGroups(cid),
   });
+  const { data: posGroups = [] } = useListPosItemGroups();
   const { data: units = [] } = useQuery({
     queryKey: ["units", cid],
     queryFn: () => inventoryApi.getUnits(cid),
@@ -1504,6 +1506,7 @@ export default function Items() {
       // (String(g.id)), so a numeric groupId never matches → picker shows the
       // placeholder on reopen even though the group IS saved.
       groupId: item.groupId != null ? String(item.groupId) : "",
+      posGroupId: item.posGroupId != null ? String(item.posGroupId) : "",
       unitId:  item.unitId  != null ? String(item.unitId)  : "",
       costPrice: item.costPrice ?? "0", salePrice: item.salePrice ?? "0",
       vatRate: item.vatRate ?? "15", reorderLevel: item.reorderLevel ?? "0",
@@ -1548,6 +1551,7 @@ export default function Items() {
     const payload = {
       ...form,
       groupId:          form.groupId          ? Number(form.groupId)          : null,
+      posGroupId:       form.posGroupId       ? Number(form.posGroupId)       : null,
       unitId:           form.unitId           ? Number(form.unitId)           : null,
       costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
       revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
@@ -1812,6 +1816,15 @@ export default function Items() {
                       </div>
                     );
                   })()}
+                </Field>
+                <Field label={t("inventoryMaster.items.posGroup")}>
+                  <SearchCombobox
+                    items={[{ value: "", label: t("inventoryMaster.items.noPosGroup") }, ...posGroups.map((g) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn ?? "" }))]}
+                    value={form.posGroupId}
+                    onValueChange={(v) => setForm((p: any) => ({ ...p, posGroupId: v }))}
+                    placeholder={t("inventoryMaster.items.choosePosGroup")}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">{t("inventoryMaster.items.posGroupHint")}</p>
                 </Field>
                 {!editId && canBrands && (createBrandOptions as any[]).some((brand: any) => brand.status !== "inactive") && (
                   <Field
