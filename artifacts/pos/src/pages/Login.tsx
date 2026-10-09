@@ -27,26 +27,11 @@ import {
   setPosSessionId,
   getToken,
   getStoredUser,
+  getPosDeviceId,
   type Branch,
   type PosTerminal,
 } from "@/lib/api";
 import { Cpu, MonitorSmartphone, Loader2, Building2 } from "lucide-react";
-
-// Stable per-browser device fingerprint used to pair this device with a POS
-// terminal (machineCode). Stored once in localStorage; never changes unless
-// localStorage is cleared.
-const POS_DEVICE_KEY = "pos_device_id";
-function getDeviceId(): string {
-  try {
-    let v = localStorage.getItem(POS_DEVICE_KEY);
-    if (!v) {
-      v = "DEV-" + Math.random().toString(36).slice(2, 10).toUpperCase()
-            + "-" + Date.now().toString(36).toUpperCase();
-      localStorage.setItem(POS_DEVICE_KEY, v);
-    }
-    return v;
-  } catch { return "DEV-UNKNOWN"; }
-}
 
 const features = [
   {
@@ -148,7 +133,7 @@ export default function LoginPage() {
         setTerminals(list);
         // Auto-select rules: prefer a terminal already paired to this device,
         // else the first non-busy one.
-        const myDevice = getDeviceId();
+        const myDevice = getPosDeviceId();
         const mine = list.find(t => t.machineCode === myDevice && !t.busyUserId);
         const free = list.find(t => !t.busyUserId);
         const pick = mine ?? free ?? null;
@@ -180,7 +165,7 @@ export default function LoginPage() {
         openingCash: 0,
         device: navigator.userAgent.slice(0, 120),
         posTerminalId: terminalId ?? null,
-        machineCode: terminalId ? getDeviceId() : null,
+        machineCode: terminalId ? getPosDeviceId() : null,
       });
       setPosSessionId(session.id);
       localStorage.setItem("pos_branch_id", String(branchId));
@@ -456,7 +441,7 @@ export default function LoginPage() {
                       terminalId={terminalId}
                       setTerminalId={setTerminalId}
                       terminalsLoading={terminalsLoading}
-                      deviceId={getDeviceId()}
+                      deviceId={getPosDeviceId()}
                       onBack={() => { setStage("auth"); setError(null); }}
                       onContinue={startSessionAndGo}
                       loading={loading}

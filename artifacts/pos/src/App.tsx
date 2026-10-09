@@ -12,6 +12,7 @@ import WaiterApp from "@/pages/WaiterApp";
 import KitchenDisplay from "@/pages/KitchenDisplay";
 import RestaurantSettings from "@/pages/RestaurantSettings";
 import RestaurantAI from "@/pages/RestaurantAI";
+import PosEntry from "@/pages/PosEntry";
 import { useEnterAdvances } from "@/hooks/useEnterAdvances";
 import ReturnsPage from "@/pages/Returns";
 import { api, getToken, type AuthUser } from "@/lib/api";
@@ -133,6 +134,7 @@ function RestaurantAIRoute() {
 function Router() {
   return (
     <Switch>
+      <Route path="/entry" component={PosEntry} />
       <Route path="/" component={LoginPage} />
       <Route path="/login" component={LoginPage} />
       <Route path="/pos" component={CashierRoute} />

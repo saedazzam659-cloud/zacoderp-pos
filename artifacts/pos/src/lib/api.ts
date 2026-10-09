@@ -36,6 +36,24 @@ export function setStoredUser(user: AuthUser): void {
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
+// Stable per-browser fingerprint used to pair this browser with a POS
+// terminal. Shared by the interactive login flow and the automatic landing
+// bootstrap so they follow the same device-binding rules.
+const POS_DEVICE_KEY = "pos_device_id";
+export function getPosDeviceId(): string {
+  try {
+    let value = localStorage.getItem(POS_DEVICE_KEY);
+    if (!value) {
+      value = "DEV-" + Math.random().toString(36).slice(2, 10).toUpperCase()
+        + "-" + Date.now().toString(36).toUpperCase();
+      localStorage.setItem(POS_DEVICE_KEY, value);
+    }
+    return value;
+  } catch {
+    return "DEV-UNKNOWN";
+  }
+}
+
 function authHeaders(): Record<string, string> {
   const token = getToken();
   const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -78,6 +96,7 @@ export type AuthUser = {
   email: string | null;
   role: string;
   companyId: number | null;
+  posDefaultScreen?: string | null;
   permissions?: Record<string, Partial<Record<
     "view" | "create" | "edit" | "delete" | "post" | "cancel",
     boolean

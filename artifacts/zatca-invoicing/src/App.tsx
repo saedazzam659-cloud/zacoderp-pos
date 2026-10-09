@@ -493,6 +493,15 @@ function LoadingScreen() {
   );
 }
 
+function CrossArtifactRedirect({ to }: { to: string }) {
+  useEffect(() => {
+    // A client-side Wouter redirect would keep this ERP bundle mounted. A
+    // document navigation lets the proxy route /pos/* to the POS artifact.
+    window.location.replace(to);
+  }, [to]);
+  return <LoadingScreen />;
+}
+
 // /pricing is the new top-of-funnel landing page — kept fully public so
 // search engines can crawl it and unauthenticated visitors can compare
 // plans before signing up. /recover-superadmin* are also public but
@@ -750,9 +759,15 @@ function AppRoutes() {
     let target = "/";
     try {
       const sp = new URLSearchParams(window.location.search);
-      target = safeRedirectTarget(sp.get("redirect")) ?? "/";
+      const explicitTarget = safeRedirectTarget(sp.get("redirect"));
+      const hasPosLanding = user?.role !== "cashier"
+        && typeof user?.posDefaultScreen === "string"
+        && user.posDefaultScreen.length > 0;
+      target = explicitTarget ?? (hasPosLanding ? "/pos/entry" : "/");
     } catch { /* noop */ }
-    return <Redirect to={target} />;
+    return target === "/pos" || target.startsWith("/pos/")
+      ? <CrossArtifactRedirect to={target} />
+      : <Redirect to={target} />;
   }
 
   // Unauthenticated visitors: serve guest landings directly, render the

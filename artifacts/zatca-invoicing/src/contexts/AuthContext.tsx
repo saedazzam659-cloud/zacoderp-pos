@@ -109,6 +109,8 @@ export interface AuthUser {
   partnerPermissions?: Record<string, boolean>;
   nameAr?: string | null;
   code?: string | null;
+  /** Per-user default POS landing screen; does not grant POS permissions. */
+  posDefaultScreen?: string | null;
   /**
    * Durable per-user UI preferences, namespaced by screen slug. Mirrors what
    * used to live only in localStorage so a saved grid layout survives a browser

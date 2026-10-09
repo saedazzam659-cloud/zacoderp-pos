@@ -739,6 +739,7 @@ router.post("/login", async (req, res) => {
       nameEn: (user as any).nameEn ?? null,
       permissions: effectiveDemoPermissions((sessionUser as any).permissions ?? {},
         !!demoLogin.deviceLinkId && user.demoDeviceIsolation && user.demoOperationalAdmin),
+      posDefaultScreen: (sessionUser as any).permissions?.__posDefaultScreen ?? null,
       viewAllBranches: (sessionUser as any).viewAllBranches ?? true,
       demoSourceUserId: sessionUser.id === user.id ? undefined : user.id,
       demoDeviceIsolation: user.demoDeviceIsolation === true,
@@ -1038,6 +1039,7 @@ router.get("/me", async (req, res) => {
     nameAr: (user as any).nameAr ?? null,
     nameEn: (user as any).nameEn ?? null,
     permissions: (user as any).permissions ?? {},
+    posDefaultScreen: (user as any).permissions?.__posDefaultScreen ?? null,
     // Per-user mobile-app rights (صلاحيات تطبيق الموبايل) — null = all
     // allowed. The Expo app re-reads /me on focus so changes apply live.
     mobilePermissions: (user as any).mobilePermissions ?? null,

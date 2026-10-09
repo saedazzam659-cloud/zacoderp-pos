@@ -32,6 +32,21 @@ import { companyAllowsPermissionModule } from "@/lib/companyModuleGate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+type PosDefaultScreen = "/pos" | "/super" | "/returns" | "/waiter" | "/kitchen";
+type UserPermissions = Record<string, any> & { __posDefaultScreen?: PosDefaultScreen };
+
+const POS_DEFAULT_SCREENS: Array<{
+  path: PosDefaultScreen;
+  labelKey: string;
+  feature: "pos_cashier" | "pos_returns" | "pos_waiter" | "pos_kitchen";
+}> = [
+  { path: "/pos", labelKey: "users.posLandingCashier", feature: "pos_cashier" },
+  { path: "/super", labelKey: "users.posLandingSupermarket", feature: "pos_cashier" },
+  { path: "/returns", labelKey: "users.posLandingReturns", feature: "pos_returns" },
+  { path: "/waiter", labelKey: "users.posLandingWaiter", feature: "pos_waiter" },
+  { path: "/kitchen", labelKey: "users.posLandingKitchen", feature: "pos_kitchen" },
+];
+
 type UserRow = {
   id: number;
   username: string;
@@ -40,7 +55,7 @@ type UserRow = {
   code: string | null;
   nameAr: string | null;
   nameEn: string | null;
-  permissions: PermissionMap | null;
+  permissions: UserPermissions | null;
   viewAllBranches: boolean;
   scopeOwnCustomersOnly?: boolean;
   isActive: boolean;
@@ -193,7 +208,7 @@ const emptyForm = () => ({
   // explicitly grant each module/action, so an ungranted module never leaks
   // into the user's sidebar. (Was viewOnlyPermissions() which silently granted
   // view on every module and made "I picked HR only" show every menu.)
-  permissions: emptyPermissions(),
+  permissions: emptyPermissions() as UserPermissions,
   // All-checked by default — matches the server's back-compat "allowed unless
   // explicitly denied" semantics.
   postingPermissions: seedPostingPerms(),
@@ -596,7 +611,10 @@ export default function Users() {
         });
       });
     }
-    setForm(f => ({ ...f, permissions: p }));
+    setForm(f => ({
+      ...f,
+      permissions: { ...p, __posDefaultScreen: f.permissions.__posDefaultScreen },
+    }));
   };
 
   // ─── Copy permissions from another user ──────────────────────────────────
@@ -610,7 +628,14 @@ export default function Users() {
     const src = users.find(x => x.id === sourceId);
     if (!src) return;
     const srcPerms = { ...emptyPermissions(), ...(src.permissions ?? {}) };
-    setForm(f => ({ ...f, permissions: srcPerms }));
+    setForm(f => ({
+      ...f,
+      permissions: {
+        ...srcPerms,
+        // A landing screen is a per-user preference, not a permission to copy.
+        __posDefaultScreen: f.permissions.__posDefaultScreen,
+      },
+    }));
     toast({
       title: "✅ تم نسخ الصلاحيات",
       description: `تم نسخ صلاحيات المستخدم «${src.nameAr || src.username}». اضغط «حفظ التعديلات» للتأكيد.`,
@@ -624,12 +649,14 @@ export default function Users() {
   const [bulkTargetIds, setBulkTargetIds] = useState<Set<number>>(new Set());
   const bulkCopyMut = useMutation({
     mutationFn: async (targetIds: number[]) => {
+      const sharedPermissions = { ...form.permissions };
+      delete sharedPermissions.__posDefaultScreen;
       const results = await Promise.allSettled(
         targetIds.map(id =>
           fetch(`${API}/api/users/${id}?companyId=${cid ?? ""}`, {
             method: "PATCH",
             headers: { ...authH, "Content-Type": "application/json" },
-            body: JSON.stringify({ permissions: form.permissions }),
+            body: JSON.stringify({ permissions: sharedPermissions }),
           }).then(async r => {
             if (!r.ok) {
               const d = await r.json().catch(() => ({}));
@@ -774,7 +801,7 @@ export default function Users() {
 
           <CardContent className="pt-5">
             <Tabs defaultValue="info" className="w-full" dir={isRtl ? "rtl" : "ltr"}>
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-6">
+              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-7">
                 <TabsTrigger value="info">{t("users.tabInfo")}</TabsTrigger>
                 <TabsTrigger value="branches">{t("users.tabBranches", { count: form.branchIds.length })}</TabsTrigger>
                 <TabsTrigger value="permissions">{t("users.tabPermissions")}</TabsTrigger>
@@ -791,6 +818,7 @@ export default function Users() {
                   <Smartphone className="h-3.5 w-3.5" />
                   {t("users.tabMobile")}
                 </TabsTrigger>
+                <TabsTrigger value="pos-landing" data-testid="tab-pos-landing">{t("users.tabPosLanding")}</TabsTrigger>
               </TabsList>
 
               {/* Info Tab */}
@@ -1497,6 +1525,50 @@ export default function Users() {
                   </table>
                 </div>
                 <p className="text-[11px] text-muted-foreground">{t("users.mobileLiveHint")}</p>
+              </TabsContent>
+
+              <TabsContent value="pos-landing" className="space-y-4 pt-4" data-testid="pos-landing-tab-content">
+                <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-3 text-sm leading-6 text-blue-950 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-100">
+                  {t("users.posLandingHint")}
+                </div>
+                {form.role === "cashier" && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100">
+                    {t("users.posLandingCashierRole")}
+                  </div>
+                )}
+                <div className="max-w-xl space-y-2">
+                  <Label htmlFor="user-pos-default-screen">{t("users.posLandingLabel")}</Label>
+                  <Select
+                    value={form.permissions.__posDefaultScreen ?? "none"}
+                    onValueChange={(value) => setForm(f => {
+                      const permissions = { ...f.permissions };
+                      if (value === "none") delete permissions.__posDefaultScreen;
+                      else permissions.__posDefaultScreen = value as PosDefaultScreen;
+                      return { ...f, permissions };
+                    })}
+                    disabled={form.role === "cashier"}
+                  >
+                    <SelectTrigger id="user-pos-default-screen" data-testid="select-pos-default-screen">
+                      <SelectValue placeholder="لا توجد شاشة افتراضية" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{t("users.posLandingNone")}</SelectItem>
+                      {POS_DEFAULT_SCREENS.map(screen => {
+                        const companyEnabled = companyAllowsPermissionModule(companyMenuPermsRaw, screen.feature);
+                        const userAllowed = form.role === "admin" || form.permissions[screen.feature]?.view === true;
+                        const enabled = companyEnabled && userAllowed;
+                        return (
+                          <SelectItem key={screen.path} value={screen.path} disabled={!enabled}>
+                            {t(screen.labelKey)}{enabled ? "" : ` ${t("users.posLandingNeedsPermission")}`}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {t("users.posLandingBranchesHint")}
+                  </p>
+                </div>
               </TabsContent>
             </Tabs>
 
