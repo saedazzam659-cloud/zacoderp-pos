@@ -73,6 +73,7 @@ export const companiesTable = pgTable("companies", {
   // items grid grow taller. Purely presentational — items are still added via
   // the in-grid "إضافة صنف" button.
   hideQuickAddBar: boolean("hide_quick_add_bar").notNull().default(false),
+  showFreeQuantity: boolean("show_free_quantity").notNull().default(true),
   // Cross-type account-note screens are hidden by default. These flags affect
   // only menu links and invoice tabs; note records and accounting behavior are
   // unchanged.

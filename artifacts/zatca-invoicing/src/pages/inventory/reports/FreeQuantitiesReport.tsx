@@ -201,6 +201,8 @@ export default function FreeQuantitiesReport() {
     appliedBrand && `${t("inventoryReports.common.brand")}: ${pickName(appliedBrand.nameAr, appliedBrand.nameEn) || appliedBrand.code}`,
   ].filter(Boolean).join("  •  ");
 
+  if (user?.company?.showFreeQuantity === false) return null;
+
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* Header */}

@@ -1623,6 +1623,29 @@ export default function GeneralSettings() {
             </span>
           </span>
         </label>
+        <label
+          data-testid="show-free-quantity-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.showFreeQuantity !== false
+              ? "border-primary bg-primary/5 shadow-sm"
+              : "border-border hover:border-primary/40 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+            checked={user?.company?.showFreeQuantity !== false}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ showFreeQuantity: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">إظهار حقل الكمية المجانية</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              عند إيقافه يُخفى حقل «مجاني» من نماذج الفواتير والمرتجعات والطباعة والتقارير. تبقى الكميات المسجلة محفوظة ولا تتغير حركات المخزون أو الحسابات.
+            </span>
+          </span>
+        </label>
         <div className="space-y-3 border-t pt-4">
           <div>
             <h3 className="text-sm font-semibold">{t("pages.generalSettings.accountNotesVisibilityTitle")}</h3>

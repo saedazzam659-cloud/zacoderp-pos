@@ -18,6 +18,7 @@ type Props = {
   toDate?: string;
   rows: ReportRow[];
   labels: Record<string, string>;
+  hideFreeQuantity?: boolean;
 };
 
 const moneyFields = new Set([
@@ -95,14 +96,15 @@ function printableValue(value: unknown): string {
 }
 
 export default function AdditionalOperationalReportGrid({
-  domain, reportId, reportTitle, companyId, fromDate, toDate, rows, labels,
+  domain, reportId, reportTitle, companyId, fromDate, toDate, rows, labels, hideFreeQuantity = false,
 }: Props) {
   const { fmt, fmtDate, fmtInt } = useFormatters();
   const { dp } = useFmt();
   const columns = useMemo(
     () => [...new Set(rows.flatMap(row => Object.keys(row).filter(key => !key.startsWith("_"))))]
-      .filter(key => rows.some(row => row[key] !== undefined)),
-    [rows],
+      .filter(key => rows.some(row => row[key] !== undefined))
+      .filter(key => !hideFreeQuantity || !/(^freeQty$|freeQuantity|free_qty)/i.test(key)),
+    [hideFreeQuantity, rows],
   );
   const numericKeys = useMemo(
     () => new Set(columns.filter(key => isNumericField(key, rows))),

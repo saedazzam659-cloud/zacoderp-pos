@@ -115,6 +115,8 @@ export default function FreeReturnsReport() {
     sellTotalIncVat: fmt(r.sellTotalIncVat),
   }));
 
+  if (user?.company?.showFreeQuantity === false) return null;
+
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">

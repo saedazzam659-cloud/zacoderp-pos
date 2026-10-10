@@ -2212,11 +2212,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <Input className="h-9 text-xs" type="text" inputMode="numeric" dir="ltr" value={qaQty}
             onChange={e => setQaQty(e.target.value.replace(/[^0-9]/g, ""))} />
         </div>
-        <div className="space-y-1">
+        {user?.company?.showFreeQuantity !== false && <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colFreeQty")}</label>
           <Input className="h-9 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono" type="text" inputMode="numeric" dir="ltr" value={qaFreeQty}
             onChange={e => setQaFreeQty(e.target.value.replace(/[^0-9]/g, ""))} />
-        </div>
+        </div>}
         <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colPrice")}</label>
           <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" placeholder="تلقائي" value={qaPrice}
@@ -2262,8 +2262,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // browser page itself does not grow a scrollbar.
   const displayLinesGrid = (() => {
     // Invoice mode gets an extra in-row cost-center column (توزيع تحليلي).
-    const gridCols = `38px 80px minmax(160px,1.3fr) 118px 110px 64px 64px 98px 122px 74px 108px${isInvoice ? " 150px" : ""} 34px`;
-    const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colFreeQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), "الضريبة %", t("salesDocForm.colTotal"), ...(isInvoice ? ["مركز التكلفة"] : []), ""];
+    const showFreeQuantity = user?.company?.showFreeQuantity !== false;
+    const gridCols = `38px 80px minmax(160px,1.3fr) 118px 110px 64px${showFreeQuantity ? " 64px" : ""} 98px 122px 74px 108px${isInvoice ? " 150px" : ""} 34px`;
+    const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), ...(showFreeQuantity ? [t("salesDocForm.colFreeQty")] : []), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), "الضريبة %", t("salesDocForm.colTotal"), ...(isInvoice ? ["مركز التكلفة"] : []), ""];
     const whName = (id: string) => (warehouses as any[]).find((w: any) => String(w.id) === String(id))?.nameAr ?? "—";
     const filled = lines;
     // Tabbed grid: removing the last row leaves the grid EMPTY (the friendly
@@ -2342,12 +2343,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     )}
                     <Input className="h-8 text-xs font-mono" type="text" inputMode="numeric" dir="ltr" value={l.qty}
                       onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
-                    <Input
+                    {showFreeQuantity && <Input
                       className={cn("h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono", fp.isReadOnly("freeQty") && "bg-muted/40 cursor-not-allowed")}
                       type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
                       readOnly={fp.isReadOnly("freeQty")}
                       title={fp.isReadOnly("freeQty") ? "للقراءة فقط حسب السياسة" : (t("salesDocForm.colFreeQtyHint") as string)}
-                      onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
+                      onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />}
                     <Input
                       className={cn("h-8 text-xs font-mono", l.appliedOfferId && l.appliedOfferName && "bg-emerald-50 border-emerald-300 text-emerald-800", fp.isReadOnly("unitPrice") && "bg-muted/40 cursor-not-allowed")}
                       type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
@@ -2503,7 +2504,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 // picker + auto-fill effects (defined earlier) already work
                 // identically across modes, so a newly added line inherits
                 // the default warehouse without any extra wiring here.
-                const gridCols = "110px minmax(260px,1.4fr) 160px 120px 90px 80px 110px 80px 100px 80px 130px 180px 40px";
+                const showFreeQuantity = user?.company?.showFreeQuantity !== false;
+                const gridCols = `110px minmax(260px,1.4fr) 160px 120px 90px 80px${showFreeQuantity ? " 110px" : ""} 80px 100px 80px 130px 180px 40px`;
                 const totalLabel = t("salesDocForm.colTotal");
                 const headers = [
                   t("salesDocForm.colItemCode"),
@@ -2511,7 +2513,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   t("salesDocForm.colWarehouse"),
                   t("salesDocForm.colUnit"),
                   t("salesDocForm.colQty"),
-                  t("salesDocForm.colFreeQty"),
+                  ...(showFreeQuantity ? [t("salesDocForm.colFreeQty")] : []),
                   t("salesDocForm.colPrice"),
                   t("salesDocForm.colDiscPct"),
                   t("salesDocForm.colDiscAmount"),
@@ -2590,14 +2592,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       })()}
                       <Input className="h-8 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
                         onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
-                      <Input className={cn(
+                      {showFreeQuantity && <Input className={cn(
                           "h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono",
                           fp.isReadOnly("freeQty") && "bg-muted/40 cursor-not-allowed"
                         )}
                         type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
                         readOnly={fp.isReadOnly("freeQty")}
                         title={fp.isReadOnly("freeQty") ? "للقراءة فقط حسب السياسة" : (t("salesDocForm.colFreeQtyHint") as string)}
-                        onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
+                        onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />}
                       <Input
                         className={cn(
                           "h-8 text-xs",

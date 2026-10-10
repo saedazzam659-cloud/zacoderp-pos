@@ -3076,6 +3076,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   const selectedIsThermal = templateIsThermal(selected);
   const { toast } = useToast();
   const { user, token } = useAuth() as any;
+  const showFreeQuantity = companyCfg.showFreeQuantity ?? user?.company?.showFreeQuantity;
 
   // ── Print language (template 14 «الأصلي» only, for now) ───────────────
   // Seed from the company default; the user can override per print job via
@@ -3283,10 +3284,20 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
       const resolved = map.get(Number(data.customer.accountId));
       if (resolved) (data.customer as any).accountCode = resolved;
     }
-    const renderedHtml = tmpl.fn(withManualSalesPrintPartyName(data));
-    const html = selectedIsThermal && !tmpl.thermal
-      ? forceThermalPaperSize(renderedHtml)
+    const printSource = withManualSalesPrintPartyName(data);
+    const printData = showFreeQuantity === false
+      ? { ...printSource, lines: (printSource as any).lines?.map((line: any) => ({ ...line, freeQty: 0 })) }
+      : printSource;
+    const renderedHtml = tmpl.fn(printData);
+    const freeSafeHtml = showFreeQuantity === false
+      ? renderedHtml
+          .replaceAll("إجمالي كميات الفاتورة (شاملة المجانية)", "إجمالي كميات الفاتورة")
+          .replaceAll("إجمالي الكميات (مع المجاني):", "إجمالي الكميات:")
+          .replaceAll("Total quantity (including free):", "Total quantity:")
       : renderedHtml;
+    const html = selectedIsThermal && !tmpl.thermal
+      ? forceThermalPaperSize(freeSafeHtml)
+      : freeSafeHtml;
     // Use a hidden same-origin iframe instead of `window.open` so popup
     // blockers don't kill auto-print after save (no user-gesture path)
     // and so the print preview always shows up — even when the print

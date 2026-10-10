@@ -1043,8 +1043,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     const byKey = Object.fromEntries(COLUMNS.map(c => [c.key, c]));
     return [...FIXED_LEAD, ...dataOrder.filter(k => !hiddenSet.has(k)), ...FIXED_TAIL]
       .map(k => byKey[k])
-      .filter(Boolean);
-  }, [dataOrder, hiddenSet]);
+      .filter(Boolean)
+      .filter((col: any) => col.key !== "freeQty" || user?.company?.showFreeQuantity !== false);
+  }, [dataOrder, hiddenSet, user?.company?.showFreeQuantity]);
 
   function moveCol(key: string, dir: -1 | 1) {
     setDataOrder(prev => {
@@ -1763,7 +1764,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     }
     const header = [
       "#","رقم الفاتورة","التاريخ","العميل","الرقم الضريبي","هاتف العميل","الفرع","المندوب",
-      "نوع الدفع","العملة","الكمية المجانية","المجموع","الخصم","الضريبة","الإجمالي","العمولة",
+      "نوع الدفع","العملة",
+      ...(user?.company?.showFreeQuantity !== false ? ["الكمية المجانية"] : []),
+      "المجموع","الخصم","الضريبة","الإجمالي","العمولة",
       "حالة السداد","القيد","ZATCA","الحالة","المصدر","ملاحظات",
     ];
     const rows = filtered.map((inv: any, idx: number) => [
@@ -1777,7 +1780,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       repMap[inv.salesRepId] ?? "",
       inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل",
       inv.currencyCode ?? "SAR",
-      Number(inv.totalFreeQty ?? 0).toString(),
+      ...(user?.company?.showFreeQuantity !== false ? [Number(inv.totalFreeQty ?? 0).toString()] : []),
       invGrossSubtotal(inv).toFixed(2),
       invTotalDiscount(inv).toFixed(2),
       Number(inv.vatAmount ?? 0).toFixed(2),
@@ -1972,7 +1975,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       { header: "المندوب",           key: "rep",          width: 14 },
       { header: "نوع الدفع",         key: "paymentLabel", width: 10 },
       { header: "العملة",            key: "currencyCode", width: 8  },
-      { header: "الكمية المجانية",   key: "freeQty",      width: 12 },
+      ...(user?.company?.showFreeQuantity !== false ? [{ header: "الكمية المجانية", key: "freeQty", width: 12 }] : []),
       { header: "المجموع",           key: "subtotal",     width: 12 },
       { header: "الخصم",             key: "discount",     width: 10 },
       { header: "الضريبة",           key: "vatAmount",    width: 12 },

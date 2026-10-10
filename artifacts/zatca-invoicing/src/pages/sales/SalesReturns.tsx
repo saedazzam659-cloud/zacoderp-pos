@@ -931,7 +931,7 @@ export default function SalesReturns() {
           }
           if (headerShare > 0)    parts.push(`− ${fmt(headerShare)} حصة الخصم الرأسي`);
           parts.push(`= ${fmt(lineNet)} صافي`);
-          parts.push(`÷ ${fmt(totalUnits)} وحدة${freeQty > 0 ? ` (${fmt(qty)} + ${fmt(freeQty)} مجاني)` : ""}`);
+          parts.push(`÷ ${fmt(totalUnits)} وحدة${user?.company?.showFreeQuantity !== false && freeQty > 0 ? ` (${fmt(qty)} + ${fmt(freeQty)} مجاني)` : ""}`);
           parts.push(`= ${fmt(effectivePrice)}`);
           const breakdown = parts.join(" ");
 
@@ -1476,11 +1476,11 @@ export default function SalesReturns() {
           <Input className="h-9 text-xs" type="text" inputMode="numeric" dir="ltr" value={qaQty}
             onChange={e => setQaQty(e.target.value.replace(/[^0-9]/g, ""))} />
         </div>
-        <div className="space-y-1">
+        {user?.company?.showFreeQuantity !== false && <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colFreeQty")}</label>
           <Input className="h-9 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono" type="text" inputMode="numeric" dir="ltr" value={qaFreeQty}
             onChange={e => setQaFreeQty(e.target.value.replace(/[^0-9]/g, ""))} />
-        </div>
+        </div>}
         <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{t("salesReturns.colPrice")}</label>
           <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" placeholder="تلقائي" value={qaPrice}
@@ -2603,7 +2603,7 @@ ${sections}
                   { k: "wh", l: t("salesReturns.colWarehouse") },
                   { k: "unit", l: t("salesReturns.colUnit") },
                   { k: "qty", l: t("salesReturns.colQty") },
-                  { k: "freeQty", l: t("salesDocForm.colFreeQty") },
+                  ...(user?.company?.showFreeQuantity !== false ? [{ k: "freeQty", l: t("salesDocForm.colFreeQty") }] : []),
                   { k: "price", l: t("salesReturns.colPrice") },
                   { k: "disc", l: t("salesReturns.colDiscPct") },
                   { k: "discAmt", l: "قيمة الخصم" },
@@ -2670,10 +2670,10 @@ ${sections}
                     })()}
                     <Input className="h-8 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
                       onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
-                    <Input className="h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono"
+                    {user?.company?.showFreeQuantity !== false && <Input className="h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono"
                       type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
                       title={t("salesDocForm.colFreeQtyHint") as string}
-                      onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
+                      onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />}
                     {/* Unit price + optional "سعر معدّل" badge when the
                         picker auto-adjusted the price for free units +
                         discounts (Option B). The badge is purely
@@ -2693,7 +2693,7 @@ ${sections}
                           className="text-[10px] text-emerald-700 font-medium leading-tight cursor-help truncate"
                           title={l._pricingNote}
                         >
-                          ✻ سعر معدّل (مجاني/خصم)
+                          ✻ سعر معدّل{user?.company?.showFreeQuantity === false ? "" : " (مجاني/خصم)"}
                         </span>
                       )}
                     </div>
@@ -3403,7 +3403,7 @@ ${sections}
                   <th className="p-2 border text-center">الوحدة</th>
                   <th className="p-2 border text-end">المباع</th>
                   <th className="p-2 border text-end">سعر البيع</th>
-                  <th className="p-2 border text-end">مجاني</th>
+                  {user?.company?.showFreeQuantity !== false && <th className="p-2 border text-end">مجاني</th>}
                   <th className="p-2 border text-end">الخصم</th>
                   <th
                     className="p-2 border text-end bg-emerald-50 text-emerald-900"
@@ -3449,7 +3449,7 @@ ${sections}
                       <td className="p-2 border text-center">{r.srcLine.unit ?? ""}</td>
                       <td className="p-2 border text-end font-mono">{fmt(Number(r.srcLine.qty ?? 0))}</td>
                       <td className="p-2 border text-end font-mono">{fmt(Number(r.srcLine.unitPrice ?? 0))}</td>
-                      <td className="p-2 border text-end font-mono">{fmt(Number(r.srcLine.freeQty ?? 0))}</td>
+                      {user?.company?.showFreeQuantity !== false && <td className="p-2 border text-end font-mono">{fmt(Number(r.srcLine.freeQty ?? 0))}</td>}
                       <td className="p-2 border text-end font-mono">{discCell}</td>
                       <td
                         className={cn(

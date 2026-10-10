@@ -745,7 +745,7 @@ export default function PurchaseOrderForm() {
     tr("lineCols.warehouse"),
     tr("lineCols.unit"),
     tr("lineCols.qty"),
-    t("salesDocForm.colFreeQty"),
+    ...(user?.company?.showFreeQuantity !== false ? [t("salesDocForm.colFreeQty")] : []),
     tr("lineCols.unitPrice"),
     tr("lineCols.discount"),
     tr("lineCols.vat"),
@@ -944,11 +944,11 @@ export default function PurchaseOrderForm() {
           <Input className="h-9 text-xs" type="text" inputMode="numeric" dir="ltr" value={qaQty}
             onChange={e => setQaQty(e.target.value.replace(/[^0-9]/g, ""))} />
         </div>
-        <div className="space-y-1">
+        {user?.company?.showFreeQuantity !== false && <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colFreeQty")}</label>
           <Input className="h-9 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono" type="text" inputMode="numeric" dir="ltr" value={qaFreeQty}
             onChange={e => setQaFreeQty(e.target.value.replace(/[^0-9]/g, ""))} />
-        </div>
+        </div>}
         <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{tr("lineCols.unitPrice")}</label>
           <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" placeholder="تلقائي" value={qaPrice}
@@ -1335,10 +1335,10 @@ export default function PurchaseOrderForm() {
                       })()}
                       <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.qty}
                         onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9.]/g, ""))} />
-                      <Input className="h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono"
+                      {user?.company?.showFreeQuantity !== false && <Input className="h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono"
                         type="text" inputMode="numeric" value={l.freeQty}
                         title={t("salesDocForm.colFreeQtyHint") as string}
-                        onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />
+                        onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />}
                       <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}
                         onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}

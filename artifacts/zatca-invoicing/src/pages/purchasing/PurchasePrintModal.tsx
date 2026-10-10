@@ -1555,6 +1555,7 @@ interface Props {
 
 export default function PurchasePrintModal({ open, onClose, data }: Props) {
     const gate = useDemoActionGate();
+  const { user } = useAuth() as any;
   const [selected, setSelected] = useState(1);
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -1578,7 +1579,16 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
     const printData: PrintData = !data.supplier && data.doc?.supplierId == null && manualName
       ? { ...qrPrintData, supplier: { nameAr: manualName, nameEn: manualName } }
       : qrPrintData;
-    const html = tmpl.fn(printData);
+    const visiblePrintData: PrintData = user?.company?.showFreeQuantity === false
+      ? { ...printData, lines: (printData.lines ?? []).map((line: any) => ({ ...line, freeQty: 0 })) }
+      : printData;
+    const renderedHtml = tmpl.fn(visiblePrintData);
+    const html = user?.company?.showFreeQuantity === false
+      ? renderedHtml
+          .replaceAll("إجمالي كميات الفاتورة (شاملة المجانية)", "إجمالي كميات الفاتورة")
+          .replaceAll("إجمالي الكميات (مع المجاني):", "إجمالي الكميات:")
+          .replaceAll("Total quantity (including free):", "Total quantity:")
+      : renderedHtml;
     const win = window.open("", "_blank", "width=900,height=700");
     if (!win) return;
     win.document.open();

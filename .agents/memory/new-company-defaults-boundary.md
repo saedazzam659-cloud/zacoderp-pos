@@ -38,3 +38,9 @@ Fresh companies start with cash as the default payment type for sales invoices, 
 **Why:** The user explicitly requested cash instead of credit for every new-company invoice flow, while keeping payment preferences editable and avoiding changes to existing companies.
 
 **How to apply:** Set these values only in fresh-company initialization. Do not backfill existing tenants or override settings in restore/import flows.
+
+Free-quantity visibility is a company-level presentation preference: existing companies stay visible by default, while newly created companies start hidden. Hiding the field must not clear saved quantities or change stock, tax, or accounting calculations.
+
+**Why:** The user explicitly requested the new-company default while preserving existing-company behavior and historical quantity data.
+
+**How to apply:** Keep the schema default enabled for existing rows; set the hidden default only during fresh-company initialization. Apply visibility to entry forms, reports, and printed views, but preserve stored values and business calculations.

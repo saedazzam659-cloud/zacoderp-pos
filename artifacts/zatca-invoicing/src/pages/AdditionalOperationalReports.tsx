@@ -347,6 +347,7 @@ export default function AdditionalOperationalReportsPage({ domain }: { domain: D
             toDate={String(applied.params.toDate ?? "")}
             rows={rows}
             labels={fieldLabels}
+            hideFreeQuantity={user?.company?.showFreeQuantity === false}
           />
         )}
       </div>

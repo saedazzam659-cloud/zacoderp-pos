@@ -2007,7 +2007,7 @@ router.post("/register", async (req, res) => {
     res.status(201).json({
       token: sessionToken,
       sessionId,
-      user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role, companyId: company.id, company: { ...company, menuLayout: "topnav", hideQuickAddBar: true }, subscription },
+      user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role, companyId: company.id, company: { ...company, menuLayout: "topnav", hideQuickAddBar: true, showFreeQuantity: false }, subscription },
       accountingDefaults,
       ...(domainBindWarning ? { domainBindWarning } : {}),
     });

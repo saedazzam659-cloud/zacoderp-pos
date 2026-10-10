@@ -396,7 +396,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   const {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
-    decimalPlaces, showZeros, hideQuickAddBar, autoPostingEnabled,
+    decimalPlaces, showZeros, hideQuickAddBar, showFreeQuantity, autoPostingEnabled,
     showCustomerDebitNotes, showSupplierCreditNotes,
     allowUnbalancedOpeningBalances, openingBalanceReminderMessage,
     openingBalanceReminderStartTime, openingBalanceReminderRepeatCount,
@@ -455,7 +455,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
-    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; autoPostingEnabled?: boolean;
+    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; showFreeQuantity?: boolean; autoPostingEnabled?: boolean;
     showCustomerDebitNotes?: boolean; showSupplierCreditNotes?: boolean;
     allowUnbalancedOpeningBalances?: boolean;
     openingBalanceReminderMessage?: string;
@@ -567,6 +567,13 @@ router.patch("/:id/general-settings", async (req, res) => {
   if (showZeros !== undefined) updates.showZeros = !!showZeros;
   // UX-only toggle: hide the quick add-item bar on document item tabs.
   if (hideQuickAddBar !== undefined) updates.hideQuickAddBar = !!hideQuickAddBar;
+  if (showFreeQuantity !== undefined) {
+    if (typeof showFreeQuantity !== "boolean") {
+      res.status(400).json({ error: "showFreeQuantity يجب أن تكون قيمة منطقية" });
+      return;
+    }
+    updates.showFreeQuantity = showFreeQuantity;
+  }
   // Visibility-only controls; reject non-boolean input rather than treating
   // the string "false" as enabled.
   for (const [key, value] of [

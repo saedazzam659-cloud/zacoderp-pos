@@ -63,6 +63,7 @@ export async function seedNewCompanyDefaults(
     await tx.update(companiesTable).set({
       menuLayout: "topnav",
       hideQuickAddBar: true,
+      showFreeQuantity: false,
       defaultSalesPaymentType: "cash",
       defaultSalesReturnPaymentType: "cash",
       defaultPurchasePaymentType: "cash",

@@ -158,6 +158,7 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       decimalPlaces:             source.decimalPlaces,
       showZeros:                 source.showZeros,
       hideQuickAddBar:           source.hideQuickAddBar,
+      showFreeQuantity:          false,
       showCustomerDebitNotes:    source.showCustomerDebitNotes,
       showSupplierCreditNotes:   source.showSupplierCreditNotes,
       menuPermissions:           normalizeCompanyMenuPermissions(source.menuPermissions),

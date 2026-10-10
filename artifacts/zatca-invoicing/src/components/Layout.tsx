@@ -1387,7 +1387,9 @@ function InventoryReportsNavGroup({
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={inventoryReportsHeader} location={location} onClick={onNavigate} indent />
-          {inventoryReportsSubNav.map(item => (
+          {inventoryReportsSubNav
+            .filter(item => item.href !== "/inventory/reports/free-quantities" || user?.company?.showFreeQuantity !== false)
+            .map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>

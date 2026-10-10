@@ -145,7 +145,8 @@ export default function InventoryReportsHub() {
   const isRtl = i18n.language === "ar";
   const visibleReports = INVENTORY_REPORTS.filter(
     report => report.href !== "/inventory/alerts" || canViewSmartAlerts,
-  ).filter(report => !report.key.startsWith("clothing") || canViewClothing);
+  ).filter(report => !report.key.startsWith("clothing") || canViewClothing)
+    .filter(report => report.key !== "freeQuantities" || user?.company?.showFreeQuantity !== false);
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div>
