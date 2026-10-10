@@ -432,6 +432,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printTemplateSales, printTemplateReceipt,
     printTemplatePayment, printTemplateJournal,
     defaultSalesPaymentType, defaultSalesReturnPaymentType, paymentMethodLabels,
+    topbarQuickActions,
     // Journal-entry form behavior: "auto" (keep form open + fresh draft) or
     // "manual" (navigate back to entries list after save). See companies
     // schema for the full semantics.
@@ -497,6 +498,11 @@ router.patch("/:id/general-settings", async (req, res) => {
     printTemplatePayment?: string; printTemplateJournal?: string;
     defaultSalesPaymentType?: string; defaultSalesReturnPaymentType?: string;
     paymentMethodLabels?: Partial<Record<"cash" | "credit" | "bank", string>>;
+    topbarQuickActions?: Partial<Record<
+      "salesInvoices" | "salesReturns" | "purchaseInvoices" | "purchaseReturns" |
+      "receiptVoucher" | "paymentVoucher" | "newCustomer" | "newSupplier" | "newJournalEntry",
+      boolean
+    >>;
     journalEntryFormMode?: string;
     journalSmartForm?: boolean;
     menuLayout?: string;
@@ -746,6 +752,27 @@ router.patch("/:id/general-settings", async (req, res) => {
       if (typeof raw === "string") labels[key] = raw.trim().slice(0, 32);
     }
     updates.paymentMethodLabels = labels;
+  }
+  if (topbarQuickActions !== undefined) {
+    const actionKeys = [
+      "salesInvoices", "salesReturns", "purchaseInvoices", "purchaseReturns",
+      "receiptVoucher", "paymentVoucher", "newCustomer", "newSupplier", "newJournalEntry",
+    ] as const;
+    if (!topbarQuickActions || typeof topbarQuickActions !== "object" || Array.isArray(topbarQuickActions)) {
+      res.status(400).json({ error: "إعدادات اختصارات الشريط غير صالحة" }); return;
+    }
+    const entries = Object.entries(topbarQuickActions);
+    if (entries.some(([key, value]) => !actionKeys.includes(key as typeof actionKeys[number]) || typeof value !== "boolean")) {
+      res.status(400).json({ error: "يجب أن تكون خيارات الاختصارات قيمًا منطقية معروفة" }); return;
+    }
+    const [currentCompany] = await db.select({ topbarQuickActions: companiesTable.topbarQuickActions })
+      .from(companiesTable).where(eq(companiesTable.id, id)).limit(1);
+    updates.topbarQuickActions = {
+      salesInvoices: true, salesReturns: true, purchaseInvoices: true, purchaseReturns: true,
+      receiptVoucher: true, paymentVoucher: true, newCustomer: true, newSupplier: true, newJournalEntry: true,
+      ...(currentCompany?.topbarQuickActions ?? {}),
+      ...topbarQuickActions,
+    };
   }
   if (invoicePrintLanguage !== undefined) {
     const v = String(invoicePrintLanguage);

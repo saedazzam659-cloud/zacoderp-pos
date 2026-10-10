@@ -1606,6 +1606,7 @@
       "purchaseInvoice": "Purchase Invoice",
       "purchaseReturn": "Purchase Return",
       "paymentVoucher": "Payment Voucher",
+      "newJournalEntry": "New Journal Entry",
       "chartOfAccounts": "Chart of Accounts",
       "monthlyRevenueStats": "Monthly Revenue Stats",
       "monthlyStatsDesc": "Revenue and VAT comparison over recent months",

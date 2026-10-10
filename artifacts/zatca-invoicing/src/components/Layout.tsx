@@ -4005,6 +4005,33 @@ function TopBar({
   const canViewPurchaseReturns = usePermission("purchase_returns", "view");
   const canCreateReceiptVoucher = usePermission("receipt_vouchers", "create");
   const canCreatePaymentVoucher = usePermission("payment_vouchers", "create");
+  const canCreateCustomer = usePermission("customers", "create");
+  const canCreateSupplier = usePermission("suppliers", "create");
+  const canCreateJournalEntry = usePermission("journal_entries", "create");
+  type QuickActionKey =
+    | "salesInvoices" | "salesReturns" | "purchaseInvoices" | "purchaseReturns"
+    | "receiptVoucher" | "paymentVoucher" | "newCustomer" | "newSupplier" | "newJournalEntry";
+  const quickActionVisibility: Partial<Record<QuickActionKey, boolean>> =
+    user?.company?.topbarQuickActions ?? {};
+  const quickActionButtons: {
+    key: QuickActionKey;
+    allowed: boolean;
+    href: string;
+    label: string;
+    icon: LucideIcon;
+    tone: string;
+    alwaysShowLabel?: boolean;
+  }[] = [
+    { key: "salesInvoices", allowed: canViewSalesInvoices, href: "/sales/invoices", label: t("nav.salesInvoices"), icon: ShoppingBag, tone: "border-blue-200 bg-blue-50/70 text-blue-800 hover:border-blue-300 hover:bg-blue-100 hover:text-blue-900" },
+    { key: "salesReturns", allowed: canViewSalesReturns, href: "/sales/returns", label: t("nav.salesReturns"), icon: Undo2, tone: "border-orange-200 bg-orange-50/70 text-orange-800 hover:border-orange-300 hover:bg-orange-100 hover:text-orange-900" },
+    { key: "purchaseInvoices", allowed: canViewPurchaseInvoices, href: "/purchasing/invoices", label: t("nav.purchaseInvoices"), icon: ShoppingCart, tone: "border-indigo-200 bg-indigo-50/70 text-indigo-800 hover:border-indigo-300 hover:bg-indigo-100 hover:text-indigo-900" },
+    { key: "purchaseReturns", allowed: canViewPurchaseReturns, href: "/purchasing/returns", label: t("nav.purchaseReturns"), icon: RotateCcw, tone: "border-amber-200 bg-amber-50/70 text-amber-800 hover:border-amber-300 hover:bg-amber-100 hover:text-amber-900" },
+    { key: "receiptVoucher", allowed: canCreateReceiptVoucher, href: "/cash/receipt-vouchers/new", label: t("pages.dashboard.receiptVoucher"), icon: ArrowDownCircle, tone: "border-emerald-200 bg-emerald-50/70 text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-900", alwaysShowLabel: true },
+    { key: "paymentVoucher", allowed: canCreatePaymentVoucher, href: "/cash/payment-vouchers/new", label: t("pages.dashboard.paymentVoucher"), icon: ArrowUpCircle, tone: "border-rose-200 bg-rose-50/70 text-rose-800 hover:border-rose-300 hover:bg-rose-100 hover:text-rose-900", alwaysShowLabel: true },
+    { key: "newCustomer", allowed: canCreateCustomer, href: "/customers/new", label: t("pages.dashboard.newCustomer"), icon: Users, tone: "border-cyan-200 bg-cyan-50/70 text-cyan-800 hover:border-cyan-300 hover:bg-cyan-100 hover:text-cyan-900" },
+    { key: "newSupplier", allowed: canCreateSupplier, href: "/suppliers/new", label: t("pages.dashboard.newSupplier"), icon: Truck, tone: "border-violet-200 bg-violet-50/70 text-violet-800 hover:border-violet-300 hover:bg-violet-100 hover:text-violet-900" },
+    { key: "newJournalEntry", allowed: canCreateJournalEntry, href: "/accounting/journals/new", label: t("pages.dashboard.newJournalEntry"), icon: BookOpen, tone: "border-sky-200 bg-sky-50/70 text-sky-800 hover:border-sky-300 hover:bg-sky-100 hover:text-sky-900" },
+  ];
   const crumbs = useMemo(() => getBreadcrumbs(location, t), [location, t, i18n.language]);
   // On agent domains the visible app title is the agent's brand (e.g. «طفرة»)
   // on every screen — not the default Zacode name.
@@ -4062,47 +4089,27 @@ function TopBar({
             Phones see only NotificationBell + Avatar; everything else is
             hidden behind `md:` so the toolbar fits within ~120px after
             the hamburger and the app title. */}
-        <div className="flex items-center gap-1 shrink-0" aria-label="اختصارات المستندات">
-          {/* Quick links to documents — desktop/tablet only; voucher actions have
-              visible labels so they are not confused with the four invoice icons. */}
-          {canViewSalesInvoices && (
-            <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10" title={t("nav.salesInvoices")} aria-label={t("nav.salesInvoices")}
-              onClick={() => navigate("/sales/invoices")}>
-              <ShoppingBag className="h-[18px] w-[18px]" />
-            </Button>
-          )}
-          {canViewSalesReturns && (
-            <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-orange-600 hover:bg-orange-50" title={t("nav.salesReturns")} aria-label={t("nav.salesReturns")}
-              onClick={() => navigate("/sales/returns")}>
-              <Undo2 className="h-[18px] w-[18px]" />
-            </Button>
-          )}
-          {canViewPurchaseInvoices && (
-            <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10" title={t("nav.purchaseInvoices")} aria-label={t("nav.purchaseInvoices")}
-              onClick={() => navigate("/purchasing/invoices")}>
-              <ShoppingCart className="h-[18px] w-[18px]" />
-            </Button>
-          )}
-          {canViewPurchaseReturns && (
-            <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-orange-600 hover:bg-orange-50" title={t("nav.purchaseReturns")} aria-label={t("nav.purchaseReturns")}
-              onClick={() => navigate("/purchasing/returns")}>
-              <RotateCcw className="h-[18px] w-[18px]" />
-            </Button>
-          )}
-          {canCreateReceiptVoucher && (
-            <Button variant="outline" size="sm" className="hidden md:inline-flex h-9 gap-1.5 rounded-lg border-emerald-200 bg-emerald-50/70 px-2.5 text-xs font-semibold text-emerald-800 shadow-sm transition-all hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-100 hover:shadow"
-              title={t("nav.receiptVouchers")} aria-label={t("nav.receiptVouchers")} onClick={() => navigate("/cash/receipt-vouchers/new")}>
-              <ArrowDownCircle className="h-4 w-4 shrink-0" />
-              <span>{t("pages.dashboard.receiptVoucher")}</span>
-            </Button>
-          )}
-          {canCreatePaymentVoucher && (
-            <Button variant="outline" size="sm" className="hidden md:inline-flex h-9 gap-1.5 rounded-lg border-rose-200 bg-rose-50/70 px-2.5 text-xs font-semibold text-rose-800 shadow-sm transition-all hover:-translate-y-0.5 hover:border-rose-300 hover:bg-rose-100 hover:shadow"
-              title={t("nav.paymentVouchers")} aria-label={t("nav.paymentVouchers")} onClick={() => navigate("/cash/payment-vouchers/new")}>
-              <ArrowUpCircle className="h-4 w-4 shrink-0" />
-              <span>{t("pages.dashboard.paymentVoucher")}</span>
-            </Button>
-          )}
+        <div className="flex items-center gap-1 shrink-0" aria-label={t("pages.dashboard.quickActions")}>
+          {quickActionButtons
+            .filter(action => action.allowed && quickActionVisibility[action.key] !== false)
+            .map(({ key, href, label, icon: Icon, tone, alwaysShowLabel }) => (
+              <Button
+                key={key}
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "hidden md:inline-flex h-9 shrink-0 gap-1 rounded-lg border px-2 text-[11px] font-semibold shadow-sm transition-all hover:-translate-y-0.5 hover:shadow",
+                  tone,
+                )}
+                title={label}
+                aria-label={label}
+                data-testid={`topbar-quick-action-${key}`}
+                onClick={() => navigate(href)}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className={alwaysShowLabel ? "" : "hidden 2xl:inline"}>{label}</span>
+              </Button>
+            ))}
           <div className="hidden md:block h-5 w-px bg-border mx-1" />
           <div className="hidden md:flex"><LanguageSwitcher variant="compact" /></div>
           <Button

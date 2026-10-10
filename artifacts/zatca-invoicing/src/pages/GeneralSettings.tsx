@@ -1451,6 +1451,13 @@ export default function GeneralSettings() {
             <span className="truncate">إعدادات طرق الدفع</span>
           </TabsTrigger>
           <TabsTrigger
+            value="quickActions"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Sparkles className="h-4 w-4 shrink-0" />
+            <span className="truncate">اختصارات الشريط العلوي</span>
+          </TabsTrigger>
+          <TabsTrigger
             value="printPrefs"
             className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
           >
@@ -3256,6 +3263,10 @@ export default function GeneralSettings() {
 
         <TabsContent value="paymentPrefs" className="mt-5 space-y-6">
           <PaymentPreferencesTab user={user} token={token} setUser={setUser} />
+        </TabsContent>
+
+        <TabsContent value="quickActions" className="mt-5 space-y-6">
+          <QuickActionVisibilityTab user={user} token={token} setUser={setUser} />
         </TabsContent>
 
         {/* ═══ TAB 9: Auto Logout (idle timeout) ═══════════════════════════ */}
@@ -5067,6 +5078,119 @@ function PaymentPreferencesTab({ user, token, setUser }: { user: any; token: str
       <div className="flex justify-end">
         <Button onClick={() => void save()} disabled={saving || !cid}>
           {saving ? <><Loader2 className="h-4 w-4 ml-2 animate-spin" />جاري الحفظ...</> : <><Save className="h-4 w-4 ml-2" />حفظ إعدادات الدفع</>}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+type TopbarQuickActionKey =
+  | "salesInvoices" | "salesReturns" | "purchaseInvoices" | "purchaseReturns"
+  | "receiptVoucher" | "paymentVoucher" | "newCustomer" | "newSupplier" | "newJournalEntry";
+
+const TOPBAR_QUICK_ACTION_DEFAULTS: Record<TopbarQuickActionKey, boolean> = {
+  salesInvoices: true,
+  salesReturns: true,
+  purchaseInvoices: true,
+  purchaseReturns: true,
+  receiptVoucher: true,
+  paymentVoucher: true,
+  newCustomer: true,
+  newSupplier: true,
+  newJournalEntry: true,
+};
+
+function QuickActionVisibilityTab({ user, token, setUser }: { user: any; token: string; setUser: any }) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const company = user?.company ?? {};
+  const companyId = company.id ?? user?.companyId;
+  const [actions, setActions] = useState<Record<TopbarQuickActionKey, boolean>>({
+    ...TOPBAR_QUICK_ACTION_DEFAULTS,
+    ...(company.topbarQuickActions ?? {}),
+  });
+  const [saving, setSaving] = useState(false);
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const rows: { key: TopbarQuickActionKey; label: string; description: string }[] = [
+    { key: "salesInvoices", label: t("nav.salesInvoices"), description: "إظهار اختصار فواتير المبيعات في الشريط العلوي." },
+    { key: "salesReturns", label: t("nav.salesReturns"), description: "إظهار اختصار مرتجعات المبيعات في الشريط العلوي." },
+    { key: "purchaseInvoices", label: t("nav.purchaseInvoices"), description: "إظهار اختصار فواتير المشتريات في الشريط العلوي." },
+    { key: "purchaseReturns", label: t("nav.purchaseReturns"), description: "إظهار اختصار مرتجعات المشتريات في الشريط العلوي." },
+    { key: "receiptVoucher", label: t("pages.dashboard.receiptVoucher"), description: "إظهار زر إنشاء سند قبض." },
+    { key: "paymentVoucher", label: t("pages.dashboard.paymentVoucher"), description: "إظهار زر إنشاء سند صرف." },
+    { key: "newCustomer", label: t("pages.dashboard.newCustomer"), description: "إظهار زر إضافة عميل." },
+    { key: "newSupplier", label: t("pages.dashboard.newSupplier"), description: "إظهار زر إضافة مورد." },
+    { key: "newJournalEntry", label: t("pages.dashboard.newJournalEntry"), description: "إظهار زر إنشاء قيد محاسبي." },
+  ];
+
+  useEffect(() => {
+    setActions({
+      ...TOPBAR_QUICK_ACTION_DEFAULTS,
+      ...(company.topbarQuickActions ?? {}),
+    });
+  }, [company.id, company.topbarQuickActions]);
+
+  async function save() {
+    if (!companyId || saving) return;
+    setSaving(true);
+    try {
+      const payload = { topbarQuickActions: actions };
+      const response = await fetch(`${API}/api/companies/${companyId}/general-settings`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "تعذر حفظ إعدادات الاختصارات");
+      setUser?.((current: any) => current ? {
+        ...current,
+        company: { ...current.company, ...payload },
+      } : current);
+      qc.invalidateQueries({ queryKey: ["auth-me"] });
+      toast({ title: "تم حفظ إعدادات الاختصارات" });
+    } catch (error: any) {
+      toast({ title: error?.message ?? "تعذر حفظ إعدادات الاختصارات", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-5 space-y-5">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <Sparkles className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="font-semibold text-base">أزرار الاختصارات في الشريط العلوي</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            تحكم في الأزرار الظاهرة لجميع مستخدمي الشركة. إخفاء الزر هنا لا يمنح صلاحية إضافية؛ يظل كل زر مقيدًا بصلاحية المستخدم.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {rows.map(({ key, label, description }) => (
+          <div key={key} className="flex min-h-[76px] items-center justify-between gap-3 rounded-xl border bg-background px-4 py-3 transition-colors hover:border-primary/30 hover:bg-primary/[0.02]">
+            <div className="min-w-0">
+              <Label htmlFor={`topbar-action-${key}`} className="cursor-pointer text-sm font-semibold">{label}</Label>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{description}</p>
+            </div>
+            <Switch
+              id={`topbar-action-${key}`}
+              checked={actions[key]}
+              onCheckedChange={(checked) => setActions((current) => ({ ...current, [key]: checked }))}
+              aria-label={`${actions[key] ? "إخفاء" : "إظهار"} ${label}`}
+              data-testid={`topbar-action-toggle-${key}`}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={() => void save()} disabled={saving || !companyId} className="gap-2">
+          {saving ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الحفظ...</> : <><Save className="h-4 w-4" />حفظ إعدادات الاختصارات</>}
         </Button>
       </div>
     </div>

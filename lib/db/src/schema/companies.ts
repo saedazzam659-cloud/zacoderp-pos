@@ -145,6 +145,16 @@ export const companiesTable = pgTable("companies", {
   // Display-only aliases. Internal payment keys (cash/credit/bank) remain stable.
   paymentMethodLabels: jsonb("payment_method_labels").$type<Partial<Record<"cash" | "credit" | "bank", string>>>()
     .notNull().default({}),
+  // Company-wide visibility preferences for document shortcuts in the top bar.
+  // Defaults preserve the current shortcut set for existing tenants.
+  topbarQuickActions: jsonb("topbar_quick_actions").$type<Partial<Record<
+    "salesInvoices" | "salesReturns" | "purchaseInvoices" | "purchaseReturns" |
+    "receiptVoucher" | "paymentVoucher" | "newCustomer" | "newSupplier" | "newJournalEntry",
+    boolean
+  >>>().notNull().default({
+    salesInvoices: true, salesReturns: true, purchaseInvoices: true, purchaseReturns: true,
+    receiptVoucher: true, paymentVoucher: true, newCustomer: true, newSupplier: true, newJournalEntry: true,
+  }),
   // ─── Per-document-type auto-posting toggles ───────────────────────────
   // Each flag controls whether saving a document of that type immediately
   // posts the resulting journal entry (true) or leaves it as a draft for

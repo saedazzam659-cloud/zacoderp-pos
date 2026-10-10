@@ -1601,6 +1601,7 @@
       "purchaseInvoice": "فاتورة مشتريات",
       "purchaseReturn": "مرتجع مشتريات",
       "paymentVoucher": "سند صرف",
+      "newJournalEntry": "قيد محاسبي",
       "chartOfAccounts": "شجرة الحسابات",
       "monthlyRevenueStats": "إحصائيات الإيرادات الشهرية",
       "monthlyStatsDesc": "مقارنة الإيرادات والضريبة خلال آخر الأشهر",
