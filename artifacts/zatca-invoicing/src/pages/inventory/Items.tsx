@@ -1350,9 +1350,10 @@ export default function Items() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
-  const { user } = useAuth();
+  const { user, actingCompanyId } = useAuth();
   const { fmt, fmtQty } = useFmt();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const subgroupCompanyId = actingCompanyId ?? cid;
   const qc = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -1386,7 +1387,7 @@ export default function Items() {
     queryFn: () => inventoryApi.getItemGroups(cid),
   });
   const { data: subgroups = [] } = useQuery({
-    queryKey: ["item-subgroups"],
+    queryKey: ["item-subgroups", subgroupCompanyId],
     queryFn: () => inventoryApi.getItemSubgroups(),
   });
   const { data: posGroups = [] } = useListPosItemGroups();

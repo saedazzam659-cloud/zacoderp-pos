@@ -11,17 +11,18 @@ import { useToast } from "@/hooks/use-toast";
 const EMPTY = { parentGroupId: "", nameAr: "", nameEn: "", description: "", isActive: true, sortOrder: "0" };
 
 export default function ItemSubgroups() {
-  const { user } = useAuth() as any;
-  const cid = user?.company?.id;
+  const { user, actingCompanyId } = useAuth() as any;
+  const cid = actingCompanyId ?? user?.company?.id;
   const qc = useQueryClient();
   const { toast } = useToast();
   const [form, setForm] = useState<any>(EMPTY);
   const [editId, setEditId] = useState<number | null>(null);
   const groupsQuery = useQuery({ queryKey: ["item-groups", cid], queryFn: () => inventoryApi.getItemGroups(cid) });
-  const rowsQuery = useQuery({ queryKey: ["item-subgroups"], queryFn: () => inventoryApi.getItemSubgroups() });
+  const subgroupQueryKey = ["item-subgroups", cid];
+  const rowsQuery = useQuery({ queryKey: subgroupQueryKey, queryFn: () => inventoryApi.getItemSubgroups(), enabled: Boolean(cid) });
   const groups = (groupsQuery.data ?? []).filter((g: any) => !g.isPosGroup);
   const rows = rowsQuery.data ?? [];
-  const refresh = () => qc.invalidateQueries({ queryKey: ["item-subgroups"] });
+  const refresh = () => qc.invalidateQueries({ queryKey: subgroupQueryKey });
   const save = useMutation({
     mutationFn: () => editId ? inventoryApi.updateItemSubgroup(editId, { ...form, parentGroupId: Number(form.parentGroupId), sortOrder: Number(form.sortOrder) }) : inventoryApi.createItemSubgroup({ ...form, parentGroupId: Number(form.parentGroupId), sortOrder: Number(form.sortOrder) }),
     onSuccess: () => { refresh(); setForm(EMPTY); setEditId(null); toast({ title: "تم حفظ المجموعة الفرعية" }); },
