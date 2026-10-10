@@ -21,7 +21,7 @@ import { db, pool } from "@workspace/db";
 import { manufacturingSettingsTable, productionOrdersTable } from "@workspace/db/schema";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
-  warehouseGroupsTable, warehousesTable, itemGroupsTable, unitsTable,
+  warehouseGroupsTable, warehousesTable, itemGroupsTable, itemSubgroupsTable, unitsTable,
   brandsTable, itemBrandsTable,
   itemsTable, itemUnitPricesTable, stockBalanceTable, stockLedgerTable,
   stockTransfersTable, stockTransferItemsTable,
@@ -117,6 +117,7 @@ router.use(pathRbac([
   ["/warehouse-groups",         "warehouses"],
   ["/warehouses",               "warehouses"],
   ["/item-groups",              "items"],
+  ["/item-subgroups",           "items"],
   ["/pos-item-groups",          "items"],
   ["/units",                    "items"],
   // Brands master — own module key rolling up to the inventory company gate.
@@ -480,6 +481,94 @@ router.get("/item-groups", async (req, res) => {
   res.json(rows);
 });
 
+router.get("/item-subgroups", async (req, res): Promise<void> => {
+  const cid = guard(req, res); if (!cid) return;
+  const rows = await db.select().from(itemSubgroupsTable)
+    .where(eq(itemSubgroupsTable.companyId, cid))
+    .orderBy(asc(itemSubgroupsTable.sortOrder), asc(itemSubgroupsTable.nameAr));
+  res.json(rows);
+});
+
+router.post("/item-subgroups", async (req, res): Promise<void> => {
+  const cid = guard(req, res); if (!cid) return;
+  const parentGroupId = Number(req.body?.parentGroupId);
+  const nameAr = typeof req.body?.nameAr === "string" ? req.body.nameAr.trim() : "";
+  if (!Number.isSafeInteger(parentGroupId) || parentGroupId <= 0 || !nameAr) {
+    res.status(400).json({ error: "المجموعة الرئيسية واسم المجموعة الفرعية مطلوبان" }); return;
+  }
+  const [parent] = await db.select({ id: itemGroupsTable.id }).from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, parentGroupId), eq(itemGroupsTable.companyId, cid), eq(itemGroupsTable.isPosGroup, false),
+  ));
+  if (!parent) { res.status(400).json({ error: "المجموعة الرئيسية غير صالحة" }); return; }
+  const siblings = await db.select().from(itemSubgroupsTable).where(and(
+    eq(itemSubgroupsTable.companyId, cid), eq(itemSubgroupsTable.parentGroupId, parentGroupId),
+  ));
+  if (siblings.some((row) => row.nameAr.trim().toLowerCase() === nameAr.toLowerCase())) {
+    res.status(409).json({ error: "اسم المجموعة الفرعية مستخدم داخل المجموعة الرئيسية" }); return;
+  }
+  const code = String(req.body?.code ?? "").trim() || nextEntityCode("SUB", siblings.map((row) => row.code));
+  if (siblings.some((row) => row.code.trim().toLowerCase() === code.toLowerCase())) {
+    res.status(409).json({ error: "كود المجموعة الفرعية مستخدم بالفعل" }); return;
+  }
+  const [row] = await db.insert(itemSubgroupsTable).values({
+    companyId: cid, parentGroupId, code, nameAr,
+    nameEn: typeof req.body?.nameEn === "string" ? req.body.nameEn.trim() || null : null,
+    description: typeof req.body?.description === "string" ? req.body.description.trim() || null : null,
+    isActive: req.body?.isActive !== false,
+    sortOrder: Number.isSafeInteger(Number(req.body?.sortOrder)) ? Number(req.body.sortOrder) : 0,
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.put("/item-subgroups/:id", async (req, res): Promise<void> => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const [current] = await db.select().from(itemSubgroupsTable).where(and(
+    eq(itemSubgroupsTable.id, id), eq(itemSubgroupsTable.companyId, cid),
+  ));
+  if (!current) { res.status(404).json({ error: "المجموعة الفرعية غير موجودة" }); return; }
+  const parentGroupId = req.body?.parentGroupId === undefined ? current.parentGroupId : Number(req.body.parentGroupId);
+  const nameAr = typeof req.body?.nameAr === "string" ? req.body.nameAr.trim() : current.nameAr;
+  const [parent] = await db.select({ id: itemGroupsTable.id }).from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, parentGroupId), eq(itemGroupsTable.companyId, cid), eq(itemGroupsTable.isPosGroup, false),
+  ));
+  if (!parent || !nameAr) { res.status(400).json({ error: "المجموعة الرئيسية واسم المجموعة الفرعية مطلوبان" }); return; }
+  const siblings = await db.select().from(itemSubgroupsTable).where(and(
+    eq(itemSubgroupsTable.companyId, cid), eq(itemSubgroupsTable.parentGroupId, parentGroupId),
+  ));
+  if (siblings.some((row) => row.id !== id && row.nameAr.trim().toLowerCase() === nameAr.toLowerCase())) {
+    res.status(409).json({ error: "اسم المجموعة الفرعية مستخدم داخل المجموعة الرئيسية" }); return;
+  }
+  if (parentGroupId !== current.parentGroupId) {
+    const [linked] = await db.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(eq(itemsTable.companyId, cid), eq(itemsTable.subgroupId, id))).limit(1);
+    if (linked) { res.status(409).json({ error: "لا يمكن نقل مجموعة فرعية مرتبطة بأصناف؛ غيّر تصنيف الأصناف أولًا" }); return; }
+  }
+  const nextCode = req.body?.code !== undefined ? String(req.body.code).trim() || current.code : current.code;
+  if (siblings.some((row) => row.id !== id && row.code.trim().toLowerCase() === nextCode.toLowerCase())) {
+    res.status(409).json({ error: "كود المجموعة الفرعية مستخدم بالفعل" }); return;
+  }
+  const [row] = await db.update(itemSubgroupsTable).set({
+    parentGroupId, nameAr,
+    code: nextCode,
+    ...(req.body?.nameEn !== undefined ? { nameEn: String(req.body.nameEn ?? "").trim() || null } : {}),
+    ...(req.body?.description !== undefined ? { description: String(req.body.description ?? "").trim() || null } : {}),
+    ...(req.body?.isActive !== undefined ? { isActive: req.body.isActive === true } : {}),
+    ...(req.body?.sortOrder !== undefined && Number.isSafeInteger(Number(req.body.sortOrder)) ? { sortOrder: Number(req.body.sortOrder) } : {}),
+  }).where(and(eq(itemSubgroupsTable.id, id), eq(itemSubgroupsTable.companyId, cid))).returning();
+  res.json(row);
+});
+
+router.delete("/item-subgroups/:id", async (req, res): Promise<void> => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const [linked] = await db.select({ id: itemsTable.id }).from(itemsTable)
+    .where(and(eq(itemsTable.companyId, cid), eq(itemsTable.subgroupId, id))).limit(1);
+  if (linked) { res.status(409).json({ error: "لا يمكن حذف مجموعة فرعية مرتبطة بأصناف؛ عطّلها بدلًا من ذلك" }); return; }
+  await db.delete(itemSubgroupsTable).where(and(eq(itemSubgroupsTable.id, id), eq(itemSubgroupsTable.companyId, cid)));
+  res.sendStatus(204);
+});
+
 const POS_GROUP_COLUMNS = {
   id: itemGroupsTable.id,
   companyId: itemGroupsTable.companyId,
@@ -819,6 +908,9 @@ router.put("/item-groups/:id", async (req, res) => {
 router.delete("/item-groups/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
+  const [child] = await db.select({ id: itemSubgroupsTable.id }).from(itemSubgroupsTable)
+    .where(and(eq(itemSubgroupsTable.parentGroupId, id), eq(itemSubgroupsTable.companyId, cid))).limit(1);
+  if (child) { res.status(409).json({ error: "احذف المجموعات الفرعية أو انقلها قبل حذف المجموعة الرئيسية" }); return; }
   const deleted = await db.delete(itemGroupsTable).where(and(
     eq(itemGroupsTable.id, id),
     eq(itemGroupsTable.companyId, cid),
@@ -1483,7 +1575,7 @@ router.get("/items/:id", async (req, res) => {
 // columns like id/companyId/createdAt/updatedAt that the user can't change.
 const ITEM_AUDIT_FIELDS = [
   "code", "nameAr", "nameEn", "barcode", "itemType",
-  "groupId", "posGroupId", "unitId", "costPrice", "salePrice", "vatRate",
+  "groupId", "subgroupId", "posGroupId", "unitId", "costPrice", "salePrice", "vatRate",
   "reorderLevel", "maxLevel", "costMethod", "description",
   "status", "imageUrl", "tags",
   // PRO Extension #3 — per-item default discount
@@ -1671,9 +1763,26 @@ async function parseAndValidateAccountingItemGroupId(
   return { id };
 }
 
+async function parseAndValidateItemSubgroupId(
+  companyId: number,
+  raw: unknown,
+  groupId: number | null,
+  allowExistingInactive = false,
+): Promise<{ id: number | null; error?: string }> {
+  if (raw == null || raw === "") return { id: null };
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id <= 0 || !groupId) return { id: null, error: "المجموعة الفرعية غير صالحة" };
+  const [subgroup] = await db.select().from(itemSubgroupsTable).where(and(
+    eq(itemSubgroupsTable.id, id), eq(itemSubgroupsTable.companyId, companyId),
+  ));
+  if (!subgroup || subgroup.parentGroupId !== groupId) return { id: null, error: "المجموعة الفرعية لا تتبع المجموعة الرئيسية المحددة" };
+  if (!subgroup.isActive && !allowExistingInactive) return { id: null, error: "المجموعة الفرعية غير نشطة ولا يمكن ربط أصناف جديدة بها" };
+  return { id };
+}
+
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code: rawCode, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
+  const { code: rawCode, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, subgroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
   if (!nameAr) { res.status(400).json({ error: "اسم الصنف مطلوب" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   // كود الصنف اختياري — إن تُرك فارغاً يُولَّد تلقائياً بمتابعة أعلى رقم موجود.
@@ -1740,12 +1849,19 @@ router.post("/items", async (req, res) => {
     groupId === undefined ? parentRowForVariant?.groupId : groupId,
   );
   if (assignedAccountingGroup.error) { res.status(400).json({ error: assignedAccountingGroup.error }); return; }
+  const assignedSubgroup = await parseAndValidateItemSubgroupId(
+    cid,
+    subgroupId === undefined ? parentRowForVariant?.subgroupId : subgroupId,
+    assignedAccountingGroup.id,
+  );
+  if (assignedSubgroup.error) { res.status(400).json({ error: assignedSubgroup.error }); return; }
   const [row] = await db.insert(itemsTable).values({
     companyId: cid, code, nameAr, nameEn, barcode,
     itemType: itemType || parentRowForVariant?.itemType || "stock",
     itemNature: ["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? itemNature : (parentRowForVariant?.itemNature || "merchandise"),
     groupId: assignedAccountingGroup.id,
     posGroupId: assignedPosGroup.id,
+    subgroupId: assignedSubgroup.id,
     unitId: requiredUnitId,
     costPrice: costPrice || parentRowForVariant?.costPrice || "0",
     salePrice: salePrice || parentRowForVariant?.salePrice || "0",
@@ -1791,7 +1907,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, subgroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
   // PRO Extension #20 — variantAttributes is editable; parentItemId is
   // set-once at create time (re-parenting requires DELETE + recreate so
   // we don't have to reason about stock-balance migration).
@@ -1825,6 +1941,19 @@ router.put("/items/:id", async (req, res) => {
     const assignedAccountingGroup = await parseAndValidateAccountingItemGroupId(cid, groupId);
     if (assignedAccountingGroup.error) { res.status(400).json({ error: assignedAccountingGroup.error }); return; }
     validatedAccountingGroupId = assignedAccountingGroup.id;
+  }
+  let validatedSubgroupId: number | null | undefined;
+  const resultingGroupId = validatedAccountingGroupId !== undefined ? validatedAccountingGroupId : existing.groupId;
+  if (subgroupId !== undefined) {
+    const requestedSubgroupId = subgroupId == null || subgroupId === "" ? null : Number(subgroupId);
+    const assignedSubgroup = await parseAndValidateItemSubgroupId(
+      cid, subgroupId, resultingGroupId,
+      requestedSubgroupId != null && requestedSubgroupId === existing.subgroupId,
+    );
+    if (assignedSubgroup.error) { res.status(400).json({ error: assignedSubgroup.error }); return; }
+    validatedSubgroupId = assignedSubgroup.id;
+  } else if (validatedAccountingGroupId !== undefined && validatedAccountingGroupId !== existing.groupId) {
+    validatedSubgroupId = null;
   }
   let requestedUnitId: number | null | undefined;
   try {
@@ -1883,6 +2012,7 @@ router.put("/items/:id", async (req, res) => {
         ...(["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? { itemNature } : {}),
         groupId: validatedAccountingGroupId ?? null, unitId: requestedUnitId === undefined ? lockedExisting.unitId : requestedUnitId,
         ...(validatedPosGroupId !== undefined ? { posGroupId: validatedPosGroupId } : {}),
+        ...(validatedSubgroupId !== undefined ? { subgroupId: validatedSubgroupId } : {}),
         costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
         reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
         costMethod: costMethod || "weighted_avg", description,

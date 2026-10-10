@@ -80,7 +80,7 @@ function CollapsibleSection({
 
 const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock", itemNature: "merchandise",
-  groupId: "", posGroupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
+  groupId: "", subgroupId: "", posGroupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
   costAccountId: "", revenueAccountId: "", imageUrl: "",
   // PRO Extension #3 — per-item default discount auto-applied on sales lines.
@@ -1385,6 +1385,10 @@ export default function Items() {
     queryKey: ["item-groups", cid],
     queryFn: () => inventoryApi.getItemGroups(cid),
   });
+  const { data: subgroups = [] } = useQuery({
+    queryKey: ["item-subgroups"],
+    queryFn: () => inventoryApi.getItemSubgroups(),
+  });
   const { data: posGroups = [] } = useListPosItemGroups();
   const { data: units = [] } = useQuery({
     queryKey: ["units", cid],
@@ -1506,6 +1510,7 @@ export default function Items() {
       // (String(g.id)), so a numeric groupId never matches → picker shows the
       // placeholder on reopen even though the group IS saved.
       groupId: item.groupId != null ? String(item.groupId) : "",
+      subgroupId: item.subgroupId != null ? String(item.subgroupId) : "",
       posGroupId: item.posGroupId != null ? String(item.posGroupId) : "",
       unitId:  item.unitId  != null ? String(item.unitId)  : "",
       costPrice: item.costPrice ?? "0", salePrice: item.salePrice ?? "0",
@@ -1551,6 +1556,7 @@ export default function Items() {
     const payload = {
       ...form,
       groupId:          form.groupId          ? Number(form.groupId)          : null,
+      subgroupId:       form.subgroupId       ? Number(form.subgroupId)       : null,
       posGroupId:       form.posGroupId       ? Number(form.posGroupId)       : null,
       unitId:           form.unitId           ? Number(form.unitId)           : null,
       costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
@@ -1804,7 +1810,7 @@ export default function Items() {
                 </Field>
                 )}
                 <Field label={t("pages.items.group")}>
-                  <SearchCombobox items={[{ value: "", label: t("pages.items.noGroup") }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]} value={form.groupId} onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))} placeholder={t("pages.items.chooseGroup")} />
+                  <SearchCombobox items={[{ value: "", label: t("pages.items.noGroup") }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]} value={form.groupId} onValueChange={v => setForm((p: any) => ({ ...p, groupId: v, subgroupId: "" }))} placeholder={t("pages.items.chooseGroup")} />
                   {(() => {
                     const sg = (groups as any[]).find((g: any) => String(g.id) === String(form.groupId));
                     if (!sg?.categoryType) return null;
@@ -1816,6 +1822,20 @@ export default function Items() {
                       </div>
                     );
                   })()}
+                </Field>
+                <Field label="المجموعة الفرعية" hint="اختياري؛ تظهر المجموعات التابعة للفئة الرئيسية المحددة فقط.">
+                  <SearchCombobox
+                    items={[
+                      { value: "", label: "بدون مجموعة فرعية" },
+                      ...(subgroups as any[])
+                        .filter((s: any) => String(s.parentGroupId) === String(form.groupId) && (s.isActive !== false || String(s.id) === String(form.subgroupId)))
+                        .map((s: any) => ({ value: String(s.id), code: s.code, label: s.nameAr, labelEn: s.nameEn || "" })),
+                    ]}
+                    value={form.subgroupId}
+                    onValueChange={(v) => setForm((p: any) => ({ ...p, subgroupId: v }))}
+                    placeholder={form.groupId ? "اختر المجموعة الفرعية" : "اختر المجموعة الرئيسية أولًا"}
+                    disabled={!form.groupId}
+                  />
                 </Field>
                 <Field label={t("inventoryMaster.items.posGroup")}>
                   <SearchCombobox

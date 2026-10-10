@@ -255,6 +255,10 @@ export const inventoryApi = {
   createItemGroup: (data: any)    => post<any>("/item-groups", data),
   updateItemGroup: (id: number, data: any) => put<any>(`/item-groups/${id}`, data),
   deleteItemGroup: (id: number)   => del(`/item-groups/${id}`),
+  getItemSubgroups: () => get<any[]>("/item-subgroups"),
+  createItemSubgroup: (data: any) => post<any>("/item-subgroups", data),
+  updateItemSubgroup: (id: number, data: any) => put<any>(`/item-subgroups/${id}`, data),
+  deleteItemSubgroup: (id: number) => del(`/item-subgroups/${id}`),
   // Brands (العلامات التجارية) — master CRUD. List coerced to array to avoid a
   // white-screen when a module-gated 403 returns an object instead of a list.
   getBrands:   (cid?: number) => get<any[]>(`/brands${cid ? `?companyId=${cid}` : ""}`).then(arr => Array.isArray(arr) ? arr : []),

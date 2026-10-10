@@ -1,6 +1,6 @@
 import {
   pgTable, serial, text, integer, numeric, boolean, timestamp, date, pgEnum,
-  uniqueIndex, jsonb, AnyPgColumn,
+  uniqueIndex, index, jsonb, AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
@@ -83,6 +83,27 @@ export const itemGroupsTable = pgTable("item_groups", {
   createdAt:       timestamp("created_at").defaultNow().notNull(),
 });
 
+// Optional catalog subgroups for restaurant-style classification. Kept in a
+// separate table so accounting item groups and POS display groups retain their
+// existing meanings.
+export const itemSubgroupsTable = pgTable("item_subgroups", {
+  id:            serial("id").primaryKey(),
+  companyId:     integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  parentGroupId: integer("parent_group_id").notNull().references(() => itemGroupsTable.id, { onDelete: "restrict" }),
+  code:          text("code").notNull(),
+  nameAr:        text("name_ar").notNull(),
+  nameEn:        text("name_en"),
+  description:   text("description"),
+  imageUrl:      text("image_url"),
+  isActive:      boolean("is_active").default(true).notNull(),
+  sortOrder:     integer("sort_order").default(0).notNull(),
+  createdAt:     timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  companyParentCode: uniqueIndex("item_subgroups_company_parent_code_uq").on(t.companyId, t.parentGroupId, t.code),
+  companyParentName: uniqueIndex("item_subgroups_company_parent_name_uq").on(t.companyId, t.parentGroupId, t.nameAr),
+  companySort: index("item_subgroups_company_sort_idx").on(t.companyId, t.parentGroupId, t.sortOrder),
+}));
+
 // ─── Brands (العلامات التجارية) ────────────────────────────────────────────────
 // OPTIONAL, additive multi-brand support: one item can carry several brands,
 // each with its own price / cost / barcode / part-number (see item_brands).
@@ -152,6 +173,7 @@ export const itemsTable = pgTable("items", {
   companyId:    integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
   groupId:      integer("group_id").references(() => itemGroupsTable.id),
   posGroupId:   integer("pos_group_id"),
+  subgroupId:   integer("subgroup_id").references(() => itemSubgroupsTable.id, { onDelete: "set null" }),
   unitId:       integer("unit_id").references(() => unitsTable.id),
   code:         text("code").notNull(),
   nameAr:       text("name_ar").notNull(),

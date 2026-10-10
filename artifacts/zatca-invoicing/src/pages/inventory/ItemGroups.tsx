@@ -13,6 +13,7 @@ import { TablePagination, usePagination } from "@/components/TablePagination";
 import { Plus, Pencil, Trash2, Tag, Search, BookMarked, Wand2, Link2, CheckCircle2 } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Link } from "wouter";
 
 const EMPTY = { code: "", nameAr: "", nameEn: "", costAccountId: "", revenueAccountId: "", categoryType: "", parentAccountId: "", accountLinkMode: "auto", accountId: "" };
 
@@ -136,6 +137,9 @@ export default function ItemGroups() {
         <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
           <Plus className="h-4 w-4" />{tr("newGroup")}
         </Button>
+        <Link href="/inventory/item-subgroups" className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">
+          إدارة المجموعات الفرعية
+        </Link>
       </div>
 
       {showForm && (
