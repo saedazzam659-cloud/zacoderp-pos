@@ -5,13 +5,13 @@ export const modules: ModuleMap = {
   "./components/mockups/bundle-fields/SingleRow.tsx": () => import("../components/mockups/bundle-fields/SingleRow.tsx"),
   "./components/mockups/contracting-bill-tabs/Current.tsx": () => import("../components/mockups/contracting-bill-tabs/Current.tsx"),
   "./components/mockups/contracting-bill-tabs/StageColors.tsx": () => import("../components/mockups/contracting-bill-tabs/StageColors.tsx"),
+  "./components/mockups/goods-documents/CurrentDelivery.tsx": () => import("../components/mockups/goods-documents/CurrentDelivery.tsx"),
+  "./components/mockups/goods-documents/CurrentReceipt.tsx": () => import("../components/mockups/goods-documents/CurrentReceipt.tsx"),
   "./components/mockups/manufacturing-delivery/InternalDelivery.tsx": () => import("../components/mockups/manufacturing-delivery/InternalDelivery.tsx"),
   "./components/mockups/pos-checkout/Current.tsx": () => import("../components/mockups/pos-checkout/Current.tsx"),
   "./components/mockups/pos-checkout/Improved.tsx": () => import("../components/mockups/pos-checkout/Improved.tsx"),
   "./components/mockups/pos-register/Aurora.tsx": () => import("../components/mockups/pos-register/Aurora.tsx"),
   "./components/mockups/pos-register/Onyx.tsx": () => import("../components/mockups/pos-register/Onyx.tsx"),
   "./components/mockups/simple-manufacturing-flow/Current.tsx": () => import("../components/mockups/simple-manufacturing-flow/Current.tsx"),
-  "./components/mockups/simple-manufacturing-flow/StageAware.tsx": () => import("../components/mockups/simple-manufacturing-flow/StageAware.tsx"),
-  "./components/mockups/goods-documents/CurrentDelivery.tsx": () => import("../components/mockups/goods-documents/CurrentDelivery.tsx"),
-  "./components/mockups/goods-documents/CurrentReceipt.tsx": () => import("../components/mockups/goods-documents/CurrentReceipt.tsx")
+  "./components/mockups/simple-manufacturing-flow/StageAware.tsx": () => import("../components/mockups/simple-manufacturing-flow/StageAware.tsx")
 };
