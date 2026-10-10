@@ -1575,7 +1575,7 @@ router.get("/items/:id", async (req, res) => {
 // columns like id/companyId/createdAt/updatedAt that the user can't change.
 const ITEM_AUDIT_FIELDS = [
   "code", "nameAr", "nameEn", "barcode", "itemType",
-  "groupId", "subgroupId", "posGroupId", "unitId", "costPrice", "salePrice", "vatRate",
+  "groupId", "subgroupId", "posGroupId", "unitId", "showInPos", "costPrice", "salePrice", "vatRate",
   "reorderLevel", "maxLevel", "costMethod", "description",
   "status", "imageUrl", "tags",
   // PRO Extension #3 — per-item default discount
@@ -5453,10 +5453,83 @@ router.post("/import/items", async (req, res) => {
     userAgent:  req.get("user-agent")?.slice(0, 256) ?? null,
   };
 
-  let createdCount = 0, updatedCount = 0;
+  let createdCount = 0, updatedCount = 0, skippedCount = 0;
   const errors: { row: number; error: string }[] = [];
+  const inputCodeCounts = new Map<string, number>();
+  for (const row of rows) {
+    const key = String(row?.code ?? "").trim().toLowerCase();
+    inputCodeCounts.set(key, (inputCodeCounts.get(key) ?? 0) + 1);
+  }
+  const bulkCandidates: Array<{ index: number; codeKey: string; values: any }> = [];
+  const bulkCreatedIndexes = new Set<number>();
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    const code = String(r.code ?? "").trim();
+    const codeKey = code.toLowerCase();
+    if (!code || inputCodeCounts.get(codeKey) !== 1 || itemByCode.has(codeKey)) continue;
+    const importDisc = normalizeDiscount(r.discountType, r.discountValue);
+    bulkCandidates.push({
+      index: i,
+      codeKey,
+      values: {
+        companyId: cid, code, nameAr: String(r.nameAr ?? r.name ?? "").trim(),
+        nameEn: r.nameEn != null && r.nameEn !== "" ? String(r.nameEn) : null,
+        barcode: r.barcode != null && r.barcode !== "" ? String(r.barcode) : null,
+        itemType: (["service", "fixed_asset", "prepaid_expense"].includes(r.itemType) ? r.itemType : "stock") as any,
+        groupId: r.groupCode ? groupByCode.get(String(r.groupCode).trim().toLowerCase()) ?? null : null,
+        unitId: unitByCode.get(String(r.unitCode ?? "").trim().toLowerCase()) ?? null,
+        showInPos: showInPosByRow.get(i) ?? true,
+        costPrice: String(Number(r.costPrice ?? 0) || 0),
+        salePrice: String(Number(r.salePrice ?? 0) || 0),
+        vatRate: String(Number(r.vatRate ?? 15) || 0),
+        reorderLevel: String(Number(r.reorderLevel ?? 0) || 0),
+        maxLevel: r.maxLevel != null && r.maxLevel !== "" ? String(Number(r.maxLevel) || 0) : null,
+        description: r.description != null && r.description !== "" ? String(r.description) : null,
+        discountType: importDisc.type,
+        discountValue: importDisc.value,
+      },
+    });
+  }
+  const recordCreated = (candidate: typeof bulkCandidates[number], item: any) => {
+    createdCount++;
+    bulkCreatedIndexes.add(candidate.index);
+    itemByCode.set(candidate.codeKey, item);
+    void writeAudit({
+      ...auditBase,
+      action: "create",
+      entityId: String(item.id),
+      statusCode: 201,
+      metadata: { name: item.nameAr, code: item.code, snapshot: snapshotItem(item), source: "import" },
+    });
+  };
+  for (let start = 0; start < bulkCandidates.length; start += 200) {
+    const chunk = bulkCandidates.slice(start, start + 200);
+    try {
+      const inserted = await db.insert(itemsTable).values(chunk.map(candidate => candidate.values)).returning();
+      const byCode = new Map(inserted.map((item: any) => [String(item.code).trim().toLowerCase(), item]));
+      for (const candidate of chunk) {
+        bulkCreatedIndexes.add(candidate.index);
+        const item = byCode.get(candidate.codeKey);
+        if (item) recordCreated(candidate, item);
+        else errors.push({ row: candidate.index + 2, error: "تعذر تأكيد حفظ الصنف" });
+      }
+    } catch {
+      // A bad row should not block unrelated valid rows in the same batch.
+      for (const candidate of chunk) {
+        bulkCreatedIndexes.add(candidate.index);
+        try {
+          const [item] = await db.insert(itemsTable).values(candidate.values).returning();
+          if (item) recordCreated(candidate, item);
+          else errors.push({ row: candidate.index + 2, error: "تعذر تأكيد حفظ الصنف" });
+        } catch (e: any) {
+          errors.push({ row: candidate.index + 2, error: e?.message || "خطأ غير معروف" });
+        }
+      }
+    }
+  }
 
   for (let i = 0; i < rows.length; i++) {
+    if (bulkCreatedIndexes.has(i)) continue;
     const r = rows[i] || {};
     try {
       const code   = String(r.code ?? "").trim();
@@ -5506,6 +5579,20 @@ router.post("/import/items", async (req, res) => {
       if (existingRow) {
         const { companyId, ...upd } = values as any;
         if (r.unitCode === undefined) delete (upd as any).unitId;
+        const importChanges = diffItem(existingRow, { ...existingRow, ...upd });
+        const effectiveChanges = importChanges.filter(change => {
+          const numericFields = new Set(["costPrice", "salePrice", "vatRate", "reorderLevel", "maxLevel", "discountValue"]);
+          if (numericFields.has(change.field) && change.from != null && change.to != null) {
+            const before = Number(change.from);
+            const after = Number(change.to);
+            if (Number.isFinite(before) && Number.isFinite(after) && before === after) return false;
+          }
+          return true;
+        });
+        if (effectiveChanges.length === 0) {
+          skippedCount++;
+          continue;
+        }
         const [updatedRow] = await db.update(itemsTable).set({ ...upd, updatedAt: new Date() })
           .where(and(eq(itemsTable.id, existingRow.id), eq(itemsTable.companyId, cid)))
           .returning();
@@ -5541,7 +5628,7 @@ router.post("/import/items", async (req, res) => {
     }
   }
 
-  res.json({ created: createdCount, updated: updatedCount, errors, total: rows.length });
+  res.json({ created: createdCount, updated: updatedCount, skipped: skippedCount, errors, total: rows.length });
 });
 
 // ═══════════════════════════════════════════════════════════════════

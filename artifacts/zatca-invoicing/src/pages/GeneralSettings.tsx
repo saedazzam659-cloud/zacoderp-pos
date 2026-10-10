@@ -496,6 +496,8 @@ export default function GeneralSettings() {
   const itemsFileRef    = useRef<HTMLInputElement>(null);
   const balancesFileRef = useRef<HTMLInputElement>(null);
   const [itemsImporting,    setItemsImporting]    = useState(false);
+  const [itemsUploadProgress, setItemsUploadProgress] = useState(0);
+  const [itemsUploadStage, setItemsUploadStage] = useState<"reading" | "uploading" | "processing">("reading");
   const [balancesImporting, setBalancesImporting] = useState(false);
   const [inventoryOpeningAccountId, setInventoryOpeningAccountId] = useState("");
   const [inventoryOpeningDate, setInventoryOpeningDate] = useState(new Date().toISOString().slice(0, 10));
@@ -509,7 +511,7 @@ export default function GeneralSettings() {
   const [openingReminderRepeatCount, setOpeningReminderRepeatCount] = useState(
     Number(user?.company?.openingBalanceReminderRepeatCount ?? 3),
   );
-  const [itemsReport,    setItemsReport]    = useState<{ created: number; updated: number; total: number; errors: { row: number; error: string }[] } | null>(null);
+  const [itemsReport,    setItemsReport]    = useState<{ created: number; updated: number; skipped?: number; total: number; errors: { row: number; error: string }[] } | null>(null);
   const [balancesReport, setBalancesReport] = useState<{ applied: number; total: number; errors: { row: number; error: string }[] } | null>(null);
 
   const companyId = user?.company?.id ?? user?.companyId;
@@ -574,6 +576,8 @@ export default function GeneralSettings() {
 
   async function handleItemsUpload(file: File) {
     setItemsImporting(true);
+    setItemsUploadProgress(0);
+    setItemsUploadStage("reading");
     setItemsReport(null);
     try {
       const items = await parseExcelToObjects(file);
@@ -606,27 +610,55 @@ export default function GeneralSettings() {
         return;
       }
       const cid = user?.company?.id ?? user?.companyId;
-      const res = await fetch(`${API}/api/inventory/import/items?companyId=${cid}`, {
-        method: "POST", headers, body: JSON.stringify({ items }),
-      });
-      const j = await res.json();
-      if (!res.ok) {
-        if (Array.isArray(j.errors)) {
-          setItemsReport({ created: 0, updated: 0, total: items.length, errors: j.errors });
+      setItemsUploadStage("uploading");
+      const { j, status } = await new Promise<{ j: any; status: number }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${API}/api/inventory/import/items?companyId=${cid}`);
+        Object.entries(headers as Record<string, string>).forEach(([key, value]) => xhr.setRequestHeader(key, value));
+        if (!Object.keys(headers as Record<string, string>).some(key => key.toLowerCase() === "content-type")) {
+          xhr.setRequestHeader("Content-Type", "application/json");
         }
+        xhr.upload.onprogress = event => {
+          if (!event.lengthComputable) return;
+          const percent = Math.min(100, Math.round(event.loaded / event.total * 100));
+          setItemsUploadProgress(percent);
+          if (percent === 100) setItemsUploadStage("processing");
+        };
+        xhr.onload = () => {
+          let payload: any;
+          try { payload = JSON.parse(xhr.responseText); } catch { /* non-JSON gateway/parser response */ }
+          if (!payload || typeof payload !== "object") {
+            reject(new Error(xhr.status === 413
+              ? t("pages.generalSettings.itemsUploadTooLarge")
+              : t("pages.generalSettings.itemsUploadBadResponse", { status: xhr.status })));
+            return;
+          }
+          resolve({ j: payload, status: xhr.status });
+        };
+        xhr.onerror = () => reject(new Error(t("pages.generalSettings.itemsUploadNetworkError")));
+        xhr.send(JSON.stringify({ items }));
+      });
+      if (status < 200 || status >= 300) {
+        if (Array.isArray(j.errors)) setItemsReport({ created: 0, updated: 0, total: items.length, errors: j.errors });
         throw new Error(j.error || t("pages.generalSettings.importFailed"));
       }
+      setItemsUploadProgress(100);
       setItemsReport(j);
       {
         const errCount = j.errors?.length || 0;
-        const key = errCount > 0 ? "pages.generalSettings.itemsImportReportWithErrors" : "pages.generalSettings.itemsImportReport";
-        toast({ title: t(key, { created: j.created, updated: j.updated, errors: errCount }) });
+        const key = errCount > 0
+          ? "pages.generalSettings.itemsImportReportWithErrors"
+          : j.skipped > 0
+            ? "pages.generalSettings.itemsImportReportWithSkipped"
+            : "pages.generalSettings.itemsImportReport";
+        toast({ title: t(key, { created: j.created, updated: j.updated, skipped: j.skipped ?? 0, errors: errCount }) });
       }
       qc.invalidateQueries({ queryKey: ["items"] });
     } catch (e: any) {
       toast({ title: e.message || t("pages.generalSettings.importFailed"), variant: "destructive" });
     } finally {
       setItemsImporting(false);
+      setItemsUploadProgress(0);
     }
   }
 
@@ -2103,10 +2135,24 @@ export default function GeneralSettings() {
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handleItemsUpload(f); e.target.value = ""; }}
             />
           </div>
+          {itemsImporting && (
+            <div className="mt-3 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 via-white to-cyan-50 p-3 shadow-sm" role="status" aria-live="polite">
+              <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                <span className="font-semibold text-slate-700">
+                  {t(itemsUploadStage === "reading" ? "pages.generalSettings.itemsUploadReading" : itemsUploadStage === "uploading" ? "pages.generalSettings.itemsUploadSending" : "pages.generalSettings.itemsUploadProcessing")}
+                </span>
+                <span className="font-mono font-bold text-blue-700" dir="ltr">{itemsUploadProgress}%</span>
+              </div>
+              <div className="h-2.5 overflow-hidden rounded-full bg-blue-100" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={itemsUploadProgress} dir="ltr">
+                <div className="h-full rounded-full bg-gradient-to-r from-blue-600 via-cyan-500 to-emerald-400 shadow-[0_0_10px_rgba(14,165,233,0.45)] transition-[width] duration-300 ease-out" style={{ width: `${itemsUploadStage === "reading" ? 8 : itemsUploadProgress}%` }} />
+              </div>
+              {itemsUploadStage === "processing" && <p className="mt-2 text-[11px] text-slate-500">{t("pages.generalSettings.itemsUploadProcessingHint")}</p>}
+            </div>
+          )}
           {itemsReport && (
             <div className="rounded-md border bg-card px-3 py-2 text-xs space-y-1">
               <p className="font-medium">
-                {t("pages.generalSettings.result")}: <span className="text-green-600">{itemsReport.created} {t("pages.generalSettings.added")}</span> · <span className="text-blue-600">{itemsReport.updated} {t("pages.generalSettings.updated")}</span> / {itemsReport.total}
+                {t("pages.generalSettings.result")}: <span className="text-green-600">{itemsReport.created} {t("pages.generalSettings.added")}</span> · <span className="text-blue-600">{itemsReport.updated} {t("pages.generalSettings.updated")}</span>{itemsReport.skipped ? <> · <span className="text-slate-500">{itemsReport.skipped} {t("pages.generalSettings.itemsAlreadyPresent")}</span></> : null} / {itemsReport.total}
                 {itemsReport.errors?.length ? <span className="text-red-600"> · {itemsReport.errors.length} {t("pages.generalSettings.error")}</span> : null}
               </p>
               {itemsReport.errors?.length > 0 && (
