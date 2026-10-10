@@ -720,6 +720,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryFn: () => fetchJsonArray(`${API}/api/bank-accounts?companyId=${cid}`, authH),
     enabled: !!user,
   });
+  useEffect(() => {
+    if (!isNew || !isInvoice || paymentType !== "cash" || cashBoxId || !cashBoxes.length) return;
+    const active = [...cashBoxes].filter((box: any) => box.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+    const preferred = active.find((box: any) => String(box.id) === String(user?.company?.defaultPaymentCashBoxId));
+    if (preferred ?? active[0]) setCashBoxId(String((preferred ?? active[0]).id));
+  }, [isNew, isInvoice, paymentType, cashBoxId, cashBoxes, user?.company?.defaultPaymentCashBoxId]);
+  useEffect(() => {
+    if (!isNew || !isInvoice || paymentType !== "bank" || bankAccountId || !bankAccounts.length) return;
+    const active = [...bankAccounts].filter((account: any) => account.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+    const preferred = active.find((account: any) => String(account.id) === String(user?.company?.defaultPaymentBankAccountId));
+    if (preferred ?? active[0]) setBankAccountId(String((preferred ?? active[0]).id));
+  }, [isNew, isInvoice, paymentType, bankAccountId, bankAccounts, user?.company?.defaultPaymentBankAccountId]);
   const { data: costCentersList = [] } = useQuery<any[]>({
     queryKey: ["cost-centers", cid],
     queryFn: async () => {
@@ -3847,14 +3859,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       setPaymentType(v);
                       if (v === "cash") {
                         if (!cashBoxId) {
-                          const first = [...(cashBoxes as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
-                          if (first) setCashBoxId(String(first.id));
+                          const active = [...(cashBoxes as any[])].filter((b: any) => b.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+                          const preferred = active.find((b: any) => String(b.id) === String(user?.company?.defaultPaymentCashBoxId));
+                          if (preferred ?? active[0]) setCashBoxId(String((preferred ?? active[0]).id));
                         }
                         setBankAccountId("");
                       } else if (v === "bank") {
                         if (!bankAccountId) {
-                          const first = [...(bankAccounts as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
-                          if (first) setBankAccountId(String(first.id));
+                          const active = [...(bankAccounts as any[])].filter((a: any) => a.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+                          const preferred = active.find((a: any) => String(a.id) === String(user?.company?.defaultPaymentBankAccountId));
+                          if (preferred ?? active[0]) setBankAccountId(String((preferred ?? active[0]).id));
                         }
                         setCashBoxId("");
                       } else {

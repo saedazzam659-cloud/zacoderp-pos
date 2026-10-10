@@ -140,8 +140,12 @@ export const companiesTable = pgTable("companies", {
   statementPrintFormat: text("statement_print_format").notNull().default("classic"),
   // New sales and return forms keep the historical "credit" default unless a
   // company explicitly chooses another payment type in General Settings.
-  defaultSalesPaymentType: text("default_sales_payment_type").notNull().default("credit"),
-  defaultSalesReturnPaymentType: text("default_sales_return_payment_type").notNull().default("credit"),
+  defaultSalesPaymentType: text("default_sales_payment_type").notNull().default("cash"),
+  defaultSalesReturnPaymentType: text("default_sales_return_payment_type").notNull().default("cash"),
+  defaultPurchasePaymentType: text("default_purchase_payment_type").notNull().default("cash"),
+  defaultPurchaseReturnPaymentType: text("default_purchase_return_payment_type").notNull().default("cash"),
+  defaultPaymentCashBoxId: integer("default_payment_cashbox_id"),
+  defaultPaymentBankAccountId: integer("default_payment_bank_account_id"),
   // Display-only aliases. Internal payment keys (cash/credit/bank) remain stable.
   paymentMethodLabels: jsonb("payment_method_labels").$type<Partial<Record<"cash" | "credit" | "bank", string>>>()
     .notNull().default({}),

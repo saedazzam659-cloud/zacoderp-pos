@@ -431,7 +431,9 @@ router.patch("/:id/general-settings", async (req, res) => {
     printAutoAfterSavePayment, printAutoAfterSaveJournal,
     printTemplateSales, printTemplateReceipt,
     printTemplatePayment, printTemplateJournal,
-    defaultSalesPaymentType, defaultSalesReturnPaymentType, paymentMethodLabels,
+    defaultSalesPaymentType, defaultSalesReturnPaymentType,
+    defaultPurchasePaymentType, defaultPurchaseReturnPaymentType,
+    defaultPaymentCashBoxId, defaultPaymentBankAccountId, paymentMethodLabels,
     topbarQuickActions,
     // Journal-entry form behavior: "auto" (keep form open + fresh draft) or
     // "manual" (navigate back to entries list after save). See companies
@@ -497,6 +499,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     printTemplateSales?: string; printTemplateReceipt?: string;
     printTemplatePayment?: string; printTemplateJournal?: string;
     defaultSalesPaymentType?: string; defaultSalesReturnPaymentType?: string;
+    defaultPurchasePaymentType?: string; defaultPurchaseReturnPaymentType?: string;
+    defaultPaymentCashBoxId?: number | null; defaultPaymentBankAccountId?: number | null;
     paymentMethodLabels?: Partial<Record<"cash" | "credit" | "bank", string>>;
     topbarQuickActions?: Partial<Record<
       "salesInvoices" | "salesReturns" | "purchaseInvoices" | "purchaseReturns" |
@@ -731,10 +735,33 @@ router.patch("/:id/general-settings", async (req, res) => {
   for (const [key, val] of [
     ["defaultSalesPaymentType", defaultSalesPaymentType],
     ["defaultSalesReturnPaymentType", defaultSalesReturnPaymentType],
+    ["defaultPurchasePaymentType", defaultPurchasePaymentType],
+    ["defaultPurchaseReturnPaymentType", defaultPurchaseReturnPaymentType],
   ] as const) {
     if (val !== undefined) {
       if (!validPaymentType(val)) {
         res.status(400).json({ error: `قيمة طريقة الدفع الافتراضية غير صالحة لـ ${key}` }); return;
+      }
+      updates[key] = val;
+    }
+  }
+  if (defaultPaymentCashBoxId != null) {
+    const [box] = await db.select({ id: cashBoxesTable.id }).from(cashBoxesTable)
+      .where(and(eq(cashBoxesTable.id, defaultPaymentCashBoxId), eq(cashBoxesTable.companyId, id), eq(cashBoxesTable.isActive, true))).limit(1);
+    if (!box) { res.status(400).json({ error: "الخزينة الافتراضية غير نشطة أو لا تخص هذه الشركة" }); return; }
+  }
+  if (defaultPaymentBankAccountId != null) {
+    const [account] = await db.select({ id: bankAccountsTable.id }).from(bankAccountsTable)
+      .where(and(eq(bankAccountsTable.id, defaultPaymentBankAccountId), eq(bankAccountsTable.companyId, id), eq(bankAccountsTable.isActive, true))).limit(1);
+    if (!account) { res.status(400).json({ error: "الحساب البنكي الافتراضي غير نشط أو لا يخص هذه الشركة" }); return; }
+  }
+  for (const [key, val] of [
+    ["defaultPaymentCashBoxId", defaultPaymentCashBoxId],
+    ["defaultPaymentBankAccountId", defaultPaymentBankAccountId],
+  ] as const) {
+    if (val !== undefined) {
+      if (val !== null && (!Number.isInteger(val) || val <= 0)) {
+        res.status(400).json({ error: `الحساب الافتراضي غير صالح لـ ${key}` }); return;
       }
       updates[key] = val;
     }

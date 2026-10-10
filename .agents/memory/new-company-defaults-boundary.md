@@ -32,3 +32,9 @@ Country-based defaults are initial settings, not a promise of jurisdiction-speci
 **Why:** The user requested Egypt → EGP and 14% default VAT while explicitly keeping calculation/business logic unchanged. This does not authorize building ETA integration or assuming every Egyptian transaction is taxable at that rate.
 
 **How to apply:** Apply currency/tax defaults only to fresh companies, retain editable tax treatment, and explain compliance boundaries. Do not replace existing tenant tax settings when deploying this feature.
+
+Fresh companies start with cash as the default payment type for sales invoices, sales returns, purchase invoices, and purchase returns. Existing companies retain their saved values; the owner can change each type and the shared cashbox/bank defaults in payment settings.
+
+**Why:** The user explicitly requested cash instead of credit for every new-company invoice flow, while keeping payment preferences editable and avoiding changes to existing companies.
+
+**How to apply:** Set these values only in fresh-company initialization. Do not backfill existing tenants or override settings in restore/import flows.

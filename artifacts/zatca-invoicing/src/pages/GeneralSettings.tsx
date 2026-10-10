@@ -4948,6 +4948,16 @@ function PaymentPreferencesTab({ user, token, setUser }: { user: any; token: str
     company.defaultSalesReturnPaymentType === "cash" || company.defaultSalesReturnPaymentType === "bank"
       ? company.defaultSalesReturnPaymentType : "credit",
   );
+  const [defaultPurchasePaymentType, setDefaultPurchasePaymentType] = useState(
+    company.defaultPurchasePaymentType === "cash" || company.defaultPurchasePaymentType === "bank"
+      ? company.defaultPurchasePaymentType : "credit",
+  );
+  const [defaultPurchaseReturnPaymentType, setDefaultPurchaseReturnPaymentType] = useState(
+    company.defaultPurchaseReturnPaymentType === "cash" || company.defaultPurchaseReturnPaymentType === "bank"
+      ? company.defaultPurchaseReturnPaymentType : "credit",
+  );
+  const [defaultCashBoxId, setDefaultCashBoxId] = useState(company.defaultPaymentCashBoxId ? String(company.defaultPaymentCashBoxId) : "");
+  const [defaultBankAccountId, setDefaultBankAccountId] = useState(company.defaultPaymentBankAccountId ? String(company.defaultPaymentBankAccountId) : "");
   const [labels, setLabels] = useState<Record<string, string>>({
     cash: company.paymentMethodLabels?.cash ?? "",
     credit: company.paymentMethodLabels?.credit ?? "",
@@ -4957,6 +4967,26 @@ function PaymentPreferencesTab({ user, token, setUser }: { user: any; token: str
     labels[key]?.trim() || fallback;
   const [saving, setSaving] = useState(false);
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const { data: cashBoxes = [] } = useQuery<any[]>({
+    queryKey: ["payment-settings-cash-boxes", cid],
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers });
+      if (!response.ok) throw new Error("تعذر تحميل الخزائن");
+      const rows = await response.json();
+      return Array.isArray(rows) ? rows : [];
+    },
+    enabled: !!cid && !!token,
+  });
+  const { data: bankAccounts = [] } = useQuery<any[]>({
+    queryKey: ["payment-settings-bank-accounts", cid],
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers });
+      if (!response.ok) throw new Error("تعذر تحميل الحسابات البنكية");
+      const rows = await response.json();
+      return Array.isArray(rows) ? rows : [];
+    },
+    enabled: !!cid && !!token,
+  });
 
   useEffect(() => {
     setDefaultSalesPaymentType(
@@ -4967,6 +4997,16 @@ function PaymentPreferencesTab({ user, token, setUser }: { user: any; token: str
       company.defaultSalesReturnPaymentType === "cash" || company.defaultSalesReturnPaymentType === "bank"
         ? company.defaultSalesReturnPaymentType : "credit",
     );
+    setDefaultPurchasePaymentType(
+      company.defaultPurchasePaymentType === "cash" || company.defaultPurchasePaymentType === "bank"
+        ? company.defaultPurchasePaymentType : "credit",
+    );
+    setDefaultPurchaseReturnPaymentType(
+      company.defaultPurchaseReturnPaymentType === "cash" || company.defaultPurchaseReturnPaymentType === "bank"
+        ? company.defaultPurchaseReturnPaymentType : "credit",
+    );
+    setDefaultCashBoxId(company.defaultPaymentCashBoxId ? String(company.defaultPaymentCashBoxId) : "");
+    setDefaultBankAccountId(company.defaultPaymentBankAccountId ? String(company.defaultPaymentBankAccountId) : "");
     setLabels({
       cash: company.paymentMethodLabels?.cash ?? "",
       credit: company.paymentMethodLabels?.credit ?? "",
@@ -4975,6 +5015,10 @@ function PaymentPreferencesTab({ user, token, setUser }: { user: any; token: str
   }, [
     company.defaultSalesPaymentType,
     company.defaultSalesReturnPaymentType,
+    company.defaultPurchasePaymentType,
+    company.defaultPurchaseReturnPaymentType,
+    company.defaultPaymentCashBoxId,
+    company.defaultPaymentBankAccountId,
     company.paymentMethodLabels?.cash,
     company.paymentMethodLabels?.credit,
     company.paymentMethodLabels?.bank,
@@ -4987,6 +5031,10 @@ function PaymentPreferencesTab({ user, token, setUser }: { user: any; token: str
       const payload = {
         defaultSalesPaymentType,
         defaultSalesReturnPaymentType,
+        defaultPurchasePaymentType,
+        defaultPurchaseReturnPaymentType,
+        defaultPaymentCashBoxId: defaultCashBoxId ? Number(defaultCashBoxId) : null,
+        defaultPaymentBankAccountId: defaultBankAccountId ? Number(defaultBankAccountId) : null,
         paymentMethodLabels: {
           cash: labels.cash.trim().slice(0, 32),
           credit: labels.credit.trim().slice(0, 32),
@@ -5019,10 +5067,10 @@ function PaymentPreferencesTab({ user, token, setUser }: { user: any; token: str
       <div>
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Wallet className="h-4 w-4 text-primary" />
-          تفضيلات الدفع لفواتير البيع والمرتجعات
+          تفضيلات الدفع لفواتير البيع والشراء والمرتجعات
         </h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          الإعدادات خاصة بهذه الشركة. تغيير المسمى يغيّر النص الظاهر فقط؛ ولا يغيّر طريقة الترحيل أو البيانات المحاسبية.
+          اختر النوع الافتراضي لكل فاتورة ومرتجع، وحدد الخزينة والبنك ليتم اختيارهما تلقائيًا عند الدفع النقدي أو البنكي. تغيير المسمى يغيّر النص الظاهر فقط.
         </p>
       </div>
 
@@ -5034,6 +5082,40 @@ function PaymentPreferencesTab({ user, token, setUser }: { user: any; token: str
             <option value="credit">{shownLabel("credit", "آجل")}</option>
             <option value="cash">{shownLabel("cash", "نقدي")}</option>
             <option value="bank">{shownLabel("bank", "بنكي")}</option>
+          </select>
+        </div>
+        <div className="space-y-2">
+          <Label>الافتراضي لفاتورة المشتريات الجديدة</Label>
+          <select className={selectClass} value={defaultPurchasePaymentType}
+            onChange={(event) => setDefaultPurchasePaymentType(event.target.value)}>
+            <option value="credit">{shownLabel("credit", "آجل")}</option>
+            <option value="cash">{shownLabel("cash", "نقدي")}</option>
+            <option value="bank">{shownLabel("bank", "بنكي")}</option>
+          </select>
+        </div>
+        <div className="space-y-2">
+          <Label>الافتراضي لمرتجع المشتريات الجديد</Label>
+          <select className={selectClass} value={defaultPurchaseReturnPaymentType}
+            onChange={(event) => setDefaultPurchaseReturnPaymentType(event.target.value)}>
+            <option value="credit">{shownLabel("credit", "آجل")}</option>
+            <option value="cash">{shownLabel("cash", "نقدي")}</option>
+            <option value="bank">{shownLabel("bank", "بنكي")}</option>
+          </select>
+        </div>
+        <div className="space-y-2">
+          <Label>الخزينة الافتراضية للنقدي</Label>
+          <select className={selectClass} value={defaultCashBoxId} onChange={(event) => setDefaultCashBoxId(event.target.value)}>
+            <option value="">اختيار الخزينة الافتراضية</option>
+            {cashBoxes.filter((box: any) => box.isActive !== false).map((box: any) =>
+              <option key={box.id} value={String(box.id)}>{box.nameAr ?? box.nameEn ?? `#${box.id}`}</option>)}
+          </select>
+        </div>
+        <div className="space-y-2">
+          <Label>الحساب البنكي الافتراضي</Label>
+          <select className={selectClass} value={defaultBankAccountId} onChange={(event) => setDefaultBankAccountId(event.target.value)}>
+            <option value="">اختيار الحساب البنكي الافتراضي</option>
+            {bankAccounts.filter((account: any) => account.isActive !== false).map((account: any) =>
+              <option key={account.id} value={String(account.id)}>{account.nameAr ?? account.nameEn ?? `#${account.id}`}</option>)}
           </select>
         </div>
         <div className="space-y-2">

@@ -3037,6 +3037,19 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS print_default_template INTEGER NOT NULL DEFAULT 1` },
     { label: "companies add print_preview_after_save_sales",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS print_preview_after_save_sales BOOLEAN NOT NULL DEFAULT TRUE` },
+    { label: "companies add default purchase payment preferences",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS default_purchase_payment_type TEXT;
+              ALTER TABLE companies ADD COLUMN IF NOT EXISTS default_purchase_return_payment_type TEXT;
+              ALTER TABLE companies ADD COLUMN IF NOT EXISTS default_payment_cashbox_id INTEGER;
+              ALTER TABLE companies ADD COLUMN IF NOT EXISTS default_payment_bank_account_id INTEGER;
+              UPDATE companies SET default_purchase_payment_type = 'credit' WHERE default_purchase_payment_type IS NULL;
+              UPDATE companies SET default_purchase_return_payment_type = 'credit' WHERE default_purchase_return_payment_type IS NULL;
+              ALTER TABLE companies ALTER COLUMN default_purchase_payment_type SET DEFAULT 'cash';
+              ALTER TABLE companies ALTER COLUMN default_purchase_payment_type SET NOT NULL;
+              ALTER TABLE companies ALTER COLUMN default_purchase_return_payment_type SET DEFAULT 'cash';
+              ALTER TABLE companies ALTER COLUMN default_purchase_return_payment_type SET NOT NULL;
+              ALTER TABLE companies ALTER COLUMN default_sales_payment_type SET DEFAULT 'cash';
+              ALTER TABLE companies ALTER COLUMN default_sales_return_payment_type SET DEFAULT 'cash'` },
     { label: "companies add sequence_date_source",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS sequence_date_source TEXT NOT NULL DEFAULT 'system'` },
     { label: "companies add brand_logo",

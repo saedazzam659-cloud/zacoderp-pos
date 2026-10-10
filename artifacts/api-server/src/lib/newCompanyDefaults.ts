@@ -63,6 +63,10 @@ export async function seedNewCompanyDefaults(
     await tx.update(companiesTable).set({
       menuLayout: "topnav",
       hideQuickAddBar: true,
+      defaultSalesPaymentType: "cash",
+      defaultSalesReturnPaymentType: "cash",
+      defaultPurchasePaymentType: "cash",
+      defaultPurchaseReturnPaymentType: "cash",
       updatedAt: new Date(),
     }).where(eq(companiesTable.id, companyId));
     await tx.delete(sequencesTable).where(eq(sequencesTable.companyId, companyId));

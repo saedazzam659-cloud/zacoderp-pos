@@ -236,6 +236,10 @@ function PurchaseInvoiceFormContent() {
   const seqPeek = useNextSequenceNumber("purchase_invoice", isNew, undefined, branchId, paymentType);
   const [cashBoxId,    setCashBoxId]    = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
+  useEffect(() => {
+    if (isNew) setPaymentType(user?.company?.defaultPurchasePaymentType === "cash" || user?.company?.defaultPurchasePaymentType === "bank"
+      ? user.company.defaultPurchasePaymentType : "credit");
+  }, [isNew, user?.company?.defaultPurchasePaymentType]);
   const [currencyCode, setCurrencyCode] = useState("");
   const [exchangeRate, setExchangeRate] = useState("1");
   const [lcId,         setLcId]         = useState("");
@@ -516,6 +520,18 @@ function PurchaseInvoiceFormContent() {
     queryFn: () => fetchJsonArray(`${API}/api/bank-accounts/balances?companyId=${cid}`, authH),
     enabled: !!user && !!cid && paymentType === "bank",
   });
+  useEffect(() => {
+    if (!isNew || paymentType !== "cash" || cashBoxId || !cashBoxes.length) return;
+    const active = [...cashBoxes].filter((box: any) => box.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+    const preferred = active.find((box: any) => String(box.id) === String(user?.company?.defaultPaymentCashBoxId));
+    if (preferred ?? active[0]) setCashBoxId(String((preferred ?? active[0]).id));
+  }, [isNew, paymentType, cashBoxId, cashBoxes, user?.company?.defaultPaymentCashBoxId]);
+  useEffect(() => {
+    if (!isNew || paymentType !== "bank" || bankAccountId || !bankAccounts.length) return;
+    const active = [...bankAccounts].filter((account: any) => account.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+    const preferred = active.find((account: any) => String(account.id) === String(user?.company?.defaultPaymentBankAccountId));
+    if (preferred ?? active[0]) setBankAccountId(String((preferred ?? active[0]).id));
+  }, [isNew, paymentType, bankAccountId, bankAccounts, user?.company?.defaultPaymentBankAccountId]);
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
@@ -1669,14 +1685,16 @@ function PurchaseInvoiceFormContent() {
                     setPaymentType(v);
                     if (v === "cash") {
                       if (!cashBoxId) {
-                        const first = [...(cashBoxes as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
-                        if (first) setCashBoxId(String(first.id));
+                        const active = [...(cashBoxes as any[])].filter((b: any) => b.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+                        const preferred = active.find((b: any) => String(b.id) === String(user?.company?.defaultPaymentCashBoxId));
+                        if (preferred ?? active[0]) setCashBoxId(String((preferred ?? active[0]).id));
                       }
                       setBankAccountId("");
                     } else if (v === "bank") {
                       if (!bankAccountId) {
-                        const first = [...(bankAccounts as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
-                        if (first) setBankAccountId(String(first.id));
+                        const active = [...(bankAccounts as any[])].filter((a: any) => a.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+                        const preferred = active.find((a: any) => String(a.id) === String(user?.company?.defaultPaymentBankAccountId));
+                        if (preferred ?? active[0]) setBankAccountId(String((preferred ?? active[0]).id));
                       }
                       setCashBoxId("");
                     } else {

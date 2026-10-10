@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
+import { companyPaymentDefault } from "@/lib/paymentMethodLabels";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -162,6 +163,13 @@ export default function PurchaseReturns() {
   const seqPeek = useNextSequenceNumber("purchase_return", showForm && editingId == null, undefined, form.branchId, form.paymentType);
   useEffect(() => {
     if (!showForm || editingId != null) return;
+    setForm((p: any) => ({
+      ...p,
+      paymentType: companyPaymentDefault(user?.company, "defaultPurchaseReturnPaymentType"),
+    }));
+  }, [showForm, editingId, user?.company?.defaultPurchaseReturnPaymentType]);
+  useEffect(() => {
+    if (!showForm || editingId != null) return;
     if (seqPeek.hasSequence && seqPeek.number) {
       setForm((p: any) => (p.docNumber === seqPeek.number ? p : { ...p, docNumber: seqPeek.number }));
     }
@@ -291,6 +299,19 @@ export default function PurchaseReturns() {
     queryFn: () => fetchJsonArray(`${API}/api/bank-accounts/balances?companyId=${cid}`, authH),
     enabled: !!user && !!cid && form.paymentType === "bank",
   });
+  useEffect(() => {
+    if (!showForm || editingId != null) return;
+    if (form.paymentType === "cash" && !form.cashBoxId && cashBoxes.length) {
+      const active = [...cashBoxes].filter((box: any) => box.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+      const preferred = active.find((box: any) => String(box.id) === String(user?.company?.defaultPaymentCashBoxId));
+      if (preferred ?? active[0]) setForm((p: any) => ({ ...p, cashBoxId: String((preferred ?? active[0]).id) }));
+    }
+    if (form.paymentType === "bank" && !form.bankAccountId && bankAccounts.length) {
+      const active = [...bankAccounts].filter((account: any) => account.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+      const preferred = active.find((account: any) => String(account.id) === String(user?.company?.defaultPaymentBankAccountId));
+      if (preferred ?? active[0]) setForm((p: any) => ({ ...p, bankAccountId: String((preferred ?? active[0]).id) }));
+    }
+  }, [showForm, editingId, form.paymentType, form.cashBoxId, form.bankAccountId, cashBoxes, bankAccounts, user?.company?.defaultPaymentCashBoxId, user?.company?.defaultPaymentBankAccountId]);
 
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
@@ -1851,14 +1872,16 @@ ${sections}
                     if (v === "cash") {
                       next.bankAccountId = "";
                       if (!p.cashBoxId) {
-                        const first = [...(cashBoxes as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
-                        if (first) next.cashBoxId = String(first.id);
+                        const active = [...(cashBoxes as any[])].filter((b: any) => b.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+                        const preferred = active.find((b: any) => String(b.id) === String(user?.company?.defaultPaymentCashBoxId));
+                        if (preferred ?? active[0]) next.cashBoxId = String((preferred ?? active[0]).id);
                       } else next.cashBoxId = p.cashBoxId;
                     } else if (v === "bank") {
                       next.cashBoxId = "";
                       if (!p.bankAccountId) {
-                        const first = [...(bankAccounts as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
-                        if (first) next.bankAccountId = String(first.id);
+                        const active = [...(bankAccounts as any[])].filter((a: any) => a.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+                        const preferred = active.find((a: any) => String(a.id) === String(user?.company?.defaultPaymentBankAccountId));
+                        if (preferred ?? active[0]) next.bankAccountId = String((preferred ?? active[0]).id);
                       } else next.bankAccountId = p.bankAccountId;
                     } else {
                       next.cashBoxId = "";
