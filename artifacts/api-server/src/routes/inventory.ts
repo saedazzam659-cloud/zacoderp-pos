@@ -5369,6 +5369,27 @@ router.post("/import/items", async (req, res) => {
   const rows: any[] = Array.isArray(req.body?.items) ? req.body.items : [];
   if (!rows.length) { res.status(400).json({ error: "لا توجد بيانات" }); return; }
 
+  const requiredFields = [
+    { key: "code", label: "كود الصنف" },
+    { key: "nameAr", label: "اسم الصنف العربي" },
+    { key: "unitCode", label: "وحدة القياس (unitCode)" },
+  ];
+  const requiredErrors = rows.flatMap((row, index) => {
+    const missing = requiredFields
+      .filter(({ key }) => row?.[key] == null || String(row[key]).trim() === "")
+      .map(({ label }) => label);
+    return missing.length
+      ? [{ row: index + 2, error: `الحقول الإلزامية الناقصة: ${missing.join("، ")}` }]
+      : [];
+  });
+  if (requiredErrors.length) {
+    res.status(400).json({
+      error: "لم يتم استيراد الملف. أكمل الحقول الإلزامية الموضحة في الصفوف التالية ثم أعد رفعه.",
+      errors: requiredErrors,
+    });
+    return;
+  }
+
   const groups = await db.select().from(itemGroupsTable).where(and(
     eq(itemGroupsTable.companyId, cid),
     eq(itemGroupsTable.isPosGroup, false),
@@ -5380,6 +5401,40 @@ router.post("/import/items", async (req, res) => {
   const groupByCode = new Map(groups.map((g: any) => [String(g.code).trim().toLowerCase(), g.id]));
   const unitByCode  = new Map(units.map((u: any)  => [String(u.code).trim().toLowerCase(), u.id]));
   const itemByCode  = new Map<string, any>(existing.map((it: any) => [String(it.code).trim().toLowerCase(), it]));
+  const importValidationErrors: { row: number; error: string }[] = [];
+  const showInPosByRow = new Map<number, boolean>();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || {};
+    const unitCode = String(row.unitCode ?? "").trim();
+    if (!unitByCode.has(unitCode.toLowerCase())) {
+      importValidationErrors.push({ row: i + 2, error: "وحدة القياس غير موجودة في هذه الشركة" });
+    }
+
+    const rawPosValue = row.showInPos;
+    if (rawPosValue == null || String(rawPosValue).trim() === "") {
+      showInPosByRow.set(i, true);
+      continue;
+    }
+    if (typeof rawPosValue === "boolean") {
+      showInPosByRow.set(i, rawPosValue);
+      continue;
+    }
+    const normalizedPosValue = String(rawPosValue).trim().toLowerCase();
+    if (["true", "1", "yes", "نعم"].includes(normalizedPosValue)) {
+      showInPosByRow.set(i, true);
+    } else if (["false", "0", "no", "لا"].includes(normalizedPosValue)) {
+      showInPosByRow.set(i, false);
+    } else {
+      importValidationErrors.push({ row: i + 2, error: "قيمة showInPos غير صحيحة؛ استخدم true أو false" });
+    }
+  }
+  if (importValidationErrors.length) {
+    res.status(400).json({
+      error: "لم يتم استيراد الملف. صحح وحدات القياس وقيم الظهور في نقاط البيع الموضحة ثم أعد رفعه.",
+      errors: importValidationErrors,
+    });
+    return;
+  }
 
   // Snapshot reusable audit-row metadata so each writeAudit call below stays
   // small and consistent (and importantly tagged with `source: "import"` so
@@ -5437,6 +5492,7 @@ router.post("/import/items", async (req, res) => {
         barcode:      r.barcode      != null && r.barcode  !== "" ? String(r.barcode)  : null,
         itemType:     ((r.itemType === "service" || r.itemType === "fixed_asset" || r.itemType === "prepaid_expense") ? r.itemType : "stock") as any,
          groupId, unitId,
+        showInPos:   showInPosByRow.get(i) ?? true,
         costPrice:    String(Number(r.costPrice    ?? 0) || 0),
         salePrice:    String(Number(r.salePrice    ?? 0) || 0),
         vatRate:      String(Number(r.vatRate      ?? 15) || 0),

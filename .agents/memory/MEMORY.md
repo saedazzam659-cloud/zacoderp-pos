@@ -32,6 +32,7 @@
 - [Platform and security index](platform-ops-index.md) — tenant isolation, permissions, agents, mobile/HR, storage, infrastructure, and operational safeguards.
 - [Controller-link state integrity](dual-platform-agent-control.md) — preserve exact concurrency checks and use idempotent recovery after remote shell-sync failures.
 - [Web and shared UI index](web-shared-index.md) — browser forms, shared UI, dates, catalog, reports, and cross-cutting web behavior.
+- [Item import requirements](item-import-requirements.md) — imports require code, Arabic name, and a valid company unit; reject the whole file before writes when required data is incomplete.
 - [Wouter navigation boundaries](wouter-native-new-tab.md) — use native browser navigation for new tabs and cross-artifact routes.
 - [Variable manufacturing routes](manufacturing-route-stages.md) — stage count and sequence vary by factory and product; never assume a fixed six-stage flow.
 - [Inventory-only assembly boundary](inventory-quick-assembly-boundary.md) — quick item assembly must stay inside inventory and leave production/manufacturing flows untouched.

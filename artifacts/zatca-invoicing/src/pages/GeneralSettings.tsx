@@ -503,14 +503,19 @@ export default function GeneralSettings() {
 
   async function downloadItemsTemplate() {
       if (!(await gate('export'))) return;
-    const headers = ["code","nameAr","nameEn","barcode","groupCode","unitCode","itemType","costPrice","salePrice","vatRate","reorderLevel","maxLevel","description"];
-    const example = [
-      ["ITM-001","حليب طازج 1 لتر","Fresh Milk 1L","6281234567890","DAIRY","PCS","stock",4.50,6.00,15,20,500,"حليب بقري طازج"],
-      ["ITM-002","خبز توست أبيض","White Toast Bread","6281234567891","BAKERY","PCS","stock",3.20,5.00,15,30,200,""],
-      ["SRV-001","رسوم توصيل","Delivery Fee","","SERVICES","SRV","service",0,15,15,0,"",""],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...example]);
-    ws["!cols"] = headers.map(() => ({ wch: 16 }));
+    const columns = ["code","nameAr","nameEn","barcode","groupCode","unitCode","itemType","showInPos","costPrice","salePrice","vatRate","reorderLevel","maxLevel","description"];
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid) throw new Error(t("pages.generalSettings.importFailed"));
+    const unitsRes = await fetch(`${API}/api/inventory/units?companyId=${cid}`, { headers });
+    if (!unitsRes.ok) throw new Error(t("pages.generalSettings.templateUnitsLoadFailed"));
+    const units = await unitsRes.json();
+    const exampleUnitCode = Array.isArray(units) ? String(units[0]?.code ?? "").trim() : "";
+    const example = exampleUnitCode
+      ? [["ITM-001","حليب طازج 1 لتر","Fresh Milk 1L","","",exampleUnitCode,"stock",true,4.50,6.00,15,20,500,"حليب بقري طازج"]]
+      : [];
+    if (!exampleUnitCode) toast({ title: t("pages.generalSettings.templateNoUnits") });
+    const ws = XLSX.utils.aoa_to_sheet([columns, ...example]);
+    ws["!cols"] = columns.map(() => ({ wch: 16 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Items");
     void saveWorkbook(wb, "items_template.xlsx");
@@ -544,12 +549,44 @@ export default function GeneralSettings() {
     try {
       const items = await parseExcelToObjects(file);
       if (!items.length) throw new Error(t("pages.generalSettings.emptyFileError"));
+      const requiredFields = [
+        { key: "code", label: t("pages.generalSettings.requiredItemCode") },
+        { key: "nameAr", label: t("pages.generalSettings.requiredItemArabicName") },
+        { key: "unitCode", label: t("pages.generalSettings.requiredItemUnit") },
+      ];
+      const requiredErrors = items.flatMap((item, index) => {
+        const missing = requiredFields
+          .filter(({ key }) => item?.[key] == null || String(item[key]).trim() === "")
+          .map(({ label }) => label);
+        return missing.length
+          ? [{ row: index + 2, error: t("pages.generalSettings.itemsMissingRequired", { fields: missing.join("، ") }) }]
+          : [];
+      });
+      const invalidPosErrors = items.flatMap((item, index) => {
+        const value = item?.showInPos;
+        if (value == null || String(value).trim() === "") return [];
+        if (typeof value === "boolean") return [];
+        return ["true", "false", "1", "0", "yes", "no", "نعم", "لا"].includes(String(value).trim().toLowerCase())
+          ? []
+          : [{ row: index + 2, error: t("pages.generalSettings.itemsInvalidPosValue") }];
+      });
+      const validationErrors = [...requiredErrors, ...invalidPosErrors];
+      if (validationErrors.length) {
+        setItemsReport({ created: 0, updated: 0, total: items.length, errors: validationErrors });
+        toast({ title: t("pages.generalSettings.itemsFixRequiredBeforeUpload", { errors: validationErrors.length }), variant: "destructive" });
+        return;
+      }
       const cid = user?.company?.id ?? user?.companyId;
       const res = await fetch(`${API}/api/inventory/import/items?companyId=${cid}`, {
         method: "POST", headers, body: JSON.stringify({ items }),
       });
       const j = await res.json();
-      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.importFailed"));
+      if (!res.ok) {
+        if (Array.isArray(j.errors)) {
+          setItemsReport({ created: 0, updated: 0, total: items.length, errors: j.errors });
+        }
+        throw new Error(j.error || t("pages.generalSettings.importFailed"));
+      }
       setItemsReport(j);
       {
         const errCount = j.errors?.length || 0;
@@ -1981,10 +2018,13 @@ export default function GeneralSettings() {
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-sm">{t("pages.generalSettings.itemsFile")}</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">code, nameAr, nameEn, barcode, groupCode, unitCode, itemType, costPrice, salePrice, vatRate, reorderLevel, maxLevel, description</span>
+                {t("pages.generalSettings.columns")}: <span className="font-mono" dir="ltr">code, nameAr, nameEn, barcode, groupCode, unitCode, itemType, showInPos, costPrice, salePrice, vatRate, reorderLevel, maxLevel, description</span>
               </p>
               <p className="text-[11px] text-muted-foreground mt-1">
-                {t("pages.generalSettings.itemsImportNote1")} <span className="font-mono" dir="ltr">groupCode</span>, <span className="font-mono" dir="ltr">unitCode</span> {t("pages.generalSettings.itemsImportNote2")}
+                {t("pages.generalSettings.itemsImportNote1")} {t("pages.generalSettings.itemsImportNote2")}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {t("pages.generalSettings.itemsImportRequiredHelp")}
               </p>
             </div>
           </div>
@@ -2011,11 +2051,14 @@ export default function GeneralSettings() {
                 {itemsReport.errors?.length ? <span className="text-red-600"> · {itemsReport.errors.length} {t("pages.generalSettings.error")}</span> : null}
               </p>
               {itemsReport.errors?.length > 0 && (
-                <ul className="text-[11px] text-red-700 space-y-0.5 max-h-32 overflow-auto pr-2">
-                  {itemsReport.errors.slice(0, 50).map((er, i) => (
-                    <li key={i}>{t("pages.generalSettings.line")} {er.row}: {er.error}</li>
-                  ))}
-                </ul>
+                <>
+                  <p className="text-[11px] text-amber-700">{t("pages.generalSettings.itemsFixRequiredBeforeUpload", { errors: itemsReport.errors.length })}</p>
+                  <ul className="text-[11px] text-red-700 space-y-0.5 max-h-32 overflow-auto pr-2">
+                    {itemsReport.errors.slice(0, 50).map((er, i) => (
+                      <li key={i}>{t("pages.generalSettings.line")} {er.row}: {er.error}</li>
+                    ))}
+                  </ul>
+                </>
               )}
             </div>
           )}
