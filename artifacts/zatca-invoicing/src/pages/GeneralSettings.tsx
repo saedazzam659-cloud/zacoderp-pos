@@ -1,11 +1,12 @@
 import { useTranslation } from "react-i18next";
-import { useState, useRef, useCallback, useEffect } from "react";
+import { Children, isValidElement, useState, useRef, useCallback, useEffect, type ComponentProps, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger as PrimitiveTabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Settings2, Upload, Trash2, CheckCircle2, Image as ImageIcon,
   Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet,
@@ -36,6 +37,34 @@ import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function tabTriggerText(children: ReactNode): string {
+  return Children.toArray(children).map((child) => {
+    if (typeof child === "string" || typeof child === "number") return String(child);
+    if (isValidElement<{ children?: ReactNode }>(child)) return tabTriggerText(child.props.children);
+    return "";
+  }).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function TabsTrigger(props: ComponentProps<typeof PrimitiveTabsTrigger>) {
+  const label = tabTriggerText(props.children);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <PrimitiveTabsTrigger {...props} aria-label={label}>
+          {props.children}
+        </PrimitiveTabsTrigger>
+      </TooltipTrigger>
+      <TooltipContent
+        side="top"
+        dir="rtl"
+        className="max-w-xs rounded-xl border border-primary/20 bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-xl"
+      >
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 const AGENT_GENERAL_SETTINGS_SECTIONS = [
   {
