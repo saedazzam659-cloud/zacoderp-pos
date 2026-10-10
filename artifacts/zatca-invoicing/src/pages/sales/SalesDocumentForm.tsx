@@ -353,6 +353,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
   const [activeTab, setActiveTab]       = useState("basic");
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!isInvoice || isNew || viewMode || params.get("savedTab") !== "items") return;
+    setActiveTab("items");
+    params.delete("savedTab");
+    const url = new URL(window.location.href);
+    url.search = params.toString();
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [isInvoice, isNew, viewMode]);
+  useEffect(() => {
     if (!showCustomerDebitNotes && activeTab === "debitNote") {
       setActiveTab(viewMode ? "details" : "basic");
     }
@@ -1699,7 +1708,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // وضع التعديل بالمعرّف المحفوظ. عروض الأسعار وأوامر البيع تحتفظ
       // بالسلوك القديم (رجوع للقائمة).
       if (isInvoice && saved?.id) {
-        if (matchNew) navigate(`${basePath}/${saved.id}`);
+        setActiveTab("items");
+        if (matchNew) navigate(`${basePath}/${saved.id}?savedTab=items`);
         return;
       }
       navigate(basePath);

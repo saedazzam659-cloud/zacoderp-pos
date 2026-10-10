@@ -201,6 +201,15 @@ function PurchaseInvoiceFormContent() {
   const hideQuickAdd = !!_co?.hideQuickAddBar;
   const [activeTab, setActiveTab] = useState<"basic" | "items" | "industrialCosts" | "debitNote" | "creditNote" | "payments" | "returns" | "archive" | "details" | "deferred" | "expenses">("basic");
   useEffect(() => {
+    const params = new URLSearchParams(search);
+    if (isNew || viewMode || params.get("savedTab") !== "items") return;
+    setActiveTab("items");
+    params.delete("savedTab");
+    const url = new URL(window.location.href);
+    url.search = params.toString();
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [search, isNew, viewMode]);
+  useEffect(() => {
     if (!showSupplierCreditNotes && activeTab === "creditNote") {
       setActiveTab(viewMode ? "details" : "basic");
     }
@@ -991,7 +1000,10 @@ function PurchaseInvoiceFormContent() {
       // المستخدم يستخدم تبويب «السداد» مباشرة. فاتورة جديدة → افتحها
       // في وضع التعديل بالمعرّف المحفوظ.
       if (isNew && saved?.id) {
-        navigate(`/purchasing/invoices/${saved.id}`);
+        setActiveTab("items");
+        navigate(`/purchasing/invoices/${saved.id}?savedTab=items`);
+      } else {
+        setActiveTab("items");
       }
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),

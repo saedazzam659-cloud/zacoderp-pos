@@ -37,6 +37,7 @@
 - [Inventory-only assembly boundary](inventory-quick-assembly-boundary.md) — quick item assembly must stay inside inventory and leave production/manufacturing flows untouched.
 - [Inventory brand filter boundary](inventory-brand-filter-boundary.md) — filter by linked items in inventory reports; include full quantities without allocating stock across brands.
 - [Sales-invoice form parity](sales-invoice-form-parity.md) — keep related customer, supplier, HR, order, credit, and representative forms on the same full-width field layout.
+- [Invoice save tab focus](invoice-save-tab-focus.md) — new invoices still begin with basic data; after a successful save, open the saved sales or purchase invoice on Items.
 - [Web sales thermal printing](web-sales-thermal-printing.md) — keep thermal templates opt-in for invoices and returns; A4 remains the default.
 - [Approved agent UI](approved-agent-ui.md) — current agent-facing web UI is approved; custom views must be opt-in and leave the default unchanged.
 - [Module-aware user guide](module-aware-user-guide.md) — company help should show only chapters for modules enabled in that company.
