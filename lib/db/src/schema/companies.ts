@@ -273,6 +273,10 @@ export const companiesTable = pgTable("companies", {
   // as a JSONB int[] (template ids 1..12). The "default" id below picks
   // which one is preselected when the modal opens.
   printEnabledTemplates: jsonb("print_enabled_templates").$type<number[]>(),
+  // Company-wide paper-size overrides for individual print templates.
+  // Missing/null keeps legacy defaults: A4 templates remain A4 and native
+  // thermal templates remain 80mm. IDs here opt A4 designs into 80mm output.
+  printThermalTemplates: jsonb("print_thermal_templates").$type<number[]>(),
   printDefaultTemplate:  integer("print_default_template").notNull().default(1),
   // Optional per-doc-type default template overrides. NULL = fall back to
   // the company-wide `printDefaultTemplate` above. Set from the checkboxes

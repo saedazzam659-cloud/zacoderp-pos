@@ -4356,6 +4356,11 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     return new Set(ALL_IDS);
   })();
   const [enabledIds, setEnabledIds] = useState<Set<number>>(initialEnabled);
+  const nativeThermalIds = TEMPLATE_CATALOG.filter(t => t.thermal).map(t => t.id);
+  const initialThermal: Set<number> = Array.isArray(company.printThermalTemplates)
+    ? new Set(company.printThermalTemplates.map(Number).filter((n: number) => ALL_IDS.includes(n)))
+    : new Set(nativeThermalIds);
+  const [thermalIds, setThermalIds] = useState<Set<number>>(initialThermal);
   const [defaultTplId, setDefaultTplId] = useState<number>(
     Number.isInteger(company.printDefaultTemplate) ? Number(company.printDefaultTemplate) : 1,
   );
@@ -4378,12 +4383,15 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setEnabledIds(Array.isArray(raw) && raw.length > 0
       ? new Set(raw.filter((n: any) => ALL_IDS.includes(Number(n))).map(Number))
       : new Set(ALL_IDS));
+    setThermalIds(Array.isArray(company.printThermalTemplates)
+      ? new Set(company.printThermalTemplates.map(Number).filter((n: number) => ALL_IDS.includes(n)))
+      : new Set(nativeThermalIds));
     setDefaultTplId(Number.isInteger(company.printDefaultTemplate) ? Number(company.printDefaultTemplate) : 1);
     setDefaultQuotTplId(asTplId(company.printDefaultTemplateQuotation));
     setDefaultOrderTplId(asTplId(company.printDefaultTemplateOrder));
     setDefaultRetTplId(asTplId(company.printDefaultTemplateReturn));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, company.printQuotationShowQr, company.printQuotationShowCurrencyName, company.printQuotationShowCustomerAddress, company.printEnabledTemplates, company.printDefaultTemplate, company.printDefaultTemplateQuotation, company.printDefaultTemplateOrder, company.printDefaultTemplateReturn, DEFAULT_INVOICE, DEFAULT_RETURN]);
+  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, company.printQuotationShowQr, company.printQuotationShowCurrencyName, company.printQuotationShowCustomerAddress, company.printEnabledTemplates, company.printThermalTemplates, company.printDefaultTemplate, company.printDefaultTemplateQuotation, company.printDefaultTemplateOrder, company.printDefaultTemplateReturn, DEFAULT_INVOICE, DEFAULT_RETURN]);
 
   function toggleTemplate(id: number) {
     setEnabledIds(prev => {
@@ -4407,6 +4415,15 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   }
   function selectAllTemplates() { setEnabledIds(new Set(ALL_IDS)); }
   function selectOnlyDefault()  { setEnabledIds(new Set([defaultTplId])); }
+  function toggleThermalTemplate(id: number) {
+    if (TEMPLATE_CATALOG.find(t => t.id === id)?.thermal) return;
+    setThermalIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -4430,6 +4447,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
           // Send `null` when all templates are enabled so we don't bloat
           // the row with a long array that means the same as the default.
           printEnabledTemplates: enabledIds.size === ALL_IDS.length ? null : Array.from(enabledIds).sort((a,b)=>a-b),
+          printThermalTemplates: Array.from(thermalIds).sort((a,b)=>a-b),
           printDefaultTemplate: defaultTplId,
           printDefaultTemplateQuotation: defaultQuotTplId,
           printDefaultTemplateOrder:     defaultOrderTplId,
@@ -4455,6 +4473,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             printQuotationShowCustomerAddress: data.printQuotationShowCustomerAddress,
             bankAccountText:       data.bankAccountText,
             printEnabledTemplates: data.printEnabledTemplates,
+            printThermalTemplates: data.printThermalTemplates,
             printDefaultTemplate:  data.printDefaultTemplate,
             printDefaultTemplateQuotation: data.printDefaultTemplateQuotation,
             printDefaultTemplateOrder:     data.printDefaultTemplateOrder,
@@ -4478,6 +4497,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setQuotationShowCustomerAddress(true);
     setBankAccountText("");
     setEnabledIds(new Set(ALL_IDS));
+    setThermalIds(new Set(nativeThermalIds));
     setDefaultTplId(1);
     setDefaultQuotTplId(null);
     setDefaultOrderTplId(null);
@@ -4635,7 +4655,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
               النماذج المتاحة للطباعة
             </h3>
             <p className="text-xs text-muted-foreground leading-6">
-              اختر النماذج التي ستظهر للمستخدمين عند طباعة الفاتورة، وحدّد النموذج الافتراضي الذي يُفتح أوّلاً. النماذج التي تُلغى لن تظهر في نافذة الطباعة.
+              اختر النماذج التي ستظهر عند طباعة الفواتير والمرتجعات، وحدّد النموذج الافتراضي. علّم «طباعة حرارية 80 مم» بجانب أي قالب A4 لتحويل تصميمه نفسه إلى إيصال طولي.
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs">
@@ -4705,7 +4725,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
                     <div className="min-w-0">
                       <div className="font-semibold text-sm truncate">{tpl.name}</div>
                       <div className="text-[10px] text-muted-foreground">
-                        {tpl.thermal ? "حراري 80mm" : "A4"}
+                        {thermalIds.has(tpl.id) ? "حراري 80mm" : "A4"}
                       </div>
                     </div>
                   </div>
@@ -4724,6 +4744,21 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
                   >
                     {isDefault ? "النموذج الافتراضي ✓" : "اجعله الافتراضي"}
                   </Button>
+
+                  <div className="pt-1 border-t border-dashed" onClick={(e) => e.stopPropagation()}>
+                    <label className={cn("flex items-center gap-2 text-[11px] cursor-pointer select-none", !isOn && "opacity-50 pointer-events-none")}>
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-primary"
+                        checked={thermalIds.has(tpl.id)}
+                        disabled={!isOn || tpl.thermal}
+                        onChange={() => toggleThermalTemplate(tpl.id)}
+                      />
+                      <span className={thermalIds.has(tpl.id) ? "font-semibold text-primary" : "text-muted-foreground"}>
+                        {tpl.thermal ? "حراري أصلي 80 مم" : "طباعة حرارية 80 مم"}
+                      </span>
+                    </label>
+                  </div>
 
                   {/* Per-doc-type default checkboxes (A4 templates only).
                       Checking one makes THIS template the default for that
@@ -4814,12 +4849,12 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
 
   type PrefRow = {
     autoKey: "printAutoAfterSaveSales" | "printAutoAfterSaveReceipt" | "printAutoAfterSavePayment" | "printAutoAfterSaveJournal";
-    tplKey:  "printTemplateSales"     | "printTemplateReceipt"     | "printTemplatePayment"     | "printTemplateJournal";
+    tplKey?: "printTemplateSales"     | "printTemplateReceipt"     | "printTemplatePayment"     | "printTemplateJournal";
     label: string;
     hint:  string;
   };
   const ROWS: PrefRow[] = [
-    { autoKey: "printAutoAfterSaveSales",   tplKey: "printTemplateSales",   label: "فواتير المبيعات ومرتجعاتها", hint: "مفتاح الطباعة التلقائية يشمل الفواتير والمرتجعات؛ قالب المرتجع يُحدد من إعدادات قوالب الطباعة." },
+    { autoKey: "printAutoAfterSaveSales",   label: "فواتير المبيعات ومرتجعاتها", hint: "مفتاح الطباعة التلقائية يشمل الفواتير والمرتجعات؛ حجم الورق محفوظ بجانب كل قالب في إعدادات القوالب." },
     { autoKey: "printAutoAfterSaveReceipt", tplKey: "printTemplateReceipt", label: "سند القبض (تحصيل العملاء)", hint: "ينطبق على إيصالات تحصيل العملاء" },
     { autoKey: "printAutoAfterSavePayment", tplKey: "printTemplatePayment", label: "سند الصرف (تسديد الموردين)", hint: "ينطبق على إيصالات تسديد الموردين" },
     { autoKey: "printAutoAfterSaveJournal", tplKey: "printTemplateJournal", label: "القيود المحاسبية",      hint: "ينطبق على شاشة إنشاء/تعديل القيد" },
@@ -4921,17 +4956,21 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
                 />
               </label>
 
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground whitespace-nowrap">نموذج الطباعة</Label>
-                <select
-                  value={form[row.tplKey]}
-                  onChange={(e) => setForm((p) => ({ ...p, [row.tplKey]: e.target.value }))}
-                  className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="a4">ورقة A4</option>
-                  <option value="thermal">طابعة حرارية 80 مم</option>
-                </select>
-              </div>
+              {row.tplKey ? (
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground whitespace-nowrap">نموذج الطباعة</Label>
+                  <select
+                    value={form[row.tplKey]}
+                    onChange={(e) => setForm((p) => ({ ...p, [row.tplKey!]: e.target.value }))}
+                    className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+                  >
+                    <option value="a4">ورقة A4</option>
+                    <option value="thermal">طابعة حرارية 80 مم</option>
+                  </select>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground">حجم الورق حسب القالب المحدد</div>
+              )}
             </div>
           ))}
         </div>

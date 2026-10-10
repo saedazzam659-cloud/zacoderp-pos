@@ -2992,14 +2992,34 @@ const TEMPLATES = [
   { id: 7,  name: "حراري عصري",    desc: "إيصال 80mm ملوّن",         color: "#0f766e", fn: template7,  thermal: true  },
 ];
 
+function forceThermalPaperSize(html: string): string {
+  const style = `<style id="thermal-paper-override">
+    @page { size: 80mm auto !important; margin: 0 !important; }
+    html, body { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 !important; padding: 0 !important; }
+    body { font-size: 10px !important; line-height: 1.35 !important; overflow: visible !important; }
+    body > * { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 auto !important; }
+    *, *::before, *::after { box-sizing: border-box !important; }
+    table { width: 100% !important; max-width: 100% !important; table-layout: fixed !important; }
+    th, td { padding: 2px 1px !important; font-size: 8px !important; overflow-wrap: anywhere !important; word-break: break-word !important; }
+    img { max-width: 100% !important; height: auto !important; }
+    @media print {
+      [class*="page"], [class*="invoice"], [class*="receipt"], [class*="paper"], [class*="container"] {
+        width: 80mm !important; min-width: 0 !important; max-width: 80mm !important;
+        height: auto !important; min-height: 0 !important; margin: 0 auto !important;
+        padding: 3mm !important; box-shadow: none !important;
+      }
+      div[style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+    }
+  </style>`;
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${style}</head>`) : html.replace(/<body/i, `${style}<body`);
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
   data: PrintData | null;
-  /** Optional initial template selection.  When omitted, defaults to
-   *  template 1 (classic A4) — historical behaviour.  Pass "thermal" to
-   *  preselect template 7 so callers driven by the company-wide auto-print
-   *  preference don't need to know about specific template ids. */
+  /** Legacy paper-size preference, used only when the company has not saved
+   *  per-template thermal settings yet. It does not change the selected design. */
   defaultTemplate?: "a4" | "thermal";
   /** When true, immediately fires the print pipeline as soon as the
    *  modal opens.  Used by the post-save auto-print flow so the user
@@ -3017,6 +3037,14 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   // If the configured default isn't visible (e.g. admin disabled it
   // after picking it), fall back to the first visible id.
   const companyCfg: any = (data as any)?.company ?? {};
+  const savedThermalIds = Array.isArray(companyCfg.printThermalTemplates)
+    ? new Set<number>(companyCfg.printThermalTemplates.map((n: any) => Number(n)))
+    : null;
+  function templateIsThermal(id: number): boolean {
+    const template = TEMPLATES.find(t => t.id === id);
+    if (template?.thermal) return true;
+    return savedThermalIds ? savedThermalIds.has(id) : defaultTemplate === "thermal";
+  }
   const visibleTemplates = useMemo(() => {
     const enabled = Array.isArray(companyCfg.printEnabledTemplates) && companyCfg.printEnabledTemplates.length > 0
       ? new Set<number>(companyCfg.printEnabledTemplates.map((n: any) => Number(n)))
@@ -3026,15 +3054,6 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   }, [companyCfg.printEnabledTemplates]);
 
   function resolveInitialId(): number {
-    // Caller's preference wins when it points at a visible template.
-    if (defaultTemplate === "thermal") {
-      const t = visibleTemplates.find(x => x.thermal);
-      if (t) return t.id;
-    }
-    if (defaultTemplate === "a4") {
-      const t = visibleTemplates.find(x => !x.thermal);
-      if (t) return t.id;
-    }
     // Per-doc-type default override (quotation / order / return checkboxes
     // in General Settings) wins over the company-wide default when set
     // and visible.
@@ -3050,6 +3069,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     return visibleTemplates[0]?.id ?? 1;
   }
   const [selected, setSelected] = useState<number>(resolveInitialId);
+  const selectedIsThermal = templateIsThermal(selected);
   const { toast } = useToast();
   const { user, token } = useAuth() as any;
 
@@ -3259,7 +3279,10 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
       const resolved = map.get(Number(data.customer.accountId));
       if (resolved) (data.customer as any).accountCode = resolved;
     }
-    const html = tmpl.fn(withManualSalesPrintPartyName(data));
+    const renderedHtml = tmpl.fn(withManualSalesPrintPartyName(data));
+    const html = selectedIsThermal && !tmpl.thermal
+      ? forceThermalPaperSize(renderedHtml)
+      : renderedHtml;
     // Use a hidden same-origin iframe instead of `window.open` so popup
     // blockers don't kill auto-print after save (no user-gesture path)
     // and so the print preview always shows up — even when the print
@@ -3351,7 +3374,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
               )}
               style={selected === t.id ? { borderColor: t.color } : {}}
             >
-              {t.thermal && (
+              {templateIsThermal(t.id) && (
                 <span
                   className="absolute -top-2 -left-2 rounded-full text-[9px] font-bold px-2 py-0.5 text-white shadow"
                   style={{ background: t.color }}
@@ -3359,7 +3382,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
                   80mm
                 </span>
               )}
-              {t.thermal ? (
+              {templateIsThermal(t.id) ? (
                 <div
                   className="w-[60%] mx-auto aspect-[2/5] rounded-sm mb-2 flex flex-col overflow-hidden"
                   style={{ background: "#fff", border: `1.5px solid ${t.color}` }}
@@ -3395,6 +3418,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
                 </div>
               )}
               <p className="text-xs font-bold" style={selected === t.id ? { color: t.color } : {}}>{t.name}</p>
+              <p className="text-[9px] font-medium text-muted-foreground">{templateIsThermal(t.id) ? "حراري 80 مم" : "ورقة A4"}</p>
               <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{t.desc}</p>
             </button>
           ))}
@@ -3428,7 +3452,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
             <X className="h-4 w-4 ml-1" />إلغاء
           </Button>
           <Button onClick={handlePrint} className="gap-2">
-            <Printer className="h-4 w-4" />طباعة النموذج {selected}
+            <Printer className="h-4 w-4" />طباعة النموذج {selected} · {selectedIsThermal ? "80 مم" : "A4"}
           </Button>
         </div>
       </DialogContent>

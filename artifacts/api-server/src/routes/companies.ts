@@ -419,7 +419,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printQuotationShowQr, printQuotationShowCurrencyName, printQuotationShowCustomerAddress,
     bankAccountText, printShowItemsSummary,
     printT14ShowEnSubtitle, printT14ShowAccountCode, printT14ShowAuditFooter,
-    printEnabledTemplates, printDefaultTemplate,
+    printEnabledTemplates, printThermalTemplates, printDefaultTemplate,
     printDefaultTemplateQuotation, printDefaultTemplateOrder, printDefaultTemplateReturn,
     invoicePrintLanguage,
     sequenceDateSource,
@@ -484,7 +484,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printQuotationShowCustomerAddress?: boolean;
     bankAccountText?: string | null; printShowItemsSummary?: boolean;
     printT14ShowEnSubtitle?: boolean; printT14ShowAccountCode?: boolean; printT14ShowAuditFooter?: boolean;
-    printEnabledTemplates?: number[] | null; printDefaultTemplate?: number;
+    printEnabledTemplates?: number[] | null; printThermalTemplates?: number[] | null; printDefaultTemplate?: number;
     printDefaultTemplateQuotation?: number | null;
     printDefaultTemplateOrder?: number | null;
     printDefaultTemplateReturn?: number | null;
@@ -679,6 +679,21 @@ router.patch("/:id/general-settings", async (req, res) => {
           .filter((n) => Number.isInteger(n) && ((n >= 1 && n <= 15) || n === 20)),
       )).sort((a, b) => a - b);
       updates.printEnabledTemplates = cleaned.length === 0 ? null : cleaned;
+    }
+  }
+  // Thermal mode is saved per template. An empty array explicitly means
+  // every non-native template stays A4; null restores the native defaults.
+  if (printThermalTemplates !== undefined) {
+    if (printThermalTemplates === null) {
+      updates.printThermalTemplates = null;
+    } else if (!Array.isArray(printThermalTemplates)) {
+      res.status(400).json({ error: "قائمة القوالب الحرارية يجب أن تكون مصفوفة" }); return;
+    } else {
+      updates.printThermalTemplates = Array.from(new Set(
+        printThermalTemplates
+          .map((x) => Number(x))
+          .filter((n) => Number.isInteger(n) && ((n >= 1 && n <= 15) || n === 20)),
+      )).sort((a, b) => a - b);
     }
   }
   if (printDefaultTemplate !== undefined) {
