@@ -138,6 +138,13 @@ export const companiesTable = pgTable("companies", {
   // used across all four statement screens). Presentation only. Default
   // "classic" so existing tenants keep their current printout untouched.
   statementPrintFormat: text("statement_print_format").notNull().default("classic"),
+  // New sales and return forms keep the historical "credit" default unless a
+  // company explicitly chooses another payment type in General Settings.
+  defaultSalesPaymentType: text("default_sales_payment_type").notNull().default("credit"),
+  defaultSalesReturnPaymentType: text("default_sales_return_payment_type").notNull().default("credit"),
+  // Display-only aliases. Internal payment keys (cash/credit/bank) remain stable.
+  paymentMethodLabels: jsonb("payment_method_labels").$type<Partial<Record<"cash" | "credit" | "bank", string>>>()
+    .notNull().default({}),
   // ─── Per-document-type auto-posting toggles ───────────────────────────
   // Each flag controls whether saving a document of that type immediately
   // posts the resulting journal entry (true) or leaves it as a draft for

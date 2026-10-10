@@ -11,6 +11,7 @@ import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { companyPaymentDefault, paymentMethodLabel } from "@/lib/paymentMethodLabels";
 import { usePermission } from "@/hooks/usePermission";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { useToast } from "@/hooks/use-toast";
@@ -173,7 +174,19 @@ export default function SalesReturns() {
   const stickyPriceIncl = useStickyPriceIncludesVat();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm]         = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
+  const [form, setForm]         = useState<any>({
+    ...EMPTY,
+    paymentType: companyPaymentDefault(user?.company, "defaultSalesReturnPaymentType"),
+    priceIncludesVat: stickyPriceIncl.initial,
+  });
+  useEffect(() => {
+    if (showForm && editingId == null) {
+      setForm((current: any) => ({
+        ...current,
+        paymentType: companyPaymentDefault(user?.company, "defaultSalesReturnPaymentType"),
+      }));
+    }
+  }, [showForm, editingId, user?.company?.defaultSalesReturnPaymentType]);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
 
   // SAP-style tabbed layout (default) vs classic single-page (per-company opt-out).
@@ -573,7 +586,12 @@ export default function SalesReturns() {
   }, [form.salesAccountId, form.cogsAccountId, form.inventoryAccountId, form.taxAccountId, form.discountAccountId]);
 
   function reset() {
-    setForm({ ...EMPTY, ...loadAcctDefaults(), priceIncludesVat: stickyPriceIncl.read() });
+    setForm({
+      ...EMPTY,
+      paymentType: companyPaymentDefault(user?.company, "defaultSalesReturnPaymentType"),
+      ...loadAcctDefaults(),
+      priceIncludesVat: stickyPriceIncl.read(),
+    });
     // Tabbed layout: start with NO pre-seeded row — entry happens via the
     // quick-add bar (empty-state shows in the grid). Classic keeps one row.
     setLines(useTabbedLayout ? [] : [newLine()]);
@@ -2396,9 +2414,9 @@ ${sections}
                 })}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="credit">{t("salesReturns.paymentCredit")}</SelectItem>
-                    <SelectItem value="cash">{t("salesReturns.paymentCash")}</SelectItem>
-                    <SelectItem value="bank">{t("salesReturns.paymentBank")}</SelectItem>
+                    <SelectItem value="credit">{paymentMethodLabel(user?.company, "credit", t("salesReturns.paymentCredit"))}</SelectItem>
+                    <SelectItem value="cash">{paymentMethodLabel(user?.company, "cash", t("salesReturns.paymentCash"))}</SelectItem>
+                    <SelectItem value="bank">{paymentMethodLabel(user?.company, "bank", t("salesReturns.paymentBank"))}</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>

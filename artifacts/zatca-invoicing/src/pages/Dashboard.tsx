@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   FileText, CheckCircle2, XCircle, FileWarning, TrendingUp, ShieldCheck,
   Plus, Users, Truck, Package, Wallet, BookOpen, ArrowUpRight, Receipt,
+  RotateCcw, ShoppingCart, Undo2, CreditCard,
   Calendar, Award, Star, BarChart3, PieChart as PieChartIcon, ExternalLink,
   Bell, Activity, Clock, AlertTriangle, User as UserIcon,
 } from "lucide-react";
@@ -97,18 +98,18 @@ function QuickAction({
         href={href}
         className={moduleShortcutIcons
           ? "group flex min-h-[112px] flex-col items-center justify-center gap-3 rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/5 via-card to-card p-5 text-center shadow-sm transition-all hover:-translate-y-1 hover:border-primary/35 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          : "group flex flex-col items-center justify-center gap-2 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-md transition-all"}
+          : "group flex min-h-[104px] flex-col items-center justify-center gap-2.5 rounded-2xl border border-border/70 bg-gradient-to-br from-primary/5 via-card to-card p-4 text-center shadow-sm transition-all hover:-translate-y-1 hover:border-primary/35 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"}
       >
         <div className={cn(
           "flex items-center justify-center transition-transform group-hover:scale-110",
           color,
-          moduleShortcutIcons ? "h-14 w-14 rounded-2xl shadow-md" : "h-11 w-11 rounded-xl"
+          moduleShortcutIcons ? "h-14 w-14 rounded-2xl shadow-md" : "h-12 w-12 rounded-xl shadow-sm"
         )}>
           <Icon className={moduleShortcutIcons ? "h-6 w-6 text-white" : "h-5 w-5 text-white"} />
         </div>
         <span className={moduleShortcutIcons
           ? "text-sm font-semibold text-foreground text-center leading-tight"
-          : "text-xs font-medium text-foreground text-center leading-tight"}>{label}</span>
+          : "text-sm font-semibold text-foreground text-center leading-tight"}>{label}</span>
       </Link>
       {moduleShortcutIcons && (
         <a
@@ -256,6 +257,12 @@ export default function Dashboard() {
   const canKpis   = usePermission("dashboard_kpis", "view");
   const canCharts = usePermission("dashboard_charts", "view");
   const canAlerts = usePermission("dashboard_alerts", "view");
+  const canCreateSalesInvoice = usePermission("sales_invoices", "create");
+  const canViewSalesReturns = usePermission("sales_returns", "view");
+  const canCreatePurchaseInvoice = usePermission("purchase_invoices", "create");
+  const canViewPurchaseReturns = usePermission("purchase_returns", "view");
+  const canCreateReceiptVoucher = usePermission("receipt_vouchers", "create");
+  const canCreatePaymentVoucher = usePermission("payment_vouchers", "create");
 
   const { data: recentInvoices, isLoading: loadingRecent } = useGetRecentInvoices(undefined, {
     query: { queryKey: ["recent-invoices", companyId], enabled: canViewRecentInvoices },
@@ -444,6 +451,7 @@ export default function Dashboard() {
       )}
 
       {/* Quick actions launchpad */}
+      {(canCreateSalesInvoice || canViewSalesReturns || canCreateReceiptVoucher || canCreatePurchaseInvoice || canViewPurchaseReturns || canCreatePaymentVoucher) && (
       <div className="rounded-xl border bg-card shadow-sm">
         <div className="flex items-center justify-between px-5 py-3 border-b">
           <div>
@@ -451,15 +459,16 @@ export default function Dashboard() {
             <p className="text-[11px] text-muted-foreground">{t("pages.dashboard.quickActionsDesc")}</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-4">
-          <QuickAction href="/sales/invoices/new"      icon={Receipt}   label={t("pages.dashboard.newInvoice")}     color="bg-primary" moduleShortcutIcons={moduleShortcutIcons} />
-          <QuickAction href="/customers/new"           icon={Users}     label={t("pages.dashboard.newCustomer")}    color="bg-sky-500" moduleShortcutIcons={moduleShortcutIcons} />
-          <QuickAction href="/suppliers/new"           icon={Truck}     label={t("pages.dashboard.newSupplier")}    color="bg-indigo-500" moduleShortcutIcons={moduleShortcutIcons} />
-          <QuickAction href="/inventory/items"         icon={Package}   label={t("pages.dashboard.addItem")}        color="bg-emerald-500" moduleShortcutIcons={moduleShortcutIcons} />
-          <QuickAction href="/cash/receipt-vouchers"   icon={Wallet}    label={t("pages.dashboard.receiptVoucher")} color="bg-amber-500" moduleShortcutIcons={moduleShortcutIcons} />
-          <QuickAction href="/accounting/accounts"     icon={BookOpen}  label={t("pages.dashboard.chartOfAccounts")} color="bg-rose-500" moduleShortcutIcons={moduleShortcutIcons} />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 p-4">
+          {canCreateSalesInvoice && <QuickAction href="/sales/invoices/new" icon={Receipt} label={t("pages.dashboard.newInvoice")} color="bg-primary" moduleShortcutIcons={moduleShortcutIcons} />}
+          {canViewSalesReturns && <QuickAction href="/sales/returns" icon={RotateCcw} label={t("pages.dashboard.salesReturn")} color="bg-rose-500" moduleShortcutIcons={moduleShortcutIcons} />}
+          {canCreateReceiptVoucher && <QuickAction href="/cash/receipt-vouchers/new" icon={Wallet} label={t("pages.dashboard.receiptVoucher")} color="bg-emerald-600" moduleShortcutIcons={moduleShortcutIcons} />}
+          {canCreatePurchaseInvoice && <QuickAction href="/purchasing/invoices/new" icon={ShoppingCart} label={t("pages.dashboard.purchaseInvoice")} color="bg-indigo-500" moduleShortcutIcons={moduleShortcutIcons} />}
+          {canViewPurchaseReturns && <QuickAction href="/purchasing/returns" icon={Undo2} label={t("pages.dashboard.purchaseReturn")} color="bg-amber-500" moduleShortcutIcons={moduleShortcutIcons} />}
+          {canCreatePaymentVoucher && <QuickAction href="/cash/payment-vouchers/new" icon={CreditCard} label={t("pages.dashboard.paymentVoucher")} color="bg-sky-600" moduleShortcutIcons={moduleShortcutIcons} />}
         </div>
       </div>
+      )}
 
       {/* ─── INTERACTIVE CHARTS (2x2 grid) ──────────────────────────────── */}
       {canCharts && (

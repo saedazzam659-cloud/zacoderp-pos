@@ -431,6 +431,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printAutoAfterSavePayment, printAutoAfterSaveJournal,
     printTemplateSales, printTemplateReceipt,
     printTemplatePayment, printTemplateJournal,
+    defaultSalesPaymentType, defaultSalesReturnPaymentType, paymentMethodLabels,
     // Journal-entry form behavior: "auto" (keep form open + fresh draft) or
     // "manual" (navigate back to entries list after save). See companies
     // schema for the full semantics.
@@ -494,6 +495,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     printAutoAfterSavePayment?: boolean; printAutoAfterSaveJournal?: boolean;
     printTemplateSales?: string; printTemplateReceipt?: string;
     printTemplatePayment?: string; printTemplateJournal?: string;
+    defaultSalesPaymentType?: string; defaultSalesReturnPaymentType?: string;
+    paymentMethodLabels?: Partial<Record<"cash" | "credit" | "bank", string>>;
     journalEntryFormMode?: string;
     journalSmartForm?: boolean;
     menuLayout?: string;
@@ -717,6 +720,32 @@ router.patch("/:id/general-settings", async (req, res) => {
       res.status(400).json({ error: "النموذج الافتراضي لنوع المستند يجب أن يكون رقماً بين 1 و 15 أو 20 أو فارغاً" }); return;
     }
     updates[key] = n;
+  }
+  const validPaymentType = (v: any) => v === "credit" || v === "cash" || v === "bank";
+  for (const [key, val] of [
+    ["defaultSalesPaymentType", defaultSalesPaymentType],
+    ["defaultSalesReturnPaymentType", defaultSalesReturnPaymentType],
+  ] as const) {
+    if (val !== undefined) {
+      if (!validPaymentType(val)) {
+        res.status(400).json({ error: `قيمة طريقة الدفع الافتراضية غير صالحة لـ ${key}` }); return;
+      }
+      updates[key] = val;
+    }
+  }
+  if (paymentMethodLabels !== undefined) {
+    if (!paymentMethodLabels || typeof paymentMethodLabels !== "object" || Array.isArray(paymentMethodLabels)) {
+      res.status(400).json({ error: "مسميات طرق الدفع غير صالحة" }); return;
+    }
+    const labels: Record<string, string> = {};
+    for (const key of ["cash", "credit", "bank"] as const) {
+      const raw = paymentMethodLabels[key];
+      if (raw !== undefined && typeof raw !== "string") {
+        res.status(400).json({ error: `المسمى المخصص لطريقة الدفع ${key} غير صالح` }); return;
+      }
+      if (typeof raw === "string") labels[key] = raw.trim().slice(0, 32);
+    }
+    updates.paymentMethodLabels = labels;
   }
   if (invoicePrintLanguage !== undefined) {
     const v = String(invoicePrintLanguage);

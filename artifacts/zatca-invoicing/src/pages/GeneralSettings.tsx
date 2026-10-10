@@ -11,7 +11,7 @@ import {
   Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet,
   DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle,
   Clock, Repeat, Trash, History, Play, Zap, Hand, Printer, Save,
-  LogOut, Timer, ShieldCheck, CalendarDays, CalendarClock,
+  LogOut, Timer, ShieldCheck, CalendarDays, CalendarClock, Wallet,
   Users as UsersIcon, Percent, Calculator,
   Wand2, PanelTop, PanelRight, Scale,
   Archive, Cloud, HardDrive, Ban,
@@ -1376,6 +1376,13 @@ export default function GeneralSettings() {
           >
             <Printer className="h-4 w-4 shrink-0" />
             <span className="truncate">{t("pages.generalSettings.printText")}</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="paymentPrefs"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Wallet className="h-4 w-4 shrink-0" />
+            <span className="truncate">إعدادات طرق الدفع</span>
           </TabsTrigger>
           <TabsTrigger
             value="printPrefs"
@@ -3175,6 +3182,10 @@ export default function GeneralSettings() {
           <PrintPreferencesTab user={user} token={token} setUser={setUser} />
         </TabsContent>
 
+        <TabsContent value="paymentPrefs" className="mt-5 space-y-6">
+          <PaymentPreferencesTab user={user} token={token} setUser={setUser} />
+        </TabsContent>
+
         {/* ═══ TAB 9: Auto Logout (idle timeout) ═══════════════════════════ */}
         <TabsContent value="autoLogout" className="mt-5 space-y-6">
           <AutoLogoutTab />
@@ -4841,6 +4852,155 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
 // Covers sales invoices/returns, customer receipt vouchers, supplier
 // payment vouchers, and journal entries. Each row has its own toggle +
 // template select; one save button pushes the whole set.
+function PaymentPreferencesTab({ user, token, setUser }: { user: any; token: string; setUser: any }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const company = user?.company ?? {};
+  const cid = company.id ?? user?.companyId;
+  const [defaultSalesPaymentType, setDefaultSalesPaymentType] = useState(
+    company.defaultSalesPaymentType === "cash" || company.defaultSalesPaymentType === "bank"
+      ? company.defaultSalesPaymentType : "credit",
+  );
+  const [defaultSalesReturnPaymentType, setDefaultSalesReturnPaymentType] = useState(
+    company.defaultSalesReturnPaymentType === "cash" || company.defaultSalesReturnPaymentType === "bank"
+      ? company.defaultSalesReturnPaymentType : "credit",
+  );
+  const [labels, setLabels] = useState<Record<string, string>>({
+    cash: company.paymentMethodLabels?.cash ?? "",
+    credit: company.paymentMethodLabels?.credit ?? "",
+    bank: company.paymentMethodLabels?.bank ?? "",
+  });
+  const shownLabel = (key: "cash" | "credit" | "bank", fallback: string) =>
+    labels[key]?.trim() || fallback;
+  const [saving, setSaving] = useState(false);
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  useEffect(() => {
+    setDefaultSalesPaymentType(
+      company.defaultSalesPaymentType === "cash" || company.defaultSalesPaymentType === "bank"
+        ? company.defaultSalesPaymentType : "credit",
+    );
+    setDefaultSalesReturnPaymentType(
+      company.defaultSalesReturnPaymentType === "cash" || company.defaultSalesReturnPaymentType === "bank"
+        ? company.defaultSalesReturnPaymentType : "credit",
+    );
+    setLabels({
+      cash: company.paymentMethodLabels?.cash ?? "",
+      credit: company.paymentMethodLabels?.credit ?? "",
+      bank: company.paymentMethodLabels?.bank ?? "",
+    });
+  }, [
+    company.defaultSalesPaymentType,
+    company.defaultSalesReturnPaymentType,
+    company.paymentMethodLabels?.cash,
+    company.paymentMethodLabels?.credit,
+    company.paymentMethodLabels?.bank,
+  ]);
+
+  async function save() {
+    if (!cid || saving) return;
+    setSaving(true);
+    try {
+      const payload = {
+        defaultSalesPaymentType,
+        defaultSalesReturnPaymentType,
+        paymentMethodLabels: {
+          cash: labels.cash.trim().slice(0, 32),
+          credit: labels.credit.trim().slice(0, 32),
+          bank: labels.bank.trim().slice(0, 32),
+        },
+      };
+      const res = await fetch(`${API}/api/companies/${cid}/general-settings`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error ?? "تعذر حفظ إعدادات طرق الدفع");
+      setUser?.((current: any) => current ? {
+        ...current,
+        company: { ...current.company, ...payload },
+      } : current);
+      qc.invalidateQueries({ queryKey: ["auth-me"] });
+      toast({ title: "تم حفظ إعدادات طرق الدفع" });
+    } catch (error: any) {
+      toast({ title: error?.message ?? "تعذر حفظ إعدادات طرق الدفع", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const selectClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm";
+  return (
+    <div className="rounded-xl border bg-card p-5 space-y-5">
+      <div>
+        <h2 className="font-semibold text-base flex items-center gap-2">
+          <Wallet className="h-4 w-4 text-primary" />
+          تفضيلات الدفع لفواتير البيع والمرتجعات
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          الإعدادات خاصة بهذه الشركة. تغيير المسمى يغيّر النص الظاهر فقط؛ ولا يغيّر طريقة الترحيل أو البيانات المحاسبية.
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label>الافتراضي لفاتورة المبيعات الجديدة</Label>
+          <select className={selectClass} value={defaultSalesPaymentType}
+            onChange={(event) => setDefaultSalesPaymentType(event.target.value)}>
+            <option value="credit">{shownLabel("credit", "آجل")}</option>
+            <option value="cash">{shownLabel("cash", "نقدي")}</option>
+            <option value="bank">{shownLabel("bank", "بنكي")}</option>
+          </select>
+        </div>
+        <div className="space-y-2">
+          <Label>الافتراضي لمرتجع المبيعات الجديد</Label>
+          <select className={selectClass} value={defaultSalesReturnPaymentType}
+            onChange={(event) => setDefaultSalesReturnPaymentType(event.target.value)}>
+            <option value="credit">{shownLabel("credit", "آجل")}</option>
+            <option value="cash">{shownLabel("cash", "نقدي")}</option>
+            <option value="bank">{shownLabel("bank", "بنكي")}</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="space-y-3 border-t pt-4">
+        <div>
+          <h3 className="text-sm font-semibold">المسميات الظاهرة لوسائل الدفع</h3>
+          <p className="mt-1 text-xs text-muted-foreground">اترك الحقل فارغًا لاستخدام المسمى الافتراضي.</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {([
+            ["cash", "مسمى النقدي", "نقدي"],
+            ["credit", "مسمى الآجل", "آجل"],
+            ["bank", "مسمى البنكي", "شبكة"],
+          ] as const).map(([key, label, placeholder]) => (
+            <div key={key} className="space-y-2">
+              <Label htmlFor={`payment-label-${key}`}>{label}</Label>
+              <Input
+                id={`payment-label-${key}`}
+                value={labels[key] ?? ""}
+                placeholder={placeholder}
+                maxLength={32}
+                onChange={(event) => setLabels((current) => ({ ...current, [key]: event.target.value }))}
+              />
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          «شبكة» هنا تسمية عرض للوسيلة البنكية الحالية، وليست وسيلة دفع أو حسابًا محاسبيًا جديدًا.
+        </p>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={() => void save()} disabled={saving || !cid}>
+          {saving ? <><Loader2 className="h-4 w-4 ml-2 animate-spin" />جاري الحفظ...</> : <><Save className="h-4 w-4 ml-2" />حفظ إعدادات الدفع</>}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function PrintPreferencesTab({ user, token, setUser }: { user: any; token: string; setUser: any }) {
   const { toast } = useToast();
   const qc = useQueryClient();

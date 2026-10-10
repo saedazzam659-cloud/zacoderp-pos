@@ -9,6 +9,7 @@ import { useRoute, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { companyPaymentDefault, paymentMethodLabel } from "@/lib/paymentMethodLabels";
 import { isAccountNoteVisible } from "@/lib/accountNoteVisibility";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { usePermission } from "@/hooks/usePermission";
@@ -380,6 +381,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [paymentType,setPaymentType]    = useState("credit");
   const [cashBoxId, setCashBoxId]       = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
+  useEffect(() => {
+    if (isNew && isInvoice) {
+      setPaymentType(companyPaymentDefault(user?.company, "defaultSalesPaymentType"));
+    }
+  }, [isNew, isInvoice, user?.company?.defaultSalesPaymentType]);
   const [currencyCode,setCurrencyCode]  = useState("");
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
@@ -2823,9 +2829,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 label: t("salesDocForm.paymentType"),
                 type: "select",
                 options: [
-                  { value: "credit", label: "آجل / Credit" },
-                  { value: "cash", label: "نقدي / Cash" },
-                  { value: "bank", label: "بنكي / Bank" },
+                  { value: "credit", label: paymentMethodLabel(user?.company, "credit", "آجل / Credit") },
+                  { value: "cash", label: paymentMethodLabel(user?.company, "cash", "نقدي / Cash") },
+                  { value: "bank", label: paymentMethodLabel(user?.company, "bank", "بنكي / Bank") },
                 ],
                 description:
                   "credit = آجل (اعتماد على الذمة)، cash = نقدي (يحتاج cashBoxId)، bank = بنكي (يحتاج bankAccountId).",
@@ -3840,9 +3846,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     }}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="credit">{t("salesDocForm.paymentCredit")}</SelectItem>
-                        <SelectItem value="cash">{t("salesDocForm.paymentCash")}</SelectItem>
-                        <SelectItem value="bank">{t("salesDocForm.paymentBank")}</SelectItem>
+                        <SelectItem value="credit">{paymentMethodLabel(user?.company, "credit", t("salesDocForm.paymentCredit"))}</SelectItem>
+                        <SelectItem value="cash">{paymentMethodLabel(user?.company, "cash", t("salesDocForm.paymentCash"))}</SelectItem>
+                        <SelectItem value="bank">{paymentMethodLabel(user?.company, "bank", t("salesDocForm.paymentBank"))}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

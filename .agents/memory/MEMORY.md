@@ -53,3 +53,4 @@
 - [External DB routing and schema healing](external-db-storage-routing.md) — keep readiness strict by default; one designated request path may tolerate missing tables without weakening other agents.
 - [Test runtime boundary](api-server-ensureschema-lock-hang.md) — do not run the slow/full admin suite without explicit approval; use focused checks.
 - [Simple voucher multi-invoice settlements](voucher-multi-invoice-settlement-boundary.md) — same-party, same-currency invoice allocation must preserve one voucher posting and legacy single-invoice behavior.
+- [Company payment labels](company-payment-labels-boundary.md) — payment defaults and display aliases are company-scoped; keep the internal accounting payment keys unchanged.
