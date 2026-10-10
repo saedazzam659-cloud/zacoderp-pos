@@ -4803,9 +4803,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
 
 // ─── Sub-component: Print Preferences tab ─────────────────────────────────
 // Per-doc-type preferences for "auto-print after save" + "A4 vs thermal".
-// Covers four surfaces: sales invoices, customer receipt vouchers,
-// supplier payment vouchers, and journal entries. Each row has its
-// own toggle + template select; one save button pushes the whole set.
+// Covers sales invoices/returns, customer receipt vouchers, supplier
+// payment vouchers, and journal entries. Each row has its own toggle +
+// template select; one save button pushes the whole set.
 function PrintPreferencesTab({ user, token, setUser }: { user: any; token: string; setUser: any }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -4819,7 +4819,7 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
     hint:  string;
   };
   const ROWS: PrefRow[] = [
-    { autoKey: "printAutoAfterSaveSales",   tplKey: "printTemplateSales",   label: "فواتير المبيعات",       hint: "تنطبق على الفواتير الصادرة من شاشة المبيعات" },
+    { autoKey: "printAutoAfterSaveSales",   tplKey: "printTemplateSales",   label: "فواتير المبيعات ومرتجعاتها", hint: "مفتاح الطباعة التلقائية يشمل الفواتير والمرتجعات؛ قالب المرتجع يُحدد من إعدادات قوالب الطباعة." },
     { autoKey: "printAutoAfterSaveReceipt", tplKey: "printTemplateReceipt", label: "سند القبض (تحصيل العملاء)", hint: "ينطبق على إيصالات تحصيل العملاء" },
     { autoKey: "printAutoAfterSavePayment", tplKey: "printTemplatePayment", label: "سند الصرف (تسديد الموردين)", hint: "ينطبق على إيصالات تسديد الموردين" },
     { autoKey: "printAutoAfterSaveJournal", tplKey: "printTemplateJournal", label: "القيود المحاسبية",      hint: "ينطبق على شاشة إنشاء/تعديل القيد" },

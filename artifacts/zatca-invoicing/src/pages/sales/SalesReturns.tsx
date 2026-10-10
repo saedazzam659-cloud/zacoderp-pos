@@ -192,6 +192,8 @@ export default function SalesReturns() {
   const [notesError, setNotesError] = useState(false);
   const notesRef = useRef<HTMLInputElement | null>(null);
   const [printData, setPrintData] = useState<any>(null);
+  const [autoPrintOpenedReturn, setAutoPrintOpenedReturn] = useState(false);
+  const pendingDraftNavigateRef = useRef<string | null>(null);
   // Source-invoice picker — when a sales invoice is selected as the source,
   // open this modal instead of auto-importing every line. Lets the user
   // pick exactly which items to return + the qty for each (capped at the
@@ -227,15 +229,30 @@ export default function SalesReturns() {
   // The return-number peek lives below — after the `customers` query — so it
   // can detect a foreign (non-SA) buyer and preview the separate foreign series.
 
-  async function openPrint(r: any) {
+  async function openPrint(r: any, autoPrint = false) {
     try {
       const res = await fetch(`${API}/api/sales/sales-returns/${r.id}`, { headers: authH });
       const full = await res.json();
-      const customer = customers.find((c: any) => c.id === r.customerId) ?? null;
+      if (!res.ok) throw new Error(full.error ?? "تعذّر تحميل المرتجع للطباعة");
+      const customerId = full.customerId ?? r.customerId;
+      const customer = customers.find((c: any) => String(c.id) === String(customerId)) ?? null;
+      setAutoPrintOpenedReturn(autoPrint);
       setPrintData({ type: "return", doc: full, lines: full.lines ?? [], customer, company: user?.company ?? null });
     } catch (e: any) {
       toast({ title: e?.message ?? "تعذّر تحميل المرتجع للطباعة", variant: "destructive" });
+      if (autoPrint && pendingDraftNavigateRef.current) {
+        const next = pendingDraftNavigateRef.current;
+        pendingDraftNavigateRef.current = null;
+        navigate(next);
+      }
     }
+  }
+  function closeReturnPrint() {
+    setPrintData(null);
+    setAutoPrintOpenedReturn(false);
+    const next = pendingDraftNavigateRef.current;
+    pendingDraftNavigateRef.current = null;
+    if (next) navigate(next);
   }
   const [focusLineId, setFocusLineId] = useState<string>(() => lines[0]?._id ?? "");
   useEffect(() => {
@@ -462,7 +479,7 @@ export default function SalesReturns() {
       }
       return j;
     },
-    onSuccess: () => {
+    onSuccess: (saved: any) => {
       invalidate();
       const wasEdit = editingId != null;
       // «إرجاع كامل + مسودة فاتورة جديدة» — نلتقط القيمة قبل reset()
@@ -470,7 +487,13 @@ export default function SalesReturns() {
       const draftSrcId = !wasEdit ? newDraftInvoiceIdRef.current : null;
       reset();
       toast({ title: wasEdit ? t("salesReturns.toastReturnEdited") : t("salesReturns.toastReturnCreated") });
-      if (draftSrcId) navigate(`/sales/invoices/new?from=${draftSrcId}`);
+      const nextDraftPath = draftSrcId ? `/sales/invoices/new?from=${draftSrcId}` : null;
+      if (saved?.id && !!user?.company?.printAutoAfterSaveSales) {
+        pendingDraftNavigateRef.current = nextDraftPath;
+        void openPrint({ id: saved.id, customerId: saved.customerId }, true);
+      } else if (nextDraftPath) {
+        navigate(nextDraftPath);
+      }
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -3289,7 +3312,12 @@ ${sections}
           }
         }}
       />
-      <SalesPrintModal open={!!printData} onClose={() => setPrintData(null)} data={printData} />
+      <SalesPrintModal
+        open={!!printData}
+        onClose={closeReturnPrint}
+        data={printData}
+        autoPrintOnOpen={autoPrintOpenedReturn}
+      />
 
       {/* ─── Source-invoice item picker ────────────────────────────────────
           Opens when the user picks a source sales invoice. Lets them tick
