@@ -3999,10 +3999,10 @@ function TopBar({
 }) {
   const { t, i18n } = useTranslation();
   const [, navigate] = useLocation();
-  const canViewSalesInvoices = usePermission("sales_invoices", "view");
-  const canViewSalesReturns = usePermission("sales_returns", "view");
-  const canViewPurchaseInvoices = usePermission("purchase_invoices", "view");
-  const canViewPurchaseReturns = usePermission("purchase_returns", "view");
+  const canCreateSalesInvoice = usePermission("sales_invoices", "create");
+  const canCreateSalesReturn = usePermission("sales_returns", "create");
+  const canCreatePurchaseInvoice = usePermission("purchase_invoices", "create");
+  const canCreatePurchaseReturn = usePermission("purchase_returns", "create");
   const canCreateReceiptVoucher = usePermission("receipt_vouchers", "create");
   const canCreatePaymentVoucher = usePermission("payment_vouchers", "create");
   const canCreateCustomer = usePermission("customers", "create");
@@ -4022,10 +4022,10 @@ function TopBar({
     tone: string;
     alwaysShowLabel?: boolean;
   }[] = [
-    { key: "salesInvoices", allowed: canViewSalesInvoices, href: "/sales/invoices", label: t("nav.salesInvoices"), icon: ShoppingBag, tone: "border-blue-200 bg-blue-50/70 text-blue-800 hover:border-blue-300 hover:bg-blue-100 hover:text-blue-900" },
-    { key: "salesReturns", allowed: canViewSalesReturns, href: "/sales/returns", label: t("nav.salesReturns"), icon: Undo2, tone: "border-orange-200 bg-orange-50/70 text-orange-800 hover:border-orange-300 hover:bg-orange-100 hover:text-orange-900" },
-    { key: "purchaseInvoices", allowed: canViewPurchaseInvoices, href: "/purchasing/invoices", label: t("nav.purchaseInvoices"), icon: ShoppingCart, tone: "border-indigo-200 bg-indigo-50/70 text-indigo-800 hover:border-indigo-300 hover:bg-indigo-100 hover:text-indigo-900" },
-    { key: "purchaseReturns", allowed: canViewPurchaseReturns, href: "/purchasing/returns", label: t("nav.purchaseReturns"), icon: RotateCcw, tone: "border-amber-200 bg-amber-50/70 text-amber-800 hover:border-amber-300 hover:bg-amber-100 hover:text-amber-900" },
+    { key: "salesInvoices", allowed: canCreateSalesInvoice, href: "/sales/invoices/new", label: t("nav.salesInvoices"), icon: ShoppingBag, tone: "border-blue-200 bg-blue-50/70 text-blue-800 hover:border-blue-300 hover:bg-blue-100 hover:text-blue-900" },
+    { key: "salesReturns", allowed: canCreateSalesReturn, href: "/sales/returns?new=1", label: t("nav.salesReturns"), icon: Undo2, tone: "border-orange-200 bg-orange-50/70 text-orange-800 hover:border-orange-300 hover:bg-orange-100 hover:text-orange-900" },
+    { key: "purchaseInvoices", allowed: canCreatePurchaseInvoice, href: "/purchasing/invoices/new", label: t("nav.purchaseInvoices"), icon: ShoppingCart, tone: "border-indigo-200 bg-indigo-50/70 text-indigo-800 hover:border-indigo-300 hover:bg-indigo-100 hover:text-indigo-900" },
+    { key: "purchaseReturns", allowed: canCreatePurchaseReturn, href: "/purchasing/returns?new=1", label: t("nav.purchaseReturns"), icon: RotateCcw, tone: "border-amber-200 bg-amber-50/70 text-amber-800 hover:border-amber-300 hover:bg-amber-100 hover:text-amber-900" },
     { key: "receiptVoucher", allowed: canCreateReceiptVoucher, href: "/cash/receipt-vouchers/new", label: t("pages.dashboard.receiptVoucher"), icon: ArrowDownCircle, tone: "border-emerald-200 bg-emerald-50/70 text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-900", alwaysShowLabel: true },
     { key: "paymentVoucher", allowed: canCreatePaymentVoucher, href: "/cash/payment-vouchers/new", label: t("pages.dashboard.paymentVoucher"), icon: ArrowUpCircle, tone: "border-rose-200 bg-rose-50/70 text-rose-800 hover:border-rose-300 hover:bg-rose-100 hover:text-rose-900", alwaysShowLabel: true },
     { key: "newCustomer", allowed: canCreateCustomer, href: "/customers/new", label: t("pages.dashboard.newCustomer"), icon: Users, tone: "border-cyan-200 bg-cyan-50/70 text-cyan-800 hover:border-cyan-300 hover:bg-cyan-100 hover:text-cyan-900" },

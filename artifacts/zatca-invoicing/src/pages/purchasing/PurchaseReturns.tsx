@@ -130,7 +130,7 @@ export default function PurchaseReturns() {
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const canCreateReturn = usePermission("purchase_returns", "create");
   const canCreateCatalogItems = usePermission("items", "create");
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -684,8 +684,17 @@ export default function PurchaseReturns() {
     url.searchParams.delete("fromInvoice");
     url.searchParams.delete("full");
     url.searchParams.delete("newDraft");
+    url.searchParams.delete("new");
     window.history.replaceState({}, "", url.toString());
   }
+
+  useEffect(() => {
+    const query = location.split("?")[1] ?? "";
+    if (!canCreateReturn || new URLSearchParams(query).get("new") !== "1") return;
+    reset();
+    setShowForm(true);
+    navigate("/purchasing/returns", { replace: true });
+  }, [location, canCreateReturn]);
 
   async function openPrint(ret: any) {
     const res = await fetch(`${API}/api/purchasing/purchase-returns/${ret.id}`, { headers: authH });

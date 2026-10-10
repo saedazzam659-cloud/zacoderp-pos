@@ -163,7 +163,7 @@ export default function SalesReturns() {
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
   const qc = useQueryClient();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const canCreateReturn = usePermission("sales_returns", "create");
   const canCreateCatalogItems = usePermission("items", "create");
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -623,8 +623,17 @@ export default function SalesReturns() {
     url.searchParams.delete("fromInvoice");
     url.searchParams.delete("full");
     url.searchParams.delete("newDraft");
+    url.searchParams.delete("new");
     window.history.replaceState({}, "", url.toString());
   }
+
+  useEffect(() => {
+    const query = location.split("?")[1] ?? "";
+    if (!canCreateReturn || new URLSearchParams(query).get("new") !== "1") return;
+    reset();
+    setShowForm(true);
+    navigate("/sales/returns", { replace: true });
+  }, [location, canCreateReturn]);
 
   async function editReturn(id: number, asView = false) {
     try {

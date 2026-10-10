@@ -1002,8 +1002,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/customers"     module="customers" component={Customers} />}
             {!isSuperAdmin && <PermRoute path="/customers/new" module="customers" action="create" component={CustomerNew} />}
             {!isSuperAdmin && <PermRoute path="/customers/:id" module="customers" component={CustomerNew} />}
-            {!isSuperAdmin && <PermRoute path="/suppliers"     module="suppliers" component={Suppliers} />}
             {!isSuperAdmin && <PermRoute path="/suppliers/new" module="suppliers" action="create" component={SupplierNew} />}
+            {!isSuperAdmin && <PermRoute path="/suppliers"     module="suppliers" component={Suppliers} />}
             {!isSuperAdmin && <PermRoute path="/zatca"         module="zatca_setup"   component={ZatcaIntegration} />}
             {!isSuperAdmin && <PermRoute path="/zatca-bridge"  module="zatca_bridge"  component={ZatcaBridge} />}
             {!isSuperAdmin && <PermRoute path="/zatca-report"  module="zatca_report"  component={ZatcaReport} />}
