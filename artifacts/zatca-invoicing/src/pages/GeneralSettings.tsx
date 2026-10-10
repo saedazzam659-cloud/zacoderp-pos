@@ -5220,6 +5220,7 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
   // local copy on every toggle/select change and only PATCH on Save.
   const [form, setForm] = useState<Record<string, any>>({
     printAutoAfterSaveSales:   !!company.printAutoAfterSaveSales,
+    printPreviewAfterSaveSales: company.printPreviewAfterSaveSales !== false,
     printAutoAfterSaveReceipt: !!company.printAutoAfterSaveReceipt,
     printAutoAfterSavePayment: !!company.printAutoAfterSavePayment,
     printAutoAfterSaveJournal: !!company.printAutoAfterSaveJournal,
@@ -5256,6 +5257,7 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
                 company: {
                   ...u.company,
                   printAutoAfterSaveSales:   data.printAutoAfterSaveSales,
+                  printPreviewAfterSaveSales: data.printPreviewAfterSaveSales,
                   printAutoAfterSaveReceipt: data.printAutoAfterSaveReceipt,
                   printAutoAfterSavePayment: data.printAutoAfterSavePayment,
                   printAutoAfterSaveJournal: data.printAutoAfterSaveJournal,
@@ -5329,6 +5331,19 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
               )}
             </div>
           ))}
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 p-4">
+          <div>
+            <div className="font-semibold text-sm">فتح معاينة الطباعة بعد حفظ فاتورة المبيعات أو مرتجعها</div>
+            <div className="text-xs text-muted-foreground mt-0.5">
+              يعرض نموذج الطباعة الافتراضي أولًا مع بقية النماذج المفعّلة. لا يبدأ الطباعة إلا عند اختيارك «طباعة».
+              عند تفعيل هذا الخيار تكون المعاينة أسبق من الطباعة التلقائية.
+            </div>
+          </div>
+          <Switch
+            checked={!!form.printPreviewAfterSaveSales}
+            onCheckedChange={(v) => setForm((p) => ({ ...p, printPreviewAfterSaveSales: !!v }))}
+          />
         </div>
       </div>
 

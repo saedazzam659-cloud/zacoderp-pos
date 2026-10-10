@@ -321,6 +321,7 @@ export const companiesTable = pgTable("companies", {
   // template column picks the visual layout used for that auto-print
   // (and is the default selection on manual-print buttons too).
   printAutoAfterSaveSales:    boolean("print_auto_after_save_sales").notNull().default(false),
+  printPreviewAfterSaveSales: boolean("print_preview_after_save_sales").notNull().default(true),
   printAutoAfterSaveReceipt:  boolean("print_auto_after_save_receipt").notNull().default(false),
   printAutoAfterSavePayment:  boolean("print_auto_after_save_payment").notNull().default(false),
   printAutoAfterSaveJournal:  boolean("print_auto_after_save_journal").notNull().default(false),

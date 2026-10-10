@@ -427,7 +427,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     // Each `printAutoAfterSave*` is a boolean; each `printTemplate*` is
     // either "a4" or "thermal".  Validated below before write so we never
     // persist garbage that other surfaces would have to defensively parse.
-    printAutoAfterSaveSales, printAutoAfterSaveReceipt,
+    printAutoAfterSaveSales, printPreviewAfterSaveSales, printAutoAfterSaveReceipt,
     printAutoAfterSavePayment, printAutoAfterSaveJournal,
     printTemplateSales, printTemplateReceipt,
     printTemplatePayment, printTemplateJournal,
@@ -492,7 +492,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     printDefaultTemplateReturn?: number | null;
     invoicePrintLanguage?: string;
     sequenceDateSource?: string;
-    printAutoAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
+    printAutoAfterSaveSales?: boolean; printPreviewAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
     printAutoAfterSavePayment?: boolean; printAutoAfterSaveJournal?: boolean;
     printTemplateSales?: string; printTemplateReceipt?: string;
     printTemplatePayment?: string; printTemplateJournal?: string;
@@ -794,6 +794,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   if (printT14ShowAuditFooter !== undefined) updates.printT14ShowAuditFooter = !!printT14ShowAuditFooter;
   // Auto-print toggles — coerce to boolean.
   if (printAutoAfterSaveSales   !== undefined) updates.printAutoAfterSaveSales   = !!printAutoAfterSaveSales;
+  if (printPreviewAfterSaveSales !== undefined) updates.printPreviewAfterSaveSales = !!printPreviewAfterSaveSales;
   if (printAutoAfterSaveReceipt !== undefined) updates.printAutoAfterSaveReceipt = !!printAutoAfterSaveReceipt;
   if (printAutoAfterSavePayment !== undefined) updates.printAutoAfterSavePayment = !!printAutoAfterSavePayment;
   if (printAutoAfterSaveJournal !== undefined) updates.printAutoAfterSaveJournal = !!printAutoAfterSaveJournal;

@@ -501,9 +501,11 @@ export default function SalesReturns() {
       reset();
       toast({ title: wasEdit ? t("salesReturns.toastReturnEdited") : t("salesReturns.toastReturnCreated") });
       const nextDraftPath = draftSrcId ? `/sales/invoices/new?from=${draftSrcId}` : null;
-      if (saved?.id && !!user?.company?.printAutoAfterSaveSales) {
+      const previewAfterSave = !!user?.company?.printPreviewAfterSaveSales;
+      const autoPrintAfterSave = !!user?.company?.printAutoAfterSaveSales && !previewAfterSave;
+      if (saved?.id && (previewAfterSave || autoPrintAfterSave)) {
         pendingDraftNavigateRef.current = nextDraftPath;
-        void openPrint({ id: saved.id, customerId: saved.customerId }, true);
+        void openPrint({ id: saved.id, customerId: saved.customerId }, autoPrintAfterSave);
       } else if (nextDraftPath) {
         navigate(nextDraftPath);
       }

@@ -8,3 +8,9 @@ Keep A4 as the default for web sales invoices and returns. A company can save th
 **Why:** The owner wants thermal printing available without changing existing paper-size behavior, and wants a saved per-template choice that works consistently across users.
 
 **How to apply:** Keep the built-in thermal designs available, but let A4 designs opt into 80 mm output through a company-level template setting. Preserve A4 defaults and only auto-print when the saved company preference is enabled.
+
+After-save print preview is a separate company preference for sales invoices and returns. It opens the template chooser without launching the browser print dialog; when both preview and auto-print are enabled, preview takes precedence. Put the configured default template first, then the remaining enabled templates.
+
+**Why:** The owner wants to inspect the saved invoice and choose whether to print, while keeping the older direct auto-print behavior available as a separate setting.
+
+**How to apply:** Preserve the two preferences independently, use the existing sales print modal for the after-save handoff, and keep the explicit Print button as the only print action in preview mode.

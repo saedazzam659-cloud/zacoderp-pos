@@ -3068,6 +3068,10 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     }
     return visibleTemplates[0]?.id ?? 1;
   }
+  const initialTemplateId = resolveInitialId();
+  const orderedVisibleTemplates = [...visibleTemplates].sort((a, b) =>
+    Number(b.id === initialTemplateId) - Number(a.id === initialTemplateId),
+  );
   const [selected, setSelected] = useState<number>(resolveInitialId);
   const selectedIsThermal = templateIsThermal(selected);
   const { toast } = useToast();
@@ -3331,7 +3335,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Printer className="h-5 w-5 text-primary" />
-            اختر نموذج الطباعة — {typeLabelAr}
+            معاينة واختيار نموذج الطباعة — {typeLabelAr}
           </DialogTitle>
         </DialogHeader>
 
@@ -3362,7 +3366,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
         )}
 
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3 my-4 max-h-[55vh] overflow-y-auto pr-1">
-          {visibleTemplates.map(t => (
+          {orderedVisibleTemplates.map(t => (
             <button
               key={t.id}
               onClick={() => setSelected(t.id)}
@@ -3374,6 +3378,11 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
               )}
               style={selected === t.id ? { borderColor: t.color } : {}}
             >
+              {t.id === initialTemplateId && (
+                <span className="absolute -top-2 -right-2 rounded-full bg-primary px-2 py-0.5 text-[9px] font-bold text-primary-foreground shadow">
+                  الافتراضي
+                </span>
+              )}
               {templateIsThermal(t.id) && (
                 <span
                   className="absolute -top-2 -left-2 rounded-full text-[9px] font-bold px-2 py-0.5 text-white shadow"

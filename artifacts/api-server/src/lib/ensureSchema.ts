@@ -3035,6 +3035,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS print_enabled_templates JSONB` },
     { label: "companies add print_default_template",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS print_default_template INTEGER NOT NULL DEFAULT 1` },
+    { label: "companies add print_preview_after_save_sales",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS print_preview_after_save_sales BOOLEAN NOT NULL DEFAULT TRUE` },
     { label: "companies add sequence_date_source",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS sequence_date_source TEXT NOT NULL DEFAULT 'system'` },
     { label: "companies add brand_logo",

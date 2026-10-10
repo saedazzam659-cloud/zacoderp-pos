@@ -1853,14 +1853,16 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     if (!raw) return;
     autoPrintConsumed.current = true;
     try { sessionStorage.removeItem("autoPrintSalesInvoice"); } catch { /* ignore */ }
-    let parsed: { id?: number; template?: "a4" | "thermal"; ts?: number } = {};
+    let parsed: { id?: number; template?: "a4" | "thermal"; autoPrint?: boolean; ts?: number } = {};
     try { parsed = JSON.parse(raw); } catch { /* ignore */ }
     if (!parsed?.id) return;
     // Discard hints older than 5 minutes — if the user lingered on another
     // page or tab before navigating back, we don't want a surprise print
     // dialog firing for an invoice they finished saving long ago.
     if (parsed.ts && Date.now() - parsed.ts > 5 * 60 * 1000) return;
-    void openPrintFor(parsed.id, { autoPrint: true, template: parsed.template });
+    // Old handoffs predate the explicit `autoPrint` field and represent the
+    // original auto-print preference. New preview-only handoffs set false.
+    void openPrintFor(parsed.id, { autoPrint: parsed.autoPrint ?? true, template: parsed.template });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, token]);
 

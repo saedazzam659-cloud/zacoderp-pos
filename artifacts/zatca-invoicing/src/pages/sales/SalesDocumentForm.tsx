@@ -1602,7 +1602,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // SalesPrintModal, so we redirect there with a hint in window.history
   // state and let it pick up `defaultTemplate` + `autoPrintOnOpen`.
   // This only applies to invoices (not quotations / orders).
-  const autoPrintSalesInvoice = isInvoice && !!(user as any)?.company?.printAutoAfterSaveSales;
+  const previewAfterSaveSales = isInvoice && !!(user as any)?.company?.printPreviewAfterSaveSales;
+  const autoPrintSalesInvoice =
+    isInvoice && !!(user as any)?.company?.printAutoAfterSaveSales && !previewAfterSaveSales;
+  const openPrintAfterSaveSales = previewAfterSaveSales || autoPrintSalesInvoice;
   const salesTemplate: "a4" | "thermal" =
     ((user as any)?.company?.printTemplateSales === "thermal") ? "thermal" : "a4";
 
@@ -1687,7 +1690,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // If auto-print is on for sales invoices, hand the just-saved id
       // and chosen template to the list page via history.state. The
       // list page reads it once on mount and triggers the print modal.
-      if (autoPrintSalesInvoice && saved?.id) {
+      if (openPrintAfterSaveSales && saved?.id) {
         // Use sessionStorage instead of window.history.state because
         // `wouter`'s navigate() pushes a fresh history entry whose state
         // would otherwise overwrite ours, causing the auto-print hint
@@ -1695,7 +1698,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         try {
           sessionStorage.setItem(
             "autoPrintSalesInvoice",
-            JSON.stringify({ id: saved.id, template: salesTemplate, ts: Date.now() }),
+            JSON.stringify({
+              id: saved.id,
+              template: salesTemplate,
+              autoPrint: autoPrintSalesInvoice,
+              ts: Date.now(),
+            }),
           );
         } catch { /* ignore storage failures */ }
         // The auto-print hint is read by the LIST page on mount — keep the
