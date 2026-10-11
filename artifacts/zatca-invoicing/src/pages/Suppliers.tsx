@@ -1300,7 +1300,10 @@ export default function Suppliers() {
       >
         <DialogContent
           dir="rtl"
-          className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
+          className={cn(
+            "max-w-4xl max-h-[90vh] overflow-hidden flex flex-col",
+            bulkImportPreview && "h-[90vh]",
+          )}
           data-testid="dialog-bulk-supplier-accounts"
         >
           <DialogHeader>
@@ -1584,10 +1587,20 @@ export default function Suppliers() {
                   ))}
                 </div>
               )}
+              {!!bulkImportPreview?.summary.errors && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
+                  data-testid="alert-supplier-bulk-import-errors"
+                >
+                  لا يمكن تنفيذ الاستيراد بعد: يوجد {bulkImportPreview.summary.errors} صفًا يحتاج إلى تصحيح.
+                  تفاصيل كل صف تظهر في الجدول أدناه.
+                </div>
+              )}
             </div>
           )}
 
-          <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
+          <div className="min-h-[140px] flex-1 overflow-auto rounded-lg border">
             {bulkSource === "selection" ? (
               <table className="w-full text-sm border-collapse">
                 <thead className="sticky top-0 bg-slate-100 text-slate-700">
