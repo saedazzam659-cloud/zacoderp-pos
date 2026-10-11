@@ -25,6 +25,7 @@ import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { usePermission } from "@/hooks/usePermission";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useToast } from "@/hooks/use-toast";
@@ -107,6 +108,7 @@ function calcLine(l: OrderLine, priceIncludesVat = false) {
 }
 
 export default function PurchaseOrderForm() {
+  const fieldPolicy = useFieldPolicy("purchase");
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1348,7 +1350,7 @@ export default function PurchaseOrderForm() {
                         onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}
                         onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
+                      <Input hidden={!fieldPolicy.isVisible("taxRate")} className={`h-8 text-xs ${fieldPolicy.isReadOnly("taxRate") ? "bg-muted/40 cursor-not-allowed" : ""}`} type="text" inputMode="decimal" value={l.vatRate} readOnly={fieldPolicy.isReadOnly("taxRate")} title={fieldPolicy.isReadOnly("taxRate") ? "نسبة الضريبة للقراءة فقط حسب إعدادات الشركة" : undefined}
                         onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
                       <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"

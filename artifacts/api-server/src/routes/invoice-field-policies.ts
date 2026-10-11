@@ -5,7 +5,8 @@
 // Model:
 //   - Admin defines named policy PROFILES (e.g. "كاشير", "محاسب مبتدئ").
 //   - Each user is ASSIGNED to one profile (or inherits company default).
-//   - Admins/superadmins always bypass.
+//   - SuperAdmin always bypasses. Company admins bypass unless the
+//     SuperAdmin-enabled company-wide field-controls switch is active.
 
 import { Router } from "express";
 import { eq, and, inArray } from "drizzle-orm";
@@ -44,13 +45,6 @@ function getCid(req: any): number | null {
 function isSuperadmin(req: any): boolean {
   return req.authUser?.role === "superadmin";
 }
-// Bypass on /me — applies to BOTH superadmins (acting/global) and company
-// admins. Company admins still get a fully editable bundle so their own
-// invoice screens are unaffected by this governance feature.
-function bypassesPolicy(req: any): boolean {
-  const role = req.authUser?.role;
-  return role === "admin" || role === "superadmin";
-}
 function isScope(s: any): s is PolicyScope {
   return POLICY_SCOPES.includes(s);
 }
@@ -77,7 +71,10 @@ function sanitizePolicy(scope: PolicyScope, raw: any): PolicyMap {
   }
   for (const f of FIELD_CATALOGUE[scope]) {
     if (!out[f.key]) {
-      out[f.key] = { mode: "editable", ...(f.isDate ? { dateConstraint: "none" as const } : {}) };
+      out[f.key] = {
+        mode: f.key === "taxRate" ? "readonly" : "editable",
+        ...(f.isDate ? { dateConstraint: "none" as const } : {}),
+      };
     }
   }
   return out;
@@ -102,14 +99,23 @@ router.get("/me", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
 
-    if (bypassesPolicy(req)) {
-      res.json({ isAdmin: true, bundle: defaultBundle(), profile: null });
+    const [company] = await db.select({
+      documentFieldControlsEnabled: companiesTable.documentFieldControlsEnabled,
+    }).from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
+    const companyControlsEnabled = company?.documentFieldControlsEnabled === true;
+    const role = (req as any).authUser?.role;
+
+    // SuperAdmin retains the governance bypass. A company admin only bypasses
+    // while the opt-in feature is off; when on, the company default governs
+    // every user, including the manager.
+    if (role === "superadmin" || (role === "admin" && !companyControlsEnabled)) {
+      res.json({ isAdmin: true, bundle: defaultBundle(), profile: null, companyControlsEnabled });
       return;
     }
 
     const userId = (req as any).authUser?.id;
     let profileId: number | null = null;
-    if (userId) {
+    if (userId && !companyControlsEnabled) {
       const [a] = await db.select({ profileId: userInvoiceFieldPoliciesTable.profileId })
         .from(userInvoiceFieldPoliciesTable)
         .where(eq(userInvoiceFieldPoliciesTable.userId, userId)).limit(1);
@@ -148,9 +154,81 @@ router.get("/me", async (req, res) => {
       isAdmin: false,
       bundle,
       profile: profile ? { id: profile.id, name: profile.name } : null,
+      companyControlsEnabled,
     });
   } catch (e: any) {
     req.log?.error?.({ err: e }, "GET /invoice-field-policies/me failed");
+    res.status(500).json({ error: e?.message ?? "internal error" });
+  }
+});
+
+// Company-wide default editor. This deliberately has no per-user assignment
+// surface; it becomes available only after SuperAdmin enables the company gate.
+router.get("/company-default", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid || req.authUser?.role !== "admin" || Number(req.authUser?.companyId) !== cid) {
+      res.status(403).json({ error: "الإعداد متاح لمدير الشركة فقط" });
+      return;
+    }
+    const [company] = await db.select({
+      documentFieldControlsEnabled: companiesTable.documentFieldControlsEnabled,
+    }).from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
+    if (company?.documentFieldControlsEnabled !== true) {
+      res.status(403).json({ error: "لم يفعّل السوبر أدمن شاشة التحكم لهذه الشركة" });
+      return;
+    }
+    const [profile] = await db.select({
+      id: invoiceFieldPolicyProfilesTable.id,
+      name: invoiceFieldPolicyProfilesTable.name,
+      bundle: invoiceFieldPolicyProfilesTable.bundle,
+    }).from(invoiceFieldPolicyProfilesTable).where(and(
+      eq(invoiceFieldPolicyProfilesTable.companyId, cid),
+      eq(invoiceFieldPolicyProfilesTable.isDefault, true),
+    )).limit(1);
+    res.json({
+      bundle: profile ? sanitizeBundle(profile.bundle as any) : defaultBundle(),
+      catalogue: FIELD_CATALOGUE,
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /invoice-field-policies/company-default failed");
+    res.status(500).json({ error: e?.message ?? "internal error" });
+  }
+});
+
+router.put("/company-default", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid || req.authUser?.role !== "admin" || Number(req.authUser?.companyId) !== cid) {
+      res.status(403).json({ error: "الإعداد متاح لمدير الشركة فقط" });
+      return;
+    }
+    const [company] = await db.select({
+      documentFieldControlsEnabled: companiesTable.documentFieldControlsEnabled,
+    }).from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
+    if (company?.documentFieldControlsEnabled !== true) {
+      res.status(403).json({ error: "لم يفعّل السوبر أدمن شاشة التحكم لهذه الشركة" });
+      return;
+    }
+    const bundle = sanitizeBundle(req.body?.bundle);
+    const updatedBy = req.authUser.id ?? null;
+    const [existing] = await db.select({ id: invoiceFieldPolicyProfilesTable.id })
+      .from(invoiceFieldPolicyProfilesTable).where(and(
+        eq(invoiceFieldPolicyProfilesTable.companyId, cid),
+        eq(invoiceFieldPolicyProfilesTable.isDefault, true),
+      )).limit(1);
+    if (existing) {
+      await db.update(invoiceFieldPolicyProfilesTable)
+        .set({ bundle: bundle as any, updatedBy, updatedAt: new Date() })
+        .where(and(eq(invoiceFieldPolicyProfilesTable.id, existing.id), eq(invoiceFieldPolicyProfilesTable.companyId, cid)));
+    } else {
+      await db.insert(invoiceFieldPolicyProfilesTable).values({
+        companyId: cid, name: "إعدادات الشركة", bundle: bundle as any, isDefault: true, updatedBy,
+      });
+    }
+    res.json({ bundle });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "PUT /invoice-field-policies/company-default failed");
     res.status(500).json({ error: e?.message ?? "internal error" });
   }
 });

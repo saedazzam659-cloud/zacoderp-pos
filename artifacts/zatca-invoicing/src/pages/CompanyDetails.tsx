@@ -167,6 +167,27 @@ export default function CompanyDetails() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  const documentFieldControlsMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await fetch(`${API}/api/companies/${id}/general-settings`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ documentFieldControlsEnabled: enabled }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "تعذّر تحديث تفعيل التحكم في الحقول");
+      return json;
+    },
+    onSuccess: async (_result, enabled) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admin-company", id, agentId] }),
+        qc.invalidateQueries({ queryKey: ["companies"] }),
+      ]);
+      toast({ title: enabled ? "تم إتاحة إعدادات الحقول لمدير الشركة" : "تم إيقاف شاشة التحكم في الحقول" });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   const addUserMutation = useMutation({
     mutationFn: async (body: any) => {
       const res = await fetch(`${API}/api/admin/companies/${id}/users${agentQS}`, {
@@ -371,6 +392,24 @@ export default function CompanyDetails() {
         <StatCard label="العملاء" value={counts.customers} icon={UserCheck} iconBg="bg-green-100" iconColor="text-green-600" />
         <StatCard label="الموردون" value={counts.suppliers} icon={Truck} iconBg="bg-amber-100" iconColor="text-amber-600" />
       </div>
+
+      <section className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/50 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-amber-900 dark:bg-amber-950/20">
+        <div>
+          <h2 className="font-semibold text-sm">التحكم في حقول المستندات</h2>
+          <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
+            عند التفعيل، تظهر إعدادات الحقول لمدير الشركة. اتركها متوقفة حتى تجهز سياسة الحقول الآمنة.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-medium">{company.documentFieldControlsEnabled ? "مفعّل" : "غير مفعّل"}</span>
+          <Switch
+            checked={company.documentFieldControlsEnabled === true}
+            disabled={documentFieldControlsMutation.isPending}
+            onCheckedChange={(value) => documentFieldControlsMutation.mutate(value)}
+            aria-label="تفعيل شاشة التحكم في حقول المستندات"
+          />
+        </div>
+      </section>
 
       {/* Tabs */}
       <div className="border-b flex gap-0 overflow-x-auto">

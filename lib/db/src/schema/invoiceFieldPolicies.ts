@@ -235,7 +235,10 @@ export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos", "custom
 export function defaultPolicy(scope: PolicyScope): PolicyMap {
   const out: PolicyMap = {};
   for (const f of FIELD_CATALOGUE[scope]) {
-    out[f.key] = { mode: "editable", ...(f.isDate ? { dateConstraint: "none" as const } : {}) };
+    out[f.key] = {
+      mode: f.key === "taxRate" ? "readonly" : "editable",
+      ...(f.isDate ? { dateConstraint: "none" as const } : {}),
+    };
   }
   return out;
 }

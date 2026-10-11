@@ -74,6 +74,9 @@ export const companiesTable = pgTable("companies", {
   // the in-grid "إضافة صنف" button.
   hideQuickAddBar: boolean("hide_quick_add_bar").notNull().default(false),
   showFreeQuantity: boolean("show_free_quantity").notNull().default(true),
+  // Opt-in gate for company-admin document-field controls. Only SuperAdmin
+  // may change this flag; false keeps the manager-facing controls unavailable.
+  documentFieldControlsEnabled: boolean("document_field_controls_enabled").notNull().default(false),
   // Cross-type account-note screens are hidden by default. These flags affect
   // only menu links and invoice tabs; note records and accounting behavior are
   // unchanged.

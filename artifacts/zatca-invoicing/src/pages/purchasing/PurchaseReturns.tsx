@@ -11,6 +11,7 @@ import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { usePermission } from "@/hooks/usePermission";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { useToast } from "@/hooks/use-toast";
@@ -129,6 +130,7 @@ export default function PurchaseReturns() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
+  const fieldPolicy = useFieldPolicy("purchase");
   const { toast } = useToast();
   const qc = useQueryClient();
   const [location, navigate] = useLocation();
@@ -2221,7 +2223,7 @@ ${sections}
                       onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}
                       onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                    <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
+                    <Input hidden={!fieldPolicy.isVisible("taxRate")} className={`h-8 text-xs ${fieldPolicy.isReadOnly("taxRate") ? "bg-muted/40 cursor-not-allowed" : ""}`} type="text" inputMode="decimal" value={l.vatRate} readOnly={fieldPolicy.isReadOnly("taxRate")} title={fieldPolicy.isReadOnly("taxRate") ? "نسبة الضريبة للقراءة فقط حسب إعدادات الشركة" : undefined}
                       onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
                     {/* OPTIONAL per-line cost center (توزيع تحليلي) — empty falls back to header */}

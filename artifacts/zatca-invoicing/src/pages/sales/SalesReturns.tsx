@@ -11,6 +11,7 @@ import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { companyPaymentDefault, paymentMethodLabel } from "@/lib/paymentMethodLabels";
 import { usePermission } from "@/hooks/usePermission";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
@@ -155,6 +156,7 @@ const STATUS_CLS: Record<string, string> = {
 export default function SalesReturns() {
     const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
+  const fieldPolicy = useFieldPolicy("sales");
   const { data: projectOptions } = useQuery({
     queryKey: contractingOptionsKey(user?.id, user?.company?.id, undefined, token),
     queryFn: () => fetchContractingProjectOptions(token),
@@ -2711,7 +2713,7 @@ ${sections}
                       title="قيمة الخصم بالعملة — تُطرح بعد الخصم بالنسبة"
                       data-testid={`line-discount-amount-${l._id}`}
                       onChange={e => updateLine(l._id, "discountAmount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                    <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
+                    <Input hidden={!fieldPolicy.isVisible("taxRate")} className={`h-8 text-xs ${fieldPolicy.isReadOnly("taxRate") ? "bg-muted/40 cursor-not-allowed" : ""}`} type="text" inputMode="decimal" dir="ltr" value={l.vatRate} readOnly={fieldPolicy.isReadOnly("taxRate")} title={fieldPolicy.isReadOnly("taxRate") ? "نسبة الضريبة للقراءة فقط حسب إعدادات الشركة" : undefined}
                       onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
                     <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"

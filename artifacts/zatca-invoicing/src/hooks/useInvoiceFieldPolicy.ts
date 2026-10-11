@@ -9,7 +9,8 @@
 //   <Input ... readOnly={fp.isReadOnly("date")} required={fp.isRequired("date")} />
 //   const dateBounds = fp.dateBounds("date"); // { min, max } or null
 //
-// Admins/superadmins always get an all-editable bundle.
+// SuperAdmin always bypasses. Company admins bypass unless their company has
+// opted into the centrally controlled company-wide field policy.
 
 import { useQuery } from "@tanstack/react-query";
 
@@ -81,7 +82,8 @@ export function useFieldPolicy(scope: PolicyScope): FieldPolicy {
   const profileName = data?.profile?.name ?? null;
 
   function rule(key: string): FieldRule {
-    if (bypass) return { mode: "editable" };
+    if (key === "taxRate" && !map[key]) return { mode: "readonly" };
+    if (bypass && key !== "taxRate") return { mode: "editable" };
     return map[key] ?? { mode: "editable" };
   }
   function isVisible(key: string)  { return rule(key).mode !== "hidden"; }

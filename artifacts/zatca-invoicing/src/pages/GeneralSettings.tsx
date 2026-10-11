@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
 import SenderSettingsTab from "./settings/SenderSettingsTab";
+import CompanyDocumentFieldControls from "./settings/CompanyDocumentFieldControls";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
@@ -1405,6 +1406,15 @@ export default function GeneralSettings() {
             <Settings2 className="h-4 w-4 shrink-0" />
             <span className="truncate">{t("pages.generalSettings.general")}</span>
           </TabsTrigger>
+          {user?.role === "admin" && user?.company?.documentFieldControlsEnabled === true && (
+            <TabsTrigger
+              value="documentFields"
+              className="flex-1 min-w-[190px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md"
+            >
+              <ShieldCheck className="h-4 w-4 shrink-0" />
+              <span className="truncate">التحكم في كل المستندات</span>
+            </TabsTrigger>
+          )}
           <TabsTrigger
             value="items"
             className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
@@ -4185,6 +4195,11 @@ export default function GeneralSettings() {
             token={token ?? null}
           />
         </TabsContent>
+        )}
+        {user?.role === "admin" && user?.company?.documentFieldControlsEnabled === true && (
+          <TabsContent value="documentFields" className="mt-5">
+            <CompanyDocumentFieldControls />
+          </TabsContent>
         )}
       </Tabs>
 

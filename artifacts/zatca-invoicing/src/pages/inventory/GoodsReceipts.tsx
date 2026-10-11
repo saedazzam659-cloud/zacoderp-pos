@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
@@ -130,6 +131,7 @@ export default function GoodsReceipts() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
+  const fieldPolicy = useFieldPolicy("purchase");
   const hideQuickAddBar = !!user?.company?.hideQuickAddBar;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -1484,7 +1486,7 @@ ${sections}
                           onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                         <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}
                           onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                        <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
+                        <Input hidden={!fieldPolicy.isVisible("taxRate")} className={`h-8 text-xs ${fieldPolicy.isReadOnly("taxRate") ? "bg-muted/40 cursor-not-allowed" : ""}`} type="text" inputMode="decimal" value={l.vatRate} readOnly={fieldPolicy.isReadOnly("taxRate")} title={fieldPolicy.isReadOnly("taxRate") ? "نسبة الضريبة للقراءة فقط حسب إعدادات الشركة" : undefined}
                           onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                         <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
                         <Input className="h-8 text-xs" placeholder={tg("batchNumber")} value={l.batchNumber}

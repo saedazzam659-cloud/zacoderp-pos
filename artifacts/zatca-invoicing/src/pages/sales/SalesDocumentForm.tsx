@@ -323,8 +323,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
   // SuperAdmin "Invoice Field Policies" governance — controls which header
   // fields are visible / readonly / required, and locks the date to today
-  // when the matching profile says so. Admins/superadmins always bypass via
-  // the hook (returns editable for everything). Field keys here MUST match
+  // when the matching profile says so. Company admins bypass only while the
+  // company-wide field control is disabled. Field keys here MUST match
   // FIELD_CATALOGUE.sales in lib/db/src/schema/invoiceFieldPolicies.ts.
   const fp = useFieldPolicy("sales");
   const overdraftViewPermission = usePermission("sales_invoice_overdraft", "view");
@@ -2372,8 +2372,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         {dMode === "amt" ? "﷼" : "%"}
                       </button>
                     </div>
-                    <Input className="h-8 text-xs font-mono" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
-                      title="نسبة ضريبة القيمة المضافة %"
+                    <Input className={cn("h-8 text-xs font-mono", fp.isReadOnly("taxRate") && "bg-muted/40 cursor-not-allowed")} type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
+                      readOnly={fp.isReadOnly("taxRate")}
+                      title="نسبة ضريبة القيمة المضافة — للقراءة فقط افتراضيًا"
                       onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <span className="font-mono tabular-nums font-semibold text-primary text-end" dir="ltr">{fmt(Number(l.lineTotal) || 0)}</span>
                     {/* OPTIONAL per-line cost center (توزيع تحليلي) — invoice mode only.
