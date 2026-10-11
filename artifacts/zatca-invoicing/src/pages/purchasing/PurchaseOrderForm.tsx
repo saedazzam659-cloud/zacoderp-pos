@@ -37,6 +37,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
@@ -228,11 +229,11 @@ export default function PurchaseOrderForm() {
     enabled: !!user,
   });
 
-  const { data: inventoryItems = [] } = useQuery<any[]>({
-    queryKey: ["inventory-items", cid],
-    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/items?companyId=${cid}&includeHidden=1` : `${API}/api/inventory/items?includeHidden=1`, authH),
-    enabled: !!user,
-  });
+  const {
+    items: inventoryItems,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(cid, authH, lines.map(line => line.itemId), !!user);
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
@@ -905,6 +906,8 @@ export default function PurchaseOrderForm() {
             items={itemComboItems}
             value={qaItemId}
             onValueChange={setQaItemId}
+            onSearchChange={setItemSearch}
+            loading={isSearchingItems}
             placeholder={tr("itemSearchPh")}
             searchPlaceholder="ابحث بالكود أو الاسم..."
           />
@@ -1281,11 +1284,13 @@ export default function PurchaseOrderForm() {
                       <span className="text-xs text-muted-foreground tabular-nums">{idx + 1}</span>
                       <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={tr("auto")} value={l.itemCode}
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                      {inventoryItems.length > 0 ? (
+                      {isSearchingItems || inventoryItems.length > 0 ? (
                         <SearchCombobox
                           items={itemComboItems}
                           value={l.itemId}
                           onValueChange={v => selectItem(l._id, v)}
+                          onSearchChange={setItemSearch}
+                          loading={isSearchingItems}
                           placeholder={tr("itemSearchPh")}
                           searchPlaceholder="ابحث بالكود أو الاسم..."
                         />

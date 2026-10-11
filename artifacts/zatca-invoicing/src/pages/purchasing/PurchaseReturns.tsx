@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import {
   Plus, Trash2, RotateCcw, CheckCircle2, Printer, Wallet, CreditCard, TrendingUp,
   TrendingDown, Undo2, Pencil, FileText, ListOrdered, Copy,
@@ -255,11 +256,11 @@ export default function PurchaseReturns() {
     enabled: !!user,
   });
 
-  const { data: inventoryItems = [] } = useQuery<any[]>({
-    queryKey: ["inventory-items", cid],
-    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/items?companyId=${cid}&includeHidden=1` : `${API}/api/inventory/items?includeHidden=1`, authH),
-    enabled: !!user,
-  });
+  const {
+    items: inventoryItems,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(cid, authH, lines.map(line => line.itemId), !!user);
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
@@ -1149,6 +1150,8 @@ export default function PurchaseReturns() {
             items={itemComboItems}
             value={qaItemId}
             onValueChange={setQaItemId}
+            onSearchChange={setItemSearch}
+            loading={isSearchingItems}
             placeholder={tr("selectItemCombo")}
             searchPlaceholder="ابحث بالكود أو الاسم..."
           />
@@ -2156,11 +2159,13 @@ ${sections}
                     <span className="text-xs text-muted-foreground tabular-nums">{idx + 1}</span>
                     <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                       onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                    {inventoryItems.length > 0 ? (
+                    {isSearchingItems || inventoryItems.length > 0 ? (
                       <SearchCombobox
                         items={itemComboItems}
                         value={l.itemId}
                         onValueChange={v => selectItem(l._id, v)}
+                        onSearchChange={setItemSearch}
+                        loading={isSearchingItems}
                         placeholder={tr("selectItemCombo")}
                         searchPlaceholder="ابحث بالكود أو الاسم..."
                       />

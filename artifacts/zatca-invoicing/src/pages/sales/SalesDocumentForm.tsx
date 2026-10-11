@@ -31,6 +31,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
@@ -690,11 +691,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryFn: () => fetchJsonArray(cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`, authH),
     enabled: !!user,
   });
-  const { data: inventoryItems = [] } = useQuery<any[]>({
-    queryKey: ["inventory-items", cid],
-    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/items?companyId=${cid}&includeHidden=1` : `${API}/api/inventory/items?includeHidden=1`, authH),
-    enabled: !!user,
-  });
+  const {
+    items: inventoryItems,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(cid, authH, lines.map(line => line.itemId), !!user);
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
     queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, authH),
@@ -2173,6 +2174,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             items={itemComboItems}
             value={qaItemId}
             onValueChange={setQaItemId}
+            onSearchChange={setItemSearch}
+            loading={isSearchingItems}
             placeholder={t("salesDocForm.itemPlaceholder")}
             searchPlaceholder="ابحث بالكود أو الاسم..."
           />
@@ -2318,6 +2321,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         items={itemComboItems}
                         value={l.itemId}
                         onValueChange={v => void selectItem(l._id, v)}
+                        onSearchChange={setItemSearch}
+                        loading={isSearchingItems}
                         placeholder={t("salesDocForm.itemPlaceholder")}
                         searchPlaceholder="ابحث بالكود أو الاسم..."
                         className="h-8 text-xs"
@@ -2539,8 +2544,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     >
                       <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                      {inventoryItems.length > 0 ? (
-                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." />
+                      {isSearchingItems || inventoryItems.length > 0 ? (
+                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." />
                       ) : (
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />

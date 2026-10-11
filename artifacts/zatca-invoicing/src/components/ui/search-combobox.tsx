@@ -47,6 +47,8 @@ interface SearchComboboxProps {
   testId?: string;
   renderSelected?: (item: ComboboxItem) => React.ReactNode;
   renderItem?: (item: ComboboxItem, selected: boolean) => React.ReactNode;
+  onSearchChange?: (search: string) => void;
+  loading?: boolean;
 }
 
 export function SearchCombobox({
@@ -66,6 +68,8 @@ export function SearchCombobox({
   testId,
   renderSelected: _renderSelected,
   renderItem,
+  onSearchChange,
+  loading = false,
 }: SearchComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -133,6 +137,7 @@ export function SearchCombobox({
     onValueChange(val);
     setOpen(false);
     setSearch("");
+    onSearchChange?.("");
     if (advance) {
       // After committing a selection via Enter, jump to the next form
       // control just like a normal Enter-as-Tab would. Defer one tick so
@@ -176,9 +181,12 @@ export function SearchCombobox({
     } else if (e.key === "Escape") {
       setOpen(false);
       setSearch("");
+      onSearchChange?.("");
       inputRef.current?.blur();
     } else if (e.key === "Tab") {
       setOpen(false);
+      setSearch("");
+      onSearchChange?.("");
     }
   };
 
@@ -239,6 +247,7 @@ export function SearchCombobox({
             onClick={() => setOpen(true)}
             onChange={e => {
               setSearch(e.target.value);
+              onSearchChange?.(e.target.value);
               if (!open) setOpen(true);
             }}
             onKeyDown={onKeyDown}
@@ -267,6 +276,7 @@ export function SearchCombobox({
                 e.stopPropagation();
                 onValueChange("");
                 setSearch("");
+                onSearchChange?.("");
               }}
             >
               <X className="h-3.5 w-3.5" />
@@ -285,7 +295,9 @@ export function SearchCombobox({
         onCloseAutoFocus={e => e.preventDefault()}
       >
         <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
-          {flatList.length === 0 ? (
+          {loading ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">جارٍ البحث عن الأصناف...</div>
+          ) : flatList.length === 0 ? (
             <div className="py-6 text-center text-sm text-muted-foreground">{emptyText}</div>
           ) : grouped && groups ? (
             Array.from(groups.entries()).map(([groupName, groupItems], gi) => (

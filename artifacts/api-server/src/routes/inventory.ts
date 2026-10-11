@@ -1537,6 +1537,72 @@ router.get("/items", async (req, res) => {
   res.json(rows.map(r => ({ ...r.item, group: r.group, unit: r.unit })));
 });
 
+// Fast, bounded catalog lookups for document item pickers. Keep the legacy
+// full-list endpoint above unchanged because reports and exports still need it.
+router.get("/items/search", async (req, res) => {
+  // Match the legacy /items scope: regular users resolve to their company,
+  // while SuperAdmins without an acting company may search across companies.
+  const cid = getCompanyId(req);
+  const query = String(req.query.q ?? "").trim().slice(0, 128);
+
+  const includeHidden = String(req.query.includeHidden ?? "") === "1"
+    || String(req.query.includeHidden ?? "").toLowerCase() === "true";
+  const clauses: any[] = cid ? [eq(itemsTable.companyId, cid)] : [];
+  if (query) {
+    const pattern = `%${query}%`;
+    clauses.push(or(
+      eq(itemsTable.barcode, query),
+      ilike(itemsTable.code, pattern),
+      ilike(itemsTable.barcode, pattern),
+      ilike(itemsTable.nameAr, pattern),
+      ilike(itemsTable.nameEn, pattern),
+    )!);
+  }
+  if (!includeHidden) clauses.push(eq(itemsTable.showInPos, true));
+
+  const rawLimit = Number(req.query.limit ?? 40);
+  const limit = Number.isInteger(rawLimit) ? Math.max(1, Math.min(rawLimit, 50)) : 40;
+  const rows = await db.select({ item: itemsTable, group: itemGroupsTable, unit: unitsTable })
+    .from(itemsTable)
+    .leftJoin(itemGroupsTable, eq(itemsTable.groupId, itemGroupsTable.id))
+    .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
+    .where(and(...clauses))
+    .orderBy(
+      ...(query
+        ? [sql`CASE WHEN ${itemsTable.barcode} = ${query} THEN 0 WHEN ${itemsTable.code} = ${query} THEN 1 ELSE 2 END`]
+        : []),
+      asc(itemsTable.code),
+    )
+    .limit(limit);
+  res.json(rows.map(row => ({ ...row.item, group: row.group, unit: row.unit })));
+});
+
+// Rehydrate only the already-selected item IDs when reopening/editing a
+// document; this avoids downloading the entire catalog just to show its lines.
+router.get("/items/lookup", async (req, res) => {
+  const cid = getCompanyId(req);
+  const ids = [...new Set(
+    String(req.query.ids ?? "")
+      .split(",")
+      .map(value => Number(value.trim()))
+      .filter(id => Number.isInteger(id) && id > 0),
+  )];
+  if (ids.length > 500) {
+    res.status(400).json({ error: "لا يمكن تحميل أكثر من 500 صنف محدد في الطلب الواحد" });
+    return;
+  }
+  if (!ids.length) { res.json([]); return; }
+  const rows = await db.select({ item: itemsTable, group: itemGroupsTable, unit: unitsTable })
+    .from(itemsTable)
+    .leftJoin(itemGroupsTable, eq(itemsTable.groupId, itemGroupsTable.id))
+    .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
+    .where(and(
+      ...(cid ? [eq(itemsTable.companyId, cid)] : []),
+      inArray(itemsTable.id, ids),
+    ));
+  res.json(rows.map(row => ({ ...row.item, group: row.group, unit: row.unit })));
+});
+
 // ─── Batch usage-modes for ONE screen (Phase ب enforcement, frontend) ────────
 // Returns every NON-default rule for the given screen across the company's
 // catalogue plus whether the caller is usage-privileged, so a document form can

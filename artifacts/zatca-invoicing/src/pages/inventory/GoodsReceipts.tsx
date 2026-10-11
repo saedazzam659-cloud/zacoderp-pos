@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -255,11 +256,11 @@ export default function GoodsReceipts() {
     enabled: !!user,
   });
 
-  const { data: inventoryItems = [] } = useQuery<any[]>({
-    queryKey: ["inventory-items", cid],
-    queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/items?companyId=${cid}&includeHidden=1` : `${API}/api/inventory/items?includeHidden=1`, authH),
-    enabled: !!user,
-  });
+  const {
+    items: inventoryItems,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(cid, authH, lines.map(line => line.itemId), !!user);
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
@@ -1430,9 +1431,11 @@ ${sections}
                       <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: GRID_COLS_GR }}>
                         <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                           onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                        {inventoryItems.length > 0 ? (
+                        {isSearchingItems || inventoryItems.length > 0 ? (
                           <SearchCombobox items={itemComboItems} value={l.itemId}
                             onValueChange={v => selectItem(l._id, v)}
+                            onSearchChange={setItemSearch}
+                            loading={isSearchingItems}
                             placeholder={tr("selectItemCombo")}
                             searchPlaceholder={tg("itemSearchPh")} />
                         ) : (
