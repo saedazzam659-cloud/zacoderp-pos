@@ -7,7 +7,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, LockKeyhole, Save, ShieldCheck } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-type Scope = "sales" | "purchase";
+type Scope =
+  | "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return"
+  | "sales_quotation" | "sales_order" | "purchase_order" | "goods_receipt" | "delivery_note";
 type Rule = { mode: "editable" | "readonly" | "hidden" | "required"; dateConstraint?: string };
 type Bundle = Record<string, Record<string, Rule>>;
 type Field = { key: string; labelAr: string; labelEn: string };
@@ -18,6 +20,18 @@ const MODES = [
   { value: "readonly", label: "للقراءة فقط" },
   { value: "hidden", label: "مخفي" },
 ] as const;
+
+const DOCUMENTS: { scope: Scope; label: string }[] = [
+  { scope: "sales_invoice", label: "فاتورة مبيعات" },
+  { scope: "purchase_invoice", label: "فاتورة مشتريات" },
+  { scope: "sales_return", label: "مرتجع مبيعات" },
+  { scope: "purchase_return", label: "مرتجع مشتريات" },
+  { scope: "sales_quotation", label: "عرض سعر" },
+  { scope: "sales_order", label: "أمر بيع" },
+  { scope: "purchase_order", label: "أمر شراء" },
+  { scope: "goods_receipt", label: "استلام بضاعة" },
+  { scope: "delivery_note", label: "تسليم بضاعة" },
+];
 
 export default function CompanyDocumentFieldControls() {
   const { token } = useAuth();
@@ -119,13 +133,17 @@ export default function CompanyDocumentFieldControls() {
           </div>
         </div>
       </div>
-      <Tabs defaultValue="sales" dir="rtl">
-        <TabsList className="grid h-auto w-full grid-cols-2">
-          <TabsTrigger value="sales">مستندات المبيعات</TabsTrigger>
-          <TabsTrigger value="purchase">مستندات المشتريات</TabsTrigger>
+      <Tabs defaultValue="sales_invoice" dir="rtl">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3">
+          {DOCUMENTS.map((document) => (
+            <TabsTrigger key={document.scope} value={document.scope}>{document.label}</TabsTrigger>
+          ))}
         </TabsList>
-        <TabsContent value="sales" className="mt-4">{renderScope("sales")}</TabsContent>
-        <TabsContent value="purchase" className="mt-4">{renderScope("purchase")}</TabsContent>
+        {DOCUMENTS.map((document) => (
+          <TabsContent key={document.scope} value={document.scope} className="mt-4">
+            {renderScope(document.scope)}
+          </TabsContent>
+        ))}
       </Tabs>
       <div className="flex items-center justify-between border-t pt-4">
         <p className="flex items-center gap-2 text-xs text-muted-foreground"><LockKeyhole className="h-4 w-4" />يتطلب تعديل هذه الإعدادات تفعيل الميزة من السوبر أدمن.</p>

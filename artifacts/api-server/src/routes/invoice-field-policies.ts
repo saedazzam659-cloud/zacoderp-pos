@@ -81,15 +81,21 @@ function sanitizePolicy(scope: PolicyScope, raw: any): PolicyMap {
 }
 
 function sanitizeBundle(raw: any): PolicyBundle {
-  return {
-    sales:         sanitizePolicy("sales",         raw?.sales),
-    purchase:      sanitizePolicy("purchase",      raw?.purchase),
-    pos:           sanitizePolicy("pos",           raw?.pos),
-    customers:     sanitizePolicy("customers",     raw?.customers),
-    journal_entry: sanitizePolicy("journal_entry", raw?.journal_entry),
-    sales_audit:   sanitizePolicy("sales_audit",   raw?.sales_audit),
-    receipt_voucher: sanitizePolicy("receipt_voucher", raw?.receipt_voucher),
+  const legacySource: Partial<Record<PolicyScope, any>> = {
+    sales_invoice: raw?.sales,
+    sales_return: raw?.sales,
+    sales_quotation: raw?.sales,
+    sales_order: raw?.sales,
+    delivery_note: raw?.sales,
+    purchase_invoice: raw?.purchase,
+    purchase_return: raw?.purchase,
+    purchase_order: raw?.purchase,
+    goods_receipt: raw?.purchase,
   };
+  return Object.fromEntries(POLICY_SCOPES.map((scope) => [
+    scope,
+    sanitizePolicy(scope, raw?.[scope] ?? legacySource[scope]),
+  ])) as PolicyBundle;
 }
 
 // ── /me ─────────────────────────────────────────────────────────────────

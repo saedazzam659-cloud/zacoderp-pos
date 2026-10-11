@@ -108,7 +108,7 @@ function calcLine(l: OrderLine, priceIncludesVat = false) {
 }
 
 export default function PurchaseOrderForm() {
-  const fieldPolicy = useFieldPolicy("purchase");
+  const fieldPolicy = useFieldPolicy("purchase_order");
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1097,15 +1097,15 @@ export default function PurchaseOrderForm() {
                     <p className="text-[11px] text-destructive">{tr("seqExhausted")}</p>
                   )}
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("date")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("date") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.orderDate")}</Label>
                   <DateField className="h-9 text-sm" value={orderDate} onChange={e => setOrderDate(e.target.value)} required />
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("dueDate")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("dueDate") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.expectedDeliveryDate")}</Label>
                   <DateField className="h-9 text-sm" value={expectedDeliveryDate} onChange={e => setExpectedDeliveryDate(e.target.value)} />
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("supplier")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("supplier") && "pointer-events-none opacity-70")}>
                   <div className="flex items-center justify-between gap-2">
                     <Label className="text-xs">{tr("fields.supplier")}</Label>
                     <Button
@@ -1131,11 +1131,11 @@ export default function PurchaseOrderForm() {
                     onAddDialogOpenChange={setQuickSupplierDialogOpen}
                   />
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("supplierInvoiceNumber")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("supplierInvoiceNumber") && "opacity-70")}>
                   <Label className="text-xs">{tr("fields.supplierInvoiceNumber")}</Label>
-                  <Input className="h-9 text-sm" placeholder={tr("fields.supplierInvoiceNumberPh")} value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} />
+                  <Input className="h-9 text-sm" placeholder={tr("fields.supplierInvoiceNumberPh")} value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} readOnly={fieldPolicy.isReadOnly("supplierInvoiceNumber")} />
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("branch")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("branch") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.branch")}</Label>
                   <Select value={branchId || undefined} onValueChange={setBranchId}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("fields.branchPh")} /></SelectTrigger>
@@ -1146,7 +1146,7 @@ export default function PurchaseOrderForm() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("warehouse")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("warehouse") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">المستودع</Label>
                   <SearchCombobox
                     items={(warehouses as any[]).map((w: any) => ({
@@ -1171,10 +1171,10 @@ export default function PurchaseOrderForm() {
                     <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
                   </div>
                 )}
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("currency")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("currency") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.currency")}</Label>
                   {currencies.length > 0 ? (
-                    <Select value={currencyCode} onValueChange={handleCurrencyChange}>
+                    <Select value={currencyCode} disabled={fieldPolicy.isReadOnly("currency")} onValueChange={handleCurrencyChange}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("fields.currencyPh")} /></SelectTrigger>
                       <SelectContent>
                         {currencies.map((c: any) => {
@@ -1184,10 +1184,10 @@ export default function PurchaseOrderForm() {
                       </SelectContent>
                     </Select>
                   ) : (
-                    <Input className="h-9 text-sm" placeholder="SAR" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
+                    <Input className="h-9 text-sm" placeholder="SAR" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} readOnly={fieldPolicy.isReadOnly("currency")} />
                   )}
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("exchangeRate")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("exchangeRate") && "opacity-70")}>
                   <Label className="text-xs flex items-center justify-between">
                     <span>{tr("fields.exchangeRate")}</span>
                     {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && (
@@ -1198,14 +1198,15 @@ export default function PurchaseOrderForm() {
                   </Label>
                   <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr"
                     value={exchangeRate}
-                    onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
+                    onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))}
+                    readOnly={fieldPolicy.isReadOnly("exchangeRate")} />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("paymentMethod")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("paymentMethod") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.paymentType")}</Label>
-                  <Select value={paymentType} onValueChange={setPaymentType}>
+                  <Select value={paymentType} disabled={fieldPolicy.isReadOnly("paymentMethod")} onValueChange={setPaymentType}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="credit">
@@ -1221,9 +1222,9 @@ export default function PurchaseOrderForm() {
                   </Select>
                   <p className="text-[10px] text-muted-foreground">{tr("paymentInformational")}</p>
                 </div>
-                <div className="space-y-1.5 lg:col-span-3">
+                <div hidden={!fieldPolicy.isVisible("notes")} className={cn("space-y-1.5 lg:col-span-3", fieldPolicy.isReadOnly("notes") && "opacity-70")}>
                   <Label className="text-xs">{tr("fields.notes")}</Label>
-                  <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} placeholder={tr("notesPh")} />
+                  <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} placeholder={tr("notesPh")} readOnly={fieldPolicy.isReadOnly("notes")} />
                 </div>
               </div>
               {useTabbedLayout && nextButtonBlock}

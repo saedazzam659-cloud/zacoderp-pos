@@ -131,7 +131,7 @@ export default function GoodsReceipts() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
-  const fieldPolicy = useFieldPolicy("purchase");
+  const fieldPolicy = useFieldPolicy("goods_receipt");
   const hideQuickAddBar = !!user?.company?.hideQuickAddBar;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -1274,15 +1274,15 @@ ${sections}
                       readOnly={!editingId && seqPeek.hasSequence}
                     />
                   </Field>
-                  <Field label={tr("receiptDate")} required>
+                  <div hidden={!fieldPolicy.isVisible("date")} className={fieldPolicy.isReadOnly("date") ? "pointer-events-none opacity-70" : ""}><Field label={tr("receiptDate")} required>
                     <DateField value={form.receiptDate}
                       onChange={e => setForm((p: any) => ({ ...p, receiptDate: e.target.value }))} />
-                  </Field>
-                  <Field label={tr("supplier")}>
+                  </Field></div>
+                  <div hidden={!fieldPolicy.isVisible("supplier")} className={fieldPolicy.isReadOnly("supplier") ? "pointer-events-none opacity-70" : ""}><Field label={tr("supplier")}>
                     <SearchCombobox items={supplierItems} value={form.supplierId}
                       onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))}
                       placeholder={tr("supplierPh")} />
-                  </Field>
+                  </Field></div>
                   <Field label={tr("purchaseOrder")}>
                     <SearchCombobox
                       items={[
@@ -1314,13 +1314,14 @@ ${sections}
                       data-testid="combo-goods-receipt-purchase-order"
                     />
                   </Field>
-                  <Field label={tr("supplierInvoiceNumber")}>
+                  <div hidden={!fieldPolicy.isVisible("supplierInvoiceNumber")} className={fieldPolicy.isReadOnly("supplierInvoiceNumber") ? "opacity-70" : ""}><Field label={tr("supplierInvoiceNumber")}>
                     <Input value={form.supplierInvoiceNumber}
                       onChange={e => setForm((p: any) => ({ ...p, supplierInvoiceNumber: e.target.value }))}
-                      placeholder={tr("supplierInvoiceNumberPh")} />
-                  </Field>
-                  <Field label={tr("branch")}>
+                      placeholder={tr("supplierInvoiceNumberPh")} readOnly={fieldPolicy.isReadOnly("supplierInvoiceNumber")} />
+                  </Field></div>
+                  <div hidden={!fieldPolicy.isVisible("branch")} className={fieldPolicy.isReadOnly("branch") ? "pointer-events-none opacity-70" : ""}><Field label={tr("branch")}>
                     <Select value={form.branchId || undefined}
+                      disabled={fieldPolicy.isReadOnly("branch")}
                       onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}>
                       <SelectTrigger><SelectValue placeholder={tr("branch")} /></SelectTrigger>
                       <SelectContent>
@@ -1331,7 +1332,7 @@ ${sections}
                         ))}
                       </SelectContent>
                     </Select>
-                  </Field>
+                  </Field></div>
                   <Field label="المشروع (اختياري)">
                     <select aria-label="مشروع إذن الاستلام" value={form.projectId ?? ""}
                       onChange={e => setForm((p: any) => ({ ...p, projectId: e.target.value }))}
@@ -1341,7 +1342,7 @@ ${sections}
                         .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
                     </select>
                   </Field>
-                  <Field label={tg("warehouse")}>
+                  <div hidden={!fieldPolicy.isVisible("warehouse")} className={fieldPolicy.isReadOnly("warehouse") ? "pointer-events-none opacity-70" : ""}><Field label={tg("warehouse")}>
                     <SearchCombobox
                       items={(warehouses as any[]).map((w: any) => ({
                         value: String(w.id),
@@ -1351,7 +1352,7 @@ ${sections}
                       onValueChange={applyHeaderWarehouse}
                       placeholder={tg("warehousePh")}
                     />
-                  </Field>
+                  </Field></div>
                   {taxCatalog.length > 0 && (
                     <Field label={tg("tax")}>
                       <SearchCombobox
@@ -1363,24 +1364,26 @@ ${sections}
                       <p className="text-[10px] text-muted-foreground">{tg("taxHint")}</p>
                     </Field>
                   )}
-                  <Field label={tr("currency")}>
+                  <div hidden={!fieldPolicy.isVisible("currency")} className={fieldPolicy.isReadOnly("currency") ? "pointer-events-none opacity-70" : ""}><Field label={tr("currency")}>
                     <SearchCombobox
                       items={currencies.map((c: any) => ({ value: c.code, label: `${c.code} — ${pickName(c.nameAr, c.nameEn)}` }))}
                       value={form.currencyCode} onValueChange={handleCurrencyChange} placeholder={tr("currencyPh")} />
-                  </Field>
+                  </Field></div>
                   {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && (
-                    <Field label={tr("exchangeRate")}>
+                    <div hidden={!fieldPolicy.isVisible("exchangeRate")} className={fieldPolicy.isReadOnly("exchangeRate") ? "opacity-70" : ""}><Field label={tr("exchangeRate")}>
                       <Input type="text" inputMode="decimal" value={form.exchangeRate}
-                        onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
-                    </Field>
+                        onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))}
+                        readOnly={fieldPolicy.isReadOnly("exchangeRate")} />
+                    </Field></div>
                   )}
                 </FormGrid>
 
-                <Field label={tr("notes")}>
+                <div hidden={!fieldPolicy.isVisible("notes")} className={fieldPolicy.isReadOnly("notes") ? "opacity-70" : ""}><Field label={tr("notes")}>
                   <Textarea rows={2} value={form.notes}
                     onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
+                    readOnly={fieldPolicy.isReadOnly("notes")}
                     placeholder={tr("notesPh")} />
-                </Field>
+                </Field></div>
               </TabsContent>
 
               <TabsContent value="lines" className="mt-0 space-y-3">

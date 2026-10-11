@@ -130,7 +130,7 @@ export default function PurchaseReturns() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
-  const fieldPolicy = useFieldPolicy("purchase");
+  const fieldPolicy = useFieldPolicy("purchase_return");
   const { toast } = useToast();
   const qc = useQueryClient();
   const [location, navigate] = useLocation();
@@ -1792,10 +1792,10 @@ ${sections}
                 readOnly={editingId != null || seqPeek.hasSequence}
                 title={editingId != null ? t("purchasingPages.purchaseInvoiceForm.lockTitle") : (seqPeek.hasSequence ? `${seqPeek.sequenceCode ?? ""}` : undefined)}
               /></Field>
-              <Field label={t("common.date")} required><DateField value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
-              <Field label={tr("supplierLabel")}>
+              <div hidden={!fieldPolicy.isVisible("date")} className={fieldPolicy.isReadOnly("date") ? "pointer-events-none opacity-70" : ""}><Field label={t("common.date")} required><DateField value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field></div>
+              <div hidden={!fieldPolicy.isVisible("supplier")} className={fieldPolicy.isReadOnly("supplier") ? "pointer-events-none opacity-70" : ""}><Field label={tr("supplierLabel")}>
                 <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v, ...(v ? { manualPrintPartyName: "" } : {}) }))} placeholder={tr("supplierPlaceholder")} />
-              </Field>
+              </Field></div>
               <SupplierVatControl
                 suppliers={suppliers}
                 supplierId={form.supplierId}
@@ -1814,9 +1814,9 @@ ${sections}
                 </Field>
               )}
               <Field label={tr("supplierInvoiceLabel")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder={tr("invoiceNumberPh")} /></Field>
-              <Field label={tr("supplierInvoiceNumber")}><Input placeholder={tr("supplierInvoiceNumberPh")} value={form.supplierInvoiceNumber} onChange={e => setForm((p: any) => ({ ...p, supplierInvoiceNumber: e.target.value }))} /></Field>
-              <Field label={tr("branch")}>
-                <Select value={form.branchId || undefined} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}>
+              <div hidden={!fieldPolicy.isVisible("supplierInvoiceNumber")} className={fieldPolicy.isReadOnly("supplierInvoiceNumber") ? "opacity-70" : ""}><Field label={tr("supplierInvoiceNumber")}><Input placeholder={tr("supplierInvoiceNumberPh")} value={form.supplierInvoiceNumber} onChange={e => setForm((p: any) => ({ ...p, supplierInvoiceNumber: e.target.value }))} readOnly={fieldPolicy.isReadOnly("supplierInvoiceNumber")} /></Field></div>
+              <div hidden={!fieldPolicy.isVisible("branch")} className={fieldPolicy.isReadOnly("branch") ? "pointer-events-none opacity-70" : ""}><Field label={tr("branch")}>
+                <Select value={form.branchId || undefined} disabled={fieldPolicy.isReadOnly("branch")} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("purchasingPages.purchaseInvoiceForm.fields.branchPh")} /></SelectTrigger>
                   <SelectContent>
                     {(branches as any[]).map((b: any) => (
@@ -1824,7 +1824,7 @@ ${sections}
                     ))}
                   </SelectContent>
                 </Select>
-              </Field>
+              </Field></div>
               <Field label="المشروع (اختياري)">
                 <select aria-label="مشروع مرتجع الشراء" value={form.projectId ?? ""}
                   onChange={e => setForm((p: any) => ({ ...p, projectId: e.target.value }))}
@@ -1834,7 +1834,7 @@ ${sections}
                     .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
                 </select>
               </Field>
-              <Field label="المستودع">
+              <div hidden={!fieldPolicy.isVisible("warehouse")} className={fieldPolicy.isReadOnly("warehouse") ? "pointer-events-none opacity-70" : ""}><Field label="المستودع">
                 <SearchCombobox
                   items={(warehouses as any[]).map((w: any) => ({
                     value: String(w.id),
@@ -1844,7 +1844,7 @@ ${sections}
                   onValueChange={applyHeaderWarehouse}
                   placeholder="اختر المستودع"
                 />
-              </Field>
+              </Field></div>
               {taxCatalog.length > 0 && (
                 <Field label="الضريبة">
                   <SearchCombobox
@@ -1855,9 +1855,9 @@ ${sections}
                   />
                 </Field>
               )}
-              <Field label={tr("currency")}>
+              <div hidden={!fieldPolicy.isVisible("currency")} className={fieldPolicy.isReadOnly("currency") ? "pointer-events-none opacity-70" : ""}><Field label={tr("currency")}>
                 {currencies.length > 0 ? (
-                  <Select value={form.currencyCode || undefined} onValueChange={handleCurrencyChange}>
+                  <Select value={form.currencyCode || undefined} disabled={fieldPolicy.isReadOnly("currency")} onValueChange={handleCurrencyChange}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("currencyPh")} /></SelectTrigger>
                     <SelectContent>
                       {currencies.map((c: any) => {
@@ -1867,10 +1867,10 @@ ${sections}
                     </SelectContent>
                   </Select>
                 ) : (
-                  <Input placeholder="SAR" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} />
+                  <Input placeholder="SAR" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} readOnly={fieldPolicy.isReadOnly("currency")} />
                 )}
-              </Field>
-              <Field
+              </Field></div>
+              <div hidden={!fieldPolicy.isVisible("exchangeRate")} className={fieldPolicy.isReadOnly("exchangeRate") ? "opacity-70" : ""}><Field
                 label={<span className="flex items-center justify-between w-full">
                   <span>{tr("exchangeRate")}</span>
                   {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && (
@@ -1878,11 +1878,12 @@ ${sections}
                   )}
                 </span>}
               >
-                <Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
-              </Field>
-              <Field label={tr("settlementType")} required>
+                <Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} readOnly={fieldPolicy.isReadOnly("exchangeRate")} />
+              </Field></div>
+              <div hidden={!fieldPolicy.isVisible("paymentMethod")} className={fieldPolicy.isReadOnly("paymentMethod") ? "pointer-events-none opacity-70" : ""}><Field label={tr("settlementType")} required>
                 <Select
                   value={form.paymentType}
+                  disabled={fieldPolicy.isReadOnly("paymentMethod")}
                   onValueChange={(v) => setForm((p: any) => {
                     const next: any = { ...p, paymentType: v };
                     if (v === "cash") {
@@ -1919,7 +1920,7 @@ ${sections}
                     </SelectItem>
                   </SelectContent>
                 </Select>
-              </Field>
+              </Field></div>
               <Field label="قيد فروق الأسعار">
                 <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm cursor-pointer select-none">
                   <input

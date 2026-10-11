@@ -65,7 +65,10 @@ export interface FieldRule {
 /** A complete policy for one scope: { fieldName: rule } */
 export type PolicyMap = Record<string, FieldRule>;
 
-export type PolicyScope = "sales" | "purchase" | "pos" | "customers" | "journal_entry" | "sales_audit" | "receipt_voucher";
+export type PolicyScope =
+  | "sales" | "purchase" | "pos" | "customers" | "journal_entry" | "sales_audit" | "receipt_voucher"
+  | "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return"
+  | "sales_quotation" | "sales_order" | "purchase_order" | "goods_receipt" | "delivery_note";
 
 /** A complete bundle covering all scopes — the shape stored in `bundle`. */
 export type PolicyBundle = Record<PolicyScope, PolicyMap>;
@@ -228,9 +231,35 @@ export const FIELD_CATALOGUE: Record<PolicyScope, FieldDef[]> = {
     { key: "description",        labelAr: "البيان",                 labelEn: "Description" },
     { key: "notes",              labelAr: "ملاحظات",                labelEn: "Notes" },
   ],
+  // Document-specific aliases are populated below from the legacy sales and
+  // purchase catalogues. Their policies are independent, while older profile
+  // bundles continue to seed each new scope from the former shared rule.
+  sales_invoice: [],
+  purchase_invoice: [],
+  sales_return: [],
+  purchase_return: [],
+  sales_quotation: [],
+  sales_order: [],
+  purchase_order: [],
+  goods_receipt: [],
+  delivery_note: [],
 };
 
-export const POLICY_SCOPES: PolicyScope[] = ["sales", "purchase", "pos", "customers", "journal_entry", "sales_audit", "receipt_voucher"];
+FIELD_CATALOGUE.sales_invoice = [...FIELD_CATALOGUE.sales];
+FIELD_CATALOGUE.sales_return = [...FIELD_CATALOGUE.sales];
+FIELD_CATALOGUE.sales_quotation = [...FIELD_CATALOGUE.sales];
+FIELD_CATALOGUE.sales_order = [...FIELD_CATALOGUE.sales];
+FIELD_CATALOGUE.delivery_note = [...FIELD_CATALOGUE.sales];
+FIELD_CATALOGUE.purchase_invoice = [...FIELD_CATALOGUE.purchase];
+FIELD_CATALOGUE.purchase_return = [...FIELD_CATALOGUE.purchase];
+FIELD_CATALOGUE.purchase_order = [...FIELD_CATALOGUE.purchase];
+FIELD_CATALOGUE.goods_receipt = [...FIELD_CATALOGUE.purchase];
+
+export const POLICY_SCOPES: PolicyScope[] = [
+  "sales", "purchase", "pos", "customers", "journal_entry", "sales_audit", "receipt_voucher",
+  "sales_invoice", "purchase_invoice", "sales_return", "purchase_return",
+  "sales_quotation", "sales_order", "purchase_order", "goods_receipt", "delivery_note",
+];
 
 export function defaultPolicy(scope: PolicyScope): PolicyMap {
   const out: PolicyMap = {};
@@ -244,13 +273,5 @@ export function defaultPolicy(scope: PolicyScope): PolicyMap {
 }
 
 export function defaultBundle(): PolicyBundle {
-  return {
-    sales:         defaultPolicy("sales"),
-    purchase:      defaultPolicy("purchase"),
-    pos:           defaultPolicy("pos"),
-    customers:     defaultPolicy("customers"),
-    journal_entry: defaultPolicy("journal_entry"),
-    sales_audit:   defaultPolicy("sales_audit"),
-    receipt_voucher: defaultPolicy("receipt_voucher"),
-  };
+  return Object.fromEntries(POLICY_SCOPES.map((scope) => [scope, defaultPolicy(scope)])) as PolicyBundle;
 }

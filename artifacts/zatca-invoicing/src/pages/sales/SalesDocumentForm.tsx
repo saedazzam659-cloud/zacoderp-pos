@@ -326,7 +326,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // when the matching profile says so. Company admins bypass only while the
   // company-wide field control is disabled. Field keys here MUST match
   // FIELD_CATALOGUE.sales in lib/db/src/schema/invoiceFieldPolicies.ts.
-  const fp = useFieldPolicy("sales");
+  const fp = useFieldPolicy(isInvoice ? "sales_invoice" : isQuotation ? "sales_quotation" : "sales_order");
   const overdraftViewPermission = usePermission("sales_invoice_overdraft", "view");
   const overdraftEditPermission = usePermission("sales_invoice_overdraft", "edit");
   const { data: serverOverdraftCapability } = useQuery<{ view: boolean; edit: boolean }>({

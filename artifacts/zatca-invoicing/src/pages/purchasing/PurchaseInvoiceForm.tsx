@@ -155,7 +155,7 @@ function PurchaseInvoiceFormContent() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
-  const fieldPolicy = useFieldPolicy("purchase");
+  const fieldPolicy = useFieldPolicy("purchase_invoice");
   const showSupplierCreditNotes = isAccountNoteVisible(user, "showSupplierCreditNotes");
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -1572,11 +1572,11 @@ function PurchaseInvoiceFormContent() {
                     );
                   })()}
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("date")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("date") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.date")}</Label>
                   <DateField className="h-9 text-sm" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} required />
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("supplier")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("supplier") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.supplier")}</Label>
                   <SearchCombobox items={supplierItems} value={supplierId} onValueChange={v => {
                     setSupplierId(v);
@@ -1600,15 +1600,15 @@ function PurchaseInvoiceFormContent() {
                     <p className="text-[10px] text-muted-foreground">{t("printOnlyPartyNameHint")}</p>
                   </div>
                 )}
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("supplierInvoiceNumber")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("supplierInvoiceNumber") && "opacity-70")}>
                   <Label className="text-xs">{tr("fields.supplierInvoiceNumber")}</Label>
-                  <Input className="h-9 text-sm" placeholder={tr("fields.supplierInvoiceNumberPh")} value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} />
+                  <Input className="h-9 text-sm" placeholder={tr("fields.supplierInvoiceNumberPh")} value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} readOnly={fieldPolicy.isReadOnly("supplierInvoiceNumber")} />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.supplierInvoiceDate")}</Label>
                   <DateField className="h-9 text-sm" value={supplierInvoiceDate} onChange={e => setSupplierInvoiceDate(e.target.value)} />
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("branch")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("branch") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.branch")}</Label>
                   <Select value={branchId || undefined} onValueChange={setBranchId}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("fields.branchPh")} /></SelectTrigger>
@@ -1623,15 +1623,16 @@ function PurchaseInvoiceFormContent() {
                   <Label className="text-xs">{tr("fields.lc")}</Label>
                   <SearchCombobox items={lcItems} value={lcId} onValueChange={setLcId} placeholder={tr("fields.lcPh")} />
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("notes")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("notes") && "opacity-70")}>
                   <Label className="text-xs">{tr("fields.notes")}</Label>
-                  <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} />
+                  <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} readOnly={fieldPolicy.isReadOnly("notes")} />
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("costCenter")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("costCenter") && "opacity-70")}>
                   <Label className="text-xs">مركز التكلفة</Label>
                   <select
                     value={costCenter}
                     onChange={e => setCostCenter(e.target.value)}
+                    disabled={fieldPolicy.isReadOnly("costCenter")}
                     data-testid="purchase-cost-center"
                     className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
                   >
@@ -1646,7 +1647,7 @@ function PurchaseInvoiceFormContent() {
                   </select>
                   <p className="text-[10px] text-muted-foreground">يُسند تلقائياً إلى كل سطور القيد عند الترحيل.</p>
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("warehouse")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("warehouse") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">المشروع (اختياري)</Label>
                   <select aria-label="مشروع فاتورة الشراء" value={projectId} onChange={e => setProjectId(e.target.value)}
                     className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
@@ -1656,7 +1657,7 @@ function PurchaseInvoiceFormContent() {
                   </select>
                   <p className="text-[10px] text-muted-foreground">مشتريات المستودع لا تُحتسب مصروفاً فورياً للمشروع.</p>
                 </div>
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("paymentMethod")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("paymentMethod") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">المستودع</Label>
                   <SearchCombobox
                     items={(warehouses as any[]).map((w: any) => ({
@@ -1686,7 +1687,7 @@ function PurchaseInvoiceFormContent() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.paymentType")}</Label>
-                  <Select value={paymentType} onValueChange={(v) => {
+                  <Select value={paymentType} disabled={fieldPolicy.isReadOnly("paymentMethod")} onValueChange={(v) => {
                     setPaymentType(v);
                     if (v === "cash") {
                       if (!cashBoxId) {
@@ -1722,10 +1723,10 @@ function PurchaseInvoiceFormContent() {
                   </Select>
                 </div>
 
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("currency")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("currency") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.currency")}</Label>
                   {currencies.length > 0 ? (
-                    <Select value={currencyCode} onValueChange={handleCurrencyChange}>
+                    <Select value={currencyCode} disabled={fieldPolicy.isReadOnly("currency")} onValueChange={handleCurrencyChange}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("fields.currencyPh")} /></SelectTrigger>
                       <SelectContent>
                         {currencies.map((c: any) => {
@@ -1735,11 +1736,11 @@ function PurchaseInvoiceFormContent() {
                       </SelectContent>
                     </Select>
                   ) : (
-                    <Input className="h-9 text-sm" placeholder="SAR" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
+                    <Input className="h-9 text-sm" placeholder="SAR" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} readOnly={fieldPolicy.isReadOnly("currency")} />
                   )}
                 </div>
 
-                <div className="space-y-1.5">
+                <div hidden={!fieldPolicy.isVisible("exchangeRate")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("exchangeRate") && "opacity-70")}>
                   <Label className="text-xs flex items-center justify-between">
                     <span>{tr("fields.exchangeRate")}</span>
                     {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && (
@@ -1750,7 +1751,8 @@ function PurchaseInvoiceFormContent() {
                   </Label>
                   <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr"
                     value={exchangeRate}
-                    onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
+                    onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))}
+                    readOnly={fieldPolicy.isReadOnly("exchangeRate")} />
                 </div>
 
                 <div className="space-y-1.5">

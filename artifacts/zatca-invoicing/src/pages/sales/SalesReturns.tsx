@@ -156,7 +156,7 @@ const STATUS_CLS: Record<string, string> = {
 export default function SalesReturns() {
     const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
-  const fieldPolicy = useFieldPolicy("sales");
+  const fieldPolicy = useFieldPolicy("sales_return");
   const { data: projectOptions } = useQuery({
     queryKey: contractingOptionsKey(user?.id, user?.company?.id, undefined, token),
     queryFn: () => fetchContractingProjectOptions(token),
@@ -2339,8 +2339,8 @@ ${sections}
                 readOnly={editingId != null || seqPeek.hasSequence}
                 title={editingId != null ? "الرقم محفوظ — لا يمكن تعديله" : (seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
               /></Field>
-              <Field label={t("salesReturns.date")} required><DateField value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
-              <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v, ...(v ? { manualPrintPartyName: "" } : {}) }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>
+              <div hidden={!fieldPolicy.isVisible("date")} className={fieldPolicy.isReadOnly("date") ? "pointer-events-none opacity-70" : ""}><Field label={t("salesReturns.date")} required><DateField value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field></div>
+              <div hidden={!fieldPolicy.isVisible("customer")} className={fieldPolicy.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""}><Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v, ...(v ? { manualPrintPartyName: "" } : {}) }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field></div>
               <CustomerVatControl customers={customers} customerId={form.customerId} onCustomerChange={v => setForm((p: any) => ({ ...p, customerId: v, ...(v ? { manualPrintPartyName: "" } : {}) }))} />
               {(form.paymentType === "cash" || form.paymentType === "bank") && !form.customerId && (
                 <Field label={t("printOnlyPartyName")}>
@@ -2355,8 +2355,8 @@ ${sections}
                 </Field>
               )}
               <Field label={t("salesReturns.salesInvoice")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder={t("salesReturns.invoicePlaceholder")} /></Field>
-              <Field label={t("salesReturns.branch")}>
-                <Select value={form.branchId || undefined} onValueChange={(v) => setForm((p: any) => ({ ...p, branchId: v }))}>
+              <div hidden={!fieldPolicy.isVisible("branch")} className={fieldPolicy.isReadOnly("branch") ? "pointer-events-none opacity-70" : ""}><Field label={t("salesReturns.branch")}>
+                <Select value={form.branchId || undefined} disabled={fieldPolicy.isReadOnly("branch")} onValueChange={(v) => setForm((p: any) => ({ ...p, branchId: v }))}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesReturns.branchPlaceholder")} /></SelectTrigger>
                   <SelectContent>
                     {(branches as any[]).map((b: any) => (
@@ -2364,7 +2364,7 @@ ${sections}
                     ))}
                   </SelectContent>
                 </Select>
-              </Field>
+              </Field></div>
               <Field label="المشروع (اختياري)">
                 <select aria-label="مشروع مرتجع المبيعات" value={form.projectId ?? ""}
                   onChange={e => setForm((p: any) => ({ ...p, projectId: e.target.value }))}
@@ -2374,7 +2374,7 @@ ${sections}
                     .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
                 </select>
               </Field>
-              <Field label="المستودع">
+              <div hidden={!fieldPolicy.isVisible("warehouse")} className={fieldPolicy.isReadOnly("warehouse") ? "pointer-events-none opacity-70" : ""}><Field label="المستودع">
                 <SearchCombobox
                   items={(warehouses as any[]).map((w: any) => ({
                     value: String(w.id),
@@ -2384,7 +2384,7 @@ ${sections}
                   onValueChange={applyHeaderWarehouse}
                   placeholder="اختر المستودع"
                 />
-              </Field>
+              </Field></div>
               {taxCatalog.length > 0 && (
                 <Field label="الضريبة">
                   <SearchCombobox
@@ -2396,9 +2396,9 @@ ${sections}
                   <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
                 </Field>
               )}
-              <Field label={t("salesReturns.currency")}>
+              <div hidden={!fieldPolicy.isVisible("currency")} className={fieldPolicy.isReadOnly("currency") ? "pointer-events-none opacity-70" : ""}><Field label={t("salesReturns.currency")}>
                 {currencies.length > 0 ? (
-                  <Select value={form.currencyCode || undefined} onValueChange={handleCurrencyChange}>
+                  <Select value={form.currencyCode || undefined} disabled={fieldPolicy.isReadOnly("currency")} onValueChange={handleCurrencyChange}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesReturns.currencyPlaceholder")} /></SelectTrigger>
                     <SelectContent>
                       {currencies.map((c: any) => (
@@ -2407,10 +2407,10 @@ ${sections}
                     </SelectContent>
                   </Select>
                 ) : (
-                  <Input placeholder="SAR" dir="ltr" className="text-left" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} />
+                  <Input placeholder="SAR" dir="ltr" className="text-left" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} readOnly={fieldPolicy.isReadOnly("currency")} />
                 )}
-              </Field>
-              <Field label={
+              </Field></div>
+              <div hidden={!fieldPolicy.isVisible("exchangeRate")} className={fieldPolicy.isReadOnly("exchangeRate") ? "opacity-70" : ""}><Field label={
                 <span className="flex items-center justify-between gap-2 w-full">
                   <span>{t("salesReturns.exchangeRate")}</span>
                   {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && (
@@ -2420,10 +2420,10 @@ ${sections}
                   )}
                 </span>
               }>
-                <Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
-              </Field>
-              <Field label={t("salesReturns.paymentType")}>
-                <Select value={form.paymentType} onValueChange={(v) => setForm((p: any) => {
+                <Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} readOnly={fieldPolicy.isReadOnly("exchangeRate")} />
+              </Field></div>
+              <div hidden={!fieldPolicy.isVisible("paymentMethod")} className={fieldPolicy.isReadOnly("paymentMethod") ? "pointer-events-none opacity-70" : ""}><Field label={t("salesReturns.paymentType")}>
+                <Select value={form.paymentType} disabled={fieldPolicy.isReadOnly("paymentMethod")} onValueChange={(v) => setForm((p: any) => {
                   const next: any = { ...p, paymentType: v };
                   if (v === "cash") {
                     if (!p.cashBoxId) {
@@ -2452,7 +2452,7 @@ ${sections}
                     <SelectItem value="bank">{paymentMethodLabel(user?.company, "bank", t("salesReturns.paymentBank"))}</SelectItem>
                   </SelectContent>
                 </Select>
-              </Field>
+              </Field></div>
               {form.paymentType === "cash" && (
                 <Field label={t("salesReturns.cashBox")} required>
                   <Select value={form.cashBoxId || undefined} onValueChange={(v) => setForm((p: any) => ({ ...p, cashBoxId: v }))}>

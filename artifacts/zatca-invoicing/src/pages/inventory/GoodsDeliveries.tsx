@@ -124,7 +124,7 @@ export default function GoodsDeliveries() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
-  const fieldPolicy = useFieldPolicy("sales");
+  const fieldPolicy = useFieldPolicy("delivery_note");
   const hideQuickAddBar = !!user?.company?.hideQuickAddBar;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -1245,22 +1245,23 @@ ${sections}
                       readOnly={!editingId && seqPeek.hasSequence}
                     />
                   </Field>
-                  <Field label={tr("deliveryDate")} required>
+                  <div hidden={!fieldPolicy.isVisible("date")} className={fieldPolicy.isReadOnly("date") ? "pointer-events-none opacity-70" : ""}><Field label={tr("deliveryDate")} required>
                     <DateField value={form.deliveryDate}
                       onChange={e => setForm((p: any) => ({ ...p, deliveryDate: e.target.value }))} />
-                  </Field>
-                  <Field label={tr("customer")}>
+                  </Field></div>
+                  <div hidden={!fieldPolicy.isVisible("customer")} className={fieldPolicy.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""}><Field label={tr("customer")}>
                     <SearchCombobox items={customerItems} value={form.customerId}
                       onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))}
                       placeholder={tr("customerPh")} />
-                  </Field>
+                  </Field></div>
                   <Field label={tr("customerOrderNumber")}>
                     <Input value={form.customerOrderNumber}
                       onChange={e => setForm((p: any) => ({ ...p, customerOrderNumber: e.target.value }))}
                       placeholder={tr("customerOrderNumberPh")} />
                   </Field>
-                  <Field label={tr("branch")}>
+                  <div hidden={!fieldPolicy.isVisible("branch")} className={fieldPolicy.isReadOnly("branch") ? "pointer-events-none opacity-70" : ""}><Field label={tr("branch")}>
                     <Select value={form.branchId || undefined}
+                      disabled={fieldPolicy.isReadOnly("branch")}
                       onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}>
                       <SelectTrigger><SelectValue placeholder={tr("branch")} /></SelectTrigger>
                       <SelectContent>
@@ -1271,7 +1272,7 @@ ${sections}
                         ))}
                       </SelectContent>
                     </Select>
-                  </Field>
+                  </Field></div>
                   <Field label="المشروع (اختياري)">
                     <select aria-label="مشروع إذن التسليم" value={form.projectId ?? ""}
                       onChange={e => setForm((p: any) => ({ ...p, projectId: e.target.value }))}
@@ -1281,7 +1282,7 @@ ${sections}
                         .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
                     </select>
                   </Field>
-                  <Field label={tr("warehouse")}>
+                  <div hidden={!fieldPolicy.isVisible("warehouse")} className={fieldPolicy.isReadOnly("warehouse") ? "pointer-events-none opacity-70" : ""}><Field label={tr("warehouse")}>
                     <SearchCombobox
                       items={(warehouses as any[]).map((w: any) => ({
                         value: String(w.id),
@@ -1291,7 +1292,7 @@ ${sections}
                       onValueChange={applyHeaderWarehouse}
                       placeholder={tr("warehousePh")}
                     />
-                  </Field>
+                  </Field></div>
                   {taxCatalog.length > 0 && (
                     <Field label={tr("tax")}>
                       <SearchCombobox
@@ -1303,24 +1304,26 @@ ${sections}
                       <p className="text-[10px] text-muted-foreground">{tr("taxHint")}</p>
                     </Field>
                   )}
-                  <Field label={tr("currency")}>
+                  <div hidden={!fieldPolicy.isVisible("currency")} className={fieldPolicy.isReadOnly("currency") ? "pointer-events-none opacity-70" : ""}><Field label={tr("currency")}>
                     <SearchCombobox
                       items={currencies.map((c: any) => ({ value: c.code, label: `${c.code} — ${isRtl ? c.nameAr : c.nameEn}` }))}
                       value={form.currencyCode} onValueChange={handleCurrencyChange} placeholder={tr("currencyPh")} />
-                  </Field>
+                  </Field></div>
                   {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && (
-                    <Field label={tr("exchangeRate")}>
+                    <div hidden={!fieldPolicy.isVisible("exchangeRate")} className={fieldPolicy.isReadOnly("exchangeRate") ? "opacity-70" : ""}><Field label={tr("exchangeRate")}>
                       <Input type="text" inputMode="decimal" value={form.exchangeRate}
-                        onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
-                    </Field>
+                        onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))}
+                        readOnly={fieldPolicy.isReadOnly("exchangeRate")} />
+                    </Field></div>
                   )}
                 </FormGrid>
 
-                <Field label={tr("notes")}>
+                <div hidden={!fieldPolicy.isVisible("notes")} className={fieldPolicy.isReadOnly("notes") ? "opacity-70" : ""}><Field label={tr("notes")}>
                   <Textarea rows={2} value={form.notes}
                     onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
+                    readOnly={fieldPolicy.isReadOnly("notes")}
                     placeholder={tr("notesPh")} />
-                </Field>
+                </Field></div>
               </TabsContent>
 
               <TabsContent value="lines" className="mt-0 space-y-3">
