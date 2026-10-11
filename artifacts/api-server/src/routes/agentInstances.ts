@@ -408,6 +408,21 @@ export function getAgentRequestSchemaHealOptions(agentId: number): {
     : {};
 }
 
+export function shouldPreserveInitializedAgentAfterInitFailure(input: {
+  agentId: number;
+  registeredInstallationId: string;
+  registeredFingerprint: string | null;
+  expectedFingerprint: string;
+  observedInstallationId: string | null;
+  observedFingerprint: string | null;
+}): boolean {
+  return input.agentId === MISSING_TABLE_TOLERANT_REQUEST_AGENT_ID
+    && !!input.registeredFingerprint
+    && input.observedInstallationId === input.registeredInstallationId
+    && input.observedFingerprint === input.registeredFingerprint
+    && input.observedFingerprint === input.expectedFingerprint;
+}
+
 export function startAgentSchemaHeal(
   agentId: number,
   ctx: AgentDbContext,
@@ -1864,15 +1879,47 @@ async function initAgentDatabaseCore(inst: typeof agentInstancesTable.$inferSele
 }
 
 /** Fail-closed bookkeeping shared by init-db + provision. */
-async function markInitDbFailed(id: number, msg: string): Promise<void> {
-  // Fail CLOSED: a failed (re-)init must never leave dbStatus=initialized,
-  // or routed traffic keeps flowing into a half-built database.
+async function markInitDbFailed(inst: typeof agentInstancesTable.$inferSelect, msg: string): Promise<void> {
+  // Mahmoud's previously fingerprinted agent may be undergoing an additive
+  // release heal, including recovery from an earlier failed retry. Keep
+  // existing customers online only if the external DB still proves the exact
+  // registered installation and fingerprint. First-time setup, unreachable
+  // DBs, and all identity mismatches remain fail-closed.
+  let preserveAvailability = false;
+  if (
+    getAgentRequestSchemaHealOptions(inst.id).allowMissingTables
+    && inst.dbFingerprint
+    && inst.dbUrlEnc
+  ) {
+    try {
+      const observed = await withAgentPool(inst.dbUrlEnc, async (pool) => {
+        const result = await pool.query<{ installation_id: string; fingerprint: string }>(
+          "SELECT installation_id, fingerprint FROM zacod_installation WHERE id = 1",
+        );
+        return result.rows[0] ?? null;
+      });
+      preserveAvailability = shouldPreserveInitializedAgentAfterInitFailure({
+        agentId: inst.id,
+        registeredInstallationId: inst.installationId,
+        registeredFingerprint: inst.dbFingerprint,
+        expectedFingerprint: expectedFingerprint(inst.installationId, inst.domain),
+        observedInstallationId: observed?.installation_id ?? null,
+        observedFingerprint: observed?.fingerprint ?? null,
+      });
+    } catch {
+      // Cannot prove identity → retain fail-closed behavior.
+    }
+  }
   await db.update(agentInstancesTable).set({
-    dbStatus: "error", dbLastCheckAt: new Date(), dbLastError: msg, updatedAt: new Date(),
-  }).where(eq(agentInstancesTable.id, id)).catch(() => {});
+    dbStatus: preserveAvailability ? "initialized" : "error",
+    dbLastCheckAt: new Date(), dbLastError: msg, updatedAt: new Date(),
+  }).where(eq(agentInstancesTable.id, inst.id)).catch(() => {});
+  if (preserveAvailability) {
+    void logAgentEvent(inst.id, "agent_reinit_failed_existing_db_preserved", { error: msg }).catch(() => {});
+  }
   clearAgentHostCache();
   const { evictAgentDb } = await import("../lib/agentDb.js");
-  evictAgentDb(id);
+  evictAgentDb(inst.id);
 }
 
 // POST /:id/init-db — run full schema creation on the agent DB + plant fingerprint.
@@ -1886,7 +1933,7 @@ router.post("/:id/init-db", async (req, res) => {
     res.json({ ok: true, fingerprintPlanted: true });
   } catch (e: any) {
     const msg = String(e?.message ?? e).slice(0, 500);
-    await markInitDbFailed(id, msg);
+    await markInitDbFailed(inst, msg);
     res.status(502).json({ error: "فشلت التهيئة", detail: msg });
   }
 });
@@ -5274,7 +5321,7 @@ echo ZACOD_DB_RESTORED`, "ZACOD_DB_RESTORED", 600_000);
         );
       }
     } catch (e: any) {
-      await markInitDbFailed(inst.id, String(e?.message ?? e).slice(0, 500));
+      await markInitDbFailed(inst, String(e?.message ?? e).slice(0, 500));
       throw e;
     }
 

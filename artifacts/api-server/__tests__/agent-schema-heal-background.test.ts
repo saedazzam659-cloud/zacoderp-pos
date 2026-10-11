@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   getAgentRequestSchemaHealOptions,
+  shouldPreserveInitializedAgentAfterInitFailure,
   serveAgentRequestAfterSchemaReady,
 } from "../src/routes/agentInstances.ts";
 import { assertStrictSchemaReady } from "../src/lib/ensureSchema.ts";
@@ -180,6 +181,22 @@ test("missing-table tolerance is scoped to the designated agent request path", (
   );
   assert.match(agentInstancesSrc, /getAgentRequestSchemaHealOptions\(hit\.id\)/);
   assert.match(agentInstancesSrc, /runAgentRequestSchemaHealOnActiveDb\(schemaHealOptions\)/);
+});
+
+test("failed re-init preserves only the designated agent with its exact registered fingerprint", () => {
+  const valid = {
+    agentId: 2,
+    registeredInstallationId: "install-2",
+    registeredFingerprint: "fingerprint-2",
+    expectedFingerprint: "fingerprint-2",
+    observedInstallationId: "install-2",
+    observedFingerprint: "fingerprint-2",
+  };
+  assert.equal(shouldPreserveInitializedAgentAfterInitFailure(valid), true);
+  assert.equal(shouldPreserveInitializedAgentAfterInitFailure({ ...valid, agentId: 3 }), false);
+  assert.equal(shouldPreserveInitializedAgentAfterInitFailure({ ...valid, observedFingerprint: "foreign" }), false);
+  assert.equal(shouldPreserveInitializedAgentAfterInitFailure({ ...valid, observedInstallationId: "foreign" }), false);
+  assert.equal(shouldPreserveInitializedAgentAfterInitFailure({ ...valid, registeredFingerprint: null }), false);
 });
 
 test("agent strict heal creates payroll allocation tables before missing-table validation", () => {
