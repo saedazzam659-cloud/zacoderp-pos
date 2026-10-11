@@ -12,6 +12,7 @@ import {
 import ExportButtons from "@/components/ExportButtons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFmt } from "@/hooks/use-fmt";
 import { ArrowRight, ChevronLeft, Shirt } from "lucide-react";
@@ -133,19 +134,26 @@ export default function ClothingStockReport() {
           <span className="text-sm font-medium">{tr("search")}</span>
           <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={tr("searchPlaceholder")} />
         </label>
-        <label className="w-full space-y-1.5 sm:max-w-xs">
+        <div className="w-full space-y-1.5 sm:max-w-xs">
           <span className="text-sm font-medium">{tr("warehouse")}</span>
-          <select
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+          <SearchCombobox
+            items={[
+              { value: "", label: t("inventoryReports.common.allWarehouses") as string },
+              ...(warehousesQuery.data ?? []).map((warehouse: any) => ({
+                value: String(warehouse.id),
+                code: warehouse.code,
+                label: warehouse.nameAr ?? warehouse.nameEn ?? String(warehouse.id),
+                labelEn: warehouse.nameEn ?? undefined,
+              })),
+            ]}
             value={warehouseId}
-            onChange={(event) => { setWarehouseId(event.target.value); setPage(1); }}
-          >
-            <option value="">{t("inventoryReports.common.allWarehouses")}</option>
-            {(warehousesQuery.data ?? []).map((warehouse: any) => (
-              <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr ?? warehouse.nameEn ?? warehouse.id}</option>
-            ))}
-          </select>
-        </label>
+            onValueChange={(value) => { setWarehouseId(value); setPage(1); }}
+            placeholder={t("inventoryReports.common.allWarehouses") as string}
+            searchPlaceholder={tr("warehouse")}
+            loading={warehousesQuery.isLoading}
+            testId="select-clothing-stock-warehouse"
+          />
+        </div>
       </section>
 
       {error && (

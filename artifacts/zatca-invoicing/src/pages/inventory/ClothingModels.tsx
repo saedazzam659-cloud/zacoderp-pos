@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -8,7 +8,6 @@ import {
   ArrowDownUp,
   Check,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   CircleHelp,
   ClipboardList,
@@ -36,6 +35,8 @@ import {
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
+import { Input } from "@/components/ui/input";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 
 type InventoryItem = {
   id: number;
@@ -55,8 +56,8 @@ type InventoryItem = {
   status?: string;
 };
 
-type ItemGroup = { id: number; nameAr: string };
-type Unit = { id: number; nameAr: string };
+type ItemGroup = { id: number; code?: string; nameAr: string; nameEn?: string | null };
+type Unit = { id: number; code?: string; nameAr: string; nameEn?: string | null };
 type VariantDraft = {
   key: string;
   color: string;
@@ -119,35 +120,6 @@ function LoadingRows() {
       {[0, 1, 2, 3].map((row) => (
         <div className="h-14 animate-pulse rounded-xl bg-[#edf1ed]" key={row} />
       ))}
-    </div>
-  );
-}
-
-function FormSelect({
-  value,
-  onChange,
-  children,
-  testId,
-  placeholder,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  children: ReactNode;
-  testId: string;
-  placeholder: string;
-}) {
-  return (
-    <div className="relative">
-      <select
-        className="h-10 w-full appearance-none rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-3 pl-9 text-sm text-[#20352f] outline-none transition focus:border-[#16745e] focus:ring-2 focus:ring-[#16745e]/10"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        data-testid={testId}
-      >
-        <option value="">{placeholder}</option>
-        {children}
-      </select>
-      <ChevronDown className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-[#77857f]" />
     </div>
   );
 }
@@ -511,11 +483,11 @@ export default function ClothingModels() {
             <div>
               <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold tracking-[.18em] text-[#d6c693]">
                 <span className="h-px w-7 bg-[#d6c693]" />
-                المخزون / إدارة التشكيلة
+                المخزون / تشكيلات التجزئة
               </div>
-              <h1 className="text-2xl font-bold leading-tight sm:text-[32px]">موديلات الملابس والأحذية</h1>
+              <h1 className="text-2xl font-bold leading-tight sm:text-[32px]">تشكيلات التجزئة</h1>
               <p className="mt-2 max-w-2xl text-sm leading-7 text-[#d2ded8]">
-                حوّل كل موديل إلى أصناف مخزنية فعلية حسب اللون والمقاس — برمز وباركود وسعر مستقل لكل تركيبة.
+                أنشئ موديلات ومتغيرات حسب اللون والمقاس للملابس والأحذية والأنشطة المشابهة، مع بقاء كل تركيبة صنفًا مخزنيًا مستقلًا.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -577,7 +549,7 @@ export default function ClothingModels() {
               </div>
               <label className="relative block w-full sm:max-w-[220px]">
                 <Search className="absolute right-3 top-2.5 h-4 w-4 text-[#86928c]" />
-                <input className="h-9 w-full rounded-lg border border-[#dce2dc] bg-[#f8faf7] pr-9 pl-3 text-sm outline-none focus:border-[#16745e]" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="بحث بالاسم أو الرمز" data-testid="input-search-models" />
+                <Input className="h-9 w-full rounded-lg border-[#dce2dc] bg-[#f8faf7] pr-9 pl-3 text-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="بحث بالاسم أو الرمز" data-testid="input-search-models" />
               </label>
             </div>
 
@@ -689,7 +661,7 @@ export default function ClothingModels() {
                           <div className="rounded-xl border border-[#e4e9e3] bg-[#f8faf7] p-4">
                             <label className="mb-2 block text-xs font-bold text-[#43554b]" htmlFor="color-entry">الألوان</label>
                             <div className="flex gap-2">
-                              <input id="color-entry" className="h-10 min-w-0 flex-1 rounded-lg border border-[#d9dedb] bg-white px-3 text-sm outline-none focus:border-[#16745e]" value={colorInput} onChange={(event) => setColorInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addColor(); } }} placeholder="مثال: كحلي" data-testid="input-add-color" />
+                              <Input id="color-entry" className="h-10 min-w-0 flex-1 rounded-lg border-[#d9dedb] bg-white px-3 text-sm" value={colorInput} onChange={(event) => setColorInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addColor(); } }} placeholder="مثال: كحلي" data-testid="input-add-color" />
                               <button className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[#e3ede6] text-[#16745e] transition hover:bg-[#d3e4d9]" onClick={addColor} aria-label="إضافة لون" data-testid="button-add-color"><Plus className="h-4 w-4" /></button>
                             </div>
                             <div className="mt-3 flex min-h-7 flex-wrap gap-2" data-testid="list-colors">
@@ -700,7 +672,7 @@ export default function ClothingModels() {
                           <div className="rounded-xl border border-[#e4e9e3] bg-[#f8faf7] p-4">
                             <label className="mb-2 block text-xs font-bold text-[#43554b]" htmlFor="size-entry">المقاسات</label>
                             <div className="flex gap-2">
-                              <input id="size-entry" className="h-10 min-w-0 flex-1 rounded-lg border border-[#d9dedb] bg-white px-3 text-sm outline-none focus:border-[#16745e]" value={sizeInput} onChange={(event) => setSizeInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSize(); } }} placeholder="مثال: ٣٨ أو L" data-testid="input-add-size" />
+                              <Input id="size-entry" className="h-10 min-w-0 flex-1 rounded-lg border-[#d9dedb] bg-white px-3 text-sm" value={sizeInput} onChange={(event) => setSizeInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSize(); } }} placeholder="مثال: ٣٨ أو L" data-testid="input-add-size" />
                               <button className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[#e3ede6] text-[#16745e] transition hover:bg-[#d3e4d9]" onClick={addSize} aria-label="إضافة مقاس" data-testid="button-add-size"><Plus className="h-4 w-4" /></button>
                             </div>
                             <div className="mt-3 flex min-h-7 flex-wrap gap-2" data-testid="list-sizes">
@@ -756,12 +728,12 @@ export default function ClothingModels() {
                                       <span className="text-[10px] text-[#87938a]">تركيبة {index + 1}</span>
                                     </div>
                                       <div className="grid grid-cols-2 gap-2 md:grid-cols-1">
-                                       <label className="text-[10px] font-semibold text-[#758279]">رمز الصنف <span className="text-[#a4482d]">*</span><input className="mt-1 h-9 w-full rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f] outline-none focus:border-[#16745e]" value={draft.code} onChange={(event) => setDraftField(pair.key, "code", event.target.value)} placeholder={`${activeModel.code}-${index + 1}`} dir="ltr" data-testid={`input-variant-code-${index}`} /></label>
-                                       <label className="text-[10px] font-semibold text-[#758279]">باركود اختياري<input className="mt-1 h-9 w-full rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f] outline-none focus:border-[#16745e]" value={draft.barcode} onChange={(event) => setDraftField(pair.key, "barcode", event.target.value)} placeholder="يُترك فارغًا عند عدم توفره" dir="ltr" data-testid={`input-variant-barcode-${index}`} /></label>
+                                       <label className="text-[10px] font-semibold text-[#758279]">رمز الصنف <span className="text-[#a4482d]">*</span><Input className="mt-1 h-9 w-full rounded-lg border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f]" value={draft.code} onChange={(event) => setDraftField(pair.key, "code", event.target.value)} placeholder={`${activeModel.code}-${index + 1}`} dir="ltr" data-testid={`input-variant-code-${index}`} /></label>
+                                       <label className="text-[10px] font-semibold text-[#758279]">باركود اختياري<Input className="mt-1 h-9 w-full rounded-lg border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f]" value={draft.barcode} onChange={(event) => setDraftField(pair.key, "barcode", event.target.value)} placeholder="يُترك فارغًا عند عدم توفره" dir="ltr" data-testid={`input-variant-barcode-${index}`} /></label>
                                     </div>
                                     <div className="grid grid-cols-2 gap-2">
-                                      <label className="text-[10px] font-semibold text-[#758279]">التكلفة <span className="font-normal">— تورث عند الفراغ</span><input className="mt-1 h-9 w-full rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f] outline-none focus:border-[#16745e]" value={draft.costPrice} onChange={(event) => setDraftField(pair.key, "costPrice", event.target.value)} type="number" min="0" step="0.01" placeholder={String(activeModel.costPrice ?? "تكلفة الموديل")} dir="ltr" data-testid={`input-variant-cost-${index}`} /></label>
-                                      <label className="text-[10px] font-semibold text-[#758279]">سعر البيع <span className="font-normal">— يورث عند الفراغ</span><input className="mt-1 h-9 w-full rounded-lg border border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f] outline-none focus:border-[#16745e]" value={draft.salePrice} onChange={(event) => setDraftField(pair.key, "salePrice", event.target.value)} type="number" min="0" step="0.01" placeholder={String(activeModel.salePrice ?? "سعر الموديل")} dir="ltr" data-testid={`input-variant-sale-${index}`} /></label>
+                                      <label className="text-[10px] font-semibold text-[#758279]">التكلفة <span className="font-normal">— تورث عند الفراغ</span><Input className="mt-1 h-9 w-full rounded-lg border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f]" value={draft.costPrice} onChange={(event) => setDraftField(pair.key, "costPrice", event.target.value)} type="number" min="0" step="0.01" placeholder={String(activeModel.costPrice ?? "تكلفة الموديل")} dir="ltr" data-testid={`input-variant-cost-${index}`} /></label>
+                                      <label className="text-[10px] font-semibold text-[#758279]">سعر البيع <span className="font-normal">— يورث عند الفراغ</span><Input className="mt-1 h-9 w-full rounded-lg border-[#d9dedb] bg-[#fbfcfa] px-2.5 text-xs text-[#20352f]" value={draft.salePrice} onChange={(event) => setDraftField(pair.key, "salePrice", event.target.value)} type="number" min="0" step="0.01" placeholder={String(activeModel.salePrice ?? "سعر الموديل")} dir="ltr" data-testid={`input-variant-sale-${index}`} /></label>
                                     </div>
                                   </div>
                                 );
@@ -817,14 +789,14 @@ export default function ClothingModels() {
             <div className="p-5 sm:p-7">
               <Form {...modelForm}>
                 <form onSubmit={modelForm.handleSubmit((values) => createModelMutation.mutate(values))} className="grid gap-x-4 gap-y-4 sm:grid-cols-2" data-testid="form-create-model">
-                  <FormField control={modelForm.control} name="nameAr" render={({ field }) => <FormItem className="sm:col-span-2"><FormLabel>اسم الموديل بالعربية *</FormLabel><FormControl><input className="h-10 w-full rounded-lg border border-[#d9dedb] bg-white px-3 text-sm outline-none focus:border-[#16745e]" placeholder="مثال: قميص يومي بقصة مستقيمة" data-testid="input-model-name-ar" {...field} /></FormControl><FormMessage /></FormItem>} />
-                  <FormField control={modelForm.control} name="code" render={({ field }) => <FormItem><FormLabel>رمز الموديل *</FormLabel><FormControl><input className="h-10 w-full rounded-lg border border-[#d9dedb] bg-white px-3 text-sm outline-none focus:border-[#16745e]" placeholder="مثال: SH-240" dir="ltr" data-testid="input-model-code" {...field} /></FormControl><FormMessage /></FormItem>} />
-                  <FormField control={modelForm.control} name="nameEn" render={({ field }) => <FormItem><FormLabel>الاسم بالإنجليزية</FormLabel><FormControl><input className="h-10 w-full rounded-lg border border-[#d9dedb] bg-white px-3 text-sm outline-none focus:border-[#16745e]" placeholder="Optional model name" dir="ltr" data-testid="input-model-name-en" {...field} /></FormControl><FormMessage /></FormItem>} />
-                  <FormField control={modelForm.control} name="groupId" render={({ field }) => <FormItem><FormLabel>مجموعة الصنف *</FormLabel><FormControl><FormSelect value={field.value} onChange={field.onChange} testId="select-model-group" placeholder={groupsQuery.isLoading ? "جارٍ تحميل المجموعات…" : "اختر المجموعة"}>{groups.map((group) => <option key={group.id} value={String(group.id)}>{group.nameAr}</option>)}</FormSelect></FormControl><FormMessage /></FormItem>} />
-                  <FormField control={modelForm.control} name="unitId" render={({ field }) => <FormItem><FormLabel>وحدة القياس *</FormLabel><FormControl><FormSelect value={field.value} onChange={field.onChange} testId="select-model-unit" placeholder={unitsQuery.isLoading ? "جارٍ تحميل الوحدات…" : "اختر الوحدة"}>{units.map((unit) => <option key={unit.id} value={String(unit.id)}>{unit.nameAr}</option>)}</FormSelect></FormControl><FormMessage /></FormItem>} />
-                  <FormField control={modelForm.control} name="costPrice" render={({ field }) => <FormItem><FormLabel>التكلفة الأساسية *</FormLabel><FormControl><input className="h-10 w-full rounded-lg border border-[#d9dedb] bg-white px-3 text-sm outline-none focus:border-[#16745e]" type="number" min="0" step="0.01" dir="ltr" placeholder="0.00" data-testid="input-model-cost" {...field} /></FormControl><FormMessage /></FormItem>} />
-                  <FormField control={modelForm.control} name="salePrice" render={({ field }) => <FormItem><FormLabel>سعر البيع الأساسي *</FormLabel><FormControl><input className="h-10 w-full rounded-lg border border-[#d9dedb] bg-white px-3 text-sm outline-none focus:border-[#16745e]" type="number" min="0" step="0.01" dir="ltr" placeholder="0.00" data-testid="input-model-sale" {...field} /></FormControl><FormMessage /></FormItem>} />
-                  <FormField control={modelForm.control} name="vatRate" render={({ field }) => <FormItem><FormLabel>نسبة الضريبة % *</FormLabel><FormControl><input className="h-10 w-full rounded-lg border border-[#d9dedb] bg-white px-3 text-sm outline-none focus:border-[#16745e]" type="number" min="0" step="0.01" dir="ltr" data-testid="input-model-vat" {...field} /></FormControl><FormMessage /></FormItem>} />
+                  <FormField control={modelForm.control} name="nameAr" render={({ field }) => <FormItem className="sm:col-span-2"><FormLabel>اسم التشكيلة بالعربية *</FormLabel><FormControl><Input placeholder="مثال: قميص يومي بقصة مستقيمة" data-testid="input-model-name-ar" {...field} /></FormControl><FormMessage /></FormItem>} />
+                  <FormField control={modelForm.control} name="code" render={({ field }) => <FormItem><FormLabel>رمز التشكيلة *</FormLabel><FormControl><Input placeholder="مثال: SH-240" dir="ltr" data-testid="input-model-code" {...field} /></FormControl><FormMessage /></FormItem>} />
+                  <FormField control={modelForm.control} name="nameEn" render={({ field }) => <FormItem><FormLabel>الاسم بالإنجليزية</FormLabel><FormControl><Input placeholder="Optional model name" dir="ltr" data-testid="input-model-name-en" {...field} /></FormControl><FormMessage /></FormItem>} />
+                  <FormField control={modelForm.control} name="groupId" render={({ field }) => <FormItem><FormLabel>مجموعة الصنف *</FormLabel><FormControl><SearchCombobox items={groups.map((group) => ({ value: String(group.id), code: group.code, label: group.nameAr, labelEn: group.nameEn ?? undefined }))} value={field.value} onValueChange={field.onChange} placeholder={groupsQuery.isLoading ? "جارٍ تحميل مجموعات الأصناف…" : "ابحث واختر مجموعة الصنف"} searchPlaceholder="ابحث في مجموعات الأصناف…" emptyText="لا توجد مجموعات أصناف مطابقة" loading={groupsQuery.isLoading} testId="select-model-group" /></FormControl><FormMessage /></FormItem>} />
+                  <FormField control={modelForm.control} name="unitId" render={({ field }) => <FormItem><FormLabel>وحدة القياس *</FormLabel><FormControl><SearchCombobox items={units.map((unit) => ({ value: String(unit.id), code: unit.code, label: unit.nameAr, labelEn: unit.nameEn ?? undefined }))} value={field.value} onValueChange={field.onChange} placeholder={unitsQuery.isLoading ? "جارٍ تحميل الوحدات…" : "ابحث واختر وحدة القياس"} searchPlaceholder="ابحث في وحدات القياس…" loading={unitsQuery.isLoading} testId="select-model-unit" /></FormControl><FormMessage /></FormItem>} />
+                  <FormField control={modelForm.control} name="costPrice" render={({ field }) => <FormItem><FormLabel>التكلفة الأساسية *</FormLabel><FormControl><Input type="number" min="0" step="0.01" dir="ltr" placeholder="0.00" data-testid="input-model-cost" {...field} /></FormControl><FormMessage /></FormItem>} />
+                  <FormField control={modelForm.control} name="salePrice" render={({ field }) => <FormItem><FormLabel>سعر البيع الأساسي *</FormLabel><FormControl><Input type="number" min="0" step="0.01" dir="ltr" placeholder="0.00" data-testid="input-model-sale" {...field} /></FormControl><FormMessage /></FormItem>} />
+                  <FormField control={modelForm.control} name="vatRate" render={({ field }) => <FormItem><FormLabel>نسبة الضريبة % *</FormLabel><FormControl><Input type="number" min="0" step="0.01" dir="ltr" data-testid="input-model-vat" {...field} /></FormControl><FormMessage /></FormItem>} />
                   <div className="rounded-lg bg-[#eff4ef] px-3 py-2 text-xs leading-5 text-[#58705f] sm:col-span-2" data-testid="text-model-inheritance-note">سيُنشأ هذا كسجل أب عادي (ليس حزمة). مجموعة الصنف والوحدة والضريبة تُستخدم افتراضيًا للأصناف الفرعية.</div>
                   <div className="mt-1 flex flex-col-reverse gap-2 border-t border-[#e8ece7] pt-4 sm:col-span-2 sm:flex-row sm:justify-end">
                     <button type="button" className="h-10 rounded-lg border border-[#dce2dc] px-4 text-sm font-semibold text-[#607067] hover:bg-[#f1f4f0] disabled:opacity-50" onClick={() => setShowCreateModel(false)} disabled={createModelMutation.isPending} data-testid="button-cancel-create-model">إلغاء</button>
@@ -847,13 +819,17 @@ export default function ClothingModels() {
               <button className="grid h-9 w-9 place-items-center rounded-lg text-[#728078] hover:bg-[#e8ede8] disabled:opacity-40" onClick={() => setShowAdoptModel(false)} disabled={adoptModelMutation.isPending} aria-label="إغلاق" data-testid="button-close-adopt-model"><X className="h-4 w-4" /></button>
             </div>
             <div className="space-y-4 p-5">
-              <label className="relative block">
-                <Search className="absolute right-3 top-2.5 h-4 w-4 text-[#86928c]" />
-                <input className="h-10 w-full rounded-lg border border-[#dce2dc] bg-white pr-9 pl-3 text-sm outline-none focus:border-[#16745e]" value={adoptSearch} onChange={(event) => setAdoptSearch(event.target.value)} placeholder="ابحث بالاسم أو الرمز" data-testid="input-search-adoptable-models" />
-              </label>
-              <FormSelect value={adoptModelId} onChange={setAdoptModelId} testId="select-adopt-model" placeholder={adoptableQuery.isLoading ? "جارٍ تحميل الأصناف…" : "اختر صنفًا مخزنيًا رئيسيًا"}>
-                {filteredAdoptableModels.map((item) => <option key={item.id} value={String(item.id)}>{item.nameAr} — {item.code}</option>)}
-              </FormSelect>
+              <SearchCombobox
+                items={filteredAdoptableModels.map((item) => ({ value: String(item.id), code: item.code, label: item.nameAr }))}
+                value={adoptModelId}
+                onValueChange={setAdoptModelId}
+                onSearchChange={setAdoptSearch}
+                placeholder={adoptableQuery.isLoading ? "جارٍ تحميل الأصناف…" : "ابحث واختر صنفًا مخزنيًا رئيسيًا"}
+                searchPlaceholder="ابحث بالاسم أو الرمز…"
+                emptyText="لا توجد أصناف مخزنية رئيسية مطابقة"
+                loading={adoptableQuery.isLoading}
+                testId="select-adopt-model"
+              />
               {filteredAdoptableModels.length === 0 && (
                 <p className="rounded-lg bg-[#f4f7f3] px-3 py-3 text-xs leading-5 text-[#77857f]" data-testid="empty-adoptable-models">
                   {adoptableQuery.isLoading ? "جارٍ تحميل الأصناف…" : "لا توجد أصناف مخزنية رئيسية تطابق البحث. يمكنك إنشاء موديل جديد بدلًا من ذلك."}

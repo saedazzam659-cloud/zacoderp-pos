@@ -22,7 +22,7 @@
 - [Cashier company-login boundary](cashier-main-login-boundary.md) — allow station-linked cashiers through company login only to enter POS; use the station branch without duplicate user-branch links.
 - [Accounting and ZATCA index](accounting-zatca-index.md) — accounting, numbering, settlement, reports, documents, imports, and ZATCA implementation notes.
 - [Cash expense boundary](cash-expense-boundary.md) — explicit mobile grants, per-cashbox assignment, private receipts, and currency-safe reporting.
-- [Clothing and footwear module boundary](clothing-module-boundary.md) — keep it default-off, SuperAdmin-enabled per company, and backed by existing item variants.
+- [Retail variant module boundary](clothing-module-boundary.md) — keep retail variants opt-in, reusable from item tabs, and backed by existing stock-item variants.
 - [Restaurant subgroup rollout](restaurant-subgroups-rollout.md) — current companies are commercial; subgroup classification is preparatory and must remain optional.
 - [Account-note visibility defaults](account-note-visibility-defaults.md) — show customer credit and supplier debit notes; hide the opposite types unless each company opts in.
 - [Source-linked JE reuse](je-number-reuse-on-repost.md) — protected unpost/repost keeps the same linked JE row and number; reservations remain for legacy paths.

@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
+import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 import ExportButtons from "@/components/ExportButtons";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -102,6 +103,7 @@ const EMPTY = {
   //   'fifo'           → oldest received batch first
   //   'fefo'           → earliest expiry first (best for perishables)
   batchTrackingMode: "none" as "none" | "fifo" | "fefo",
+  retailEnabled: false, retailCategory: "", retailColor: "", retailSize: "",
 };
 
 // ─── Helpers: tags as array ↔ string ─────────────────────────────────────────
@@ -1369,6 +1371,7 @@ export default function Items() {
   // Optional `brands` module gate — hides the العلامات التجارية tab + panel
   // entirely for companies that haven't enabled brand management.
   const canBrands = usePermission("brands");
+  const canRetailVariants = companyExplicitlyEnablesModule(user, "clothing");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
@@ -1526,6 +1529,11 @@ export default function Items() {
       costAccountId:    item.costAccountId    ? String(item.costAccountId)    : "",
       revenueAccountId: item.revenueAccountId ? String(item.revenueAccountId) : "",
       tags: item.tags ?? "",
+      retailEnabled: tagsToArray(item.tags).includes("ملابس وأحذية")
+        || Boolean(item.variantAttributes?.["نوع التجزئة"] || item.variantAttributes?.["اللون"] || item.variantAttributes?.["المقاس"]),
+      retailCategory: item.variantAttributes?.["نوع التجزئة"] ?? "",
+      retailColor: item.variantAttributes?.["اللون"] ?? "",
+      retailSize: item.variantAttributes?.["المقاس"] ?? "",
       discountType:  (item.discountType ?? "none") as "none" | "percent" | "amount",
       discountValue: item.discountValue != null ? String(item.discountValue) : "0",
       showInPos: item.showInPos !== false,
@@ -1560,8 +1568,25 @@ export default function Items() {
         return;
       }
     }
+    const { retailEnabled, retailCategory, retailColor, retailSize, ...itemFields } = form;
+    const retailTags = tagsToArray(form.tags);
+    const retailAttributes = { ...(form.variantAttributes && typeof form.variantAttributes === "object" ? form.variantAttributes : {}) };
+    if (canRetailVariants) {
+      delete retailAttributes["نوع التجزئة"];
+      delete retailAttributes["اللون"];
+      delete retailAttributes["المقاس"];
+      if (retailEnabled) {
+        if (!retailTags.includes("ملابس وأحذية")) retailTags.push("ملابس وأحذية");
+        if (retailCategory) retailAttributes["نوع التجزئة"] = retailCategory;
+        if (retailColor.trim()) retailAttributes["اللون"] = retailColor.trim();
+        if (retailSize.trim()) retailAttributes["المقاس"] = retailSize.trim();
+      } else {
+        const legacyIndex = retailTags.indexOf("ملابس وأحذية");
+        if (legacyIndex >= 0) retailTags.splice(legacyIndex, 1);
+      }
+    }
     const payload = {
-      ...form,
+      ...itemFields,
       groupId:          form.groupId          ? Number(form.groupId)          : null,
       subgroupId:       form.subgroupId       ? Number(form.subgroupId)       : null,
       posGroupId:       form.posGroupId       ? Number(form.posGroupId)       : null,
@@ -1569,6 +1594,10 @@ export default function Items() {
       unitId:           form.unitId           ? Number(form.unitId)           : null,
       costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
       revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
+      ...(canRetailVariants ? {
+        tags: retailTags.join(", "),
+        variantAttributes: Object.keys(retailAttributes).length ? retailAttributes : null,
+      } : {}),
     };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else        createMut.mutate({ data: payload, brandId: createBrandId });
@@ -1791,6 +1820,7 @@ export default function Items() {
               <TabsTrigger value="additional" className="text-xs gap-1.5"><Layers     className="h-3.5 w-3.5" />{t("pages.items.additionalData")}</TabsTrigger>
               <TabsTrigger value="usage"      className="text-xs gap-1.5"><Cog        className="h-3.5 w-3.5" />{t("pages.items.usageControlTab")}</TabsTrigger>
               <TabsTrigger value="notes"      className="text-xs gap-1.5"><FileText   className="h-3.5 w-3.5" />{t("pages.items.notesTab")}</TabsTrigger>
+              {canRetailVariants && <TabsTrigger value="retail" className="text-xs gap-1.5"><Tag className="h-3.5 w-3.5" />تشكيلات التجزئة</TabsTrigger>}
             </TabsList>
             <TabsContent value="basic" className="mt-0 space-y-6">
               <FormGrid cols={3}>
@@ -2087,6 +2117,64 @@ export default function Items() {
                 />
               </Field>
             </TabsContent>
+            {canRetailVariants && (
+              <TabsContent value="retail" className="mt-0 space-y-5">
+                <div className="rounded-lg border border-border bg-card p-4">
+                  <label className="flex cursor-pointer items-start gap-3 text-sm font-medium">
+                    <Checkbox
+                      checked={Boolean(form.retailEnabled)}
+                      onCheckedChange={(checked) => setForm((p: any) => ({
+                        ...p,
+                        retailEnabled: checked === true,
+                        retailCategory: checked === true ? (p.retailCategory || "apparel") : p.retailCategory,
+                      }))}
+                      data-testid="checkbox-retail-attributes-enabled"
+                    />
+                    <span>
+                      تفعيل خصائص التجزئة لهذا الصنف
+                      <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                        تحفظ بيانات النشاط واللون والمقاس على الصنف، ويمكن إدارة التشكيلات والإنشاء بالجملة من شاشة تشكيلات التجزئة.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+                {form.retailEnabled && (
+                  <FormGrid cols={3}>
+                    <Field label="نوع النشاط">
+                      <SearchCombobox
+                        items={[
+                          { value: "apparel", label: "ملابس" },
+                          { value: "footwear", label: "أحذية" },
+                          { value: "bags", label: "حقائب" },
+                          { value: "accessories", label: "إكسسوارات" },
+                          { value: "other", label: "نشاط تجزئة آخر" },
+                        ]}
+                        value={form.retailCategory}
+                        onValueChange={(v) => setForm((p: any) => ({ ...p, retailCategory: v }))}
+                        placeholder="اختر نوع النشاط"
+                        testId="select-retail-category"
+                      />
+                    </Field>
+                    <Field label="اللون">
+                      <Input
+                        value={form.retailColor}
+                        onChange={(e) => setForm((p: any) => ({ ...p, retailColor: e.target.value }))}
+                        placeholder="مثال: أسود"
+                        data-testid="input-retail-color"
+                      />
+                    </Field>
+                    <Field label="المقاس">
+                      <Input
+                        value={form.retailSize}
+                        onChange={(e) => setForm((p: any) => ({ ...p, retailSize: e.target.value }))}
+                        placeholder="مثال: 42 أو XL"
+                        data-testid="input-retail-size"
+                      />
+                    </Field>
+                  </FormGrid>
+                )}
+              </TabsContent>
+            )}
           </Tabs>
             </div>
             {/* SIDEBAR — appears on the LEFT in RTL */}

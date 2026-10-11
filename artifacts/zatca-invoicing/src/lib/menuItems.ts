@@ -26,7 +26,7 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "inventory_reports",  label: "تقارير المخازن",             section: "المخازن" },
   // الملابس والأحذية — optional company module, explicitly enabled only by
   // SuperAdmin from صلاحيات القوائم. New and existing companies default OFF.
-  { key: "clothing",           label: "الملابس والأحذية والحقائب",  section: "الملابس والأحذية والحقائب" },
+  { key: "clothing",           label: "تشكيلات التجزئة",  section: "تشكيلات التجزئة" },
   { key: "sister_companies",   label: "معاملات الشركات الشقيقة",    section: "معاملات الشركات الشقيقة" },
   { key: "customer_notes",     label: "إشعارات دائنة/مدينة (عملاء)", section: "المبيعات" },
   { key: "supplier_notes",     label: "إشعارات دائنة/مدينة (موردين)", section: "المشتريات" },
