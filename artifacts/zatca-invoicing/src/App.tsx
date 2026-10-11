@@ -1330,15 +1330,15 @@ function AppRoutes() {
 
             {/* Standalone Supplier Credit/Debit Notes — pure accounting. */}
             {!isSuperAdmin && <PermRoute path="/purchasing/supplier-credit-notes/new" module="supplier_notes" action="create"
-              component={() => <AccountNoteForm partyType="supplier" noteType="credit" />} />}
+              component={SupplierCreditNoteFormRoute} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/supplier-credit-notes/:id" module="supplier_notes"
-              component={() => <AccountNoteForm partyType="supplier" noteType="credit" />} />}
+              component={SupplierCreditNoteFormRoute} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/supplier-credit-notes"     module="supplier_notes"
               component={() => <AccountNotesList partyType="supplier" noteType="credit" />} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/supplier-debit-notes/new"  module="supplier_notes" action="create"
-              component={() => <AccountNoteForm partyType="supplier" noteType="debit" />} />}
+              component={SupplierDebitNoteFormRoute} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/supplier-debit-notes/:id"  module="supplier_notes"
-              component={() => <AccountNoteForm partyType="supplier" noteType="debit" />} />}
+              component={SupplierDebitNoteFormRoute} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/supplier-debit-notes"      module="supplier_notes"
               component={() => <AccountNotesList partyType="supplier" noteType="debit" />} />}
             {!isSuperAdmin && <PermRoute path="/inventory/goods-receipts"   module="warehouses"            component={GoodsReceipts} />}
@@ -1364,15 +1364,15 @@ function AppRoutes() {
 
             {/* Standalone Customer Credit/Debit Notes — pure accounting, NOT linked to invoices. */}
             {!isSuperAdmin && <PermRoute path="/sales/customer-credit-notes/new" module="customer_notes" action="create"
-              component={() => <AccountNoteForm partyType="customer" noteType="credit" />} />}
+              component={CustomerCreditNoteFormRoute} />}
             {!isSuperAdmin && <PermRoute path="/sales/customer-credit-notes/:id" module="customer_notes"
-              component={() => <AccountNoteForm partyType="customer" noteType="credit" />} />}
+              component={CustomerCreditNoteFormRoute} />}
             {!isSuperAdmin && <PermRoute path="/sales/customer-credit-notes"     module="customer_notes"
               component={() => <AccountNotesList partyType="customer" noteType="credit" />} />}
             {!isSuperAdmin && <PermRoute path="/sales/customer-debit-notes/new"  module="customer_notes" action="create"
-              component={() => <AccountNoteForm partyType="customer" noteType="debit" />} />}
+              component={CustomerDebitNoteFormRoute} />}
             {!isSuperAdmin && <PermRoute path="/sales/customer-debit-notes/:id"  module="customer_notes"
-              component={() => <AccountNoteForm partyType="customer" noteType="debit" />} />}
+              component={CustomerDebitNoteFormRoute} />}
             {!isSuperAdmin && <PermRoute path="/sales/customer-debit-notes"      module="customer_notes"
               component={() => <AccountNotesList partyType="customer" noteType="debit" />} />}
 
@@ -1473,6 +1473,21 @@ function AppRoutes() {
     </Route>
   </Switch>
 );
+}
+
+// Keep route component identities stable: inline component factories here
+// remount the whole form whenever App rerenders, which discards unsaved input.
+function SupplierCreditNoteFormRoute() {
+  return <AccountNoteForm partyType="supplier" noteType="credit" />;
+}
+function SupplierDebitNoteFormRoute() {
+  return <AccountNoteForm partyType="supplier" noteType="debit" />;
+}
+function CustomerCreditNoteFormRoute() {
+  return <AccountNoteForm partyType="customer" noteType="credit" />;
+}
+function CustomerDebitNoteFormRoute() {
+  return <AccountNoteForm partyType="customer" noteType="debit" />;
 }
 
 function App() {
