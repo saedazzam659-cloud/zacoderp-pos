@@ -643,3 +643,18 @@ id = "Lf7xr60niuIbgh8E5k4db"
 uri = "file://.local/outputs/----------ERP--------------.pdf"
 type = "pdf"
 title = "عرض زاكود ERP التقني (عربي).pdf"
+logical_id = "a118abb1-1044-4308-a56f-3a5828faeb0b"
+
+[[outputs]]
+id = "OGQWow8XYEI1S0xu1Iobh"
+uri = "file://.local/reports/item-code-duplicate-audit.csv"
+type = "table"
+title = "تقرير أكواد الأصناف المكررة"
+description = "816 كودًا مكررًا في ملف الأصناف مع رقمَي الصفين والاسم العربي ووحدة القياس."
+logical_id = "e6e7dee4-b740-43fe-adf2-99fa5075dce9"
+content_hash = "sha256:e9255b2dd5c6bc9ddc01fd28dc09e05be73ee66ceaa6e28e3b2866e4f1186fe8"
+size = 102708
+mtime_ms = 1791678097776
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/e6e7dee4-b740-43fe-adf2-99fa5075dce9/1e2accf3-7fe6-40d3-b8e1-2cfd0f358f4c"
+storage_version_token = "1791678104386005"
+content_type = "text/csv"
