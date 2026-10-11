@@ -21,7 +21,7 @@ import { db, pool } from "@workspace/db";
 import { manufacturingSettingsTable, productionOrdersTable } from "@workspace/db/schema";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
-  warehouseGroupsTable, warehousesTable, itemGroupsTable, itemSubgroupsTable, unitsTable,
+  warehouseGroupsTable, warehousesTable, itemGroupsTable, itemSubgroupsTable, posItemSubgroupsTable, unitsTable,
   brandsTable, itemBrandsTable,
   itemsTable, itemUnitPricesTable, stockBalanceTable, stockLedgerTable,
   stockTransfersTable, stockTransferItemsTable,
@@ -605,7 +605,7 @@ router.post("/pos-item-groups", async (req, res) => {
   const nameAr = parsed.data.nameAr.trim();
   if (!nameAr) { res.status(400).json({ error: "اسم المجموعة مطلوب" }); return; }
   const image = parsePosGroupImageUrl(parsed.data.imageUrl);
-  if (image.error) { res.status(400).json({ error: image.error }); return; }
+  if ("error" in image && image.error) { res.status(400).json({ error: image.error }); return; }
 
   const allGroups = await db.select().from(itemGroupsTable)
     .where(eq(itemGroupsTable.companyId, cid));
@@ -668,7 +668,7 @@ router.put("/pos-item-groups/:id", async (req, res) => {
   const image = parsed.data.imageUrl === undefined
     ? { value: current.imageUrl }
     : parsePosGroupImageUrl(parsed.data.imageUrl);
-  if (image.error) { res.status(400).json({ error: image.error }); return; }
+  if ("error" in image && image.error) { res.status(400).json({ error: image.error }); return; }
 
   const [row] = await db.update(itemGroupsTable).set({
     code,
@@ -705,12 +705,105 @@ router.delete("/pos-item-groups/:id", async (req, res) => {
     res.status(409).json({ error: "لا يمكن حذف مجموعة مرتبطة بأصناف؛ أعد تعيين الأصناف أولاً" });
     return;
   }
+  const [linkedSubgroup] = await db.select({ id: posItemSubgroupsTable.id }).from(posItemSubgroupsTable)
+    .where(and(eq(posItemSubgroupsTable.companyId, cid), eq(posItemSubgroupsTable.parentPosGroupId, id))).limit(1);
+  if (linkedSubgroup) { res.status(409).json({ error: "احذف أو انقل المجموعات الفرعية أولاً" }); return; }
   await db.delete(itemGroupsTable).where(and(
     eq(itemGroupsTable.id, id),
     eq(itemGroupsTable.companyId, cid),
     eq(itemGroupsTable.isPosGroup, true),
   ));
   res.json({ ok: true });
+});
+
+router.get("/pos-item-subgroups", async (req, res): Promise<void> => {
+  const cid = guard(req, res); if (!cid) return;
+  const rows = await db.select().from(posItemSubgroupsTable)
+    .where(eq(posItemSubgroupsTable.companyId, cid))
+    .orderBy(asc(posItemSubgroupsTable.sortOrder), asc(posItemSubgroupsTable.nameAr));
+  res.json(rows);
+});
+
+router.post("/pos-item-subgroups", async (req, res): Promise<void> => {
+  const cid = guard(req, res); if (!cid) return;
+  const parentPosGroupId = Number(req.body?.parentPosGroupId);
+  const nameAr = typeof req.body?.nameAr === "string" ? req.body.nameAr.trim() : "";
+  if (!Number.isSafeInteger(parentPosGroupId) || parentPosGroupId <= 0 || !nameAr) {
+    res.status(400).json({ error: "مجموعة العرض والاسم العربي مطلوبان" }); return;
+  }
+  const [parent] = await db.select({ id: itemGroupsTable.id }).from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, parentPosGroupId), eq(itemGroupsTable.companyId, cid), eq(itemGroupsTable.isPosGroup, true),
+  ));
+  if (!parent) { res.status(400).json({ error: "مجموعة عرض نقاط البيع غير صالحة" }); return; }
+  const image = parsePosGroupImageUrl(req.body?.imageUrl);
+  if (image.error) { res.status(400).json({ error: image.error }); return; }
+  const siblings = await db.select().from(posItemSubgroupsTable).where(and(
+    eq(posItemSubgroupsTable.companyId, cid), eq(posItemSubgroupsTable.parentPosGroupId, parentPosGroupId),
+  ));
+  if (siblings.some((row) => row.nameAr.trim().toLowerCase() === nameAr.toLowerCase())) {
+    res.status(409).json({ error: "اسم المجموعة الفرعية مستخدم داخل مجموعة العرض" }); return;
+  }
+  const code = String(req.body?.code ?? "").trim() || nextEntityCode("POS-SUB", siblings.map((row) => row.code));
+  if (siblings.some((row) => row.code.trim().toLowerCase() === code.toLowerCase())) {
+    res.status(409).json({ error: "كود المجموعة الفرعية مستخدم بالفعل" }); return;
+  }
+  const [row] = await db.insert(posItemSubgroupsTable).values({
+    companyId: cid, parentPosGroupId, code, nameAr,
+    nameEn: typeof req.body?.nameEn === "string" ? req.body.nameEn.trim() || null : null,
+    imageUrl: image.value,
+    isActive: req.body?.isActive !== false,
+    sortOrder: Number.isSafeInteger(Number(req.body?.sortOrder)) ? Number(req.body.sortOrder) : 0,
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.put("/pos-item-subgroups/:id", async (req, res): Promise<void> => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const [current] = await db.select().from(posItemSubgroupsTable).where(and(
+    eq(posItemSubgroupsTable.id, id), eq(posItemSubgroupsTable.companyId, cid),
+  ));
+  if (!current) { res.status(404).json({ error: "المجموعة الفرعية غير موجودة" }); return; }
+  const parentPosGroupId = req.body?.parentPosGroupId === undefined ? current.parentPosGroupId : Number(req.body.parentPosGroupId);
+  const nameAr = typeof req.body?.nameAr === "string" ? req.body.nameAr.trim() : current.nameAr;
+  const [parent] = await db.select({ id: itemGroupsTable.id }).from(itemGroupsTable).where(and(
+    eq(itemGroupsTable.id, parentPosGroupId), eq(itemGroupsTable.companyId, cid), eq(itemGroupsTable.isPosGroup, true),
+  ));
+  if (!parent || !nameAr) { res.status(400).json({ error: "مجموعة العرض والاسم العربي مطلوبان" }); return; }
+  const siblings = await db.select().from(posItemSubgroupsTable).where(and(
+    eq(posItemSubgroupsTable.companyId, cid), eq(posItemSubgroupsTable.parentPosGroupId, parentPosGroupId),
+  ));
+  if (siblings.some((row) => row.id !== id && row.nameAr.trim().toLowerCase() === nameAr.toLowerCase())) {
+    res.status(409).json({ error: "اسم المجموعة الفرعية مستخدم داخل مجموعة العرض" }); return;
+  }
+  if (parentPosGroupId !== current.parentPosGroupId) {
+    const [linked] = await db.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(eq(itemsTable.companyId, cid), eq(itemsTable.posSubgroupId, id))).limit(1);
+    if (linked) { res.status(409).json({ error: "لا يمكن نقل مجموعة فرعية مرتبطة بأصناف؛ غيّر تصنيفها أولاً" }); return; }
+  }
+  const image = req.body?.imageUrl === undefined ? { value: current.imageUrl } : parsePosGroupImageUrl(req.body.imageUrl);
+  if (image.error) { res.status(400).json({ error: image.error }); return; }
+  const code = req.body?.code === undefined ? current.code : String(req.body.code).trim() || current.code;
+  if (siblings.some((row) => row.id !== id && row.code.trim().toLowerCase() === code.toLowerCase())) {
+    res.status(409).json({ error: "كود المجموعة الفرعية مستخدم بالفعل" }); return;
+  }
+  const [row] = await db.update(posItemSubgroupsTable).set({
+    parentPosGroupId, code, nameAr, imageUrl: image.value,
+    ...(req.body?.nameEn !== undefined ? { nameEn: String(req.body.nameEn ?? "").trim() || null } : {}),
+    ...(req.body?.isActive !== undefined ? { isActive: req.body.isActive === true } : {}),
+    ...(req.body?.sortOrder !== undefined && Number.isSafeInteger(Number(req.body.sortOrder)) ? { sortOrder: Number(req.body.sortOrder) } : {}),
+  }).where(and(eq(posItemSubgroupsTable.id, id), eq(posItemSubgroupsTable.companyId, cid))).returning();
+  res.json(row);
+});
+
+router.delete("/pos-item-subgroups/:id", async (req, res): Promise<void> => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const [linked] = await db.select({ id: itemsTable.id }).from(itemsTable)
+    .where(and(eq(itemsTable.companyId, cid), eq(itemsTable.posSubgroupId, id))).limit(1);
+  if (linked) { res.status(409).json({ error: "لا يمكن حذف مجموعة فرعية مرتبطة بأصناف؛ عطّلها بدلًا من ذلك" }); return; }
+  await db.delete(posItemSubgroupsTable).where(and(eq(posItemSubgroupsTable.id, id), eq(posItemSubgroupsTable.companyId, cid)));
+  res.sendStatus(204);
 });
 
 // ── التوجيه المحاسبي: normalize + validate routing fields from the body ──
@@ -1846,9 +1939,26 @@ async function parseAndValidateItemSubgroupId(
   return { id };
 }
 
+async function parseAndValidatePosSubgroupId(
+  companyId: number,
+  raw: unknown,
+  posGroupId: number | null,
+  allowExistingInactive = false,
+): Promise<{ id: number | null; error?: string }> {
+  if (raw == null || raw === "") return { id: null };
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id <= 0 || !posGroupId) return { id: null, error: "مجموعة نقاط البيع الفرعية غير صالحة" };
+  const [subgroup] = await db.select().from(posItemSubgroupsTable).where(and(
+    eq(posItemSubgroupsTable.id, id), eq(posItemSubgroupsTable.companyId, companyId),
+  ));
+  if (!subgroup || subgroup.parentPosGroupId !== posGroupId) return { id: null, error: "المجموعة الفرعية لا تتبع مجموعة العرض المحددة" };
+  if (!subgroup.isActive && !allowExistingInactive) return { id: null, error: "المجموعة الفرعية غير نشطة ولا يمكن ربط أصناف جديدة بها" };
+  return { id };
+}
+
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code: rawCode, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, subgroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
+  const { code: rawCode, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, posSubgroupId, subgroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
   if (!nameAr) { res.status(400).json({ error: "اسم الصنف مطلوب" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   // كود الصنف اختياري — إن تُرك فارغاً يُولَّد تلقائياً بمتابعة أعلى رقم موجود.
@@ -1910,6 +2020,14 @@ router.post("/items", async (req, res) => {
     posGroupId === undefined ? parentRowForVariant?.posGroupId : posGroupId,
   );
   if (assignedPosGroup.error) { res.status(400).json({ error: assignedPosGroup.error }); return; }
+  const assignedPosSubgroup = await parseAndValidatePosSubgroupId(
+    cid,
+    posSubgroupId === undefined
+      ? (assignedPosGroup.id === parentRowForVariant?.posGroupId ? parentRowForVariant?.posSubgroupId : null)
+      : posSubgroupId,
+    assignedPosGroup.id,
+  );
+  if (assignedPosSubgroup.error) { res.status(400).json({ error: assignedPosSubgroup.error }); return; }
   const assignedAccountingGroup = await parseAndValidateAccountingItemGroupId(
     cid,
     groupId === undefined ? parentRowForVariant?.groupId : groupId,
@@ -1927,6 +2045,7 @@ router.post("/items", async (req, res) => {
     itemNature: ["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? itemNature : (parentRowForVariant?.itemNature || "merchandise"),
     groupId: assignedAccountingGroup.id,
     posGroupId: assignedPosGroup.id,
+    posSubgroupId: assignedPosSubgroup.id,
     subgroupId: assignedSubgroup.id,
     unitId: requiredUnitId,
     costPrice: costPrice || parentRowForVariant?.costPrice || "0",
@@ -1973,7 +2092,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, subgroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, itemNature, groupId, posGroupId, posSubgroupId, subgroupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate, batchTrackingMode, costAccountId, revenueAccountId } = req.body;
   // PRO Extension #20 — variantAttributes is editable; parentItemId is
   // set-once at create time (re-parenting requires DELETE + recreate so
   // we don't have to reason about stock-balance migration).
@@ -2001,6 +2120,19 @@ router.put("/items/:id", async (req, res) => {
     const assignedPosGroup = await parseAndValidatePosGroupId(cid, posGroupId);
     if (assignedPosGroup.error) { res.status(400).json({ error: assignedPosGroup.error }); return; }
     validatedPosGroupId = assignedPosGroup.id;
+  }
+  const resultingPosGroupId = validatedPosGroupId !== undefined ? validatedPosGroupId : existing.posGroupId;
+  let validatedPosSubgroupId: number | null | undefined;
+  if (posSubgroupId !== undefined) {
+    const requestedSubgroupId = posSubgroupId == null || posSubgroupId === "" ? null : Number(posSubgroupId);
+    const assigned = await parseAndValidatePosSubgroupId(
+      cid, posSubgroupId, resultingPosGroupId,
+      requestedSubgroupId != null && requestedSubgroupId === existing.posSubgroupId,
+    );
+    if (assigned.error) { res.status(400).json({ error: assigned.error }); return; }
+    validatedPosSubgroupId = assigned.id;
+  } else if (validatedPosGroupId !== undefined && validatedPosGroupId !== existing.posGroupId) {
+    validatedPosSubgroupId = null;
   }
   let validatedAccountingGroupId: number | null | undefined;
   if (groupId !== undefined) {
@@ -2078,6 +2210,7 @@ router.put("/items/:id", async (req, res) => {
         ...(["raw","semi","finished","consumable","merchandise"].includes(itemNature) ? { itemNature } : {}),
         groupId: validatedAccountingGroupId ?? null, unitId: requestedUnitId === undefined ? lockedExisting.unitId : requestedUnitId,
         ...(validatedPosGroupId !== undefined ? { posGroupId: validatedPosGroupId } : {}),
+        ...(validatedPosSubgroupId !== undefined ? { posSubgroupId: validatedPosSubgroupId } : {}),
         ...(validatedSubgroupId !== undefined ? { subgroupId: validatedSubgroupId } : {}),
         costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
         reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,

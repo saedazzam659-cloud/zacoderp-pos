@@ -104,6 +104,25 @@ export const itemSubgroupsTable = pgTable("item_subgroups", {
   companySort: index("item_subgroups_company_sort_idx").on(t.companyId, t.parentGroupId, t.sortOrder),
 }));
 
+// POS-only subgroups are separate from accounting item subgroups. They are
+// attached to a POS display group and only control cashier catalog filtering.
+export const posItemSubgroupsTable = pgTable("pos_item_subgroups", {
+  id:                serial("id").primaryKey(),
+  companyId:         integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  parentPosGroupId:  integer("parent_pos_group_id").notNull().references(() => itemGroupsTable.id, { onDelete: "restrict" }),
+  code:              text("code").notNull(),
+  nameAr:            text("name_ar").notNull(),
+  nameEn:            text("name_en"),
+  imageUrl:          text("image_url"),
+  isActive:          boolean("is_active").default(true).notNull(),
+  sortOrder:         integer("sort_order").default(0).notNull(),
+  createdAt:         timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  companyParentCode: uniqueIndex("pos_item_subgroups_company_parent_code_uq").on(t.companyId, t.parentPosGroupId, t.code),
+  companyParentName: uniqueIndex("pos_item_subgroups_company_parent_name_uq").on(t.companyId, t.parentPosGroupId, t.nameAr),
+  companySort: index("pos_item_subgroups_company_sort_idx").on(t.companyId, t.parentPosGroupId, t.sortOrder),
+}));
+
 // ─── Brands (العلامات التجارية) ────────────────────────────────────────────────
 // OPTIONAL, additive multi-brand support: one item can carry several brands,
 // each with its own price / cost / barcode / part-number (see item_brands).
@@ -174,6 +193,7 @@ export const itemsTable = pgTable("items", {
   groupId:      integer("group_id").references(() => itemGroupsTable.id),
   posGroupId:   integer("pos_group_id"),
   subgroupId:   integer("subgroup_id").references(() => itemSubgroupsTable.id, { onDelete: "set null" }),
+  posSubgroupId: integer("pos_subgroup_id").references(() => posItemSubgroupsTable.id, { onDelete: "set null" }),
   unitId:       integer("unit_id").references(() => unitsTable.id),
   code:         text("code").notNull(),
   nameAr:       text("name_ar").notNull(),

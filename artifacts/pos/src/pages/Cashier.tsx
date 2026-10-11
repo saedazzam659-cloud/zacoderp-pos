@@ -46,7 +46,7 @@ import {
   setPosSessionId,
   type Item,
   type PosItemGroup,
-  type ItemSubgroup,
+  type PosItemSubgroup,
   type CashBox,
   type Branch,
   type Warehouse,
@@ -165,7 +165,7 @@ export default function CashierPage() {
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
   const [items, setItems] = useState<Item[]>([]);
   const [groups, setGroups] = useState<PosItemGroup[]>([]);
-  const [subgroups, setSubgroups] = useState<ItemSubgroup[]>([]);
+  const [subgroups, setSubgroups] = useState<PosItemSubgroup[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cashBoxes, setCashBoxes] = useState<CashBox[]>([]);
@@ -259,7 +259,7 @@ export default function CashierPage() {
         const [its, grs, sgs, whs, brs, cbs, settings] = await Promise.all([
           api.getItems(cid),
           api.getPosItemGroups(cid).catch(() => []),
-          api.getItemSubgroups(cid).catch(() => []),
+          api.getPosItemSubgroups(cid).catch(() => []),
           api.getWarehouses(cid).catch(() => []),
           api.getBranches(cid).catch(() => []),
           api.getCashBoxes(cid).catch(() => []),
@@ -359,15 +359,16 @@ export default function CashierPage() {
   }, [items, groups]);
 
   const availableSubgroups = useMemo(() => {
-    const scopedItems = activeCat === "all" ? items : items.filter((item) => item.posGroupId === activeCat);
-    const used = new Set(scopedItems.map((item) => item.subgroupId).filter((id): id is number => Number.isSafeInteger(id)));
-    return subgroups.filter((group) => group.isActive && used.has(group.id));
+    if (activeCat === "all") return [];
+    const used = new Set(items.filter((item) => item.posGroupId === activeCat)
+      .map((item) => item.posSubgroupId).filter((id): id is number => Number.isSafeInteger(id)));
+    return subgroups.filter((group) => group.isActive && group.parentPosGroupId === activeCat && used.has(group.id));
   }, [items, subgroups, activeCat]);
 
   const filtered = useMemo(() => {
     let list = items;
     if (activeCat !== "all") list = list.filter((p) => p.posGroupId === activeCat);
-    if (activeSubgroup !== "all") list = list.filter((p) => p.subgroupId === activeSubgroup);
+    if (activeSubgroup !== "all") list = list.filter((p) => p.posSubgroupId === activeSubgroup);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter(
@@ -860,18 +861,21 @@ export default function CashierPage() {
           )}
 
           {availableSubgroups.length > 0 && (
-            <div className="flex items-center gap-3 border-b border-border px-4 py-2 lg:px-6">
-              <label htmlFor="pos-subgroup-filter" className="text-xs font-bold text-muted-foreground">المجموعة الفرعية</label>
-              <select
-                id="pos-subgroup-filter"
-                data-testid="select-pos-subgroup"
-                value={activeSubgroup}
-                onChange={(e) => setActiveSubgroup(e.target.value === "all" ? "all" : Number(e.target.value))}
-                className="h-9 min-w-48 rounded-lg border border-border bg-card px-3 text-sm"
-              >
-                <option value="all">كل المجموعات الفرعية</option>
-                {availableSubgroups.map((group) => <option key={group.id} value={group.id}>{group.nameAr}</option>)}
-              </select>
+            <div className="border-b border-border px-4 py-2 lg:px-6">
+              <div className="flex items-center gap-2 overflow-x-auto">
+                <span className="shrink-0 text-xs font-bold text-muted-foreground">المجموعات الفرعية</span>
+                <button type="button" data-testid="button-pos-subgroup-all" aria-pressed={activeSubgroup === "all"}
+                  onClick={() => setActiveSubgroup("all")}
+                  className={`flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold ${activeSubgroup === "all" ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card"}`}>
+                  الكل
+                </button>
+                {availableSubgroups.map((group) => <button type="button" key={group.id} data-testid={`button-pos-subgroup-${group.id}`}
+                  aria-pressed={activeSubgroup === group.id} onClick={() => setActiveSubgroup(group.id)}
+                  className={`flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold ${activeSubgroup === group.id ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card"}`}>
+                  {group.imageUrl && <img src={imageSrcFromUrl(group.imageUrl) ?? undefined} alt="" className="h-6 w-6 rounded object-cover" loading="lazy" />}
+                  <span>{group.nameAr}</span>
+                </button>)}
+              </div>
             </div>
           )}
 

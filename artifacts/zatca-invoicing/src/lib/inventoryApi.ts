@@ -77,6 +77,11 @@ export async function uploadPosItemGroupImage(file: File): Promise<string> {
   return objectPath;
 }
 
+export const getPosItemSubgroups = () => get<any[]>("/pos-item-subgroups");
+export const createPosItemSubgroup = (data: any) => post<any>("/pos-item-subgroups", data);
+export const updatePosItemSubgroup = (id: number, data: any) => put<any>(`/pos-item-subgroups/${id}`, data);
+export const deletePosItemSubgroup = (id: number) => del(`/pos-item-subgroups/${id}`);
+
 export interface ItemSupplier {
   id: number;
   companyId: number;
@@ -259,6 +264,10 @@ export const inventoryApi = {
   createItemSubgroup: (data: any) => post<any>("/item-subgroups", data),
   updateItemSubgroup: (id: number, data: any) => put<any>(`/item-subgroups/${id}`, data),
   deleteItemSubgroup: (id: number) => del(`/item-subgroups/${id}`),
+  getPosItemSubgroups: () => get<any[]>("/pos-item-subgroups"),
+  createPosItemSubgroup: (data: any) => post<any>("/pos-item-subgroups", data),
+  updatePosItemSubgroup: (id: number, data: any) => put<any>(`/pos-item-subgroups/${id}`, data),
+  deletePosItemSubgroup: (id: number) => del(`/pos-item-subgroups/${id}`),
   // Brands (العلامات التجارية) — master CRUD. List coerced to array to avoid a
   // white-screen when a module-gated 403 returns an object instead of a list.
   getBrands:   (cid?: number) => get<any[]>(`/brands${cid ? `?companyId=${cid}` : ""}`).then(arr => Array.isArray(arr) ? arr : []),

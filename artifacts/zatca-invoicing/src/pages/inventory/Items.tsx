@@ -80,7 +80,7 @@ function CollapsibleSection({
 
 const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock", itemNature: "merchandise",
-  groupId: "", subgroupId: "", posGroupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
+  groupId: "", subgroupId: "", posGroupId: "", posSubgroupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
   costAccountId: "", revenueAccountId: "", imageUrl: "",
   // PRO Extension #3 — per-item default discount auto-applied on sales lines.
@@ -1391,6 +1391,11 @@ export default function Items() {
     queryFn: () => inventoryApi.getItemSubgroups(),
   });
   const { data: posGroups = [] } = useListPosItemGroups();
+  const { data: posSubgroups = [] } = useQuery({
+    queryKey: ["pos-item-subgroups", cid],
+    queryFn: () => inventoryApi.getPosItemSubgroups(),
+    enabled: Boolean(cid),
+  });
   const { data: units = [] } = useQuery({
     queryKey: ["units", cid],
     queryFn: () => inventoryApi.getUnits(cid),
@@ -1513,6 +1518,7 @@ export default function Items() {
       groupId: item.groupId != null ? String(item.groupId) : "",
       subgroupId: item.subgroupId != null ? String(item.subgroupId) : "",
       posGroupId: item.posGroupId != null ? String(item.posGroupId) : "",
+      posSubgroupId: item.posSubgroupId != null ? String(item.posSubgroupId) : "",
       unitId:  item.unitId  != null ? String(item.unitId)  : "",
       costPrice: item.costPrice ?? "0", salePrice: item.salePrice ?? "0",
       vatRate: item.vatRate ?? "15", reorderLevel: item.reorderLevel ?? "0",
@@ -1559,6 +1565,7 @@ export default function Items() {
       groupId:          form.groupId          ? Number(form.groupId)          : null,
       subgroupId:       form.subgroupId       ? Number(form.subgroupId)       : null,
       posGroupId:       form.posGroupId       ? Number(form.posGroupId)       : null,
+      posSubgroupId:    form.posSubgroupId    ? Number(form.posSubgroupId)    : null,
       unitId:           form.unitId           ? Number(form.unitId)           : null,
       costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
       revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
@@ -1842,10 +1849,24 @@ export default function Items() {
                   <SearchCombobox
                     items={[{ value: "", label: t("inventoryMaster.items.noPosGroup") }, ...posGroups.map((g) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn ?? "" }))]}
                     value={form.posGroupId}
-                    onValueChange={(v) => setForm((p: any) => ({ ...p, posGroupId: v }))}
+                    onValueChange={(v) => setForm((p: any) => ({ ...p, posGroupId: v, posSubgroupId: "" }))}
                     placeholder={t("inventoryMaster.items.choosePosGroup")}
                   />
                   <p className="mt-1 text-xs text-muted-foreground">{t("inventoryMaster.items.posGroupHint")}</p>
+                </Field>
+                <Field label="المجموعة الفرعية لنقطة البيع" hint="اختياري؛ تظهر تحت مجموعة العرض المحددة في شاشة الكاشير.">
+                  <SearchCombobox
+                    items={[
+                      { value: "", label: "بدون مجموعة فرعية" },
+                      ...(posSubgroups as any[])
+                        .filter((s: any) => String(s.parentPosGroupId) === String(form.posGroupId) && (s.isActive !== false || String(s.id) === String(form.posSubgroupId)))
+                        .map((s: any) => ({ value: String(s.id), code: s.code, label: s.nameAr, labelEn: s.nameEn || "" })),
+                    ]}
+                    value={form.posSubgroupId}
+                    onValueChange={(v) => setForm((p: any) => ({ ...p, posSubgroupId: v }))}
+                    placeholder={form.posGroupId ? "اختر المجموعة الفرعية" : "اختر مجموعة العرض أولًا"}
+                    disabled={!form.posGroupId}
+                  />
                 </Field>
                 {!editId && canBrands && (createBrandOptions as any[]).some((brand: any) => brand.status !== "inactive") && (
                   <Field

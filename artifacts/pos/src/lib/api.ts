@@ -146,6 +146,7 @@ export type PosItemGroup = {
 };
 
 export type ItemSubgroup = { id: number; parentGroupId: number; code: string; nameAr: string; isActive: boolean };
+export type PosItemSubgroup = { id: number; parentPosGroupId: number; code: string; nameAr: string; nameEn?: string | null; imageUrl?: string | null; isActive: boolean; sortOrder: number };
 export type Warehouse = {
   id: number;
   code: string;
@@ -161,6 +162,7 @@ export type Item = {
   barcode?: string | null;
   groupId?: number | null;
   posGroupId?: number | null;
+  posSubgroupId?: number | null;
   subgroupId?: number | null;
   unitId?: number | null;
   itemType: "stock" | "service" | "fixed_asset";
@@ -342,6 +344,8 @@ export const api = {
     req<PosItemGroup[]>("GET", `/api/inventory/pos-item-groups?companyId=${companyId}`),
   getItemSubgroups: (companyId: number) =>
     req<ItemSubgroup[]>("GET", `/api/inventory/item-subgroups?companyId=${companyId}`),
+  getPosItemSubgroups: (companyId: number) =>
+    req<PosItemSubgroup[]>("GET", `/api/inventory/pos-item-subgroups?companyId=${companyId}`),
   getWarehouses: (companyId: number) =>
     req<Warehouse[]>("GET", `/api/inventory/warehouses?companyId=${companyId}`),
 
