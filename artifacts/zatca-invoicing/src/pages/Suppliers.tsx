@@ -30,6 +30,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { fmt2 } from "@/lib/format";
+import { useLocation } from "wouter";
 import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
 } from "@/lib/docRowTone";
@@ -146,6 +147,7 @@ function Field({ label, value, onChange, placeholder, dir }: { label: string; va
 
 export default function Suppliers() {
     const gate = useDemoActionGate();
+  const [location] = useLocation();
   const { user, token } = useAuth();
   const contractingEnabled = companyExplicitlyEnablesModule(user, "contracting");
   const { data: allowedBranches = [] } = useBranches();
@@ -207,6 +209,18 @@ export default function Suppliers() {
     setCreating(false);
     setEditSup(null);
   }
+
+  // The top-bar shortcut should open the same inline create panel as the
+  // Suppliers screen, rather than the separate legacy /suppliers/new form.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("new") !== "1") return;
+    openCreate();
+    url.searchParams.delete("new");
+    window.history.replaceState(window.history.state, "", url.toString());
+    // openCreate is intentionally stable in behavior; the URL is consumed once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location]);
 
   // The add/edit FormPanel renders INLINE above the table — a user who clicks
   // تعديل on a row far down the list would otherwise see nothing happen.

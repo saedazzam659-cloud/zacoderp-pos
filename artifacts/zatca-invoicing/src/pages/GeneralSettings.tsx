@@ -1598,7 +1598,22 @@ export default function GeneralSettings() {
                 type="button"
                 aria-pressed={active}
                 aria-controls={`agent-general-settings-panel-${section.id}`}
-                onClick={() => setActiveAgentGeneralSection(section.id)}
+                onClick={() => {
+                  setActiveAgentGeneralSection(section.id);
+                  window.requestAnimationFrame(() => {
+                    const panel = document.getElementById(
+                      `agent-general-settings-panel-${section.id}`,
+                    );
+                    if (!panel) return;
+                    panel.style.scrollMarginTop = "8rem";
+                    panel.scrollIntoView({
+                      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+                        ? "auto"
+                        : "smooth",
+                      block: "start",
+                    });
+                  });
+                }}
                 className={cn(
                   "group flex min-h-[112px] flex-col items-center justify-center gap-2 rounded-xl border bg-card px-3 py-3 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md",
                   active && "border-primary bg-primary/5 text-primary shadow-md ring-1 ring-primary/15",

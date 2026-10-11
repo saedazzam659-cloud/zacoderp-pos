@@ -629,8 +629,10 @@ export default function SalesReturns() {
   }
 
   useEffect(() => {
-    const query = location.split("?")[1] ?? "";
-    if (!canCreateReturn || new URLSearchParams(query).get("new") !== "1") return;
+    // Wouter's location value can omit the query string, even though the
+    // quick-action URL includes it. Read the browser URL so deep links open
+    // directly into the creation form on first mount.
+    if (!canCreateReturn || new URLSearchParams(window.location.search).get("new") !== "1") return;
     reset();
     setShowForm(true);
     navigate("/sales/returns", { replace: true });
