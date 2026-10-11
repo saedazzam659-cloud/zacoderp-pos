@@ -4705,27 +4705,26 @@ async function runHeal(options: {
   );
 }
 }
-async function ensureAgentItemSubgroupsSchema(): Promise<void> {
+async function ensureAgentPosItemSubgroupsSchema(): Promise<void> {
   const statements = [
-    `CREATE TABLE IF NOT EXISTS item_subgroups (
+    `CREATE TABLE IF NOT EXISTS pos_item_subgroups (
       id SERIAL PRIMARY KEY,
       company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-      parent_group_id INTEGER NOT NULL REFERENCES item_groups(id) ON DELETE RESTRICT,
+      parent_pos_group_id INTEGER NOT NULL REFERENCES item_groups(id) ON DELETE RESTRICT,
       code TEXT NOT NULL,
       name_ar TEXT NOT NULL,
       name_en TEXT,
-      description TEXT,
       image_url TEXT,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     )`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS item_subgroups_company_parent_code_uq
-       ON item_subgroups(company_id, parent_group_id, code)`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS item_subgroups_company_parent_name_uq
-       ON item_subgroups(company_id, parent_group_id, name_ar)`,
-    `CREATE INDEX IF NOT EXISTS item_subgroups_company_sort_idx
-       ON item_subgroups(company_id, parent_group_id, sort_order)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_item_subgroups_company_parent_code_uq
+       ON pos_item_subgroups(company_id, parent_pos_group_id, code)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_item_subgroups_company_parent_name_uq
+       ON pos_item_subgroups(company_id, parent_pos_group_id, name_ar)`,
+    `CREATE INDEX IF NOT EXISTS pos_item_subgroups_company_sort_idx
+       ON pos_item_subgroups(company_id, parent_pos_group_id, sort_order)`,
   ];
   for (const stmt of statements) await execDDL(stmt);
 }
@@ -4767,7 +4766,7 @@ async function runHeal(options: {
   if (getActiveExternalDb()) {
     await ensureAgentSchoolSchema();
     await ensureContractingBoqTables();
-    await ensureAgentItemSubgroupsSchema();
+    await ensureAgentPosItemSubgroupsSchema();
   }
   // Owner-bill tax mappings are required application data. Agent databases
   // need their complete DDL before strict table validation; central schema
