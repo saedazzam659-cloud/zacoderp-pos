@@ -21,6 +21,7 @@ import { useLocation, useParams } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,7 +62,7 @@ export default function OfferForm() {
   const [, navigate] = useLocation();
   const params = useParams() as { id?: string };
   const editingId = params.id ? Number(params.id) : null;
-  const { user } = useAuth();
+  const { user, token } = useAuth() as any;
   const cid = user?.companyId ?? undefined;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -106,11 +107,12 @@ export default function OfferForm() {
     queryFn:  () => fetchJson(`/api/customers${cid ? `?companyId=${cid}` : ""}`),
     enabled:  !!cid,
   });
-  const itemsQ = useQuery<ItemLite[]>({
-    queryKey: ["items-lite", cid],
-    queryFn:  () => fetchJson(`/api/inventory/items${cid ? `?companyId=${cid}` : ""}`),
-    enabled:  !!cid,
-  });
+  const itemSearch = useInventoryItemSearch(
+    cid,
+    { Authorization: `Bearer ${token}` },
+    pickedItems.map(item => item.itemId),
+    !!token,
+  );
   const salesRepsQ = useQuery<SalesRepLite[]>({
     queryKey: ["salesreps-lite", cid],
     queryFn:  () => fetchJson(`/api/sales-reps${cid ? `?companyId=${cid}` : ""}`),
@@ -562,8 +564,9 @@ export default function OfferForm() {
             emptyHint={t("offers.scopeCard.allItemsHint", "العرض ينطبق على جميع الأصناف")}
           >
             <ItemsPicker
-              rows={itemsQ.data ?? []}
-              loading={itemsQ.isLoading}
+              rows={itemSearch.items}
+              loading={itemSearch.isSearching}
+              onSearchChange={itemSearch.setSearch}
               picked={pickedItems}
               onChange={setPickedItems}
             />
@@ -674,8 +677,9 @@ function SimpleMultiPicker<T extends { id: number; code?: string; nameAr?: strin
 }
 
 // ── Items picker — adds per-item price / discount / qty fields ──────────────
-function ItemsPicker({ rows, loading, picked, onChange }: {
+function ItemsPicker({ rows, loading, picked, onChange, onSearchChange }: {
   rows: ItemLite[]; loading: boolean; picked: SelectedItem[]; onChange: (next: SelectedItem[]) => void;
+  onSearchChange: (search: string) => void;
 }) {
   const { t } = useTranslation();
   const [q, setQ] = useState("");
@@ -691,6 +695,7 @@ function ItemsPicker({ rows, loading, picked, onChange }: {
   function add(it: ItemLite) {
     onChange([...picked, { itemId: it.id, price: it.salePrice ?? "", discount: "", qty: "" }]);
     setQ("");
+    onSearchChange("");
   }
   function remove(itemId: number) {
     onChange(picked.filter(p => p.itemId !== itemId));
@@ -703,14 +708,15 @@ function ItemsPicker({ rows, loading, picked, onChange }: {
     return r ? (r.nameAr ?? r.nameEn ?? `#${itemId}`) : `#${itemId}`;
   }
 
-  if (loading) return <Skeleton className="h-32 w-full" />;
   return (
     <div className="space-y-3">
       {/* Search-and-add */}
       <div className="relative">
         <Search className="h-4 w-4 absolute top-3 start-3 text-muted-foreground pointer-events-none" />
-        <Input className="ps-9" placeholder={t("offers.itemsSearchPh", "ابحث عن صنف لإضافته...") as string} value={q} onChange={(e) => setQ(e.target.value)} />
-        {q.trim() !== "" && candidates.length > 0 && (
+        <Input className="ps-9" placeholder={t("offers.itemsSearchPh", "ابحث عن صنف لإضافته...") as string} value={q} onChange={(e) => { setQ(e.target.value); onSearchChange(e.target.value); }} />
+        {loading ? (
+          <div className="absolute z-10 mt-1 left-0 right-0 bg-popover border border-border rounded-lg p-3 text-xs text-muted-foreground shadow-lg">جارٍ البحث...</div>
+        ) : q.trim() !== "" && candidates.length > 0 && (
           <div className="absolute z-10 mt-1 left-0 right-0 bg-popover border border-border rounded-lg max-h-60 overflow-y-auto shadow-lg">
             {candidates.map(c => (
               <button

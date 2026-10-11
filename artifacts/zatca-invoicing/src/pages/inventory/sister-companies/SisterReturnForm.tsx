@@ -6,15 +6,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { branchesApi } from "@/lib/branchesApi";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { fmt2, fmtNum } from "@/lib/format";
 import { DateField } from "@/components/ui/date-field";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 
 export default function SisterReturnForm() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { user, token, actingCompanyId } = useAuth() as any;
+  const cid = actingCompanyId ?? user?.company?.id;
   const qc = useQueryClient();
 
   // Edit mode: /inventory/sister-returns/:id (draft-only).
@@ -44,7 +48,14 @@ export default function SisterReturnForm() {
     queryFn: () => sisterCompaniesApi.getTransfer(Number(transferId)),
     enabled: !!transferId,
   });
-  const { data: items = [] } = useQuery({ queryKey: ["items"], queryFn: () => inventoryApi.getItems() });
+  const {
+    items,
+  } = useInventoryItemSearch(
+    cid,
+    { Authorization: `Bearer ${token}` },
+    ((tDetail as any)?.items ?? []).map((item: any) => item.itemId),
+    !!user,
+  );
   const itemMap = Object.fromEntries((items as any[]).map((i: any) => [i.id, i.nameAr]));
 
   // Edit mode: load the existing (draft) return + seed its return quantities.

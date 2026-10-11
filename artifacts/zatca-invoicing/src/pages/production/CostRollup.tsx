@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { DateField } from "@/components/ui/date-field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { downloadBlob } from "@/lib/dataIoApi";
@@ -46,7 +47,6 @@ const fmtMoney = (n: number) =>
 export default function CostRollup() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
-  const [items, setItems] = useState<Item[]>([]);
   const [productId, setProductId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<CostRollup | null>(null);
@@ -67,17 +67,11 @@ export default function CostRollup() {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   }), [token]);
-
-  useEffect(() => {
-    if (!token) return;
-    (async () => {
-      const r = await fetch(`${API}/api/inventory/items?includeHidden=1&limit=1000`, { headers });
-      if (r.ok) {
-        const d = await r.json();
-        setItems(Array.isArray(d) ? d : d?.items ?? []);
-      }
-    })();
-  }, [token, headers]);
+  const {
+    items,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(undefined, headers, [productId], !!token);
 
   useEffect(() => {
     if (!token) return;
@@ -244,6 +238,8 @@ export default function CostRollup() {
               <SearchCombobox
                 value={productId}
                 onValueChange={(v: string) => setProductId(v)}
+                onSearchChange={setItemSearch}
+                loading={isSearchingItems}
                 items={items.map((it) => ({
                   value: String(it.id),
                   label: it.nameAr || it.nameEn || it.sku || `#${it.id}`,

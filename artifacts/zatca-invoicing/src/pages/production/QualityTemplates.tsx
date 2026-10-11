@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -67,7 +68,6 @@ export default function QualityTemplates() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
   const [list, setList] = useState<Template[] | null>(null);
-  const [items, setItems] = useState<Item[]>([]);
   const [editing, setEditing] = useState<typeof EMPTY_FORM | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -76,22 +76,25 @@ export default function QualityTemplates() {
     () => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" }),
     [token],
   );
+  const {
+    items,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(
+    undefined,
+    headers,
+    [editing?.productItemId],
+    !!token,
+  );
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [tplR, itR] = await Promise.all([
-        fetch(`${API}/api/production/quality-templates`, { headers }),
-        fetch(`${API}/api/inventory/items?includeHidden=1&limit=500`, { headers }),
-      ]);
+      const tplR = await fetch(`${API}/api/production/quality-templates`, { headers });
       if (!tplR.ok) throw new Error(`HTTP ${tplR.status}`);
       const tpls = await tplR.json();
       setList(Array.isArray(tpls) ? tpls : []);
-      if (itR.ok) {
-        const dat = await itR.json();
-        setItems(Array.isArray(dat) ? dat : dat?.items ?? []);
-      }
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     } finally {
@@ -271,6 +274,8 @@ export default function QualityTemplates() {
                   onValueChange={(v: string) =>
                     setEditing({ ...editing, productItemId: v ? Number(v) : null })
                   }
+                  onSearchChange={setItemSearch}
+                  loading={isSearchingItems}
                   items={[
                     { value: "", label: "— عام لجميع المنتجات —" },
                     ...items.map((it) => ({

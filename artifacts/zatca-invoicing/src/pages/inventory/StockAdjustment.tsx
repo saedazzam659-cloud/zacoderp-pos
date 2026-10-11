@@ -20,6 +20,7 @@ import {
   rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
@@ -90,6 +91,16 @@ export default function StockAdjustment() {
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<any>(EMPTY_FORM);
   const [lines, setLines] = useState<any[]>([newLine()]);
+  const {
+    items,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(
+    cid,
+    { Authorization: `Bearer ${token}` },
+    lines.map(line => line.itemId),
+    !!user,
+  );
   const [showForm, setShowForm] = useState(false);
   const [importIssues, setImportIssues] = useState<StockAdjustmentImportIssue[]>([]);
   const [importFilename, setImportFilename] = useState("");
@@ -114,10 +125,6 @@ export default function StockAdjustment() {
   const { data: warehouses = [] } = useQuery({
     queryKey: ["warehouses", cid],
     queryFn: () => inventoryApi.getWarehouses(cid),
-  });
-  const { data: items = [] } = useQuery({
-    queryKey: ["items", cid],
-    queryFn: () => inventoryApi.getItems(cid),
   });
   const { data: units = [] } = useQuery({
     queryKey: ["units", cid],
@@ -181,14 +188,19 @@ export default function StockAdjustment() {
     setShowForm(false);
   }
 
-  function downloadExcelTemplate() {
-    const stockItems = (items as any[]).filter((item: any) => item.itemType === "stock");
-    if (!stockItems.length) {
-      toast({ title: t("stockAdjustmentPage.excelNoStockItems"), variant: "destructive" });
-      return;
+  async function downloadExcelTemplate() {
+    try {
+      const allItems = await inventoryApi.getItems(cid);
+      const stockItems = (allItems as any[]).filter((item: any) => item.itemType === "stock");
+      if (!stockItems.length) {
+        toast({ title: t("stockAdjustmentPage.excelNoStockItems"), variant: "destructive" });
+        return;
+      }
+      const wb = buildStockAdjustmentWorkbook(stockItems, units as any[]);
+      void saveWorkbook(wb, `stock-adjustment-template-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (error: any) {
+      toast({ title: error?.message || t("stockAdjustmentPage.excelUnreadable"), variant: "destructive" });
     }
-    const wb = buildStockAdjustmentWorkbook(stockItems, units as any[]);
-    void saveWorkbook(wb, `stock-adjustment-template-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   function issueLabel(issue: StockAdjustmentImportIssue): string {
@@ -201,7 +213,10 @@ export default function StockAdjustment() {
     setIsImporting(true);
     setImportIssues([]);
     try {
-      const result = readStockAdjustmentWorkbook(await file.arrayBuffer(), items as any[], units as any[]);
+      // Keep the complete catalog lookup for the explicit Excel import action;
+      // the ordinary form no longer downloads all items on page load.
+      const allItems = await inventoryApi.getItems(cid);
+      const result = readStockAdjustmentWorkbook(await file.arrayBuffer(), allItems as any[], units as any[]);
       setImportFilename(file.name);
       if (result.issues.length) {
         setImportIssues(result.issues);
@@ -665,6 +680,8 @@ export default function StockAdjustment() {
                               items={annotateItemCombo((items as any[]).filter((it: any) => it.itemType === "stock").map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn })), usageModes)}
                               value={line.itemId}
                               onValueChange={v => handleItemSelect(i, v)}
+                              onSearchChange={setItemSearch}
+                              loading={isSearchingItems}
                               placeholder={t("stockAdjustmentPage.selectItem")}
                               className="h-8 text-xs"
                             />

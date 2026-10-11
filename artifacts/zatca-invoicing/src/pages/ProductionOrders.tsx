@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { Link, useLocation } from "wouter";
 import { Plus, Search, Factory, ArrowRight, X, ClipboardList, Boxes, Route, Cog, Calculator, CheckCircle2, Save, Repeat2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +12,7 @@ import {
   rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { Label } from "@/components/ui/label";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
@@ -56,7 +56,8 @@ const STATUS_TONES: Record<string, string> = {
 
 export default function ProductionOrders() {
   const { t } = useTranslation();
-  const { token, user } = useAuth() as any;
+  const { token, user, actingCompanyId } = useAuth() as any;
+  const cid = actingCompanyId ?? user?.company?.id;
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
@@ -108,20 +109,16 @@ export default function ProductionOrders() {
   const [routingPreview, setRoutingPreview] = useState<any>(null);
   // Manufactured items (finished + semi) used as the FG product picker.
   // BOM templates auto-copy raw lines to the order based on this id.
-  const [items, setItems] = useState<{ id: number; code: string; nameAr: string; itemNature?: string | null; unitCode?: string | null }[]>([]);
-  const loadItems = useCallback(async () => {
-    if (!token) return;
-    try {
-      const r = await fetch(`${API}/api/inventory/items?includeHidden=1&limit=5000`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) return;
-      const j = await r.json();
-      setItems(Array.isArray(j) ? j : (j.rows ?? []));
-    } catch { /* silent */ }
-  }, [token]);
-  useEffect(() => { void loadItems(); }, [loadItems]);
-  useRefetchOnFocus(loadItems);
+  const {
+    items,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(
+    cid,
+    { Authorization: `Bearer ${token}` },
+    [form.productItemId],
+    !!token,
+  );
   const fgItems = useMemo(
     () => items.filter((i) => !i.itemNature || i.itemNature === "finished" || i.itemNature === "semi"),
     [items],
@@ -458,6 +455,7 @@ export default function ProductionOrders() {
               <div className="md:col-span-2"><Label>المنتج النهائي *</Label><SearchCombobox
                 value={form.productItemId===""?"":String(form.productItemId)} items={fgComboItems}
                 placeholder="اختر المنتج" searchPlaceholder="ابحث بالاسم أو الكود…"
+                onSearchChange={setItemSearch} loading={isSearchingItems}
                 onValueChange={v=>{const idNum=v===""?"":Number(v);const it=idNum===""?undefined:fgItems.find(x=>x.id===idNum);
                   setForm(f=>({...f,productItemId:idNum,unitCode:it?.unitCode||f.unitCode,title:f.title.trim()?f.title:(it?.nameAr??f.title)}));}}/></div>
               <div><Label>الكمية *</Label><Input type="number" min="0.0001" step="0.01" value={form.plannedQty} onChange={e=>setForm({...form,plannedQty:e.target.value})}/></div>

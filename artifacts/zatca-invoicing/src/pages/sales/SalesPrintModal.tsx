@@ -3092,17 +3092,31 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   // Live inventory catalogue → English item-name lookup. Only fetched when
   // we're actually printing in English (and the modal is open).
   const itemsCompanyId = companyCfg?.id ?? user?.company?.id;
+  const printItemIds = useMemo(
+    () => [...new Set((Array.isArray(data?.lines) ? data.lines : [])
+      .map((line: any) => Number(line.itemId))
+      .filter((id: number) => Number.isInteger(id) && id > 0))],
+    [data?.lines],
+  );
   const enItemsQuery = useQuery({
-    queryKey: ["print-en-items", itemsCompanyId],
-    enabled: !!open && printLang === "en" && !!itemsCompanyId,
+    queryKey: ["print-en-items", itemsCompanyId, printItemIds],
+    enabled: !!open && printLang === "en" && !!itemsCompanyId && printItemIds.length > 0,
     staleTime: 60_000,
     queryFn: async () => {
-      const r = await fetch(`${API}/api/inventory/items?companyId=${itemsCompanyId}&includeHidden=1`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) return [] as any[];
-      const j = await r.json();
-      return Array.isArray(j) ? j : (j.items ?? j.data ?? []);
+      const batches = Array.from(
+        { length: Math.ceil(printItemIds.length / 500) },
+        (_, index) => printItemIds.slice(index * 500, (index + 1) * 500),
+      );
+      const results = await Promise.all(batches.map(async ids => {
+        const r = await fetch(
+          `${API}/api/inventory/items/lookup?companyId=${itemsCompanyId}&ids=${encodeURIComponent(ids.join(","))}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!r.ok) return [];
+        const j = await r.json();
+        return Array.isArray(j) ? j : (j.items ?? j.data ?? []);
+      }));
+      return results.flat();
     },
   });
   const enNamesMap = useMemo(() => buildEnNamesMap(enItemsQuery.data ?? []), [enItemsQuery.data]);

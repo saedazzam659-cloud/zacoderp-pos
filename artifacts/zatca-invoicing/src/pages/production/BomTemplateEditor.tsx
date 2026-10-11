@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute, Link } from "wouter";
 import { ArrowRight, Plus, Save, Trash2, ListTree } from "lucide-react";
@@ -10,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { Skeleton } from "@/components/ui/skeleton";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
 
@@ -40,7 +40,8 @@ const FG_NATURES = new Set(["finished", "semi"]);
 const RAW_NATURES = new Set(["raw", "consumable", "semi"]);
 
 export default function BomTemplateEditor() {
-  const { token } = useAuth() as any;
+  const { token, user, actingCompanyId } = useAuth() as any;
+  const cid = actingCompanyId ?? user?.company?.id;
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [, params] = useRoute<{ id: string }>("/production/bom-templates/:id");
@@ -49,8 +50,6 @@ export default function BomTemplateEditor() {
 
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
-  const [items, setItems] = useState<Item[]>([]);
-
   const [productItemId, setProductItemId] = useState<number | null>(null);
   const [nameAr, setNameAr] = useState("");
   const [nameEn, setNameEn] = useState("");
@@ -59,35 +58,24 @@ export default function BomTemplateEditor() {
   const [isActive, setIsActive] = useState(true);
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
+  const {
+    items,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(
+    cid,
+    { Authorization: `Bearer ${token}` },
+    [productItemId, ...lines.map(line => line.itemId)],
+    !!token,
+  );
 
-  // Reusable items fetcher — called on mount AND whenever the user
-  // returns to this tab (so a newly-added item from another screen
-  // appears in the picker without manual refresh).
-  const loadItems = useCallback(async () => {
-    if (!token) return;
-    try {
-      const headers = { Authorization: `Bearer ${token}` };
-      const itemsR = await fetch(`${API}/api/inventory/items?includeHidden=1&limit=5000`, { headers });
-      const itemsJ = itemsR.ok ? await itemsR.json() : [];
-      const all: Item[] = Array.isArray(itemsJ) ? itemsJ : (itemsJ.rows ?? []);
-      setItems(all);
-    } catch {
-      /* silent — initial load handles user-facing error */
-    }
-  }, [token]);
-  useRefetchOnFocus(loadItems);
-
-  // Load items + (optionally) the existing template — reuses `loadItems`
-  // so item-fetch logic lives in exactly one place.
+  // Load the template independently; item choices are searched remotely.
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
     (async () => {
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        await loadItems();
-        if (cancelled) return;
-
         if (!isNew && id) {
           const tR = await fetch(`${API}/api/production/bom-templates/${id}`, { headers });
           if (!tR.ok) throw new Error(`HTTP ${tR.status}`);
@@ -118,7 +106,7 @@ export default function BomTemplateEditor() {
       }
     })();
     return () => { cancelled = true; };
-  }, [token, id, isNew, toast, loadItems]);
+  }, [token, id, isNew, toast]);
 
   const fgItems = useMemo(
     () => items.filter(i => !i.itemNature || FG_NATURES.has(i.itemNature)),
@@ -223,6 +211,8 @@ export default function BomTemplateEditor() {
             <SearchCombobox
               value={productItemId == null ? "" : String(productItemId)}
               onValueChange={(v) => setProductItemId(v ? Number(v) : null)}
+              onSearchChange={setItemSearch}
+              loading={isSearchingItems}
               placeholder="اختر المنتج النهائي…"
               searchPlaceholder="ابحث بالاسم أو الكود…"
               items={fgItems.map(i => ({
@@ -294,6 +284,8 @@ export default function BomTemplateEditor() {
                         <SearchCombobox
                           value={l.itemId == null ? "" : String(l.itemId)}
                           onValueChange={(v) => pickLineItem(idx, v ? Number(v) : null)}
+                          onSearchChange={setItemSearch}
+                          loading={isSearchingItems}
                           placeholder="اختر صنف…"
                           searchPlaceholder="ابحث بالاسم أو الكود…"
                           items={rawItems.map(i => ({

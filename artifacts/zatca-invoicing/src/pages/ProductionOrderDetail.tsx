@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
@@ -319,6 +320,16 @@ export default function ProductionOrderDetail() {
     ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
   }), [token, actingCompanyId]);
   const [order, setOrder] = useState<Order | null>(null);
+  const {
+    items: itemRefs,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(
+    actingCompanyId ?? user?.companyId ?? user?.company?.id,
+    requestHeaders,
+    [order?.productItemId],
+    !!token,
+  );
   const [items, setItems] = useState<Item[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
@@ -329,7 +340,6 @@ export default function ProductionOrderDetail() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierRef[]>([]);
-  const [itemRefs, setItemRefs] = useState<ItemRef[]>([]);
   const [workCenters, setWorkCenters] = useState<WorkCenterRef[]>([]);
   const [savingWip, setSavingWip] = useState(false);
   const [completion, setCompletion] = useState(EMPTY_COMPLETION);
@@ -585,16 +595,14 @@ export default function ProductionOrderDetail() {
     if (!token) return;
     const h = requestHeaders;
     try {
-      const [whs, accs, its, wcs, sups] = await Promise.all([
+      const [whs, accs, wcs, sups] = await Promise.all([
         fetch(`${API}/api/inventory/warehouses`, { headers: h }).then((r) => r.ok ? r.json() : []),
         fetch(`${API}/api/accounts?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
-        fetch(`${API}/api/inventory/items?includeHidden=1&limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
         fetch(`${apiPrefix}/work-centers`, { headers: h }).then((r) => r.ok ? r.json() : []),
         fetch(simpleFacade ? `${apiPrefix}/suppliers` : `${API}/api/suppliers?limit=2000`, { headers: h }).then((r) => r.ok ? r.json() : []),
       ]);
       setWarehouses(Array.isArray(whs) ? whs : (whs?.rows ?? whs?.data ?? []));
       setAccounts(Array.isArray(accs) ? accs : (accs?.rows ?? accs?.data ?? []));
-      setItemRefs(Array.isArray(its) ? its : (its?.rows ?? its?.data ?? []));
       setWorkCenters(Array.isArray(wcs) ? wcs : (wcs?.rows ?? []));
       setSuppliers(Array.isArray(sups) ? sups : (sups?.rows ?? sups?.data ?? []));
     } catch {
@@ -1210,6 +1218,8 @@ export default function ProductionOrderDetail() {
             warehouses={warehouses}
             accounts={accounts}
             itemRefs={itemRefs}
+            onItemSearch={setItemSearch}
+            itemSearchLoading={isSearchingItems}
             workCenters={workCenters}
             apiPrefix={apiPrefix}
             routePrefix={routePrefix}
@@ -2200,12 +2210,14 @@ function DrillRow({ label, value, detail }: { label: string; value: unknown; det
 // is locked once the order moves past "approved" because the issue JE has
 // already posted against these accounts. Saved via a single PATCH per change.
 function WipSetupPanel({
-  order, warehouses, accounts, itemRefs, workCenters, apiPrefix, routePrefix, simpleFacade, saving, onSave,
+  order, warehouses, accounts, itemRefs, onItemSearch, itemSearchLoading, workCenters, apiPrefix, routePrefix, simpleFacade, saving, onSave,
 }: {
   order: Order;
   warehouses: Warehouse[];
   accounts: Account[];
   itemRefs: ItemRef[];
+  onItemSearch: (search: string) => void;
+  itemSearchLoading: boolean;
   workCenters: WorkCenterRef[];
   apiPrefix: string;
   routePrefix: string;
@@ -2443,7 +2455,7 @@ function WipSetupPanel({
         <Field label="صنف المنتج النهائي">
           <SelectId value={draft.productItemId} onChange={(v) => set("productItemId", v)}
             options={itemRefs.map((i) => ({ value: i.id, label: `${i.code} — ${i.nameAr}` }))}
-            comboItems={fgComboItems} testid="select-fg-item" />
+            comboItems={fgComboItems} onSearchChange={onItemSearch} loading={itemSearchLoading} testid="select-fg-item" />
         </Field>
       </div>
 
@@ -3077,7 +3089,7 @@ function WasteRecordsTab({
 }
 
 function SelectId({
-  value, onChange, options, disabled, testid, comboItems,
+  value, onChange, options, disabled, testid, comboItems, onSearchChange, loading,
 }: {
   value: number | string;
   onChange: (v: number | "") => void;
@@ -3086,6 +3098,8 @@ function SelectId({
   testid?: string;
   /** Pre-annotated combobox items (Item Usage Control). Overrides `options`. */
   comboItems?: ComboboxItem[];
+  onSearchChange?: (search: string) => void;
+  loading?: boolean;
 }) {
   const v = value === "" || value == null ? "" : String(value);
   return (
@@ -3096,6 +3110,8 @@ function SelectId({
         disabled={disabled}
         placeholder="—"
         searchPlaceholder="ابحث…"
+        onSearchChange={onSearchChange}
+        loading={loading}
         items={comboItems ?? [
           { value: "", label: "—" },
           ...options.map((o) => ({ value: String(o.value), label: o.label })),

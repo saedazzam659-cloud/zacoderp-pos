@@ -6,18 +6,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import { sisterCompaniesApi } from "@/lib/sisterCompaniesApi";
 import { branchesApi } from "@/lib/branchesApi";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { fmt2 } from "@/lib/format";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DateField } from "@/components/ui/date-field";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 
 const newLine = () => ({ itemId: "", unitId: "", qty: "1", costPrice: "0", supplyPrice: "0" });
 
 export default function SisterTransferForm() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { user, token, actingCompanyId } = useAuth() as any;
+  const cid = actingCompanyId ?? user?.company?.id;
   const qc = useQueryClient();
 
   // Edit mode: /inventory/sister-transfers/:id (draft-only).
@@ -37,11 +42,15 @@ export default function SisterTransferForm() {
     notes: "",
   });
   const [lines, setLines] = useState<any[]>([newLine()]);
+  const {
+    items,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(cid, { Authorization: `Bearer ${token}` }, lines.map(line => line.itemId), !!user);
 
   const { data: sisters = [] } = useQuery({ queryKey: ["sister-companies"], queryFn: () => sisterCompaniesApi.list() });
   const { data: branches = [] } = useQuery({ queryKey: ["branches"], queryFn: () => branchesApi.getBranches() });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses"], queryFn: () => inventoryApi.getWarehouses() });
-  const { data: items = [] } = useQuery({ queryKey: ["items"], queryFn: () => inventoryApi.getItems() });
   const { data: units = [] } = useQuery({ queryKey: ["units"], queryFn: () => inventoryApi.getUnits() });
 
   // Edit mode: load the existing (draft) transfer with its items.
@@ -227,11 +236,22 @@ export default function SisterTransferForm() {
               {lines.map((l, i) => (
                 <tr key={i} className="border-t">
                   <td className="p-1">
-                    <select className="w-full border rounded h-8 px-1" value={l.itemId}
-                      onChange={e => pickItem(i, e.target.value)}>
-                      <option value="">—</option>
-                      {(items as any[]).map((it: any) => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
-                    </select>
+                    <SearchCombobox
+                      items={[
+                        { value: "", label: "—" },
+                        ...(items as any[]).map((it: any) => ({
+                          value: String(it.id),
+                          code: it.code,
+                          label: it.nameAr ?? it.nameEn ?? `#${it.id}`,
+                          labelEn: it.nameEn,
+                        })),
+                      ]}
+                      value={String(l.itemId ?? "")}
+                      onValueChange={v => pickItem(i, v)}
+                      onSearchChange={setItemSearch}
+                      loading={isSearchingItems}
+                      placeholder="اختر الصنف"
+                    />
                   </td>
                   <td className="p-1">
                     <select className="w-full border rounded h-8 px-1" value={l.unitId}

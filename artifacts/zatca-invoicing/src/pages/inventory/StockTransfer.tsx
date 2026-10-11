@@ -19,6 +19,7 @@ import {
   rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
@@ -72,6 +73,16 @@ export default function StockTransfer() {
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<any>(EMPTY_FORM);
   const [lines, setLines] = useState<any[]>([newLine()]);
+  const {
+    items,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(
+    cid,
+    { Authorization: `Bearer ${token}` },
+    lines.map(line => line.itemId),
+    !!user,
+  );
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deliveryTab, setDeliveryTab] = useState<"basic" | "items" | "costs">("basic");
@@ -95,10 +106,6 @@ export default function StockTransfer() {
   const { data: warehouses = [] } = useQuery({
     queryKey: ["warehouses", cid],
     queryFn: () => inventoryApi.getWarehouses(cid),
-  });
-  const { data: items = [] } = useQuery({
-    queryKey: ["items", cid],
-    queryFn: () => inventoryApi.getItems(cid),
   });
   const {
     data: manufacturingOptions,
@@ -825,6 +832,8 @@ export default function StockTransfer() {
                                           })), usageModes)}
                                         value={line.itemId}
                                         onValueChange={v => handleItemSelect(i, v)}
+                                        onSearchChange={setItemSearch}
+                                        loading={isSearchingItems}
                                         placeholder={t("stockTransferPage.selectItemPlaceholder")}
                                         className="h-8 text-xs"
                                       />

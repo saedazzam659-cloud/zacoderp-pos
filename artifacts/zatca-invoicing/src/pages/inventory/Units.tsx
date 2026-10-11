@@ -13,6 +13,7 @@ import { TablePagination, usePagination } from "@/components/TablePagination";
 import { Plus, Pencil, Trash2, Ruler, Search, Info, ArrowRight, Package } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 
 const EMPTY = { code: "", nameAr: "", nameEn: "", conversionFactor: "1" };
 
@@ -33,7 +34,7 @@ export default function Units() {
   const tr = (k: string, opts?: any) => t(`inventoryMaster.units.${k}`, opts) as string;
   const pickName = (ar?: string | null, en?: string | null) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
 
-  const { user, actingCompanyId } = useAuth();
+  const { user, token, actingCompanyId } = useAuth() as any;
   const cid = actingCompanyId ?? user?.company?.id;
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -47,10 +48,11 @@ export default function Units() {
     queryFn: () => inventoryApi.getUnits(cid),
   });
 
-  const { data: itemsData } = useQuery({
-    queryKey: ["items", cid],
-    queryFn: () => inventoryApi.getItems(cid),
-  });
+  const {
+    items: itemsData,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(cid, { Authorization: `Bearer ${token}` }, [], !!user);
   const [, setLocation] = useLocation();
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["units"] });
@@ -110,6 +112,8 @@ export default function Units() {
                   }))}
                   value=""
                   onValueChange={(v) => { if (v) setLocation(`/inventory/items?edit=${v}&tab=units`); }}
+                  onSearchChange={setItemSearch}
+                  loading={isSearchingItems}
                   placeholder={t("inventoryMaster.units.searchItemToConvert", { defaultValue: "Find item to manage units..." })}
                 />
               </div>

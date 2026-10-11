@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -82,7 +83,6 @@ export default function MrpPlanning() {
   const { token } = useAuth() as any;
   const { toast } = useToast();
   const [list, setList] = useState<ForecastSummary[] | null>(null);
-  const [items, setItems] = useState<Item[]>([]);
   const [editing, setEditing] = useState<typeof EMPTY_FORM | null>(null);
   const [saving, setSaving] = useState(false);
   const [mrpResult, setMrpResult] = useState<MrpRow[] | null>(null);
@@ -93,19 +93,25 @@ export default function MrpPlanning() {
     () => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" }),
     [token],
   );
+  const {
+    items,
+    setSearch: setItemSearch,
+    isSearching: isSearchingItems,
+  } = useInventoryItemSearch(
+    undefined,
+    headers,
+    [
+      ...(editing?.lines ?? []).map(line => line.productItemId),
+      ...(mrpResult ?? []).map(row => row.itemId),
+    ],
+    !!token,
+  );
 
   const load = useCallback(async () => {
     if (!token) return;
     try {
-      const [fR, iR] = await Promise.all([
-        fetch(`${API}/api/production/forecasts`, { headers }),
-        fetch(`${API}/api/inventory/items?includeHidden=1&limit=1000`, { headers }),
-      ]);
+      const fR = await fetch(`${API}/api/production/forecasts`, { headers });
       if (fR.ok) setList(await fR.json());
-      if (iR.ok) {
-        const d = await iR.json();
-        setItems(Array.isArray(d) ? d : d?.items ?? []);
-      }
     } catch (e: any) {
       toast({ title: "خطأ", description: e?.message, variant: "destructive" });
     }
@@ -353,6 +359,8 @@ export default function MrpPlanning() {
                             onValueChange={(v: string) =>
                               updateLine(idx, { productItemId: v ? Number(v) : null })
                             }
+                            onSearchChange={setItemSearch}
+                            loading={isSearchingItems}
                             items={items.map((it) => ({
                               value: String(it.id),
                               label: it.nameAr || it.nameEn || it.sku || `#${it.id}`,
