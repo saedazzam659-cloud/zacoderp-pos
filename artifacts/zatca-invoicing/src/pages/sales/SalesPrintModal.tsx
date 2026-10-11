@@ -43,6 +43,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 // in `baseStyles()` so the browser never injects new BiDi marks at
 // render time.
 const NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const QTY_FMT = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
 // Codepoints to strip:
 //   U+061C  Arabic Letter Mark
 //   U+200E  LTR Mark
@@ -52,6 +53,12 @@ const NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maxim
 //   U+FEFF  Zero-width no-break space (BOM)
 const STRIP_INVISIBLE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+const fmtQty = (value: any) => {
+  const n = Number(value);
+  return Number.isFinite(n)
+    ? QTY_FMT.format(n).replace(STRIP_INVISIBLE, "")
+    : "0";
+};
 // Pure en-US formatter for English print mode (Latin digits + Latin
 // grouping/decimal separators), avoiding the Arabic locale's separators.
 const EN_NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -564,6 +571,14 @@ function customerBlock(cu: any, d?: PrintData) {
     </div>`;
 }
 
+function customerNationalAddressShort(customer: any, doc: any): string {
+  return [
+    customer?.nationalAddressShort,
+    doc?.buyerNationalAddressShort,
+    doc?.nationalAddressShort,
+  ].map(value => String(value ?? "").trim()).find(Boolean) ?? "";
+}
+
 function withManualSalesPrintPartyName(data: PrintData): PrintData {
   const manualName = String(data.doc?.manualPrintPartyName ?? "").trim();
   if (!manualName || data.doc?.customerId != null || data.customer) return data;
@@ -1026,6 +1041,7 @@ function template6(d: PrintData): string {
   const { doc, lines, customer, company } = d;
   const isReturn = d.type === "return";
   const quotationAddress = quotationCustomerAddressText(d, "ar");
+  const nationalAddress = customerNationalAddressShort(customer, doc);
   const accent = isReturn ? "#b91c1c" : "#111";
   const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
   const itemsRows = lines.map((l) => {
@@ -1036,11 +1052,11 @@ function template6(d: PrintData): string {
         <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}${renderInventoryPrintDetailsHtml(l, d.type)}</td>
       </tr>
       <tr>
-        <td class="mono" style="padding-bottom:4px;border-bottom:1px dashed #999;">
-          ${Math.round(Number(l.qty) || 0)} × ${fmt(l.unitPrice)}${(Number(l.freeQty) || 0) > 0 ? ` <span style="color:#b45309;font-weight:700;">+ ${Math.round(Number(l.freeQty))} مجاني</span>` : ""}
+        <td style="padding-bottom:4px;border-bottom:1px dashed #999;">
+          <span class="mono">${fmtQty(l.qty)} × ${fmt(l.unitPrice)}</span>${(Number(l.freeQty) || 0) > 0 ? ` <span style="color:#b45309;font-weight:700;">+ <span class="mono">${fmtQty(l.freeQty)}</span> مجاني</span>` : ""}
         </td>
         <td class="mono" style="text-align:center;padding-bottom:4px;border-bottom:1px dashed #999;">
-          ${l.vatRate ?? 15}%
+          ${fmtQty(l.vatRate ?? 15)}%
         </td>
         <td class="mono" style="text-align:left;padding-bottom:4px;border-bottom:1px dashed #999;font-weight:700;">
           ${fmt(tot)}
@@ -1052,7 +1068,7 @@ function template6(d: PrintData): string {
   <style>
     @page { size: 80mm auto; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { direction: rtl; font-family: 'Courier New', 'Tahoma', monospace; font-size: 11px; color: #000; padding: 4mm 3mm; width: 80mm; }
+    body { direction: rtl; font-family: 'Tahoma', 'Arial', 'Segoe UI', sans-serif; font-size: 12px; line-height: 1.45; color: #000; padding: 4mm 3mm; width: 80mm; }
     .center { text-align: center; }
     /* direction:ltr + unicode-bidi:isolate prevents the browser from
        inserting any BiDi marks at render time around the formatted
@@ -1061,7 +1077,7 @@ function template6(d: PrintData): string {
        visible glyphs (digits + separators). Without this, some Windows
        fonts render an injected RTL/ALM marker as a stray
        vertical-stroke .notdef glyph next to every total. */
-    .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+    .mono { font-family: 'Arial', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
     .name-ar { font-size: 14px; font-weight: 700; }
     .name-en { font-size: 9px; opacity: .75; margin-top: 2px; }
     .meta { font-size: 10px; line-height: 1.45; }
@@ -1069,14 +1085,17 @@ function template6(d: PrintData): string {
     .doc-num  { font-size: 12px; font-weight: 700; margin-top: 2px; }
     .sep { border-top: 1px dashed #555; margin: 6px 0; }
     .sep-solid { border-top: 1.5px solid #000; margin: 6px 0; }
-    .info { font-size: 10px; line-height: 1.5; }
+    .info { font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
     .info b { display: inline-block; min-width: 42px; }
-    table.items { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 2px; }
-    table.items th { padding: 3px 0; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; font-size: 10px; }
-    .totals { margin-top: 4px; font-size: 11px; }
-    .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
-    .totals .grand { font-size: 13px; font-weight: 700; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 4px 0; margin-top: 4px; }
-    .footer { text-align: center; margin-top: 8px; font-size: 9px; line-height: 1.5; }
+    table.items { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11px; line-height: 1.45; margin-top: 3px; }
+    table.items th { padding: 4px 1px; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; font-size: 11px; }
+    table.items td { padding: 4px 1px; vertical-align: top; overflow-wrap: anywhere; }
+    .totals { margin-top: 5px; font-size: 12px; }
+    .totals .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 3px 0; }
+    .totals .row > :first-child { min-width: 0; }
+    .totals .row .mono { flex: 0 0 auto; }
+    .totals .grand { font-size: 14px; font-weight: 700; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 5px 0; margin-top: 4px; }
+    .footer { text-align: center; margin-top: 9px; font-size: 10px; line-height: 1.55; }
     .qr-box { text-align: center; margin: 8px 0 4px; font-size: 9px; }
     .qr-box .qr-ph { width: 30mm; height: 30mm; margin: 0 auto 4px; border: 1px dashed #999; display: flex; align-items: center; justify-content: center; color: #999; font-size: 9px; }
     @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
@@ -1093,7 +1112,7 @@ function template6(d: PrintData): string {
         ${company?.phone     ? `<div>هاتف: ${company.phone}</div>` : ""}
       </div>
       <div class="doc-type">${docTitle(d.type)}</div>
-      <div class="doc-num mono">${doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`}</div>
+       <div class="doc-num mono">${escapePrintHtml(doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`)}</div>
       <div class="meta">${docDate(doc, d.type)}</div>
     </div>
 
@@ -1103,6 +1122,7 @@ function template6(d: PrintData): string {
       <div><b>العميل:</b> ${escapePrintHtml(customer?.nameAr ?? customer?.nameEn ?? "—")}</div>
       ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
       ${customer?.phone     ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
+      ${nationalAddress ? `<div><b>العنوان الوطني:</b> <span class="mono">${escapePrintHtml(nationalAddress)}</span></div>` : ""}
       ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
       ${d.type !== "quotation"
         ? `<div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "تحويل بنكي" : "آجل"}</div>`
@@ -1151,6 +1171,7 @@ function template7(d: PrintData): string {
   const { doc, lines, customer, company } = d;
   const isReturn = d.type === "return";
   const quotationAddress = quotationCustomerAddressText(d, "ar");
+  const nationalAddress = customerNationalAddressShort(customer, doc);
   const accent = isReturn ? "#dc2626" : "#0f766e";
   const accentSoft = isReturn ? "#fee2e2" : "#ccfbf1";
   const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
@@ -1162,14 +1183,16 @@ function template7(d: PrintData): string {
     return `
       <div class="line ${i % 2 === 0 ? "alt" : ""}">
         <div class="line-top">
-          <span class="line-name">${l.itemName ?? l.itemCode ?? "—"}</span>${l.brandName ? `<span class="line-name" style="display:block;font-size:10px;color:#555;">العلامة التجارية: ${l.brandName}</span>` : ""}${renderInventoryPrintDetailsHtml(l, d.type, (d as any)._lang === "en" ? "en" : "ar")}
+          <span class="line-name">${escapePrintHtml(l.itemName ?? l.itemCode ?? "—")}</span>
           <span class="mono line-tot">${fmt(tot)}</span>
         </div>
-        <div class="line-sub mono">
-          ${Math.round(Number(l.qty) || 0)} ${l.unit ?? ""} × ${fmt(l.unitPrice)}
-          ${(Number(l.freeQty) || 0) > 0 ? ` <span style="color:#b45309;font-weight:700;">+ ${Math.round(Number(l.freeQty))} مجاني</span>` : ""}
-          ${disc > 0 ? ` <span style="color:#b91c1c;">(خصم ${disc}%)</span>` : ""}
-          <span style="opacity:.7;"> · ض ${l.vatRate ?? 15}%</span>
+        ${l.brandName ? `<div class="line-brand">العلامة التجارية: ${escapePrintHtml(l.brandName)}</div>` : ""}
+        ${renderInventoryPrintDetailsHtml(l, d.type, (d as any)._lang === "en" ? "en" : "ar")}
+        <div class="line-sub">
+          <span class="mono">${fmtQty(l.qty)} ${escapePrintHtml(l.unit ?? "")} × ${fmt(l.unitPrice)}</span>
+          ${(Number(l.freeQty) || 0) > 0 ? ` <span style="color:#b45309;font-weight:700;">+ <span class="mono">${fmtQty(l.freeQty)}</span> مجاني</span>` : ""}
+          ${disc > 0 ? ` <span style="color:#b91c1c;">(خصم <span class="mono">${fmtQty(disc)}</span>%)</span>` : ""}
+          <span style="opacity:.7;"> · ض <span class="mono">${fmtQty(l.vatRate ?? 15)}%</span></span>
         </div>
       </div>`;
   }).join("");
@@ -1177,8 +1200,8 @@ function template7(d: PrintData): string {
   return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
   <style>
     @page { size: 80mm auto; margin: 0; }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', 'Tahoma', sans-serif; }
-    body { direction: rtl; font-size: 11px; color: #1a1a1a; width: 80mm; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Tahoma', 'Arial', 'Segoe UI', sans-serif; }
+    body { direction: rtl; font-size: 12px; line-height: 1.45; color: #111; width: 80mm; padding: 0; }
     /* direction:ltr + unicode-bidi:isolate prevents the browser from
        inserting any BiDi marks at render time around the formatted
        numbers — pairs with the JS-side stripping of invisible BiDi
@@ -1186,7 +1209,7 @@ function template7(d: PrintData): string {
        visible glyphs (digits + separators). Without this, some Windows
        fonts render an injected RTL/ALM marker as a stray
        vertical-stroke .notdef glyph next to every total. */
-    .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+    .mono { font-family: 'Arial', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
     .header { background: ${accent}; color: #fff; padding: 8px 4mm 10px; text-align: center; }
     .header .name-ar { font-size: 14px; font-weight: 800; letter-spacing: .3px; }
     .header .name-en { font-size: 9px; opacity: .85; margin-top: 2px; }
@@ -1196,16 +1219,17 @@ function template7(d: PrintData): string {
     .doc-band .num { font-size: 13px; font-weight: 800; margin-top: 2px; }
     .doc-band .date { font-size: 10px; color: #555; margin-top: 2px; }
     .body { padding: 6px 4mm; }
-    .info-card { background: #f9fafb; border-radius: 4px; padding: 6px 8px; font-size: 10px; line-height: 1.55; margin-bottom: 6px; }
+    .info-card { background: #f9fafb; border-radius: 4px; padding: 7px 8px; font-size: 11px; line-height: 1.6; margin-bottom: 7px; overflow-wrap: anywhere; }
     .info-card b { color: ${accent}; display: inline-block; min-width: 42px; }
     .lines-title { font-size: 10px; font-weight: 700; color: ${accent}; margin: 8px 0 4px; padding-bottom: 3px; border-bottom: 1.5px solid ${accent}; }
     .line { padding: 4px 0; border-bottom: 1px dashed #d1d5db; }
     .line.alt { background: #fafafa; padding-right: 4px; padding-left: 4px; margin: 0 -4px; }
     .line-top { display: flex; justify-content: space-between; align-items: baseline; }
-    .line-name { font-size: 11px; font-weight: 600; flex: 1; }
-    .line-tot { font-size: 11px; font-weight: 700; color: ${accent}; }
-    .line-sub { font-size: 9.5px; color: #666; margin-top: 2px; }
-    .totals { margin-top: 8px; padding: 6px 8px; background: #f9fafb; border-radius: 4px; font-size: 10.5px; }
+    .line-name { font-size: 11px; font-weight: 600; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    .line-tot { font-size: 12px; font-weight: 700; color: ${accent}; flex: 0 0 auto; white-space: nowrap; margin-inline-start: 8px; }
+    .line-brand { font-size: 10px; color: #444; margin-top: 1px; }
+    .line-sub { font-size: 10.5px; color: #333; margin-top: 3px; line-height: 1.5; }
+    .totals { margin-top: 8px; padding: 7px 8px; background: #f9fafb; border-radius: 4px; font-size: 11.5px; }
     .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
     .totals .grand { font-size: 13px; font-weight: 800; color: ${accent}; border-top: 2px solid ${accent}; padding-top: 5px; margin-top: 4px; }
     .qr-box { text-align: center; margin: 8px 0 4px; }
@@ -1230,7 +1254,7 @@ function template7(d: PrintData): string {
 
     <div class="doc-band">
       <div class="label">${docTitle(d.type)}</div>
-      <div class="num mono">${doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`}</div>
+       <div class="num mono">${escapePrintHtml(doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`)}</div>
       <div class="date">${docDate(doc, d.type)}</div>
     </div>
 
@@ -1239,6 +1263,7 @@ function template7(d: PrintData): string {
         <div><b>العميل:</b> ${escapePrintHtml(customer?.nameAr ?? customer?.nameEn ?? "—")}</div>
         ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
         ${customer?.phone ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
+        ${nationalAddress ? `<div><b>العنوان الوطني:</b> <span class="mono">${escapePrintHtml(nationalAddress)}</span></div>` : ""}
         ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
         ${d.type !== "quotation"
           ? `<div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "تحويل بنكي" : "آجل"}</div>`
@@ -3000,7 +3025,8 @@ function forceThermalPaperSize(html: string): string {
     body > * { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 auto !important; }
     *, *::before, *::after { box-sizing: border-box !important; }
     table { width: 100% !important; max-width: 100% !important; table-layout: fixed !important; }
-    th, td { padding: 2px 1px !important; font-size: 8px !important; overflow-wrap: anywhere !important; word-break: break-word !important; }
+    th, td { padding: 2px 1px !important; font-size: 9px !important; overflow-wrap: anywhere !important; word-break: break-word !important; }
+    .mono, [dir="ltr"] { white-space: nowrap !important; overflow-wrap: normal !important; word-break: keep-all !important; }
     img { max-width: 100% !important; height: auto !important; }
     @media print {
       [class*="page"], [class*="invoice"], [class*="receipt"], [class*="paper"], [class*="container"] {
