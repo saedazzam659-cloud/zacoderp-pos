@@ -23,6 +23,10 @@ import {
 } from "@/lib/dataIoApi";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
+const MASTER_DATA_TRANSFER_KEYS = new Set([
+  "accounts", "branches", "warehouses", "cashBoxes", "customers", "suppliers", "items",
+]);
+
 type Step = "upload" | "analyze" | "review" | "result";
 
 function entityLabel(e: EntityCatalogItem | undefined, isAr: boolean): string {
@@ -438,10 +442,11 @@ export default function DataImportExport() {
       </header>
 
       <Tabs value={tab} onValueChange={setTab} dir={isAr ? "rtl" : "ltr"}>
-        <TabsList className="grid grid-cols-3 max-w-2xl">
+        <TabsList className="grid grid-cols-2 md:grid-cols-4 max-w-4xl">
           <TabsTrigger value="export"><Download className="w-4 h-4 ml-2" /> {t("dataIO.tabExport")}</TabsTrigger>
           <TabsTrigger value="import"><Upload className="w-4 h-4 ml-2" /> {t("dataIO.tabImport")}</TabsTrigger>
           <TabsTrigger value="historical"><Database className="w-4 h-4 ml-2" /> الترحيل التاريخي</TabsTrigger>
+          <TabsTrigger value="master-transfer"><Database className="w-4 h-4 ml-2" /> نقل البيانات التأسيسية</TabsTrigger>
         </TabsList>
 
         <TabsContent value="export" className="mt-4">
@@ -455,8 +460,53 @@ export default function DataImportExport() {
         <TabsContent value="historical" className="mt-4">
           <HistoricalMigration entities={entities} cid={cid} token={token} toast={toast} />
         </TabsContent>
+        <TabsContent value="master-transfer" className="mt-4">
+          <MasterDataTransferPanel
+            entities={entities}
+            loading={entitiesLoading}
+            cid={cid}
+            token={token}
+            toast={toast}
+            isAr={isAr}
+          />
+        </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function MasterDataTransferPanel({ entities, loading, cid, token, toast, isAr }: {
+  entities: EntityCatalogItem[];
+  loading: boolean;
+  cid?: number;
+  token: string | null;
+  toast: any;
+  isAr: boolean;
+}) {
+  const { t } = useTranslation();
+  const masterEntities = entities.filter((entity) => MASTER_DATA_TRANSFER_KEYS.has(entity.key));
+
+  return (
+    <Card className="p-4 md:p-6 space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">نقل البيانات التأسيسية بين الشركات</h2>
+        <p className="text-sm text-muted-foreground">
+          يشمل الحسابات والفروع والمخازن والخزن والعملاء والموردين والأصناف فقط. لا يشمل الفواتير أو القيود أو الأرصدة أو حركات المخزون.
+        </p>
+      </div>
+      <Tabs defaultValue="export" dir={isAr ? "rtl" : "ltr"}>
+        <TabsList className="grid grid-cols-2 max-w-md">
+          <TabsTrigger value="export"><Download className="w-4 h-4 ml-2" /> {t("dataIO.tabExport")}</TabsTrigger>
+          <TabsTrigger value="import"><Upload className="w-4 h-4 ml-2" /> {t("dataIO.tabImport")}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="export" className="mt-4">
+          <ExportPanel entities={masterEntities} loading={loading} cid={cid} token={token} toast={toast} />
+        </TabsContent>
+        <TabsContent value="import" className="mt-4">
+          <ImportWizard entities={masterEntities} loading={loading} cid={cid} token={token} toast={toast} isAr={isAr} />
+        </TabsContent>
+      </Tabs>
+    </Card>
   );
 }
 

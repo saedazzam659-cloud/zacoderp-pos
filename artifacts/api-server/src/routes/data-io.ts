@@ -23,7 +23,7 @@ import {
   journalEntriesTable, journalEntryLinesTable,
   fiscalYearsTable, fiscalPeriodsTable,
 } from "@workspace/db";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, asc } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
@@ -180,6 +180,37 @@ function buildBusinessKey(
     return values.map(({ field, value }) => `${field}:${String(value).trim()}`).join("|");
   }
   return null;
+}
+
+function sortAccountRowsParentFirst(
+  rows: Array<{ row: any; idx: number }>,
+): Array<{ row: any; idx: number }> {
+  const byCode = new Map<string, { row: any; idx: number }>();
+  for (const item of rows) {
+    const code = String(item.row?.code ?? "").trim().toLowerCase();
+    if (code && !byCode.has(code)) byCode.set(code, item);
+  }
+  const visiting = new Set<{ row: any; idx: number }>();
+  const visited = new Set<{ row: any; idx: number }>();
+  const ordered: Array<{ row: any; idx: number }> = [];
+  const visit = (item: { row: any; idx: number }) => {
+    if (visited.has(item)) return;
+    if (visiting.has(item)) {
+      throw new Error("تعذر استيراد شجرة الحسابات: توجد دائرة في علاقات الحساب الأب");
+    }
+    visiting.add(item);
+    const parentCode = String(item.row?.parentCode ?? "").trim().toLowerCase();
+    const parent = parentCode ? byCode.get(parentCode) : undefined;
+    if (parent && parent !== item) visit(parent);
+    else if (parent === item) {
+      throw new Error(`الحساب ${item.row?.code} لا يمكن أن يكون أبًا لنفسه`);
+    }
+    visiting.delete(item);
+    visited.add(item);
+    ordered.push(item);
+  };
+  for (const item of rows) visit(item);
+  return ordered;
 }
 
 /**
@@ -1135,6 +1166,16 @@ async function materializeExportVirtualFields(
   rows: any[],
   companyId: number,
 ): Promise<any[]> {
+  if (entityKey === "accounts") {
+    const accounts = await db.select({ id: accountsTable.id, code: accountsTable.code })
+      .from(accountsTable)
+      .where(eq(accountsTable.companyId, companyId));
+    const codeById = new Map(accounts.map((account) => [account.id, account.code]));
+    return rows.map((row) => ({
+      ...row,
+      parentCode: row.parentId == null ? null : codeById.get(row.parentId) ?? null,
+    }));
+  }
   if (entityKey === "items") {
     const units = await db.select({ id: unitsTable.id, code: unitsTable.code })
       .from(unitsTable)
@@ -1264,9 +1305,14 @@ router.post("/export", async (req, res) => {
         continue;
       }
 
-      const rows = ent.hasCompanyId
-        ? await db.select().from(ent.table).where(eq(ent.table.companyId, cid)).limit(limit)
-        : await db.select().from(ent.table).limit(limit);
+      const rows = ent.key === "accounts"
+        ? await db.select().from(accountsTable)
+          .where(eq(accountsTable.companyId, cid))
+          .orderBy(asc(accountsTable.level), asc(accountsTable.code))
+          .limit(limit)
+        : ent.hasCompanyId
+          ? await db.select().from(ent.table).where(eq(ent.table.companyId, cid)).limit(limit)
+          : await db.select().from(ent.table).limit(limit);
       if (rows.length > EXPORT_MAX_ROWS_PER_ENTITY) {
         truncated[t] = EXPORT_MAX_ROWS_PER_ENTITY;
         data[t] = await materializeExportVirtualFields(t, rows.slice(0, EXPORT_MAX_ROWS_PER_ENTITY), cid);
@@ -1410,6 +1456,16 @@ router.post("/import/process", async (req, res) => {
     if (!ent) { res.status(400).json({ error: "نوع البيانات غير معروف" }); return; }
     const mapping = (req.body?.mapping ?? {}) as Record<string, string | null>;
     const rawRows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const accountCodesInFile = new Set<string>();
+    if (entityKey === "accounts") {
+      const codeSource = Object.entries(mapping).find(([, target]) => target === "code")?.[0];
+      if (codeSource) {
+        for (const sourceRow of rawRows) {
+          const code = String(sourceRow?.[codeSource] ?? "").trim().toLowerCase();
+          if (code) accountCodesInFile.add(code);
+        }
+      }
+    }
 
     // Pre-load FK lookup maps once
     const fkMaps: Record<string, Map<string, number>> = {};
@@ -1502,7 +1558,14 @@ router.post("/import/process", async (req, res) => {
               confidence: 1.0, message: `تم العثور على ${f.labelAr} = ${lookupVal}`,
             });
           } else {
-            issues.push({
+            const parentWillImport = entityKey === "accounts"
+              && f.name === "parentCode"
+              && accountCodesInFile.has(String(lookupVal).trim().toLowerCase());
+            issues.push(parentWillImport ? {
+              rowIndex: idx, field: f.name, type: "fk_resolved", severity: "info",
+              before: lookupVal, after: null, action: "سيتم ربطه بعد استيراد الحساب الأب",
+              confidence: 1.0, message: `الحساب الأب ${lookupVal} موجود ضمن ملف الاستيراد`,
+            } : {
               rowIndex: idx, field: f.name, type: "fk_unresolved", severity: "warning",
               before: lookupVal, after: null, action: "سيتم تجاهل الحقل (يحتاج إنشاء يدوي لاحقًا)",
               confidence: 0.6, message: `لم يتم العثور على ${f.labelAr} = ${lookupVal}`,
@@ -1974,6 +2037,13 @@ router.post("/import/commit", async (req, res) => {
         fkLookupMaps[f.name] = lookup;
       }
     }
+    const rowsToCommit = ent.key === "accounts" ? sortAccountRowsParentFirst(validRows) : validRows;
+    const accountIdByCode = new Map<string, number>();
+    if (ent.key === "accounts") {
+      for (const [code, id] of fkLookupMaps.parentCode ?? []) {
+        accountIdByCode.set(code.trim().toLowerCase(), id);
+      }
+    }
 
     const importedUnitItemIds = ent.key === "itemUnitPrices"
       ? validRows
@@ -2026,11 +2096,21 @@ router.post("/import/commit", async (req, res) => {
       }
       // Process in chunks of 200 to avoid huge single statements
       const CHUNK = 200;
-      for (let i = 0; i < validRows.length; i += CHUNK) {
-        const slice = validRows.slice(i, i + CHUNK);
+      for (let i = 0; i < rowsToCommit.length; i += CHUNK) {
+        const slice = rowsToCommit.slice(i, i + CHUNK);
         for (const { row, idx } of slice) {
           try {
             const { row: cleaned, warnings } = cleanRow(row);
+            if (ent.key === "accounts" && Object.prototype.hasOwnProperty.call(row, "parentCode")) {
+              const parentCode = String(row.parentCode ?? "").trim();
+              if (!parentCode) {
+                cleaned.parentId = null;
+              } else {
+                const parentId = accountIdByCode.get(parentCode.toLowerCase());
+                if (parentId == null) throw new Error(`الحساب الأب غير موجود ضمن الملف أو الشركة: ${parentCode}`);
+                cleaned.parentId = parentId;
+              }
+            }
             if (
               ent.key === "itemUnitPrices"
               && Object.prototype.hasOwnProperty.call(cleaned, "conversionFactor")
@@ -2075,12 +2155,18 @@ router.post("/import/commit", async (req, res) => {
                 log.push({ rowIndex: idx, status: "skipped", reason: "السجل غير موجود ضمن نطاق الشركة" });
               } else {
                 updated++;
+                if (ent.key === "accounts" && cleaned.code) {
+                  accountIdByCode.set(String(cleaned.code).trim().toLowerCase(), serverExistingId);
+                }
                 log.push({ rowIndex: idx, status: "updated", id: serverExistingId, ...(warnings.length ? { reason: `تم التحديث${reasonSuffix}` } : {}) });
               }
             } else {
               const out = await tx.insert(ent.table).values(cleaned).returning({ id: ent.table.id });
               const newId = (out[0] as any)?.id;
               inserted++;
+              if (ent.key === "accounts" && cleaned.code && newId != null) {
+                accountIdByCode.set(String(cleaned.code).trim().toLowerCase(), Number(newId));
+              }
               log.push({ rowIndex: idx, status: "inserted", id: newId, ...(warnings.length ? { reason: `تم الإدراج${reasonSuffix}` } : {}) });
               // keep the in-memory map current so duplicates within the same batch
               // upsert correctly instead of inserting twice.
