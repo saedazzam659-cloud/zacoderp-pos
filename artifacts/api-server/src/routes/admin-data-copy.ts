@@ -7,6 +7,7 @@ import {
 import { and, asc, eq, gte, inArray, lte, isNull } from "drizzle-orm";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { writeAudit } from "../middleware/permissions.js";
+import { copyCompanyMasterData } from "../lib/companyMasterDataCopy.js";
 
 const router = Router();
 
@@ -56,6 +57,31 @@ router.get("/companies", requireSuperAdmin, async (_req, res) => {
     .where(isNull(companiesTable.deletedAt))
     .orderBy(asc(companiesTable.nameAr));
   res.json({ companies: rows });
+});
+
+router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> => {
+  const user = (req as any).authUser;
+  const sourceCompanyId = Number(req.body?.sourceCompanyId);
+  const targetCompanyId = Number(req.body?.targetCompanyId);
+  if (!Number.isInteger(sourceCompanyId) || !Number.isInteger(targetCompanyId)) {
+    res.status(400).json({ error: "اختر شركة مصدر وشركة هدف" });
+    return;
+  }
+  try {
+    const result = await copyCompanyMasterData(sourceCompanyId, targetCompanyId);
+    const ip = loginIp(req);
+    const ua = req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null;
+    await writeAudit({
+      userId: user.id, username: user.username, role: user.role, companyId: null,
+      module: "data-copy", action: "execute",
+      method: "POST", path: "/api/admin/data-copy/master-data",
+      statusCode: 200, ip, userAgent: ua,
+      metadata: { sourceCompanyId, targetCompanyId, conflictPolicy: "skip_existing", result: result.counts },
+    });
+    res.json({ ok: true, ...result });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message ?? "تعذر نسخ البيانات التأسيسية" });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

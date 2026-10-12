@@ -7,7 +7,7 @@ import {
   Plus, Building2, ExternalLink, ShieldCheck, AlertCircle,
   CheckCircle2, Search, ChevronDown, ChevronUp, MapPin,
   BadgeCheck, FileText, RefreshCw, Layers, Trash2, Globe2, LogIn, Pencil,
-  ListOrdered, ScanSearch, ShieldAlert
+  ListOrdered, ScanSearch, ShieldAlert, Copy
 } from "lucide-react";
 import ExportButtons from "@/components/ExportButtons";
 import CompanyCodeDialog, { type CompanyCodeTarget } from "@/components/CompanyCodeDialog";
@@ -21,6 +21,10 @@ import {
   AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 
 const INVOICE_TYPE: Record<string, string> = {
   standard:   "ضريبية",
@@ -102,6 +106,10 @@ export default function Companies() {
     && invoiceRepairLegacyOverride && !String(invoiceRepairDoc?.kind ?? "").endsWith("_return");
   const [invoiceRepairPreview, setInvoiceRepairPreview] = useState<{ key: string; nextNumber: string; newNumber?: string; changes?: any[]; warnings: string[] } | null>(null);
   const [invoiceRepairError, setInvoiceRepairError] = useState("");
+  const [masterCopySource, setMasterCopySource] = useState<any>(null);
+  const [masterCopyTargetId, setMasterCopyTargetId] = useState("");
+  const [masterCopyBusy, setMasterCopyBusy] = useState(false);
+  const [masterCopyResult, setMasterCopyResult] = useState<any>(null);
   const invoiceRepairKindLabel = (kind: string) => ({
     sales: "فاتورة مبيعات",
     purchase: "فاتورة مشتريات",
@@ -127,6 +135,40 @@ export default function Companies() {
   const invoiceRepairBatchEnabled = ["sales_return", "purchase_return"].includes(invoiceRepairKind)
     && invoiceRepairScan?.supportsBatchDraftRenumber === true;
   const { token } = useAuth() as any;
+
+  const openMasterDataCopy = (company: any) => {
+    setMasterCopySource(company);
+    setMasterCopyTargetId("");
+    setMasterCopyResult(null);
+  };
+
+  const runMasterDataCopy = async () => {
+    if (!masterCopySource || !masterCopyTargetId || masterCopyBusy) return;
+    const target = companies.find((row: any) => Number(row.id) === Number(masterCopyTargetId));
+    if (!target || target.agentInstanceId) {
+      toast({ title: "شركة الهدف غير صالحة", variant: "destructive" });
+      return;
+    }
+    setMasterCopyBusy(true);
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const response = await fetch(`${BASE}/api/admin/data-copy/master-data`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceCompanyId: Number(masterCopySource.id), targetCompanyId: Number(masterCopyTargetId) }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "تعذر نسخ بيانات الشركة");
+      setMasterCopyResult(body);
+      const added = Object.values(body.counts ?? {}).reduce((sum: number, count: any) => sum + Number(count.added ?? 0), 0);
+      const skipped = Object.values(body.counts ?? {}).reduce((sum: number, count: any) => sum + Number(count.skipped ?? 0), 0);
+      toast({ title: "اكتمل نسخ البيانات التأسيسية", description: `أضيف ${added} سجل، وتم تخطي ${skipped} سجل موجود.` });
+    } catch (error: any) {
+      toast({ title: "تعذر نسخ البيانات", description: error?.message || "حاول مرة أخرى.", variant: "destructive" });
+    } finally {
+      setMasterCopyBusy(false);
+    }
+  };
 
   // Rename (SuperAdmin): PUT /api/companies/:id — agent companies route into
   // their agent DB via `?agent=<id>` (SA-only, enforced server-side).
@@ -723,6 +765,15 @@ export default function Companies() {
                         onClick={() => openCodeEditor(company)} data-testid={`button-change-company-code-${company.id}`}>
                         <Pencil className="h-3.5 w-3.5" />تغيير كود الشركة
                       </Button>}
+                      {isSuperAdmin && !company.agentInstanceId && (
+                        <Button
+                          size="sm" variant="outline" className="gap-1.5 h-8"
+                          onClick={(event) => { event.stopPropagation(); openMasterDataCopy(company); }}
+                          data-testid={`button-copy-master-data-${company.id}`}
+                        >
+                          <Copy className="h-3.5 w-3.5" />نسخ بيانات الشركة بدون أرصدة
+                        </Button>
+                      )}
                       {(company.status ?? "active") === "active" && !company.zatcaPcsid && (
                         <Button asChild size="sm" className="gap-1.5 h-8">
                           <Link href={`/companies/${company.id}?tab=zatca${company.agentInstanceId ? `&agent=${company.agentInstanceId}` : ""}`}>
@@ -808,6 +859,86 @@ export default function Companies() {
           </div>
         )}
       </div>
+
+      <Dialog open={!!masterCopySource} onOpenChange={(open) => {
+        if (!open && !masterCopyBusy) { setMasterCopySource(null); setMasterCopyResult(null); }
+      }}>
+        <DialogContent dir="rtl" className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Copy className="h-5 w-5 text-primary" />نسخ بيانات الشركة بدون أرصدة
+            </DialogTitle>
+            <DialogDescription className="text-right">
+              المصدر: <strong>{masterCopySource?.nameAr}</strong>. ستُضاف السجلات الناقصة فقط، وستُترك السجلات الموجودة كما هي.
+            </DialogDescription>
+          </DialogHeader>
+          {!masterCopyResult ? (
+            <div className="space-y-4">
+              <label className="block space-y-2 text-sm font-medium">
+                <span>الشركة الهدف</span>
+                <select
+                  value={masterCopyTargetId}
+                  onChange={(event) => setMasterCopyTargetId(event.target.value)}
+                  className="h-10 w-full rounded-md border bg-background px-3 font-normal"
+                  disabled={masterCopyBusy}
+                >
+                  <option value="">اختر الشركة الهدف</option>
+                  {companies.filter((row: any) =>
+                    !row.agentInstanceId && Number(row.id) !== Number(masterCopySource?.id)
+                  ).map((row: any) => (
+                    <option key={row.id} value={row.id}>{row.nameAr} — {row.code || row.id}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <p className="mb-2 text-sm font-semibold">سيتم النسخ بهذا الترتيب لتجهيز العلاقات:</p>
+                <ol className="grid grid-cols-2 gap-x-4 gap-y-1 pr-5 text-xs text-muted-foreground list-decimal">
+                  <li>الفروع</li><li>وحدات القياس</li><li>شجرة الحسابات بالكامل</li>
+                  <li>المستخدمون (مع تعطيل الدخول)</li><li>المناديب</li><li>العملاء والموردون</li>
+                  <li>المخازن</li><li>الأصناف</li><li>الخزن</li><li>البنوك</li>
+                </ol>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  مجموعات الأصناف والمخازن اللازمة لربط البيانات تُنسخ كاعتماديات. لا تُنسخ الفواتير أو القيود أو الأرصدة أو حركات المخزون.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-green-700">اكتمل النسخ إلى «{masterCopyResult.targetCompany}».</p>
+              <div className="max-h-64 overflow-auto rounded-md border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50"><tr><th className="p-2 text-right">البيانات</th><th className="p-2">أضيف</th><th className="p-2">تم تخطيه</th></tr></thead>
+                  <tbody>{Object.entries(masterCopyResult.counts ?? {}).map(([key, value]: [string, any]) => (
+                    <tr key={key} className="border-t">
+                      <td className="p-2">{({
+                        branches: "الفروع", units: "وحدات القياس", accounts: "الحسابات",
+                        users: "المستخدمون", sales_reps: "المناديب", customers: "العملاء",
+                        suppliers: "الموردون", warehouses: "المخازن", items: "الأصناف",
+                        cash_boxes: "الخزن", bank_accounts: "البنوك",
+                        item_groups: "مجموعات الأصناف التابعة", warehouse_groups: "مجموعات المخازن التابعة",
+                      } as Record<string, string>)[key] ?? key}</td>
+                      <td className="p-2 text-center">{value.added}</td>
+                      <td className="p-2 text-center">{value.skipped}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:justify-start">
+            {masterCopyResult ? (
+              <Button onClick={() => { setMasterCopySource(null); setMasterCopyResult(null); }}>إغلاق</Button>
+            ) : (
+              <Button onClick={runMasterDataCopy} disabled={!masterCopyTargetId || masterCopyBusy}>
+                {masterCopyBusy ? "جارٍ النسخ…" : "بدء النسخ"}
+              </Button>
+            )}
+            {!masterCopyResult && (
+              <Button variant="outline" onClick={() => setMasterCopySource(null)} disabled={masterCopyBusy}>إلغاء</Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Delete confirmation dialog ── */}
       <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
