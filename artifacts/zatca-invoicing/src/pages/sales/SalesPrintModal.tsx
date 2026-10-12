@@ -3043,9 +3043,11 @@ const TEMPLATES = [
 
 function forceThermalPaperSize(html: string): string {
   const style = `<style id="thermal-paper-override">
-    @page { size: 80mm auto !important; margin: 0 !important; }
+    @page { size: 80mm auto !important; margin: 0 6mm !important; }
     html { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
-    body { width: 68mm !important; min-width: 0 !important; max-width: 68mm !important; margin: 0 auto !important; padding: 3mm 0 !important; font-size: 11px !important; line-height: 1.4 !important; overflow-x: hidden !important; overflow-y: visible !important; }
+    body { width: auto !important; min-width: 0 !important; max-width: none !important; margin: 0 !important; padding: 3mm 0 !important; color: #000 !important; font-size: 11px !important; font-weight: 600 !important; line-height: 1.4 !important; overflow-x: hidden !important; overflow-y: visible !important; }
+    body * { color: #000 !important; font-weight: 600 !important; text-shadow: none !important; }
+    strong, b, h1, h2, h3, .total, .total-row { font-weight: 800 !important; }
     body > * { width: 100% !important; min-width: 0 !important; max-width: 100% !important; margin: 0 auto !important; }
     *, *::before, *::after { box-sizing: border-box !important; }
     table { width: 100% !important; max-width: 100% !important; table-layout: fixed !important; }
