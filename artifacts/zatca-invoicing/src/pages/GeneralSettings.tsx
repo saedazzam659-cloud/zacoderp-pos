@@ -25,6 +25,7 @@ import { getIdleLogoutMinutes, setIdleLogoutMinutes } from "@/hooks/useIdleLogou
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getPreferredPrinter, setPreferredPrinter, openPrinterTestSheet, detectUsbPrinter, isWebUsbSupported } from "@/lib/preferredPrinter";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,12 @@ import { AccountCombobox } from "@/components/AccountCombobox";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
+import {
+  readThermalPrintScale,
+  saveThermalPrintScale,
+  THERMAL_PRINT_SCALE_MAX,
+  THERMAL_PRINT_SCALE_MIN,
+} from "@/lib/thermalPrintScale";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -4749,6 +4756,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     ? new Set(company.printThermalTemplates.map(Number).filter((n: number) => ALL_IDS.includes(n)))
     : new Set(nativeThermalIds);
   const [thermalIds, setThermalIds] = useState<Set<number>>(initialThermal);
+  const [thermalScales, setThermalScales] = useState<Record<number, number>>(
+    () => Object.fromEntries(TEMPLATE_CATALOG.map(tpl => [tpl.id, readThermalPrintScale(cid, tpl.id)])),
+  );
   const [defaultTplId, setDefaultTplId] = useState<number>(
     Number.isInteger(company.printDefaultTemplate) ? Number(company.printDefaultTemplate) : 1,
   );
@@ -4780,6 +4790,17 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setDefaultRetTplId(asTplId(company.printDefaultTemplateReturn));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, company.printQuotationShowQr, company.printQuotationShowCurrencyName, company.printQuotationShowCustomerAddress, company.printEnabledTemplates, company.printThermalTemplates, company.printDefaultTemplate, company.printDefaultTemplateQuotation, company.printDefaultTemplateOrder, company.printDefaultTemplateReturn, DEFAULT_INVOICE, DEFAULT_RETURN]);
+
+  useEffect(() => {
+    setThermalScales(Object.fromEntries(
+      TEMPLATE_CATALOG.map(tpl => [tpl.id, readThermalPrintScale(cid, tpl.id)]),
+    ));
+  }, [cid]);
+
+  function changeThermalTemplateScale(templateId: number, value: number) {
+    const scale = saveThermalPrintScale(cid, templateId, value);
+    setThermalScales(previous => ({ ...previous, [templateId]: scale }));
+  }
 
   function toggleTemplate(id: number) {
     setEnabledIds(prev => {
@@ -5146,6 +5167,40 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
                         {tpl.thermal ? "حراري أصلي 80 مم" : "طباعة حرارية 80 مم"}
                       </span>
                     </label>
+                    {thermalIds.has(tpl.id) && isOn && (
+                      <div
+                        className="mt-2 rounded-md bg-background/80 px-2 py-2 space-y-1.5"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-medium">عرض الطباعة</span>
+                          <span className="text-[10px] font-bold tabular-nums">
+                            {thermalScales[tpl.id] ?? THERMAL_PRINT_SCALE_MAX}%
+                          </span>
+                        </div>
+                        <Slider
+                          dir="ltr"
+                          min={THERMAL_PRINT_SCALE_MIN}
+                          max={THERMAL_PRINT_SCALE_MAX}
+                          step={1}
+                          value={[thermalScales[tpl.id] ?? THERMAL_PRINT_SCALE_MAX]}
+                          onValueChange={([value]) => changeThermalTemplateScale(tpl.id, value ?? THERMAL_PRINT_SCALE_MAX)}
+                          aria-label={`نسبة عرض الطباعة للنموذج ${tpl.name}`}
+                        />
+                        <div className="flex items-center justify-between text-[9px] text-muted-foreground" dir="ltr">
+                          <span>{THERMAL_PRINT_SCALE_MIN}%</span>
+                          <button
+                            type="button"
+                            className="underline underline-offset-2 hover:text-foreground"
+                            onClick={() => changeThermalTemplateScale(tpl.id, THERMAL_PRINT_SCALE_MAX)}
+                          >
+                            إعادة إلى 100%
+                          </button>
+                          <span>{THERMAL_PRINT_SCALE_MAX}%</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Per-doc-type default checkboxes (A4 templates only).

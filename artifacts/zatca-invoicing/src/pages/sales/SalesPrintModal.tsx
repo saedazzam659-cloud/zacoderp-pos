@@ -7,6 +7,13 @@ import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
 import { currencySymbol } from "@/lib/format";
+import {
+  clampThermalPrintScale,
+  readThermalPrintScale,
+  saveThermalPrintScale,
+  THERMAL_PRINT_SCALE_MAX,
+  THERMAL_PRINT_SCALE_MIN,
+} from "@/lib/thermalPrintScale";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
@@ -3076,30 +3083,9 @@ function forceThermalPaperSize(html: string): string {
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${style}</head>`) : html.replace(/<body/i, `${style}<body`);
 }
 
-const THERMAL_SCALE_MIN = 85;
-const THERMAL_SCALE_MAX = 100;
-
-function thermalScaleStorageKey(companyId: unknown, templateId: number): string | null {
-  if (companyId == null || companyId === "") return null;
-  return `zatca:thermal-print-scale:${String(companyId)}:${templateId}`;
-}
-
-function readThermalScale(companyId: unknown, templateId: number): number {
-  const key = thermalScaleStorageKey(companyId, templateId);
-  if (!key || typeof window === "undefined") return THERMAL_SCALE_MAX;
-  try {
-    const saved = Number(window.localStorage.getItem(key));
-    return Number.isFinite(saved) && saved >= THERMAL_SCALE_MIN && saved <= THERMAL_SCALE_MAX
-      ? saved
-      : THERMAL_SCALE_MAX;
-  } catch {
-    return THERMAL_SCALE_MAX;
-  }
-}
-
 function applyThermalContentScale(html: string, scale: number): string {
-  const percent = Math.min(THERMAL_SCALE_MAX, Math.max(THERMAL_SCALE_MIN, Math.round(scale)));
-  const centerOffset = (THERMAL_SCALE_MAX - percent) / 2;
+  const percent = clampThermalPrintScale(scale);
+  const centerOffset = (THERMAL_PRINT_SCALE_MAX - percent) / 2;
   const style = `<style id="thermal-content-scale">@media print { body { zoom: ${percent}% !important; transform: translateX(${centerOffset}%) !important; transform-origin: top left !important; } }</style>`;
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${style}</head>`) : html.replace(/<body/i, `${style}<body`);
 }
@@ -3165,7 +3151,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   const [selected, setSelected] = useState<number>(resolveInitialId);
   const selectedIsThermal = templateIsThermal(selected);
   const [thermalScale, setThermalScale] = useState<number>(
-    () => readThermalScale(companyCfg.id, resolveInitialId()),
+    () => readThermalPrintScale(companyCfg.id, resolveInitialId()),
   );
   const { toast } = useToast();
   const { user, token } = useAuth() as any;
@@ -3256,19 +3242,12 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   // company's visibility config changes.
   useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate, companyCfg.printDefaultTemplateQuotation, companyCfg.printDefaultTemplateOrder, companyCfg.printDefaultTemplateReturn, (data as any)?.type]);
   useEffect(() => {
-    setThermalScale(readThermalScale(companyCfg.id, selected));
+    setThermalScale(readThermalPrintScale(companyCfg.id, selected));
   }, [companyCfg.id, selected]);
 
   function changeThermalScale(value: number) {
-    const percent = Math.min(THERMAL_SCALE_MAX, Math.max(THERMAL_SCALE_MIN, Math.round(value)));
+    const percent = saveThermalPrintScale(companyCfg.id, selected, value);
     setThermalScale(percent);
-    const key = thermalScaleStorageKey(companyCfg.id, selected);
-    if (!key) return;
-    try {
-      window.localStorage.setItem(key, String(percent));
-    } catch {
-      // Printing still uses the selected value if browser storage is unavailable.
-    }
   }
   // Fire-and-forget auto-print on open. We track the last id we auto-
   // printed so we don't loop on re-renders, and reset when the modal
@@ -3516,23 +3495,23 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
             </div>
             <Slider
               dir="ltr"
-              min={THERMAL_SCALE_MIN}
-              max={THERMAL_SCALE_MAX}
+              min={THERMAL_PRINT_SCALE_MIN}
+              max={THERMAL_PRINT_SCALE_MAX}
               step={1}
               value={[thermalScale]}
-              onValueChange={([value]) => changeThermalScale(value ?? THERMAL_SCALE_MAX)}
+              onValueChange={([value]) => changeThermalScale(value ?? THERMAL_PRINT_SCALE_MAX)}
               aria-label="نسبة عرض الطباعة الحرارية"
             />
             <div className="flex justify-between text-[10px] text-muted-foreground" dir="ltr">
-              <span>{THERMAL_SCALE_MIN}%</span>
+              <span>{THERMAL_PRINT_SCALE_MIN}%</span>
               <button
                 type="button"
                 className="underline underline-offset-2 hover:text-foreground"
-                onClick={() => changeThermalScale(THERMAL_SCALE_MAX)}
+                onClick={() => changeThermalScale(THERMAL_PRINT_SCALE_MAX)}
               >
                 إعادة إلى 100%
               </button>
-              <span>{THERMAL_SCALE_MAX}%</span>
+              <span>{THERMAL_PRINT_SCALE_MAX}%</span>
             </div>
           </div>
         )}
