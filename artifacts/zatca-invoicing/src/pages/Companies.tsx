@@ -123,6 +123,9 @@ export default function Companies() {
   const [masterCopyProgress, setMasterCopyProgress] = useState<{ completed: string[]; counts: Record<string, any> }>({
     completed: [], counts: {},
   });
+  const [customerConflictPreview, setCustomerConflictPreview] = useState<any>(null);
+  const [customerConflictDecisions, setCustomerConflictDecisions] = useState<Record<number, any>>({});
+  const [customerConflictLoading, setCustomerConflictLoading] = useState(false);
   const invoiceRepairKindLabel = (kind: string) => ({
     sales: "فاتورة مبيعات",
     purchase: "فاتورة مشتريات",
@@ -154,10 +157,49 @@ export default function Companies() {
     setMasterCopyTargetId("");
     setMasterCopyResult(null);
     setMasterCopyProgress({ completed: [], counts: {} });
+    setCustomerConflictPreview(null);
+    setCustomerConflictDecisions({});
+  };
+
+  const previewMasterDataCopy = async () => {
+    if (!masterCopySource || !masterCopyTargetId || customerConflictLoading || masterCopyBusy) return;
+    const [locationKey, targetIdText] = masterCopyTargetId.split(":");
+    const targetAgentInstanceId = locationKey === "central" ? null : Number(locationKey);
+    setCustomerConflictLoading(true);
+    setCustomerConflictPreview(null);
+    setCustomerConflictDecisions({});
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const response = await fetch(`${BASE}/api/admin/data-copy/master-data/preview`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceCompanyId: Number(masterCopySource.id),
+          targetCompanyId: Number(targetIdText),
+          targetAgentInstanceId,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "تعذر فحص تعارضات العملاء");
+      setCustomerConflictPreview(body);
+      setCustomerConflictDecisions(Object.fromEntries((body.conflicts ?? []).map((conflict: any) => [
+        conflict.source.id,
+        {
+          action: "skip",
+          nameAr: conflict.source.nameAr ?? "",
+          vatNumber: conflict.source.vatNumber ?? "",
+          crNumber: conflict.source.crNumber ?? "",
+        },
+      ])));
+    } catch (error: any) {
+      toast({ title: "تعذر فحص تعارضات العملاء", description: error?.message || "حاول مرة أخرى.", variant: "destructive" });
+    } finally {
+      setCustomerConflictLoading(false);
+    }
   };
 
   const runMasterDataCopy = async () => {
-    if (!masterCopySource || !masterCopyTargetId || masterCopyBusy) return;
+    if (!masterCopySource || !masterCopyTargetId || masterCopyBusy || !customerConflictPreview) return;
     const [locationKey, targetIdText] = masterCopyTargetId.split(":");
     const targetAgentInstanceId = locationKey === "central" ? null : Number(locationKey);
     const targetCompanyId = Number(targetIdText);
@@ -180,6 +222,7 @@ export default function Companies() {
           sourceCompanyId: Number(masterCopySource.id),
           targetCompanyId,
           targetAgentInstanceId,
+          customerOverrides: customerConflictDecisions,
         }),
       });
       if (!response.ok) {
@@ -917,7 +960,9 @@ export default function Companies() {
       </div>
 
       <Dialog open={!!masterCopySource} onOpenChange={(open) => {
-        if (!open && !masterCopyBusy) { setMasterCopySource(null); setMasterCopyResult(null); }
+        if (!open && !masterCopyBusy && !customerConflictLoading) {
+          setMasterCopySource(null); setMasterCopyResult(null); setCustomerConflictPreview(null);
+        }
       }}>
         <DialogContent dir="rtl" className="max-w-xl">
           <DialogHeader>
@@ -935,9 +980,13 @@ export default function Companies() {
                 <span>الشركة الهدف</span>
                 <select
                   value={masterCopyTargetId}
-                  onChange={(event) => setMasterCopyTargetId(event.target.value)}
+                  onChange={(event) => {
+                    setMasterCopyTargetId(event.target.value);
+                    setCustomerConflictPreview(null);
+                    setCustomerConflictDecisions({});
+                  }}
                   className="h-10 w-full rounded-md border bg-background px-3 font-normal"
-                  disabled={masterCopyBusy}
+                  disabled={masterCopyBusy || customerConflictLoading}
                 >
                   <option value="">اختر الشركة الهدف</option>
                   {companies.filter((row: any) =>
@@ -961,6 +1010,76 @@ export default function Companies() {
                   تُنسخ مجموعات الأصناف والمخازن اللازمة لربط البيانات أيضًا. لا تُنسخ الفواتير أو القيود أو الأرصدة أو حركات المخزون.
                 </p>
               </div>
+              {!customerConflictPreview ? (
+                <p className="text-xs text-muted-foreground">
+                  افحص العملاء أولًا؛ النسخ يسمح بتكرار الرقم الضريبي، ويمنع تكرار اسم العميل.
+                </p>
+              ) : (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <p className="text-sm font-semibold">
+                    فحص العملاء: {customerConflictPreview.conflicts.length} تعارض من أصل {customerConflictPreview.totalCustomers} عميل.
+                  </p>
+                  {customerConflictPreview.conflicts.length === 0 ? (
+                    <p className="text-sm text-green-700">لم يتم العثور على تعارضات للعملاء.</p>
+                  ) : (
+                    <div className="max-h-72 space-y-3 overflow-y-auto">
+                      {customerConflictPreview.conflicts.map((conflict: any) => {
+                        const sourceId = Number(conflict.source.id);
+                        const decision = customerConflictDecisions[sourceId] ?? {};
+                        return (
+                          <div key={sourceId} className="space-y-2 rounded-md border bg-muted/20 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="text-sm font-semibold">{conflict.source.nameAr || "عميل بدون اسم"}</div>
+                              <span className="text-xs text-amber-700">الاسم مكرر — الرقم الضريبي لا يمنع النسخ</span>
+                            </div>
+                            {[...(conflict.targetMatches ?? []).map((row: any) => ({ ...row, origin: "موجود في الهدف" })),
+                              ...(conflict.sourceMatches ?? []).map((row: any) => ({ ...row, origin: "سجل سابق من المصدر" }))].map((match: any, index) => (
+                              <div key={`${match.origin}-${match.id}-${index}`} className="rounded bg-background px-2 py-1.5 text-xs text-muted-foreground">
+                                <strong className="text-foreground">{match.origin}:</strong> {match.nameAr || "—"}
+                                {" · "}ضريبي: {match.vatNumber || "—"}{" · "}سجل تجاري: {match.crNumber || "—"}
+                              </div>
+                            ))}
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <label className="space-y-1 text-xs">
+                                <span>الاسم في النسخة المستوردة</span>
+                                <Input value={decision.nameAr ?? ""} onChange={(event) => setCustomerConflictDecisions((previous) => ({
+                                  ...previous, [sourceId]: { ...decision, nameAr: event.target.value },
+                                }))} />
+                              </label>
+                              <label className="space-y-1 text-xs">
+                                <span>الرقم الضريبي في النسخة المستوردة</span>
+                                <Input value={decision.vatNumber ?? ""} onChange={(event) => setCustomerConflictDecisions((previous) => ({
+                                  ...previous, [sourceId]: { ...decision, vatNumber: event.target.value },
+                                }))} />
+                              </label>
+                              <label className="space-y-1 text-xs">
+                                <span>رقم السجل التجاري في النسخة المستوردة</span>
+                                <Input value={decision.crNumber ?? ""} onChange={(event) => setCustomerConflictDecisions((previous) => ({
+                                  ...previous, [sourceId]: { ...decision, crNumber: event.target.value },
+                                }))} />
+                              </label>
+                              <label className="space-y-1 text-xs">
+                                <span>قرار هذا التعارض</span>
+                                <select value={decision.action ?? "skip"}
+                                  onChange={(event) => setCustomerConflictDecisions((previous) => ({
+                                    ...previous, [sourceId]: { ...decision, action: event.target.value },
+                                  }))}
+                                  className="h-9 w-full rounded-md border bg-background px-2">
+                                  <option value="skip">تخطي العميل</option>
+                                  <option value="add">إضافة بعد التصحيح مع إعادة الفحص</option>
+                                </select>
+                              </label>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    تكرار الرقم الضريبي مسموح بين عملاء فروع مختلفة في هذه العملية. لا يُضاف اسم مكرر؛ عدّل اسم النسخة الواردة أو تخطَّ السجل. التعديل يخص النسخة المستوردة فقط.
+                  </p>
+                </div>
+              )}
               {masterCopyBusy && (() => {
                 const completedCount = masterCopyProgress.completed.length;
                 const activeStage = MASTER_COPY_STAGES[completedCount];
@@ -1027,12 +1146,18 @@ export default function Companies() {
             {masterCopyResult ? (
               <Button onClick={() => { setMasterCopySource(null); setMasterCopyResult(null); }}>إغلاق</Button>
             ) : (
-              <Button onClick={runMasterDataCopy} disabled={!masterCopyTargetId || masterCopyBusy}>
-                {masterCopyBusy ? "جارٍ النسخ…" : "بدء النسخ"}
-              </Button>
+              customerConflictPreview ? (
+                <Button onClick={runMasterDataCopy} disabled={!masterCopyTargetId || masterCopyBusy || customerConflictLoading}>
+                  {masterCopyBusy ? "جارٍ النسخ…" : "بدء النسخ"}
+                </Button>
+              ) : (
+                <Button onClick={previewMasterDataCopy} disabled={!masterCopyTargetId || masterCopyBusy || customerConflictLoading}>
+                  {customerConflictLoading ? "جارٍ فحص العملاء…" : "فحص تعارضات العملاء"}
+                </Button>
+              )
             )}
             {!masterCopyResult && (
-              <Button variant="outline" onClick={() => setMasterCopySource(null)} disabled={masterCopyBusy}>إلغاء</Button>
+              <Button variant="outline" onClick={() => setMasterCopySource(null)} disabled={masterCopyBusy || customerConflictLoading}>إلغاء</Button>
             )}
           </DialogFooter>
         </DialogContent>

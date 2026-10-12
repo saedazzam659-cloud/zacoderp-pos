@@ -7,11 +7,11 @@ The approved SuperAdmin direction is central database source → existing agent-
 
 For an existing destination, skip matching master records and add only missing ones. Match by company-local codes or stable business identity, never source-company database IDs. Preserve account parents by local account codes. New users are copied disabled until an administrator reviews them.
 
-Customer records in source data can reuse VAT numbers. Treat VAT collisions as reviewable conflicts, not automatic permission to duplicate or silently merge identities.
+Different branch customer records may legitimately share one VAT number so each branch can keep a separate account. In the copy flow, duplicate customer names are conflicts; matching VAT numbers alone are not.
 
-**Why:** A repeated VAT number may be bad source data or a legitimate shared identifier; admins need to review the actual records without weakening the duplicate guard.
+**Why:** The business tracks branch-level customer balances separately even when the branches share their parent organization's VAT registration.
 
-**How to apply:** Offer explicit choices to link an existing destination record, correct the incoming copy and revalidate it, or skip it. Do not overwrite target records or allow a duplicate VAT number merely to complete the import.
+**How to apply:** During copy, allow shared VAT values but block same-name customer records until the incoming copy is renamed or skipped. Do not overwrite target records silently; do not change ordinary customer validation without a separate request.
 
 **Why:** The owner needs central setup copied into agent-hosted companies, not transaction history. Importing operational records would be out of scope and could alter financial or inventory history.
 

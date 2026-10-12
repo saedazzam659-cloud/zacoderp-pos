@@ -7,7 +7,7 @@ import {
 import { and, asc, eq, gte, inArray, lte, isNull } from "drizzle-orm";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { writeAudit } from "../middleware/permissions.js";
-import { copyCompanyMasterData } from "../lib/companyMasterDataCopy.js";
+import { copyCompanyMasterData, previewCompanyCustomerDuplicates } from "../lib/companyMasterDataCopy.js";
 
 const router = Router();
 
@@ -59,6 +59,27 @@ router.get("/companies", requireSuperAdmin, async (_req, res) => {
   res.json({ companies: rows });
 });
 
+router.post("/master-data/preview", requireSuperAdmin, async (req, res): Promise<void> => {
+  const sourceCompanyId = Number(req.body?.sourceCompanyId);
+  const targetCompanyId = Number(req.body?.targetCompanyId);
+  const rawTargetAgentId = req.body?.targetAgentInstanceId;
+  const targetAgentInstanceId = rawTargetAgentId == null || rawTargetAgentId === ""
+    ? null : Number(rawTargetAgentId);
+  if (!Number.isInteger(sourceCompanyId) || !Number.isInteger(targetCompanyId)) {
+    res.status(400).json({ error: "اختر شركة مصدر وشركة هدف" });
+    return;
+  }
+  if (targetAgentInstanceId != null && (!Number.isInteger(targetAgentInstanceId) || targetAgentInstanceId <= 0)) {
+    res.status(400).json({ error: "قاعدة بيانات الشركة الهدف غير صالحة" });
+    return;
+  }
+  try {
+    res.json(await previewCompanyCustomerDuplicates(sourceCompanyId, targetCompanyId, targetAgentInstanceId));
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message ?? "تعذر فحص تعارضات العملاء" });
+  }
+});
+
 router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> => {
   const user = (req as any).authUser;
   const sourceCompanyId = Number(req.body?.sourceCompanyId);
@@ -66,6 +87,23 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
   const rawTargetAgentId = req.body?.targetAgentInstanceId;
   const targetAgentInstanceId = rawTargetAgentId == null || rawTargetAgentId === ""
     ? null : Number(rawTargetAgentId);
+  const rawCustomerOverrides = req.body?.customerOverrides;
+  const customerOverrides: Record<number, any> = {};
+  if (rawCustomerOverrides && typeof rawCustomerOverrides === "object" && !Array.isArray(rawCustomerOverrides)) {
+    for (const [rawId, value] of Object.entries(rawCustomerOverrides)) {
+      const id = Number(rawId);
+      if (!Number.isInteger(id) || id <= 0 || !value || typeof value !== "object") continue;
+      const action = (value as any).action;
+      if (action !== "skip" && action !== "add") continue;
+      customerOverrides[id] = {
+        action,
+        ...(["nameAr", "vatNumber", "crNumber"] as const).reduce((acc, field) => {
+          if (Object.prototype.hasOwnProperty.call(value, field)) acc[field] = (value as any)[field];
+          return acc;
+        }, {} as Record<string, unknown>),
+      };
+    }
+  }
   if (!Number.isInteger(sourceCompanyId) || !Number.isInteger(targetCompanyId)) {
     res.status(400).json({ error: "اختر شركة مصدر وشركة هدف" });
     return;
@@ -91,6 +129,7 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
       targetCompanyId,
       targetAgentInstanceId,
       (progress) => send({ type: "progress", ...progress }),
+      customerOverrides,
     );
     const ip = loginIp(req);
     const ua = req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null;
@@ -99,7 +138,14 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
       module: "data-copy", action: "execute",
       method: "POST", path: "/api/admin/data-copy/master-data",
       statusCode: 200, ip, userAgent: ua,
-      metadata: { sourceCompanyId, targetCompanyId, targetAgentInstanceId, conflictPolicy: "skip_existing", result: result.counts },
+      metadata: {
+        sourceCompanyId, targetCompanyId, targetAgentInstanceId,
+        conflictPolicy: "customer_name_unique_vat_reuse_allowed",
+        reviewedCustomerIds: Object.keys(customerOverrides).map(Number),
+        correctedCustomerIds: Object.entries(customerOverrides)
+          .filter(([, value]) => value.action === "add").map(([id]) => Number(id)),
+        result: result.counts,
+      },
     });
     send({ type: "complete", result: { ok: true, ...result } });
     res.end();

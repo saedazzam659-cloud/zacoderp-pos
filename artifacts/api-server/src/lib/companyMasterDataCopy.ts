@@ -19,6 +19,7 @@ export async function copyCompanyMasterData(
   targetCompanyId: number,
   targetAgentInstanceId?: number | null,
   onProgress?: CopyProgress,
+  customerOverrides: Record<number, { action?: "skip" | "add"; nameAr?: string; vatNumber?: string | null; crNumber?: string | null }> = {},
 ) {
   if (!Number.isInteger(sourceCompanyId) || sourceCompanyId <= 0
     || !Number.isInteger(targetCompanyId) || targetCompanyId <= 0
@@ -316,21 +317,49 @@ export async function copyCompanyMasterData(
       const src = await srcRows(table);
       const dst = await dstRows(table);
       const state = mapExisting(src, dst, keyOf);
+      const customerIdentityKeys = new Set<string>();
+      const addCustomerKeys = (row: Row) => {
+        const name = norm(row.nameAr);
+        if (name) customerIdentityKeys.add(`nameAr:${name}`);
+      };
+      if (kind === "customers") {
+        for (const row of dst) addCustomerKeys(row);
+      }
       for (const row of src) {
-        const key = norm(keyOf(row));
-        if (key && state.dstByKey.has(key)) { bump(kind, false); continue; }
+        const override = kind === "customers" ? customerOverrides[Number(row.id)] : undefined;
+        if (override?.action === "skip") { bump(kind, false); addCustomerKeys(row); continue; }
+        const copyRow = kind === "customers"
+          ? { ...row, ...(override?.nameAr !== undefined ? { nameAr: override.nameAr } : {}),
+            ...(override?.vatNumber !== undefined ? { vatNumber: override.vatNumber } : {}),
+            ...(override?.crNumber !== undefined ? { crNumber: override.crNumber } : {}) }
+          : row;
+        const key = norm(keyOf(copyRow));
+        const nameKey = norm(copyRow.nameAr);
+        const hasCustomerCollision = kind === "customers" && Boolean(nameKey && customerIdentityKeys.has(`nameAr:${nameKey}`));
+        const hasCollision = kind === "customers"
+          ? hasCustomerCollision
+          : Boolean(key && state.dstByKey.has(key));
+        if (hasCollision) {
+          bump(kind, false);
+          if (kind === "customers") addCustomerKeys(copyRow);
+          continue;
+        }
         const id = await insert(table, {
-          ...strip(row, ["accountId", "branchId", "salesRepId", "regionId", "customerGroupId", "groupId", "openingBalance"]),
+          ...strip(copyRow, ["accountId", "branchId", "salesRepId", "regionId", "customerGroupId", "groupId", "openingBalance"]),
           companyId: targetCompanyId,
-          accountId: row.accountId == null ? null : accountMap.get(row.accountId) ?? null,
-          branchId: row.branchId == null ? null : branchMap.get(row.branchId) ?? null,
-          salesRepId: row.salesRepId == null ? null : repMap.get(row.salesRepId) ?? null,
+          accountId: copyRow.accountId == null ? null : accountMap.get(copyRow.accountId) ?? null,
+          branchId: copyRow.branchId == null ? null : branchMap.get(copyRow.branchId) ?? null,
+          salesRepId: copyRow.salesRepId == null ? null : repMap.get(copyRow.salesRepId) ?? null,
           regionId: null,
           ...(kind === "customers"
-            ? { customerGroupId: row.customerGroupId == null ? null : groupMap.get(row.customerGroupId) ?? null }
-            : { groupId: row.groupId == null ? null : groupMap.get(row.groupId) ?? null, openingBalance: "0" }),
+            ? { customerGroupId: copyRow.customerGroupId == null ? null : groupMap.get(copyRow.customerGroupId) ?? null }
+            : { groupId: copyRow.groupId == null ? null : groupMap.get(copyRow.groupId) ?? null, openingBalance: "0" }),
         });
-        if (key) state.dstByKey.set(key, { id });
+        if (kind === "customers") {
+          addCustomerKeys(copyRow);
+        } else if (key) {
+          state.dstByKey.set(key, { id });
+        }
         bump(kind, true);
       }
     };
@@ -441,5 +470,57 @@ export async function copyCompanyMasterData(
       targetAgentInstanceId: targetAgentInstanceId ?? null,
       counts,
     };
+  });
+}
+
+export async function previewCompanyCustomerDuplicates(
+  sourceCompanyId: number,
+  targetCompanyId: number,
+  targetAgentInstanceId?: number | null,
+) {
+  if (!Number.isInteger(sourceCompanyId) || sourceCompanyId <= 0
+    || !Number.isInteger(targetCompanyId) || targetCompanyId <= 0) {
+    throw new Error("اختر شركتين مختلفتين وصحيحتين");
+  }
+  const sourceRows = await centralDb.select().from(customersTable)
+    .where(eq(customersTable.companyId, sourceCompanyId));
+  const targetLocation: TransferLocation = targetAgentInstanceId == null
+    ? { kind: "central" }
+    : { kind: "agent", agentId: targetAgentInstanceId };
+  return withTransferLocation(targetLocation, async () => {
+    const [target] = await db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr, deletedAt: companiesTable.deletedAt })
+      .from(companiesTable).where(eq(companiesTable.id, targetCompanyId));
+    if (!target || target.deletedAt) throw new Error("الشركة الهدف غير موجودة أو محذوفة في قاعدة بياناتها");
+    const targetRows = await db.select().from(customersTable).where(eq(customersTable.companyId, targetCompanyId));
+    const normalize = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase();
+    const seenSource = new Map<string, Row>();
+    const conflicts: Row[] = [];
+    for (const sourceRow of sourceRows) {
+      const keys = ([["nameAr", normalize(sourceRow.nameAr)]] as const).filter(([, value]) => value);
+      const targetMatches = targetRows.filter((candidate) =>
+        keys.some(([field, value]) => normalize(candidate[field]) === value));
+      const sourceMatches: Row[] = [];
+      for (const [field, value] of keys) {
+        const prior = seenSource.get(`${field}:${value}`);
+        if (prior && !sourceMatches.some((match) => match.id === prior.id)) sourceMatches.push(prior);
+      }
+      if (targetMatches.length || sourceMatches.length) {
+        conflicts.push({
+          source: {
+            id: sourceRow.id, nameAr: sourceRow.nameAr, vatNumber: sourceRow.vatNumber,
+            crNumber: sourceRow.crNumber, phone: sourceRow.phone,
+          },
+          targetMatches: targetMatches.map((row) => ({
+            id: row.id, nameAr: row.nameAr, vatNumber: row.vatNumber, crNumber: row.crNumber, phone: row.phone,
+          })),
+          sourceMatches: sourceMatches.map((row) => ({
+            id: row.id, nameAr: row.nameAr, vatNumber: row.vatNumber, crNumber: row.crNumber, phone: row.phone,
+          })),
+          reasons: ["name"],
+        });
+      }
+      for (const [field, value] of keys) if (!seenSource.has(`${field}:${value}`)) seenSource.set(`${field}:${value}`, sourceRow);
+    }
+    return { targetCompany: target.nameAr, totalCustomers: sourceRows.length, conflicts };
   });
 }
