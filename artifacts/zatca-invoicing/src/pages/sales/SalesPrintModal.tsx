@@ -1095,7 +1095,10 @@ function template6(d: PrintData): string {
   <style>
     @page { size: 80mm auto; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { direction: rtl; font-family: 'Tahoma', 'Arial', 'Segoe UI', sans-serif; font-size: 12px; line-height: 1.45; color: #000; padding: 4mm 3mm; width: 80mm; max-width: 80mm; overflow-x: hidden; }
+    /* 80mm is the paper roll width; most 80mm printers expose about 72mm
+       of printable head width. Keeping the document inside that area stops
+       the browser/driver from silently shrinking every glyph to fit. */
+    body { direction: rtl; font-family: 'Tahoma', 'Arial', 'Segoe UI', sans-serif; font-size: 13px; font-weight: 500; line-height: 1.55; color: #000; padding: 3mm 2mm; width: 72mm; max-width: 72mm; margin: 0 auto; overflow-x: hidden; }
     .center { text-align: center; }
     /* direction:ltr + unicode-bidi:isolate prevents the browser from
        inserting any BiDi marks at render time around the formatted
@@ -1105,25 +1108,25 @@ function template6(d: PrintData): string {
        fonts render an injected RTL/ALM marker as a stray
        vertical-stroke .notdef glyph next to every total. */
     .mono { font-family: 'Arial', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
-    .name-ar { font-size: 14px; font-weight: 700; }
-    .name-en { font-size: 10px; opacity: .75; margin-top: 2px; }
-    .meta { font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; word-break: normal; }
-    .doc-type { background: ${accent}; color: #fff; display: inline-block; padding: 3px 10px; margin: 6px 0 4px; font-weight: 700; font-size: 12px; border-radius: 3px; }
-    .doc-num  { font-size: 12px; font-weight: 700; margin-top: 2px; }
+    .name-ar { font-size: 16px; font-weight: 800; }
+    .name-en { font-size: 11px; font-weight: 600; margin-top: 2px; }
+    .meta { font-size: 12px; font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; word-break: normal; }
+    .doc-type { background: ${accent}; color: #fff; display: inline-block; padding: 4px 10px; margin: 6px 0 4px; font-weight: 800; font-size: 13px; border-radius: 3px; }
+    .doc-num  { font-size: 13px; font-weight: 800; margin-top: 2px; }
     .sep { border-top: 1px dashed #555; margin: 6px 0; }
     .sep-solid { border-top: 1.5px solid #000; margin: 6px 0; }
-    .info { font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+    .info { font-size: 12px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
     .info b { display: inline-block; min-width: 42px; }
-    table.items { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11px; line-height: 1.45; margin-top: 3px; }
-    table.items th { padding: 4px 1px; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; font-size: 11px; }
+    table.items { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; line-height: 1.5; margin-top: 3px; }
+    table.items th { padding: 5px 1px; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; font-size: 12px; font-weight: 800; }
     table.items td { padding: 4px 1px; vertical-align: top; overflow-wrap: anywhere; }
-    .totals { margin-top: 5px; font-size: 12px; }
+    .totals { margin-top: 5px; font-size: 13px; font-weight: 500; }
     .totals .row { display: flex; justify-content: space-between; align-items: baseline; gap: 5px; padding: 3px 0; }
     .totals .row > :first-child { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
     .totals .row > :last-child { min-width: 0; flex: 0 0 auto; text-align: left; white-space: nowrap; }
     .totals .row .mono { flex: 0 0 auto; white-space: nowrap; }
-    .totals .grand { font-size: 14px; font-weight: 700; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 5px 0; margin-top: 4px; }
-    .footer { text-align: center; margin-top: 9px; font-size: 10px; line-height: 1.55; }
+    .totals .grand { font-size: 15px; font-weight: 800; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 5px 0; margin-top: 4px; }
+    .footer { text-align: center; margin-top: 9px; font-size: 11px; font-weight: 500; line-height: 1.55; }
     .qr-box { text-align: center; margin: 8px 0 4px; font-size: 9px; }
     .qr-box img { margin: 0 auto; }
     .qr-box .qr-ph { width: 30mm; height: 30mm; margin: 0 auto 4px; border: 1px dashed #999; display: flex; align-items: center; justify-content: center; color: #999; font-size: 9px; }
@@ -1159,8 +1162,8 @@ function template6(d: PrintData): string {
       <thead>
         <tr>
           <th style="text-align:right;">الصنف / الكمية × السعر</th>
-          <th style="text-align:center;width:18mm;">ض.</th>
-          <th style="text-align:left;width:22mm;">الإجمالي</th>
+          <th style="text-align:center;width:15mm;">ض.</th>
+          <th style="text-align:left;width:19mm;">الإجمالي</th>
         </tr>
       </thead>
       <tbody>${itemsRows}</tbody>
@@ -1168,7 +1171,7 @@ function template6(d: PrintData): string {
 
     <div class="totals">${totalRowsHtml(computeFullTotals(doc, lines), "row", "grand")}</div>
     ${(() => { const t = computeFullTotals(doc, lines); return `
-      <div style="margin-top:6px;font-size:10px;line-height:1.5;border-top:1px dashed #555;padding-top:5px;">
+      <div style="margin-top:6px;font-size:11px;font-weight:500;line-height:1.55;border-top:1px dashed #333;padding-top:5px;">
         <div style="font-weight:700;margin-bottom:3px;">${t.amountWords}</div>
         <div style="display:flex;justify-content:space-between;"><span>إجمالي الأصناف:</span><span class="mono"><b>${t.itemsCount}</b></span></div>
         <div style="display:flex;justify-content:space-between;"><span>إجمالي الكميات (مع المجاني):</span><span class="mono"><b>${fmt(t.totalQty + t.totalFreeQty)}</b></span></div>
