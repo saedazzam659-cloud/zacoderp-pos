@@ -1106,9 +1106,9 @@ function template6(d: PrintData): string {
        vertical-stroke .notdef glyph next to every total. */
     .mono { font-family: 'Arial', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
     .name-ar { font-size: 14px; font-weight: 700; }
-    .name-en { font-size: 9px; opacity: .75; margin-top: 2px; }
-    .meta { font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; word-break: normal; }
-    .doc-type { background: ${accent}; color: #fff; display: inline-block; padding: 3px 10px; margin: 6px 0 4px; font-weight: 700; font-size: 11px; border-radius: 3px; }
+    .name-en { font-size: 10px; opacity: .75; margin-top: 2px; }
+    .meta { font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; word-break: normal; }
+    .doc-type { background: ${accent}; color: #fff; display: inline-block; padding: 3px 10px; margin: 6px 0 4px; font-weight: 700; font-size: 12px; border-radius: 3px; }
     .doc-num  { font-size: 12px; font-weight: 700; margin-top: 2px; }
     .sep { border-top: 1px dashed #555; margin: 6px 0; }
     .sep-solid { border-top: 1.5px solid #000; margin: 6px 0; }
@@ -1120,8 +1120,8 @@ function template6(d: PrintData): string {
     .totals { margin-top: 5px; font-size: 12px; }
     .totals .row { display: flex; justify-content: space-between; align-items: baseline; gap: 5px; padding: 3px 0; }
     .totals .row > :first-child { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
-    .totals .row > :last-child { min-width: 0; flex: 0 1 auto; text-align: left; }
-    .totals .row .mono { flex: 0 1 auto; }
+    .totals .row > :last-child { min-width: 0; flex: 0 0 auto; text-align: left; white-space: nowrap; }
+    .totals .row .mono { flex: 0 0 auto; white-space: nowrap; }
     .totals .grand { font-size: 14px; font-weight: 700; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 5px 0; margin-top: 4px; }
     .footer { text-align: center; margin-top: 9px; font-size: 10px; line-height: 1.55; }
     .qr-box { text-align: center; margin: 8px 0 4px; font-size: 9px; }
@@ -1236,17 +1236,17 @@ function template7(d: PrintData): string {
     .mono { font-family: 'Arial', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
     .header { background: ${accent}; color: #fff; padding: 8px 4mm 10px; text-align: center; }
     .header .name-ar { font-size: 14px; font-weight: 800; letter-spacing: .3px; }
-    .header .name-en { font-size: 9px; opacity: .85; margin-top: 2px; }
-    .header .meta { font-size: 9.5px; opacity: .9; margin-top: 4px; line-height: 1.45; overflow-wrap: anywhere; word-break: normal; }
+    .header .name-en { font-size: 10px; opacity: .85; margin-top: 2px; }
+    .header .meta { font-size: 11px; opacity: .9; margin-top: 4px; line-height: 1.5; overflow-wrap: anywhere; word-break: normal; }
     .header .name-ar, .header .name-en { overflow-wrap: anywhere; }
     .doc-band { background: ${accentSoft}; padding: 6px 4mm; text-align: center; border-bottom: 1.5px solid ${accent}; }
-    .doc-band .label { font-size: 10px; color: ${accent}; font-weight: 700; }
+    .doc-band .label { font-size: 11px; color: ${accent}; font-weight: 700; }
     .doc-band .num { font-size: 13px; font-weight: 800; margin-top: 2px; overflow-wrap: anywhere; word-break: break-all; white-space: normal; }
-    .doc-band .date { font-size: 10px; color: #555; margin-top: 2px; }
+    .doc-band .date { font-size: 10.5px; color: #555; margin-top: 2px; }
     .body { padding: 6px 4mm; }
-    .info-card { background: #f9fafb; border-radius: 4px; padding: 7px 8px; font-size: 11px; line-height: 1.6; margin-bottom: 7px; overflow-wrap: anywhere; }
+    .info-card { background: #f9fafb; border-radius: 4px; padding: 7px 8px; font-size: 11.5px; line-height: 1.6; margin-bottom: 7px; overflow-wrap: anywhere; }
     .info-card b { color: ${accent}; display: inline-block; min-width: 42px; }
-    .lines-title { font-size: 10px; font-weight: 700; color: ${accent}; margin: 8px 0 4px; padding-bottom: 3px; border-bottom: 1.5px solid ${accent}; }
+    .lines-title { font-size: 11px; font-weight: 700; color: ${accent}; margin: 8px 0 4px; padding-bottom: 3px; border-bottom: 1.5px solid ${accent}; }
     .line { padding: 4px 0; border-bottom: 1px dashed #d1d5db; }
     .line.alt { background: #fafafa; padding-right: 4px; padding-left: 4px; margin: 0 -4px; }
     .line-top { display: flex; justify-content: space-between; align-items: baseline; }
@@ -1257,13 +1257,14 @@ function template7(d: PrintData): string {
     .totals { margin-top: 8px; padding: 7px 8px; background: #f9fafb; border-radius: 4px; font-size: 11.5px; }
     .totals .row { display: flex; justify-content: space-between; gap: 5px; padding: 2px 0; }
     .totals .row > :first-child { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
-    .totals .row > :last-child { min-width: 0; flex: 0 1 auto; text-align: left; }
+    .totals .row > :last-child { min-width: 0; flex: 0 0 auto; text-align: left; white-space: nowrap; }
+    .totals .row .mono { flex: 0 0 auto; white-space: nowrap; }
     .totals .grand { font-size: 13px; font-weight: 800; color: ${accent}; border-top: 2px solid ${accent}; padding-top: 5px; margin-top: 4px; }
     .qr-box { text-align: center; margin: 8px 0 4px; }
     .qr-box img { margin: 0 auto; }
     .qr-box .qr-ph { width: 28mm; height: 28mm; margin: 0 auto 4px; border: 1.5px dashed ${accent}; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: ${accent}; font-size: 9px; font-weight: 700; }
     .qr-box .qr-cap { font-size: 9px; color: #555; }
-    .footer { background: ${accent}; color: #fff; padding: 8px 4mm; text-align: center; font-size: 9.5px; line-height: 1.5; }
+    .footer { background: ${accent}; color: #fff; padding: 8px 4mm; text-align: center; font-size: 10.5px; line-height: 1.5; overflow-wrap: anywhere; }
     .footer .thanks { font-size: 11px; font-weight: 700; margin-bottom: 3px; }
     @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   </style>
@@ -3043,13 +3044,19 @@ const TEMPLATES = [
 function forceThermalPaperSize(html: string): string {
   const style = `<style id="thermal-paper-override">
     @page { size: 80mm auto !important; margin: 0 !important; }
-    html, body { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
-    body { font-size: 10px !important; line-height: 1.35 !important; overflow-y: visible !important; }
+    html { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
+    body { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 !important; padding: 3mm 4mm !important; font-size: 11px !important; line-height: 1.4 !important; overflow-x: hidden !important; overflow-y: visible !important; }
     body > * { width: 100% !important; min-width: 0 !important; max-width: 100% !important; margin: 0 auto !important; }
     *, *::before, *::after { box-sizing: border-box !important; }
     table { width: 100% !important; max-width: 100% !important; table-layout: fixed !important; }
-    th, td { padding: 2px 1px !important; font-size: 9px !important; overflow-wrap: anywhere !important; word-break: break-word !important; }
+    th, td { min-width: 0 !important; padding: 3px 2px !important; font-size: 10.5px !important; overflow-wrap: anywhere !important; word-break: break-word !important; }
+    p, div, span, th, td { max-width: 100% !important; overflow-wrap: anywhere; }
     .mono, [dir="ltr"] { white-space: nowrap !important; overflow-wrap: normal !important; word-break: keep-all !important; }
+    .info .mono, .info-card .mono { white-space: normal !important; overflow-wrap: anywhere !important; word-break: break-word !important; }
+    .doc-num, .doc-band .num { white-space: normal !important; overflow-wrap: anywhere !important; word-break: break-word !important; }
+    .totals .row .mono { flex: 0 0 auto !important; max-width: 46% !important; }
+    .meta { font-size: 11px !important; }
+    .qr-box, .qr-cap { font-size: 10px !important; }
     img { max-width: 100% !important; height: auto !important; }
     @media print {
       [class*="page"], [class*="invoice"], [class*="receipt"], [class*="paper"], [class*="container"] {
