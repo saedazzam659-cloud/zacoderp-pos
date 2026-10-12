@@ -1097,6 +1097,7 @@ function template6(d: PrintData): string {
     .totals .grand { font-size: 14px; font-weight: 700; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 5px 0; margin-top: 4px; }
     .footer { text-align: center; margin-top: 9px; font-size: 10px; line-height: 1.55; }
     .qr-box { text-align: center; margin: 8px 0 4px; font-size: 9px; }
+    .qr-box img { margin: 0 auto; }
     .qr-box .qr-ph { width: 30mm; height: 30mm; margin: 0 auto 4px; border: 1px dashed #999; display: flex; align-items: center; justify-content: center; color: #999; font-size: 9px; }
     @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   </style>
@@ -1108,8 +1109,9 @@ function template6(d: PrintData): string {
       <div class="meta">
         ${company?.vatNumber ? `<div>الرقم الضريبي: ${company.vatNumber}</div>` : ""}
         ${company?.crNumber  ? `<div>س.ت: ${company.crNumber}</div>` : ""}
+        ${company?.buildingNumber ? `<div>رقم المبنى: ${escapePrintHtml(company.buildingNumber)}</div>` : ""}
         ${company?.city      ? `<div>${company.city}${company.country ? ` — ${company.country}` : ""}</div>` : ""}
-        ${company?.phone     ? `<div>هاتف: ${company.phone}</div>` : ""}
+        ${company?.phone     ? `<div>هاتف: ${escapePrintHtml(company.phone)}</div>` : ""}
       </div>
       <div class="doc-type">${docTitle(d.type)}</div>
        <div class="doc-num mono">${escapePrintHtml(doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`)}</div>
@@ -1233,6 +1235,7 @@ function template7(d: PrintData): string {
     .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
     .totals .grand { font-size: 13px; font-weight: 800; color: ${accent}; border-top: 2px solid ${accent}; padding-top: 5px; margin-top: 4px; }
     .qr-box { text-align: center; margin: 8px 0 4px; }
+    .qr-box img { margin: 0 auto; }
     .qr-box .qr-ph { width: 28mm; height: 28mm; margin: 0 auto 4px; border: 1.5px dashed ${accent}; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: ${accent}; font-size: 9px; font-weight: 700; }
     .qr-box .qr-cap { font-size: 9px; color: #555; }
     .footer { background: ${accent}; color: #fff; padding: 8px 4mm; text-align: center; font-size: 9.5px; line-height: 1.5; }
@@ -1247,7 +1250,8 @@ function template7(d: PrintData): string {
       <div class="meta">
         ${company?.vatNumber ? `الرقم الضريبي: ${company.vatNumber}` : ""}
         ${company?.crNumber ? `<br/>س.ت: ${company.crNumber}` : ""}
-        ${company?.phone ? `<br/>هاتف: ${company.phone}` : ""}
+        ${company?.buildingNumber ? `<br/>رقم المبنى: ${escapePrintHtml(company.buildingNumber)}` : ""}
+        ${company?.phone ? `<br/>هاتف: ${escapePrintHtml(company.phone)}` : ""}
         ${company?.city ? `<br/>${company.city}${company.country ? ` — ${company.country}` : ""}` : ""}
       </div>
     </div>
