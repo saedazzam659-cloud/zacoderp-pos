@@ -1036,6 +1036,33 @@ function footerSettings(company: any, isReturn: boolean) {
   return { thanks, showTimestamp, showZatcaBrand };
 }
 
+function thermalDocumentTitle(d: PrintData): string {
+  if (d.type !== "invoice") return docTitle(d.type);
+  const explicitType = String(d.doc?.invoiceType ?? "").toLowerCase();
+  const hasBuyerVat = !!(d.customer?.vatNumber ?? d.doc?.buyerVatNumber);
+  const isSimplified = explicitType ? explicitType !== "standard" : !hasBuyerVat;
+  return isSimplified ? "فاتورة ضريبية مبسطة" : "فاتورة ضريبية";
+}
+
+function thermalCompanyDetailsHtml(company: any): string {
+  const rows: Array<[string, unknown]> = [
+    ["الدولة", company?.country],
+    ["المدينة", company?.city],
+    ["الحي", company?.district],
+    ["الشارع", company?.street],
+    ["رقم المبنى", company?.buildingNumber],
+    ["الرمز البريدي", company?.postalCode],
+    ["الرقم الإضافي", company?.additionalNumber],
+    ["الرقم الضريبي", company?.vatNumber],
+    ["السجل التجاري", company?.crNumber],
+    ["هاتف", company?.phone],
+  ];
+  return rows
+    .filter(([, value]) => value != null && String(value).trim() !== "")
+    .map(([label, value]) => `<div>${label}: ${escapePrintHtml(value)}</div>`)
+    .join("");
+}
+
 // ── Template 6: حراري كلاسيكي (80mm) ─────────────────────────────────────────
 function template6(d: PrintData): string {
   const { doc, lines, customer, company } = d;
@@ -1049,7 +1076,7 @@ function template6(d: PrintData): string {
     const { tot } = lineFigures(l, !!doc.priceIncludesVat);
     return `
       <tr>
-        <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}${renderInventoryPrintDetailsHtml(l, d.type)}</td>
+        <td colspan="3" style="padding-top:4px;overflow-wrap:anywhere;">${escapePrintHtml(l.itemName ?? l.itemCode ?? "—")}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${escapePrintHtml(l.brandName)}</div>` : ""}${renderInventoryPrintDetailsHtml(l, d.type)}</td>
       </tr>
       <tr>
         <td style="padding-bottom:4px;border-bottom:1px dashed #999;">
@@ -1064,11 +1091,11 @@ function template6(d: PrintData): string {
       </tr>`;
   }).join("");
 
-  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${escapePrintHtml(thermalDocumentTitle(d))}</title>
   <style>
     @page { size: 80mm auto; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { direction: rtl; font-family: 'Tahoma', 'Arial', 'Segoe UI', sans-serif; font-size: 12px; line-height: 1.45; color: #000; padding: 4mm 3mm; width: 80mm; }
+    body { direction: rtl; font-family: 'Tahoma', 'Arial', 'Segoe UI', sans-serif; font-size: 12px; line-height: 1.45; color: #000; padding: 4mm 3mm; width: 80mm; max-width: 80mm; overflow-x: hidden; }
     .center { text-align: center; }
     /* direction:ltr + unicode-bidi:isolate prevents the browser from
        inserting any BiDi marks at render time around the formatted
@@ -1080,7 +1107,7 @@ function template6(d: PrintData): string {
     .mono { font-family: 'Arial', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
     .name-ar { font-size: 14px; font-weight: 700; }
     .name-en { font-size: 9px; opacity: .75; margin-top: 2px; }
-    .meta { font-size: 10px; line-height: 1.45; }
+    .meta { font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; word-break: normal; }
     .doc-type { background: ${accent}; color: #fff; display: inline-block; padding: 3px 10px; margin: 6px 0 4px; font-weight: 700; font-size: 11px; border-radius: 3px; }
     .doc-num  { font-size: 12px; font-weight: 700; margin-top: 2px; }
     .sep { border-top: 1px dashed #555; margin: 6px 0; }
@@ -1091,9 +1118,10 @@ function template6(d: PrintData): string {
     table.items th { padding: 4px 1px; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; font-size: 11px; }
     table.items td { padding: 4px 1px; vertical-align: top; overflow-wrap: anywhere; }
     .totals { margin-top: 5px; font-size: 12px; }
-    .totals .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 3px 0; }
-    .totals .row > :first-child { min-width: 0; }
-    .totals .row .mono { flex: 0 0 auto; }
+    .totals .row { display: flex; justify-content: space-between; align-items: baseline; gap: 5px; padding: 3px 0; }
+    .totals .row > :first-child { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
+    .totals .row > :last-child { min-width: 0; flex: 0 1 auto; text-align: left; }
+    .totals .row .mono { flex: 0 1 auto; }
     .totals .grand { font-size: 14px; font-weight: 700; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 5px 0; margin-top: 4px; }
     .footer { text-align: center; margin-top: 9px; font-size: 10px; line-height: 1.55; }
     .qr-box { text-align: center; margin: 8px 0 4px; font-size: 9px; }
@@ -1104,26 +1132,20 @@ function template6(d: PrintData): string {
   </head><body>
     <div class="center">
       ${logoCenterHtml(company, 46, 140)}
-      <div class="name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
-      ${company?.nameEn ? `<div class="name-en">${company.nameEn}</div>` : ""}
-      <div class="meta">
-        ${company?.vatNumber ? `<div>الرقم الضريبي: ${company.vatNumber}</div>` : ""}
-        ${company?.crNumber  ? `<div>س.ت: ${company.crNumber}</div>` : ""}
-        ${company?.buildingNumber ? `<div>رقم المبنى: ${escapePrintHtml(company.buildingNumber)}</div>` : ""}
-        ${company?.city      ? `<div>${company.city}${company.country ? ` — ${company.country}` : ""}</div>` : ""}
-        ${company?.phone     ? `<div>هاتف: ${escapePrintHtml(company.phone)}</div>` : ""}
-      </div>
-      <div class="doc-type">${docTitle(d.type)}</div>
+      <div class="name-ar">${escapePrintHtml(company?.nameAr ?? "اسم الشركة")}</div>
+      ${company?.nameEn ? `<div class="name-en">${escapePrintHtml(company.nameEn)}</div>` : ""}
+      <div class="meta">${thermalCompanyDetailsHtml(company)}</div>
+      <div class="doc-type">${escapePrintHtml(thermalDocumentTitle(d))}</div>
        <div class="doc-num mono">${escapePrintHtml(doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`)}</div>
-      <div class="meta">${docDate(doc, d.type)}</div>
+      <div class="meta">${escapePrintHtml(docDate(doc, d.type))}</div>
     </div>
 
     <div class="sep"></div>
 
     <div class="info">
       <div><b>العميل:</b> ${escapePrintHtml(customer?.nameAr ?? customer?.nameEn ?? "—")}</div>
-      ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
-      ${customer?.phone     ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
+      ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${escapePrintHtml(customer.vatNumber)}</div>` : ""}
+      ${customer?.phone     ? `<div><b>هاتف:</b> ${escapePrintHtml(customer.phone)}</div>` : ""}
       ${nationalAddress ? `<div><b>العنوان الوطني:</b> <span class="mono">${escapePrintHtml(nationalAddress)}</span></div>` : ""}
       ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
       ${d.type !== "quotation"
@@ -1152,7 +1174,7 @@ function template6(d: PrintData): string {
         <div style="display:flex;justify-content:space-between;"><span>إجمالي الكميات (مع المجاني):</span><span class="mono"><b>${fmt(t.totalQty + t.totalFreeQty)}</b></span></div>
       </div>`; })()}
 
-    ${doc.notes ? `<div class="sep"></div><div class="info"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+      ${doc.notes ? `<div class="sep"></div><div class="info"><b>ملاحظات:</b> ${escapePrintHtml(doc.notes)}</div>` : ""}
 
     ${shouldShowQr(d) ? `<div class="qr-box">
       ${qrImgHtml(d, { size: 110 })}
@@ -1199,11 +1221,11 @@ function template7(d: PrintData): string {
       </div>`;
   }).join("");
 
-  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${escapePrintHtml(thermalDocumentTitle(d))}</title>
   <style>
     @page { size: 80mm auto; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Tahoma', 'Arial', 'Segoe UI', sans-serif; }
-    body { direction: rtl; font-size: 12px; line-height: 1.45; color: #111; width: 80mm; padding: 0; }
+    body { direction: rtl; font-size: 12px; line-height: 1.45; color: #111; width: 80mm; max-width: 80mm; padding: 0; overflow-x: hidden; }
     /* direction:ltr + unicode-bidi:isolate prevents the browser from
        inserting any BiDi marks at render time around the formatted
        numbers — pairs with the JS-side stripping of invisible BiDi
@@ -1215,10 +1237,11 @@ function template7(d: PrintData): string {
     .header { background: ${accent}; color: #fff; padding: 8px 4mm 10px; text-align: center; }
     .header .name-ar { font-size: 14px; font-weight: 800; letter-spacing: .3px; }
     .header .name-en { font-size: 9px; opacity: .85; margin-top: 2px; }
-    .header .meta { font-size: 9.5px; opacity: .9; margin-top: 4px; line-height: 1.45; }
+    .header .meta { font-size: 9.5px; opacity: .9; margin-top: 4px; line-height: 1.45; overflow-wrap: anywhere; word-break: normal; }
+    .header .name-ar, .header .name-en { overflow-wrap: anywhere; }
     .doc-band { background: ${accentSoft}; padding: 6px 4mm; text-align: center; border-bottom: 1.5px solid ${accent}; }
     .doc-band .label { font-size: 10px; color: ${accent}; font-weight: 700; }
-    .doc-band .num { font-size: 13px; font-weight: 800; margin-top: 2px; }
+    .doc-band .num { font-size: 13px; font-weight: 800; margin-top: 2px; overflow-wrap: anywhere; word-break: break-all; white-space: normal; }
     .doc-band .date { font-size: 10px; color: #555; margin-top: 2px; }
     .body { padding: 6px 4mm; }
     .info-card { background: #f9fafb; border-radius: 4px; padding: 7px 8px; font-size: 11px; line-height: 1.6; margin-bottom: 7px; overflow-wrap: anywhere; }
@@ -1230,9 +1253,11 @@ function template7(d: PrintData): string {
     .line-name { font-size: 11px; font-weight: 600; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
     .line-tot { font-size: 12px; font-weight: 700; color: ${accent}; flex: 0 0 auto; white-space: nowrap; margin-inline-start: 8px; }
     .line-brand { font-size: 10px; color: #444; margin-top: 1px; }
-    .line-sub { font-size: 10.5px; color: #333; margin-top: 3px; line-height: 1.5; }
+    .line-sub { font-size: 10.5px; color: #333; margin-top: 3px; line-height: 1.5; overflow-wrap: anywhere; }
     .totals { margin-top: 8px; padding: 7px 8px; background: #f9fafb; border-radius: 4px; font-size: 11.5px; }
-    .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
+    .totals .row { display: flex; justify-content: space-between; gap: 5px; padding: 2px 0; }
+    .totals .row > :first-child { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
+    .totals .row > :last-child { min-width: 0; flex: 0 1 auto; text-align: left; }
     .totals .grand { font-size: 13px; font-weight: 800; color: ${accent}; border-top: 2px solid ${accent}; padding-top: 5px; margin-top: 4px; }
     .qr-box { text-align: center; margin: 8px 0 4px; }
     .qr-box img { margin: 0 auto; }
@@ -1245,28 +1270,22 @@ function template7(d: PrintData): string {
   </head><body>
     <div class="header">
       ${logoCenterHtml(company, 46, 130)}
-      <div class="name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
-      ${company?.nameEn ? `<div class="name-en">${company.nameEn}</div>` : ""}
-      <div class="meta">
-        ${company?.vatNumber ? `الرقم الضريبي: ${company.vatNumber}` : ""}
-        ${company?.crNumber ? `<br/>س.ت: ${company.crNumber}` : ""}
-        ${company?.buildingNumber ? `<br/>رقم المبنى: ${escapePrintHtml(company.buildingNumber)}` : ""}
-        ${company?.phone ? `<br/>هاتف: ${escapePrintHtml(company.phone)}` : ""}
-        ${company?.city ? `<br/>${company.city}${company.country ? ` — ${company.country}` : ""}` : ""}
-      </div>
+      <div class="name-ar">${escapePrintHtml(company?.nameAr ?? "اسم الشركة")}</div>
+      ${company?.nameEn ? `<div class="name-en">${escapePrintHtml(company.nameEn)}</div>` : ""}
+      <div class="meta">${thermalCompanyDetailsHtml(company)}</div>
     </div>
 
     <div class="doc-band">
-      <div class="label">${docTitle(d.type)}</div>
+      <div class="label">${escapePrintHtml(thermalDocumentTitle(d))}</div>
        <div class="num mono">${escapePrintHtml(doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`)}</div>
-      <div class="date">${docDate(doc, d.type)}</div>
+      <div class="date">${escapePrintHtml(docDate(doc, d.type))}</div>
     </div>
 
     <div class="body">
       <div class="info-card">
         <div><b>العميل:</b> ${escapePrintHtml(customer?.nameAr ?? customer?.nameEn ?? "—")}</div>
-        ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
-        ${customer?.phone ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
+        ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${escapePrintHtml(customer.vatNumber)}</div>` : ""}
+        ${customer?.phone ? `<div><b>هاتف:</b> ${escapePrintHtml(customer.phone)}</div>` : ""}
         ${nationalAddress ? `<div><b>العنوان الوطني:</b> <span class="mono">${escapePrintHtml(nationalAddress)}</span></div>` : ""}
         ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
         ${d.type !== "quotation"
@@ -1276,7 +1295,7 @@ function template7(d: PrintData): string {
         ${isReturn && doc.originalInvoiceNumber ? `<div><b>الفاتورة الأصلية:</b> ${doc.originalInvoiceNumber}</div>` : ""}
       </div>
 
-      <div class="lines-title">بنود ${docTitle(d.type)} (${lines.length})</div>
+      <div class="lines-title">بنود ${escapePrintHtml(thermalDocumentTitle(d))} (${lines.length})</div>
       ${itemsRows}
 
       <div class="totals">${totalRowsHtml(computeFullTotals(doc, lines), "row", "grand")}</div>
@@ -1287,7 +1306,7 @@ function template7(d: PrintData): string {
           <div style="display:flex;justify-content:space-between;"><span>إجمالي الكميات (مع المجاني):</span><span class="mono"><b>${fmt(t.totalQty + t.totalFreeQty)}</b></span></div>
         </div>`; })()}
 
-      ${doc.notes ? `<div class="info-card" style="margin-top:8px;"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+      ${doc.notes ? `<div class="info-card" style="margin-top:8px;"><b>ملاحظات:</b> ${escapePrintHtml(doc.notes)}</div>` : ""}
 
       ${shouldShowQr(d) ? `<div class="qr-box">
         ${qrImgHtml(d, { size: 105, color: accent })}
@@ -3024,9 +3043,9 @@ const TEMPLATES = [
 function forceThermalPaperSize(html: string): string {
   const style = `<style id="thermal-paper-override">
     @page { size: 80mm auto !important; margin: 0 !important; }
-    html, body { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 !important; padding: 0 !important; }
-    body { font-size: 10px !important; line-height: 1.35 !important; overflow: visible !important; }
-    body > * { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 auto !important; }
+    html, body { width: 80mm !important; min-width: 0 !important; max-width: 80mm !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
+    body { font-size: 10px !important; line-height: 1.35 !important; overflow-y: visible !important; }
+    body > * { width: 100% !important; min-width: 0 !important; max-width: 100% !important; margin: 0 auto !important; }
     *, *::before, *::after { box-sizing: border-box !important; }
     table { width: 100% !important; max-width: 100% !important; table-layout: fixed !important; }
     th, td { padding: 2px 1px !important; font-size: 9px !important; overflow-wrap: anywhere !important; word-break: break-word !important; }
@@ -3034,7 +3053,7 @@ function forceThermalPaperSize(html: string): string {
     img { max-width: 100% !important; height: auto !important; }
     @media print {
       [class*="page"], [class*="invoice"], [class*="receipt"], [class*="paper"], [class*="container"] {
-        width: 80mm !important; min-width: 0 !important; max-width: 80mm !important;
+        width: 100% !important; min-width: 0 !important; max-width: 100% !important;
         height: auto !important; min-height: 0 !important; margin: 0 auto !important;
         padding: 3mm !important; box-shadow: none !important;
       }
