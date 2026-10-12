@@ -1,10 +1,11 @@
 import { eq, inArray } from "drizzle-orm";
 import {
-  db, companiesTable, usersTable, userBranchesTable, branchesTable,
+  centralDb, db, companiesTable, usersTable, userBranchesTable, branchesTable,
   accountsTable, warehousesTable, warehouseGroupsTable, cashBoxesTable, bankAccountsTable,
   customersTable, suppliersTable, itemsTable, itemGroupsTable, unitsTable,
   currenciesTable, salesRepsTable,
 } from "@workspace/db";
+import { withTransferLocation, type TransferLocation } from "./companyTransfer.js";
 
 type CopyCounts = Record<string, { added: number; skipped: number }>;
 type Row = Record<string, any>;
@@ -12,27 +13,52 @@ type Row = Record<string, any>;
 const norm = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase();
 const asKey = (value: unknown) => String(value ?? "").trim();
 
-export async function copyCompanyMasterData(sourceCompanyId: number, targetCompanyId: number) {
+export async function copyCompanyMasterData(
+  sourceCompanyId: number,
+  targetCompanyId: number,
+  targetAgentInstanceId?: number | null,
+) {
   if (!Number.isInteger(sourceCompanyId) || sourceCompanyId <= 0
     || !Number.isInteger(targetCompanyId) || targetCompanyId <= 0
-    || sourceCompanyId === targetCompanyId) {
+    || (targetAgentInstanceId == null && sourceCompanyId === targetCompanyId)) {
     throw new Error("اختر شركتين مختلفتين وصحيحتين");
   }
-  const [source] = await db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr, deletedAt: companiesTable.deletedAt })
+  if (targetAgentInstanceId != null && (!Number.isInteger(targetAgentInstanceId) || targetAgentInstanceId <= 0)) {
+    throw new Error("قاعدة بيانات الشركة الهدف غير صالحة");
+  }
+  const [source] = await centralDb.select({ id: companiesTable.id, nameAr: companiesTable.nameAr, deletedAt: companiesTable.deletedAt })
     .from(companiesTable).where(eq(companiesTable.id, sourceCompanyId));
-  const [target] = await db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr, deletedAt: companiesTable.deletedAt })
-    .from(companiesTable).where(eq(companiesTable.id, targetCompanyId));
   if (!source || source.deletedAt) throw new Error("الشركة المصدر غير موجودة أو محذوفة");
-  if (!target || target.deletedAt) throw new Error("الشركة الهدف غير موجودة أو محذوفة");
 
-  const counts: CopyCounts = {};
-  const bump = (type: string, added: boolean) => {
-    counts[type] ??= { added: 0, skipped: 0 };
-    counts[type][added ? "added" : "skipped"]++;
-  };
-  await db.transaction(async (tx) => {
-    const srcRows = async (table: any): Promise<Row[]> =>
-      tx.select().from(table).where(eq(table.companyId, sourceCompanyId)) as Promise<Row[]>;
+  const sourceTables = [
+    branchesTable, unitsTable, accountsTable, itemGroupsTable, warehouseGroupsTable,
+    currenciesTable, usersTable, salesRepsTable, customersTable, suppliersTable,
+    warehousesTable, itemsTable, cashBoxesTable, bankAccountsTable,
+  ];
+  const sourceRowsByTable = new Map<any, Row[]>();
+  for (const table of sourceTables) {
+    sourceRowsByTable.set(table, await centralDb.select().from(table).where(eq(table.companyId, sourceCompanyId)) as Row[]);
+  }
+  const sourceUserIds = (sourceRowsByTable.get(usersTable) ?? []).map((user) => user.id);
+  const sourceUserBranches = sourceUserIds.length
+    ? await centralDb.select().from(userBranchesTable).where(inArray(userBranchesTable.userId, sourceUserIds))
+    : [];
+  const targetLocation: TransferLocation = targetAgentInstanceId == null
+    ? { kind: "central" }
+    : { kind: "agent", agentId: targetAgentInstanceId };
+
+  return withTransferLocation(targetLocation, async () => {
+    const [target] = await db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr, deletedAt: companiesTable.deletedAt })
+      .from(companiesTable).where(eq(companiesTable.id, targetCompanyId));
+    if (!target || target.deletedAt) throw new Error("الشركة الهدف غير موجودة أو محذوفة في قاعدة بياناتها");
+
+    const counts: CopyCounts = {};
+    const bump = (type: string, added: boolean) => {
+      counts[type] ??= { added: 0, skipped: 0 };
+      counts[type][added ? "added" : "skipped"]++;
+    };
+    await db.transaction(async (tx) => {
+    const srcRows = async (table: any): Promise<Row[]> => sourceRowsByTable.get(table) ?? [];
     const dstRows = async (table: any): Promise<Row[]> =>
       tx.select().from(table).where(eq(table.companyId, targetCompanyId)) as Promise<Row[]>;
     const insert = async (table: any, value: Row): Promise<number> => {
@@ -188,11 +214,7 @@ export async function copyCompanyMasterData(sourceCompanyId: number, targetCompa
       if (key) userState.dstByKey.set(key, { id });
       bump("users", true);
     }
-    const allUserBranches = srcUsers.length
-      ? await tx.select().from(userBranchesTable)
-          .where(inArray(userBranchesTable.userId, srcUsers.map((user) => user.id)))
-      : [];
-    for (const link of allUserBranches as Row[]) {
+    for (const link of sourceUserBranches as Row[]) {
       if (!newlyCopiedUserIds.has(Number(link.userId))) continue;
       const userId = userMap.get(Number(link.userId));
       const branchId = branchMap.get(Number(link.branchId));
@@ -333,7 +355,12 @@ export async function copyCompanyMasterData(sourceCompanyId: number, targetCompa
       if (key) bankState.dstByKey.set(key, { id });
       bump("bank_accounts", true);
     }
+    });
+    return {
+      sourceCompany: source.nameAr,
+      targetCompany: target.nameAr,
+      targetAgentInstanceId: targetAgentInstanceId ?? null,
+      counts,
+    };
   });
-
-  return { sourceCompany: source.nameAr, targetCompany: target.nameAr, counts };
 }

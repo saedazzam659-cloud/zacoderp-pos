@@ -63,12 +63,19 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
   const user = (req as any).authUser;
   const sourceCompanyId = Number(req.body?.sourceCompanyId);
   const targetCompanyId = Number(req.body?.targetCompanyId);
+  const rawTargetAgentId = req.body?.targetAgentInstanceId;
+  const targetAgentInstanceId = rawTargetAgentId == null || rawTargetAgentId === ""
+    ? null : Number(rawTargetAgentId);
   if (!Number.isInteger(sourceCompanyId) || !Number.isInteger(targetCompanyId)) {
     res.status(400).json({ error: "اختر شركة مصدر وشركة هدف" });
     return;
   }
+  if (targetAgentInstanceId != null && (!Number.isInteger(targetAgentInstanceId) || targetAgentInstanceId <= 0)) {
+    res.status(400).json({ error: "قاعدة بيانات الشركة الهدف غير صالحة" });
+    return;
+  }
   try {
-    const result = await copyCompanyMasterData(sourceCompanyId, targetCompanyId);
+    const result = await copyCompanyMasterData(sourceCompanyId, targetCompanyId, targetAgentInstanceId);
     const ip = loginIp(req);
     const ua = req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null;
     await writeAudit({
@@ -76,7 +83,7 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
       module: "data-copy", action: "execute",
       method: "POST", path: "/api/admin/data-copy/master-data",
       statusCode: 200, ip, userAgent: ua,
-      metadata: { sourceCompanyId, targetCompanyId, conflictPolicy: "skip_existing", result: result.counts },
+      metadata: { sourceCompanyId, targetCompanyId, targetAgentInstanceId, conflictPolicy: "skip_existing", result: result.counts },
     });
     res.json({ ok: true, ...result });
   } catch (error: any) {

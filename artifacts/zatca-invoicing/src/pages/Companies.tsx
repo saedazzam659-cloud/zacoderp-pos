@@ -144,8 +144,14 @@ export default function Companies() {
 
   const runMasterDataCopy = async () => {
     if (!masterCopySource || !masterCopyTargetId || masterCopyBusy) return;
-    const target = companies.find((row: any) => Number(row.id) === Number(masterCopyTargetId));
-    if (!target || target.agentInstanceId) {
+    const [locationKey, targetIdText] = masterCopyTargetId.split(":");
+    const targetAgentInstanceId = locationKey === "central" ? null : Number(locationKey);
+    const targetCompanyId = Number(targetIdText);
+    const target = companies.find((row: any) =>
+      Number(row.id) === targetCompanyId
+      && (row.agentInstanceId == null ? targetAgentInstanceId == null : Number(row.agentInstanceId) === targetAgentInstanceId)
+    );
+    if (!target) {
       toast({ title: "شركة الهدف غير صالحة", variant: "destructive" });
       return;
     }
@@ -155,7 +161,11 @@ export default function Companies() {
       const response = await fetch(`${BASE}/api/admin/data-copy/master-data`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceCompanyId: Number(masterCopySource.id), targetCompanyId: Number(masterCopyTargetId) }),
+        body: JSON.stringify({
+          sourceCompanyId: Number(masterCopySource.id),
+          targetCompanyId,
+          targetAgentInstanceId,
+        }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "تعذر نسخ بيانات الشركة");
@@ -884,9 +894,11 @@ export default function Companies() {
                 >
                   <option value="">اختر الشركة الهدف</option>
                   {companies.filter((row: any) =>
-                    !row.agentInstanceId && Number(row.id) !== Number(masterCopySource?.id)
+                    (row.agentInstanceId != null || Number(row.id) !== Number(masterCopySource?.id))
                   ).map((row: any) => (
-                    <option key={row.id} value={row.id}>{row.nameAr} — {row.code || row.id}</option>
+                    <option key={`${row.agentInstanceId ?? "central"}:${row.id}`} value={`${row.agentInstanceId ?? "central"}:${row.id}`}>
+                      {row.nameAr} — {row.code || row.id}{row.agentInstanceId ? ` (وكيل: ${row.agentName ?? `#${row.agentInstanceId}`})` : " (مركزي)"}
+                    </option>
                   ))}
                 </select>
               </label>
