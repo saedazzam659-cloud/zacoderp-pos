@@ -39,11 +39,12 @@ export default function DailyReport() {
 
   const [date, setDate] = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  const [userId, setUserId] = useState<number | undefined>(undefined);
   const [source, setSource] = useState<"all" | "manual" | "pos">("all");
 
   const { data, isLoading } = useQuery({
-    queryKey: ["sales-daily-report", cid, date, branchId, source],
-    queryFn: () => salesAnalyticsApi.dailyReport(cid, date, branchId, source),
+    queryKey: ["sales-daily-report", cid, date, branchId, source, userId],
+    queryFn: () => salesAnalyticsApi.dailyReport(cid, date, branchId, source, userId),
   });
 
   const summary = data?.summary;
@@ -66,6 +67,7 @@ export default function DailyReport() {
     { key: "docNumber",    header: tr("colInvoice"),     width: 16 },
     { key: "time",         header: tr("colTime"),        width: 8  },
     { key: "customer",     header: tr("colCustomer"),    width: 28 },
+    { key: "createdBy",    header: tr("colUser"),        width: 18 },
     { key: "rep",          header: tr("colRep"),         width: 18 },
     { key: "branch",       header: tr("colBranch"),      width: 14 },
     { key: "lineCount",    header: tr("colLines"),       width: 8  },
@@ -81,6 +83,7 @@ export default function DailyReport() {
     docNumber:   i.docNumber ?? `#${i.id}`,
     time:        i.time,
     customer:    pickName(i.customerNameAr, i.customerNameEn),
+    createdBy:   i.createdByName ?? "—",
     rep:         pickName(i.salesRepNameAr, i.salesRepNameEn),
     branch:      pickName(i.branchNameAr, i.branchNameEn),
     lineCount:   i.lineCount,
@@ -104,6 +107,7 @@ export default function DailyReport() {
         docNumber:   tr("totalLabel"),
         time:        "",
         customer:    tr("totalInvoicesShort", { n: summary.invoiceCount ?? invoices.length }),
+        createdBy:   "",
         rep:         "",
         branch:      "",
         lineCount:   summary.lineCount ?? "",
@@ -138,7 +142,7 @@ export default function DailyReport() {
       </div>
 
       {/* ───── Filters */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
         <div className="space-y-1.5">
           <Label>{tr("date")}</Label>
           <DateField value={date} onChange={e => setDate(e.target.value)} />
@@ -146,6 +150,20 @@ export default function DailyReport() {
         <div className="space-y-1.5">
           <Label>{t("common.branch")}</Label>
           <BranchFilter value={branchId} onChange={setBranchId} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>{tr("userFilter")}</Label>
+          <select
+            className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+            value={userId ?? ""}
+            onChange={e => setUserId(e.target.value ? Number(e.target.value) : undefined)}
+          >
+            <option value="">{tr("allUsers")}</option>
+            {(data?.users ?? []).map(u => {
+              const name = pickName(u.nameAr, u.nameEn);
+              return <option key={u.id} value={u.id}>{name === "—" ? u.username : name}</option>;
+            })}
+          </select>
         </div>
         <div className="space-y-1.5">
           <Label>{isAr ? "المصدر" : "Source"}</Label>
@@ -177,6 +195,9 @@ export default function DailyReport() {
           </button>
         </div>
       </div>
+      {userId != null && (
+        <p className="text-xs text-muted-foreground">{tr("receiptsNotFiltered")}</p>
+      )}
 
       {/* ───── KPI Tiles (top row) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -228,7 +249,7 @@ export default function DailyReport() {
         />
         <KpiTile
           icon={Receipt} tone="primary"
-          label={tr("kpi.receipts")}
+          label={data?.receiptsAreCompanyWide ? `${tr("kpi.receipts")} (${tr("allUsers")})` : tr("kpi.receipts")}
           value={isLoading ? "…" : fmt(summary?.receiptsAmount ?? 0)}
           hint={tr("kpi.receiptsCount", { n: summary?.receiptsCount ?? 0 })}
         />
@@ -436,7 +457,10 @@ export default function DailyReport() {
       </Section>
 
       {/* ───── Receipts list (cash collected today) */}
-      <Section title={tr("sections.receipts")} icon={Receipt}>
+      <Section
+        title={data?.receiptsAreCompanyWide ? `${tr("sections.receipts")} — ${tr("allUsers")}` : tr("sections.receipts")}
+        icon={Receipt}
+      >
         {isLoading ? (
           <Skeleton className="h-32 w-full" />
         ) : receipts.length === 0 ? (
@@ -482,6 +506,7 @@ export default function DailyReport() {
                 <th className={`px-3 py-2 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colInvoice")}</th>
                 <th className="px-3 py-2 text-center font-semibold text-muted-foreground">{tr("colTime")}</th>
                 <th className={`px-3 py-2 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colCustomer")}</th>
+                <th className={`px-3 py-2 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden lg:table-cell`}>{tr("colUser")}</th>
                 <th className={`px-3 py-2 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden lg:table-cell`}>{tr("colRep")}</th>
                 <th className="px-3 py-2 text-center font-semibold text-muted-foreground hidden lg:table-cell">{tr("colLines")}</th>
                 <th className="px-3 py-2 text-center font-semibold text-muted-foreground hidden md:table-cell">{tr("colSubtotal")}</th>
@@ -493,16 +518,17 @@ export default function DailyReport() {
             </thead>
             <tbody className="divide-y">
               {isLoading
-                ? [...Array(6)].map((_, i) => (
-                    <tr key={i}><td colSpan={10} className="px-3 py-2"><Skeleton className="h-6 w-full" /></td></tr>
+                    ? [...Array(6)].map((_, i) => (
+                        <tr key={i}><td colSpan={11} className="px-3 py-2"><Skeleton className="h-6 w-full" /></td></tr>
                   ))
                 : invoices.length === 0
-                ? <tr><td colSpan={10} className="py-12 text-center text-muted-foreground">{tr("empty.noInvoices")}</td></tr>
+                ? <tr><td colSpan={11} className="py-12 text-center text-muted-foreground">{tr("empty.noInvoices")}</td></tr>
                 : invoices.map(i => (
                     <tr key={i.id} className="hover:bg-muted/20">
                       <td className="px-3 py-2 font-mono text-xs font-semibold">{i.docNumber ?? `#${i.id}`}</td>
                       <td className="px-3 py-2 text-center font-mono text-xs">{i.time}</td>
                       <td className="px-3 py-2">{pickName(i.customerNameAr, i.customerNameEn)}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground hidden lg:table-cell">{i.createdByName ?? "—"}</td>
                       <td className="px-3 py-2 text-xs text-muted-foreground hidden lg:table-cell">
                         {pickName(i.salesRepNameAr, i.salesRepNameEn) === "—" ? "—" : pickName(i.salesRepNameAr, i.salesRepNameEn)}
                       </td>
@@ -526,7 +552,7 @@ export default function DailyReport() {
             {!isLoading && invoices.length > 0 && summary && (
               <tfoot className="bg-muted/30 border-t">
                 <tr>
-                  <td colSpan={5} className="px-3 py-2 text-xs font-bold">{tr("footerLabel")}</td>
+                  <td colSpan={6} className="px-3 py-2 text-xs font-bold">{tr("footerLabel")}</td>
                   <td className="px-3 py-2 text-center tabular-nums font-bold hidden md:table-cell">{fmt(summary.subtotal)}</td>
                   <td className="px-3 py-2 text-center tabular-nums font-bold hidden md:table-cell">{fmt(summary.vatAmount)}</td>
                   <td className="px-3 py-2 text-center tabular-nums font-bold text-blue-700">{fmt(summary.totalAmount)}</td>

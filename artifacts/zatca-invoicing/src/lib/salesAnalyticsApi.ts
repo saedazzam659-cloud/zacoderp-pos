@@ -121,6 +121,7 @@ export type DailyReportSummary = {
 
 export type DailyReportInvoice = {
   id: number; docNumber: string | null; time: string;
+  createdById: number | null; createdByName: string | null;
   customerId: number | null; customerNameAr: string; customerNameEn: string | null;
   salesRepId: number | null; salesRepNameAr: string | null; salesRepNameEn: string | null;
   branchId: number | null;   branchNameAr: string | null;   branchNameEn: string | null;
@@ -158,6 +159,8 @@ export type DailyReportReceipt = {
 
 export type DailyReport = {
   date: string;
+  users: Array<{ id: number; nameAr: string | null; nameEn: string | null; username: string }>;
+  receiptsAreCompanyWide: boolean;
   summary: DailyReportSummary;
   invoices:     DailyReportInvoice[];
   topItems:     DailyReportTopItem[];
@@ -265,8 +268,8 @@ export const salesAnalyticsApi = {
     get<AgingRow[]>(`/aging${qs({ companyId: cid, asOf, branchId })}`),
   returnsByCustomer: (cid?: number, from?: string, to?: string, branchId?: number, regionId?: number, customerId?: number) =>
     get<ReturnsByCustomerRow[]>(`/returns-by-customer${qs({ companyId: cid, from, to, branchId, regionId, customerId })}`),
-  dailyReport:       (cid?: number, date?: string, branchId?: number, source?: "all" | "manual" | "pos") =>
-    get<DailyReport>(`/daily-report${qs({ companyId: cid, date, branchId, source })}`),
+  dailyReport:       (cid?: number, date?: string, branchId?: number, source?: "all" | "manual" | "pos", userId?: number) =>
+    get<DailyReport>(`/daily-report${qs({ companyId: cid, date, branchId, source, userId })}`),
   paymentMixReport:  (cid?: number, date?: string, branchId?: number) =>
     get<PaymentMixReport>(`/payment-mix-report${qs({ companyId: cid, date, branchId })}`),
   paymentMixAiInsights: async (payload: PaymentMixReport & { language?: "ar" | "en" }): Promise<PaymentMixAiInsights> => {

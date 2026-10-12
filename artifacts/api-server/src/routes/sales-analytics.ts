@@ -18,6 +18,7 @@ import {
   contractingAccountingSettlementsTable,
   contractingFiscalInvoicesTable,
   contractingProjectsTable,
+  usersTable,
 } from "@workspace/db";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 import { and, eq, sql, gte, lte, lt, asc, desc, inArray, notInArray, isNull } from "drizzle-orm";
@@ -1392,13 +1393,39 @@ router.get("/daily-report", async (req, res) => {
       res.json({
         date: req.query.date || new Date().toISOString().slice(0, 10),
         summary: emptyDailySummary(),
-        invoices: [], topItems: [], topCustomers: [],
+        users: [], receiptsAreCompanyWide: false, invoices: [], topItems: [], topCustomers: [],
         byRep: [], byBranch: [], byHour: [], receipts: [],
       });
       return;
     }
     const bid = getBid(req);
     const date = String(req.query.date || new Date().toISOString().slice(0, 10));
+    const rawUserId = String(req.query.userId ?? "").trim();
+    const requestedUserId = rawUserId ? Number(rawUserId) : undefined;
+    if (rawUserId && (!Number.isSafeInteger(requestedUserId) || Number(requestedUserId) <= 0)) {
+      res.status(400).json({ error: "مستخدم غير صحيح" });
+      return;
+    }
+    const companyUsers = await db
+      .select({
+        id: usersTable.id,
+        nameAr: usersTable.nameAr,
+        nameEn: usersTable.nameEn,
+        username: usersTable.username,
+      })
+      .from(usersTable)
+      .where(eq(usersTable.companyId, cid));
+    if (requestedUserId && !companyUsers.some((u) => u.id === requestedUserId)) {
+      res.status(400).json({ error: "المستخدم لا يتبع الشركة الحالية" });
+      return;
+    }
+    const companyUserMap = new Map(companyUsers.map((u) => [u.id, u]));
+    const userFilter = requestedUserId
+      ? [eq(salesInvoicesTable.createdById, requestedUserId)]
+      : [];
+    const returnUserFilter = requestedUserId
+      ? [eq(salesReturnsTable.createdById, requestedUserId)]
+      : [];
     // Source filter — `manual` (default) excludes POS rows, `pos` shows POS only,
     // `all` returns everything. The same filter is applied to returns below so
     // KPI tiles like net-sales stay coherent within the chosen source.
@@ -1425,6 +1452,7 @@ router.get("/daily-report", async (req, res) => {
         docNumber:     salesInvoicesTable.docNumber,
         invoiceDate:   salesInvoicesTable.invoiceDate,
         createdTime:   sql<string>`to_char(${salesInvoicesTable.createdAt}, 'HH24:MI')`,
+        createdById:   salesInvoicesTable.createdById,
         customerId:    salesInvoicesTable.customerId,
         salesRepId:    salesInvoicesTable.salesRepId,
         branchId:      salesInvoicesTable.branchId,
@@ -1440,6 +1468,7 @@ router.get("/daily-report", async (req, res) => {
       .where(and(
         eq(salesInvoicesTable.companyId, cid),
         eq(salesInvoicesTable.invoiceDate, date),
+        ...userFilter,
         ...invSourceFilter,
         ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ));
@@ -1533,6 +1562,7 @@ router.get("/daily-report", async (req, res) => {
         eq(salesReturnsTable.companyId, cid),
         eq(salesReturnsTable.returnDate, date),
         eq(salesReturnsTable.status, "posted"),
+        ...returnUserFilter,
         ...retSourceFilter,
         ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
       ));
@@ -1569,6 +1599,13 @@ router.get("/daily-report", async (req, res) => {
           id:             i.id,
           docNumber:      i.docNumber,
           time:           i.createdTime ?? "",
+          createdById:    i.createdById,
+          createdByName:  i.createdById != null
+            ? (companyUserMap.get(i.createdById)?.nameAr
+              ?? companyUserMap.get(i.createdById)?.nameEn
+              ?? companyUserMap.get(i.createdById)?.username
+              ?? null)
+            : null,
           customerId:     i.customerId,
           customerNameAr: c?.nameAr ?? "عميل نقدي",
           customerNameEn: c?.nameEn ?? "Cash Customer",
@@ -1712,6 +1749,8 @@ router.get("/daily-report", async (req, res) => {
 
     res.json({
       date,
+      users: companyUsers,
+      receiptsAreCompanyWide: !!requestedUserId,
       summary,
       invoices: invoiceRows,
       topItems,
