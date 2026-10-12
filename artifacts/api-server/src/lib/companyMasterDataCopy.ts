@@ -9,6 +9,7 @@ import { withTransferLocation, type TransferLocation } from "./companyTransfer.j
 
 type CopyCounts = Record<string, { added: number; skipped: number }>;
 type Row = Record<string, any>;
+type CopyProgress = (event: { stage: string; counts: CopyCounts }) => void | Promise<void>;
 
 const norm = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase();
 const asKey = (value: unknown) => String(value ?? "").trim();
@@ -17,6 +18,7 @@ export async function copyCompanyMasterData(
   sourceCompanyId: number,
   targetCompanyId: number,
   targetAgentInstanceId?: number | null,
+  onProgress?: CopyProgress,
 ) {
   if (!Number.isInteger(sourceCompanyId) || sourceCompanyId <= 0
     || !Number.isInteger(targetCompanyId) || targetCompanyId <= 0
@@ -57,6 +59,14 @@ export async function copyCompanyMasterData(
     const bump = (type: string, added: boolean) => {
       counts[type] ??= { added: 0, skipped: 0 };
       counts[type][added ? "added" : "skipped"]++;
+    };
+    const reportStage = async (stage: string) => {
+      if (onProgress) {
+        await onProgress({
+          stage,
+          counts: Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, { ...value }])),
+        });
+      }
     };
     await db.transaction(async (tx) => {
     const srcRows = async (table: any): Promise<Row[]> => sourceRowsByTable.get(table) ?? [];
@@ -104,6 +114,7 @@ export async function copyCompanyMasterData(
       if (key) branchState.dstByKey.set(key, { id: newId });
       bump("branches", true);
     }
+    await reportStage("branches");
 
     // Units and chart accounts precede items, parties, tills, and banks.
     const srcUnits = await srcRows(unitsTable);
@@ -118,6 +129,7 @@ export async function copyCompanyMasterData(
       if (key) unitState.dstByKey.set(key, { id });
       bump("units", true);
     }
+    await reportStage("units");
 
     const srcCostCenters = await srcRows(costCentersTable);
     const dstCostCenters = await dstRows(costCentersTable);
@@ -147,6 +159,7 @@ export async function copyCompanyMasterData(
       if (key) costCenterState.dstByKey.set(key, { id });
       bump("cost_centers", true);
     }
+    await reportStage("cost_centers");
 
     const srcAccounts = await srcRows(accountsTable);
     const dstAccounts = await dstRows(accountsTable);
@@ -178,6 +191,7 @@ export async function copyCompanyMasterData(
       if (key) accountState.dstByKey.set(key, { id });
       bump("accounts", true);
     }
+    await reportStage("accounts");
 
     // Copy item groups as an item-catalog dependency, not accounting balances.
     const srcItemGroups = await srcRows(itemGroupsTable);
@@ -199,6 +213,7 @@ export async function copyCompanyMasterData(
       if (key) itemGroupState.dstByKey.set(key, { id });
       bump("item_groups", true);
     }
+    await reportStage("item_groups");
 
     const srcWhGroups = await srcRows(warehouseGroupsTable);
     const dstWhGroups = await dstRows(warehouseGroupsTable);
@@ -212,8 +227,9 @@ export async function copyCompanyMasterData(
       if (key) whGroupState.dstByKey.set(key, { id });
       bump("warehouse_groups", true);
     }
+    await reportStage("warehouse_groups");
 
-    const copyGroups = async (table: any, kind: "customer_groups" | "supplier_groups") => {
+    const copyGroups = async (table: any, kind: "customer_groups" | "supplier_groups", stage: string) => {
       const src = await srcRows(table);
       const dst = await dstRows(table);
       const state = mapExisting(src, dst, (row) => row.code);
@@ -225,10 +241,11 @@ export async function copyCompanyMasterData(
         if (key) state.dstByKey.set(key, { id });
         bump(kind, true);
       }
+      await reportStage(stage);
       return state.idMap;
     };
-    const customerGroupMap = await copyGroups(customerGroupsTable, "customer_groups");
-    const supplierGroupMap = await copyGroups(supplierGroupsTable, "supplier_groups");
+    const customerGroupMap = await copyGroups(customerGroupsTable, "customer_groups", "customer_groups");
+    const supplierGroupMap = await copyGroups(supplierGroupsTable, "supplier_groups", "supplier_groups");
 
     const srcCurrencies = await srcRows(currenciesTable);
     const dstCurrencies = await dstRows(currenciesTable);
@@ -268,6 +285,7 @@ export async function copyCompanyMasterData(
       if (userId == null || branchId == null) continue;
       await tx.insert(userBranchesTable).values({ userId, branchId }).onConflictDoNothing();
     }
+    await reportStage("users");
 
     const srcReps = await srcRows(salesRepsTable);
     const dstReps = await dstRows(salesRepsTable);
@@ -287,6 +305,7 @@ export async function copyCompanyMasterData(
       if (key) repState.dstByKey.set(key, { id });
       bump("sales_reps", true);
     }
+    await reportStage("sales_reps");
 
     const copyParties = async (
       table: any,
@@ -316,7 +335,9 @@ export async function copyCompanyMasterData(
       }
     };
     await copyParties(customersTable, "customers", (r) => r.vatNumber || r.nameAr, customerGroupMap);
+    await reportStage("customers");
     await copyParties(suppliersTable, "suppliers", (r) => r.code || r.vatNumber || r.nameAr, supplierGroupMap);
+    await reportStage("suppliers");
 
     const srcWarehouses = await srcRows(warehousesTable);
     const dstWarehouses = await dstRows(warehousesTable);
@@ -339,6 +360,7 @@ export async function copyCompanyMasterData(
       if (key) whState.dstByKey.set(key, { id });
       bump("warehouses", true);
     }
+    await reportStage("warehouses");
 
     const srcItems = await srcRows(itemsTable);
     const dstItems = await dstRows(itemsTable);
@@ -369,6 +391,7 @@ export async function copyCompanyMasterData(
       await tx.update(itemsTable).set({ parentItemId: itemMap.get(row.parentItemId)! })
         .where(eq(itemsTable.id, itemMap.get(row.id)!));
     }
+    await reportStage("items");
 
     const srcCashBoxes = await srcRows(cashBoxesTable);
     const dstCashBoxes = await dstRows(cashBoxesTable);
@@ -388,6 +411,7 @@ export async function copyCompanyMasterData(
       if (key) cashState.dstByKey.set(key, { id });
       bump("cash_boxes", true);
     }
+    await reportStage("cash_boxes");
 
     const srcBanks = await srcRows(bankAccountsTable);
     const dstBanks = await dstRows(bankAccountsTable);
@@ -409,6 +433,7 @@ export async function copyCompanyMasterData(
       if (key) bankState.dstByKey.set(key, { id });
       bump("bank_accounts", true);
     }
+    await reportStage("bank_accounts");
     });
     return {
       sourceCompany: source.nameAr,

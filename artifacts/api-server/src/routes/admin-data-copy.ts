@@ -74,8 +74,24 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
     res.status(400).json({ error: "قاعدة بيانات الشركة الهدف غير صالحة" });
     return;
   }
+  res.status(200);
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+  const send = (event: Record<string, unknown>) => {
+    if (!res.destroyed) {
+      res.write(`${JSON.stringify(event)}\n`);
+      (res as any).flush?.();
+    }
+  };
   try {
-    const result = await copyCompanyMasterData(sourceCompanyId, targetCompanyId, targetAgentInstanceId);
+    const result = await copyCompanyMasterData(
+      sourceCompanyId,
+      targetCompanyId,
+      targetAgentInstanceId,
+      (progress) => send({ type: "progress", ...progress }),
+    );
     const ip = loginIp(req);
     const ua = req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null;
     await writeAudit({
@@ -85,9 +101,15 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
       statusCode: 200, ip, userAgent: ua,
       metadata: { sourceCompanyId, targetCompanyId, targetAgentInstanceId, conflictPolicy: "skip_existing", result: result.counts },
     });
-    res.json({ ok: true, ...result });
+    send({ type: "complete", result: { ok: true, ...result } });
+    res.end();
   } catch (error: any) {
-    res.status(400).json({ error: error?.message ?? "تعذر نسخ البيانات التأسيسية" });
+    if (!res.headersSent) {
+      res.status(400).json({ error: error?.message ?? "تعذر نسخ البيانات التأسيسية" });
+    } else {
+      send({ type: "error", error: error?.message ?? "تعذر نسخ البيانات التأسيسية" });
+      res.end();
+    }
   }
 });
 

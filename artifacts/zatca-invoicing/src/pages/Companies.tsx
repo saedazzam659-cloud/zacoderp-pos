@@ -7,7 +7,7 @@ import {
   Plus, Building2, ExternalLink, ShieldCheck, AlertCircle,
   CheckCircle2, Search, ChevronDown, ChevronUp, MapPin,
   BadgeCheck, FileText, RefreshCw, Layers, Trash2, Globe2, LogIn, Pencil,
-  ListOrdered, ScanSearch, ShieldAlert, Copy
+  ListOrdered, ScanSearch, ShieldAlert, Copy, Loader2
 } from "lucide-react";
 import ExportButtons from "@/components/ExportButtons";
 import CompanyCodeDialog, { type CompanyCodeTarget } from "@/components/CompanyCodeDialog";
@@ -25,6 +25,16 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { Progress } from "@/components/ui/progress";
+
+const MASTER_COPY_STAGES = [
+  ["branches", "الفروع"], ["units", "وحدات القياس"], ["cost_centers", "مراكز التكلفة"],
+  ["accounts", "الحسابات العامة"], ["item_groups", "مجموعات الأصناف"], ["warehouse_groups", "مجموعات المخازن"],
+  ["customer_groups", "مجموعات العملاء"], ["supplier_groups", "مجموعات الموردين"],
+  ["users", "المستخدمون"], ["sales_reps", "المناديب"], ["customers", "العملاء"],
+  ["suppliers", "الموردون"], ["warehouses", "المخازن"], ["items", "الأصناف"],
+  ["cash_boxes", "الخزن"], ["bank_accounts", "الحسابات البنكية"],
+] as const;
 
 const INVOICE_TYPE: Record<string, string> = {
   standard:   "ضريبية",
@@ -110,6 +120,9 @@ export default function Companies() {
   const [masterCopyTargetId, setMasterCopyTargetId] = useState("");
   const [masterCopyBusy, setMasterCopyBusy] = useState(false);
   const [masterCopyResult, setMasterCopyResult] = useState<any>(null);
+  const [masterCopyProgress, setMasterCopyProgress] = useState<{ completed: string[]; counts: Record<string, any> }>({
+    completed: [], counts: {},
+  });
   const invoiceRepairKindLabel = (kind: string) => ({
     sales: "فاتورة مبيعات",
     purchase: "فاتورة مشتريات",
@@ -140,6 +153,7 @@ export default function Companies() {
     setMasterCopySource(company);
     setMasterCopyTargetId("");
     setMasterCopyResult(null);
+    setMasterCopyProgress({ completed: [], counts: {} });
   };
 
   const runMasterDataCopy = async () => {
@@ -156,6 +170,7 @@ export default function Companies() {
       return;
     }
     setMasterCopyBusy(true);
+    setMasterCopyProgress({ completed: [], counts: {} });
     try {
       const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
       const response = await fetch(`${BASE}/api/admin/data-copy/master-data`, {
@@ -167,12 +182,43 @@ export default function Companies() {
           targetAgentInstanceId,
         }),
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || "تعذر نسخ بيانات الشركة");
-      setMasterCopyResult(body);
-      const added = Object.values(body.counts ?? {}).reduce((sum: number, count: any) => sum + Number(count.added ?? 0), 0);
-      const skipped = Object.values(body.counts ?? {}).reduce((sum: number, count: any) => sum + Number(count.skipped ?? 0), 0);
-      toast({ title: "اكتمل نسخ البيانات التأسيسية", description: `أضيف ${added} سجل، وتم تخطي ${skipped} سجل موجود.` });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "تعذر نسخ بيانات الشركة");
+      }
+      if (!response.body) throw new Error("المتصفح لم يستطع استقبال تقدم النسخ");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      let result: any = null;
+      const handleEvent = (event: any) => {
+        if (event.type === "progress") {
+          setMasterCopyProgress((previous) => ({
+            completed: previous.completed.includes(event.stage)
+              ? previous.completed
+              : [...previous.completed, event.stage],
+            counts: event.counts ?? previous.counts,
+          }));
+        } else if (event.type === "complete") {
+          result = event.result;
+        } else if (event.type === "error") {
+          throw new Error(event.error || "تعذر نسخ بيانات الشركة");
+        }
+      };
+      while (true) {
+        const { value, done } = await reader.read();
+        pending += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+        const lines = pending.split("\n");
+        pending = lines.pop() ?? "";
+        for (const line of lines) if (line.trim()) handleEvent(JSON.parse(line));
+        if (done) break;
+      }
+      if (pending.trim()) handleEvent(JSON.parse(pending));
+      if (!result) throw new Error("انقطع الاتصال قبل تأكيد اكتمال النسخ");
+      setMasterCopyResult(result);
+      const added = Object.values(result.counts ?? {}).reduce((sum: number, count: any) => sum + Number(count.added ?? 0), 0);
+      const skipped = Object.values(result.counts ?? {}).reduce((sum: number, count: any) => sum + Number(count.skipped ?? 0), 0);
+      toast({ title: "اكتمل نسخ البيانات التأسيسية", description: `أضيف ${added} سجل، وتم تخطي ${skipped} سجل بسبب المطابقة أو التكرار.` });
     } catch (error: any) {
       toast({ title: "تعذر نسخ البيانات", description: error?.message || "حاول مرة أخرى.", variant: "destructive" });
     } finally {
@@ -880,6 +926,7 @@ export default function Companies() {
             </DialogTitle>
             <DialogDescription className="text-right">
               المصدر: <strong>{masterCopySource?.nameAr}</strong>. ستُضاف السجلات الناقصة فقط، وستُترك السجلات الموجودة كما هي.
+              للعملاء، تتم المطابقة بالرقم الضريبي، أو بالاسم العربي عند غياب الرقم الضريبي؛ وقد يشمل التخطي سجلات مكررة داخل المصدر.
             </DialogDescription>
           </DialogHeader>
           {!masterCopyResult ? (
@@ -914,28 +961,64 @@ export default function Companies() {
                   تُنسخ مجموعات الأصناف والمخازن اللازمة لربط البيانات أيضًا. لا تُنسخ الفواتير أو القيود أو الأرصدة أو حركات المخزون.
                 </p>
               </div>
+              {masterCopyBusy && (() => {
+                const completedCount = masterCopyProgress.completed.length;
+                const activeStage = MASTER_COPY_STAGES[completedCount];
+                const percent = Math.min(95, Math.round((completedCount / MASTER_COPY_STAGES.length) * 100));
+                return (
+                  <div className="space-y-2 rounded-lg border p-3" aria-live="polite" aria-label="تقدم نسخ البيانات">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="flex items-center gap-2 font-medium">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                        {activeStage ? `جارٍ نسخ ${activeStage[1]}…` : "جارٍ إنهاء النسخ وحفظه…"}
+                      </span>
+                      <span className="text-xs text-muted-foreground">{completedCount} من {MASTER_COPY_STAGES.length}</span>
+                    </div>
+                    <Progress value={percent} />
+                    <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border bg-background p-2">
+                      {MASTER_COPY_STAGES.map(([id, label], index) => {
+                        const done = masterCopyProgress.completed.includes(id);
+                        const active = !done && index === completedCount;
+                        const count = masterCopyProgress.counts[id];
+                        return (
+                          <div key={id} className="flex items-center justify-between gap-3 py-1 text-xs">
+                            <span className="flex min-w-0 items-center gap-2">
+                              {done
+                                ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-600" />
+                                : active
+                                  ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+                                  : <span className="h-3.5 w-3.5 shrink-0 rounded-full border" />}
+                              <span className={cn("truncate", done && "text-green-700")}>{label}</span>
+                            </span>
+                            <span className="shrink-0 text-muted-foreground">
+                              {count ? `أضيف ${count.added} · تخطّى ${count.skipped}` : done ? "أضيف 0 · تخطّى 0" : active ? "جارٍ العمل" : "في الانتظار"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      الأعداد مؤقتة حتى اكتمال العملية؛ إذا فشلت مرحلة، تُلغى التغييرات كلها.
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-green-700">اكتمل النسخ إلى «{masterCopyResult.targetCompany}».</p>
               <div className="max-h-64 overflow-auto rounded-md border">
                 <table className="w-full text-sm">
-                  <thead className="bg-muted/50"><tr><th className="p-2 text-right">البيانات</th><th className="p-2">أضيف</th><th className="p-2">تم تخطيه</th></tr></thead>
-                  <tbody>{Object.entries(masterCopyResult.counts ?? {}).map(([key, value]: [string, any]) => (
+                  <thead className="bg-muted/50"><tr><th className="p-2 text-right">البيانات</th><th className="p-2">أضيف</th><th className="p-2">تم تخطيه (مطابق/مكرر)</th></tr></thead>
+                  <tbody>{MASTER_COPY_STAGES.map(([key, label]) => {
+                    const value = masterCopyResult.counts?.[key] ?? { added: 0, skipped: 0 };
+                    return (
                     <tr key={key} className="border-t">
-                      <td className="p-2">{({
-                        branches: "الفروع", units: "وحدات القياس", accounts: "الحسابات",
-                        cost_centers: "مراكز التكلفة",
-                        users: "المستخدمون", sales_reps: "المناديب", customers: "العملاء",
-                        suppliers: "الموردون", warehouses: "المخازن", items: "الأصناف",
-                        cash_boxes: "الخزن", bank_accounts: "البنوك",
-                        customer_groups: "مجموعات العملاء", supplier_groups: "مجموعات الموردين",
-                        item_groups: "مجموعات الأصناف التابعة", warehouse_groups: "مجموعات المخازن التابعة",
-                      } as Record<string, string>)[key] ?? key}</td>
+                      <td className="p-2">{label}</td>
                       <td className="p-2 text-center">{value.added}</td>
                       <td className="p-2 text-center">{value.skipped}</td>
                     </tr>
-                  ))}</tbody>
+                  );})}</tbody>
                 </table>
               </div>
             </div>
