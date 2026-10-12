@@ -3,7 +3,7 @@ import {
   centralDb, db, companiesTable, usersTable, userBranchesTable, branchesTable,
   accountsTable, warehousesTable, warehouseGroupsTable, cashBoxesTable, bankAccountsTable,
   customersTable, suppliersTable, itemsTable, itemGroupsTable, unitsTable,
-  currenciesTable, salesRepsTable,
+  currenciesTable, salesRepsTable, customerGroupsTable, supplierGroupsTable, costCentersTable,
 } from "@workspace/db";
 import { withTransferLocation, type TransferLocation } from "./companyTransfer.js";
 
@@ -31,7 +31,8 @@ export async function copyCompanyMasterData(
   if (!source || source.deletedAt) throw new Error("الشركة المصدر غير موجودة أو محذوفة");
 
   const sourceTables = [
-    branchesTable, unitsTable, accountsTable, itemGroupsTable, warehouseGroupsTable,
+    branchesTable, unitsTable, costCentersTable, accountsTable,
+    customerGroupsTable, supplierGroupsTable, itemGroupsTable, warehouseGroupsTable,
     currenciesTable, usersTable, salesRepsTable, customersTable, suppliersTable,
     warehousesTable, itemsTable, cashBoxesTable, bankAccountsTable,
   ];
@@ -118,6 +119,35 @@ export async function copyCompanyMasterData(
       bump("units", true);
     }
 
+    const srcCostCenters = await srcRows(costCentersTable);
+    const dstCostCenters = await dstRows(costCentersTable);
+    const costCenterState = mapExisting(srcCostCenters, dstCostCenters, (r) => r.code);
+    const costCenterMap = costCenterState.idMap;
+    const pendingCostCenters = srcCostCenters
+      .filter((row) => !costCenterMap.has(row.id))
+      .sort((a, b) => Number(a.level ?? 1) - Number(b.level ?? 1) || asKey(a.code).localeCompare(asKey(b.code)));
+    for (const row of srcCostCenters) if (costCenterMap.has(row.id)) bump("cost_centers", false);
+    const parentPendingCostCenters = [...pendingCostCenters];
+    while (parentPendingCostCenters.length) {
+      const index = parentPendingCostCenters.findIndex((row) => row.parentId == null || costCenterMap.has(row.parentId));
+      if (index < 0) throw new Error("تعذر نسخ شجرة مراكز التكلفة: يوجد مركز أب غير موجود أو علاقة دائرية");
+      const [row] = parentPendingCostCenters.splice(index, 1);
+      const key = norm(row.code);
+      if (key && costCenterState.dstByKey.has(key)) {
+        costCenterMap.set(row.id, costCenterState.dstByKey.get(key)!.id);
+        bump("cost_centers", false);
+        continue;
+      }
+      const id = await insert(costCentersTable, {
+        ...strip(row, ["parentId"]),
+        companyId: targetCompanyId,
+        parentId: row.parentId == null ? null : costCenterMap.get(row.parentId) ?? null,
+      });
+      costCenterMap.set(row.id, id);
+      if (key) costCenterState.dstByKey.set(key, { id });
+      bump("cost_centers", true);
+    }
+
     const srcAccounts = await srcRows(accountsTable);
     const dstAccounts = await dstRows(accountsTable);
     const accountState = mapExisting(srcAccounts, dstAccounts, (r) => r.code);
@@ -142,7 +172,7 @@ export async function copyCompanyMasterData(
         ...strip(row, ["parentId", "costCenterId"]),
         companyId: targetCompanyId,
         parentId: row.parentId == null ? null : accountMap.get(row.parentId) ?? null,
-        costCenterId: null,
+        costCenterId: row.costCenterId == null ? null : costCenterMap.get(row.costCenterId) ?? null,
       });
       accountMap.set(row.id, id);
       if (key) accountState.dstByKey.set(key, { id });
@@ -182,6 +212,23 @@ export async function copyCompanyMasterData(
       if (key) whGroupState.dstByKey.set(key, { id });
       bump("warehouse_groups", true);
     }
+
+    const copyGroups = async (table: any, kind: "customer_groups" | "supplier_groups") => {
+      const src = await srcRows(table);
+      const dst = await dstRows(table);
+      const state = mapExisting(src, dst, (row) => row.code);
+      for (const row of src) {
+        const key = norm(row.code);
+        if (key && state.dstByKey.has(key)) { bump(kind, false); continue; }
+        const id = await insert(table, { ...strip(row, []), companyId: targetCompanyId });
+        state.idMap.set(row.id, id);
+        if (key) state.dstByKey.set(key, { id });
+        bump(kind, true);
+      }
+      return state.idMap;
+    };
+    const customerGroupMap = await copyGroups(customerGroupsTable, "customer_groups");
+    const supplierGroupMap = await copyGroups(supplierGroupsTable, "supplier_groups");
 
     const srcCurrencies = await srcRows(currenciesTable);
     const dstCurrencies = await dstRows(currenciesTable);
@@ -241,7 +288,12 @@ export async function copyCompanyMasterData(
       bump("sales_reps", true);
     }
 
-    const copyParties = async (table: any, kind: "customers" | "suppliers", keyOf: (r: Row) => string) => {
+    const copyParties = async (
+      table: any,
+      kind: "customers" | "suppliers",
+      keyOf: (r: Row) => string,
+      groupMap: Map<number, number>,
+    ) => {
       const src = await srcRows(table);
       const dst = await dstRows(table);
       const state = mapExisting(src, dst, keyOf);
@@ -255,14 +307,16 @@ export async function copyCompanyMasterData(
           branchId: row.branchId == null ? null : branchMap.get(row.branchId) ?? null,
           salesRepId: row.salesRepId == null ? null : repMap.get(row.salesRepId) ?? null,
           regionId: null,
-          ...(kind === "customers" ? { customerGroupId: null } : { groupId: null, openingBalance: "0" }),
+          ...(kind === "customers"
+            ? { customerGroupId: row.customerGroupId == null ? null : groupMap.get(row.customerGroupId) ?? null }
+            : { groupId: row.groupId == null ? null : groupMap.get(row.groupId) ?? null, openingBalance: "0" }),
         });
         if (key) state.dstByKey.set(key, { id });
         bump(kind, true);
       }
     };
-    await copyParties(customersTable, "customers", (r) => r.vatNumber || r.nameAr);
-    await copyParties(suppliersTable, "suppliers", (r) => r.code || r.vatNumber || r.nameAr);
+    await copyParties(customersTable, "customers", (r) => r.vatNumber || r.nameAr, customerGroupMap);
+    await copyParties(suppliersTable, "suppliers", (r) => r.code || r.vatNumber || r.nameAr, supplierGroupMap);
 
     const srcWarehouses = await srcRows(warehousesTable);
     const dstWarehouses = await dstRows(warehousesTable);

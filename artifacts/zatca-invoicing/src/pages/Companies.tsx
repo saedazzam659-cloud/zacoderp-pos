@@ -905,12 +905,13 @@ export default function Companies() {
               <div className="rounded-lg border bg-muted/30 p-3">
                 <p className="mb-2 text-sm font-semibold">سيتم النسخ بهذا الترتيب لتجهيز العلاقات:</p>
                 <ol className="grid grid-cols-2 gap-x-4 gap-y-1 pr-5 text-xs text-muted-foreground list-decimal">
-                  <li>الفروع</li><li>وحدات القياس</li><li>شجرة الحسابات بالكامل</li>
-                  <li>المستخدمون (مع تعطيل الدخول)</li><li>المناديب</li><li>العملاء والموردون</li>
+                  <li>الفروع ووحدات القياس</li><li>مراكز التكلفة</li><li>شجرة الحسابات بالكامل</li>
+                  <li>مجموعات العملاء والموردين</li><li>المستخدمون (مع تعطيل الدخول)</li>
+                  <li>المناديب والعملاء والموردون</li>
                   <li>المخازن</li><li>الأصناف</li><li>الخزن</li><li>البنوك</li>
                 </ol>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  مجموعات الأصناف والمخازن اللازمة لربط البيانات تُنسخ كاعتماديات. لا تُنسخ الفواتير أو القيود أو الأرصدة أو حركات المخزون.
+                  تُنسخ مجموعات الأصناف والمخازن اللازمة لربط البيانات أيضًا. لا تُنسخ الفواتير أو القيود أو الأرصدة أو حركات المخزون.
                 </p>
               </div>
             </div>
@@ -924,9 +925,11 @@ export default function Companies() {
                     <tr key={key} className="border-t">
                       <td className="p-2">{({
                         branches: "الفروع", units: "وحدات القياس", accounts: "الحسابات",
+                        cost_centers: "مراكز التكلفة",
                         users: "المستخدمون", sales_reps: "المناديب", customers: "العملاء",
                         suppliers: "الموردون", warehouses: "المخازن", items: "الأصناف",
                         cash_boxes: "الخزن", bank_accounts: "البنوك",
+                        customer_groups: "مجموعات العملاء", supplier_groups: "مجموعات الموردين",
                         item_groups: "مجموعات الأصناف التابعة", warehouse_groups: "مجموعات المخازن التابعة",
                       } as Record<string, string>)[key] ?? key}</td>
                       <td className="p-2 text-center">{value.added}</td>
