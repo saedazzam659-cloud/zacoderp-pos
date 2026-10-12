@@ -343,6 +343,28 @@ router.post("/login", async (req, res) => {
     return;
   }
 
+  const sessionChannel: "mobile" | "web" = String(req.headers?.["x-app-channel"] ?? "") === "mobile"
+    ? "mobile"
+    : "web";
+  const channelAllowed = sessionChannel === "mobile"
+    ? user.allowMobileLogin !== false
+    : user.allowWebLogin !== false;
+  if (!channelAllowed) {
+    await writeAudit({
+      userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+      module: "auth", action: "denied",
+      method: "POST", path: "/api/auth/login", statusCode: 403,
+      ip, userAgent: ua, metadata: { reason: "login_channel_not_allowed", channel: sessionChannel },
+    });
+    res.status(403).json({
+      error: sessionChannel === "mobile"
+        ? "تسجيل الدخول إلى تطبيق الموبايل غير مسموح لهذا المستخدم"
+        : "تسجيل الدخول إلى الويب غير مسموح لهذا المستخدم",
+      code: "LOGIN_CHANNEL_NOT_ALLOWED",
+    });
+    return;
+  }
+
   // ── Cashier station-bound login ────────────────────────────────────────
   // The company login is also the entry point for a station-bound cashier:
   // after authentication the ERP client immediately sends them to POS.
@@ -452,9 +474,6 @@ router.post("/login", async (req, res) => {
   // a failed session write rolls the entire handoff back.
   const sessionToken = generateToken();
   const sessionId = randomUUID();
-  const sessionChannel = String(req.headers?.["x-app-channel"] ?? "") === "mobile"
-    ? "mobile" as const
-    : "web" as const;
   const sessionIssuedAt = new Date();
 
   let demoLogin: Awaited<ReturnType<typeof resolveDemoDeviceLogin>> | null = null;

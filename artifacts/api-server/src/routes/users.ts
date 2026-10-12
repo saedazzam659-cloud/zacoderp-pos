@@ -112,6 +112,8 @@ router.get("/", async (req, res) => {
       permissions: usersTable.permissions,
       postingPermissions: usersTable.postingPermissions,
       mobilePermissions: usersTable.mobilePermissions,
+      allowWebLogin: usersTable.allowWebLogin,
+      allowMobileLogin: usersTable.allowMobileLogin,
       viewAllBranches: usersTable.viewAllBranches,
       scopeOwnCustomersOnly: usersTable.scopeOwnCustomersOnly,
       isActive: usersTable.isActive,
@@ -167,9 +169,16 @@ router.post("/", async (req, res) => {
       username, password, email, role, code, nameAr, nameEn,
       isActive, branchIds, permissions, viewAllBranches,
       canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval,
+      allowWebLogin, allowMobileLogin,
     } = req.body ?? {};
     if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
     if (String(password).length < 6) { res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" }); return; }
+    const webLoginAllowed = typeof allowWebLogin === "boolean" ? allowWebLogin : true;
+    const mobileLoginAllowed = typeof allowMobileLogin === "boolean" ? allowMobileLogin : true;
+    if (!webLoginAllowed && !mobileLoginAllowed) {
+      res.status(400).json({ error: "يجب السماح بتسجيل الدخول من الويب أو تطبيق الموبايل على الأقل" });
+      return;
+    }
 
     // Plan-based cap. Re-checked on every POST so SuperAdmin upgrades take
     // effect immediately. Returns the limit + used count so the frontend
@@ -229,6 +238,8 @@ router.post("/", async (req, res) => {
       // Per-user mobile-app rights (صلاحيات تطبيق الموبايل). NULL = all
       // allowed (back-compat); see lib/mobilePerms.ts.
       mobilePermissions: sanitizeMobilePermissions(req.body?.mobilePermissions),
+      allowWebLogin: webLoginAllowed,
+      allowMobileLogin: mobileLoginAllowed,
       // Default true if not provided (matches the column default).
       viewAllBranches: typeof viewAllBranches === "boolean" ? viewAllBranches : true,
       scopeOwnCustomersOnly: typeof req.body?.scopeOwnCustomersOnly === "boolean" ? req.body.scopeOwnCustomersOnly : false,
@@ -265,6 +276,7 @@ router.patch("/:id", async (req, res) => {
       username, password, email, role, code, nameAr, nameEn,
       isActive, branchIds, permissions, viewAllBranches,
       canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval,
+      allowWebLogin, allowMobileLogin,
     } = req.body ?? {};
 
     const update: any = { updatedAt: new Date() };
@@ -307,6 +319,24 @@ router.patch("/:id", async (req, res) => {
       }
     }
     if (typeof viewAllBranches === "boolean") update.viewAllBranches = viewAllBranches;
+    if (allowWebLogin !== undefined || allowMobileLogin !== undefined) {
+      const nextWebLogin = typeof allowWebLogin === "boolean" ? allowWebLogin : existing.allowWebLogin;
+      const nextMobileLogin = typeof allowMobileLogin === "boolean" ? allowMobileLogin : existing.allowMobileLogin;
+      if (!nextWebLogin && !nextMobileLogin) {
+        res.status(400).json({ error: "يجب السماح بتسجيل الدخول من الويب أو تطبيق الموبايل على الأقل" });
+        return;
+      }
+      if (typeof allowWebLogin === "boolean") update.allowWebLogin = allowWebLogin;
+      if (typeof allowMobileLogin === "boolean") update.allowMobileLogin = allowMobileLogin;
+      const currentChannelRevoked =
+        (existing.sessionChannel === "web" && !nextWebLogin) ||
+        (existing.sessionChannel === "mobile" && !nextMobileLogin);
+      if (currentChannelRevoked) {
+        update.sessionToken = null;
+        update.sessionId = null;
+        update.sessionChannel = null;
+      }
+    }
     if (typeof req.body?.scopeOwnCustomersOnly === "boolean") {
       update.scopeOwnCustomersOnly = req.body.scopeOwnCustomersOnly;
     }

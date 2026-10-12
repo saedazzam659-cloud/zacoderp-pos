@@ -56,6 +56,8 @@ type UserRow = {
   nameAr: string | null;
   nameEn: string | null;
   permissions: UserPermissions | null;
+  allowWebLogin: boolean;
+  allowMobileLogin: boolean;
   viewAllBranches: boolean;
   scopeOwnCustomersOnly?: boolean;
   isActive: boolean;
@@ -201,6 +203,8 @@ const emptyForm = () => ({
   email: "",
   role: "user" as "user" | "admin" | "cashier",
   isActive: true,
+  allowWebLogin: true,
+  allowMobileLogin: true,
   viewAllBranches: true,
   scopeOwnCustomersOnly: false,
   branchIds: [] as number[],
@@ -430,6 +434,8 @@ export default function Users() {
       email: u.email ?? "",
       role: (u.role === "admin" ? "admin" : u.role === "cashier" ? "cashier" : "user"),
       isActive: u.isActive,
+      allowWebLogin: u.allowWebLogin !== false,
+      allowMobileLogin: u.allowMobileLogin !== false,
       viewAllBranches: u.viewAllBranches ?? true,
       scopeOwnCustomersOnly: !!u.scopeOwnCustomersOnly,
       branchIds: u.branchIds ?? [],
@@ -475,6 +481,8 @@ export default function Users() {
         email: form.email,
         role: form.role,
         isActive: form.isActive,
+        allowWebLogin: form.allowWebLogin,
+        allowMobileLogin: form.allowMobileLogin,
         viewAllBranches: form.viewAllBranches,
         scopeOwnCustomersOnly: form.scopeOwnCustomersOnly,
         branchIds: form.branchIds,
@@ -787,6 +795,7 @@ export default function Users() {
                   disabled={
                     saveMut.isPending ||
                     !form.username ||
+                    (!form.allowWebLogin && !form.allowMobileLogin) ||
                     (editingId == null && !form.password)
                   }
                   className="bg-blue-600 hover:bg-blue-700 gap-1"
@@ -1002,6 +1011,32 @@ export default function Users() {
                     <Button size="sm" variant="outline" onClick={() => applyPreset("view")}>{t("users.presetView")}</Button>
                     <Button size="sm" variant="outline" onClick={() => applyPreset("none")}>{t("users.presetNone")}</Button>
                   </div>
+                </div>
+
+                <div className="rounded-xl border bg-card p-4 space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold">{t("users.loginAccessTitle")}</h3>
+                    <p className="text-xs text-muted-foreground mt-1">{t("users.loginAccessHint")}</p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="flex items-center gap-2 rounded-lg border p-3 cursor-pointer">
+                      <Checkbox
+                        checked={form.allowWebLogin}
+                        onCheckedChange={(checked) => setForm({ ...form, allowWebLogin: checked === true })}
+                      />
+                      <span className="text-sm">{t("users.allowWebLogin")}</span>
+                    </label>
+                    <label className="flex items-center gap-2 rounded-lg border p-3 cursor-pointer">
+                      <Checkbox
+                        checked={form.allowMobileLogin}
+                        onCheckedChange={(checked) => setForm({ ...form, allowMobileLogin: checked === true })}
+                      />
+                      <span className="text-sm">{t("users.allowMobileLogin")}</span>
+                    </label>
+                  </div>
+                  {!form.allowWebLogin && !form.allowMobileLogin && (
+                    <p role="alert" className="text-xs text-destructive">{t("users.loginAccessRequired")}</p>
+                  )}
                 </div>
 
                 {/* ─── Copy permissions toolbar ─────────────────────────────

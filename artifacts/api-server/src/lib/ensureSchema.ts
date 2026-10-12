@@ -1775,6 +1775,10 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // "all allowed" (back-compat). See api-server lib/mobilePerms.ts.
     { label: "users.mobile_permissions column",
       sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile_permissions JSONB` },
+    { label: "users.allow_web_login column",
+      sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS allow_web_login BOOLEAN NOT NULL DEFAULT TRUE` },
+    { label: "users.allow_mobile_login column",
+      sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS allow_mobile_login BOOLEAN NOT NULL DEFAULT TRUE` },
     { label: "users.session_channel column",
       sql:   `ALTER TABLE users ADD COLUMN IF NOT EXISTS session_channel TEXT` },
     // Per-type HR expiry-alert lead times (days) — {iqama,contract,passport,workPermit}.

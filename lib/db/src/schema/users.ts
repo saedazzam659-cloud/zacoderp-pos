@@ -40,6 +40,10 @@ export const usersTable = pgTable("users", {
   // client-side gating in the Expo app + server checks on mobile-channel
   // sales creation (see api-server lib/mobilePerms.ts).
   mobilePermissions: jsonb("mobile_permissions"),
+  // Login surfaces this user may open. Existing users retain access to both
+  // surfaces by default; single-session enforcement remains independent.
+  allowWebLogin: boolean("allow_web_login").notNull().default(true),
+  allowMobileLogin: boolean("allow_mobile_login").notNull().default(true),
   // Per-user UI preferences (durable, server-side mirror of what used to live
   // only in localStorage). Survives a browser cache/localStorage wipe. Shape:
   //   { "<screenSlug>": { ...arbitrary layout blob } }

@@ -110,6 +110,8 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
     isActive: boolean; permissions: any; postingPermissions?: any; viewAllBranches: boolean; email: string | null;
     sessionId: string | null;
     sessionChannel?: string | null;
+     allowWebLogin?: boolean;
+     allowMobileLogin?: boolean;
     demoOperationalVerified?: boolean;
     storedPermissions?: any;
   };
@@ -125,6 +127,8 @@ export async function resolveBearerToken(token: string, rawCookieHeader?: string
       viewAllBranches: usersTable.viewAllBranches,
       email: usersTable.email, sessionId: usersTable.sessionId,
       sessionChannel: usersTable.sessionChannel,
+       allowWebLogin: usersTable.allowWebLogin,
+       allowMobileLogin: usersTable.allowMobileLogin,
       currentSessionId: usersTable.currentSessionId,
       isDemoShadow: usersTable.isDemoShadow,
       demoDeviceIsolation: usersTable.demoDeviceIsolation,
@@ -272,6 +276,13 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
   const resolved = await resolveBearerToken(token, req.headers.cookie);
   if (!resolved) { next(); return; }
   const { user } = resolved;
+  if (
+    (user.sessionChannel === "web" && user.allowWebLogin === false) ||
+    (user.sessionChannel === "mobile" && user.allowMobileLogin === false)
+  ) {
+    _res.status(401).json({ error: "تم إيقاف الدخول من هذه المنصة لهذا المستخدم", code: "LOGIN_CHANNEL_NOT_ALLOWED" });
+    return;
+  }
   if (user.demoOperationalVerified && !isDemoOperationalRequest(req.originalUrl)) {
     user.permissions = user.storedPermissions;
     user.demoOperationalVerified = false;
