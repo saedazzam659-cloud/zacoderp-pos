@@ -41,6 +41,7 @@
 - [Sales-invoice form parity](sales-invoice-form-parity.md) — keep related customer, supplier, HR, order, credit, and representative forms on the same full-width field layout.
 - [Invoice save tab focus](invoice-save-tab-focus.md) — new invoices still begin with basic data; after a successful save, open the saved sales or purchase invoice on Items.
 - [Web sales thermal printing](web-sales-thermal-printing.md) — keep thermal templates opt-in for invoices and returns; A4 remains the default.
+- [Thermal receipt printer setup](thermal-receipt-printer-setup.md) — user reports an 80 mm roll; exact printer model and printable head width are unknown.
 - [Approved agent UI](approved-agent-ui.md) — current agent-facing web UI is approved; custom views must be opt-in and leave the default unchanged.
 - [Module-aware user guide](module-aware-user-guide.md) — company help should show only chapters for modules enabled in that company.
 - [Local visual capture and cleanup](local-visual-capture-routing.md) — use the shared proxy and remove only the exact owned fixture, even when capture fails before warehouse setup.
