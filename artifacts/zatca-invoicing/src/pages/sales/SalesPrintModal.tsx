@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
@@ -3075,6 +3076,34 @@ function forceThermalPaperSize(html: string): string {
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${style}</head>`) : html.replace(/<body/i, `${style}<body`);
 }
 
+const THERMAL_SCALE_MIN = 85;
+const THERMAL_SCALE_MAX = 100;
+
+function thermalScaleStorageKey(companyId: unknown, templateId: number): string | null {
+  if (companyId == null || companyId === "") return null;
+  return `zatca:thermal-print-scale:${String(companyId)}:${templateId}`;
+}
+
+function readThermalScale(companyId: unknown, templateId: number): number {
+  const key = thermalScaleStorageKey(companyId, templateId);
+  if (!key || typeof window === "undefined") return THERMAL_SCALE_MAX;
+  try {
+    const saved = Number(window.localStorage.getItem(key));
+    return Number.isFinite(saved) && saved >= THERMAL_SCALE_MIN && saved <= THERMAL_SCALE_MAX
+      ? saved
+      : THERMAL_SCALE_MAX;
+  } catch {
+    return THERMAL_SCALE_MAX;
+  }
+}
+
+function applyThermalContentScale(html: string, scale: number): string {
+  const percent = Math.min(THERMAL_SCALE_MAX, Math.max(THERMAL_SCALE_MIN, Math.round(scale)));
+  const centerOffset = (THERMAL_SCALE_MAX - percent) / 2;
+  const style = `<style id="thermal-content-scale">@media print { body { zoom: ${percent}% !important; transform: translateX(${centerOffset}%) !important; transform-origin: top left !important; } }</style>`;
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${style}</head>`) : html.replace(/<body/i, `${style}<body`);
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -3135,6 +3164,9 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   );
   const [selected, setSelected] = useState<number>(resolveInitialId);
   const selectedIsThermal = templateIsThermal(selected);
+  const [thermalScale, setThermalScale] = useState<number>(
+    () => readThermalScale(companyCfg.id, resolveInitialId()),
+  );
   const { toast } = useToast();
   const { user, token } = useAuth() as any;
   const showFreeQuantity = companyCfg.showFreeQuantity ?? user?.company?.showFreeQuantity;
@@ -3223,6 +3255,21 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   // Re-sync the selected template when the caller's preference or the
   // company's visibility config changes.
   useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate, companyCfg.printDefaultTemplateQuotation, companyCfg.printDefaultTemplateOrder, companyCfg.printDefaultTemplateReturn, (data as any)?.type]);
+  useEffect(() => {
+    setThermalScale(readThermalScale(companyCfg.id, selected));
+  }, [companyCfg.id, selected]);
+
+  function changeThermalScale(value: number) {
+    const percent = Math.min(THERMAL_SCALE_MAX, Math.max(THERMAL_SCALE_MIN, Math.round(value)));
+    setThermalScale(percent);
+    const key = thermalScaleStorageKey(companyCfg.id, selected);
+    if (!key) return;
+    try {
+      window.localStorage.setItem(key, String(percent));
+    } catch {
+      // Printing still uses the selected value if browser storage is unavailable.
+    }
+  }
   // Fire-and-forget auto-print on open. We track the last id we auto-
   // printed so we don't loop on re-renders, and reset when the modal
   // closes so the next "open" can auto-print again.
@@ -3370,9 +3417,12 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
           .replaceAll("إجمالي الكميات (مع المجاني):", "إجمالي الكميات:")
           .replaceAll("Total quantity (including free):", "Total quantity:")
       : renderedHtml;
-    const html = selectedIsThermal && !tmpl.thermal
+    const paperSizedHtml = selectedIsThermal && !tmpl.thermal
       ? forceThermalPaperSize(freeSafeHtml)
       : freeSafeHtml;
+    const html = selectedIsThermal
+      ? applyThermalContentScale(paperSizedHtml, thermalScale)
+      : paperSizedHtml;
     // Use a hidden same-origin iframe instead of `window.open` so popup
     // blockers don't kill auto-print after save (no user-gesture path)
     // and so the print preview always shows up — even when the print
@@ -3447,6 +3497,42 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
               >
                 English
               </Button>
+            </div>
+          </div>
+        )}
+
+        {selectedIsThermal && (
+          <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">ضبط عرض الطباعة الحرارية</p>
+                <p className="text-xs text-muted-foreground">
+                  يقلّص المحتوى والخطوط معًا من الجانبين، ويحفظ الإعداد لهذا التصميم على هذا الجهاز.
+                </p>
+              </div>
+              <span className="min-w-12 rounded-md bg-background px-2 py-1 text-center text-sm font-bold tabular-nums">
+                {thermalScale}%
+              </span>
+            </div>
+            <Slider
+              dir="ltr"
+              min={THERMAL_SCALE_MIN}
+              max={THERMAL_SCALE_MAX}
+              step={1}
+              value={[thermalScale]}
+              onValueChange={([value]) => changeThermalScale(value ?? THERMAL_SCALE_MAX)}
+              aria-label="نسبة عرض الطباعة الحرارية"
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground" dir="ltr">
+              <span>{THERMAL_SCALE_MIN}%</span>
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-foreground"
+                onClick={() => changeThermalScale(THERMAL_SCALE_MAX)}
+              >
+                إعادة إلى 100%
+              </button>
+              <span>{THERMAL_SCALE_MAX}%</span>
             </div>
           </div>
         )}

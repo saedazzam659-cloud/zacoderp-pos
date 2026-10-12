@@ -14,3 +14,9 @@ After-save print preview is a separate company preference for sales invoices and
 **Why:** The owner wants to inspect the saved invoice and choose whether to print, while keeping the older direct auto-print behavior available as a separate setting.
 
 **How to apply:** Preserve the two preferences independently, use the existing sales print modal for the after-save handoff, and keep the explicit Print button as the only print action in preview mode.
+
+Thermal print width calibration is separate from the company's template choice: default to 100%, let the user reduce the printed content and type together, and save the adjustment per company/template in that browser so different printer stations do not overwrite one another. A4 output is unaffected.
+
+**Why:** The owner wants to tune the actual thermal printer's usable width without repeatedly editing templates or wasting paper; the roll is reported as 80 mm, but each device/driver can expose a different printable area.
+
+**How to apply:** Keep calibration available only when the selected template is thermal, retain 100% as the reset/default, and do not claim physical output is verified until a printed sample is checked.
