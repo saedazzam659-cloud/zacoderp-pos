@@ -38,9 +38,9 @@ function money(v: any): string | null {
  * A match → UPDATE; otherwise INSERT (with an auto-created AR/AP sub-account via
  * ensureCustomerLedger / ensureSupplierLedger, matching the POST routes).
  *
- * Blank cells NEVER overwrite existing values: only columns with a real value
- * are written, so a partial re-upload won't wipe data the row already had.
- * `nameAr` is the only required column.
+ * By default, blank cells are ignored. With `blankIsClear`, blank cells clear
+ * matching fields only when that column is present in the source row; absent
+ * columns remain unchanged. `nameAr` is the only required column.
  */
 export async function importPartyMasterData(opts: {
   req: any;
@@ -54,8 +54,9 @@ export async function importPartyMasterData(opts: {
    * group VAT number (each becomes its own customer with its own AR ledger).
    */
   allowDuplicates?: boolean;
+  blankIsClear?: boolean;
 }): Promise<MasterImportResult> {
-  const { cid, party, rows, allowDuplicates = false } = opts;
+  const { cid, party, rows, allowDuplicates = false, blankIsClear = false } = opts;
   const isCustomer = party === "customer";
 
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -222,10 +223,16 @@ export async function importPartyMasterData(opts: {
       const nameAr = txt(r.nameAr ?? r.name);
       if (!nameAr) { errors.push({ row: i + 2, error: "الاسم العربي للطرف مطلوب" }); continue; }
 
-      // Build a patch of ONLY the provided columns (blank cells are skipped so
-      // they never clobber existing data on an update).
+      // Build a patch from columns actually present in the input. Cross-company
+      // transfer imports can opt into clearing blank cells without treating
+      // omitted columns as blank.
       const patch: Record<string, any> = { nameAr };
-      const setIf = (k: string, val: any) => { if (val !== null && val !== undefined) patch[k] = val; };
+      const hasAny = (...keys: string[]) => keys.some((key) => Object.prototype.hasOwnProperty.call(r, key));
+      const setIf = (k: string, val: any, ...sourceKeys: string[]) => {
+        const present = hasAny(...(sourceKeys.length ? sourceKeys : [k]));
+        if (val !== null && val !== undefined) patch[k] = val;
+        else if (blankIsClear && present) patch[k] = null;
+      };
       setIf("nameEn",         txt(r.nameEn));
       setIf("vatNumber",      txt(r.vatNumber));
       setIf("crNumber",       txt(r.crNumber));

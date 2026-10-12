@@ -27,6 +27,7 @@ import { eq, and, sql, inArray } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
+import { importPartyMasterData } from "../lib/partyMasterImport.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { resolveUnitGraph, toStorageDecimal } from "../lib/unitConversion.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
@@ -1474,6 +1475,12 @@ router.post("/import/process", async (req, res) => {
       // apply defaults for unmapped fields with defaults
       for (const f of ent.fields) {
         if (!(f.name in targetRow) && f.default !== undefined) {
+          // Defaults are useful for new records, but on an upsert an omitted
+          // column means "leave unchanged", not "replace with the schema default".
+          if (
+            (entityKey === "customers" || entityKey === "suppliers")
+            && existingByKey.has(buildBusinessKey(ent, targetRow, fkMaps) ?? "")
+          ) continue;
           targetRow[f.name] = f.default;
         }
       }
@@ -1832,6 +1839,36 @@ router.post("/import/commit", async (req, res) => {
     // matches are ignored, so no upsert/merge happens. Used to import multiple
     // establishments that legitimately share one group VAT number.
     const allowDuplicates = req.body?.options?.allowDuplicates === true;
+
+    // The dedicated party importer owns the ledger-link invariant: importing a
+    // customer/supplier through the generic data center must not create a party
+    // row without its corresponding company-local account.
+    if (entityKey === "customers" || entityKey === "suppliers") {
+      const result = await importPartyMasterData({
+        req,
+        cid,
+        party: entityKey === "customers" ? "customer" : "supplier",
+        rows,
+        allowDuplicates,
+        blankIsClear: true,
+      });
+      return res.json({
+        entity: entityKey,
+        summary: {
+          inserted: result.created,
+          updated: result.updated,
+          skipped: 0,
+          errors: result.errors.length,
+          total: result.total,
+        },
+        log: result.errors.map((issue) => ({
+          rowIndex: Math.max(0, issue.row - 2),
+          status: "error",
+          reason: issue.error,
+        })),
+        committedAt: new Date().toISOString(),
+      });
+    }
 
     // ── Composite entities have a totally different commit shape (group rows by
     // groupKey, then insert header + lines transactionally). Branch out early.
