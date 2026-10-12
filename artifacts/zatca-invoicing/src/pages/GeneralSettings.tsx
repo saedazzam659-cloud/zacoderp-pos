@@ -497,6 +497,7 @@ export default function GeneralSettings() {
   const itemsFileRef    = useRef<HTMLInputElement>(null);
   const balancesFileRef = useRef<HTMLInputElement>(null);
   const [itemsImporting,    setItemsImporting]    = useState(false);
+  const [masterDataExporting, setMasterDataExporting] = useState<"items" | "customer" | "supplier" | null>(null);
   const [itemsUploadProgress, setItemsUploadProgress] = useState(0);
   const [itemsUploadStage, setItemsUploadStage] = useState<"reading" | "uploading" | "processing">("reading");
   const [balancesImporting, setBalancesImporting] = useState(false);
@@ -551,6 +552,63 @@ export default function GeneralSettings() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Items");
     void saveWorkbook(wb, "items_template.xlsx");
+  }
+
+  async function fetchExportList(url: string): Promise<any[]> {
+    const res = await fetch(url, { headers });
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(payload?.error || t("pages.generalSettings.exportFailed"));
+    return coerceList(payload);
+  }
+
+  async function downloadItemsData() {
+    if (!(await gate("export"))) return;
+    setMasterDataExporting("items");
+    try {
+      const cid = user?.company?.id ?? user?.companyId;
+      if (!cid) throw new Error(t("pages.generalSettings.exportFailed"));
+      const items = await fetchExportList(`${API}/api/inventory/items?companyId=${cid}&includeHidden=1`);
+      const invalidItem = items.find(item =>
+        !String(item.unit?.code ?? "").trim() ||
+        (item.groupId != null && !String(item.group?.code ?? "").trim()),
+      );
+      if (invalidItem) {
+        throw new Error(t(
+          !String(invalidItem.unit?.code ?? "").trim()
+            ? "pages.generalSettings.exportItemMissingUnit"
+            : "pages.generalSettings.exportItemMissingGroup",
+          { name: invalidItem.nameAr ?? invalidItem.code },
+        ));
+      }
+      const columns = ["code","nameAr","nameEn","barcode","groupCode","unitCode","itemType","showInPos","costPrice","salePrice","vatRate","reorderLevel","maxLevel","description"];
+      const rows = [...items]
+        .sort((a, b) => String(a.code ?? "").localeCompare(String(b.code ?? ""), undefined, { numeric: true, sensitivity: "base" }))
+        .map(item => [
+          item.code ?? "",
+          item.nameAr ?? "",
+          item.nameEn ?? "",
+          item.barcode ?? "",
+          item.group?.code ?? "",
+          item.unit?.code ?? "",
+          item.itemType ?? "stock",
+          item.showInPos ?? true,
+          item.costPrice ?? "",
+          item.salePrice ?? "",
+          item.vatRate ?? "",
+          item.reorderLevel ?? "",
+          item.maxLevel ?? "",
+          item.description ?? "",
+        ]);
+      const ws = XLSX.utils.aoa_to_sheet([columns, ...rows]);
+      ws["!cols"] = columns.map(() => ({ wch: 18 }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Items");
+      await saveWorkbook(wb, `items_master_data_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e: any) {
+      toast({ title: e?.message || t("pages.generalSettings.exportFailed"), variant: "destructive" });
+    } finally {
+      setMasterDataExporting(null);
+    }
   }
 
   async function downloadBalancesTemplate() {
@@ -721,6 +779,71 @@ export default function GeneralSettings() {
     void saveWorkbook(wb, "customers_data_template.xlsx");
   }
 
+  async function downloadCustomersData() {
+    if (!(await gate("export"))) return;
+    setMasterDataExporting("customer");
+    try {
+      const cid = user?.company?.id ?? user?.companyId;
+      if (!cid) throw new Error(t("pages.generalSettings.exportFailed"));
+      const [customers, accounts, branches] = await Promise.all([
+        fetchExportList(`${API}/api/customers?companyId=${cid}`),
+        fetchExportList(`${API}/api/accounts?companyId=${cid}`),
+        fetchExportList(`${API}/api/org/branches?companyId=${cid}`),
+      ]);
+      const accountById = new Map(accounts.map(a => [Number(a.id), a]));
+      const accountOrder = new Map(accounts.map((a, i) => [Number(a.id), i]));
+      const branchById = new Map(branches.map(b => [Number(b.id), b]));
+      const rows = customers.map(customer => {
+        const ledger = customer.accountId != null ? accountById.get(Number(customer.accountId)) : undefined;
+        const parent = ledger?.parentId != null ? accountById.get(Number(ledger.parentId)) ?? ledger : ledger;
+        const branch = customer.branchId != null ? branchById.get(Number(customer.branchId)) : undefined;
+        if (customer.accountId != null && !ledger) {
+          throw new Error(t("pages.generalSettings.exportMissingPartyAccount", { name: customer.nameAr }));
+        }
+        if (customer.branchId != null && !branch) {
+          throw new Error(t("pages.generalSettings.exportMissingPartyBranch", { name: customer.nameAr }));
+        }
+        return {
+          customer,
+          ledgerOrder: ledger ? accountOrder.get(Number(ledger.id)) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER,
+          parentOrder: parent ? accountOrder.get(Number(parent.id)) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER,
+          values: [
+            customer.nameAr ?? "",
+            customer.nameEn ?? "",
+            customer.vatNumber ?? "",
+            customer.crNumber ?? "",
+            customer.email ?? "",
+            customer.phone ?? "",
+            customer.city ?? "",
+            customer.district ?? "",
+            customer.street ?? "",
+            customer.buildingNumber ?? "",
+            customer.postalCode ?? "",
+            customer.country ?? "SA",
+            customer.creditLimit ?? "",
+            customer.paymentTermsDays ?? "",
+            branch?.nameAr ?? branch?.nameEn ?? "",
+            parent?.code ?? "",
+          ],
+        };
+      }).sort((a, b) =>
+        a.parentOrder - b.parentOrder ||
+        a.ledgerOrder - b.ledgerOrder ||
+        String(a.customer.nameAr ?? "").localeCompare(String(b.customer.nameAr ?? ""), "ar"),
+      );
+      const columns = ["nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","creditLimit","paymentTermsDays","branch","accountNumber"];
+      const ws = XLSX.utils.aoa_to_sheet([columns, ...rows.map(row => row.values)]);
+      ws["!cols"] = columns.map(() => ({ wch: 18 }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Customers");
+      await saveWorkbook(wb, `customers_master_data_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e: any) {
+      toast({ title: e?.message || t("pages.generalSettings.exportFailed"), variant: "destructive" });
+    } finally {
+      setMasterDataExporting(null);
+    }
+  }
+
   async function downloadSuppliersDataTemplate() {
       if (!(await gate('export'))) return;
     const headers = ["code","nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","currencyCode","creditLimit","accountNumber"];
@@ -733,6 +856,63 @@ export default function GeneralSettings() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Suppliers");
     void saveWorkbook(wb, "suppliers_data_template.xlsx");
+  }
+
+  async function downloadSuppliersData() {
+    if (!(await gate("export"))) return;
+    setMasterDataExporting("supplier");
+    try {
+      const cid = user?.company?.id ?? user?.companyId;
+      if (!cid) throw new Error(t("pages.generalSettings.exportFailed"));
+      const [suppliers, accounts] = await Promise.all([
+        fetchExportList(`${API}/api/suppliers?companyId=${cid}`),
+        fetchExportList(`${API}/api/accounts?companyId=${cid}`),
+      ]);
+      const accountById = new Map(accounts.map(a => [Number(a.id), a]));
+      const accountOrder = new Map(accounts.map((a, i) => [Number(a.id), i]));
+      const rows = suppliers.map(supplier => {
+        const account = supplier.accountId != null ? accountById.get(Number(supplier.accountId)) : undefined;
+        if (supplier.accountId != null && !account) {
+          throw new Error(t("pages.generalSettings.exportMissingPartyAccount", { name: supplier.nameAr }));
+        }
+        return {
+          supplier,
+          accountOrder: account ? accountOrder.get(Number(account.id)) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER,
+          values: [
+            supplier.code ?? "",
+            supplier.nameAr ?? "",
+            supplier.nameEn ?? "",
+            supplier.vatNumber ?? "",
+            supplier.crNumber ?? "",
+            supplier.email ?? "",
+            supplier.phone ?? "",
+            supplier.city ?? "",
+            supplier.district ?? "",
+            supplier.street ?? "",
+            supplier.buildingNumber ?? "",
+            supplier.postalCode ?? "",
+            supplier.country ?? "SA",
+            supplier.currencyCode ?? "SAR",
+            supplier.creditLimit ?? "",
+            account?.code ?? "",
+          ],
+        };
+      }).sort((a, b) =>
+        a.accountOrder - b.accountOrder ||
+        String(a.supplier.code ?? "").localeCompare(String(b.supplier.code ?? ""), undefined, { numeric: true, sensitivity: "base" }) ||
+        String(a.supplier.nameAr ?? "").localeCompare(String(b.supplier.nameAr ?? ""), "ar"),
+      );
+      const columns = ["code","nameAr","nameEn","vatNumber","crNumber","email","phone","city","district","street","buildingNumber","postalCode","country","currencyCode","creditLimit","accountNumber"];
+      const ws = XLSX.utils.aoa_to_sheet([columns, ...rows.map(row => row.values)]);
+      ws["!cols"] = columns.map(() => ({ wch: 18 }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Suppliers");
+      await saveWorkbook(wb, `suppliers_master_data_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e: any) {
+      toast({ title: e?.message || t("pages.generalSettings.exportFailed"), variant: "destructive" });
+    } finally {
+      setMasterDataExporting(null);
+    }
   }
 
   async function handlePartyDataUpload(party: "customer" | "supplier", file: File) {
@@ -2148,6 +2328,10 @@ export default function GeneralSettings() {
             <Button type="button" variant="outline" size="sm" onClick={downloadItemsTemplate} className="gap-1.5">
               <Download className="h-3.5 w-3.5" />{t("pages.generalSettings.downloadTemplate")}
             </Button>
+            <Button type="button" variant="outline" size="sm" onClick={downloadItemsData} disabled={masterDataExporting !== null} className="gap-1.5">
+              {masterDataExporting === "items" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
+              {t("pages.generalSettings.exportCurrentData")}
+            </Button>
             <Button type="button" size="sm" onClick={() => itemsFileRef.current?.click()} disabled={itemsImporting} className="gap-1.5 bg-blue-600 hover:bg-blue-700">
               {itemsImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
               {itemsImporting ? t("common.loading") : t("pages.generalSettings.uploadItemsFile")}
@@ -2160,6 +2344,7 @@ export default function GeneralSettings() {
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handleItemsUpload(f); e.target.value = ""; }}
             />
           </div>
+          <p className="text-[11px] text-muted-foreground">{t("pages.generalSettings.itemsDataTransferNote")}</p>
           {itemsImporting && (
             <div className="mt-3 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 via-white to-cyan-50 p-3 shadow-sm" role="status" aria-live="polite">
               <div className="mb-2 flex items-center justify-between gap-3 text-xs">
@@ -2491,7 +2676,11 @@ export default function GeneralSettings() {
             <Button type="button" variant="outline" size="sm" onClick={downloadCustomersDataTemplate} className="gap-1.5">
               <Download className="h-3.5 w-3.5" />{t("pages.generalSettings.downloadTemplate")}
             </Button>
-            <Button type="button" size="sm" onClick={() => custDataFileRef.current?.click()} disabled={custDataImporting} className="gap-1.5 bg-indigo-600 hover:bg-indigo-700">
+            <Button type="button" variant="outline" size="sm" onClick={downloadCustomersData} disabled={masterDataExporting !== null} className="gap-1.5">
+              {masterDataExporting === "customer" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
+              {t("pages.generalSettings.exportCurrentData")}
+            </Button>
+            <Button type="button" size="sm" onClick={() => custDataFileRef.current?.click()} disabled={custDataImporting || masterDataExporting !== null} className="gap-1.5 bg-indigo-600 hover:bg-indigo-700">
               {custDataImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
               {custDataImporting ? t("common.loading") : t("pages.generalSettings.uploadCustomersDataFile")}
             </Button>
@@ -2503,6 +2692,7 @@ export default function GeneralSettings() {
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePartyDataUpload("customer", f); e.target.value = ""; }}
             />
           </div>
+          <p className="text-[11px] text-muted-foreground">{t("pages.generalSettings.partiesDataTransferNote")}</p>
           {custDataReport && (
             <div className="rounded-md border bg-card px-3 py-2 text-xs space-y-1">
               <p className="font-medium">
@@ -2541,7 +2731,11 @@ export default function GeneralSettings() {
             <Button type="button" variant="outline" size="sm" onClick={downloadSuppliersDataTemplate} className="gap-1.5">
               <Download className="h-3.5 w-3.5" />{t("pages.generalSettings.downloadTemplate")}
             </Button>
-            <Button type="button" size="sm" onClick={() => suppDataFileRef.current?.click()} disabled={suppDataImporting} className="gap-1.5 bg-amber-600 hover:bg-amber-700">
+            <Button type="button" variant="outline" size="sm" onClick={downloadSuppliersData} disabled={masterDataExporting !== null} className="gap-1.5">
+              {masterDataExporting === "supplier" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
+              {t("pages.generalSettings.exportCurrentData")}
+            </Button>
+            <Button type="button" size="sm" onClick={() => suppDataFileRef.current?.click()} disabled={suppDataImporting || masterDataExporting !== null} className="gap-1.5 bg-amber-600 hover:bg-amber-700">
               {suppDataImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
               {suppDataImporting ? t("common.loading") : t("pages.generalSettings.uploadSuppliersDataFile")}
             </Button>
@@ -2553,6 +2747,7 @@ export default function GeneralSettings() {
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePartyDataUpload("supplier", f); e.target.value = ""; }}
             />
           </div>
+          <p className="text-[11px] text-muted-foreground">{t("pages.generalSettings.partiesDataTransferNote")}</p>
           {suppDataReport && (
             <div className="rounded-md border bg-card px-3 py-2 text-xs space-y-1">
               <p className="font-medium">
