@@ -19,6 +19,7 @@ import {
 } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 import { purchaseSupplierDescription } from "../lib/journalLineDescriptions.js";
+import { ownDocumentFilter } from "../lib/documentVisibility.js";
 import {
   supplementalInvoiceLinkedVoucherRowAllocations,
   supplementalInvoiceLinkedVoucherTotals,
@@ -239,7 +240,8 @@ router.get("/by-supplier", async (req, res) => {
     const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
 
-    const invConds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted")];
+    const invConds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById)];
     pushBranchScope(req, invConds, purchaseInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(purchaseInvoicesTable.invoiceDate, to));
@@ -256,7 +258,8 @@ router.get("/by-supplier", async (req, res) => {
       .where(and(...invConds))
       .groupBy(purchaseInvoicesTable.supplierId);
 
-    const retConds = [eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.status, "posted")];
+    const retConds = [eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById)];
     pushBranchScope(req, retConds, purchaseReturnsTable.branchId, bid);
     if (from) retConds.push(gte(purchaseReturnsTable.returnDate, from));
     if (to)   retConds.push(lte(purchaseReturnsTable.returnDate, to));
@@ -350,7 +353,8 @@ router.get("/by-item", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
-    const conds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted")];
+    const conds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById)];
     pushBranchScope(req, conds, purchaseInvoicesTable.branchId, bid);
     if (from) conds.push(gte(purchaseInvoicesTable.invoiceDate, from));
     if (to)   conds.push(lte(purchaseInvoicesTable.invoiceDate, to));
@@ -391,7 +395,8 @@ router.get("/by-period", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { from, to, groupBy } = req.query as Record<string, string>;
-    const conds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted")];
+    const conds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById)];
     pushBranchScope(req, conds, purchaseInvoicesTable.branchId, bid);
     if (from) conds.push(gte(purchaseInvoicesTable.invoiceDate, from));
     if (to)   conds.push(lte(purchaseInvoicesTable.invoiceDate, to));
@@ -529,6 +534,7 @@ router.get("/supplier-statement", async (req, res) => {
       eq(purchaseInvoicesTable.companyId, cid),
       eq(purchaseInvoicesTable.supplierId, sid),
       eq(purchaseInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById),
       // Credit invoices accrue; CASH/BANK invoices are shown as TWO paired
       // lines (invoice credit + immediate payment debit) so the statement
       // documents the paid-on-the-spot purchase without changing the balance.
@@ -590,6 +596,7 @@ router.get("/supplier-statement", async (req, res) => {
       eq(purchaseReturnsTable.companyId, cid),
       eq(purchaseReturnsTable.supplierId, sid),
       eq(purchaseReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById),
     ];
     pushBranchScope(req, retConds, purchaseReturnsTable.branchId, bid);
     if (from) retConds.push(gte(purchaseReturnsTable.returnDate, from));
@@ -836,6 +843,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       eq(purchaseInvoicesTable.companyId, cid),
       eq(purchaseInvoicesTable.supplierId, sid),
       eq(purchaseInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById),
       // LC-linked invoices excluded — supplier was paid via the LC, so they
       // must not appear in the supplier ledger.
       sql`${purchaseInvoicesTable.lcId} IS NULL`,
@@ -859,6 +867,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       eq(purchaseReturnsTable.companyId, cid),
       eq(purchaseReturnsTable.supplierId, sid),
       eq(purchaseReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById),
     ];
     pushBranchScope(req, retConds, purchaseReturnsTable.branchId, bid);
     if (from) retConds.push(gte(purchaseReturnsTable.returnDate, from));
@@ -1217,7 +1226,8 @@ router.get("/returns-by-supplier", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
-    const conds = [eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.status, "posted")];
+    const conds = [eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById)];
     pushBranchScope(req, conds, purchaseReturnsTable.branchId, bid);
     if (from) conds.push(gte(purchaseReturnsTable.returnDate, from));
     if (to)   conds.push(lte(purchaseReturnsTable.returnDate, to));
@@ -1338,6 +1348,7 @@ router.get("/variant-net-by-item", async (req, res): Promise<void> => {
     const invoiceConds: any[] = [
       eq(purchaseInvoicesTable.companyId, cid),
       eq(purchaseInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById),
       eq(purchaseInvoiceLinesTable.companyId, cid),
       sql`${purchaseInvoiceLinesTable.itemId} IS NOT NULL`,
     ];
@@ -1348,6 +1359,7 @@ router.get("/variant-net-by-item", async (req, res): Promise<void> => {
     const returnConds: any[] = [
       eq(purchaseReturnsTable.companyId, cid),
       eq(purchaseReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById),
       eq(purchaseReturnLinesTable.companyId, cid),
       sql`${purchaseReturnLinesTable.itemId} IS NOT NULL`,
     ];
@@ -1479,6 +1491,7 @@ router.get("/variant-net-by-supplier", async (req, res): Promise<void> => {
     const invoiceConds: any[] = [
       eq(purchaseInvoicesTable.companyId, cid),
       eq(purchaseInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById),
       eq(purchaseInvoiceLinesTable.companyId, cid),
       sql`${purchaseInvoiceLinesTable.itemId} IS NOT NULL`,
     ];
@@ -1489,6 +1502,7 @@ router.get("/variant-net-by-supplier", async (req, res): Promise<void> => {
     const returnConds: any[] = [
       eq(purchaseReturnsTable.companyId, cid),
       eq(purchaseReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById),
       eq(purchaseReturnLinesTable.companyId, cid),
       sql`${purchaseReturnLinesTable.itemId} IS NOT NULL`,
     ];
@@ -1767,6 +1781,7 @@ router.get("/invoice-payment-status", async (req, res) => {
 
     const invConds: any[] = [
       eq(purchaseInvoicesTable.companyId, cid),
+      ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById),
       eq(purchaseInvoicesTable.status, "posted"),
       eq(purchaseInvoicesTable.paymentType, "credit"),
       sql`${purchaseInvoicesTable.lcId} IS NULL`,
@@ -1791,7 +1806,12 @@ router.get("/invoice-payment-status", async (req, res) => {
         .from(suppliersTable).where(eq(suppliersTable.companyId, cid)),
       db.select({ invId: purchaseReturnsTable.invoiceId, s: sql<string>`coalesce(sum(${purchaseReturnsTable.totalAmount} * coalesce(${purchaseReturnsTable.exchangeRate}, 1)), 0)` })
         .from(purchaseReturnsTable)
-        .where(and(eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.status, "posted"), inArray(purchaseReturnsTable.invoiceId, ids)))
+        .where(and(
+          eq(purchaseReturnsTable.companyId, cid),
+          eq(purchaseReturnsTable.status, "posted"),
+          ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById),
+          inArray(purchaseReturnsTable.invoiceId, ids),
+        ))
         .groupBy(purchaseReturnsTable.invoiceId),
       db.select({
         invId: paymentVoucherLinesTable.purchaseInvoiceId,

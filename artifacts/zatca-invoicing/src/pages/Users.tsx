@@ -34,6 +34,14 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type PosDefaultScreen = "/pos" | "/super" | "/returns" | "/waiter" | "/kitchen";
 type UserPermissions = Record<string, any> & { __posDefaultScreen?: PosDefaultScreen };
+type DataVisibilityPermissions = {
+  salesInvoicesOwn: boolean;
+  salesReturnsOwn: boolean;
+  purchaseInvoicesOwn: boolean;
+  purchaseReturnsOwn: boolean;
+  salesReportsOwn: boolean;
+  purchaseReportsOwn: boolean;
+};
 
 const POS_DEFAULT_SCREENS: Array<{
   path: PosDefaultScreen;
@@ -56,6 +64,7 @@ type UserRow = {
   nameAr: string | null;
   nameEn: string | null;
   permissions: UserPermissions | null;
+  dataVisibilityPermissions?: Partial<DataVisibilityPermissions> | null;
   allowWebLogin: boolean;
   allowMobileLogin: boolean;
   viewAllBranches: boolean;
@@ -213,6 +222,14 @@ const emptyForm = () => ({
   // into the user's sidebar. (Was viewOnlyPermissions() which silently granted
   // view on every module and made "I picked HR only" show every menu.)
   permissions: emptyPermissions() as UserPermissions,
+  dataVisibilityPermissions: {
+    salesInvoicesOwn: false,
+    salesReturnsOwn: false,
+    purchaseInvoicesOwn: false,
+    purchaseReturnsOwn: false,
+    salesReportsOwn: false,
+    purchaseReportsOwn: false,
+  } as DataVisibilityPermissions,
   // All-checked by default — matches the server's back-compat "allowed unless
   // explicitly denied" semantics.
   postingPermissions: seedPostingPerms(),
@@ -447,6 +464,14 @@ export default function Users() {
         // revokes this module. Do not create a denial just by re-saving.
         ...(u.role === "admin" ? {internal_control: {...u.permissions?.internal_control,view:u.permissions?.internal_control?.view !== false}} : {}),
       },
+      dataVisibilityPermissions: {
+        salesInvoicesOwn: !!u.dataVisibilityPermissions?.salesInvoicesOwn,
+        salesReturnsOwn: !!u.dataVisibilityPermissions?.salesReturnsOwn,
+        purchaseInvoicesOwn: !!u.dataVisibilityPermissions?.purchaseInvoicesOwn,
+        purchaseReturnsOwn: !!u.dataVisibilityPermissions?.purchaseReturnsOwn,
+        salesReportsOwn: !!u.dataVisibilityPermissions?.salesReportsOwn,
+        purchaseReportsOwn: !!u.dataVisibilityPermissions?.purchaseReportsOwn,
+      },
       postingPermissions: seedPostingPerms(u.postingPermissions),
       mobilePermissions: seedMobilePerms((u as any).mobilePermissions),
       // Approval workflow fields — coerce numeric-string cap to a string the
@@ -487,6 +512,7 @@ export default function Users() {
         scopeOwnCustomersOnly: form.scopeOwnCustomersOnly,
         branchIds: form.branchIds,
         permissions: form.permissions,
+        dataVisibilityPermissions: form.dataVisibilityPermissions,
         postingPermissions: form.postingPermissions,
         mobilePermissions: form.mobilePermissions,
         // Approval workflow — server clamps these too as a safety net.
@@ -810,10 +836,11 @@ export default function Users() {
 
           <CardContent className="pt-5">
             <Tabs defaultValue="info" className="w-full" dir={isRtl ? "rtl" : "ltr"}>
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-7">
+              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:grid-cols-8">
                 <TabsTrigger value="info">{t("users.tabInfo")}</TabsTrigger>
                 <TabsTrigger value="branches">{t("users.tabBranches", { count: form.branchIds.length })}</TabsTrigger>
                 <TabsTrigger value="permissions">{t("users.tabPermissions")}</TabsTrigger>
+                <TabsTrigger value="data-visibility">نطاق الرؤية</TabsTrigger>
                 <TabsTrigger value="posting" data-testid="tab-posting" className="gap-1.5">
                   <BookCheck className="h-3.5 w-3.5" />
                   {t("users.tabPosting")}
@@ -901,6 +928,37 @@ export default function Users() {
                     <Label>{t("users.isActive")}</Label>
                   </div>
                 </div>
+              </TabsContent>
+
+              <TabsContent value="data-visibility" className="space-y-4 pt-4" data-testid="user-data-visibility-tab">
+                <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950 dark:bg-sky-950/30 dark:text-sky-100">
+                  عند تفعيل أي خيار، يرى المستخدم مستنداته وتقاريره فقط. الإعدادات غير المفعلة تُبقي السلوك الحالي كما هو، والمدير يرى بيانات الشركة كاملة دائمًا.
+                </div>
+                {([
+                  ["salesInvoicesOwn", "فواتير المبيعات"],
+                  ["salesReturnsOwn", "مرتجعات المبيعات"],
+                  ["purchaseInvoicesOwn", "فواتير المشتريات"],
+                  ["purchaseReturnsOwn", "مرتجعات المشتريات"],
+                  ["salesReportsOwn", "تقارير المبيعات"],
+                  ["purchaseReportsOwn", "تقارير المشتريات"],
+                ] as const).map(([key, label]) => (
+                  <label key={key} className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/40">
+                    <Checkbox
+                      checked={form.dataVisibilityPermissions[key]}
+                      onCheckedChange={value => setForm(f => ({
+                        ...f,
+                        dataVisibilityPermissions: { ...f.dataVisibilityPermissions, [key]: value === true },
+                      }))}
+                      data-testid={`visibility-${key}`}
+                    />
+                    <span className="space-y-0.5">
+                      <span className="block font-medium">{label} — يرى ما أنشأه فقط</span>
+                      <span className="block text-xs text-muted-foreground">
+                        يشمل تقييد العرض من الخادم، ولا يؤثر على مستخدمين آخرين أو على المدير.
+                      </span>
+                    </span>
+                  </label>
+                ))}
               </TabsContent>
 
               {/* Branches Tab */}

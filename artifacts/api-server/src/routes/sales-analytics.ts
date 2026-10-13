@@ -21,6 +21,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
+import { ownDocumentFilter } from "../lib/documentVisibility.js";
 import { and, eq, sql, gte, lte, lt, asc, desc, inArray, notInArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, pushRegionScope } from "../middleware/auth.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
@@ -360,7 +361,8 @@ router.get("/by-customer", async (req, res) => {
     const customerIdNum = customerIdRaw ? Number(customerIdRaw) : NaN;
     const filterCustomerId = Number.isFinite(customerIdNum) ? customerIdNum : undefined;
 
-    const invConds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
+    const invConds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById)];
     pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(salesInvoicesTable.invoiceDate, to));
@@ -378,7 +380,8 @@ router.get("/by-customer", async (req, res) => {
       .where(and(...invConds))
       .groupBy(salesInvoicesTable.customerId);
 
-    const retConds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
+    const retConds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById)];
     pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
     if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
     if (to)   retConds.push(lte(salesReturnsTable.returnDate, to));
@@ -475,7 +478,8 @@ router.get("/by-item", async (req, res) => {
     const bid = getBid(req);
     const rid = getRid(req);
     const { from, to } = req.query as Record<string, string>;
-    const conds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
+    const conds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById)];
     pushBranchScope(req, conds, salesInvoicesTable.branchId, bid);
     await pushRegionScope(conds, salesInvoicesTable.branchId, cid, rid);
     if (from) conds.push(gte(salesInvoicesTable.invoiceDate, from));
@@ -517,7 +521,8 @@ router.get("/by-period", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { from, to, groupBy } = req.query as Record<string, string>;
-    const conds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
+    const conds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById)];
     pushBranchScope(req, conds, salesInvoicesTable.branchId, bid);
     if (from) conds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   conds.push(lte(salesInvoicesTable.invoiceDate, to));
@@ -642,6 +647,7 @@ router.get("/customer-statement", async (req, res) => {
 
     const invConds: any[] = [
       eq(salesInvoicesTable.companyId, cid),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
       eq(salesInvoicesTable.customerId, ccid),
       eq(salesInvoicesTable.status, "posted"),
     ];
@@ -692,6 +698,7 @@ router.get("/customer-statement", async (req, res) => {
 
     const retConds: any[] = [
       eq(salesReturnsTable.companyId, cid),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
       eq(salesReturnsTable.customerId, ccid),
       eq(salesReturnsTable.status, "posted"),
     ];
@@ -930,6 +937,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
     // balance still tracks A/R correctly (they self-settle at point of sale).
     const invConds: any[] = [
       eq(salesInvoicesTable.companyId, cid),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
       eq(salesInvoicesTable.customerId, ccid),
       eq(salesInvoicesTable.status, "posted"),
     ];
@@ -947,6 +955,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
 
     const retConds: any[] = [
       eq(salesReturnsTable.companyId, cid),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
       eq(salesReturnsTable.customerId, ccid),
       eq(salesReturnsTable.status, "posted"),
     ];
@@ -1323,7 +1332,8 @@ router.get("/returns-by-customer", async (req, res) => {
     const customerIdRaw = (req.query.customerId as string | undefined) ?? "";
     const customerIdNum = customerIdRaw ? Number(customerIdRaw) : NaN;
     const filterCustomerId = Number.isFinite(customerIdNum) ? customerIdNum : undefined;
-    const conds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
+    const conds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById)];
     pushBranchScope(req, conds, salesReturnsTable.branchId, bid);
     await pushRegionScope(conds, salesReturnsTable.branchId, cid, rid);
     if (from) conds.push(gte(salesReturnsTable.returnDate, from));
@@ -1401,7 +1411,9 @@ router.get("/daily-report", async (req, res) => {
     const bid = getBid(req);
     const date = String(req.query.date || new Date().toISOString().slice(0, 10));
     const rawUserId = String(req.query.userId ?? "").trim();
-    const requestedUserId = rawUserId ? Number(rawUserId) : undefined;
+    const ownReports = req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin"
+      && req.authUser?.permissions?.__dataVisibility?.salesReportsOwn === true;
+    const requestedUserId = ownReports ? Number(req.authUser?.id) : (rawUserId ? Number(rawUserId) : undefined);
     if (rawUserId && (!Number.isSafeInteger(requestedUserId) || Number(requestedUserId) <= 0)) {
       res.status(400).json({ error: "مستخدم غير صحيح" });
       return;
@@ -1414,7 +1426,7 @@ router.get("/daily-report", async (req, res) => {
         username: usersTable.username,
       })
       .from(usersTable)
-      .where(eq(usersTable.companyId, cid));
+      .where(and(eq(usersTable.companyId, cid), ownReports ? eq(usersTable.id, Number(req.authUser?.id)) : undefined));
     if (requestedUserId && !companyUsers.some((u) => u.id === requestedUserId)) {
       res.status(400).json({ error: "المستخدم لا يتبع الشركة الحالية" });
       return;
@@ -1467,6 +1479,7 @@ router.get("/daily-report", async (req, res) => {
       .from(salesInvoicesTable)
       .where(and(
         eq(salesInvoicesTable.companyId, cid),
+        ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
         eq(salesInvoicesTable.invoiceDate, date),
         ...userFilter,
         ...invSourceFilter,
@@ -1583,6 +1596,7 @@ router.get("/daily-report", async (req, res) => {
         eq(receiptVouchersTable.date, date),
         eq(receiptVouchersTable.status, "posted"),
         eq(receiptVouchersTable.entityType, "customer"),
+        ownReports ? sql`false` : undefined,
         ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
       .orderBy(asc(receiptVouchersTable.id));
@@ -1750,7 +1764,7 @@ router.get("/daily-report", async (req, res) => {
     res.json({
       date,
       users: companyUsers,
-      receiptsAreCompanyWide: !!requestedUserId,
+      receiptsAreCompanyWide: !!requestedUserId && !ownReports,
       summary,
       invoices: invoiceRows,
       topItems,
@@ -2419,7 +2433,8 @@ router.get("/profitability", async (req, res) => {
     const itmId  = itemId     ? Number(itemId)     : undefined;
 
     // ─── 1) Invoice-line revenue (excl VAT) ──────────────────────────────────
-    const invConds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
+    const invConds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById)];
     pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from)   invConds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)     invConds.push(lte(salesInvoicesTable.invoiceDate, to));
@@ -2480,7 +2495,8 @@ router.get("/profitability", async (req, res) => {
     for (const r of invCogsAgg) cogsByInv.set(r.invoiceId, Number(r.cogs));
 
     // ─── 3) Sales-return revenue (credit, excl VAT) — netted in cust/branch only ─
-    const retConds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
+    const retConds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById)];
     pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
     if (from)   retConds.push(gte(salesReturnsTable.returnDate, from));
     if (to)     retConds.push(lte(salesReturnsTable.returnDate, to));
@@ -2890,6 +2906,7 @@ router.get("/invoice-payment-status", async (req, res) => {
 
     const invConds: any[] = [
       eq(salesInvoicesTable.companyId, cid),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
       eq(salesInvoicesTable.status, "posted"),
       eq(salesInvoicesTable.paymentType, "credit"),
       ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
@@ -2912,7 +2929,12 @@ router.get("/invoice-payment-status", async (req, res) => {
         .from(customersTable).where(eq(customersTable.companyId, cid)),
       db.select({ invId: salesReturnsTable.invoiceId, s: sql<string>`coalesce(sum(${salesReturnsTable.totalAmount} * coalesce(${salesReturnsTable.exchangeRate}, 1)), 0)` })
         .from(salesReturnsTable)
-        .where(and(eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted"), inArray(salesReturnsTable.invoiceId, ids)))
+        .where(and(
+          eq(salesReturnsTable.companyId, cid),
+          eq(salesReturnsTable.status, "posted"),
+          ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
+          inArray(salesReturnsTable.invoiceId, ids),
+        ))
         .groupBy(salesReturnsTable.invoiceId),
       db.select({
         invId: receiptVoucherLinesTable.salesInvoiceId,

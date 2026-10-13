@@ -30,6 +30,15 @@ function sanitizePostingPermissions(raw: any): Record<string, { post: boolean; u
   return Object.keys(out).length ? out : null;
 }
 
+function sanitizeDataVisibilityPermissions(raw: any): Record<string, boolean> {
+  const keys = [
+    "salesInvoicesOwn", "salesReturnsOwn", "purchaseInvoicesOwn",
+    "purchaseReturnsOwn", "salesReportsOwn", "purchaseReportsOwn",
+  ] as const;
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  return Object.fromEntries(keys.map(key => [key, source[key] === true]));
+}
+
 router.use(extractAuth);
 
 // ─── Plan-based user quota ───────────────────────────────────────
@@ -141,7 +150,16 @@ router.get("/", async (req, res) => {
       byUser.get(l.userId)!.push(l.branchId);
     });
 
-    res.json(rows.map(r => ({ ...r, branchIds: byUser.get(r.id) ?? [] })));
+    res.json(rows.map(r => {
+      const permissions = (r.permissions ?? {}) as Record<string, any>;
+      const { __dataVisibility, ...publicPermissions } = permissions;
+      return {
+        ...r,
+        permissions: publicPermissions,
+        dataVisibilityPermissions: __dataVisibility ?? {},
+        branchIds: byUser.get(r.id) ?? [],
+      };
+    }));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -156,7 +174,14 @@ router.get("/:id", async (req, res) => {
     if (!u) { res.status(404).json({ error: "غير موجود" }); return; }
     const links = await db.select().from(userBranchesTable).where(eq(userBranchesTable.userId, id));
     const { passwordHash: _ph, sessionToken: _st, sessionId: _si, ...safe } = u as any;
-    res.json({ ...safe, branchIds: links.map(l => l.branchId) });
+    const storedPermissions = (safe.permissions ?? {}) as Record<string, any>;
+    const { __dataVisibility, ...publicPermissions } = storedPermissions;
+    res.json({
+      ...safe,
+      permissions: publicPermissions,
+      dataVisibilityPermissions: sanitizeDataVisibilityPermissions(__dataVisibility),
+      branchIds: links.map(l => l.branchId),
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -231,7 +256,10 @@ router.post("/", async (req, res) => {
       code: code || null,
       nameAr: nameAr || null,
       nameEn: nameEn || null,
-      permissions: permissions ?? null,
+      permissions: {
+        ...(permissions && typeof permissions === "object" ? permissions : {}),
+        __dataVisibility: sanitizeDataVisibilityPermissions(req.body?.dataVisibilityPermissions),
+      },
       // Per-user POST/UNPOST rights (صلاحيات الترحيل وفك الترحيل). NULL =
       // all allowed (back-compat); see lib/postingRights.ts.
       postingPermissions: sanitizePostingPermissions(req.body?.postingPermissions),
@@ -340,7 +368,18 @@ router.patch("/:id", async (req, res) => {
     if (typeof req.body?.scopeOwnCustomersOnly === "boolean") {
       update.scopeOwnCustomersOnly = req.body.scopeOwnCustomersOnly;
     }
-    if (permissions !== undefined) update.permissions = permissions;
+    if (permissions !== undefined || req.body?.dataVisibilityPermissions !== undefined) {
+      const currentPermissions = (existing.permissions ?? {}) as Record<string, any>;
+      const nextPermissions = permissions !== undefined && permissions && typeof permissions === "object"
+        ? { ...permissions }
+        : { ...currentPermissions };
+      if (req.body?.dataVisibilityPermissions !== undefined) {
+        nextPermissions.__dataVisibility = sanitizeDataVisibilityPermissions(req.body.dataVisibilityPermissions);
+      } else if (currentPermissions.__dataVisibility !== undefined) {
+        nextPermissions.__dataVisibility = currentPermissions.__dataVisibility;
+      }
+      update.permissions = nextPermissions;
+    }
     if (req.body?.postingPermissions !== undefined) {
       update.postingPermissions = sanitizePostingPermissions(req.body.postingPermissions);
     }

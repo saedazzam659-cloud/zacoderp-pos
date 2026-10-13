@@ -4,6 +4,7 @@ import { db, purchaseInvoicesTable, purchaseInvoiceLinesTable, purchaseReturnsTa
   purchaseReturnLinesTable, suppliersTable, itemsTable } from "@workspace/db";
 import { extractAuth, pushBranchScope, resolveCompanyId } from "../middleware/auth.js";
 import { requireAdditionalOperationalReport } from "../middleware/permissions.js";
+import { ownDocumentFilter } from "../lib/documentVisibility.js";
 
 const IDS = new Set([
   "purchase_analysis", "purchase_cost_summary", "purchase_price_history",
@@ -27,6 +28,7 @@ const period = (date: string, grain: string) => {
 async function invoiceRows(req: Request, cid: number, postedOnly: boolean) {
   const q: any = req.query;
   const conditions: any[] = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoiceLinesTable.companyId, cid)];
+  conditions.push(...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById));
   if (postedOnly) conditions.push(eq(purchaseInvoicesTable.status, "posted"));
   if (str(q.fromDate)) conditions.push(gte(purchaseInvoicesTable.invoiceDate, str(q.fromDate)!));
   if (str(q.toDate)) conditions.push(lte(purchaseInvoicesTable.invoiceDate, str(q.toDate)!));
@@ -64,6 +66,7 @@ async function invoiceRows(req: Request, cid: number, postedOnly: boolean) {
 async function returnRows(req: Request, cid: number) {
   const q: any = req.query;
   const conditions: any[] = [eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnLinesTable.companyId, cid), eq(purchaseReturnsTable.status, "posted")];
+  conditions.push(...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById));
   if (str(q.fromDate)) conditions.push(gte(purchaseReturnsTable.returnDate, str(q.fromDate)!));
   if (str(q.toDate)) conditions.push(lte(purchaseReturnsTable.returnDate, str(q.toDate)!));
   if (num(q.supplierId)) conditions.push(eq(purchaseReturnsTable.supplierId, num(q.supplierId)!));
@@ -107,6 +110,7 @@ router.get("/:reportId", guard, (req, res, next) => requireAdditionalOperational
       const all = await db.select({ id: suppliersTable.id, name: suppliersTable.nameAr }).from(suppliersTable).where(eq(suppliersTable.companyId, cid));
       const rows = await invoiceRows(req, cid, true), active = new Set(rows.map(r => r.supplierId));
       const historyFilters: any[] = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted")];
+       historyFilters.push(...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById));
       if (str(q.toDate)) historyFilters.push(lte(purchaseInvoicesTable.invoiceDate, str(q.toDate)!));
       if (num(q.supplierId)) historyFilters.push(eq(purchaseInvoicesTable.supplierId, num(q.supplierId)!));
       pushBranchScope(req, historyFilters, purchaseInvoicesTable.branchId, q.branchId);

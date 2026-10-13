@@ -6,6 +6,7 @@ import {
 } from "@workspace/db";
 import { extractAuth, pushBranchScope, resolveCompanyId } from "../middleware/auth.js";
 import { requireAdditionalOperationalReport } from "../middleware/permissions.js";
+import { ownDocumentFilter } from "../lib/documentVisibility.js";
 
 const router = Router();
 const REPORT_IDS = [
@@ -27,6 +28,7 @@ function company(req: Request) {
 function invoiceFilters(req: Request, companyId: number, posted = true, query: Record<string, unknown> = req.query as any) {
   const q = query as any;
   const f: any[] = [eq(salesInvoicesTable.companyId, companyId)];
+  f.push(...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById));
   if (posted) f.push(eq(salesInvoicesTable.status, "posted"));
   else if (text(q.status)) f.push(eq(salesInvoicesTable.status, text(q.status)! as any));
   if (text(q.fromDate)) f.push(gte(salesInvoicesTable.invoiceDate, text(q.fromDate)!));
@@ -119,6 +121,7 @@ async function reportData(id: ReportId, req: Request, cid: number): Promise<{ ro
   }
   if (id === "returns_detail") {
     const f: any[] = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
+    f.push(...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById));
     if (text(q.fromDate)) f.push(gte(salesReturnsTable.returnDate, text(q.fromDate)!));
     if (text(q.toDate)) f.push(lte(salesReturnsTable.returnDate, text(q.toDate)!));
     if (number(q.customerId)) f.push(eq(salesReturnsTable.customerId, number(q.customerId)!));

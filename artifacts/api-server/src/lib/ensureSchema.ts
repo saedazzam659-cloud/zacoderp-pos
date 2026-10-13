@@ -3284,6 +3284,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS posted_by_id INTEGER` },
     { label: "alter purchase_invoices add postedAt",
       sql:   `ALTER TABLE purchase_invoices ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP` },
+    { label: "alter purchase_returns add createdById",
+      sql:   `ALTER TABLE purchase_returns ADD COLUMN IF NOT EXISTS created_by_id INTEGER` },
 
     { label: "alter goods_receipts add createdById",
       sql:   `ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS created_by_id INTEGER` },

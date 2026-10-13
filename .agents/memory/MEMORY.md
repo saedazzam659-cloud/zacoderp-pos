@@ -63,3 +63,4 @@
 - [Sales negative-stock precedence](sales-negative-stock-precedence.md) — company switch is the master; warehouse can block, invoice can override warehouse only.
 - [Item catalog performance](item-catalog-performance.md) — large catalogs need bounded tenant-scoped picker search; preserve full-list behavior for reports.
 - [Company document field controls](company-document-field-controls.md) — keep company controls off by default, SuperAdmin-gated, and company-wide when enabled.
+- [Document visibility scope](document-visibility-scope.md) — per-user own-document visibility is opt-in; company admins retain company-wide access.

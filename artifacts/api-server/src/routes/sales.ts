@@ -10,6 +10,7 @@ import { db, getActiveExternalDb } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
+import { ownDocumentFilter } from "../lib/documentVisibility.js";
 import {
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable, salesReturnLinesTable,
@@ -1549,6 +1550,7 @@ router.get("/sales-invoices", requirePermission("sales_invoices", "view"), async
       [];
     const baseWhere = and(
       eq(salesInvoicesTable.companyId, cid),
+      ...ownDocumentFilter(req, "salesInvoicesOwn", salesInvoicesTable.createdById),
       ...sourceFilter,
       // Accept multi-branch filter (?branchIds=1,2,3 or repeated
       // ?branchIds=1&branchIds=2) for managers with view-all-branches.
@@ -1949,6 +1951,7 @@ router.get("/sales-invoices/:id", requirePermission("sales_invoices", "view"), a
       .where(and(
         eq(salesInvoicesTable.id, id),
         eq(salesInvoicesTable.companyId, cid),
+        ...ownDocumentFilter(req, "salesInvoicesOwn", salesInvoicesTable.createdById),
         ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
       ));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
@@ -4740,6 +4743,7 @@ router.get("/sales-returns", requirePermission("sales_returns", "view"), async (
     const rows = await db.select().from(salesReturnsTable)
       .where(and(
         eq(salesReturnsTable.companyId, cid),
+        ...ownDocumentFilter(req, "salesReturnsOwn", salesReturnsTable.createdById),
         ...sourceFilter,
         ...multiBranchScopeSpread(req, salesReturnsTable.branchId, req.query.branchIds ?? req.query.branchId),
       ))
@@ -4913,6 +4917,7 @@ router.get("/sales-returns/:id", requirePermission("sales_returns", "view"), asy
       .where(and(
         eq(salesReturnsTable.id, id),
         cid ? eq(salesReturnsTable.companyId, cid) : sql`true`,
+        ...ownDocumentFilter(req, "salesReturnsOwn", salesReturnsTable.createdById),
         // Branch isolation: a branch-restricted user must not read another
         // branch's return by guessing its id (mirrors invoice detail).
         ...multiBranchScopeSpread(req, salesReturnsTable.branchId, undefined),

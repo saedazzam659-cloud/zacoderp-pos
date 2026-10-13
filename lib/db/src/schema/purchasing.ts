@@ -274,6 +274,7 @@ export const purchaseReturnsTable = pgTable("purchase_returns", {
   discountAccountId:  integer("discount_account_id"),
   journalEntryId:     integer("journal_entry_id"),
   notes:         text("notes"),
+  createdById:   integer("created_by_id"),
   createdAt:     timestamp("created_at").defaultNow().notNull(),
   updatedAt:     timestamp("updated_at").defaultNow().notNull(),
 });

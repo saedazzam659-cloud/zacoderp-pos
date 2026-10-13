@@ -8,6 +8,7 @@ import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
+import { ownDocumentFilter } from "../lib/documentVisibility.js";
 import {
   supplierGroupsTable, lettersOfCreditTable, lcExpensesTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
@@ -1446,6 +1447,7 @@ router.get("/purchase-invoices", async (req, res) => {
     const rows = await db.select().from(purchaseInvoicesTable)
       .where(and(
         eq(purchaseInvoicesTable.companyId, cid),
+        ...ownDocumentFilter(req, "purchaseInvoicesOwn", purchaseInvoicesTable.createdById),
         ...multiBranchScopeSpread(req, purchaseInvoicesTable.branchId, req.query.branchIds ?? req.query.branchId),
       ))
       .orderBy(desc(purchaseInvoicesTable.invoiceDate));
@@ -1570,7 +1572,11 @@ router.get("/purchase-invoices/:id", async (req, res) => {
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
     const id = Number(req.params.id);
     const [inv] = await db.select().from(purchaseInvoicesTable)
-      .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
+      .where(and(
+        eq(purchaseInvoicesTable.id, id),
+        eq(purchaseInvoicesTable.companyId, cid),
+        ...ownDocumentFilter(req, "purchaseInvoicesOwn", purchaseInvoicesTable.createdById),
+      ));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     const lines = await db.select().from(purchaseInvoiceLinesTable)
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id))
@@ -3824,6 +3830,7 @@ router.get("/purchase-returns", async (req, res) => {
     const rows = await db.select().from(purchaseReturnsTable)
       .where(and(
         eq(purchaseReturnsTable.companyId, cid),
+        ...ownDocumentFilter(req, "purchaseReturnsOwn", purchaseReturnsTable.createdById),
         ...multiBranchScopeSpread(req, purchaseReturnsTable.branchId, req.query.branchIds ?? req.query.branchId),
       ))
       .orderBy(desc(purchaseReturnsTable.returnDate));
@@ -3860,7 +3867,11 @@ router.get("/purchase-returns/:id", async (req, res) => {
     const cid = getCid(req);
     const id = Number(req.params.id);
     const [ret] = await db.select().from(purchaseReturnsTable)
-      .where(and(eq(purchaseReturnsTable.id, id), cid ? eq(purchaseReturnsTable.companyId, cid) : sql`true`));
+      .where(and(
+        eq(purchaseReturnsTable.id, id),
+        cid ? eq(purchaseReturnsTable.companyId, cid) : sql`true`,
+        ...ownDocumentFilter(req, "purchaseReturnsOwn", purchaseReturnsTable.createdById),
+      ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     const lines = await db.select().from(purchaseReturnLinesTable)
       .where(eq(purchaseReturnLinesTable.returnId, id))
@@ -3979,6 +3990,7 @@ router.post("/purchase-returns", async (req, res) => {
         taxId:              taxId ? Number(taxId) : null,
         postVariance: postVariance === true || postVariance === "true",
         status: "draft", notes: notes || null,
+        createdById: req.authUser?.id ?? null,
       }, tx);
       if (lines?.length) {
         const resolvedRate = await resolveTaxRate(cid, taxId ? Number(taxId) : null);
