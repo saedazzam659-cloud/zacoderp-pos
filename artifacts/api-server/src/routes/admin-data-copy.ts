@@ -65,6 +65,9 @@ router.post("/master-data/preview", requireSuperAdmin, async (req, res): Promise
   const rawTargetAgentId = req.body?.targetAgentInstanceId;
   const targetAgentInstanceId = rawTargetAgentId == null || rawTargetAgentId === ""
     ? null : Number(rawTargetAgentId);
+  const rawSourceAgentId = req.body?.sourceAgentInstanceId;
+  const sourceAgentInstanceId = rawSourceAgentId == null || rawSourceAgentId === ""
+    ? null : Number(rawSourceAgentId);
   if (!Number.isInteger(sourceCompanyId) || !Number.isInteger(targetCompanyId)) {
     res.status(400).json({ error: "اختر شركة مصدر وشركة هدف" });
     return;
@@ -73,8 +76,12 @@ router.post("/master-data/preview", requireSuperAdmin, async (req, res): Promise
     res.status(400).json({ error: "قاعدة بيانات الشركة الهدف غير صالحة" });
     return;
   }
+  if (sourceAgentInstanceId != null && (!Number.isInteger(sourceAgentInstanceId) || sourceAgentInstanceId <= 0)) {
+    res.status(400).json({ error: "قاعدة بيانات الشركة المصدر غير صالحة" });
+    return;
+  }
   try {
-    res.json(await previewCompanyCustomerDuplicates(sourceCompanyId, targetCompanyId, targetAgentInstanceId));
+    res.json(await previewCompanyCustomerDuplicates(sourceCompanyId, targetCompanyId, targetAgentInstanceId, sourceAgentInstanceId));
   } catch (error: any) {
     res.status(400).json({ error: error?.message ?? "تعذر فحص تعارضات العملاء" });
   }
@@ -87,6 +94,9 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
   const rawTargetAgentId = req.body?.targetAgentInstanceId;
   const targetAgentInstanceId = rawTargetAgentId == null || rawTargetAgentId === ""
     ? null : Number(rawTargetAgentId);
+  const rawSourceAgentId = req.body?.sourceAgentInstanceId;
+  const sourceAgentInstanceId = rawSourceAgentId == null || rawSourceAgentId === ""
+    ? null : Number(rawSourceAgentId);
   const rawCustomerOverrides = req.body?.customerOverrides;
   const customerOverrides: Record<number, any> = {};
   if (rawCustomerOverrides && typeof rawCustomerOverrides === "object" && !Array.isArray(rawCustomerOverrides)) {
@@ -112,6 +122,10 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
     res.status(400).json({ error: "قاعدة بيانات الشركة الهدف غير صالحة" });
     return;
   }
+  if (sourceAgentInstanceId != null && (!Number.isInteger(sourceAgentInstanceId) || sourceAgentInstanceId <= 0)) {
+    res.status(400).json({ error: "قاعدة بيانات الشركة المصدر غير صالحة" });
+    return;
+  }
   res.status(200);
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -130,6 +144,7 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
       targetAgentInstanceId,
       (progress) => send({ type: "progress", ...progress }),
       customerOverrides,
+      sourceAgentInstanceId,
     );
     const ip = loginIp(req);
     const ua = req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null;
@@ -139,7 +154,7 @@ router.post("/master-data", requireSuperAdmin, async (req, res): Promise<void> =
       method: "POST", path: "/api/admin/data-copy/master-data",
       statusCode: 200, ip, userAgent: ua,
       metadata: {
-        sourceCompanyId, targetCompanyId, targetAgentInstanceId,
+        sourceCompanyId, targetCompanyId, sourceAgentInstanceId, targetAgentInstanceId,
         conflictPolicy: "customer_name_unique_vat_reuse_allowed",
         reviewedCustomerIds: Object.keys(customerOverrides).map(Number),
         correctedCustomerIds: Object.entries(customerOverrides)

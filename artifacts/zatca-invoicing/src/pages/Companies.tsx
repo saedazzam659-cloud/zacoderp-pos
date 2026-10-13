@@ -176,6 +176,7 @@ export default function Companies() {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           sourceCompanyId: Number(masterCopySource.id),
+          sourceAgentInstanceId: masterCopySource.agentInstanceId ?? null,
           targetCompanyId: Number(targetIdText),
           targetAgentInstanceId,
         }),
@@ -221,6 +222,7 @@ export default function Companies() {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           sourceCompanyId: Number(masterCopySource.id),
+          sourceAgentInstanceId: masterCopySource.agentInstanceId ?? null,
           targetCompanyId,
           targetAgentInstanceId,
           customerOverrides: customerConflictDecisions,
@@ -865,11 +867,11 @@ export default function Companies() {
                         onClick={() => openCodeEditor(company)} data-testid={`button-change-company-code-${company.id}`}>
                         <Pencil className="h-3.5 w-3.5" />تغيير كود الشركة
                       </Button>}
-                      {isSuperAdmin && !company.agentInstanceId && (
+                      {isSuperAdmin && (
                         <Button
                           size="sm" variant="outline" className="gap-1.5 h-8"
                           onClick={(event) => { event.stopPropagation(); openMasterDataCopy(company); }}
-                          data-testid={`button-copy-master-data-${company.id}`}
+                          data-testid={`button-copy-master-data-${company.agentInstanceId ?? "central"}-${company.id}`}
                         >
                           <Copy className="h-3.5 w-3.5" />نسخ بيانات الشركة بدون أرصدة
                         </Button>
@@ -979,7 +981,9 @@ export default function Companies() {
               <Copy className="h-5 w-5 text-primary" />نسخ بيانات الشركة بدون أرصدة
             </DialogTitle>
             <DialogDescription className="text-right">
-              المصدر: <strong>{masterCopySource?.nameAr}</strong>. ستُضاف السجلات الناقصة فقط، وستُترك السجلات الموجودة كما هي.
+              المصدر: <strong>{masterCopySource?.nameAr}</strong>
+              {masterCopySource?.agentInstanceId ? ` — الوكيل: ${masterCopySource.agentName ?? `#${masterCopySource.agentInstanceId}`}` : " — مركزي"}.
+              ستُضاف السجلات الناقصة فقط، وستُترك السجلات الموجودة كما هي.
               للعملاء، تتم المطابقة بالرقم الضريبي، أو بالاسم العربي عند غياب الرقم الضريبي؛ وقد يشمل التخطي سجلات مكررة داخل المصدر.
             </DialogDescription>
           </DialogHeader>
@@ -998,9 +1002,10 @@ export default function Companies() {
                   disabled={masterCopyBusy || customerConflictLoading}
                 >
                   <option value="">اختر الشركة الهدف</option>
-                  {companies.filter((row: any) =>
-                    (row.agentInstanceId != null || Number(row.id) !== Number(masterCopySource?.id))
-                  ).map((row: any) => (
+                  {companies.filter((row: any) => !(
+                    Number(row.id) === Number(masterCopySource?.id)
+                    && (row.agentInstanceId ?? null) === (masterCopySource?.agentInstanceId ?? null)
+                  )).map((row: any) => (
                     <option key={`${row.agentInstanceId ?? "central"}:${row.id}`} value={`${row.agentInstanceId ?? "central"}:${row.id}`}>
                       {row.nameAr} — {row.code || row.id}{row.agentInstanceId ? ` (وكيل: ${row.agentName ?? `#${row.agentInstanceId}`})` : " (مركزي)"}
                     </option>
