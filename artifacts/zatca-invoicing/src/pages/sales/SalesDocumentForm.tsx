@@ -1956,7 +1956,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       ];
   const itemComboItems = annotateItemCombo([
     { value: "", label: t("salesDocForm.selectItem") },
-    ...inventoryItems.map((i: any) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? i.nameEn ?? `#${i.id}` })),
+    ...inventoryItems.map((i: any) => ({
+      value: String(i.id),
+      code: i.code ?? undefined,
+      label: isRtl ? (i.nameAr ?? i.nameEn ?? `#${i.id}`) : (i.nameEn ?? i.nameAr ?? `#${i.id}`),
+      labelEn: (isRtl ? i.nameEn : i.nameAr) ?? undefined,
+    })),
   ], usageModes);
   const unitItems = units
     .filter((u: any) => u.isActive !== false)

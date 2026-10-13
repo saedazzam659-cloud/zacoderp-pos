@@ -1662,7 +1662,13 @@ router.get("/items/search", async (req, res) => {
     .where(and(...clauses))
     .orderBy(
       ...(query
-        ? [sql`CASE WHEN ${itemsTable.barcode} = ${query} THEN 0 WHEN ${itemsTable.code} = ${query} THEN 1 ELSE 2 END`]
+        ? [sql`CASE
+          WHEN ${itemsTable.code} = ${query} OR ${itemsTable.barcode} = ${query} THEN 0
+          WHEN ${itemsTable.nameAr} ILIKE ${query} OR ${itemsTable.nameEn} ILIKE ${query} THEN 1
+          WHEN ${itemsTable.code} ILIKE ${`${query}%`} OR ${itemsTable.barcode} ILIKE ${`${query}%`} THEN 2
+          WHEN ${itemsTable.nameAr} ILIKE ${`${query}%`} OR ${itemsTable.nameEn} ILIKE ${`${query}%`} THEN 3
+          ELSE 4
+        END`]
         : []),
       asc(itemsTable.code),
     )

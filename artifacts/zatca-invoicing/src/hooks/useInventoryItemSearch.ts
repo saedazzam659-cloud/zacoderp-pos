@@ -44,7 +44,7 @@ export function useInventoryItemSearch(
   const searchQuery = useQuery<any[]>({
     queryKey: ["inventory-items", companyId, "search", debouncedSearch],
     queryFn: () => fetchJsonArray(
-      `${API}/api/inventory/items/search?${companyQuery}includeHidden=1&q=${encodeURIComponent(debouncedSearch)}&limit=40`,
+      `${API}/api/inventory/items/search?${companyQuery}includeHidden=1&q=${encodeURIComponent(debouncedSearch)}&limit=50`,
       headers,
     ),
     enabled,

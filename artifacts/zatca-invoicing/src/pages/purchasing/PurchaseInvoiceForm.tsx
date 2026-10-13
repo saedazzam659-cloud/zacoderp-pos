@@ -380,7 +380,7 @@ function PurchaseInvoiceFormContent() {
     items: inventoryItems,
     setSearch: setItemSearch,
     isSearching: isSearchingItems,
-  } = useInventoryItemSearch(cid, authH, lines.map(line => line.itemId), !!user);
+  } = useInventoryItemSearch(cid, authH, [...lines.map(line => line.itemId), qaItemId], !!user);
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
@@ -1172,6 +1172,7 @@ function PurchaseInvoiceFormContent() {
       value: String(i.id),
       code: i.code ?? undefined,
       label: itemNameOf(i),
+      labelEn: (isRtl ? i.nameEn : i.nameAr) ?? undefined,
     })),
   ], usageModes);
   const unitItems = units

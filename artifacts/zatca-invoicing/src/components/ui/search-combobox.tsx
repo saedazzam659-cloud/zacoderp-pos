@@ -76,6 +76,13 @@ export function SearchCombobox({
   const [highlight, setHighlight] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen && search) {
+      setSearch("");
+      onSearchChange?.("");
+    }
+  };
 
   const selectedItem = items.find(i => i.value === value);
 
@@ -229,7 +236,7 @@ export function SearchCombobox({
   let renderedIdx = 0;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverAnchor asChild>
         <div className={cn("relative w-full", className)}>
           <input
