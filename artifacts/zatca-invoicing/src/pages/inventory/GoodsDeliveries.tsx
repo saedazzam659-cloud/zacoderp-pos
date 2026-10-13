@@ -1376,7 +1376,7 @@ ${sections}
                       <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: GRID_COLS_GD }}>
                         <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                           onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                        {isSearchingItems || inventoryItems.length > 0 ? (
+                        {user ? (
                           <SearchCombobox items={itemComboItems} value={l.itemId}
                             onValueChange={v => selectItem(l._id, v)}
                             onSearchChange={setItemSearch}

@@ -2164,7 +2164,7 @@ ${sections}
                     <span className="text-xs text-muted-foreground tabular-nums">{idx + 1}</span>
                     <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                       onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                    {isSearchingItems || inventoryItems.length > 0 ? (
+                    {user ? (
                       <SearchCombobox
                         items={itemComboItems}
                         value={l.itemId}

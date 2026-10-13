@@ -14,3 +14,9 @@ The picker’s local filter must search every name language returned by the API,
 **Why:** A correct server substring match can still disappear in the client’s second filter, and a stale shared query can make a newly opened picker appear to have missing items. Broad one-character queries also need useful ranking within a bounded result set.
 
 **How to apply:** Include alternate-language names and item code in searchable picker fields, reset shared query state on close, preserve selected-item hydration, and keep substring search available after exact and prefix matches.
+
+Remote item pickers must remain mounted when a search returns zero results. Replacing the picker with a plain text input disconnects subsequent typing from the remote search callback, making the user unable to recover without leaving the form.
+
+**Why:** In invoice and inventory document forms, the picker had been conditionally replaced when its result list was empty; after one no-match query, later queries never reached the server.
+
+**How to apply:** Render the searchable picker whenever the authenticated form is active, regardless of current result count; render an empty-results state inside the picker and let the user continue typing.
