@@ -4196,6 +4196,7 @@
       "ref": "Reference"
     },
     "tx": {
+      "notification": "Notifications",
       "sales_quotation": "Sales Quotation",
       "sales_order": "Sales Order",
       "purchase_order": "Purchase Order",

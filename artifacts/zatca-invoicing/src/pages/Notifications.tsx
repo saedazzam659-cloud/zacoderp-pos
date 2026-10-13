@@ -14,6 +14,7 @@ const AUTO_DISMISS_MS = 5000; // grace window after a notification is read
 
 type Notification = {
   id: number; title: string; body: string;
+  sequenceNumber: string | null;
   severity: "info" | "low" | "medium" | "high";
   category: string; sourceKey: string | null;
   isRead: boolean; createdAt: string;
@@ -185,6 +186,7 @@ function NotificationItem({
                   <span>•</span>
                   <span>{sev.label}</span>
                   <span>•</span>
+                  {n.sequenceNumber && <><span className="font-mono font-semibold rounded bg-muted px-1" title="رقم تسلسل الإشعار">{n.sequenceNumber}</span><span>•</span></>}
                   <span>{new Date(n.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                 </div>
               </div>

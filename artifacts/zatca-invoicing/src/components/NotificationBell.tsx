@@ -14,6 +14,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type Notification = {
   id: number; title: string; body: string;
+  sequenceNumber: string | null;
   severity: "info" | "low" | "medium" | "high";
   category: string; sourceKey: string | null;
   isRead: boolean; createdAt: string;
@@ -151,6 +152,7 @@ export function NotificationBell() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1 text-xs text-muted-foreground mb-0.5">
                     {n.category === "ai_diagnostic" && <Sparkles className="h-3 w-3 text-violet-500" />}
+                    {n.sequenceNumber && <span className="font-mono font-semibold rounded bg-muted px-1" title="رقم تسلسل الإشعار">{n.sequenceNumber}</span>}
                     <span>{new Date(n.createdAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>
                   </div>
                   <p className={`text-sm leading-snug truncate ${!n.isRead ? "font-semibold" : ""}`}>{n.title}</p>

@@ -4198,6 +4198,7 @@
       "ref": "المرجع"
     },
     "tx": {
+      "notification": "الإشعارات",
       "sales_quotation": "عرض سعر",
       "sales_invoice": "فاتورة مبيعات",
       "sales_order": "أمر بيع",

@@ -8,6 +8,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql } f
 import { extractAuth } from "../middleware/auth.js";
 import { findUnbalancedOpeningDrafts } from "../lib/openingBalances.js";
 import { ensureProductionCertificateExpiryNotifications } from "../lib/productionLifecycleReminders.js";
+import { ensureNotificationSequenceNumbers } from "../lib/notificationSequence.js";
 import { notificationScopeWhere, notificationScopeSql } from "../lib/notificationScope.js";
 
 const router = Router();
@@ -233,13 +234,14 @@ router.get("/", async (req, res) => {
     await ensureOpeningBalanceReminders(req.authUser!.companyId);
     await ensureInsuranceExpiryNotifications(req.authUser!.companyId);
     await ensureProductionCertificateExpiryNotifications(req.authUser!.companyId);
+    await ensureNotificationSequenceNumbers(req.authUser!.companyId!);
     const userId = req.authUser!.id;
     const onlyUnread = req.query.unread === "1";
 
     // LEFT JOIN against notification_reads filtered by current user → is_read.
     // Filter out per-user dismissals so the row disappears for THIS user only.
     const rows = await db.execute(sql`
-       SELECT n.id, n.company_id, n.user_id, n.title, n.body,
+        SELECT n.id, n.company_id, n.user_id, n.title, n.body, n.sequence_number,
               n.severity, n.category, n.source_key, n.module_key, n.branch_id,
              n.created_at, n.created_by_user_id,
              (nr.user_id IS NOT NULL)            AS is_read,
@@ -266,6 +268,7 @@ router.get("/", async (req, res) => {
     const notifications = ((rows as any).rows ?? rows ?? []).map((r: any) => ({
       id: r.id, companyId: r.company_id, userId: r.user_id,
       title: r.title, body: r.body, severity: r.severity,
+      sequenceNumber: r.sequence_number,
        category: r.category, sourceKey: r.source_key,
        moduleKey: r.module_key, branchId: r.branch_id,
       createdAt: r.created_at, createdByUserId: r.created_by_user_id,

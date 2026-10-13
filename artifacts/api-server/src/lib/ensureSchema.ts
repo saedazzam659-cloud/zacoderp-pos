@@ -4403,6 +4403,9 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     { label: "notifications_company_module_branch_idx",
       sql:   `CREATE INDEX IF NOT EXISTS notifications_company_module_branch_idx
         ON notifications (company_id, module_key, branch_id)` },
+    { label: "notifications sequence number column",
+      sql:   `ALTER TABLE notifications
+        ADD COLUMN IF NOT EXISTS sequence_number TEXT` },
     { label: "journal_entry_lines bank-only cost-center lock",
       sql: BANK_JE_COST_CENTER_LOCK_DDL },
   ];

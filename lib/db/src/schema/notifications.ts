@@ -16,6 +16,7 @@ export const notificationsTable = pgTable("notifications", {
   severity:     text("severity").notNull().default("info"), // info | low | medium | high
   category:     text("category").notNull().default("general"), // e.g. "ai_diagnostic"
   sourceKey:    text("source_key"),                      // e.g. "unbalanced_journals"
+  sequenceNumber: text("sequence_number"),
   // Optional delivery scope. NULL keeps backward-compatible company-wide
   // visibility; a module key and/or branch narrows the recipient set.
   moduleKey:    text("module_key"),

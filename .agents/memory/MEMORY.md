@@ -8,6 +8,7 @@
 - [Contracting accounting boundaries](contracting-accounting-boundaries.md) — optional cost-center snapshots, planning versus posting, and preservation of existing customer/bill data.
 - [Taxable contracting advances](contracting-taxable-advance-boundaries.md) — tax-point ownership, fiscal-only certificates, legacy safety, and exact partial settlements.
 - [Retroactive sequence protection](retroactive-sequence-protection.md) — enabling protection sweeps existing numbered drafts and journal entries; record markers survive package disablement.
+- [Notification sequence backfill](notification-sequence-backfill.md) — assigning a notification sequence backfills historical rows oldest-first per company.
 - [School fee accounting boundary](school-fee-accounting-boundary.md) — link fee records to sales invoices; never create parallel collection, ledger, or posting flows.
 - [School guardian portal boundary](school-guardian-portal-boundary.md) — keep guardian logins separate; consent gates face attendance, which must preserve manual records.
 - [School academic-control boundary](school-academic-control-boundary.md) — configurable independent grading weights, audited publication/reopen, and approved-only guardian results.
