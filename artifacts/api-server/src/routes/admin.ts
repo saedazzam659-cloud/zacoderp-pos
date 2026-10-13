@@ -49,6 +49,7 @@ import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegis
 import { writeAudit } from "../middleware/permissions.js";
 import { DELETED_RECORDS_RESTORE_KEY } from "../lib/deletedRecordsRestoreFeature.js";
 import { SEQUENCE_PROTECTION_LOCK_NAMESPACE } from "../lib/sequenceProtection.js";
+import { ensureCompanyPurgeSchema } from "../lib/companyPurgeSchema.js";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { canManageDemoOperationalSetting } from "../lib/demoOperationalPolicy.js";
 import { accrueResellerCommission } from "../lib/resellerCommissions.js";
@@ -248,7 +249,30 @@ router.post("/requests/:id/reject", requireSuperAdmin, async (req, res) => {
 // chains do their own work for *_lines / *_settlements children. Finally
 // remove the company row itself. Runtime discovery means new modules
 // added later are handled automatically.
+function getDeleteFailureReason(error: unknown): string {
+  let current: any = error;
+  const seen = new Set<unknown>();
+  let deepest: any = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    deepest = current;
+    current = current.cause;
+  }
+
+  const parts = [
+    deepest?.message,
+    deepest?.detail,
+    deepest?.constraint ? `constraint=${deepest.constraint}` : null,
+    deepest?.table ? `table=${deepest.table}` : null,
+    deepest?.code ? `code=${deepest.code}` : null,
+  ].filter((part) => typeof part === "string" && part.length > 0);
+  return parts.join(" — ") || String(error ?? "");
+}
+
 async function deleteCompanyWithRelations(id: number, requireSoftDeleted = false) {
+  if (requireSoftDeleted) {
+    await ensureCompanyPurgeSchema();
+  }
   await db.transaction(async (tx) => {
     // A confirmed permanent purge is an explicit company-scoped exception to
     // document deletion protection. Serialize it with sequence activation and
@@ -350,7 +374,7 @@ async function deleteCompanyWithRelations(id: number, requireSoftDeleted = false
       // Surface the actual Postgres error from the last failed DELETE
       // so the SuperAdmin can see WHY (FK from a non-company_id table,
       // for instance) instead of just a list of tables.
-      const reason = lastError instanceof Error ? lastError.message : String(lastError ?? "");
+      const reason = getDeleteFailureReason(lastError);
       throw new Error(
         `تعذّر حذف بيانات الشركة من الجداول التالية: ${pending.join(", ")}` +
         (reason ? ` — السبب: ${reason}` : ""),

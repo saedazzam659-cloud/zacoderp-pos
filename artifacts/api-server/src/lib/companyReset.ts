@@ -2,6 +2,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { canSkipMissingResetTable } from "./companyResetPolicy.js";
 import { SEQUENCE_PROTECTION_LOCK_NAMESPACE } from "./sequenceProtection.js";
+import { ensureCompanyPurgeSchema } from "./companyPurgeSchema.js";
 
 /**
  * Only tenant-scoped operational tables belong here. Master/setup records are
@@ -175,6 +176,7 @@ export async function resetCompanyOperationalData(
   confirmationName: string,
   expectedFingerprint: string,
 ): Promise<CompanyResetPreview> {
+  await ensureCompanyPurgeSchema();
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(741923, ${companyId})`);
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${SEQUENCE_PROTECTION_LOCK_NAMESPACE}, ${companyId})`);

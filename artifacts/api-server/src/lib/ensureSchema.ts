@@ -24,6 +24,7 @@ import { ensureInternalControlSchema } from "./internalControlStorage.js";
 import { ensureDocumentExpenseSchema } from "./documentExpenses.js";
 import { ensureContractingLocalTaxMappingTables } from "./contracting-local-tax-mapping-service.js";
 import { ensureSequenceProtectionSchema } from "./sequenceProtection.js";
+import { ensureCompanyPurgeSchema } from "./companyPurgeSchema.js";
 import { ensureAgentSchoolSchema } from "./agentSchoolSchema.js";
 import { ensureCrmWhatsAppSchema } from "./crmWhatsAppSchema.js";
 
@@ -4975,6 +4976,7 @@ export function ensureSchemaUpToDate(): Promise<void> {
         await ensureCentralDemoAnalyticsSchema();
         await ensureCentralZatcaRegistrationTransferSchema();
         await runHeal();
+        await ensureCompanyPurgeSchema();
         await ensureSequenceProtectionSchema();
         await ensureCentralAgentControlSchema();
         schemaReconciliationState = { state: "ready", completedAt: new Date().toISOString() };
@@ -5014,6 +5016,7 @@ const EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS = {
 
 export async function runSchemaHealOnActiveDb(): Promise<void> {
   await runHeal(EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS);
+  await ensureCompanyPurgeSchema();
   await ensureSequenceProtectionSchema();
   // Sequence reconciliation takes table locks while comparing MAX(id) with an
   // owned sequence. Keep all of those locks in one external-agent transaction.
@@ -5032,6 +5035,7 @@ export async function runAgentInitializationSchemaHealOnActiveDb(): Promise<void
     ...EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS,
     strictSchema: true,
   });
+  await ensureCompanyPurgeSchema();
   await ensureSequenceProtectionSchema();
   await db.transaction(async (tx) => {
     await reconcilePostgresSequences(tx);
