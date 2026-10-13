@@ -106,6 +106,10 @@ export function SearchCombobox({
   }, [autoFocus]);
 
   const filteredItems = React.useMemo(() => {
+    // Remote-search callers have already filtered and ranked this bounded list.
+    // Filtering it again by the visible label can discard valid server matches
+    // (for example, an English query on an Arabic-labeled item).
+    if (onSearchChange) return items;
     if (!search) return items;
     const q = search.toLowerCase();
     return items.filter(
@@ -116,7 +120,7 @@ export function SearchCombobox({
         item.description?.toLowerCase().includes(q) ||
         item.value.toLowerCase().includes(q)
     );
-  }, [items, search]);
+  }, [items, onSearchChange, search]);
 
   React.useEffect(() => {
     // Snap highlight onto the first enabled row whenever the filter changes
