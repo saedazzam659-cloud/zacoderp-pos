@@ -14,6 +14,13 @@ import {
   THERMAL_PRINT_SCALE_MAX,
   THERMAL_PRINT_SCALE_MIN,
 } from "@/lib/thermalPrintScale";
+import {
+  readThermalPrintBold,
+  saveThermalPrintBold,
+  THERMAL_PRINT_BOLD_MAX,
+  THERMAL_PRINT_BOLD_MIN,
+  applyThermalPrintBold,
+} from "@/lib/thermalPrintBold";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
@@ -3153,6 +3160,9 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   const [thermalScale, setThermalScale] = useState<number>(
     () => readThermalPrintScale(companyCfg.id, resolveInitialId()),
   );
+  const [thermalBoldness, setThermalBoldness] = useState<number>(
+    () => readThermalPrintBold(companyCfg.id, resolveInitialId()),
+  );
   const { toast } = useToast();
   const { user, token } = useAuth() as any;
   const showFreeQuantity = companyCfg.showFreeQuantity ?? user?.company?.showFreeQuantity;
@@ -3243,11 +3253,16 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate, companyCfg.printDefaultTemplateQuotation, companyCfg.printDefaultTemplateOrder, companyCfg.printDefaultTemplateReturn, (data as any)?.type]);
   useEffect(() => {
     setThermalScale(readThermalPrintScale(companyCfg.id, selected));
+    setThermalBoldness(readThermalPrintBold(companyCfg.id, selected));
   }, [companyCfg.id, selected]);
 
   function changeThermalScale(value: number) {
     const percent = saveThermalPrintScale(companyCfg.id, selected, value);
     setThermalScale(percent);
+  }
+  function changeThermalBold(value: number) {
+    const boldness = saveThermalPrintBold(companyCfg.id, selected, value);
+    setThermalBoldness(boldness);
   }
   // Fire-and-forget auto-print on open. We track the last id we auto-
   // printed so we don't loop on re-renders, and reset when the modal
@@ -3399,9 +3414,12 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     const paperSizedHtml = selectedIsThermal && !tmpl.thermal
       ? forceThermalPaperSize(freeSafeHtml)
       : freeSafeHtml;
-    const html = selectedIsThermal
+    const scaledHtml = selectedIsThermal
       ? applyThermalContentScale(paperSizedHtml, thermalScale)
       : paperSizedHtml;
+    const html = selectedIsThermal
+      ? applyThermalPrintBold(scaledHtml, thermalBoldness)
+      : scaledHtml;
     // Use a hidden same-origin iframe instead of `window.open` so popup
     // blockers don't kill auto-print after save (no user-gesture path)
     // and so the print preview always shows up — even when the print
@@ -3512,6 +3530,39 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
                 إعادة إلى 100%
               </button>
               <span>{THERMAL_PRINT_SCALE_MAX}%</span>
+            </div>
+            <div className="border-t pt-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">زيادة سماكة الخط</p>
+                  <p className="text-xs text-muted-foreground">
+                    من 0 إلى 10؛ كلما زادت القيمة ظهر الحبر والخط أثقل. يُحفظ لهذا النموذج على هذا الجهاز.
+                  </p>
+                </div>
+                <span className="min-w-12 rounded-md bg-background px-2 py-1 text-center text-sm font-bold tabular-nums">
+                  {thermalBoldness} / {THERMAL_PRINT_BOLD_MAX}
+                </span>
+              </div>
+              <Slider
+                dir="ltr"
+                min={THERMAL_PRINT_BOLD_MIN}
+                max={THERMAL_PRINT_BOLD_MAX}
+                step={1}
+                value={[thermalBoldness]}
+                onValueChange={([value]) => changeThermalBold(value ?? THERMAL_PRINT_BOLD_MIN)}
+                aria-label="سماكة الخط في الطباعة الحرارية"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground" dir="ltr">
+                <span>{THERMAL_PRINT_BOLD_MIN}</span>
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-foreground"
+                  onClick={() => changeThermalBold(THERMAL_PRINT_BOLD_MIN)}
+                >
+                  إعادة إلى 0
+                </button>
+                <span>{THERMAL_PRINT_BOLD_MAX}</span>
+              </div>
             </div>
           </div>
         )}

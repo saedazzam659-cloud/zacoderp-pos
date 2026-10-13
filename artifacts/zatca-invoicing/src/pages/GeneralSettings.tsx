@@ -43,6 +43,12 @@ import {
   THERMAL_PRINT_SCALE_MAX,
   THERMAL_PRINT_SCALE_MIN,
 } from "@/lib/thermalPrintScale";
+import {
+  readThermalPrintBold,
+  saveThermalPrintBold,
+  THERMAL_PRINT_BOLD_MAX,
+  THERMAL_PRINT_BOLD_MIN,
+} from "@/lib/thermalPrintBold";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -4759,6 +4765,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const [thermalScales, setThermalScales] = useState<Record<number, number>>(
     () => Object.fromEntries(TEMPLATE_CATALOG.map(tpl => [tpl.id, readThermalPrintScale(cid, tpl.id)])),
   );
+  const [thermalBoldness, setThermalBoldness] = useState<Record<number, number>>(
+    () => Object.fromEntries(TEMPLATE_CATALOG.map(tpl => [tpl.id, readThermalPrintBold(cid, tpl.id)])),
+  );
   const [defaultTplId, setDefaultTplId] = useState<number>(
     Number.isInteger(company.printDefaultTemplate) ? Number(company.printDefaultTemplate) : 1,
   );
@@ -4795,11 +4804,18 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setThermalScales(Object.fromEntries(
       TEMPLATE_CATALOG.map(tpl => [tpl.id, readThermalPrintScale(cid, tpl.id)]),
     ));
+    setThermalBoldness(Object.fromEntries(
+      TEMPLATE_CATALOG.map(tpl => [tpl.id, readThermalPrintBold(cid, tpl.id)]),
+    ));
   }, [cid]);
 
   function changeThermalTemplateScale(templateId: number, value: number) {
     const scale = saveThermalPrintScale(cid, templateId, value);
     setThermalScales(previous => ({ ...previous, [templateId]: scale }));
+  }
+  function changeThermalTemplateBoldness(templateId: number, value: number) {
+    const boldness = saveThermalPrintBold(cid, templateId, value);
+    setThermalBoldness(previous => ({ ...previous, [templateId]: boldness }));
   }
 
   function toggleTemplate(id: number) {
@@ -5198,6 +5214,34 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
                             إعادة إلى 100%
                           </button>
                           <span>{THERMAL_PRINT_SCALE_MAX}%</span>
+                        </div>
+                        <div className="border-t pt-2 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-medium">سماكة الخط</span>
+                            <span className="text-[10px] font-bold tabular-nums">
+                              {thermalBoldness[tpl.id] ?? THERMAL_PRINT_BOLD_MIN} / {THERMAL_PRINT_BOLD_MAX}
+                            </span>
+                          </div>
+                          <Slider
+                            dir="ltr"
+                            min={THERMAL_PRINT_BOLD_MIN}
+                            max={THERMAL_PRINT_BOLD_MAX}
+                            step={1}
+                            value={[thermalBoldness[tpl.id] ?? THERMAL_PRINT_BOLD_MIN]}
+                            onValueChange={([value]) => changeThermalTemplateBoldness(tpl.id, value ?? THERMAL_PRINT_BOLD_MIN)}
+                            aria-label={`سماكة الخط في الطباعة للنموذج ${tpl.name}`}
+                          />
+                          <div className="flex items-center justify-between text-[9px] text-muted-foreground" dir="ltr">
+                            <span>{THERMAL_PRINT_BOLD_MIN}</span>
+                            <button
+                              type="button"
+                              className="underline underline-offset-2 hover:text-foreground"
+                              onClick={() => changeThermalTemplateBoldness(tpl.id, THERMAL_PRINT_BOLD_MIN)}
+                            >
+                              إعادة إلى 0
+                            </button>
+                            <span>{THERMAL_PRINT_BOLD_MAX}</span>
+                          </div>
                         </div>
                       </div>
                     )}
