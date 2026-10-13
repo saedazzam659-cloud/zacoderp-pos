@@ -48,6 +48,7 @@ import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 import { writeAudit } from "../middleware/permissions.js";
 import { DELETED_RECORDS_RESTORE_KEY } from "../lib/deletedRecordsRestoreFeature.js";
+import { SEQUENCE_PROTECTION_LOCK_NAMESPACE } from "../lib/sequenceProtection.js";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { canManageDemoOperationalSetting } from "../lib/demoOperationalPolicy.js";
 import { accrueResellerCommission } from "../lib/resellerCommissions.js";
@@ -247,8 +248,35 @@ router.post("/requests/:id/reject", requireSuperAdmin, async (req, res) => {
 // chains do their own work for *_lines / *_settlements children. Finally
 // remove the company row itself. Runtime discovery means new modules
 // added later are handled automatically.
-async function deleteCompanyWithRelations(id: number) {
+async function deleteCompanyWithRelations(id: number, requireSoftDeleted = false) {
   await db.transaction(async (tx) => {
+    // A confirmed permanent purge is an explicit company-scoped exception to
+    // document deletion protection. Serialize it with sequence activation and
+    // bind the exception to this transaction and company only.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${SEQUENCE_PROTECTION_LOCK_NAMESPACE}, ${id})`);
+    const lockedCompany = requireSoftDeleted
+      ? await tx.execute<{ id: number }>(sql`
+          SELECT id FROM public.companies
+          WHERE id = ${id} AND deleted_at IS NOT NULL
+          FOR UPDATE
+        `)
+      : await tx.execute<{ id: number }>(sql`
+          SELECT id FROM public.companies
+          WHERE id = ${id}
+          FOR UPDATE
+        `);
+    const lockedCompanyRows: Array<{ id: number }> =
+      Array.isArray(lockedCompany) ? lockedCompany :
+      (lockedCompany as any).rows ?? [];
+    if (!lockedCompanyRows.length) {
+      throw new Error("الشركة غير موجودة في سلة المحذوفات");
+    }
+    if (requireSoftDeleted) {
+      await tx.execute(sql`
+        SELECT set_config('zacode.company_purge_company_id', ${String(id)}, TRUE)
+      `);
+    }
+
     // 1. Discover every public table holding a company_id integer column
     //    that points at this tenant's data. Excludes the companies table
     //    itself — that one is deleted last.
@@ -1474,11 +1502,16 @@ router.delete("/companies/:id/permanent", requireSuperAdmin, async (req, res) =>
     if (!target) {
       res.status(404).json({ error: "الشركة غير موجودة في سلة المحذوفات" }); return;
     }
-    await deleteCompanyWithRelations(id);
+    await deleteCompanyWithRelations(id, true);
     res.status(204).send();
     });
   } catch (err: any) {
-    res.status(500).json({ error: "فشل الحذف النهائي: " + (err.message ?? "خطأ غير متوقع") });
+    req.log?.error({ err, companyId: Number(req.params.id) }, "permanent company deletion failed");
+    const detail = String(err?.message ?? "خطأ غير متوقع");
+    const userDetail = detail.startsWith("Failed query: DO $sequence_protection$")
+      ? "تعذر تهيئة حماية أرقام المستندات. لم يتم حذف الشركة؛ راجع مخطط قاعدة البيانات."
+      : detail;
+    res.status(500).json({ error: "فشل الحذف النهائي: " + userDetail });
   }
 });
 

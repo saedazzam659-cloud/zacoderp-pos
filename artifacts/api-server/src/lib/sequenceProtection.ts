@@ -163,8 +163,12 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
         IF COALESCE((previous_row->>'is_sequence_protected')::BOOLEAN, FALSE)
            AND (
              previous_company_id IS NULL
-             OR current_setting('zacode.company_reset_company_id', TRUE)
-                  IS DISTINCT FROM previous_company_id::TEXT
+             OR (
+               current_setting('zacode.company_reset_company_id', TRUE)
+                 IS DISTINCT FROM previous_company_id::TEXT
+               AND current_setting('zacode.company_purge_company_id', TRUE)
+                 IS DISTINCT FROM previous_company_id::TEXT
+             )
            ) THEN
           RAISE EXCEPTION USING
             ERRCODE = 'P0001',
