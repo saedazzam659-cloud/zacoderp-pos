@@ -29,6 +29,8 @@ test("variants sharing a document-number namespace also share a fresh counter", 
     assert.equal(groupFor(type), groupFor("journal_entry"), `${type} must share JE's number space`);
   }
   assert.notEqual(groupFor("sales_invoice"), groupFor("sales_return"));
+  assert.equal(groupFor("account_note_customer_credit"), groupFor("account_note_supplier_debit"),
+    "customer credit notes and supplier debit notes share the account-note number stream");
 });
 
 test("only the newly created company is changed; issued or already-used counters cannot be wiped", async () => {

@@ -47,6 +47,7 @@ export default function SupplierStatement() {
     return:  t("purchasingReports.supplierStatement.type.return"),
     return_refund: "استرداد مرتجع",
     payment: t("purchasingReports.supplierStatement.type.payment"),
+    account_note_supplier_debit: "إشعار مدين (مورد)",
   };
 
   /** Supplier-side "نوع الوثيقة" — full categorical label for the new column.
@@ -57,6 +58,7 @@ export default function SupplierStatement() {
     return:  "مرتجع مشتريات",
     return_refund: "استرداد مرتجع",
     payment: "سند صرف",
+    account_note_supplier_debit: "إشعار مدين (مورد)",
   };
 
   /** Full "نوع الوثيقة" label WITH the payment-type suffix (shown on screen

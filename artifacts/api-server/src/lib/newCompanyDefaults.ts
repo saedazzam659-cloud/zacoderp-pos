@@ -22,6 +22,8 @@ export function newCompanySequenceGroups(): string[][] {
       "hr_payroll", "hr_loan", "hr_eos", "hr_custody", "contracting_bill_je",
       "opening_balance_je", "stock_transfer_je", "stock_adjustment_je",
     ].includes(type) ? "journal_entry"
+      : (["account_note_customer_credit", "account_note_supplier_debit"] as string[]).includes(type)
+        ? "account_notes"
       : /^(sales_invoice|purchase_invoice|sales_return|purchase_return|receipt_voucher|payment_voucher)_(cash|credit|bank|foreign|mobile)$/.test(type)
         ? type.replace(/_(cash|credit|bank|foreign|mobile)$/, "")
         : type;

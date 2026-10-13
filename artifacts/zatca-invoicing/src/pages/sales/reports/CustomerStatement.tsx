@@ -99,6 +99,7 @@ export default function CustomerStatement() {
     return_refund: "رد مرتجع",
     receipt: tr("typeReceipt"),
     journal: "قيد يومية",
+    account_note_customer_credit: "إشعار دائن (عميل)",
   };
 
   /** Customer-side "نوع الوثيقة" — full categorical label for the new column.
@@ -110,6 +111,7 @@ export default function CustomerStatement() {
     return_refund: "رد مرتجع",
     receipt: "سند قبض",
     journal: "قيد يومية",
+    account_note_customer_credit: "إشعار دائن (عميل)",
   };
 
   /** Full "نوع الوثيقة" label WITH the payment-type suffix (shown on screen

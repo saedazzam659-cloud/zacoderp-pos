@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import {
   accountsTable,
   customersTable,
+  accountNotesTable,
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable,  salesReturnLinesTable,
   receiptVouchersTable,
@@ -120,6 +121,7 @@ async function customerStatementAccount(req: any, cid: number, customerId: numbe
 // customer statement. Excluding their generated JEs prevents double counting.
 const CUSTOMER_DOC_ENTRY_TYPES = [
   "sales_invoice", "sales_return", "receipt", "customer_settlement", "contracting_taxable_advance_invoice",
+  "account_note_customer_credit",
 ] as const;
 
 /** 386 creates a real customer-specific receivable, unlike the fiscal-only
@@ -623,6 +625,18 @@ router.get("/customer-statement", async (req, res) => {
           sql`${salesReturnsTable.returnDate} < ${date}`,
           ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
         ));
+      const [accountNotes] = await db.select({ s: sql<string>`coalesce(sum(${accountNotesTable.totalAmount}), 0)` })
+        .from(accountNotesTable)
+        .where(and(
+          eq(accountNotesTable.companyId, cid as number),
+          eq(accountNotesTable.partyType, "customer"),
+          eq(accountNotesTable.noteType, "credit"),
+          eq(accountNotesTable.partyId, ccid),
+          eq(accountNotesTable.status, "posted"),
+          ...ownDocumentFilter(req, "salesReportsOwn", accountNotesTable.createdBy),
+          sql`${accountNotesTable.noteDate} < ${date}`,
+          ...branchScopeSpread(req, accountNotesTable.branchId, bid),
+        ));
       const [rec] = await db.select({ s: sql<string>`coalesce(sum(${receiptVouchersTable.amount}), 0)` })
         .from(receiptVouchersTable)
         .where(and(
@@ -653,7 +667,7 @@ router.get("/customer-statement", async (req, res) => {
           ));
         jeNet = Number(je.s);
       }
-      return Number(inv.s) - Number(ret.s) - Number(rec.s)
+      return Number(inv.s) - Number(ret.s) - Number(accountNotes.s) - Number(rec.s)
         - (supplementalRec.get(ccid) ?? 0) + jeNet;
     }
 
@@ -736,6 +750,32 @@ router.get("/customer-statement", async (req, res) => {
     }).from(salesReturnsTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, salesReturnsTable.journalEntryId))
       .where(and(...retConds));
+
+    const accountNotes = await db.select({
+      id: accountNotesTable.id,
+      date: accountNotesTable.noteDate,
+      docNumber: accountNotesTable.noteNumber,
+      journalEntryId: accountNotesTable.journalEntryId,
+      journalEntryNumber: journalEntriesTable.docNumber,
+      total: accountNotesTable.totalAmount,
+      description: accountNotesTable.description,
+      notes: accountNotesTable.notes,
+      operationNumber: accountNotesTable.operationNumber,
+      referenceNumber: accountNotesTable.referenceNumber,
+      referenceDate: accountNotesTable.referenceDate,
+    }).from(accountNotesTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, accountNotesTable.journalEntryId))
+      .where(and(
+        eq(accountNotesTable.companyId, cid),
+        eq(accountNotesTable.partyType, "customer"),
+        eq(accountNotesTable.noteType, "credit"),
+        eq(accountNotesTable.partyId, ccid),
+        eq(accountNotesTable.status, "posted"),
+        ...ownDocumentFilter(req, "salesReportsOwn", accountNotesTable.createdBy),
+        ...branchScopeSpread(req, accountNotesTable.branchId, bid),
+        ...(from ? [gte(accountNotesTable.noteDate, from)] : []),
+        ...(to ? [lte(accountNotesTable.noteDate, to)] : []),
+      ));
 
     const recConds: any[] = [
       eq(receiptVouchersTable.companyId, cid),
@@ -836,6 +876,14 @@ router.get("/customer-statement", async (req, res) => {
         }
         return [returnLine];
       }),
+      ...accountNotes.map(n => ({
+        id: n.id, date: n.date, type: "account_note_customer_credit",
+        docNumber: n.docNumber, journalEntryId: n.journalEntryId,
+        journalEntryNumber: n.journalEntryNumber, debit: 0, credit: Number(n.total),
+        description: [n.description, n.notes, n.operationNumber ? `العملية: ${n.operationNumber}` : null,
+          n.referenceNumber ? `المرجع: ${n.referenceNumber}` : null,
+          n.referenceDate ? `تاريخ المرجع: ${n.referenceDate}` : null].filter(Boolean).join(" — ") || "—",
+      })),
       ...recs.map(r => ({ id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber, journalEntryId: r.journalEntryId, journalEntryNumber: r.journalEntryNumber, debit: 0, credit: Number(r.amount), description: voucherDesc(r.description, r.notes), channel: voucherChannel(r.cashBoxId, r.bankAccountId) })),
       ...taxableMoves.invoices.map(r=>({id:r.id,date:r.date,type:"contracting_advance_invoice",
         docNumber:r.docNumber,journalEntryId:r.journalEntryId,journalEntryNumber:r.journalEntryNumber,

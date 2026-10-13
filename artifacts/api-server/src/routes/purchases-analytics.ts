@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   suppliersTable,
+  accountNotesTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
   purchaseReturnsTable,  purchaseReturnLinesTable,
   paymentVouchersTable,
@@ -30,6 +31,7 @@ import {
 // double-count purchase invoices / returns / payment vouchers.
 const SUPPLIER_DOC_ENTRY_TYPES = [
   "purchase_invoice", "purchase_return", "payment",
+  "account_note_supplier_debit",
   "supplier_settlement",
   "contracting_outgoing_bill", "contracting_incoming_bill",
 ] as const;
@@ -514,6 +516,18 @@ router.get("/supplier-statement", async (req, res) => {
           sql`${purchaseReturnsTable.returnDate} < ${date}`,
           ...branchScopeSpread(req, purchaseReturnsTable.branchId, bid),
         ));
+      const [accountNotes] = await db.select({ s: sql<string>`coalesce(sum(${accountNotesTable.totalAmount}), 0)` })
+        .from(accountNotesTable)
+        .where(and(
+          eq(accountNotesTable.companyId, cid as number),
+          eq(accountNotesTable.partyType, "supplier"),
+          eq(accountNotesTable.noteType, "debit"),
+          eq(accountNotesTable.partyId, sid),
+          eq(accountNotesTable.status, "posted"),
+          ...ownDocumentFilter(req, "purchaseReportsOwn", accountNotesTable.createdBy),
+          sql`${accountNotesTable.noteDate} < ${date}`,
+          ...branchScopeSpread(req, accountNotesTable.branchId, bid),
+        ));
       const [pay] = await db.select({ s: sql<string>`coalesce(sum(${paymentVouchersTable.amount}), 0)` })
         .from(paymentVouchersTable)
         .where(and(
@@ -545,7 +559,8 @@ router.get("/supplier-statement", async (req, res) => {
       const supplementalPay = await supplierInvoiceLinkedVoucherTotals(
         cid as number, req, bid, [lt(paymentVouchersTable.date, date)], ownOnly ? "purchaseReportsOwn" : undefined,
       );
-      return Number(inv.s) - Number(ret.s) - Number(pay.s) - (supplementalPay.get(sid) ?? 0) + jeNet;
+      return Number(inv.s) - Number(ret.s) - Number(accountNotes.s)
+        - Number(pay.s) - (supplementalPay.get(sid) ?? 0) + jeNet;
     }
 
     const opening = await sumPriorTo(from);
@@ -632,6 +647,32 @@ router.get("/supplier-statement", async (req, res) => {
     }).from(purchaseReturnsTable)
       .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, purchaseReturnsTable.journalEntryId))
       .where(and(...retConds));
+
+    const accountNotes = await db.select({
+      id: accountNotesTable.id,
+      date: accountNotesTable.noteDate,
+      docNumber: accountNotesTable.noteNumber,
+      journalEntryId: accountNotesTable.journalEntryId,
+      journalEntryNumber: journalEntriesTable.docNumber,
+      total: accountNotesTable.totalAmount,
+      description: accountNotesTable.description,
+      notes: accountNotesTable.notes,
+      operationNumber: accountNotesTable.operationNumber,
+      referenceNumber: accountNotesTable.referenceNumber,
+      referenceDate: accountNotesTable.referenceDate,
+    }).from(accountNotesTable)
+      .leftJoin(journalEntriesTable, eq(journalEntriesTable.id, accountNotesTable.journalEntryId))
+      .where(and(
+        eq(accountNotesTable.companyId, cid),
+        eq(accountNotesTable.partyType, "supplier"),
+        eq(accountNotesTable.noteType, "debit"),
+        eq(accountNotesTable.partyId, sid),
+        eq(accountNotesTable.status, "posted"),
+        ...ownDocumentFilter(req, "purchaseReportsOwn", accountNotesTable.createdBy),
+        ...branchScopeSpread(req, accountNotesTable.branchId, bid),
+        ...(from ? [gte(accountNotesTable.noteDate, from)] : []),
+        ...(to ? [lte(accountNotesTable.noteDate, to)] : []),
+      ));
 
     const payConds: any[] = [
       eq(paymentVouchersTable.companyId, cid),
@@ -748,6 +789,14 @@ router.get("/supplier-statement", async (req, res) => {
         }
         return [returnLine];
       }),
+      ...accountNotes.map(n => ({
+        id: n.id, date: n.date, type: "account_note_supplier_debit",
+        docNumber: n.docNumber, journalEntryId: n.journalEntryId,
+        journalEntryNumber: n.journalEntryNumber, debit: Number(n.total), credit: 0,
+        description: [n.description, n.notes, n.operationNumber ? `العملية: ${n.operationNumber}` : null,
+          n.referenceNumber ? `المرجع: ${n.referenceNumber}` : null,
+          n.referenceDate ? `تاريخ المرجع: ${n.referenceDate}` : null].filter(Boolean).join(" — ") || "—",
+      })),
       ...pays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: Number(p.amount), credit: 0, description: voucherDesc(p.description, p.notes), channel: voucherChannel(p.cashBoxId, p.bankAccountId) })),
       ...supplementalPays.map(p => ({ id: p.id, date: p.date, type: "payment", docNumber: p.docNumber, journalEntryId: p.journalEntryId, journalEntryNumber: p.journalEntryNumber, debit: p.allocatedAmount, credit: 0, description: voucherDesc(p.description, p.notes), channel: voucherChannel(p.cashBoxId, p.bankAccountId) })),
       // Manual / direct JE rows: show the actual journal-line text the user

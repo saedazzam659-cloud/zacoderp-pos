@@ -18,6 +18,7 @@ import {
   bankAccountsTable, cashBoxesTable,
   fiscalYearsTable,
   suppliersTable, customersTable,
+  accountNotesTable,
 } from "@workspace/db";
 import { eq, and, or, sql, gte, lte, asc, desc, ne, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
@@ -605,6 +606,12 @@ router.get("/account-statement", async (req, res) => {
         entryDate:   journalEntriesTable.entryDate,
         description: sql<string>`COALESCE(${journalEntryLinesTable.description}, ${journalEntriesTable.description}, '')`,
         entryDescription: journalEntriesTable.description,
+        accountNoteNumber: accountNotesTable.noteNumber,
+        accountNoteDescription: accountNotesTable.description,
+        accountNoteNotes: accountNotesTable.notes,
+        accountNoteOperationNumber: accountNotesTable.operationNumber,
+        accountNoteReferenceNumber: accountNotesTable.referenceNumber,
+        accountNoteReferenceDate: accountNotesTable.referenceDate,
         debit:       journalEntryLinesTable.debit,
         credit:      journalEntryLinesTable.credit,
         // Per-line supplier tax metadata (manual JE / adjustment lines). When
@@ -676,6 +683,10 @@ router.get("/account-statement", async (req, res) => {
       })
       .from(journalEntryLinesTable)
       .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .leftJoin(accountNotesTable, and(
+        eq(accountNotesTable.journalEntryId, journalEntriesTable.id),
+        eq(accountNotesTable.companyId, cid),
+      ))
       .leftJoin(salesInvoicesTable, and(
         eq(salesInvoicesTable.journalEntryId, journalEntriesTable.id),
         eq(salesInvoicesTable.companyId, cid),
@@ -1050,8 +1061,20 @@ router.get("/account-statement", async (req, res) => {
          entryDesc
            ? entryDesc
            : null;
-       const srcDesc = custodyDesc
+        const accountNoteDesc = r.accountNoteNumber
+          ? [
+              `رقم الإشعار: ${r.accountNoteNumber}`,
+              r.accountNoteDescription,
+              r.accountNoteNotes,
+              r.accountNoteOperationNumber ? `العملية: ${r.accountNoteOperationNumber}` : null,
+              r.accountNoteReferenceNumber ? `المرجع: ${r.accountNoteReferenceNumber}` : null,
+              r.accountNoteReferenceDate ? `تاريخ المرجع: ${r.accountNoteReferenceDate}` : null,
+            ].filter(Boolean).join(" — ")
+          : null;
+        const srcDesc = custodyDesc
          ? custodyDesc
+          : accountNoteDesc
+          ? accountNoteDesc
          : r.purchaseReturnId
          ? (pRetInfo.get(r.purchaseReturnId)?.description ?? null)
         : r.purchaseInvoiceId
