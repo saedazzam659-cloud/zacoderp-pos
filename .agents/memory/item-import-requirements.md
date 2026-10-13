@@ -13,6 +13,12 @@ Item import retries use the company-scoped item code as the identity: create mis
 
 **How to apply:** Keep preflight validation ahead of writes, preserve the existing update-on-code behavior, and make retry reports distinguish created, updated, and unchanged rows.
 
+Bulk imports must keep audit work bounded: preserve per-item audit records, but do not launch one detached database write per row. Import-specific internal-control evaluation should only run when the evaluator has a matching rule.
+
+**Why:** The deployed external-agent pool is small; an import that fans out hundreds of audit/evaluation queries can saturate it and stall unrelated requests until the gateway returns HTTP 524.
+
+**How to apply:** Queue or batch audit side effects with bounded concurrency, keep them outside the item mutation loop, and retain the code-based retry behavior if the client times out.
+
 **Why:** The user explicitly requires complete item identity and unit data before import, with actionable correction guidance instead of partial imports.
 
 **How to apply:** Keep client-side validation for immediate feedback and repeat the validation on the API before any mutations. Do not infer a missing unit or Arabic name.

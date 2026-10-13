@@ -5656,10 +5656,14 @@ router.post("/import/items", async (req, res) => {
     statusCode: 200,
     ip:         ipFromReq(req),
     userAgent:  req.get("user-agent")?.slice(0, 256) ?? null,
+    // The current internal-control evaluator has no import-specific rule;
+    // evaluating each row would add one unnecessary query per imported item.
+    evaluateInternalControl: false,
   };
 
   let createdCount = 0, updatedCount = 0, skippedCount = 0;
   const errors: { row: number; error: string }[] = [];
+  const importAuditRows: Parameters<typeof writeAudit>[0][] = [];
   const inputCodeCounts = new Map<string, number>();
   for (const row of rows) {
     const key = String(row?.code ?? "").trim().toLowerCase();
@@ -5699,7 +5703,7 @@ router.post("/import/items", async (req, res) => {
     createdCount++;
     bulkCreatedIndexes.add(candidate.index);
     itemByCode.set(candidate.codeKey, item);
-    void writeAudit({
+    importAuditRows.push({
       ...auditBase,
       action: "create",
       entityId: String(item.id),
@@ -5804,7 +5808,7 @@ router.post("/import/items", async (req, res) => {
         // Skip audit when the import row had no real effect.
         const changes = updatedRow ? diffItem(existingRow, updatedRow) : [];
         if (changes.length > 0) {
-          void writeAudit({
+          importAuditRows.push({
             ...auditBase,
             action:   "edit",
             entityId: String(existingRow.id),
@@ -5818,7 +5822,7 @@ router.post("/import/items", async (req, res) => {
         const [ins] = await db.insert(itemsTable).values(values).returning();
         if (ins?.id) {
           itemByCode.set(code.toLowerCase(), ins);
-          void writeAudit({
+          importAuditRows.push({
             ...auditBase,
             action:     "create",
             entityId:   String(ins.id),
@@ -5832,6 +5836,13 @@ router.post("/import/items", async (req, res) => {
       errors.push({ row: i + 2, error: e?.message || "خطأ غير معروف" });
     }
   }
+
+  // Keep every per-item audit row, but write them one at a time in the
+  // background. Fire-and-forget writes for an entire spreadsheet can enqueue
+  // hundreds of queries on the agent database pool and stall unrelated users.
+  void (async () => {
+    for (const auditRow of importAuditRows) await writeAudit(auditRow);
+  })();
 
   res.json({ created: createdCount, updated: updatedCount, skipped: skippedCount, errors, total: rows.length });
 });

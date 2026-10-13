@@ -770,6 +770,7 @@ interface WriteRow {
   metadata?: any;
   success?: boolean;
   message?: string;
+  evaluateInternalControl?: boolean;
 }
 
 export async function writeAudit(row: WriteRow): Promise<void> {
@@ -801,7 +802,8 @@ export async function writeAudit(row: WriteRow): Promise<void> {
     // Observation runs after the audit insert, outside the business transaction.
     // Dynamic import avoids a permission/engine dependency cycle; rejection is
     // intentionally isolated and cannot alter the original operation's result.
-    if (insertedAudit && row.companyId && !row.module.startsWith("internal_control")) {
+    if (insertedAudit && row.companyId && row.evaluateInternalControl !== false
+      && !row.module.startsWith("internal_control")) {
       void import("../lib/internalControlEngine.js").then(m => m.evaluateInternalControlAudit(insertedAudit.id))
         .catch(e => console.warn("[internal-control] audit evaluation failed", e?.message));
     }
