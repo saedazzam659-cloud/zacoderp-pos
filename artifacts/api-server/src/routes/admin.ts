@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import securityAutomationRouter from "./admin-security-automation.js";
 import { db, centralDb } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, reportEmailInvitationsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable, userVisitsTable, trackingZonesTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, reportEmailInvitationsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable, userVisitsTable, trackingZonesTable, documentArchivesTable } from "@workspace/db";
 import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
 import { emitSessionRefresh, emitSessionRefreshMany } from "../lib/sessionEvents.js";
 import { ensureScheduleRow, runReportDigest, REPORT_SCHEDULE_ID } from "../lib/reportScheduler.js";
@@ -70,6 +70,7 @@ import {
   resolveSequencePeriodMatch, periodMatchWhereSql, periodMatchRankSql,
 } from "../lib/sequences.js";
 import { setCompanySequenceProtectionEnabled } from "../lib/sequenceProtection.js";
+import { previewCompanyReset, resetCompanyOperationalData } from "../lib/companyReset.js";
 
 const router = Router();
   // ─────────────────────────────────────────────────────────────────────────
@@ -3484,6 +3485,99 @@ router.get("/companies", requireSuperAdmin, async (req, res) => {
       ))
       .orderBy(asc(companiesTable.nameAr));
     res.json(rows);
+  });
+});
+
+router.get("/companies/:id/reset-preview", requireSuperAdmin, async (req, res): Promise<void> => {
+  const companyId = Number(req.params.id);
+  if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+    res.status(400).json({ error: "معرّف الشركة غير صالح" }); return;
+  }
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const [company] = await db.select({
+      id: companiesTable.id,
+      nameAr: companiesTable.nameAr,
+      isInternalDemoWorkspace: companiesTable.isInternalDemoWorkspace,
+      demoParentCompanyId: companiesTable.demoParentCompanyId,
+      hasZatcaCredentials: sql<boolean>`(
+        ${companiesTable.zatcaCsid} IS NOT NULL OR ${companiesTable.zatcaPcsid} IS NOT NULL OR
+        ${companiesTable.zatcaCsidToken} IS NOT NULL OR ${companiesTable.zatcaPcsidToken} IS NOT NULL OR
+        ${companiesTable.zatcaPrivateKey} IS NOT NULL OR ${companiesTable.zatcaCsr} IS NOT NULL OR
+        ${companiesTable.zatcaCsidSecret} IS NOT NULL OR ${companiesTable.zatcaPcsidSecret} IS NOT NULL OR
+        ${companiesTable.zatcaComplianceRequestId} IS NOT NULL OR ${companiesTable.serialNumber} IS NOT NULL OR
+        ${companiesTable.deviceSerial1} IS NOT NULL OR ${companiesTable.deviceSerial2} IS NOT NULL OR
+        ${companiesTable.deviceSerial3} IS NOT NULL OR ${companiesTable.zatcaTransferId} IS NOT NULL OR
+        ${companiesTable.zatcaChainSeedIcv} IS NOT NULL OR ${companiesTable.zatcaChainSeedPih} IS NOT NULL OR
+        ${companiesTable.zatcaTransferState} <> 'active' OR
+        EXISTS (SELECT 1 FROM public.device_invoice_ranges d WHERE d.company_id = ${companyId})
+      )`,
+    }).from(companiesTable).where(and(eq(companiesTable.id, companyId), isNull(companiesTable.deletedAt))).limit(1);
+    if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+    if (company.isInternalDemoWorkspace || company.demoParentCompanyId != null) {
+      res.status(409).json({ error: "أداة التهيئة متاحة للشركات الأساسية فقط، ولا تشمل شركات الديمو" }); return;
+    }
+    if (company.hasZatcaCredentials) {
+      res.status(409).json({ error: "لا يمكن تهيئة شركة مرتبطة بزاتكا" }); return;
+    }
+    try {
+      const { getRoutedDb } = await import("../lib/externalDbRouting.js");
+      const archiveDb = await getRoutedDb("document_archive");
+      const [archiveCount] = await archiveDb.select({ value: count() }).from(documentArchivesTable)
+        .where(eq(documentArchivesTable.companyId, companyId));
+      if (Number(archiveCount?.value ?? 0) > 0) {
+        res.status(409).json({ error: "توجد مرفقات محفوظة للشركة. لم تُمسح أي بيانات؛ احذف المرفقات أولًا ثم أعد المعاينة." }); return;
+      }
+      res.json({ company: { id: company.id, nameAr: company.nameAr }, ...(await previewCompanyReset(companyId)) });
+    } catch (error) {
+      req.log?.error?.({ error, companyId }, "company reset preview failed");
+      res.status(409).json({ error: "تعذر إعداد معاينة آمنة لهذه الشركة؛ لم يتم حذف أي بيانات" });
+    }
+  });
+});
+
+router.post("/companies/:id/reset", requireSuperAdmin, async (req, res): Promise<void> => {
+  const companyId = Number(req.params.id);
+  const confirmationName = typeof req.body?.confirmationName === "string" ? req.body.confirmationName : "";
+  const expectedFingerprint = typeof req.body?.expectedFingerprint === "string" ? req.body.expectedFingerprint : "";
+  if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+    res.status(400).json({ error: "معرّف الشركة غير صالح" }); return;
+  }
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    try {
+      const { getRoutedDb } = await import("../lib/externalDbRouting.js");
+      const archiveDb = await getRoutedDb("document_archive");
+      const [archiveCount] = await archiveDb.select({ value: count() }).from(documentArchivesTable)
+        .where(eq(documentArchivesTable.companyId, companyId));
+      if (Number(archiveCount?.value ?? 0) > 0) {
+        res.status(409).json({ error: "توجد مرفقات محفوظة للشركة. لم تُمسح أي بيانات؛ احذف المرفقات أولًا ثم أعد المحاولة." }); return;
+      }
+      const result = await resetCompanyOperationalData(companyId, confirmationName, expectedFingerprint);
+      req.log?.warn?.({ companyId, deletedRows: result.totalRows, tableCount: result.tables.length }, "company operational reset completed");
+      const actor = (req as any).adminUser;
+      await writeAudit({
+        userId: actor?.id ?? null, username: actor?.username ?? null, role: "superadmin",
+        companyId, module: "company_reset", action: "delete", method: req.method,
+        path: req.originalUrl, entityType: "company", entityId: String(companyId), statusCode: 200,
+        ip: req.ip, userAgent: req.get("user-agent"),
+        metadata: { deletedRows: result.totalRows, tables: result.tables },
+      });
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      const messages: Record<string, { status: number; message: string }> = {
+        RESET_COMPANY_NOT_FOUND: { status: 404, message: "الشركة غير موجودة" },
+        RESET_NAME_MISMATCH: { status: 400, message: "اكتب اسم الشركة كما هو تمامًا لتأكيد العملية" },
+        RESET_DEMO_COMPANY: { status: 409, message: "لا يمكن تهيئة شركات الديمو" },
+        RESET_ZATCA_REGISTERED: { status: 409, message: "لا يمكن تهيئة شركة مرتبطة بزاتكا" },
+        RESET_PREVIEW_STALE: { status: 409, message: "تغيرت البيانات بعد المعاينة. أعد فتح المعاينة وراجع الأعداد الجديدة قبل التنفيذ" },
+      };
+      const mapped = messages[code];
+      if (mapped) { res.status(mapped.status).json({ error: mapped.message }); return; }
+      req.log?.error?.({ error, companyId }, "company operational reset failed");
+      res.status(409).json({ error: "تعذرت التهيئة؛ تم التراجع عن العملية بالكامل ولم تُترك الشركة في حالة جزئية" });
+    }
   });
 });
 

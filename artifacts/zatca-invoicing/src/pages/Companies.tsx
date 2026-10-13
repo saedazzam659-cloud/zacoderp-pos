@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import ExportButtons from "@/components/ExportButtons";
 import CompanyCodeDialog, { type CompanyCodeTarget } from "@/components/CompanyCodeDialog";
+import CompanyResetTool from "@/components/CompanyResetTool";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -872,6 +873,14 @@ export default function Companies() {
                         >
                           <Copy className="h-3.5 w-3.5" />نسخ بيانات الشركة بدون أرصدة
                         </Button>
+                      )}
+                      {isSuperAdmin && !company.demoParentCompanyId && !company.isInternalDemoWorkspace && (
+                        <CompanyResetTool
+                          companyId={company.id}
+                          companyName={company.nameAr}
+                          agentInstanceId={company.agentInstanceId}
+                          token={token}
+                        />
                       )}
                       {(company.status ?? "active") === "active" && !company.zatcaPcsid && (
                         <Button asChild size="sm" className="gap-1.5 h-8">
