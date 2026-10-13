@@ -1,6 +1,7 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { canSkipMissingResetTable } from "./companyResetPolicy.js";
+import { SEQUENCE_PROTECTION_LOCK_NAMESPACE } from "./sequenceProtection.js";
 
 /**
  * Only tenant-scoped operational tables belong here. Master/setup records are
@@ -176,6 +177,7 @@ export async function resetCompanyOperationalData(
 ): Promise<CompanyResetPreview> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(741923, ${companyId})`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${SEQUENCE_PROTECTION_LOCK_NAMESPACE}, ${companyId})`);
     await assertPolicyCoverage(tx);
     const companyResult: any = await tx.execute(sql`
       SELECT name_ar, is_internal_demo_workspace, demo_parent_company_id,
@@ -228,6 +230,10 @@ export async function resetCompanyOperationalData(
     const preview = await previewCompanyResetInTransaction(tx, companyId);
     const fingerprint = JSON.stringify([...preview.tables].sort((a, b) => a.table.localeCompare(b.table)));
     if (!expectedFingerprint || expectedFingerprint !== fingerprint) throw new Error("RESET_PREVIEW_STALE");
+    // This transaction-local marker permits the explicitly confirmed reset to
+    // delete protected numbered records for this company only. The guard keeps
+    // rejecting protected deletes from every other transaction/company.
+    await tx.execute(sql`SELECT set_config('zacode.company_reset_company_id', ${String(companyId)}, TRUE)`);
     for (const [table, parent, foreignKey] of CASCADE_CHILDREN) {
       await tx.execute(sql.raw(
         `DELETE FROM public.${quoteIdentifier(table)} child USING public.${quoteIdentifier(parent)} parent WHERE parent.id = child.${quoteIdentifier(foreignKey)} AND parent.company_id = ${companyId}`,

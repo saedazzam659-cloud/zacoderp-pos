@@ -53,7 +53,7 @@ const targetValues = NUMBERED_DOCUMENT_TABLES
   .map(([tableName, numberColumn]) => `('${tableName}', '${numberColumn}')`)
   .join(",\n");
 
-const SEQUENCE_PROTECTION_LOCK_NAMESPACE = 8_164_027;
+export const SEQUENCE_PROTECTION_LOCK_NAMESPACE = 8_164_027;
 
 /**
  * Change the package flag and, when enabling it, protect every already-issued
@@ -160,7 +160,12 @@ export async function ensureSequenceProtectionSchema(): Promise<void> {
           PERFORM pg_advisory_xact_lock(${SEQUENCE_PROTECTION_LOCK_NAMESPACE}, previous_company_id);
         END IF;
 
-        IF COALESCE((previous_row->>'is_sequence_protected')::BOOLEAN, FALSE) THEN
+        IF COALESCE((previous_row->>'is_sequence_protected')::BOOLEAN, FALSE)
+           AND (
+             previous_company_id IS NULL
+             OR current_setting('zacode.company_reset_company_id', TRUE)
+                  IS DISTINCT FROM previous_company_id::TEXT
+           ) THEN
           RAISE EXCEPTION USING
             ERRCODE = 'P0001',
             MESSAGE = 'هذا المستند المرقم محمي ولا يمكن حذفه. استخدم مسار الإلغاء بدلاً من الحذف.',

@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import securityAutomationRouter from "./admin-security-automation.js";
 import { db, centralDb } from "@workspace/db";
+import { sequenceProtectionErrorResponse } from "../lib/sequenceProtectionErrors.js";
 import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, reportEmailInvitationsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable, userVisitsTable, trackingZonesTable, documentArchivesTable } from "@workspace/db";
 import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
 import { emitSessionRefresh, emitSessionRefreshMany } from "../lib/sessionEvents.js";
@@ -3579,6 +3580,12 @@ router.post("/companies/:id/reset", requireSuperAdmin, async (req, res): Promise
         req.log?.error?.({ companyId, table: code.slice("RESET_SCHEMA_UNSUPPORTED:".length) }, "company reset blocked by unsupported external schema");
         res.status(409).json({
           error: "مخطط قاعدة بيانات الشركة لا يدعم التهيئة بأمان. لم تُحذف أي بيانات؛ حدّث المخطط ثم أعد المحاولة.",
+        });
+        return;
+      }
+      if (sequenceProtectionErrorResponse(error, "ar")?.code === "SEQUENCE_PROTECTED_DELETE") {
+        res.status(409).json({
+          error: "حماية أرقام التسلسل منعت حذف مستندات محمية. لم تُحذف أي بيانات؛ حدّث الخدمة وأعد محاولة التهيئة.",
         });
         return;
       }
