@@ -7,6 +7,8 @@ The reset applies only to the exact primary company selected and name-confirmed 
 
 The owner explicitly authorizes the confirmed SuperAdmin reset to delete sequence-protected documents and restart numbering for that selected company. This exception must exist only inside the validated reset transaction, be bound to that company ID, and never disable sequence protection globally or persist outside the transaction.
 
+Before deleting operational records, reset must unpost posted documents through their normal reversal behavior, in dependency-safe order. Do not merely flip posted/status flags or delete posted records directly; if a required unpost is blocked, abort and roll back the entire reset rather than bypassing that business safeguard.
+
 **Why:** The owner clarified that company reset is an intentional administrative wipe, including protected records, with numbering restarted from the beginning.
 
 **How to apply:** Acquire the sequence-protection company lock, run the existing exact-name/eligibility/stale-preview checks, then set a transaction-local company-scoped reset marker immediately before deletion. Keep the trigger blocking all protected deletes unless the row's company matches that marker.
