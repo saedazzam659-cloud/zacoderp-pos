@@ -1,5 +1,6 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { canSkipMissingResetTable } from "./companyResetPolicy.js";
 
 /**
  * Only tenant-scoped operational tables belong here. Master/setup records are
@@ -119,8 +120,6 @@ const quoteIdentifier = (name: string) => `"${name.replaceAll('"', '""')}"`;
 const ALL_POLICIED_TABLES = new Set<string>([...RESET_TABLES, ...PRESERVED_TABLES]);
 // ensureSchema reports this newer queue table as not yet installed on existing DBs.
 // Absence means there are no rows to purge; all other missing reset tables fail closed.
-const OPTIONAL_SCHEMA_TABLES = new Set<string>(["integration_invoice_queue"]);
-
 export type CompanyResetPreview = {
   tables: Array<{ table: string; rows: number }>;
   totalRows: number;
@@ -137,7 +136,7 @@ export async function previewCompanyReset(companyId: number): Promise<CompanyRes
     if (rows > 0) tables.push({ table, rows });
   }
   for (const table of RESET_TABLES) {
-    const exists = await assertTenantTableExists(table);
+    const exists = await assertTenantTableExists(table, db);
     if (!exists) continue;
     const result: any = await db.execute(sql.raw(
       `SELECT count(*)::int AS count FROM public.${quoteIdentifier(table)} WHERE company_id = ${companyId}`,
@@ -148,14 +147,14 @@ export async function previewCompanyReset(companyId: number): Promise<CompanyRes
   return { tables, totalRows: tables.reduce((sum, item) => sum + item.rows, 0) };
 }
 
-async function assertTenantTableExists(table: string): Promise<boolean> {
-  const result: any = await db.execute(sql`
+async function assertTenantTableExists(table: string, executor: any): Promise<boolean> {
+  const result: any = await executor.execute(sql`
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = ${table} AND column_name = 'company_id'
     LIMIT 1
   `);
   if (result.rows?.length) return true;
-  if (OPTIONAL_SCHEMA_TABLES.has(table)) return false;
+  if (canSkipMissingResetTable(table, false)) return false;
   throw new Error(`RESET_SCHEMA_UNSUPPORTED:${table}`);
 }
 
@@ -223,15 +222,7 @@ export async function resetCompanyOperationalData(
       if (!parentCheck.rows?.length) throw new Error(`RESET_SCHEMA_UNSUPPORTED:${parent}`);
     }
     for (const table of RESET_TABLES) {
-      const check: any = await tx.execute(sql`
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = ${table} AND column_name = 'company_id'
-        LIMIT 1
-      `);
-      if (!check.rows?.length && !OPTIONAL_SCHEMA_TABLES.has(table)) {
-        throw new Error(`RESET_SCHEMA_UNSUPPORTED:${table}`);
-      }
+      await assertTenantTableExists(table, tx);
     }
 
     const preview = await previewCompanyResetInTransaction(tx, companyId);
@@ -243,14 +234,7 @@ export async function resetCompanyOperationalData(
       ));
     }
     for (const table of RESET_TABLES) {
-      if (OPTIONAL_SCHEMA_TABLES.has(table)) {
-        const check: any = await tx.execute(sql`
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema = 'public' AND table_name = ${table} AND column_name = 'company_id'
-          LIMIT 1
-        `);
-        if (!check.rows?.length) continue;
-      }
+      if (!await assertTenantTableExists(table, tx)) continue;
       await tx.execute(sql.raw(
         `DELETE FROM public.${quoteIdentifier(table)} WHERE company_id = ${companyId}`,
       ));
@@ -280,6 +264,7 @@ async function previewCompanyResetInTransaction(tx: any, companyId: number): Pro
     if (rows > 0) tables.push({ table, rows });
   }
   for (const table of RESET_TABLES) {
+    if (!await assertTenantTableExists(table, tx)) continue;
     const result: any = await tx.execute(sql.raw(
       `SELECT count(*)::int AS count FROM public.${quoteIdentifier(table)} WHERE company_id = ${companyId}`,
     ));

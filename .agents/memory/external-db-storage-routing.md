@@ -12,6 +12,12 @@ description: External Postgres routing boundaries and schema-heal constraints fo
 
 Required business tables in externally routed agent databases should have complete, idempotent DDL in the shared pre-validation heal. Generic schema reconciliation adds columns to existing tables; request readiness is strict by default. Cached ensure promises must remain scoped by active database context.
 
+SuperAdmin company reset requests with `?agent=` run core company-data queries against that agent's external PostgreSQL through `runWithAgentScope`; inspecting the central Replit database is not evidence of the external schema. Reset preview and transactional recount/delete must apply the same optional-table policy on the selected external database.
+
+**Why:** External agent databases can have older schemas. A preview that skips an absent optional table must not be followed by a transaction that queries it unconditionally, or the whole reset safely rolls back with a misleading generic error.
+
+**How to apply:** Keep only explicitly optional tables skippable, check presence through the active database/transaction executor, and keep required missing tables fail-closed with a clear non-destructive message.
+
 One owner-approved exception applies to a single designated registry ID on the agent-domain request path: missing tables may be logged and tolerated so an unrelated new table cannot block all ERP traffic. For that same agent only, a failed retry of initialization may preserve existing availability when the exact registered installation ID and fingerprint are re-verified against its DB; first setup, unreachable DBs, identity mismatches, and other agents remain fail-closed. A feature that needs an absent table may still fail until its migration runs.
 
 **Why:** The owner requires the designated agent's existing companies to remain available across central Publish, even if a retry of initialization fails. Preserving service is safe only while the DB proves the same installation and fingerprint; otherwise fail-closed identity protection takes priority.

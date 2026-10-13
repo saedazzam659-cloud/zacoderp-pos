@@ -3575,6 +3575,13 @@ router.post("/companies/:id/reset", requireSuperAdmin, async (req, res): Promise
       };
       const mapped = messages[code];
       if (mapped) { res.status(mapped.status).json({ error: mapped.message }); return; }
+      if (code.startsWith("RESET_SCHEMA_UNSUPPORTED:")) {
+        req.log?.error?.({ companyId, table: code.slice("RESET_SCHEMA_UNSUPPORTED:".length) }, "company reset blocked by unsupported external schema");
+        res.status(409).json({
+          error: "مخطط قاعدة بيانات الشركة لا يدعم التهيئة بأمان. لم تُحذف أي بيانات؛ حدّث المخطط ثم أعد المحاولة.",
+        });
+        return;
+      }
       req.log?.error?.({ error, companyId }, "company operational reset failed");
       res.status(409).json({ error: "تعذرت التهيئة؛ تم التراجع عن العملية بالكامل ولم تُترك الشركة في حالة جزئية" });
     }
