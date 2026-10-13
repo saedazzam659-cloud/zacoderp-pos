@@ -400,7 +400,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   const {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
-    decimalPlaces, showZeros, hideQuickAddBar, showFreeQuantity, autoPostingEnabled,
+    decimalPlaces, showZeros, hideQuickAddBar, showFreeQuantity, allowNegativeSales, autoPostingEnabled,
     documentFieldControlsEnabled,
     showCustomerDebitNotes, showSupplierCreditNotes,
     allowUnbalancedOpeningBalances, openingBalanceReminderMessage,
@@ -460,7 +460,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
-    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; showFreeQuantity?: boolean; autoPostingEnabled?: boolean;
+    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; showFreeQuantity?: boolean; allowNegativeSales?: boolean; autoPostingEnabled?: boolean;
     documentFieldControlsEnabled?: boolean;
     showCustomerDebitNotes?: boolean; showSupplierCreditNotes?: boolean;
     allowUnbalancedOpeningBalances?: boolean;
@@ -579,6 +579,13 @@ router.patch("/:id/general-settings", async (req, res) => {
       return;
     }
     updates.showFreeQuantity = showFreeQuantity;
+  }
+  if (allowNegativeSales !== undefined) {
+    if (typeof allowNegativeSales !== "boolean") {
+      res.status(400).json({ error: "allowNegativeSales يجب أن تكون قيمة منطقية" });
+      return;
+    }
+    updates.allowNegativeSales = allowNegativeSales;
   }
   if (documentFieldControlsEnabled !== undefined) {
     if (typeof documentFieldControlsEnabled !== "boolean") {

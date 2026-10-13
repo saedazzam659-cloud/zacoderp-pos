@@ -359,7 +359,7 @@ router.get("/warehouses", async (req, res) => {
 
 router.post("/warehouses", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code: rawCode, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, accountId, isDefault } = req.body;
+  const { code: rawCode, nameAr, nameEn, groupId, branchId, city, region, allowNegative, blockNegativeSales, negativeLimit, accountId, isDefault } = req.body;
   if (!nameAr) { res.status(400).json({ error: "اسم المخزن مطلوب" }); return; }
   const normalizedNegativeLimit = negativeLimit === "" || negativeLimit == null ? null : Number(negativeLimit);
   if (normalizedNegativeLimit != null && (!Number.isFinite(normalizedNegativeLimit) || normalizedNegativeLimit < 0)) {
@@ -410,14 +410,14 @@ router.post("/warehouses", async (req, res) => {
   if (isDefault) {
     await db.update(warehousesTable).set({ isDefault: false }).where(eq(warehousesTable.companyId, cid));
   }
-  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, negativeLimit: normalizedNegativeLimit == null ? null : String(normalizedNegativeLimit), accountId: resolvedAccountId, isDefault: !!isDefault }).returning();
+  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, blockNegativeSales: blockNegativeSales === true, negativeLimit: normalizedNegativeLimit == null ? null : String(normalizedNegativeLimit), accountId: resolvedAccountId, isDefault: !!isDefault }).returning();
   res.status(201).json(row);
 });
 
 router.put("/warehouses/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, isActive, accountId, isDefault } = req.body;
+  const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, blockNegativeSales, negativeLimit, isActive, accountId, isDefault } = req.body;
   const normalizedNegativeLimit = negativeLimit === "" || negativeLimit == null ? null : Number(negativeLimit);
   if (normalizedNegativeLimit != null && (!Number.isFinite(normalizedNegativeLimit) || normalizedNegativeLimit < 0)) {
     res.status(400).json({ error: "حد السحب على المكشوف يجب أن يكون صفراً أو رقماً موجباً" }); return;
@@ -447,7 +447,7 @@ router.put("/warehouses/:id", async (req, res) => {
     // نلغي الافتراضي من بقية المخازن قبل تعيين هذا
     await db.update(warehousesTable).set({ isDefault: false }).where(and(eq(warehousesTable.companyId, cid), ne(warehousesTable.id, id)));
   }
-  const [row] = await db.update(warehousesTable).set({ code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, negativeLimit: normalizedNegativeLimit == null ? null : String(normalizedNegativeLimit), isActive: isActive !== false, accountId: accountId ? Number(accountId) : null, isDefault: !!isDefault }).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid))).returning();
+  const [row] = await db.update(warehousesTable).set({ code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, blockNegativeSales: blockNegativeSales === true, negativeLimit: normalizedNegativeLimit == null ? null : String(normalizedNegativeLimit), isActive: isActive !== false, accountId: accountId ? Number(accountId) : null, isDefault: !!isDefault }).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
 });

@@ -1842,8 +1842,32 @@ export default function GeneralSettings() {
           خيارات شاشات المستندات
         </h2>
         <p className="text-xs text-muted-foreground">
-          تحكم في طريقة عرض إدخال الأصناف في نماذج المستندات.
+          تحكم في طريقة عرض إدخال الأصناف وسياسات البيع في نماذج المستندات.
         </p>
+        <label
+          data-testid="allow-negative-sales-general-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.allowNegativeSales
+              ? "border-amber-500 bg-amber-50/70 shadow-sm"
+              : "border-border hover:border-amber-500/40 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-amber-600 cursor-pointer"
+            checked={user?.company?.allowNegativeSales === true}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ allowNegativeSales: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">السماح بالسحب على المكشوف في المبيعات</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              عند الإيقاف يُمنع السحب بالسالب في كل المخازن مهما كانت الخيارات الأخرى. عند التشغيل يُسمح به في كل المخازن،
+              ويمكن فرض المنع لمخزن محدد من إعداداته؛ وخيار الفاتورة يتجاوز منع المخزن وفق صلاحية المستخدم.
+            </span>
+          </span>
+        </label>
         <label
           data-testid="hide-quick-add-toggle"
           className={cn(

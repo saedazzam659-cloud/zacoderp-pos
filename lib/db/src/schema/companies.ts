@@ -73,6 +73,9 @@ export const companiesTable = pgTable("companies", {
   // items grid grow taller. Purely presentational — items are still added via
   // the in-grid "إضافة صنف" button.
   hideQuickAddBar: boolean("hide_quick_add_bar").notNull().default(false),
+  // Master safety switch for negative-stock sales. When off, neither a
+  // warehouse policy nor an invoice-level override may post stock below zero.
+  allowNegativeSales: boolean("allow_negative_sales").notNull().default(false),
   showFreeQuantity: boolean("show_free_quantity").notNull().default(true),
   // Opt-in gate for company-admin document-field controls. Only SuperAdmin
   // may change this flag; false keeps the manager-facing controls unavailable.

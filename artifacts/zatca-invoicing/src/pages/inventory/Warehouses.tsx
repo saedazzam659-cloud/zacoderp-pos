@@ -18,7 +18,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useTranslation } from "react-i18next";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 
-const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", branchId: "", city: "", region: "", allowNegative: false, negativeLimit: "", accountId: "", isDefault: false };
+const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", branchId: "", city: "", region: "", allowNegative: false, blockNegativeSales: false, negativeLimit: "", accountId: "", isDefault: false };
 
 export default function Warehouses() {
   const { t, i18n } = useTranslation();
@@ -302,6 +302,13 @@ export default function Warehouses() {
                 <div className="md:col-span-2 flex items-center gap-3 rounded-lg border bg-muted/30 px-3 py-2.5">
                   <Switch checked={form.allowNegative} onCheckedChange={v => setForm((p: any) => ({ ...p, allowNegative: v }))} id="allow-neg" />
                   <Label htmlFor="allow-neg" className="text-sm cursor-pointer">{t("pages.warehouses.fields.allowNegative")}</Label>
+                </div>
+                <div className="md:col-span-2 flex items-start gap-3 rounded-lg border bg-amber-50/60 px-3 py-2.5">
+                  <Switch checked={!!form.blockNegativeSales} onCheckedChange={v => setForm((p: any) => ({ ...p, blockNegativeSales: v }))} id="block-negative-sales" />
+                  <div className="space-y-1">
+                    <Label htmlFor="block-negative-sales" className="text-sm cursor-pointer">فرض منع البيع على المكشوف في هذا المخزن</Label>
+                    <p className="text-xs text-muted-foreground">استثناء من الإعداد العام. عند تفعيله يُمنع السحب بالسالب من هذا المخزن، ويمكن لخيار الفاتورة تجاوزه إذا كان الإعداد العام مفعّلًا.</p>
+                  </div>
                 </div>
                 {form.allowNegative && (
                   <div className="space-y-1.5 md:col-span-2">

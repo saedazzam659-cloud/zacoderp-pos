@@ -42,6 +42,9 @@ export const warehousesTable = pgTable("warehouses", {
   city:           text("city"),
   region:         text("region"),
   allowNegative:  boolean("allow_negative").default(false).notNull(),
+  // Sales-only opt-out from the company-wide negative-stock switch. The
+  // invoice checkbox may override this warehouse restriction when authorized.
+  blockNegativeSales: boolean("block_negative_sales").default(false).notNull(),
   negativeLimit:  numeric("negative_limit", { precision: 14, scale: 4 }),
   isActive:       boolean("is_active").default(true).notNull(),
   // المخزن الافتراضي للشركة — يُختار تلقائياً عند فتح فواتير المبيعات/المرتجعات

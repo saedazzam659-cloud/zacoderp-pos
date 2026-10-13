@@ -921,10 +921,11 @@ async function resolveRepCommission(
   };
 }
 
-/** Map a list of warehouse IDs (used by an invoice) to their {accountId, allowNegative, name}. */
+/** Map a list of warehouse IDs used by sales invoices to their stock policies and accounts. */
 type WarehouseInfo = {
   accountId: number | null;
   allowNegative: boolean;
+  blockNegativeSales: boolean;
   negativeLimit: number | null;
   nameAr: string | null;
 };
@@ -937,6 +938,7 @@ async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<num
     id: warehousesTable.id,
     accountId: warehousesTable.accountId,
     allowNegative: warehousesTable.allowNegative,
+    blockNegativeSales: warehousesTable.blockNegativeSales,
     negativeLimit: warehousesTable.negativeLimit,
     nameAr: warehousesTable.nameAr,
   }).from(warehousesTable)
@@ -945,6 +947,7 @@ async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<num
     out[w.id] = {
       accountId: w.accountId ?? null,
       allowNegative: !!w.allowNegative,
+      blockNegativeSales: w.blockNegativeSales === true,
       negativeLimit: w.negativeLimit == null ? null : Number(w.negativeLimit),
       nameAr: w.nameAr ?? null,
     };
@@ -1418,6 +1421,15 @@ function guard(req: any, res: any): number | null {
 }
 function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+}
+
+async function salesOverdraftEnabled(companyId: number, executor: any = db): Promise<boolean> {
+  const [company] = await executor
+    .select({ allowNegativeSales: companiesTable.allowNegativeSales })
+    .from(companiesTable)
+    .where(eq(companiesTable.id, companyId))
+    .limit(1);
+  return company?.allowNegativeSales === true;
 }
 
 // Authoritative capability probe for the invoice overdraft control.
@@ -2777,6 +2789,10 @@ router.post("/sales-invoices", async (req, res) => {
     const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
     const pType = paymentType || "credit";
     const requestedOverdraft = asBool(allowNegativeStock);
+    if (requestedOverdraft && !(await salesOverdraftEnabled(cid))) {
+      res.status(403).json({ error: "السحب على المكشوف معطّل من الإعدادات العامة للشركة" });
+      return;
+    }
     if (requestedOverdraft && !canAccessModule(req.authUser, "sales_invoice_overdraft", "edit")) {
       res.status(403).json({ error: "ليست لديك صلاحية تفعيل السحب على المكشوف في فواتير المبيعات" });
       return;
@@ -3311,6 +3327,10 @@ router.put("/sales-invoices/:id", async (req, res) => {
     const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
     const incomingOfferIds = collectInvoiceOfferIds(documentOfferId, lines);
     const requestedOverdraft = asBool(allowNegativeStock);
+    if (requestedOverdraft && !(await salesOverdraftEnabled(cid))) {
+      res.status(403).json({ error: "السحب على المكشوف معطّل من الإعدادات العامة للشركة" });
+      return;
+    }
     if (requestedOverdraft && !canAccessModule(req.authUser, "sales_invoice_overdraft", "edit")) {
       res.status(403).json({ error: "ليست لديك صلاحية تفعيل السحب على المكشوف في فواتير المبيعات" });
       return;
@@ -3718,6 +3738,11 @@ async function postSalesInvoiceHandler(
       inv = lockedInvoice;
       lines = lockedLines;
       const allowInvoiceOverdraft = !!(lockedInvoice as any).allowNegativeStock;
+      const globalOverdraftEnabled = await salesOverdraftEnabled(cid, tx);
+      if (allowInvoiceOverdraft && !globalOverdraftEnabled) {
+        res.status(403).json({ error: "السحب على المكشوف معطّل من الإعدادات العامة للشركة" });
+        return;
+      }
       if (allowInvoiceOverdraft && !canAccessModule(req.authUser, "sales_invoice_overdraft", "edit")) {
         res.status(403).json({ error: "ليست لديك صلاحية ترحيل فاتورة مفعّل بها السحب على المكشوف" });
         return;
@@ -3736,7 +3761,8 @@ async function postSalesInvoiceHandler(
           //   1) the warehouse allows it as its standing policy, OR
           //   2) an authorized user opts in for this invoice only.
           // The invoice override must never mutate the warehouse setting.
-          const overdraftAllowed = !!wh?.allowNegative || allowInvoiceOverdraft;
+          const overdraftAllowed = globalOverdraftEnabled
+            && (allowInvoiceOverdraft || wh?.blockNegativeSales !== true);
           const limit = wh?.negativeLimit;
           const exceedsLimit = overdraftAllowed && limit != null && limit >= 0 && projected < -limit;
           if (!overdraftAllowed && projected < 0) {

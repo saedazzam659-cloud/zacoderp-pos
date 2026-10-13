@@ -350,6 +350,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const canEditOverdraft = isFullAccessRole
     || overdraftEditPermission
     || serverOverdraftCapability?.edit === true;
+  const globalOverdraftEnabled = user?.company?.allowNegativeSales === true;
   const dateBounds = fp.dateBounds("date") ?? {};
 
   const [activeTab, setActiveTab]       = useState("basic");
@@ -410,6 +411,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const stickyPriceIncl = useStickyPriceIncludesVat();
   const [priceIncludesVat, setPriceIncludesVat] = useState(stickyPriceIncl.initial);
   const [allowNegativeStock, setAllowNegativeStock] = useState(false);
+  useEffect(() => {
+    if (!globalOverdraftEnabled && allowNegativeStock) setAllowNegativeStock(false);
+  }, [globalOverdraftEnabled, allowNegativeStock]);
   // ── نوع الفاتورة (ZATCA) ─────────────────────────────────────────────────
   // "standard"   = فاتورة ضريبية B2B  → يلزم رقم ضريبي + سجل تجاري + عنوان
   //                                     وطني كامل للعميل (متطلبات زاتكا)
@@ -1993,16 +1997,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       data-testid="allow-negative-stock-toggle"
       className={cn(
         "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs select-none transition-colors",
-        !canEditOverdraft || viewMode ? "cursor-not-allowed opacity-70" : "cursor-pointer",
+        !canEditOverdraft || !globalOverdraftEnabled || viewMode ? "cursor-not-allowed opacity-70" : "cursor-pointer",
         allowNegativeStock ? "border-amber-500 bg-amber-50 text-amber-900" : "border-border hover:bg-muted/50",
       )}
-      title={!canEditOverdraft ? "غير متاح للتفعيل حسب صلاحيات المستخدم" : undefined}
+      title={!globalOverdraftEnabled
+        ? "السحب على المكشوف معطّل من الإعدادات العامة للشركة"
+        : !canEditOverdraft ? "غير متاح للتفعيل حسب صلاحيات المستخدم" : undefined}
     >
       <input
         type="checkbox"
         className="h-4 w-4 accent-amber-600 cursor-pointer disabled:cursor-not-allowed"
         checked={allowNegativeStock}
-        disabled={!canEditOverdraft || viewMode}
+        disabled={!canEditOverdraft || !globalOverdraftEnabled || viewMode}
         onChange={e => {
           if (!canEditOverdraft || viewMode) return;
           setAllowNegativeStock(e.target.checked);
