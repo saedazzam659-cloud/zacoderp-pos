@@ -28,18 +28,28 @@ export default function CompanyResetTool({ companyId, companyName, agentInstance
 
   useEffect(() => {
     if (!open) return;
+    const controller = new AbortController();
     setTypedName("");
     setPreview(null);
     setError("");
     setLoading(true);
-    fetch(`${api}/reset-preview${agentQuery}`, { headers: { Authorization: `Bearer ${token ?? ""}` } })
+    fetch(`${api}/reset-preview${agentQuery}`, {
+      headers: { Authorization: `Bearer ${token ?? ""}` },
+      signal: controller.signal,
+    })
       .then(async response => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "تعذر إعداد معاينة آمنة");
+        if (controller.signal.aborted) return;
         setPreview(body);
       })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e: Error) => {
+        if (e.name !== "AbortError" && !controller.signal.aborted) setError(e.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [open, api, agentQuery, token]);
 
   const reset = async () => {
@@ -85,7 +95,30 @@ export default function CompanyResetTool({ companyId, companyName, agentInstance
             <div className="font-semibold">{companyName}</div>
             <div className="text-muted-foreground">معرّف الشركة: {companyId} — سيتم استهداف هذه الشركة فقط.</div>
           </div>
-          {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />جارٍ إعداد معاينة البيانات…</div>}
+          {loading && <div
+            role="status"
+            aria-live="polite"
+            className="space-y-3 rounded-md border border-primary/20 bg-primary/5 p-4"
+            data-testid={`company-reset-scan-loading-${companyId}`}
+          >
+            <div className="flex items-start gap-3">
+              <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary" aria-hidden="true" />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">جارٍ فحص بيانات الشركة…</p>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  يتم حصر السجلات التشغيلية للتأكد من نطاق التهيئة. لا تُحذف أي بيانات أثناء الفحص.
+                </p>
+              </div>
+            </div>
+            <div
+              role="progressbar"
+              aria-label="فحص بيانات الشركة"
+              aria-valuetext="جارٍ فحص الجداول وحساب السجلات"
+              className="h-1.5 overflow-hidden rounded-full bg-primary/15"
+            >
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
+            </div>
+          </div>}
           {preview && <div className="rounded-md border p-3 text-sm">
             <div className="font-medium">معاينة الحذف: {preview.totalRows.toLocaleString("ar-EG")} سجل</div>
             <div className="mt-2 max-h-36 space-y-1 overflow-y-auto text-xs text-muted-foreground">
@@ -98,6 +131,7 @@ export default function CompanyResetTool({ companyId, companyName, agentInstance
           <label className="block space-y-2 text-sm font-medium">
             اكتب اسم الشركة كما يظهر أعلاه لتفعيل زر التهيئة
             <Input value={typedName} onChange={e => setTypedName(e.target.value)} autoComplete="off"
+              disabled={loading || saving}
               placeholder={companyName} data-testid={`input-reset-company-name-${companyId}`} />
           </label>
         </div>
