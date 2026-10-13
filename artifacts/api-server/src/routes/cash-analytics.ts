@@ -6,6 +6,7 @@ import {
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, asc, inArray, or } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
+import { ownDocumentFilter } from "../lib/documentVisibility.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -94,6 +95,7 @@ router.get("/cash-balances", async (req, res) => {
         eq(receiptVouchersTable.companyId, cid),
         eq(receiptVouchersTable.status, "posted"),
         eq(receiptVouchersTable.paymentType, "cash"),
+        ...ownDocumentFilter(req, "receiptVouchersOwn", receiptVouchersTable.createdById),
         lte(receiptVouchersTable.date, asOf),
         ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
@@ -108,6 +110,7 @@ router.get("/cash-balances", async (req, res) => {
         eq(paymentVouchersTable.companyId, cid),
         eq(paymentVouchersTable.status, "posted"),
         eq(paymentVouchersTable.paymentType, "cash"),
+        ...ownDocumentFilter(req, "paymentVouchersOwn", paymentVouchersTable.createdById),
         lte(paymentVouchersTable.date, asOf),
         ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
       ))
@@ -188,6 +191,7 @@ router.get("/bank-balances", async (req, res) => {
         eq(receiptVouchersTable.companyId, cid),
         eq(receiptVouchersTable.status, "posted"),
         eq(receiptVouchersTable.paymentType, "bank"),
+        ...ownDocumentFilter(req, "receiptVouchersOwn", receiptVouchersTable.createdById),
         lte(receiptVouchersTable.date, asOf),
         ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
@@ -202,6 +206,7 @@ router.get("/bank-balances", async (req, res) => {
         eq(paymentVouchersTable.companyId, cid),
         eq(paymentVouchersTable.status, "posted"),
         eq(paymentVouchersTable.paymentType, "bank"),
+        ...ownDocumentFilter(req, "paymentVouchersOwn", paymentVouchersTable.createdById),
         lte(paymentVouchersTable.date, asOf),
         ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
       ))
@@ -290,6 +295,9 @@ async function buildAccountStatement(opts: {
         eq(table.companyId, cid),
         eq(table.status, "posted"),
         eq(col, accountId),
+        ...(table === receiptVouchersTable
+          ? ownDocumentFilter(req, "receiptVouchersOwn", table.createdById)
+          : ownDocumentFilter(req, "paymentVouchersOwn", table.createdById)),
         ...extraConds,
         ...branchScopeSpread(req, table.branchId, bid),
         sql`${dateCol} < ${from}`,
@@ -323,6 +331,7 @@ async function buildAccountStatement(opts: {
     eq(receiptVouchersTable.status, "posted"),
     eq(receiptVouchersTable.paymentType, paymentType),
     eq(idCol, accountId),
+    ...ownDocumentFilter(req, "receiptVouchersOwn", receiptVouchersTable.createdById),
   ];
   pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
   if (from) recConds.push(gte(receiptVouchersTable.date, from));
@@ -340,6 +349,7 @@ async function buildAccountStatement(opts: {
     eq(paymentVouchersTable.status, "posted"),
     eq(paymentVouchersTable.paymentType, paymentType),
     eq(idCol2, accountId),
+    ...ownDocumentFilter(req, "paymentVouchersOwn", paymentVouchersTable.createdById),
   ];
   pushBranchScope(req, payConds, paymentVouchersTable.branchId, bid);
   if (from) payConds.push(gte(paymentVouchersTable.date, from));
@@ -465,7 +475,10 @@ router.get("/daily-summary", async (req, res) => {
     const bid = getBid(req);
     const { from, to, scope = "all" } = req.query as Record<string, string>;
 
-    const recConds: any[] = [eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted")];
+    const recConds: any[] = [
+      eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted"),
+      ...ownDocumentFilter(req, "receiptVouchersOwn", receiptVouchersTable.createdById),
+    ];
     pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
     if (scope === "cash") recConds.push(eq(receiptVouchersTable.paymentType, "cash"));
     else if (scope === "bank") recConds.push(eq(receiptVouchersTable.paymentType, "bank"));
@@ -479,7 +492,10 @@ router.get("/daily-summary", async (req, res) => {
     }).from(receiptVouchersTable).where(and(...recConds))
       .groupBy(receiptVouchersTable.date);
 
-    const payConds: any[] = [eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")];
+    const payConds: any[] = [
+      eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted"),
+      ...ownDocumentFilter(req, "paymentVouchersOwn", paymentVouchersTable.createdById),
+    ];
     pushBranchScope(req, payConds, paymentVouchersTable.branchId, bid);
     if (scope === "cash") payConds.push(eq(paymentVouchersTable.paymentType, "cash"));
     else if (scope === "bank") payConds.push(eq(paymentVouchersTable.paymentType, "bank"));
@@ -524,7 +540,10 @@ router.get("/receipts", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { from, to, paymentType, cashBoxId, bankAccountId, entityType } = req.query as Record<string, string>;
-    const conds: any[] = [eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted")];
+    const conds: any[] = [
+      eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted"),
+      ...ownDocumentFilter(req, "receiptVouchersOwn", receiptVouchersTable.createdById),
+    ];
     pushBranchScope(req, conds, receiptVouchersTable.branchId, bid);
     if (from) conds.push(gte(receiptVouchersTable.date, from));
     if (to)   conds.push(lte(receiptVouchersTable.date, to));
@@ -553,7 +572,10 @@ router.get("/payments", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { from, to, paymentType, cashBoxId, bankAccountId, entityType } = req.query as Record<string, string>;
-    const conds: any[] = [eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")];
+    const conds: any[] = [
+      eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted"),
+      ...ownDocumentFilter(req, "paymentVouchersOwn", paymentVouchersTable.createdById),
+    ];
     pushBranchScope(req, conds, paymentVouchersTable.branchId, bid);
     if (from) conds.push(gte(paymentVouchersTable.date, from));
     if (to)   conds.push(lte(paymentVouchersTable.date, to));

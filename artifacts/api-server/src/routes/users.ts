@@ -34,6 +34,7 @@ function sanitizeDataVisibilityPermissions(raw: any): Record<string, boolean> {
   const keys = [
     "salesInvoicesOwn", "salesReturnsOwn", "purchaseInvoicesOwn",
     "purchaseReturnsOwn", "salesReportsOwn", "purchaseReportsOwn",
+    "receiptVouchersOwn", "paymentVouchersOwn",
   ] as const;
   const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   return Object.fromEntries(keys.map(key => [key, source[key] === true]));
@@ -419,7 +420,7 @@ router.patch("/:id", async (req, res) => {
     // Permission edits must reach an already-open session immediately. Emit
     // only after every user/branch write is complete so /auth/me cannot race
     // this request and reload a half-updated user.
-    if (permissions !== undefined || update.demoOperationalAdmin !== undefined || branchIds !== undefined || viewAllBranches !== undefined || update.role !== undefined) {
+    if (permissions !== undefined || req.body?.dataVisibilityPermissions !== undefined || update.demoOperationalAdmin !== undefined || branchIds !== undefined || viewAllBranches !== undefined || update.role !== undefined) {
       const shadowTargets = await propagateDemoSourcePermissions(id, permissions ?? existing.permissions);
       emitSessionRefresh(cid, "permissions_changed", {
         op: "user-permissions-update",

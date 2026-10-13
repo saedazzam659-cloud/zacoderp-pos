@@ -19,7 +19,7 @@ import {
 } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 import { purchaseSupplierDescription } from "../lib/journalLineDescriptions.js";
-import { ownDocumentFilter } from "../lib/documentVisibility.js";
+import { isOwnDocumentOnly, ownDocumentFilter } from "../lib/documentVisibility.js";
 import {
   supplementalInvoiceLinkedVoucherRowAllocations,
   supplementalInvoiceLinkedVoucherTotals,
@@ -126,13 +126,19 @@ function getBid(req: any): number | undefined {
 }
 
 /** Adds only entityId-null legacy voucher allocations to the original totals. */
-async function supplierInvoiceLinkedVoucherTotals(cid: number, req: any, bid: number | undefined, dateConds: any[]) {
+async function supplierInvoiceLinkedVoucherTotals(
+  cid: number,
+  req: any,
+  bid: number | undefined,
+  dateConds: any[],
+  visibilityKey?: "purchaseReportsOwn",
+) {
   const vouchers = await db.select({
     id: paymentVouchersTable.id, amount: paymentVouchersTable.amount,
   }).from(paymentVouchersTable).where(and(
     eq(paymentVouchersTable.companyId, cid),
     eq(paymentVouchersTable.status, "posted"),
-    isNull(paymentVouchersTable.entityId),
+    ...(visibilityKey ? [] : [isNull(paymentVouchersTable.entityId)]),
     ...dateConds,
     ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
   ));
@@ -141,6 +147,7 @@ async function supplierInvoiceLinkedVoucherTotals(cid: number, req: any, bid: nu
   const invoiceScope = [
     eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted"),
     eq(purchaseInvoicesTable.paymentType, "credit"), sql`${purchaseInvoicesTable.lcId} IS NULL`,
+    ...(visibilityKey ? ownDocumentFilter(req, visibilityKey, purchaseInvoicesTable.createdById) : []),
   ];
   const [lines, headers, settlements] = await Promise.all([
     db.select({ id: paymentVoucherLinesTable.id, voucherId: paymentVoucherLinesTable.voucherId,
@@ -166,7 +173,13 @@ async function supplierInvoiceLinkedVoucherTotals(cid: number, req: any, bid: nu
 /** Row-level counterpart of supplierInvoiceLinkedVoucherTotals. The SQL scope
  * is deliberately identical; only voucher display fields are additionally
  * selected. Allocation normalization is shared with every aggregate caller. */
-async function supplierInvoiceLinkedVoucherRows(cid: number, req: any, bid: number | undefined, dateConds: any[]) {
+async function supplierInvoiceLinkedVoucherRows(
+  cid: number,
+  req: any,
+  bid: number | undefined,
+  dateConds: any[],
+  visibilityKey?: "purchaseReportsOwn",
+) {
   const vouchers = await db.select({
     id: paymentVouchersTable.id,
     amount: paymentVouchersTable.amount,
@@ -185,7 +198,7 @@ async function supplierInvoiceLinkedVoucherRows(cid: number, req: any, bid: numb
     .where(and(
       eq(paymentVouchersTable.companyId, cid),
       eq(paymentVouchersTable.status, "posted"),
-      isNull(paymentVouchersTable.entityId),
+      ...(visibilityKey ? [] : [isNull(paymentVouchersTable.entityId)]),
       ...dateConds,
       ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
     ));
@@ -196,6 +209,7 @@ async function supplierInvoiceLinkedVoucherRows(cid: number, req: any, bid: numb
     eq(purchaseInvoicesTable.status, "posted"),
     eq(purchaseInvoicesTable.paymentType, "credit"),
     sql`${purchaseInvoicesTable.lcId} IS NULL`,
+    ...(visibilityKey ? ownDocumentFilter(req, visibilityKey, purchaseInvoicesTable.createdById) : []),
   ];
   const [lines, headers, settlements] = await Promise.all([
     db.select({
@@ -239,6 +253,7 @@ router.get("/by-supplier", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
+    const ownOnly = isOwnDocumentOnly(req, "purchaseReportsOwn");
 
     const invConds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted"),
       ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById)];
@@ -277,6 +292,7 @@ router.get("/by-supplier", async (req, res) => {
       eq(paymentVouchersTable.companyId, cid),
       eq(paymentVouchersTable.status, "posted"),
       eq(paymentVouchersTable.entityType, "supplier"),
+      ...(ownOnly ? [eq(paymentVouchersTable.id, -1)] : []),
     ];
     pushBranchScope(req, payConds, paymentVouchersTable.branchId, bid);
     if (from) payConds.push(gte(paymentVouchersTable.date, from));
@@ -442,6 +458,7 @@ router.get("/supplier-statement", async (req, res) => {
     const { supplierId, from, to } = req.query as Record<string, string>;
     const sid = Number(supplierId);
     if (!supplierId || !Number.isFinite(sid)) { res.status(400).json({ error: "supplierId مطلوب ويجب أن يكون رقماً صحيحاً" }); return; }
+    const ownOnly = isOwnDocumentOnly(req, "purchaseReportsOwn");
 
     // Display-only suppliers — hide their balance from statement view.
     const [supMeta] = await db.select({ includeInStatements: suppliersTable.includeInStatements })
@@ -480,6 +497,7 @@ router.get("/supplier-statement", async (req, res) => {
           eq(purchaseInvoicesTable.supplierId, sid),
           eq(purchaseInvoicesTable.status, "posted"),
           eq(purchaseInvoicesTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById),
           // LC-linked invoices were paid by the Letter of Credit — exclude.
           sql`${purchaseInvoicesTable.lcId} IS NULL`,
           sql`${purchaseInvoicesTable.invoiceDate} < ${date}`,
@@ -492,6 +510,7 @@ router.get("/supplier-statement", async (req, res) => {
           eq(purchaseReturnsTable.supplierId, sid),
           eq(purchaseReturnsTable.status, "posted"),
           eq(purchaseReturnsTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById),
           sql`${purchaseReturnsTable.returnDate} < ${date}`,
           ...branchScopeSpread(req, purchaseReturnsTable.branchId, bid),
         ));
@@ -502,12 +521,13 @@ router.get("/supplier-statement", async (req, res) => {
           eq(paymentVouchersTable.entityType, "supplier"),
           eq(paymentVouchersTable.entityId, sid),
           eq(paymentVouchersTable.status, "posted"),
+          ...(ownOnly ? [eq(paymentVouchersTable.id, -1)] : []),
           sql`${paymentVouchersTable.date} < ${date}`,
           ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
         ));
       // Direct JE net (credit - debit) before the from date.
       let jeNet = 0;
-      if (supAccountId && !(await supplierAccountShared(cid as number, supAccountId))) {
+      if (!ownOnly && supAccountId && !(await supplierAccountShared(cid as number, supAccountId))) {
         const [je] = await db
           .select({ s: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}), 0)` })
           .from(journalEntryLinesTable)
@@ -523,7 +543,7 @@ router.get("/supplier-statement", async (req, res) => {
         jeNet = Number(je.s);
       }
       const supplementalPay = await supplierInvoiceLinkedVoucherTotals(
-        cid as number, req, bid, [lt(paymentVouchersTable.date, date)],
+        cid as number, req, bid, [lt(paymentVouchersTable.date, date)], ownOnly ? "purchaseReportsOwn" : undefined,
       );
       return Number(inv.s) - Number(ret.s) - Number(pay.s) - (supplementalPay.get(sid) ?? 0) + jeNet;
     }
@@ -618,6 +638,7 @@ router.get("/supplier-statement", async (req, res) => {
       eq(paymentVouchersTable.entityType, "supplier"),
       eq(paymentVouchersTable.entityId, sid),
       eq(paymentVouchersTable.status, "posted"),
+      ...(ownOnly ? [eq(paymentVouchersTable.id, -1)] : []),
     ];
     pushBranchScope(req, payConds, paymentVouchersTable.branchId, bid);
     if (from) payConds.push(gte(paymentVouchersTable.date, from));
@@ -641,10 +662,10 @@ router.get("/supplier-statement", async (req, res) => {
     const supplementalPays = (await supplierInvoiceLinkedVoucherRows(cid, req, bid, [
       ...(from ? [gte(paymentVouchersTable.date, from)] : []),
       ...(to ? [lte(paymentVouchersTable.date, to)] : []),
-    ])).filter(p => p.supplierId === sid);
+    ], ownOnly ? "purchaseReportsOwn" : undefined)).filter(p => p.supplierId === sid);
 
     // Direct JE rows (fixed-asset credit, manual JEs, …) within range.
-    const jeLines = await fetchSupplierDirectJeLines(
+    const jeLines = ownOnly ? [] : await fetchSupplierDirectJeLines(
       cid, supAccountId, from, to,
       branchScopeSpread(req, journalEntriesTable.branchId, bid),
     );
@@ -762,6 +783,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       res.status(400).json({ error: "supplierId مطلوب ويجب أن يكون رقماً صحيحاً" });
       return;
     }
+    const ownOnly = isOwnDocumentOnly(req, "purchaseReportsOwn");
 
     const [supRow] = await db.select({
         accountId: suppliersTable.accountId,
@@ -787,6 +809,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           eq(purchaseInvoicesTable.supplierId, sid),
           eq(purchaseInvoicesTable.status, "posted"),
           eq(purchaseInvoicesTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById),
           // LC-linked invoices excluded — supplier was paid via the LC.
           sql`${purchaseInvoicesTable.lcId} IS NULL`,
           sql`${purchaseInvoicesTable.invoiceDate} < ${date}`,
@@ -799,6 +822,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           eq(purchaseReturnsTable.supplierId, sid),
           eq(purchaseReturnsTable.status, "posted"),
           eq(purchaseReturnsTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById),
           sql`${purchaseReturnsTable.returnDate} < ${date}`,
           ...branchScopeSpread(req, purchaseReturnsTable.branchId, bid),
         ));
@@ -809,11 +833,12 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           eq(paymentVouchersTable.entityType, "supplier"),
           eq(paymentVouchersTable.entityId, sid),
           eq(paymentVouchersTable.status, "posted"),
+          ...(ownOnly ? [eq(paymentVouchersTable.id, -1)] : []),
           sql`${paymentVouchersTable.date} < ${date}`,
           ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
         ));
       let jeNet = 0;
-      if (supAccountId && !(await supplierAccountShared(cid as number, supAccountId))) {
+      if (!ownOnly && supAccountId && !(await supplierAccountShared(cid as number, supAccountId))) {
         const [je] = await db
           .select({ s: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}), 0)` })
           .from(journalEntryLinesTable)
@@ -829,7 +854,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
         jeNet = Number(je.s);
       }
       const supplementalPay = await supplierInvoiceLinkedVoucherTotals(
-        cid as number, req, bid, [lt(paymentVouchersTable.date, date)],
+        cid as number, req, bid, [lt(paymentVouchersTable.date, date)], ownOnly ? "purchaseReportsOwn" : undefined,
       );
       return Number(inv.s) - Number(ret.s) - Number(pay.s) - (supplementalPay.get(sid) ?? 0) + jeNet;
     }
@@ -885,6 +910,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
       eq(paymentVouchersTable.entityType, "supplier"),
       eq(paymentVouchersTable.entityId, sid),
       eq(paymentVouchersTable.status, "posted"),
+      ...(ownOnly ? [eq(paymentVouchersTable.id, -1)] : []),
     ];
     pushBranchScope(req, payConds, paymentVouchersTable.branchId, bid);
     if (from) payConds.push(gte(paymentVouchersTable.date, from));
@@ -905,7 +931,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
     const supplementalPays = (await supplierInvoiceLinkedVoucherRows(cid, req, bid, [
       ...(from ? [gte(paymentVouchersTable.date, from)] : []),
       ...(to ? [lte(paymentVouchersTable.date, to)] : []),
-    ])).filter(p => p.supplierId === sid);
+    ], ownOnly ? "purchaseReportsOwn" : undefined)).filter(p => p.supplierId === sid);
 
     const invIds = invs.map(i => i.id);
     const retIds = rets.map(r => r.id);
@@ -1083,7 +1109,7 @@ router.get("/supplier-statement-detailed", async (req, res) => {
           description: p.description,
         },
       })),
-      ...(await fetchSupplierDirectJeLines(
+      ...(ownOnly ? [] : await fetchSupplierDirectJeLines(
         cid, supAccountId, from, to,
         branchScopeSpread(req, journalEntriesTable.branchId, bid),
       )).map(j => ({
@@ -1108,6 +1134,7 @@ router.get("/aging", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const asOf = (req.query.asOf as string) || new Date().toISOString().slice(0, 10);
+    const ownOnly = isOwnDocumentOnly(req, "purchaseReportsOwn");
 
     const suppliers = await db.select().from(suppliersTable)
       .where(and(
@@ -1127,6 +1154,7 @@ router.get("/aging", async (req, res) => {
         eq(purchaseInvoicesTable.companyId, cid),
         eq(purchaseInvoicesTable.status, "posted"),
         eq(purchaseInvoicesTable.paymentType, "credit"),
+        ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById),
         // LC-linked invoices were paid by the Letter of Credit, not by the
         // supplier's A/P, so they must NOT appear in aging.
         sql`${purchaseInvoicesTable.lcId} IS NULL`,
@@ -1145,6 +1173,7 @@ router.get("/aging", async (req, res) => {
         eq(purchaseReturnsTable.companyId, cid),
         eq(purchaseReturnsTable.status, "posted"),
         eq(purchaseReturnsTable.paymentType, "credit"),
+        ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById),
         lte(purchaseReturnsTable.returnDate, asOf),
         ...branchScopeSpread(req, purchaseReturnsTable.branchId, bid),
       ))
@@ -1160,11 +1189,14 @@ router.get("/aging", async (req, res) => {
         eq(paymentVouchersTable.companyId, cid),
         eq(paymentVouchersTable.entityType, "supplier"),
         eq(paymentVouchersTable.status, "posted"),
+        ...(ownOnly ? [eq(paymentVouchersTable.id, -1)] : []),
         lte(paymentVouchersTable.date, asOf),
         ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
       ))
       .groupBy(paymentVouchersTable.entityId);
-    const supplementalPayBy = await supplierInvoiceLinkedVoucherTotals(cid, req, bid, [lte(paymentVouchersTable.date, asOf)]);
+    const supplementalPayBy = await supplierInvoiceLinkedVoucherTotals(
+      cid, req, bid, [lte(paymentVouchersTable.date, asOf)], ownOnly ? "purchaseReportsOwn" : undefined,
+    );
 
     const debitBySupplier: Record<number, number> = {};
     for (const r of retAgg) if (r.supplierId) debitBySupplier[r.supplierId] = (debitBySupplier[r.supplierId] ?? 0) + Number(r.total);
@@ -1673,6 +1705,7 @@ router.get("/supplier-balances", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
+    const ownOnly = isOwnDocumentOnly(req, "purchaseReportsOwn");
     const { from, to } = req.query as Record<string, string>;
     const dr = (col: any) => [
       ...(from ? [gte(col, from)] : []),
@@ -1692,6 +1725,7 @@ router.get("/supplier-balances", async (req, res) => {
           eq(purchaseInvoicesTable.companyId, cid),
           eq(purchaseInvoicesTable.status, "posted"),
           eq(purchaseInvoicesTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById),
           sql`${purchaseInvoicesTable.lcId} IS NULL`,
           ...dr(purchaseInvoicesTable.invoiceDate),
           ...branchScopeSpread(req, purchaseInvoicesTable.branchId, bid),
@@ -1703,6 +1737,7 @@ router.get("/supplier-balances", async (req, res) => {
           eq(purchaseReturnsTable.companyId, cid),
           eq(purchaseReturnsTable.status, "posted"),
           eq(purchaseReturnsTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "purchaseReportsOwn", purchaseReturnsTable.createdById),
           ...dr(purchaseReturnsTable.returnDate),
           ...branchScopeSpread(req, purchaseReturnsTable.branchId, bid),
         ))
@@ -1713,12 +1748,15 @@ router.get("/supplier-balances", async (req, res) => {
           eq(paymentVouchersTable.companyId, cid),
           eq(paymentVouchersTable.entityType, "supplier"),
           eq(paymentVouchersTable.status, "posted"),
+          ...(ownOnly ? [eq(paymentVouchersTable.id, -1)] : []),
           ...dr(paymentVouchersTable.date),
           ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
         ))
         .groupBy(paymentVouchersTable.entityId),
     ]);
-    const supplementalPayBy = await supplierInvoiceLinkedVoucherTotals(cid, req, bid, dr(paymentVouchersTable.date));
+    const supplementalPayBy = await supplierInvoiceLinkedVoucherTotals(
+      cid, req, bid, dr(paymentVouchersTable.date), ownOnly ? "purchaseReportsOwn" : undefined,
+    );
 
     // Direct JE lines per UNSHARED supplier AP account (same exclusion list
     // as the statement's fetchSupplierDirectJeLines).
@@ -1726,7 +1764,7 @@ router.get("/supplier-balances", async (req, res) => {
     for (const s of sups) if (s.accountId) acctCount.set(s.accountId, (acctCount.get(s.accountId) ?? 0) + 1);
     const soleAccts = [...acctCount.entries()].filter(([, n]) => n === 1).map(([a]) => a);
     const jeByAcct = new Map<number, number>();
-    if (soleAccts.length) {
+    if (soleAccts.length && !ownOnly) {
       const jeRows = await db.select({
         acct: journalEntryLinesTable.accountId,
         s: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}), 0)`,
@@ -1749,7 +1787,7 @@ router.get("/supplier-balances", async (req, res) => {
     const payBy = new Map(payRows.map(r => [r.sid, Number(r.s)]));
 
     const out = sups
-      .filter(s => s.includeInStatements !== false)
+      .filter(s => s.includeInStatements !== false && (!ownOnly || invBy.has(s.id) || retBy.has(s.id)))
       .map(s => ({
         supplierId: s.id, nameAr: s.nameAr, nameEn: s.nameEn, phone: s.phone,
         balance: (invBy.get(s.id) ?? 0) - (retBy.get(s.id) ?? 0) - (payBy.get(s.id) ?? 0) - (supplementalPayBy.get(s.id) ?? 0)

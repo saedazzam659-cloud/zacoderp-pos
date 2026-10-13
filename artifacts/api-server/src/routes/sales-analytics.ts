@@ -21,7 +21,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
-import { ownDocumentFilter } from "../lib/documentVisibility.js";
+import { isOwnDocumentOnly, ownDocumentFilter } from "../lib/documentVisibility.js";
 import { and, eq, sql, gte, lte, lt, asc, desc, inArray, notInArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, pushRegionScope } from "../middleware/auth.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
@@ -241,12 +241,18 @@ function getRid(req: any): number | undefined {
 }
 
 /** Adds only entityId-null legacy receipt allocations to original totals. */
-async function customerInvoiceLinkedVoucherTotals(cid: number, req: any, bid: number | undefined, dateConds: any[]) {
+async function customerInvoiceLinkedVoucherTotals(
+  cid: number,
+  req: any,
+  bid: number | undefined,
+  dateConds: any[],
+  visibilityKey?: "salesReportsOwn",
+) {
   const vouchers = await db.select({
     id: receiptVouchersTable.id, amount: receiptVouchersTable.amount,
   }).from(receiptVouchersTable).where(and(
     eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted"),
-    isNull(receiptVouchersTable.entityId),
+    ...(visibilityKey ? [] : [isNull(receiptVouchersTable.entityId)]),
     ...dateConds, ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
   ));
   const ids = vouchers.map(v => v.id);
@@ -254,6 +260,7 @@ async function customerInvoiceLinkedVoucherTotals(cid: number, req: any, bid: nu
   const invoiceScope = [
     eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted"),
     eq(salesInvoicesTable.paymentType, "credit"),
+    ...(visibilityKey ? ownDocumentFilter(req, visibilityKey, salesInvoicesTable.createdById) : []),
   ];
   const [lines, headers, settlements] = await Promise.all([
     db.select({ id: receiptVoucherLinesTable.id, voucherId: receiptVoucherLinesTable.voucherId,
@@ -278,7 +285,13 @@ async function customerInvoiceLinkedVoucherTotals(cid: number, req: any, bid: nu
 /** Row-level counterpart of customerInvoiceLinkedVoucherTotals. Voucher date
  * and branch determine report scope; linked invoices only establish the
  * customer and must be posted credit invoices in the same tenant. */
-async function customerInvoiceLinkedVoucherRows(cid: number, req: any, bid: number | undefined, dateConds: any[]) {
+async function customerInvoiceLinkedVoucherRows(
+  cid: number,
+  req: any,
+  bid: number | undefined,
+  dateConds: any[],
+  visibilityKey?: "salesReportsOwn",
+) {
   const vouchers = await db.select({
     id: receiptVouchersTable.id,
     amount: receiptVouchersTable.amount,
@@ -297,7 +310,7 @@ async function customerInvoiceLinkedVoucherRows(cid: number, req: any, bid: numb
     .where(and(
       eq(receiptVouchersTable.companyId, cid),
       eq(receiptVouchersTable.status, "posted"),
-      isNull(receiptVouchersTable.entityId),
+      ...(visibilityKey ? [] : [isNull(receiptVouchersTable.entityId)]),
       ...dateConds,
       ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
     ));
@@ -307,6 +320,7 @@ async function customerInvoiceLinkedVoucherRows(cid: number, req: any, bid: numb
     eq(salesInvoicesTable.companyId, cid),
     eq(salesInvoicesTable.status, "posted"),
     eq(salesInvoicesTable.paymentType, "credit"),
+    ...(visibilityKey ? ownDocumentFilter(req, visibilityKey, salesInvoicesTable.createdById) : []),
   ];
   const [lines, headers, settlements] = await Promise.all([
     db.select({
@@ -568,6 +582,7 @@ router.get("/customer-statement", async (req, res) => {
     const { customerId, from, to } = req.query as Record<string, string>;
     const ccid = Number(customerId);
     if (!customerId || !Number.isFinite(ccid)) { res.status(400).json({ error: "customerId مطلوب ويجب أن يكون رقماً صحيحاً" }); return; }
+    const ownOnly = isOwnDocumentOnly(req, "salesReportsOwn");
 
     // If this customer is flagged "display only" we hide their balance from
     // the statement view (the underlying JEs still exist and roll up into the
@@ -593,6 +608,7 @@ router.get("/customer-statement", async (req, res) => {
           eq(salesInvoicesTable.customerId, ccid),
           eq(salesInvoicesTable.status, "posted"),
           eq(salesInvoicesTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
           sql`${salesInvoicesTable.invoiceDate} < ${date}`,
           ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
         ));
@@ -603,6 +619,7 @@ router.get("/customer-statement", async (req, res) => {
           eq(salesReturnsTable.customerId, ccid),
           eq(salesReturnsTable.status, "posted"),
           eq(salesReturnsTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
           sql`${salesReturnsTable.returnDate} < ${date}`,
           ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
         ));
@@ -613,14 +630,15 @@ router.get("/customer-statement", async (req, res) => {
           eq(receiptVouchersTable.entityType, "customer"),
           eq(receiptVouchersTable.entityId, ccid),
           eq(receiptVouchersTable.status, "posted"),
+          ...(ownOnly ? [eq(receiptVouchersTable.id, -1)] : []),
           sql`${receiptVouchersTable.date} < ${date}`,
           ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
         ));
       const supplementalRec = await customerInvoiceLinkedVoucherTotals(
-        cid as number, req, bid, [sql`${receiptVouchersTable.date} < ${date}`],
+        cid as number, req, bid, [sql`${receiptVouchersTable.date} < ${date}`], ownOnly ? "salesReportsOwn" : undefined,
       );
       let jeNet = 0;
-      if (custMeta?.accountId && !(await customerAccountShared(cid as number, custMeta.accountId))) {
+      if (!ownOnly && custMeta?.accountId && !(await customerAccountShared(cid as number, custMeta.accountId))) {
         const [je] = await db.select({
           s: sql<string>`coalesce(sum(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}), 0)`,
         }).from(journalEntryLinesTable)
@@ -650,6 +668,7 @@ router.get("/customer-statement", async (req, res) => {
       ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
       eq(salesInvoicesTable.customerId, ccid),
       eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
     ];
     pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
@@ -701,6 +720,7 @@ router.get("/customer-statement", async (req, res) => {
       ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
       eq(salesReturnsTable.customerId, ccid),
       eq(salesReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
     ];
     pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
     if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
@@ -722,6 +742,7 @@ router.get("/customer-statement", async (req, res) => {
       eq(receiptVouchersTable.entityType, "customer"),
       eq(receiptVouchersTable.entityId, ccid),
       eq(receiptVouchersTable.status, "posted"),
+      ...(ownOnly ? [eq(receiptVouchersTable.id, -1)] : []),
     ];
     pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
     if (from) recConds.push(gte(receiptVouchersTable.date, from));
@@ -745,9 +766,9 @@ router.get("/customer-statement", async (req, res) => {
     const supplementalRecs = (await customerInvoiceLinkedVoucherRows(cid, req, bid, [
       ...(from ? [gte(receiptVouchersTable.date, from)] : []),
       ...(to ? [lte(receiptVouchersTable.date, to)] : []),
-    ])).filter(r => r.customerId === ccid);
+    ], ownOnly ? "salesReportsOwn" : undefined)).filter(r => r.customerId === ccid);
     const taxableMoves=await taxableAdvancePartyMovements(cid,req,bid,ccid,from,to);
-    const jeLines = await fetchCustomerDirectJeLines(
+    const jeLines = ownOnly ? [] : await fetchCustomerDirectJeLines(
       cid, custMeta?.accountId, from, to,
       branchScopeSpread(req, journalEntriesTable.branchId, bid),
     );
@@ -855,6 +876,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
       res.status(400).json({ error: "customerId مطلوب ويجب أن يكون رقماً صحيحاً" });
       return;
     }
+    const ownOnly = isOwnDocumentOnly(req, "salesReportsOwn");
 
     // Display-only customer — short-circuit (matches /customer-statement).
     const [custMeta] = await db.select({
@@ -879,6 +901,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
           eq(salesInvoicesTable.customerId, ccid),
           eq(salesInvoicesTable.status, "posted"),
           eq(salesInvoicesTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
           sql`${salesInvoicesTable.invoiceDate} < ${date}`,
           ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
         ));
@@ -889,6 +912,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
           eq(salesReturnsTable.customerId, ccid),
           eq(salesReturnsTable.status, "posted"),
           eq(salesReturnsTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
           sql`${salesReturnsTable.returnDate} < ${date}`,
           ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
         ));
@@ -899,14 +923,15 @@ router.get("/customer-statement-detailed", async (req, res) => {
           eq(receiptVouchersTable.entityType, "customer"),
           eq(receiptVouchersTable.entityId, ccid),
           eq(receiptVouchersTable.status, "posted"),
+          ...(ownOnly ? [eq(receiptVouchersTable.id, -1)] : []),
           sql`${receiptVouchersTable.date} < ${date}`,
           ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
         ));
       const supplementalRec = await customerInvoiceLinkedVoucherTotals(
-        cid as number, req, bid, [sql`${receiptVouchersTable.date} < ${date}`],
+        cid as number, req, bid, [sql`${receiptVouchersTable.date} < ${date}`], ownOnly ? "salesReportsOwn" : undefined,
       );
       let jeNet = 0;
-      if (custMeta?.accountId && !(await customerAccountShared(cid as number, custMeta.accountId))) {
+      if (!ownOnly && custMeta?.accountId && !(await customerAccountShared(cid as number, custMeta.accountId))) {
         const [je] = await db.select({
           s: sql<string>`coalesce(sum(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}), 0)`,
         }).from(journalEntryLinesTable)
@@ -940,6 +965,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
       ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
       eq(salesInvoicesTable.customerId, ccid),
       eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
     ];
     pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
@@ -958,6 +984,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
       ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
       eq(salesReturnsTable.customerId, ccid),
       eq(salesReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
     ];
     pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
     if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
@@ -975,6 +1002,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
       eq(receiptVouchersTable.entityType, "customer"),
       eq(receiptVouchersTable.entityId, ccid),
       eq(receiptVouchersTable.status, "posted"),
+      ...(ownOnly ? [eq(receiptVouchersTable.id, -1)] : []),
     ];
     pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
     if (from) recConds.push(gte(receiptVouchersTable.date, from));
@@ -995,7 +1023,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
     const supplementalRecs = (await customerInvoiceLinkedVoucherRows(cid, req, bid, [
       ...(from ? [gte(receiptVouchersTable.date, from)] : []),
       ...(to ? [lte(receiptVouchersTable.date, to)] : []),
-    ])).filter(r => r.customerId === ccid);
+    ], ownOnly ? "salesReportsOwn" : undefined)).filter(r => r.customerId === ccid);
 
     const taxableMoves=await taxableAdvancePartyMovements(cid,req,bid,ccid,from,to);
     // Batch-load child rows for invoices and returns.
@@ -1174,7 +1202,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
           description: r.description,
         },
       })),
-      ...(await fetchCustomerDirectJeLines(
+      ...(ownOnly ? [] : await fetchCustomerDirectJeLines(
         cid, custMeta?.accountId, from, to,
         branchScopeSpread(req, journalEntriesTable.branchId, bid),
       )).map(j => ({
@@ -1200,6 +1228,7 @@ router.get("/aging", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
+    const ownOnly = isOwnDocumentOnly(req, "salesReportsOwn");
     const asOf = (req.query.asOf as string) || new Date().toISOString().slice(0, 10);
 
     const customers = await db.select().from(customersTable)
@@ -1221,6 +1250,7 @@ router.get("/aging", async (req, res) => {
         eq(salesInvoicesTable.companyId, cid),
         eq(salesInvoicesTable.status, "posted"),
         eq(salesInvoicesTable.paymentType, "credit"),
+        ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
         lte(salesInvoicesTable.invoiceDate, asOf),
         ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ))
@@ -1237,6 +1267,7 @@ router.get("/aging", async (req, res) => {
         eq(salesReturnsTable.companyId, cid),
         eq(salesReturnsTable.status, "posted"),
         eq(salesReturnsTable.paymentType, "credit"),
+        ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
         lte(salesReturnsTable.returnDate, asOf),
         ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
       ))
@@ -1252,19 +1283,24 @@ router.get("/aging", async (req, res) => {
         eq(receiptVouchersTable.companyId, cid),
         eq(receiptVouchersTable.entityType, "customer"),
         eq(receiptVouchersTable.status, "posted"),
+        ...(ownOnly ? [eq(receiptVouchersTable.id, -1)] : []),
         lte(receiptVouchersTable.date, asOf),
         ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
       .groupBy(receiptVouchersTable.entityId);
-    const supplementalRecBy = await customerInvoiceLinkedVoucherTotals(cid, req, bid, [lte(receiptVouchersTable.date, asOf)]);
+    const supplementalRecBy = await customerInvoiceLinkedVoucherTotals(
+      cid, req, bid, [lte(receiptVouchersTable.date, asOf)], ownOnly ? "salesReportsOwn" : undefined,
+    );
     const taxableMoves=await taxableAdvancePartyMovements(cid,req,bid,undefined,undefined,asOf);
 
     const creditByCustomer: Record<number, number> = {};
     for (const r of retAgg) if (r.customerId) creditByCustomer[r.customerId] = (creditByCustomer[r.customerId] ?? 0) + Number(r.total);
     for (const r of recAgg) if (r.customerId) creditByCustomer[r.customerId] = (creditByCustomer[r.customerId] ?? 0) + Number(r.total);
     for (const [customerId, total] of supplementalRecBy) creditByCustomer[customerId] = (creditByCustomer[customerId] ?? 0) + total;
-    for (const r of taxableMoves.directReceipts)
-      creditByCustomer[r.customerId]=(creditByCustomer[r.customerId]??0)+Number(r.total);
+    if (!ownOnly) {
+      for (const r of taxableMoves.directReceipts)
+        creditByCustomer[r.customerId]=(creditByCustomer[r.customerId]??0)+Number(r.total);
+    }
 
     // Group invoices by customer
     const invByCustomer: Record<number, { date: string; total: number }[]> = {};
@@ -1272,8 +1308,10 @@ router.get("/aging", async (req, res) => {
       if (!i.customerId) continue;
       (invByCustomer[i.customerId] ??= []).push({ date: i.date, total: Number(i.total) });
     }
-    for (const i of taxableMoves.invoices)
-      (invByCustomer[i.customerId] ??= []).push({date:i.date,total:Number(i.total)});
+    if (!ownOnly) {
+      for (const i of taxableMoves.invoices)
+        (invByCustomer[i.customerId] ??= []).push({date:i.date,total:Number(i.total)});
+    }
     for (const list of Object.values(invByCustomer)) list.sort((a,b)=>a.date.localeCompare(b.date));
 
     const today = new Date(asOf);
@@ -1816,6 +1854,7 @@ router.get("/payment-mix-report", async (req: any, res) => {
     const cid = getCid(req);
     const date = String(req.query.date || new Date().toISOString().slice(0, 10));
     const bid = getBid(req);
+    const ownOnly = isOwnDocumentOnly(req, "salesReportsOwn");
     if (!cid) {
       res.json({
         date,
@@ -1838,6 +1877,7 @@ router.get("/payment-mix-report", async (req: any, res) => {
       eq(salesInvoicesTable.companyId, cid),
       eq(salesInvoicesTable.invoiceDate, date),
       eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
       ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
     ));
 
@@ -1855,6 +1895,7 @@ router.get("/payment-mix-report", async (req: any, res) => {
       eq(receiptVouchersTable.date, date),
       eq(receiptVouchersTable.status, "posted"),
       eq(receiptVouchersTable.entityType, "customer"),
+      ...(ownOnly ? [eq(receiptVouchersTable.id, -1)] : []),
       ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
     ));
 
@@ -2123,6 +2164,7 @@ router.get("/daily-detailed-report", async (req: any, res) => {
     const cid = getCid(req);
     const date = String(req.query.date || new Date().toISOString().slice(0, 10));
     const bid = getBid(req);
+    const ownOnly = isOwnDocumentOnly(req, "salesReportsOwn");
     if (!cid) {
       res.json({
         date,
@@ -2157,6 +2199,7 @@ router.get("/daily-detailed-report", async (req: any, res) => {
       eq(salesInvoicesTable.companyId, cid),
       eq(salesInvoicesTable.invoiceDate, date),
       eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
       ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
     ));
 
@@ -2174,6 +2217,7 @@ router.get("/daily-detailed-report", async (req: any, res) => {
       eq(receiptVouchersTable.date, date),
       eq(receiptVouchersTable.status, "posted"),
       eq(receiptVouchersTable.entityType, "customer"),
+      ...(ownOnly ? [eq(receiptVouchersTable.id, -1)] : []),
       ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
     ));
 
@@ -2471,6 +2515,7 @@ router.get("/profitability", async (req, res) => {
       eq(stockLedgerTable.companyId, cid),
       eq(stockLedgerTable.refType, "sales_invoice"),
       eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
     ];
     pushBranchScope(req, invCogsConds, salesInvoicesTable.branchId, bid);
     if (from)   invCogsConds.push(gte(salesInvoicesTable.invoiceDate, from));
@@ -2708,6 +2753,7 @@ router.get("/free-returns", async (req, res) => {
     const conds = [
       eq(salesReturnsTable.companyId, cid),
       eq(salesReturnsTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
       sql`${salesReturnLinesTable.freeQty} > 0`,
     ];
     pushBranchScope(req, conds, salesReturnsTable.branchId, bid);
@@ -2789,6 +2835,7 @@ router.get("/customer-balances", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
+    const ownOnly = isOwnDocumentOnly(req, "salesReportsOwn");
     const { from, to } = req.query as Record<string, string>;
     const dr = (col: any) => [
       ...(from ? [gte(col, from)] : []),
@@ -2808,6 +2855,7 @@ router.get("/customer-balances", async (req, res) => {
           eq(salesInvoicesTable.companyId, cid),
           eq(salesInvoicesTable.status, "posted"),
           eq(salesInvoicesTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "salesReportsOwn", salesInvoicesTable.createdById),
           ...dr(salesInvoicesTable.invoiceDate),
           ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
         ))
@@ -2818,6 +2866,7 @@ router.get("/customer-balances", async (req, res) => {
           eq(salesReturnsTable.companyId, cid),
           eq(salesReturnsTable.status, "posted"),
           eq(salesReturnsTable.paymentType, "credit"),
+          ...ownDocumentFilter(req, "salesReportsOwn", salesReturnsTable.createdById),
           ...dr(salesReturnsTable.returnDate),
           ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
         ))
@@ -2828,18 +2877,23 @@ router.get("/customer-balances", async (req, res) => {
           eq(receiptVouchersTable.companyId, cid),
           eq(receiptVouchersTable.entityType, "customer"),
           eq(receiptVouchersTable.status, "posted"),
+          ...(ownOnly ? [eq(receiptVouchersTable.id, -1)] : []),
           ...dr(receiptVouchersTable.date),
           ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
         ))
         .groupBy(receiptVouchersTable.entityId),
     ]);
-    const supplementalRecBy = await customerInvoiceLinkedVoucherTotals(cid, req, bid, dr(receiptVouchersTable.date));
+    const supplementalRecBy = await customerInvoiceLinkedVoucherTotals(
+      cid, req, bid, dr(receiptVouchersTable.date), ownOnly ? "salesReportsOwn" : undefined,
+    );
     const taxableMoves=await taxableAdvancePartyMovements(cid,req,bid,undefined,from,to);
     const taxableByCustomer=new Map<number,number>();
-    for (const row of taxableMoves.invoices)
-      taxableByCustomer.set(row.customerId,(taxableByCustomer.get(row.customerId)??0)+Number(row.total));
-    for (const row of taxableMoves.directReceipts)
-      taxableByCustomer.set(row.customerId,(taxableByCustomer.get(row.customerId)??0)-Number(row.total));
+    if (!ownOnly) {
+      for (const row of taxableMoves.invoices)
+        taxableByCustomer.set(row.customerId,(taxableByCustomer.get(row.customerId)??0)+Number(row.total));
+      for (const row of taxableMoves.directReceipts)
+        taxableByCustomer.set(row.customerId,(taxableByCustomer.get(row.customerId)??0)-Number(row.total));
+    }
 
     const accountCounts = new Map<number, number>();
     for (const customer of custs) {
@@ -2851,7 +2905,7 @@ router.get("/customer-balances", async (req, res) => {
       .filter(([, count]) => count === 1)
       .map(([accountId]) => accountId);
     const jeByAccount = new Map<number, number>();
-    if (soleAccountIds.length) {
+    if (soleAccountIds.length && !ownOnly) {
       const jeRows = await db.select({
         accountId: journalEntryLinesTable.accountId,
         net: sql<string>`coalesce(sum(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}), 0)`,

@@ -38,6 +38,7 @@ import { namedPartyDescription } from "../lib/journalLineDescriptions.js";
 import { parseContractingAllocation, resolveContractingLine, contractingVoucherOptions, postVoucherSettlements, assertVoucherCanUnpost, lockVoucherContractScope, type ContractingAllocation } from "../lib/contracting-voucher-service.js";
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 import { refreshBillPaymentState } from "../lib/contracting-accounting-service.js";
+import { ownDocumentFilter } from "../lib/documentVisibility.js";
 import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
 import { draftLinkedSourceJournalEntry, getLinkedSourceJournalEntry, replaceLinkedSourceJournalEntry } from "../lib/sourceJournalEntryLifecycle.js";
 
@@ -336,6 +337,7 @@ router.get("/", async (req, res) => {
     ? await db.select().from(paymentVouchersTable)
         .where(and(
           eq(paymentVouchersTable.companyId, cid),
+          ...ownDocumentFilter(req, "paymentVouchersOwn", paymentVouchersTable.createdById),
           sql`${paymentVouchersTable.sourceType} IS DISTINCT FROM 'cash_expense'`,
           ...branchScope,
           ...piFilter,
@@ -343,6 +345,7 @@ router.get("/", async (req, res) => {
         .orderBy(desc(paymentVouchersTable.createdAt))
     : await db.select().from(paymentVouchersTable)
         .where(and(
+          ...ownDocumentFilter(req, "paymentVouchersOwn", paymentVouchersTable.createdById),
           sql`${paymentVouchersTable.sourceType} IS DISTINCT FROM 'cash_expense'`,
           ...branchScope,
           ...piFilter,
@@ -438,6 +441,7 @@ router.get("/settlement-candidates", async (req, res) => {
     const rows = await db.select().from(paymentVouchersTable)
       .where(and(
         eq(paymentVouchersTable.companyId, cid),
+        ...ownDocumentFilter(req, "paymentVouchersOwn", paymentVouchersTable.createdById),
         entityMatch,
         sql`${paymentVouchersTable.purchaseInvoiceId} IS NULL`,
         ...branchScope,
@@ -711,6 +715,7 @@ router.get("/:id", async (req, res) => {
     .where(and(
       eq(paymentVouchersTable.id, parseInt(req.params.id)),
       eq(paymentVouchersTable.companyId, cid),
+      ...ownDocumentFilter(req, "paymentVouchersOwn", paymentVouchersTable.createdById),
     ));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   const lines = await db.select().from(paymentVoucherLinesTable)
@@ -1329,6 +1334,7 @@ router.post("/", async (req, res) => {
     }
     const inserted = await tx.insert(paymentVouchersTable).values({
     companyId:     cid,
+    createdById:   Number(req.authUser?.id) || null,
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
     code,
     date:          d.date          || new Date().toISOString().slice(0, 10),

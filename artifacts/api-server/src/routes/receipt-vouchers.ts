@@ -29,6 +29,7 @@ import { parseContractingAllocation, resolveContractingLine, contractingVoucherO
 import { ensureContractingAccountingTables } from "../lib/contracting-accounting-storage.js";
 import { exactCents } from "../lib/contracting-bill-adjustment-math.js";
 import { taxableAdvanceReceiptSlice } from "../lib/contracting-taxable-advance.js";
+import { ownDocumentFilter } from "../lib/documentVisibility.js";
 import { refreshBillPaymentState } from "../lib/contracting-accounting-service.js";
 import { draftLinkedSourceJournalEntry, getLinkedSourceJournalEntry, replaceLinkedSourceJournalEntry } from "../lib/sourceJournalEntryLifecycle.js";
 
@@ -288,10 +289,10 @@ router.get("/", async (req, res) => {
   }
   const rows = cid
     ? await db.select().from(receiptVouchersTable)
-        .where(and(eq(receiptVouchersTable.companyId, cid), ...branchScope, ...siFilter))
+        .where(and(eq(receiptVouchersTable.companyId, cid), ...ownDocumentFilter(req, "receiptVouchersOwn", receiptVouchersTable.createdById), ...branchScope, ...siFilter))
         .orderBy(desc(receiptVouchersTable.createdAt))
     : await db.select().from(receiptVouchersTable)
-        .where((branchScope.length || siFilter.length) ? and(...branchScope, ...siFilter) : undefined)
+        .where(and(...ownDocumentFilter(req, "receiptVouchersOwn", receiptVouchersTable.createdById), ...branchScope, ...siFilter))
         .orderBy(desc(receiptVouchersTable.createdAt));
   // A voucher is MULTI iff it actually has allocation LINES — the header
   // accountId is NOT a reliable discriminator (simple party-mode vouchers
@@ -359,6 +360,7 @@ router.get("/settlement-candidates", async (req, res) => {
     const rows = await db.select().from(receiptVouchersTable)
       .where(and(
         eq(receiptVouchersTable.companyId, cid),
+        ...ownDocumentFilter(req, "receiptVouchersOwn", receiptVouchersTable.createdById),
         entityMatch,
         sql`${receiptVouchersTable.salesInvoiceId} IS NULL`,
         ...branchScope,
@@ -619,6 +621,7 @@ router.get("/:id", async (req, res) => {
     .where(and(
       eq(receiptVouchersTable.id, parseInt(req.params.id)),
       eq(receiptVouchersTable.companyId, cid),
+      ...ownDocumentFilter(req, "receiptVouchersOwn", receiptVouchersTable.createdById),
     ));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   const lines = await db.select().from(receiptVoucherLinesTable)
@@ -1024,6 +1027,7 @@ router.post("/", async (req, res) => {
     entityName:    d.entityName    ?? null,
     // Creation channel — 'mobile' when the companion app created the voucher.
     sourceChannel: String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile" ? "mobile" : null,
+    createdById:   Number(req.authUser?.id) || null,
     // Multi-line vouchers keep the header override null (lines carry the
     // allocation accounts); legacy single-account callers still honor it.
     accountId:     safeAccountId,

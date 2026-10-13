@@ -76,6 +76,7 @@ export const receiptVouchersTable = pgTable("receipt_vouchers", {
   entityName:    text("entity_name"),
   // Creation channel: 'mobile' from the companion app, null = web.
   sourceChannel: text("source_channel"),
+  createdById:   integer("created_by_id"),
   accountId:     integer("account_id").references(() => accountsTable.id),
   amount:        numeric("amount", { precision: 15, scale: 2 }).notNull().default("0"),
   currencyId:    integer("currency_id").references(() => currenciesTable.id),
@@ -127,6 +128,7 @@ export const paymentVouchersTable = pgTable("payment_vouchers", {
   // Cash expenses reuse the payment-voucher posting lifecycle, but remain
   // isolated from ordinary payment-voucher screens and actions.
   sourceType:    text("source_type"),
+  createdById:   integer("created_by_id"),
   cashExpenseCreatedByUserId: integer("cash_expense_created_by_user_id"),
   cashExpenseSalesRepId: integer("cash_expense_sales_rep_id"),
   cashExpenseReceiptPath: text("cash_expense_receipt_path"),

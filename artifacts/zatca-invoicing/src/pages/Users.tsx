@@ -41,6 +41,8 @@ type DataVisibilityPermissions = {
   purchaseReturnsOwn: boolean;
   salesReportsOwn: boolean;
   purchaseReportsOwn: boolean;
+  receiptVouchersOwn: boolean;
+  paymentVouchersOwn: boolean;
 };
 
 const POS_DEFAULT_SCREENS: Array<{
@@ -229,6 +231,8 @@ const emptyForm = () => ({
     purchaseReturnsOwn: false,
     salesReportsOwn: false,
     purchaseReportsOwn: false,
+    receiptVouchersOwn: false,
+    paymentVouchersOwn: false,
   } as DataVisibilityPermissions,
   // All-checked by default — matches the server's back-compat "allowed unless
   // explicitly denied" semantics.
@@ -471,6 +475,8 @@ export default function Users() {
         purchaseReturnsOwn: !!u.dataVisibilityPermissions?.purchaseReturnsOwn,
         salesReportsOwn: !!u.dataVisibilityPermissions?.salesReportsOwn,
         purchaseReportsOwn: !!u.dataVisibilityPermissions?.purchaseReportsOwn,
+        receiptVouchersOwn: !!u.dataVisibilityPermissions?.receiptVouchersOwn,
+        paymentVouchersOwn: !!u.dataVisibilityPermissions?.paymentVouchersOwn,
       },
       postingPermissions: seedPostingPerms(u.postingPermissions),
       mobilePermissions: seedMobilePerms((u as any).mobilePermissions),
@@ -941,6 +947,8 @@ export default function Users() {
                   ["purchaseReturnsOwn", "مرتجعات المشتريات"],
                   ["salesReportsOwn", "تقارير المبيعات"],
                   ["purchaseReportsOwn", "تقارير المشتريات"],
+                  ["receiptVouchersOwn", "سندات القبض"],
+                  ["paymentVouchersOwn", "سندات الصرف"],
                 ] as const).map(([key, label]) => (
                   <label key={key} className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/40">
                     <Checkbox
