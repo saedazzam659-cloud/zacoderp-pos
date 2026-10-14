@@ -7,6 +7,7 @@ import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
 import { currencySymbol } from "@/lib/format";
+import { paymentMethodLabel } from "@/lib/paymentMethodLabels";
 import {
   clampThermalPrintScale,
   readThermalPrintScale,
@@ -83,6 +84,16 @@ const escapePrintHtml = (value: unknown) => String(value ?? "")
   .replace(/</g, "&lt;")
   .replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;");
+
+function salesPaymentLabel(
+  company: any,
+  paymentType: unknown,
+  fallbacks: Partial<Record<"cash" | "credit" | "bank", string>> = {},
+): string {
+  const method = paymentType === "cash" ? "cash" : paymentType === "bank" ? "bank" : "credit";
+  const fallback = fallbacks[method] ?? (method === "cash" ? "نقدي" : method === "bank" ? "بنك" : "آجل");
+  return escapePrintHtml(paymentMethodLabel(company, method, fallback));
+}
 
 export function renderInventoryPrintDetailsHtml(
   line: any,
@@ -726,7 +737,7 @@ function template1(d: PrintData): string {
   ${doc.notes ? `<div class="section" style="margin-top:12px;"><h4>ملاحظات</h4><p>${doc.notes}</p></div>` : ""}
   <div class="footer">
     <div>
-      ${d.type !== "quotation" ? `<div>طريقة الدفع: ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "تحويل بنكي" : "آجل"}</div>` : (doc.validUntil ? `<div>صالح حتى: ${doc.validUntil}</div>` : "")}
+      ${d.type !== "quotation" ? `<div>طريقة الدفع: ${salesPaymentLabel(company, doc.paymentType, { bank: "تحويل بنكي" })}</div>` : (doc.validUntil ? `<div>صالح حتى: ${doc.validUntil}</div>` : "")}
       <div style="margin-top:4px;color:#2563eb;">تم إنشاؤه بنظام الفاتورة الإلكترونية ZATCA</div>
     </div>
     <div style="text-align:center;">
@@ -773,7 +784,7 @@ function template2(d: PrintData): string {
     <div class="card"><h4>العميل</h4>${customerBlock(customer, d)}</div>
     <div class="card">
       <h4>تفاصيل الوثيقة</h4>
-      ${d.type !== "quotation" ? `<div>النوع: <span class="badge">${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</span></div>` : (doc.validUntil ? `<div>صالح حتى: <span class="badge">${doc.validUntil}</span></div>` : "")}
+      ${d.type !== "quotation" ? `<div>النوع: <span class="badge">${salesPaymentLabel(company, doc.paymentType)}</span></div>` : (doc.validUntil ? `<div>صالح حتى: <span class="badge">${doc.validUntil}</span></div>` : "")}
       <div style="margin-top:4px;">العملة: ${doc.currencyCode ?? "SAR"}</div>
       ${d.type === "return" && doc.invoiceId ? `<div style="margin-top:4px;">فاتورة مرجعية: ${doc.invoiceId}</div>` : ""}
     </div>
@@ -833,7 +844,7 @@ function template3(d: PrintData): string {
   </div>
   <div class="sub-header">
     <div><span>التاريخ: </span><b>${docDate(doc, d.type)}</b></div>
-    ${d.type !== "quotation" ? `<div><span>طريقة الدفع: </span><b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></div>` : (doc.validUntil ? `<div><span>صالح حتى: </span><b>${doc.validUntil}</b></div>` : "")}
+    ${d.type !== "quotation" ? `<div><span>طريقة الدفع: </span><b>${salesPaymentLabel(company, doc.paymentType)}</b></div>` : (doc.validUntil ? `<div><span>صالح حتى: </span><b>${doc.validUntil}</b></div>` : "")}
     <div><span>العملة: </span><b>${doc.currencyCode ?? "SAR"}</b></div>
     ${doc.currencyCode && doc.currencyCode !== "SAR" ? `<div><span>سعر الصرف: </span><b>${doc.exchangeRate}</b></div>` : ""}
   </div>
@@ -913,7 +924,7 @@ function template4(d: PrintData): string {
     </div>
     <div class="box">
       <div class="section-title">تفاصيل</div>
-      ${d.type !== "quotation" ? `<div>الدفع: ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</div>` : (doc.validUntil ? `<div>صالح حتى: ${doc.validUntil}</div>` : "")}
+      ${d.type !== "quotation" ? `<div>الدفع: ${salesPaymentLabel(company, doc.paymentType)}</div>` : (doc.validUntil ? `<div>صالح حتى: ${doc.validUntil}</div>` : "")}
       <div>العملة: ${doc.currencyCode ?? "SAR"}</div>
     </div>
   </div>
@@ -997,7 +1008,7 @@ function template5(d: PrintData): string {
     <div><div class="label">التاريخ</div><b>${docDate(doc, d.type)}</b></div>
     ${isQuot
       ? `<div><div class="label">صالح حتى</div><b>${doc.validUntil ?? "—"}</b></div>`
-      : `<div><div class="label">طريقة الدفع</div><b>${doc.paymentType === "cash" ? "نقدي Cash" : doc.paymentType === "bank" ? "بنك Bank" : "آجل Credit"}</b></div>`}
+      : `<div><div class="label">طريقة الدفع</div><b>${salesPaymentLabel(company, doc.paymentType, { cash: "نقدي Cash", bank: "بنك Bank", credit: "آجل Credit" })}</b></div>`}
     <div><div class="label">العملة</div><b>${doc.currencyCode ?? "SAR"}</b></div>
   </div>
 
@@ -1167,7 +1178,7 @@ function template6(d: PrintData): string {
       ${nationalAddress ? `<div><b>العنوان الوطني:</b> <span class="mono">${escapePrintHtml(nationalAddress)}</span></div>` : ""}
       ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
       ${d.type !== "quotation"
-        ? `<div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "تحويل بنكي" : "آجل"}</div>`
+        ? `<div><b>الدفع:</b> ${salesPaymentLabel(company, doc.paymentType, { bank: "تحويل بنكي" })}</div>`
         : ""}
       ${isReturn && doc.returnReason ? `<div><b>السبب:</b> ${doc.returnReason}</div>` : ""}
       ${isReturn && doc.originalInvoiceNumber ? `<div><b>الفاتورة الأصلية:</b> ${doc.originalInvoiceNumber}</div>` : ""}
@@ -1308,7 +1319,7 @@ function template7(d: PrintData): string {
         ${nationalAddress ? `<div><b>العنوان الوطني:</b> <span class="mono">${escapePrintHtml(nationalAddress)}</span></div>` : ""}
         ${quotationAddress ? `<div><b>العنوان:</b> ${escapePrintHtml(quotationAddress)}</div>` : ""}
         ${d.type !== "quotation"
-          ? `<div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "تحويل بنكي" : "آجل"}</div>`
+          ? `<div><b>الدفع:</b> ${salesPaymentLabel(company, doc.paymentType, { bank: "تحويل بنكي" })}</div>`
           : ""}
         ${isReturn && doc.returnReason ? `<div><b>السبب:</b> ${doc.returnReason}</div>` : ""}
         ${isReturn && doc.originalInvoiceNumber ? `<div><b>الفاتورة الأصلية:</b> ${doc.originalInvoiceNumber}</div>` : ""}
@@ -1408,7 +1419,7 @@ function template8(d: PrintData): string {
   <div class="meta-strip">
     <div class="meta-cell"><div class="k">التاريخ</div><div class="v">${docDate(doc, d.type)}</div></div>
     <div class="meta-cell"><div class="k">العملة</div><div class="v">${doc.currencyCode ?? "SAR"}</div></div>
-    <div class="meta-cell"><div class="k">${d.type === "quotation" ? "صلاحية" : "الدفع"}</div><div class="v">${d.type === "quotation" ? (doc.validUntil ?? "—") : (doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل")}</div></div>
+    <div class="meta-cell"><div class="k">${d.type === "quotation" ? "صلاحية" : "الدفع"}</div><div class="v">${d.type === "quotation" ? (doc.validUntil ?? "—") : salesPaymentLabel(company, doc.paymentType)}</div></div>
   </div>
   <div class="parties">
     <div class="party"><h4>إلى</h4>${customerBlock(customer, d)}</div>
@@ -1493,7 +1504,7 @@ function template9(d: PrintData): string {
       <div class="strip">
         <span>التاريخ: <b>${docDate(doc, d.type)}</b></span>
         <span>العملة: <b>${doc.currencyCode ?? "SAR"}</b></span>
-        ${d.type !== "quotation" ? `<span>الدفع: <b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></span>` : (doc.validUntil ? `<span>صالح حتى: <b>${doc.validUntil}</b></span>` : "")}
+        ${d.type !== "quotation" ? `<span>الدفع: <b>${salesPaymentLabel(company, doc.paymentType)}</b></span>` : (doc.validUntil ? `<span>صالح حتى: <b>${doc.validUntil}</b></span>` : "")}
       </div>
       <div class="two">
         <div class="panel"><h4>العميل</h4>${customerBlock(customer, d)}</div>
@@ -1573,7 +1584,7 @@ function template10(d: PrintData): string {
     <div class="info-bar">
       <span>التاريخ <b>${docDate(doc, d.type)}</b></span>
       <span>العملة <b>${doc.currencyCode ?? "SAR"}</b></span>
-      ${d.type !== "quotation" ? `<span>الدفع <b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></span>` : (doc.validUntil ? `<span>صالح حتى <b>${doc.validUntil}</b></span>` : "")}
+      ${d.type !== "quotation" ? `<span>الدفع <b>${salesPaymentLabel(company, doc.paymentType)}</b></span>` : (doc.validUntil ? `<span>صالح حتى <b>${doc.validUntil}</b></span>` : "")}
     </div>
     <div class="two">
       <div class="card"><h4>العميل</h4>${customerBlock(customer, d)}</div>
@@ -1651,7 +1662,7 @@ function template11(d: PrintData): string {
     <div class="pills">
       <span class="pill">التاريخ <b>${docDate(doc, d.type)}</b></span>
       <span class="pill">العملة <b>${doc.currencyCode ?? "SAR"}</b></span>
-      ${d.type !== "quotation" ? `<span class="pill">الدفع <b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></span>` : (doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : "")}
+      ${d.type !== "quotation" ? `<span class="pill">الدفع <b>${salesPaymentLabel(company, doc.paymentType)}</b></span>` : (doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : "")}
     </div>
     <div class="two">
       <div class="card"><h4>العميل</h4>${customerBlock(customer, d)}</div>
@@ -1748,7 +1759,7 @@ function template12(d: PrintData): string {
       </div>
       <div class="meta-cards">
         <div class="mc"><div class="l">العملة</div><div class="v">${doc.currencyCode ?? "SAR"}</div></div>
-        <div class="mc"><div class="l">${d.type === "quotation" ? "صلاحية" : "نوع الدفع"}</div><div class="v">${d.type === "quotation" ? (doc.validUntil ?? "—") : (doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل")}</div></div>
+        <div class="mc"><div class="l">${d.type === "quotation" ? "صلاحية" : "نوع الدفع"}</div><div class="v">${d.type === "quotation" ? (doc.validUntil ?? "—") : salesPaymentLabel(company, doc.paymentType)}</div></div>
         <div class="mc"><div class="l">عدد البنود</div><div class="v">${lines.length}</div></div>
       </div>
       <div class="cust-card">
@@ -1944,7 +1955,7 @@ function template13(d: PrintData): string {
       <div><div class="lbl">${isQuot ? "صالح حتى — Valid Until" : "طريقة الدفع — Payment"}</div>
            <div class="val">${isQuot
              ? (doc.validUntil ?? "—")
-             : (doc.paymentType === "cash" ? "نقدي Cash" : doc.paymentType === "bank" ? "بنك Bank" : "آجل Credit")}</div></div>
+             : salesPaymentLabel(company, doc.paymentType, { cash: "نقدي Cash", bank: "بنك Bank", credit: "آجل Credit" })}</div></div>
     </div>
 
     <div class="customer-card">
@@ -2163,9 +2174,12 @@ export function template14(d: PrintData): string {
   const titleSub  = isEn ? titleAr : titleEn;
   const docNo = contracting?.billNumber ?? doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
   const dateStr = contracting?.billDate ?? docDate(doc, d.type);
-  const payLabel = contracting?.directionLabel ?? (isEn
-    ? (doc.paymentType === "cash" ? "Cash" : doc.paymentType === "bank" ? "On Account" : "Credit")
-    : (doc.paymentType === "cash" ? "نقداً" : doc.paymentType === "bank" ? "على حساب" : "آجل"));
+  const payLabel = contracting?.directionLabel ?? salesPaymentLabel(
+    company,
+    doc.paymentType,
+    isEn ? { cash: "Cash", bank: "On Account", credit: "Credit" }
+      : { cash: "نقداً", bank: "على حساب", credit: "آجل" },
+  );
   // Customer "account code" — prefer an explicit code, else fall back to the
   // chart-of-accounts link, else the customer id (#123) so the field never
   // shows a blank placeholder.
@@ -2724,7 +2738,7 @@ function template15(d: PrintData): string {
   const quotationCurrencyHtml = quotationCurrencyName
     ? ` <span class="currency-name">(${esc(quotationCurrencyName)})</span>`
     : "";
-  const payLabel = doc.paymentType === "cash" ? "نقداً / Cash" : doc.paymentType === "bank" ? "بنك / Bank" : "آجل / Credit";
+  const payLabel = salesPaymentLabel(company, doc.paymentType, { cash: "نقداً / Cash", bank: "بنك / Bank", credit: "آجل / Credit" });
   const durOrPay = isQuot || isOrder
     ? { en: "Show<br/>duration", ar: isQuot ? "مدة العرض" : "التسليم", val: esc(doc.validUntil ?? "—") }
     : { en: "Payment", ar: "طريقة الدفع", val: payLabel };
