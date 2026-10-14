@@ -1931,6 +1931,29 @@ export default function GeneralSettings() {
           </div>
         )}
         <label
+          data-testid="purchase-batch-expiry-setting"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.purchaseBatchExpiryEnabled === true
+              ? "border-primary bg-primary/5 shadow-sm"
+              : "border-border hover:border-primary/40 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 cursor-pointer"
+            checked={user?.company?.purchaseBatchExpiryEnabled === true}
+            disabled={postingSaving}
+            onChange={event => togglePostingMode({ purchaseBatchExpiryEnabled: event.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">إظهار رقم التشغيلة وتاريخ الانتهاء في فواتير الشراء</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              عند الإيقاف يُخفي الحقلين من سطر الأصناف. تبقى البيانات المسجلة سابقًا محفوظة؛ والشركات الجديدة تبدأ والإعداد مغلق.
+            </span>
+          </span>
+        </label>
+        <label
           data-testid="hide-quick-add-toggle"
           className={cn(
             "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",

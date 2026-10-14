@@ -1178,6 +1178,7 @@ function PurchaseInvoiceFormContent() {
   const unitItems = units
     .filter((u: any) => u.isActive !== false)
     .map((u: any) => ({ value: String(u.id), label: unitNameOf(u) }));
+  const showBatchExpiryFields = user?.company?.purchaseBatchExpiryEnabled === true;
 
   // Ledger-grid headers (sales-invoice items-tab design): leading "#" index
   // column; notes moved OUT of the columns into a full-width sub-row.
@@ -1195,8 +1196,7 @@ function PurchaseInvoiceFormContent() {
     tr("lineCols.vat"),
     tr("lineCols.expenses"),
     tr("lineCols.finalCost"),
-    "رقم التشغيلة",
-    "تاريخ الانتهاء",
+    ...(showBatchExpiryFields ? ["رقم التشغيلة", "تاريخ الانتهاء"] : []),
     "مركز التكلفة",
     "",
   ];
@@ -2047,7 +2047,7 @@ function PurchaseInvoiceFormContent() {
                 ? <div className="mb-3 flex justify-end">{vatModeToggle}</div>
                 : quickAddBar)}
               {(() => {
-                const GRID_COLS = "38px 100px minmax(220px,1.3fr) 130px 100px 64px 64px 70px 95px 70px 64px 95px 105px 110px 125px 150px 34px";
+                const GRID_COLS = `38px 100px minmax(220px,1.3fr) 130px 100px 64px 64px 70px 95px 70px 64px 95px 105px ${showBatchExpiryFields ? "110px 125px 150px " : "150px "}34px`;
                 const addGridLine = () => {
                   const nl = newLine();
                   const r = percentRateOf(headerTaxId);
@@ -2179,18 +2179,18 @@ function PurchaseInvoiceFormContent() {
                         onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input className="h-8 text-xs bg-blue-50 text-blue-700" readOnly value={fmt(l.expenseShare)} />
                       <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.finalCost)} />
-                      {isNoStockLine(l) ? (
+                      {showBatchExpiryFields && (isNoStockLine(l) ? (
                         <Input className="h-8 text-xs bg-muted/30" placeholder="—" readOnly />
                       ) : (
                         <Input className="h-8 text-xs" placeholder="رقم التشغيلة" value={l.batchNumber}
                           onChange={e => updateLine(l._id, "batchNumber", e.target.value)} />
-                      )}
-                      {isNoStockLine(l) ? (
+                      ))}
+                      {showBatchExpiryFields && (isNoStockLine(l) ? (
                         <Input className="h-8 text-xs bg-muted/30" placeholder="—" readOnly />
                       ) : (
                         <DateField className="h-8 text-xs" value={l.expiryDate}
                           onChange={e => updateLine(l._id, "expiryDate", e.target.value)} />
-                      )}
+                      ))}
                       {/* OPTIONAL per-line cost center (توزيع تحليلي) — empty falls back to header */}
                       {(costCentersList as any[]).length > 0 ? (
                         <select

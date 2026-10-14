@@ -400,7 +400,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   const {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
-    decimalPlaces, showZeros, hideQuickAddBar, showFreeQuantity, allowNegativeSales, autoPostingEnabled,
+    decimalPlaces, showZeros, hideQuickAddBar, showFreeQuantity, allowNegativeSales, purchaseBatchExpiryEnabled, autoPostingEnabled,
     documentFieldControlsEnabled,
     showCustomerDebitNotes, showSupplierCreditNotes,
     allowUnbalancedOpeningBalances, openingBalanceReminderMessage,
@@ -460,7 +460,7 @@ router.patch("/:id/general-settings", async (req, res) => {
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
-    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; showFreeQuantity?: boolean; allowNegativeSales?: boolean; autoPostingEnabled?: boolean;
+    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; showFreeQuantity?: boolean; allowNegativeSales?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
     documentFieldControlsEnabled?: boolean;
     showCustomerDebitNotes?: boolean; showSupplierCreditNotes?: boolean;
     allowUnbalancedOpeningBalances?: boolean;
@@ -586,6 +586,13 @@ router.patch("/:id/general-settings", async (req, res) => {
       return;
     }
     updates.allowNegativeSales = allowNegativeSales;
+  }
+  if (purchaseBatchExpiryEnabled !== undefined) {
+    if (typeof purchaseBatchExpiryEnabled !== "boolean") {
+      res.status(400).json({ error: "purchaseBatchExpiryEnabled يجب أن تكون قيمة منطقية" });
+      return;
+    }
+    updates.purchaseBatchExpiryEnabled = purchaseBatchExpiryEnabled;
   }
   if (documentFieldControlsEnabled !== undefined) {
     if (typeof documentFieldControlsEnabled !== "boolean") {

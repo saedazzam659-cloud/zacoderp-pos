@@ -4743,6 +4743,45 @@ async function ensureAgentPosItemSubgroupsSchema(): Promise<void> {
   for (const stmt of statements) await execDDL(stmt);
 }
 
+async function ensurePurchaseBatchExpirySettingMigration(): Promise<void> {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS company_setting_migrations (
+      migration_key TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(741924, 1)`);
+    const applied: any = await tx.execute(sql`
+      SELECT migration_key FROM company_setting_migrations
+      WHERE migration_key = 'purchase_batch_expiry_existing_companies_v1'
+      LIMIT 1
+    `);
+    const appliedRows = Array.isArray(applied) ? applied : applied?.rows ?? [];
+    if (!appliedRows.length) {
+      await tx.execute(sql`
+        ALTER TABLE companies
+        ADD COLUMN IF NOT EXISTS purchase_batch_expiry_enabled BOOLEAN NOT NULL DEFAULT FALSE
+      `);
+      // The field was absent before this feature, so all companies present at
+      // this one-time migration had the old, visible purchase-form behavior.
+      await tx.execute(sql`
+        UPDATE companies SET purchase_batch_expiry_enabled = TRUE
+        WHERE purchase_batch_expiry_enabled = FALSE
+      `);
+      await tx.execute(sql`
+        INSERT INTO company_setting_migrations (migration_key)
+        VALUES ('purchase_batch_expiry_existing_companies_v1')
+        ON CONFLICT (migration_key) DO NOTHING
+      `);
+    }
+    await tx.execute(sql`
+      ALTER TABLE companies
+      ALTER COLUMN purchase_batch_expiry_enabled SET DEFAULT FALSE
+    `);
+  });
+}
+
 async function runHeal(options: {
   includeIdentitySteps?: boolean;
   strictSchema?: boolean;
@@ -4757,6 +4796,7 @@ async function runHeal(options: {
   await ensureDocumentExpenseSchema();
   await ensureTaxIntegrationSchema();
   await ensureCrmWhatsAppSchema();
+  await ensurePurchaseBatchExpirySettingMigration();
   logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
 
   // Run this compatibility DDL before generic inspection. Purchase-invoice
