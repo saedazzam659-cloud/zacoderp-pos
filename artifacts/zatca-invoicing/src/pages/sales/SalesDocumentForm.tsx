@@ -412,6 +412,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [priceIncludesVat, setPriceIncludesVat] = useState(stickyPriceIncl.initial);
   const [allowNegativeStock, setAllowNegativeStock] = useState(false);
   useEffect(() => {
+    if (isInvoice && isNew) setAllowNegativeStock(globalOverdraftEnabled && canEditOverdraft);
+  }, [isInvoice, isNew, globalOverdraftEnabled, canEditOverdraft]);
+  useEffect(() => {
     if (!globalOverdraftEnabled && allowNegativeStock) setAllowNegativeStock(false);
   }, [globalOverdraftEnabled, allowNegativeStock]);
   // ── نوع الفاتورة (ZATCA) ─────────────────────────────────────────────────

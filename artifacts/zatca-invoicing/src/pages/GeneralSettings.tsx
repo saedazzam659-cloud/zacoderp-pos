@@ -244,6 +244,7 @@ export default function GeneralSettings() {
   const autoPostingEnabled = user?.company?.autoPostingEnabled !== false;
   const autoSendZatcaAfterPost = user?.company?.autoSendZatcaAfterPost === true;
   const [postingSaving, setPostingSaving] = useState(false);
+  const [overdraftSavingUserId, setOverdraftSavingUserId] = useState<number | null>(null);
   // Per-doc-type auto-posting flags. We treat `undefined` (legacy rows
   // before the columns existed) and `true` the same — only an explicit
   // `false` disables auto-posting for that document type. This mirrors
@@ -496,6 +497,37 @@ export default function GeneralSettings() {
     },
     enabled: isArchiveAdmin,
   });
+  const hasOverdraftGrant = (target: any) =>
+    target?.permissions?.sales_invoice_overdraft?.view === true
+    || target?.permissions?.sales_invoice_overdraft?.edit === true;
+  async function setUserOverdraftGrant(target: any, enabled: boolean) {
+    const targetId = Number(target?.id);
+    if (!Number.isInteger(targetId) || overdraftSavingUserId !== null) return;
+    setOverdraftSavingUserId(targetId);
+    try {
+      const permissions = target?.permissions && typeof target.permissions === "object"
+        ? { ...target.permissions }
+        : {};
+      const existingGrant = permissions.sales_invoice_overdraft && typeof permissions.sales_invoice_overdraft === "object"
+        ? permissions.sales_invoice_overdraft
+        : {};
+      permissions.sales_invoice_overdraft = { ...existingGrant, view: enabled, edit: enabled };
+      const response = await fetch(`${API}/api/users/${targetId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ permissions }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "تعذر تحديث صلاحية المستخدم");
+      await qc.invalidateQueries({ queryKey: ["users", "archive-allowed"] });
+      await qc.invalidateQueries({ queryKey: ["auth-me"] });
+      toast({ title: enabled ? "تم تفعيل السحب على المكشوف للمستخدم" : "تم إيقاف السحب على المكشوف للمستخدم" });
+    } catch (error: any) {
+      toast({ title: error?.message ?? "تعذر تحديث صلاحية المستخدم", variant: "destructive" });
+    } finally {
+      setOverdraftSavingUserId(null);
+    }
+  }
   const archiveBaseline = (user?.company?.archiveSettings ?? {}) as {
     defaultMode?: ArchiveMode; screens?: Record<string, ArchiveMode>; allowedUserIds?: number[];
   };
@@ -1864,10 +1896,40 @@ export default function GeneralSettings() {
             <span className="block text-sm font-semibold">السماح بالسحب على المكشوف في المبيعات</span>
             <span className="block text-xs text-muted-foreground leading-relaxed">
               عند الإيقاف يُمنع السحب بالسالب في كل المخازن مهما كانت الخيارات الأخرى. عند التشغيل يُسمح به في كل المخازن،
-              ويمكن فرض المنع لمخزن محدد من إعداداته؛ وخيار الفاتورة يتجاوز منع المخزن وفق صلاحية المستخدم.
+              ويمكن فرض المنع لمخزن محدد من إعداداته؛ وخيار الفاتورة يتجاوز منع المخزن للمستخدمين المحددين أدناه.
             </span>
           </span>
         </label>
+        {isArchiveAdmin && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3" data-testid="overdraft-user-access">
+            <div>
+              <p className="text-sm font-semibold">المستخدمون المسموح لهم بالسحب على المكشوف</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                المستخدم المحدد يرى خيار السحب في فاتورة المبيعات ويكون محددًا تلقائيًا للفواتير الجديدة. أزل التحديد لمنع استخدامه.
+              </p>
+            </div>
+            {archiveUsers.filter((candidate: any) => candidate.isActive !== false).length === 0 ? (
+              <p className="text-xs text-muted-foreground">لا يوجد مستخدمون نشطون.</p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {archiveUsers.filter((candidate: any) => candidate.isActive !== false).map((candidate: any) => (
+                  <label key={candidate.id} className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={hasOverdraftGrant(candidate)}
+                      disabled={overdraftSavingUserId !== null || user?.id === candidate.id}
+                      onChange={(event) => setUserOverdraftGrant(candidate, event.target.checked)}
+                      className="h-4 w-4 accent-amber-600"
+                      data-testid={`overdraft-user-${candidate.id}`}
+                    />
+                    <span>{candidate.nameAr || candidate.nameEn || candidate.username || `مستخدم ${candidate.id}`}</span>
+                    {overdraftSavingUserId === candidate.id && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <label
           data-testid="hide-quick-add-toggle"
           className={cn(
