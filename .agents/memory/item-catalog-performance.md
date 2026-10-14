@@ -13,7 +13,7 @@ The picker’s local filter must search every name language returned by the API,
 
 **Why:** A correct server substring match can still disappear in the client’s second filter, and a stale shared query can make a newly opened picker appear to have missing items. Broad one-character queries also need useful ranking within a bounded result set.
 
-**How to apply:** Include alternate-language names and item code in searchable picker fields, reset shared query state on close, preserve selected-item hydration, and keep substring search available after exact and prefix matches.
+**How to apply:** Include alternate-language names and item code in searchable picker fields, reset shared query state on close, preserve selected-item hydration, and keep substring search available after exact and prefix matches. Normalize exact code/name ranking with the same trim and case-insensitive rules used by duplicate checks, so a duplicate remains at the top of a short bounded search.
 
 Remote item pickers must remain mounted when a search returns zero results. Replacing the picker with a plain text input disconnects subsequent typing from the remote search callback, making the user unable to recover without leaving the form.
 
