@@ -408,7 +408,7 @@ router.post("/", async (req: any, res) => {
       }).from(cashBoxesTable)
         .leftJoin(branchesTable, eq(branchesTable.id, cashBoxesTable.branchId))
         .where(and(eq(cashBoxesTable.id, input.cashBoxId), eq(cashBoxesTable.companyId, scope.companyId), eq(cashBoxesTable.isActive, true)))
-        .for("update");
+        .for("update", { of: cashBoxesTable });
       if (!box || !cashExpenseBoxAllowed(box, freshScope)) throw Object.assign(new Error("الخزنة غير متاحة لفروعك أو للمستخدم الحالي"), { status: 403 });
       const [account] = await tx.select({ id: accountsTable.id })
         .from(accountsTable).where(and(
@@ -666,7 +666,7 @@ router.patch("/:id", async (req: any, res) => {
           eq(cashBoxesTable.id, targetBoxId),
           eq(cashBoxesTable.companyId, scope.companyId),
           eq(cashBoxesTable.isActive, true),
-        )).for("update");
+        )).for("update", { of: cashBoxesTable });
       if (!box || !cashExpenseBoxAllowed(box, freshScope)) throw Object.assign(new Error("الخزنة غير متاحة لفروعك أو للمستخدم الحالي"), { status: 403 });
       const targetAccountId = input.expenseAccountId ?? voucher.accountId;
       const [account] = await tx.select({ id: accountsTable.id }).from(accountsTable).where(and(
