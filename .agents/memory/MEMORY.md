@@ -33,6 +33,7 @@
 - [Additional accounting report boundary](additional-accounting-reports-boundary.md) — only genuinely new reports join the default-off selector; preserve existing report surfaces and fail closed on unsupported audit scope.
 - [Operational report rendering boundary](operational-report-rendering-boundary.md) — reuse the journal grid and branded exports; suppress monetary totals for mixed or unknown currencies.
 - [Platform and security index](platform-ops-index.md) — tenant isolation, permissions, agents, mobile/HR, storage, infrastructure, and operational safeguards.
+- [Replit-hosted latency observation](replit-hosting-latency.md) — user reports branch, warehouse, and item-loading delays only on the Replit-hosted deployment.
 - [Controller-link state integrity](dual-platform-agent-control.md) — preserve exact concurrency checks and use idempotent recovery after remote shell-sync failures.
 - [Web and shared UI index](web-shared-index.md) — browser forms, shared UI, dates, catalog, reports, and cross-cutting web behavior.
 - [Compact sales branch stock](sales-branch-stock-compact-ui.md) — show branch balances without changing invoice item-field width or line height.
