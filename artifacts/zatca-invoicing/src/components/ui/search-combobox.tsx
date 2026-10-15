@@ -49,6 +49,8 @@ interface SearchComboboxProps {
   renderItem?: (item: ComboboxItem, selected: boolean) => React.ReactNode;
   onSearchChange?: (search: string) => void;
   loading?: boolean;
+  /** Optional compact action rendered inside the existing trailing icon gutter. */
+  endAdornment?: React.ReactNode;
 }
 
 export function SearchCombobox({
@@ -70,6 +72,7 @@ export function SearchCombobox({
   renderItem,
   onSearchChange,
   loading = false,
+  endAdornment,
 }: SearchComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -294,6 +297,7 @@ export function SearchCombobox({
             </button>
           )}
           <div className="absolute inset-y-0 end-2 flex items-center gap-1 pointer-events-none">
+            {endAdornment && <span className="pointer-events-auto">{endAdornment}</span>}
             <ChevronsUpDown className="h-3.5 w-3.5 opacity-40" />
           </div>
         </div>

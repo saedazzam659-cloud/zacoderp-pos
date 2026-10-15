@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, type ComponentProps } from "react";
 import { useRegisterScreenActions, type ScreenActionsRegistration, type ScreenFieldDef } from "@/contexts/ScreenActionsContext";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { validateInvoiceLines } from "@/lib/lineValidation";
@@ -31,6 +31,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
@@ -41,7 +42,7 @@ import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive, Wallet, Undo2 } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive, Wallet, Undo2, Boxes, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import EmbeddedAccountNotesTab from "@/pages/account-notes/EmbeddedAccountNotesTab";
 import EmbeddedReturnsTab from "@/components/documents/EmbeddedReturnsTab";
 import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
@@ -77,7 +78,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
 function SalesBranchStock({ itemId, companyId, branchId, headers, enabled }: { itemId: string; companyId: number | string; branchId: string; headers: Record<string, string>; enabled: boolean }) {
-  const { data = [], isLoading, isError } = useQuery<any[]>({
+  const { data = [], isLoading, isError, refetch } = useQuery<any[]>({
     queryKey: ["sales-branch-stock", companyId, itemId],
     enabled: enabled && !!itemId && !!companyId,
     queryFn: async () => {
@@ -88,16 +89,78 @@ function SalesBranchStock({ itemId, companyId, branchId, headers, enabled }: { i
     staleTime: 30_000,
   });
   if (!enabled) return null;
-  return <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-sky-200/80 bg-gradient-to-l from-sky-50 to-white px-2 py-1.5 text-[10px]" data-testid={`sales-branch-stock-${itemId}`}>
-    <span className="font-semibold text-sky-800">رصيد الفروع المحددة</span>
-    {isLoading && <span className="text-muted-foreground">جارٍ التحميل…</span>}
-    {isError && <span className="text-rose-700">تعذر تحميل الكميات؛ أعد المحاولة لاحقًا.</span>}
-    {!isLoading && !isError && data.length === 0 && <span className="text-muted-foreground">لا توجد فروع محددة لهذا المستخدم.</span>}
-    {!isLoading && data.map((row: any) => <span key={`${row.branchId}-${row.warehouseId}`} className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-white px-2 py-0.5 text-sky-900">
-      <span>{row.branchName} · {row.warehouseName}{String(row.branchId ?? "") === String(branchId ?? "") ? " (فرع الفاتورة)" : ""}</span><b dir="ltr" className="tabular-nums">{Number(row.qty || 0).toLocaleString("en-US")}</b>
-    </span>)}
-    <span className="text-[9px] text-sky-700/70">بالوحدة الأساسية للصنف</span>
-  </div>;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="عرض أرصدة الفروع المحددة"
+          title="عرض أرصدة الفروع المحددة"
+          data-testid={`sales-branch-stock-${itemId}`}
+          className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-sky-200 bg-white text-sky-700 shadow-sm transition-colors hover:border-sky-400 hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+        >
+          {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isError ? <AlertTriangle className="h-3.5 w-3.5 text-rose-600" /> : <Boxes className="h-3.5 w-3.5" />}
+          {!isLoading && !isError && data.length > 0 && (
+            <span className="absolute -end-1 -top-1 min-w-3.5 rounded-full bg-sky-600 px-0.5 text-center text-[8px] leading-3 text-white">
+              {data.length > 99 ? "99+" : data.length}
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" sideOffset={5} dir="rtl" className="z-[100] w-72 rounded-xl border border-sky-200 bg-white p-3 shadow-xl">
+        <div className="mb-2 flex items-center justify-between gap-3 border-b pb-2">
+          <div>
+            <p className="text-xs font-bold text-slate-900">رصيد الفروع المحددة</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">بالوحدة الأساسية للصنف</p>
+          </div>
+          {data.length > 0 && <span className="rounded-full bg-sky-50 px-2 py-1 text-[10px] font-semibold text-sky-800">{data.length} مستودع</span>}
+        </div>
+        {isLoading ? (
+          <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> جارٍ تحميل الأرصدة…</div>
+        ) : isError ? (
+          <div className="flex items-center justify-between gap-2 py-2">
+            <span className="text-xs text-rose-700">تعذر تحميل الأرصدة.</span>
+            <button type="button" onClick={() => void refetch()} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] hover:bg-muted">
+              <RefreshCw className="h-3 w-3" /> إعادة المحاولة
+            </button>
+          </div>
+        ) : data.length === 0 ? (
+          <p className="py-2 text-xs text-muted-foreground">لا توجد فروع محددة لهذا المستخدم.</p>
+        ) : (
+          <div className="max-h-56 space-y-1.5 overflow-y-auto">
+            {data.map((row: any) => (
+              <div key={`${row.branchId}-${row.warehouseId}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/70 px-2.5 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-medium text-slate-800">{row.branchName || "فرع"} · {row.warehouseName || "مستودع"}</p>
+                  {String(row.branchId ?? "") === String(branchId ?? "") && <p className="mt-0.5 text-[9px] text-sky-700">فرع الفاتورة</p>}
+                </div>
+                <span dir="ltr" className="shrink-0 rounded-md bg-white px-2 py-1 text-xs font-bold tabular-nums text-sky-800 shadow-sm">{Number(row.qty || 0).toLocaleString("en-US")}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+type SalesItemPickerWithStockProps = ComponentProps<typeof SearchCombobox> & {
+  companyId: number | string;
+  branchId: string;
+  headers: Record<string, string>;
+  stockEnabled: boolean;
+};
+
+function SalesItemPickerWithStock({ companyId, branchId, headers, stockEnabled, value, ...pickerProps }: SalesItemPickerWithStockProps) {
+  return (
+    <SearchCombobox
+      {...pickerProps}
+      value={value}
+      endAdornment={stockEnabled && value
+        ? <SalesBranchStock itemId={value} companyId={companyId} branchId={branchId} headers={headers} enabled />
+        : undefined}
+    />
+  );
 }
 
 interface DocLine {
@@ -2220,7 +2283,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               </Button>
             )}
           </div>
-          <SearchCombobox
+          <SalesItemPickerWithStock
             items={itemComboItems}
             value={qaItemId}
             onValueChange={setQaItemId}
@@ -2228,11 +2291,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             loading={isSearchingItems}
             placeholder={t("salesDocForm.itemPlaceholder")}
             searchPlaceholder="ابحث بالكود أو الاسم..."
+            companyId={cid ?? ""}
+            branchId={branchId}
+            headers={authH}
+            stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true}
           />
-          {(isInvoice || isQuotation) && qaItemId && <SalesBranchStock
-            itemId={qaItemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
-            enabled={user?.company?.showSalesBranchStock === true}
-          />}
         </div>
         <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colWarehouse")}</label>
@@ -2371,7 +2434,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <span className="text-muted-foreground tabular-nums">{idx + 1}</span>
                     <span className="font-mono truncate" title={l.itemCode}>{l.itemCode || "—"}</span>
                     <div className="space-y-0.5 min-w-0">
-                      <SearchCombobox
+                      <SalesItemPickerWithStock
                         items={itemComboItems}
                         value={l.itemId}
                         onValueChange={v => void selectItem(l._id, v)}
@@ -2380,11 +2443,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         placeholder={t("salesDocForm.itemPlaceholder")}
                         searchPlaceholder="ابحث بالكود أو الاسم..."
                         className="h-8 text-xs"
+                        companyId={cid ?? ""}
+                        branchId={branchId}
+                        headers={authH}
+                        stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true}
                       />
-                      {(isInvoice || isQuotation) && l.itemId && <SalesBranchStock
-                        itemId={l.itemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
-                        enabled={user?.company?.showSalesBranchStock === true}
-                      />}
                       {(l.brandName || l.appliedOfferName) && (
                         <div className="flex flex-wrap gap-x-2 px-1 leading-tight">
                           {l.brandName ? <span className="text-[10px] text-muted-foreground truncate">({l.brandName})</span> : null}
@@ -2605,11 +2668,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {user ? (
                         <div className="min-w-0">
-                          <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." />
-                          {(isInvoice || isQuotation) && l.itemId && <SalesBranchStock
-                            itemId={l.itemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
-                            enabled={user?.company?.showSalesBranchStock === true}
-                          />}
+                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." companyId={cid ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
                         </div>
                       ) : (
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
