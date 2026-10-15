@@ -76,6 +76,30 @@ import {
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
+function SalesBranchStock({ itemId, companyId, branchId, headers, enabled }: { itemId: string; companyId: number | string; branchId: string; headers: Record<string, string>; enabled: boolean }) {
+  const { data = [], isLoading, isError } = useQuery<any[]>({
+    queryKey: ["sales-branch-stock", companyId, itemId],
+    enabled: enabled && !!itemId && !!companyId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/inventory/items/${itemId}/sales-branch-stock`, { headers });
+      if (!r.ok) throw new Error("تعذر تحميل مخزون الفروع");
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+  const otherBranches = data.filter((row) => String(row.branchId ?? "") !== String(branchId ?? ""));
+  if (!enabled || (!isLoading && !isError && otherBranches.length === 0)) return null;
+  return <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-sky-200/80 bg-gradient-to-l from-sky-50 to-white px-2 py-1.5 text-[10px]" data-testid={`sales-branch-stock-${itemId}`}>
+    <span className="font-semibold text-sky-800">متاح بالفروع الأخرى</span>
+    {isLoading && <span className="text-muted-foreground">جارٍ التحميل…</span>}
+    {isError && <span className="text-rose-700">تعذر تحميل الكميات؛ أعد المحاولة لاحقًا.</span>}
+    {!isLoading && otherBranches.map((row: any) => <span key={`${row.branchId}-${row.warehouseId}`} className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-white px-2 py-0.5 text-sky-900">
+      <span>{row.branchName} · {row.warehouseName}</span><b dir="ltr" className="tabular-nums">{Number(row.qty || 0).toLocaleString("en-US")}</b>
+    </span>)}
+    <span className="text-[9px] text-sky-700/70">بالوحدة الأساسية للصنف</span>
+  </div>;
+}
+
 interface DocLine {
   _id: string;
   /** Persisted database line id; absent on newly added/duplicated lines. */
@@ -2421,6 +2445,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       onChange={e => updateLine(l._id, "notes", e.target.value)}
                       data-testid={`input-line-notes-${l._id}`} />
                   </div>
+                  {(isInvoice || isQuotation) && l.itemId && <SalesBranchStock
+                    itemId={l.itemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
+                    enabled={user?.company?.showSalesBranchStock === true}
+                  />}
                   {isInvoice && l.itemId && l.warehouseId && (
                     <SalesBatchAllocationControl
                       kind="sale"
@@ -2677,6 +2705,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         </span>
                       </div>
                     )}
+                    {(isInvoice || isQuotation) && l.itemId && <SalesBranchStock
+                      itemId={l.itemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
+                      enabled={user?.company?.showSalesBranchStock === true}
+                    />}
                     {isInvoice && l.itemId && (
                       <ItemBrandPicker
                         itemId={l.itemId}

@@ -126,6 +126,7 @@ router.get("/", async (req, res) => {
       allowMobileLogin: usersTable.allowMobileLogin,
       viewAllBranches: usersTable.viewAllBranches,
       scopeOwnCustomersOnly: usersTable.scopeOwnCustomersOnly,
+      uiPreferences: usersTable.uiPreferences,
       isActive: usersTable.isActive,
       demoOperationalAdmin: usersTable.demoOperationalAdmin,
       demoDeviceIsolation: usersTable.demoDeviceIsolation,
@@ -159,6 +160,7 @@ router.get("/", async (req, res) => {
         permissions: publicPermissions,
         dataVisibilityPermissions: __dataVisibility ?? {},
         branchIds: byUser.get(r.id) ?? [],
+        salesStockBranchIds: Array.isArray((r.uiPreferences as any)?.salesStockBranchIds) ? (r.uiPreferences as any).salesStockBranchIds : [],
       };
     }));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -305,10 +307,22 @@ router.patch("/:id", async (req, res) => {
       username, password, email, role, code, nameAr, nameEn,
       isActive, branchIds, permissions, viewAllBranches,
       canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval,
-      allowWebLogin, allowMobileLogin,
+      allowWebLogin, allowMobileLogin, salesStockBranchIds,
     } = req.body ?? {};
 
     const update: any = { updatedAt: new Date() };
+    if (salesStockBranchIds !== undefined) {
+      if (!Array.isArray(salesStockBranchIds) || salesStockBranchIds.some((x: any) => !Number.isInteger(Number(x)))) {
+        res.status(400).json({ error: "قائمة فروع المخزون غير صالحة" }); return;
+      }
+      const ids: number[] = [...new Set<number>(salesStockBranchIds.map((x: any) => Number(x)))];
+      const valid = ids.length
+        ? await db.select({ id: branchesTable.id }).from(branchesTable)
+            .where(and(eq(branchesTable.companyId, cid), inArray(branchesTable.id, ids)))
+        : [];
+      if (valid.length !== ids.length) { res.status(400).json({ error: "يوجد فرع غير تابع للشركة" }); return; }
+      update.uiPreferences = { ...((existing.uiPreferences ?? {}) as Record<string, any>), salesStockBranchIds: ids };
+    }
     if (req.body?.demoOperationalAdmin !== undefined) {
       if (!canManageDemoOperationalSetting(req.authUser, existing, req.body.demoOperationalAdmin)) {
         res.status(400).json({ error: "الصلاحية متاحة لحساب ديمو معزول آخر فقط" }); return;

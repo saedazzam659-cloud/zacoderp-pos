@@ -80,6 +80,7 @@ export const companiesTable = pgTable("companies", {
   // Existing companies are backfilled to true to preserve their current forms.
   purchaseBatchExpiryEnabled: boolean("purchase_batch_expiry_enabled").notNull().default(false),
   showFreeQuantity: boolean("show_free_quantity").notNull().default(true),
+  showSalesBranchStock: boolean("show_sales_branch_stock").notNull().default(false),
   // Opt-in gate for company-admin document-field controls. Only SuperAdmin
   // may change this flag; false keeps the manager-facing controls unavailable.
   documentFieldControlsEnabled: boolean("document_field_controls_enabled").notNull().default(false),

@@ -18,7 +18,7 @@ import {
   parseBundleAssemblyRequestId,
 } from "../lib/bundleAssemblyCost.js";
 import { db, pool } from "@workspace/db";
-import { manufacturingSettingsTable, productionOrdersTable } from "@workspace/db/schema";
+import { manufacturingSettingsTable, productionOrdersTable, companiesTable, usersTable } from "@workspace/db/schema";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import {
   warehouseGroupsTable, warehousesTable, itemGroupsTable, itemSubgroupsTable, posItemSubgroupsTable, unitsTable,
@@ -4474,6 +4474,45 @@ router.get("/stock-balance", async (req, res) => {
     .where(and(...conditions))
     .orderBy(asc(itemsTable.code));
   res.json(rows.map(r => ({ ...r.bal, item: r.item, warehouse: r.wh, group: r.group, unit: r.unit })));
+});
+
+// Sales/quotation line helper. Branch visibility is explicitly granted per
+// user by the company admin; never accept caller-supplied branch IDs.
+router.get("/items/:itemId/sales-branch-stock", async (req, res) => {
+  const cid = getCompanyId(req);
+  const userId = Number((req as any).authUser?.id);
+  const itemId = Number(req.params.itemId);
+  if (!cid || !Number.isInteger(itemId) || itemId <= 0 || !userId) {
+    res.status(400).json({ error: "طلب غير صالح" }); return;
+  }
+  const [company] = await db.select({ enabled: (companiesTable as any).showSalesBranchStock })
+    .from(companiesTable).where(eq(companiesTable.id, cid));
+  if (!company?.enabled) { res.json([]); return; }
+  const [u] = await db.select({ prefs: usersTable.uiPreferences })
+    .from(usersTable).where(and(eq(usersTable.id, userId), eq(usersTable.companyId, cid)));
+  const branchIds: number[] = Array.isArray((u?.prefs as any)?.salesStockBranchIds)
+    ? [...new Set<number>((u!.prefs as any).salesStockBranchIds.map(Number).filter(Number.isInteger))]
+    : [];
+  if (!branchIds.length) { res.json([]); return; }
+  const rows = await db.select({
+    branchId: warehousesTable.branchId,
+    branchName: branchesTable.nameAr,
+    warehouseId: warehousesTable.id,
+    warehouseName: warehousesTable.nameAr,
+    qty: sql<string>`COALESCE(${stockBalanceTable.qty}, 0)`,
+  }).from(warehousesTable)
+    .leftJoin(branchesTable, eq(branchesTable.id, warehousesTable.branchId))
+    .leftJoin(stockBalanceTable, and(
+      eq(stockBalanceTable.warehouseId, warehousesTable.id),
+      eq(stockBalanceTable.itemId, itemId),
+      eq(stockBalanceTable.companyId, cid),
+    ))
+    .where(and(
+      eq(warehousesTable.companyId, cid),
+      eq(warehousesTable.isActive, true),
+      inArray(warehousesTable.branchId, branchIds),
+    ));
+  res.json(rows);
 });
 
 // ═══════════════════════════════════════════════════════════════════

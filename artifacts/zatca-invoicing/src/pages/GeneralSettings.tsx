@@ -160,6 +160,71 @@ const ARCHIVE_MODES: { value: ArchiveMode; label: string; desc: string; icon: ty
   { value: "off",   label: "معطّل",  desc: "إخفاء زر الأرشفة في هذه الشاشة", icon: Ban },
 ];
 
+function SalesStockBranchSettings({ users, headers, enabled, onToggle, saving }: {
+  users: any[]; headers: Record<string, string>; enabled: boolean; onToggle: (value: boolean) => void; saving: boolean;
+}) {
+  const { user } = useAuth() as any;
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [targetId, setTargetId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const cid = user?.company?.id ?? user?.companyId;
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["sales-stock-branches", cid],
+    enabled: !!cid,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/org/branches?companyId=${cid}`, { headers });
+      if (!r.ok) throw new Error("تعذر تحميل الفروع");
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
+    },
+  });
+  const activeUsers = users.filter((u) => u.isActive !== false && u.role !== "superadmin");
+  const selectedUser = activeUsers.find((u) => String(u.id) === targetId);
+  async function toggleBranch(branchId: number, checked: boolean) {
+    if (!selectedUser || busy) return;
+    const current = Array.isArray(selectedUser.salesStockBranchIds) ? selectedUser.salesStockBranchIds.map(Number) : [];
+    const ids = checked ? [...new Set([...current, branchId])] : current.filter((id: number) => id !== branchId);
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/api/users/${selectedUser.id}`, {
+        method: "PATCH", headers,
+        body: JSON.stringify({ salesStockBranchIds: ids }),
+      });
+      const result = await r.json();
+      if (!r.ok) throw new Error(result.error || "تعذر حفظ الفروع");
+      await qc.invalidateQueries({ queryKey: ["users", "archive-allowed"] });
+      toast({ title: "تم حفظ فروع عرض الكميات للمستخدم" });
+    } catch (e: any) {
+      toast({ title: e.message, variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+  return <div className="rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-4 space-y-4" data-testid="sales-branch-stock-settings">
+    <label className={cn("flex items-start gap-3 rounded-xl border p-4 cursor-pointer bg-white/90", enabled ? "border-sky-400 shadow-sm" : "border-slate-200")}>
+      <input type="checkbox" className="mt-0.5 h-5 w-5 accent-sky-600" checked={enabled} disabled={saving} onChange={(e) => onToggle(e.target.checked)} />
+      <span><b className="block text-sm">عرض الكميات المتاحة في الفروع الأخرى</b><small className="mt-1 block text-xs leading-relaxed text-muted-foreground">يظهر رصيد الصنف المختار في سطر فاتورة المبيعات أو عرض السعر. يبدأ هذا الخيار متوقفًا.</small></span>
+    </label>
+    {enabled && <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+      <div className="rounded-xl border bg-white p-3">
+        <label className="mb-2 block text-xs font-semibold">اختر المستخدم</label>
+        <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+          <option value="">حدد مستخدمًا…</option>
+          {activeUsers.map((u) => <option key={u.id} value={u.id}>{u.nameAr || u.nameEn || u.username}</option>)}
+        </select>
+        <p className="mt-2 text-[11px] text-muted-foreground">لكل مستخدم قائمة فروع مستقلة.</p>
+      </div>
+      <div className="rounded-xl border bg-white p-3">
+        <div className="mb-2 flex items-center justify-between"><b className="text-xs">الفروع المعروضة</b><span className="text-[10px] text-muted-foreground">{selectedUser ? `${(selectedUser.salesStockBranchIds || []).length} محدد` : "اختر مستخدمًا أولًا"}</span></div>
+        {!selectedUser ? <p className="py-4 text-center text-xs text-muted-foreground">اختر مستخدمًا لتحديد الفروع المسموح بعرض أرصدتها.</p> :
+          branches.length ? <div className="grid gap-2 sm:grid-cols-2">{branches.map((b: any) => <label key={b.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs hover:border-sky-300">
+            <input type="checkbox" checked={(selectedUser.salesStockBranchIds || []).map(Number).includes(Number(b.id))} disabled={busy} onChange={(e) => void toggleBranch(Number(b.id), e.target.checked)} className="accent-sky-600" />
+            <span>{b.nameAr || b.nameEn || `فرع ${b.id}`}</span>
+          </label>)}</div> : <p className="text-xs text-muted-foreground">لا توجد فروع مضافة للشركة.</p>}
+      </div>
+    </div>}
+  </div>;
+}
+
 // Company logos are stored as a base64 data URL inside companies.logo. A raw
 // 2 MB upload becomes a ~2.7 MB base64 string, which the production ingress in
 // front of the API can reject with an HTML error page (the client then chokes
@@ -1876,6 +1941,13 @@ export default function GeneralSettings() {
         <p className="text-xs text-muted-foreground">
           تحكم في طريقة عرض إدخال الأصناف وسياسات البيع في نماذج المستندات.
         </p>
+        {isArchiveAdmin && <SalesStockBranchSettings
+          users={archiveUsers}
+          headers={headers}
+          enabled={user?.company?.showSalesBranchStock === true}
+          saving={postingSaving}
+          onToggle={(value) => togglePostingMode({ showSalesBranchStock: value })}
+        />}
         <label
           data-testid="allow-negative-sales-general-toggle"
           className={cn(

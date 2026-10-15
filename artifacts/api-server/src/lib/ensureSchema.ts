@@ -3113,6 +3113,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS show_supplier_credit_notes BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "companies add show_free_quantity",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS show_free_quantity BOOLEAN NOT NULL DEFAULT TRUE` },
+    { label: "companies add show_sales_branch_stock",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS show_sales_branch_stock BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "companies add allow_negative_sales",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS allow_negative_sales BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "warehouses add block_negative_sales",
