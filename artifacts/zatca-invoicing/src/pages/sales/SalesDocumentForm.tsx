@@ -88,11 +88,12 @@ function SalesBranchStock({ itemId, companyId, branchId, headers, enabled }: { i
     staleTime: 30_000,
   });
   const otherBranches = data.filter((row) => String(row.branchId ?? "") !== String(branchId ?? ""));
-  if (!enabled || (!isLoading && !isError && otherBranches.length === 0)) return null;
+  if (!enabled) return null;
   return <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-sky-200/80 bg-gradient-to-l from-sky-50 to-white px-2 py-1.5 text-[10px]" data-testid={`sales-branch-stock-${itemId}`}>
     <span className="font-semibold text-sky-800">متاح بالفروع الأخرى</span>
     {isLoading && <span className="text-muted-foreground">جارٍ التحميل…</span>}
     {isError && <span className="text-rose-700">تعذر تحميل الكميات؛ أعد المحاولة لاحقًا.</span>}
+    {!isLoading && !isError && otherBranches.length === 0 && <span className="text-muted-foreground">لا توجد فروع أخرى محددة لهذا المستخدم.</span>}
     {!isLoading && otherBranches.map((row: any) => <span key={`${row.branchId}-${row.warehouseId}`} className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-white px-2 py-0.5 text-sky-900">
       <span>{row.branchName} · {row.warehouseName}</span><b dir="ltr" className="tabular-nums">{Number(row.qty || 0).toLocaleString("en-US")}</b>
     </span>)}
@@ -1290,10 +1291,21 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     return v != null && v !== "" ? String(v) : null;
   }
 
+  const itemSelectionRequestRef = useRef<Record<string, number>>({});
   async function selectItem(lineId: string, itemId: string, createdItem?: any) {
     const item = createdItem ?? inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
-    const itemUnits = await fetchItemUnits(itemId);
+    const requestId = (itemSelectionRequestRef.current[lineId] ?? 0) + 1;
+    itemSelectionRequestRef.current[lineId] = requestId;
+    // Commit the visible selection immediately; loading unit or currency data
+    // should not make the chosen item blink back to an empty picker.
+    setLines(prev => prev.map(l => l._id !== lineId ? l : {
+      ...l,
+      itemId: String(item.id),
+      itemName: item.nameAr ?? "",
+      itemCode: item.code ?? "",
+    }));
+    const itemUnits = await fetchItemUnits(itemId).catch(() => []);
     // Pick base unit (or first configured, or fallback to item's default unit)
     const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
@@ -1302,10 +1314,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     const catalogPrice = base?.salePrice ?? item.sellPrice ?? item.price ?? "0";
     let chosenPrice: string = String(catalogPrice);
     if (currencyCode && defaultCurrency && currencyCode !== defaultCurrency.code) {
-      const cps = await fetchItemCurrencyPrices(itemId);
+      const cps = await fetchItemCurrencyPrices(itemId).catch(() => []);
       const match = pickCurrencyPrice(cps, currencyCode);
       if (match != null) chosenPrice = match;
     }
+    if (itemSelectionRequestRef.current[lineId] !== requestId) return;
     const chosenFactor = base?.conversionFactor ?? "1";
 
     setLines(prev => prev.map(l => {
@@ -2365,6 +2378,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         searchPlaceholder="ابحث بالكود أو الاسم..."
                         className="h-8 text-xs"
                       />
+                      {(isInvoice || isQuotation) && l.itemId && <SalesBranchStock
+                        itemId={l.itemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
+                        enabled={user?.company?.showSalesBranchStock === true}
+                      />}
                       {(l.brandName || l.appliedOfferName) && (
                         <div className="flex flex-wrap gap-x-2 px-1 leading-tight">
                           {l.brandName ? <span className="text-[10px] text-muted-foreground truncate">({l.brandName})</span> : null}
@@ -2445,10 +2462,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       onChange={e => updateLine(l._id, "notes", e.target.value)}
                       data-testid={`input-line-notes-${l._id}`} />
                   </div>
-                  {(isInvoice || isQuotation) && l.itemId && <SalesBranchStock
-                    itemId={l.itemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
-                    enabled={user?.company?.showSalesBranchStock === true}
-                  />}
                   {isInvoice && l.itemId && l.warehouseId && (
                     <SalesBatchAllocationControl
                       kind="sale"
@@ -2588,7 +2601,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {user ? (
-                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." />
+                        <div className="min-w-0">
+                          <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." />
+                          {(isInvoice || isQuotation) && l.itemId && <SalesBranchStock
+                            itemId={l.itemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
+                            enabled={user?.company?.showSalesBranchStock === true}
+                          />}
+                        </div>
                       ) : (
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
@@ -2705,10 +2724,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         </span>
                       </div>
                     )}
-                    {(isInvoice || isQuotation) && l.itemId && <SalesBranchStock
-                      itemId={l.itemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
-                      enabled={user?.company?.showSalesBranchStock === true}
-                    />}
                     {isInvoice && l.itemId && (
                       <ItemBrandPicker
                         itemId={l.itemId}

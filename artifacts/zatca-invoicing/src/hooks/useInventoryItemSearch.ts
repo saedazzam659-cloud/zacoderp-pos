@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 
@@ -51,12 +51,26 @@ export function useInventoryItemSearch(
     staleTime: 60 * 1000,
   });
 
+  // Keep the last known row for a selected item while its dedicated lookup is
+  // in flight. Otherwise clearing/changing the search can temporarily remove
+  // the selected label from the controlled combobox.
+  const knownItemsRef = useRef(new Map<string, any>());
+  useEffect(() => {
+    for (const item of [...(selectedQuery.data ?? []), ...(searchQuery.data ?? [])]) {
+      knownItemsRef.current.set(String(item.id), item);
+    }
+  }, [selectedQuery.data, searchQuery.data]);
+
   const items = useMemo(() => {
     const byId = new Map<string, any>();
     for (const item of selectedQuery.data ?? []) byId.set(String(item.id), item);
     for (const item of searchQuery.data ?? []) byId.set(String(item.id), item);
+    for (const id of selectedKey.split(",").filter(Boolean)) {
+      const known = knownItemsRef.current.get(id);
+      if (known && !byId.has(id)) byId.set(id, known);
+    }
     return [...byId.values()];
-  }, [selectedQuery.data, searchQuery.data]);
+  }, [selectedQuery.data, searchQuery.data, selectedKey]);
 
   return {
     items,

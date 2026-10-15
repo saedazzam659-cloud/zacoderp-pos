@@ -168,6 +168,7 @@ function SalesStockBranchSettings({ users, headers, enabled, onToggle, saving }:
   const qc = useQueryClient();
   const [targetId, setTargetId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [draftByUser, setDraftByUser] = useState<Record<string, number[]>>({});
   const cid = user?.company?.id ?? user?.companyId;
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["sales-stock-branches", cid],
@@ -181,18 +182,39 @@ function SalesStockBranchSettings({ users, headers, enabled, onToggle, saving }:
   });
   const activeUsers = users.filter((u) => u.isActive !== false && u.role !== "superadmin");
   const selectedUser = activeUsers.find((u) => String(u.id) === targetId);
-  async function toggleBranch(branchId: number, checked: boolean) {
-    if (!selectedUser || busy) return;
-    const current = Array.isArray(selectedUser.salesStockBranchIds) ? selectedUser.salesStockBranchIds.map(Number) : [];
-    const ids = checked ? [...new Set([...current, branchId])] : current.filter((id: number) => id !== branchId);
+  const savedIds = Array.isArray(selectedUser?.salesStockBranchIds)
+    ? selectedUser.salesStockBranchIds.map(Number)
+    : [];
+  const draftIds = targetId ? (draftByUser[targetId] ?? savedIds) : [];
+  const normalizeIds = (ids: number[]) => [...new Set(ids)].sort((a, b) => a - b);
+  const hasUnsavedChanges = JSON.stringify(normalizeIds(draftIds)) !== JSON.stringify(normalizeIds(savedIds));
+
+  function toggleBranch(branchId: number, checked: boolean) {
+    if (!targetId || busy) return;
+    setDraftByUser((previous) => {
+      const current = previous[targetId] ?? savedIds;
+      const next = checked ? [...new Set([...current, branchId])] : current.filter((id) => id !== branchId);
+      return { ...previous, [targetId]: next };
+    });
+  }
+
+  async function saveBranches() {
+    if (!selectedUser || busy || !hasUnsavedChanges) return;
     setBusy(true);
     try {
       const r = await fetch(`${API}/api/users/${selectedUser.id}`, {
         method: "PATCH", headers,
-        body: JSON.stringify({ salesStockBranchIds: ids }),
+        body: JSON.stringify({ salesStockBranchIds: normalizeIds(draftIds) }),
       });
       const result = await r.json();
       if (!r.ok) throw new Error(result.error || "تعذر حفظ الفروع");
+      const ids = normalizeIds(draftIds);
+      setDraftByUser((previous) => ({ ...previous, [targetId]: ids }));
+      qc.setQueryData(["users", "archive-allowed"], (previous: any[] | undefined) =>
+        previous?.map((candidate) => String(candidate.id) === targetId
+          ? { ...candidate, salesStockBranchIds: ids }
+          : candidate),
+      );
       await qc.invalidateQueries({ queryKey: ["users", "archive-allowed"] });
       toast({ title: "تم حفظ فروع عرض الكميات للمستخدم" });
     } catch (e: any) {
@@ -207,19 +229,26 @@ function SalesStockBranchSettings({ users, headers, enabled, onToggle, saving }:
     {enabled && <div className="grid gap-3 md:grid-cols-[220px_1fr]">
       <div className="rounded-xl border bg-white p-3">
         <label className="mb-2 block text-xs font-semibold">اختر المستخدم</label>
-        <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+        <select data-testid="select-sales-stock-user" className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
           <option value="">حدد مستخدمًا…</option>
           {activeUsers.map((u) => <option key={u.id} value={u.id}>{u.nameAr || u.nameEn || u.username}</option>)}
         </select>
         <p className="mt-2 text-[11px] text-muted-foreground">لكل مستخدم قائمة فروع مستقلة.</p>
       </div>
       <div className="rounded-xl border bg-white p-3">
-        <div className="mb-2 flex items-center justify-between"><b className="text-xs">الفروع المعروضة</b><span className="text-[10px] text-muted-foreground">{selectedUser ? `${(selectedUser.salesStockBranchIds || []).length} محدد` : "اختر مستخدمًا أولًا"}</span></div>
+        <div className="mb-2 flex items-center justify-between"><b className="text-xs">الفروع المعروضة</b><span className="text-[10px] text-muted-foreground">{selectedUser ? `${draftIds.length} محدد` : "اختر مستخدمًا أولًا"}</span></div>
         {!selectedUser ? <p className="py-4 text-center text-xs text-muted-foreground">اختر مستخدمًا لتحديد الفروع المسموح بعرض أرصدتها.</p> :
           branches.length ? <div className="grid gap-2 sm:grid-cols-2">{branches.map((b: any) => <label key={b.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs hover:border-sky-300">
-            <input type="checkbox" checked={(selectedUser.salesStockBranchIds || []).map(Number).includes(Number(b.id))} disabled={busy} onChange={(e) => void toggleBranch(Number(b.id), e.target.checked)} className="accent-sky-600" />
+            <input data-testid={`checkbox-sales-stock-branch-${b.id}`} type="checkbox" checked={draftIds.includes(Number(b.id))} disabled={busy} onChange={(e) => toggleBranch(Number(b.id), e.target.checked)} className="accent-sky-600" />
             <span>{b.nameAr || b.nameEn || `فرع ${b.id}`}</span>
           </label>)}</div> : <p className="text-xs text-muted-foreground">لا توجد فروع مضافة للشركة.</p>}
+        <div className="mt-3 flex items-center gap-3 border-t pt-3">
+          <Button type="button" size="sm" className="gap-2" disabled={!selectedUser || busy || !hasUnsavedChanges} onClick={() => void saveBranches()} data-testid="button-save-sales-stock-branches">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            حفظ الفروع المحددة
+          </Button>
+          {hasUnsavedChanges && <span className="text-xs text-amber-700" role="status">تغييرات غير محفوظة</span>}
+        </div>
       </div>
     </div>}
   </div>;
