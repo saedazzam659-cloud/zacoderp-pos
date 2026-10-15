@@ -87,15 +87,14 @@ function SalesBranchStock({ itemId, companyId, branchId, headers, enabled }: { i
     },
     staleTime: 30_000,
   });
-  const otherBranches = data.filter((row) => String(row.branchId ?? "") !== String(branchId ?? ""));
   if (!enabled) return null;
   return <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-sky-200/80 bg-gradient-to-l from-sky-50 to-white px-2 py-1.5 text-[10px]" data-testid={`sales-branch-stock-${itemId}`}>
-    <span className="font-semibold text-sky-800">متاح بالفروع الأخرى</span>
+    <span className="font-semibold text-sky-800">رصيد الفروع المحددة</span>
     {isLoading && <span className="text-muted-foreground">جارٍ التحميل…</span>}
     {isError && <span className="text-rose-700">تعذر تحميل الكميات؛ أعد المحاولة لاحقًا.</span>}
-    {!isLoading && !isError && otherBranches.length === 0 && <span className="text-muted-foreground">لا توجد فروع أخرى محددة لهذا المستخدم.</span>}
-    {!isLoading && otherBranches.map((row: any) => <span key={`${row.branchId}-${row.warehouseId}`} className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-white px-2 py-0.5 text-sky-900">
-      <span>{row.branchName} · {row.warehouseName}</span><b dir="ltr" className="tabular-nums">{Number(row.qty || 0).toLocaleString("en-US")}</b>
+    {!isLoading && !isError && data.length === 0 && <span className="text-muted-foreground">لا توجد فروع محددة لهذا المستخدم.</span>}
+    {!isLoading && data.map((row: any) => <span key={`${row.branchId}-${row.warehouseId}`} className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-white px-2 py-0.5 text-sky-900">
+      <span>{row.branchName} · {row.warehouseName}{String(row.branchId ?? "") === String(branchId ?? "") ? " (فرع الفاتورة)" : ""}</span><b dir="ltr" className="tabular-nums">{Number(row.qty || 0).toLocaleString("en-US")}</b>
     </span>)}
     <span className="text-[9px] text-sky-700/70">بالوحدة الأساسية للصنف</span>
   </div>;
@@ -2230,6 +2229,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             placeholder={t("salesDocForm.itemPlaceholder")}
             searchPlaceholder="ابحث بالكود أو الاسم..."
           />
+          {(isInvoice || isQuotation) && qaItemId && <SalesBranchStock
+            itemId={qaItemId} companyId={cid ?? ""} branchId={branchId} headers={authH}
+            enabled={user?.company?.showSalesBranchStock === true}
+          />}
         </div>
         <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colWarehouse")}</label>

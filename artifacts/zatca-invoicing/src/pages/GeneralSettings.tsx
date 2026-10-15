@@ -224,7 +224,7 @@ function SalesStockBranchSettings({ users, headers, enabled, onToggle, saving }:
   return <div className="rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-4 space-y-4" data-testid="sales-branch-stock-settings">
     <label className={cn("flex items-start gap-3 rounded-xl border p-4 cursor-pointer bg-white/90", enabled ? "border-sky-400 shadow-sm" : "border-slate-200")}>
       <input type="checkbox" className="mt-0.5 h-5 w-5 accent-sky-600" checked={enabled} disabled={saving} onChange={(e) => onToggle(e.target.checked)} />
-      <span><b className="block text-sm">عرض الكميات المتاحة في الفروع الأخرى</b><small className="mt-1 block text-xs leading-relaxed text-muted-foreground">يظهر رصيد الصنف المختار في سطر فاتورة المبيعات أو عرض السعر. يبدأ هذا الخيار متوقفًا.</small></span>
+      <span><b className="block text-sm">عرض الكميات المتاحة في الفروع المحددة</b><small className="mt-1 block text-xs leading-relaxed text-muted-foreground">يظهر رصيد الصنف المختار في الفروع المحددة للمستخدم، بما فيها الفرع الرئيسي. يبدأ هذا الخيار متوقفًا.</small></span>
     </label>
     {enabled && <div className="grid gap-3 md:grid-cols-[220px_1fr]">
       <div className="rounded-xl border bg-white p-3">
