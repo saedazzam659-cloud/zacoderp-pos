@@ -799,11 +799,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryKey: ["warehouses", cid],
     queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, authH),
     enabled: !!user,
+    staleTime: 30_000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
   });
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
     queryFn: () => fetchJsonArray(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, authH),
     enabled: !!user,
+    staleTime: 30_000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
   });
   const { data: cashBoxes = [] } = useQuery<any[]>({
     queryKey: ["cash-boxes", cid],

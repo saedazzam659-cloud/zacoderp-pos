@@ -65,6 +65,9 @@ export default function Branches() {
   const { data: branches = [], isLoading } = useQuery({
     queryKey: ["branches", cid],
     queryFn:  () => branchesApi.getBranches(cid),
+    staleTime: 30_000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
   });
 
   // Plan-based branch quota — invalidated on `subscription_changed` SSE
