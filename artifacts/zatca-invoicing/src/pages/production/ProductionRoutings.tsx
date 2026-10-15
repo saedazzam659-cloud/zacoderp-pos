@@ -229,6 +229,8 @@ function RoutingEditor({
   const [productItemId, setProductItemId] = useState<number | "">("");
   const [productSearch, setProductSearch] = useState("");
   const [products, setProducts] = useState<ProductOpt[]>([]);
+  const [productSearchLoading, setProductSearchLoading] = useState(false);
+  const [productSearchError, setProductSearchError] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [notes, setNotes] = useState("");
   const [stages, setStages] = useState<Stage[]>([
@@ -287,19 +289,33 @@ function RoutingEditor({
 
   // product picker: simple search on items
   useEffect(() => {
+    const controller = new AbortController();
+    setProductSearchLoading(true);
+    setProductSearchError("");
     const t = setTimeout(async () => {
       try {
         const r = await fetch(
           `${API}/api/inventory/items/search?includeHidden=1&q=${encodeURIComponent(productSearch.trim())}&limit=20`,
-          { headers: { Authorization: `Bearer ${token}` } },
+          { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal },
         );
-        if (!r.ok) return;
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
         const arr = Array.isArray(data) ? data : (data.items ?? data.rows ?? []);
+        if (controller.signal.aborted) return;
         setProducts(arr.map((x: any) => ({ id: x.id, nameAr: x.nameAr, code: x.code })));
-      } catch {/* ignore */}
+      } catch {
+        if (!controller.signal.aborted) {
+          setProducts([]);
+          setProductSearchError("تعذر البحث عن المنتجات. حاول مرة أخرى.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setProductSearchLoading(false);
+      }
     }, 250);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
   }, [productSearch, token]);
 
   function moveStage(idx: number, dir: -1 | 1) {
@@ -418,11 +434,18 @@ function RoutingEditor({
               <label className="text-sm font-medium block mb-1">المنتج النهائي *</label>
               <Input
                 value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
+                onChange={(e) => {
+                  setProductItemId("");
+                  setProductSearch(e.target.value);
+                }}
                 placeholder="ابحث عن منتج بالاسم أو الكود…"
               />
               <div className="mt-1 max-h-32 overflow-y-auto rounded border bg-slate-50 text-sm">
-                {products.map((p) => (
+                {productSearchLoading ? (
+                  <div className="p-2 text-center text-slate-400">جارٍ البحث عن المنتجات…</div>
+                ) : productSearchError ? (
+                  <div className="p-2 text-center text-rose-600">{productSearchError}</div>
+                ) : products.map((p) => (
                   <button
                     key={p.id}
                     onClick={() => { setProductItemId(p.id); setProductSearch(p.nameAr); }}
@@ -431,8 +454,8 @@ function RoutingEditor({
                     <span className="font-mono text-xs text-slate-500">{p.code}</span> — {p.nameAr}
                   </button>
                 ))}
-                {products.length === 0 && (
-                  <div className="p-2 text-center text-slate-400">اكتب للبحث…</div>
+                {!productSearchLoading && !productSearchError && products.length === 0 && (
+                  <div className="p-2 text-center text-slate-400">لا توجد منتجات مطابقة.</div>
                 )}
               </div>
               {productItemId && (

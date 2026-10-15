@@ -20,3 +20,9 @@ Remote item pickers must remain mounted when a search returns zero results. Repl
 **Why:** In invoice and inventory document forms, the picker had been conditionally replaced when its result list was empty; after one no-match query, later queries never reached the server.
 
 **How to apply:** Render the searchable picker whenever the authenticated form is active, regardless of current result count; render an empty-results state inside the picker and let the user continue typing.
+
+Apply item-search loading and race handling consistently across every operational web screen that loads items, not only sales invoices. A background refetch must not replace cached picker choices with a blocking spinner, and custom debounced searches must cancel or ignore responses for older queries.
+
+**Why:** Users use the same item catalog across sales, purchasing, inventory, and production screens; fixing only one screen leaves the same disappearance or stale-result behavior elsewhere.
+
+**How to apply:** Prefer the shared item-search hook and keep its loading flag tied to the first result for the active query. When a screen has a bespoke search request, abort superseded requests and keep selected-item state synchronized with edits to the search field.

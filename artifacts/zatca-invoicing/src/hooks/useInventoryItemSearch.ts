@@ -76,6 +76,10 @@ export function useInventoryItemSearch(
     items,
     search,
     setSearch,
-    isSearching: searchQuery.isFetching || debouncedSearch !== search.trim(),
+    // Background refetches (for example when a second line opens an old search
+    // after the cache becomes stale) must not replace already available choices
+    // with the loading state. Only show the blocking search state before the
+    // first result for this query arrives, or during the short debounce window.
+    isSearching: searchQuery.isLoading || debouncedSearch !== search.trim(),
   };
 }
