@@ -9,22 +9,19 @@
 //       processing                 → spinner overlay
 //       error                      → red ring
 //   - Click toggles listen on/off.
-//   - While listening, a small Arabic toast above the FAB shows the live
-//     transcript so the user knows what was heard.
-//   - Last result is announced via the existing toast() helper.
+//   - Status is shown through the microphone icon only; commands are processed
+//     without transcription or result messages on screen.
 //
 // Keyboard shortcut: Alt+M toggles listen (push-to-talk style).
 
 import { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Loader2, AlertTriangle } from "lucide-react";
 import { useVoiceAssistant } from "@/hooks/useVoiceAssistant";
-import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function VoiceAssistantWidget() {
   const v = useVoiceAssistant();
-  const { toast } = useToast();
   const { t, i18n } = useTranslation();
   const { user } = useAuth();
   const isRtl = i18n.dir() === "rtl";
@@ -100,18 +97,6 @@ export default function VoiceAssistantWidget() {
     return () => window.removeEventListener("keydown", onKey);
   }, [v]);
 
-  // Show last action result as a toast --------------------------------------
-  useEffect(() => {
-    if (!v.lastResult) return;
-    toast({
-      title: v.lastResult.ok ? t("voiceAssistant.toastOk") : t("voiceAssistant.toastFail"),
-      description: v.lastResult.label,
-      variant: v.lastResult.ok ? "default" : "destructive",
-    });
-    // Intentional: react to result change only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [v.lastResult]);
-
   if (v.state === "disabled") return null;
 
   const isListening  = v.state === "listening" || v.state === "starting";
@@ -133,13 +118,6 @@ export default function VoiceAssistantWidget() {
         : { bottom: "1.5rem", [isRtl ? "right" : "left"]: "1.5rem" } as React.CSSProperties}
       data-testid="voice-assistant-widget"
     >
-      {/* Live transcript bubble — only when listening */}
-      {(isListening || isProcessing) && v.transcript && (
-        <div className="pointer-events-none rounded-lg bg-background/95 backdrop-blur border border-border px-3 py-1.5 text-sm shadow-lg max-w-[260px] text-center">
-          <span className="text-muted-foreground">{v.transcript}</span>
-        </div>
-      )}
-
       {/* The FAB itself */}
       <button
         type="button"
@@ -152,13 +130,6 @@ export default function VoiceAssistantWidget() {
           if (!isUnsupported) void v.toggle();
         }}
         disabled={isUnsupported}
-        title={`اسحب لتحريك الميكروفون. ${
-          isUnsupported  ? t("voiceAssistant.unsupportedTooltip") :
-          isError        ? t("voiceAssistant.errorTooltip") :
-          isListening    ? t("voiceAssistant.listeningTooltip") :
-          isProcessing   ? t("voiceAssistant.processingTooltip") :
-                           t("voiceAssistant.idleTooltip")
-        }`}
         className={`pointer-events-auto relative flex h-14 w-14 items-center justify-center rounded-full text-white shadow-xl transition-all ${baseColour}`}
         data-testid="voice-assistant-fab"
         aria-label={t("voiceAssistant.toggle")}

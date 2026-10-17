@@ -328,8 +328,8 @@ export default function VoiceAssistantSettings() {
                          row.action}
                       </td>
                       <td className="py-2 pe-2">
-                        <Badge variant={row.status === "success" ? "default" : row.status === "unrecognized" ? "secondary" : "destructive"}>
-                          {row.status === "success" ? tr("statusOk") :
+                        <Badge variant={row.status === "success" || row.status === "learned" ? "default" : row.status === "unrecognized" ? "secondary" : "destructive"}>
+                          {row.status === "success" || row.status === "learned" ? tr("statusOk") :
                            row.status === "unrecognized" ? tr("statusUnk") :
                            tr("statusFail")}
                         </Badge>

@@ -26,6 +26,18 @@ const MOBILE_ROUTES: Record<string, string> = {
   '/cash-expenses': '/cash-expenses',
 };
 
+function learnAfterSuccess(transcript: string, parsed: ParsedCommand, contextRoute: string): void {
+  if (parsed.kind !== 'navigate' && parsed.kind !== 'verb') return;
+  void api('/api/voice-assistant/learn', {
+    method: 'POST',
+    body: {
+      transcript: transcript.trim(),
+      parsed: { kind: parsed.kind, route: parsed.route, verb: parsed.verb },
+      contextRoute,
+    },
+  }).catch(() => {});
+}
+
 export function MobileVoiceAssistant() {
   const c = useColors();
   const router = useRouter();
@@ -38,8 +50,8 @@ export function MobileVoiceAssistant() {
   const [open, setOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [working, setWorking] = useState(false);
-  const [transcript, setTranscript] = useState('');
-  const [message, setMessage] = useState('');
+  const [, setTranscript] = useState('');
+  const [, setMessage] = useState('');
   const handledRef = useRef(false);
   const speechRef = useRef<typeof import('expo-speech-recognition') | null>(null);
   const listenersRef = useRef<Array<{ remove: () => void }>>([]);
@@ -126,15 +138,18 @@ export function MobileVoiceAssistant() {
         if (destination) {
           setMessage(`الانتقال إلى ${parsed.label ?? 'الشاشة المطلوبة'}`);
           router.push(destination as never);
+          learnAfterSuccess(command, parsed, pathname);
         } else {
           setMessage('تم فهم الأمر، لكن هذه الشاشة غير متاحة في تطبيق الموبايل حالياً.');
         }
       } else if (parsed.kind === 'verb' && parsed.verb === 'back') {
         setMessage('رجوع');
         router.back();
+        learnAfterSuccess(command, parsed, pathname);
       } else if (parsed.kind === 'verb' && parsed.verb === 'home') {
         setMessage('الانتقال إلى الرئيسية');
         router.replace('/(tabs)' as never);
+        learnAfterSuccess(command, parsed, pathname);
       } else if (parsed.kind === 'verb' && parsed.verb === 'save') {
         setMessage('راجع بيانات المستند ثم اضغط حفظ بنفسك.');
       } else {
@@ -232,10 +247,6 @@ export function MobileVoiceAssistant() {
                 <Feather name="x" size={22} color={c.foreground} />
               </Pressable>
             </View>
-            <Text style={{ minHeight: 42, color: c.mutedForeground, textAlign: 'right' }}>
-              {working ? 'جارٍ تحليل الأمر…' : listening ? 'أستمع إليك الآن…' : transcript || 'اضغط على الميكروفون وقل أمراً.'}
-            </Text>
-            {!!message && <Text style={{ color: c.primary, textAlign: 'right' }}>{message}</Text>}
             <Pressable
               onPress={() => listening ? speechRef.current?.ExpoSpeechRecognitionModule.stop() : void start()}
               accessibilityRole="button"

@@ -36,6 +36,20 @@ function authHeaders(extra?: Record<string, string>): HeadersInit {
   return { ...(extra ?? {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) };
 }
 
+function learnAfterSuccess(text: string, parsed: ParsedCommand): void {
+  if (parsed.kind !== "navigate" && parsed.kind !== "verb") return;
+  void fetch(apiUrl("/api/voice-assistant/learn"), {
+    method: "POST",
+    credentials: "include",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      transcript: text.trim(),
+      parsed: { kind: parsed.kind, route: parsed.route, verb: parsed.verb },
+      contextRoute: window.location.pathname,
+    }),
+  }).catch(() => { /* background learning is intentionally silent */ });
+}
+
 // ─── Types for the prefixed Web Speech API ───────────────────────────────────
 //
 // The browsers that ship SpeechRecognition still use the `webkit` prefix
@@ -294,6 +308,7 @@ export function useVoiceAssistant(): UseVoiceAssistantApi {
       };
       const result = await executeAction(parsed);
       setLastResult(result);
+      if (result.ok) learnAfterSuccess(text, parsed);
       // Fire-and-forget: log the offline hit on the server too so admins see it.
       void fetch(apiUrl(PARSE_URL), {
         method: "POST",
@@ -331,6 +346,7 @@ export function useVoiceAssistant(): UseVoiceAssistantApi {
         };
         const result = await executeAction(parsed);
         setLastResult(result);
+        if (result.ok) learnAfterSuccess(text, parsed);
       }
     } catch (e: any) {
       setLastResult({ ok: false, kind: "unknown", label: "تعذّر الاتصال بالخادم", reason: e?.message });

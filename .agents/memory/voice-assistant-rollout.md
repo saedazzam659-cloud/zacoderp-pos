@@ -7,6 +7,8 @@ The user wants the voice assistant to eventually cover every mobile screen, with
 
 The user also wants Egyptian and Gulf Arabic recognition options and a microphone button that can be moved and remembers its position on both web and mobile.
 
-**Why:** A full-screen-by-screen rollout is broad; a shared command/field registry can be expanded without enabling untested actions everywhere at once.
+The user does not want voice-work messages or learning prompts shown to users. Learn silently and automatically only from commands whose supported action reports success; scope learned examples to the same user and company.
 
-**How to apply:** Keep existing document APIs and authorization as the source of truth, require review before financial saves/posts, add user grants explicitly for mobile voice access, and preserve per-user draggable-button placement.
+**Why:** A full-screen-by-screen rollout is broad; a shared command/field registry can be expanded without enabling untested actions everywhere at once. Successful action events are the implicit correctness signal, avoiding prompts and unconfirmed examples.
+
+**How to apply:** Keep existing document APIs and authorization as the source of truth, require review before financial saves/posts, add user grants explicitly for mobile voice access, preserve per-user draggable-button placement, and keep learning silent and user/company-scoped.
