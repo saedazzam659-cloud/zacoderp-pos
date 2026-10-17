@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/contexts/AuthContext';
+import { emitVoiceDocumentFill } from '@/lib/voiceDocumentFillBus';
 
 type EffectiveSettings = { enabled?: boolean; language?: string };
 type ParsedCommand = {
@@ -128,6 +129,10 @@ export function MobileVoiceAssistant() {
     setTranscript(command);
     setWorking(true);
     setMessage('');
+    if (emitVoiceDocumentFill(command)) {
+      setWorking(false);
+      return;
+    }
     try {
       const parsed = await api<ParsedCommand>('/api/voice-assistant/parse-command', {
         method: 'POST',

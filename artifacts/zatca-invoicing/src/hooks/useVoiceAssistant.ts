@@ -50,6 +50,18 @@ function learnAfterSuccess(text: string, parsed: ParsedCommand): void {
   }).catch(() => { /* background learning is intentionally silent */ });
 }
 
+function dispatchDocumentFill(text: string): boolean {
+  const path = window.location.pathname;
+  if (!/^\/sales\/(?:invoices|quotations)\/new\/?$/.test(path)) return false;
+  if (!/(?:العميل|للعميل|أضف|اضف|اضيف|ضيف|حط|سجل|الكمية|عدد|بسعر)/.test(text)) return false;
+  const event = new CustomEvent("voice:document-fill", {
+    detail: { transcript: text },
+    cancelable: true,
+  });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
 // ─── Types for the prefixed Web Speech API ───────────────────────────────────
 //
 // The browsers that ship SpeechRecognition still use the `webkit` prefix
@@ -292,6 +304,10 @@ export function useVoiceAssistant(): UseVoiceAssistantApi {
           rejectedReason: "low_confidence",
         }),
       }).catch(() => { /* best-effort */ });
+      setState("idle");
+      return;
+    }
+    if (dispatchDocumentFill(text)) {
       setState("idle");
       return;
     }

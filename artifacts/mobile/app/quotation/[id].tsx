@@ -27,6 +27,7 @@ import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
 import { NumericEntry } from '@/components/NumericEntry';
 import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
 import { normalizeSearch } from '@/lib/search';
+import { normalizeVoiceFillText, parseVoiceFillNumbers, subscribeVoiceDocumentFill } from '@/lib/voiceDocumentFillBus';
 import { printInvoice, shareInvoicePdf } from '@/lib/print';
 
 interface Item {
@@ -255,6 +256,39 @@ export default function QuotationForm() {
   const setLineQty = (itemId: number, q: number) => {
     setLines((prev) => (q <= 0 ? prev.filter((l) => l.itemId !== itemId) : prev.map((l) => (l.itemId === itemId ? { ...l, qty: q } : l))));
   };
+
+  useEffect(() => subscribeVoiceDocumentFill((transcript) => {
+    if (readOnly) return false;
+    const text = normalizeVoiceFillText(transcript);
+    const customerIntent = /(?:العميل|للعميل|لعميل)\s*/.test(text);
+    const itemIntent = /(?:اضف|ضيف|حط|سجل|كميه|عدد)/.test(text);
+    const matchedCustomer = customerIntent
+      ? customers.find((customer: any) => [customer.nameAr, customer.nameEn, customer.name]
+          .some((name) => name && normalizeVoiceFillText(String(name)).length > 1 && text.includes(normalizeVoiceFillText(String(name)))))
+      : null;
+    const matchedItem = itemIntent
+      ? [...items].filter((item) => [item.nameAr, item.nameEn]
+          .some((name) => name && normalizeVoiceFillText(String(name)).length > 1 && text.includes(normalizeVoiceFillText(String(name)))))
+          .sort((a, b) => normalizeVoiceFillText(String(b.nameAr ?? b.nameEn ?? '')).length -
+            normalizeVoiceFillText(String(a.nameAr ?? a.nameEn ?? '')).length)[0]
+      : null;
+    if (!matchedCustomer && !matchedItem) return false;
+    if (matchedCustomer) setCustomerId(matchedCustomer.id);
+    if (matchedItem) {
+      const { quantity, unitPrice } = parseVoiceFillNumbers(transcript);
+      const exists = lines.some((line) => line.itemId === matchedItem.id);
+      if (!exists || quantity === undefined) addItem(matchedItem);
+      if (quantity !== undefined || unitPrice !== undefined) {
+        setLines((previous) => previous.map((line) => line.itemId !== matchedItem.id ? line : {
+          ...line,
+          ...(quantity !== undefined ? { qty: quantity } : {}),
+          ...(unitPrice !== undefined ? { unitPrice } : {}),
+        }));
+      }
+      setTab('items');
+    }
+    return true;
+  }), [customers, items, lines, readOnly, addItem]);
 
   const setLinePrice = (itemId: number, price: number) => {
     setLines((prev) => prev.map((l) => (l.itemId === itemId ? { ...l, unitPrice: Math.max(0, price) } : l)));

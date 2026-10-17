@@ -1424,6 +1424,73 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     }));
   }
 
+  useEffect(() => {
+    const norm = (value: string) => value.toLowerCase().normalize("NFKD")
+      .replace(/[\u064B-\u0655\u0670\u0640]/g, "")
+      .replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+      .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+      .replace(/٫/g, ".")
+      .replace(/\s+/g, " ").trim();
+    const onVoiceFill = (raw: Event) => {
+      const event = raw as CustomEvent<{ transcript?: string }>;
+      const transcript = String(event.detail?.transcript ?? "");
+      const text = norm(transcript);
+      const customerIntent = /(?:العميل|للعميل|لعميل)\s*/.test(text);
+      const itemIntent = /(?:اضف|اضيف|ضيف|حط|سجل|كميه|عدد)/.test(text);
+      const matchedCustomer = customerIntent
+        ? (customers as any[]).find((customer) => [customer.nameAr, customer.nameEn, customer.name]
+            .some((name) => name && norm(String(name)).length > 1 && text.includes(norm(String(name)))))
+        : null;
+      const findItem = (rows: any[]) => [...rows].filter((item) => [item.nameAr, item.nameEn]
+        .some((name) => name && norm(String(name)).length > 1 && text.includes(norm(String(name)))))
+        .sort((a, b) => Math.max(norm(String(b.nameAr ?? "")).length, norm(String(b.nameEn ?? "")).length) -
+          Math.max(norm(String(a.nameAr ?? "")).length, norm(String(a.nameEn ?? "")).length))[0];
+      const matchedItem = itemIntent ? findItem(inventoryItems as any[]) : null;
+      if (!matchedCustomer && !itemIntent) return;
+      if (viewMode) return;
+      event.preventDefault();
+      if (matchedCustomer) setCustomerId(String(matchedCustomer.id));
+      const applyItem = (item: any) => {
+        const quantityText = text.match(/(?:كميه|عدد|اضف|اضيف|ضيف|حط|سجل)\s*(\d+)/)
+          ?? text.match(/(\d+)\s*(?:من|قطعه|قطع|حبه|حبات)/);
+        const priceMatch = text.match(/(?:بسعر|سعره?|قيمه)\s*(\d+(?:\.\d+)?)/);
+        const quantity = quantityText ? Math.max(1, Math.min(100000, Number(quantityText[1]))) : undefined;
+        const price = priceMatch ? Number(priceMatch[1]) : undefined;
+        const existing = lines.find((line) => line.itemId === String(item.id));
+        if (existing) {
+          if (quantity !== undefined) updateLine(existing._id, "qty", String(quantity));
+          else updateLine(existing._id, "qty", String((Number(existing.qty) || 0) + 1));
+          if (Number.isFinite(price)) updateLine(existing._id, "unitPrice", String(price));
+        } else {
+          const fresh = newLine();
+          setLines((previous) => [...previous, fresh]);
+          setFocusLineId(fresh._id);
+          void selectItem(fresh._id, String(item.id), item).then(() => {
+            if (quantity !== undefined) updateLine(fresh._id, "qty", String(quantity));
+            if (Number.isFinite(price)) updateLine(fresh._id, "unitPrice", String(price));
+          });
+        }
+        setActiveTab("items");
+      };
+      if (matchedItem) applyItem(matchedItem);
+      else if (itemIntent) {
+        const itemQuery = text
+          .replace(/(?:للعميل|العميل|لعميل)\s+.*?(?=\s+(?:اضف|اضيف|ضيف|حط|سجل)|[,،]|$)/g, " ")
+          .replace(/(?:اضف|اضيف|ضيف|حط|سجل|كميه|عدد|بسعر|سعره?|قيمه)\s*/g, " ")
+          .replace(/\d+(?:\.\d+)?/g, " ")
+          .replace(/\b(?:من|قطعه|قطع|حبه|حبات)\b/g, " ")
+          .trim();
+        if (itemQuery) {
+          void fetchJsonArray(`${API}/api/inventory/items/search?companyId=${cid}&includeHidden=1&q=${encodeURIComponent(itemQuery)}&limit=50`, authH)
+            .then((rows) => { const item = findItem(rows); if (item) applyItem(item); })
+            .catch(() => {});
+        }
+      }
+    };
+    window.addEventListener("voice:document-fill", onVoiceFill);
+    return () => window.removeEventListener("voice:document-fill", onVoiceFill);
+  }, [customers, inventoryItems, lines, viewMode]);
+
   // Commit the "إضافة صنف" bar into a new grid line. Appends an empty line,
   // runs the SAME selectItem auto-fill (catalog/currency price, base unit,
   // VAT, offer reset), then applies the bar's overrides through updateLine
