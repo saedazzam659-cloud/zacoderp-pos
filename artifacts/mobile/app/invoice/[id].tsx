@@ -31,6 +31,7 @@ import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
 import { normalizeSearch } from '@/lib/search';
 import {
   normalizeVoiceFillText,
+  parseVoiceDateValue,
   parseVoiceFillNumbers,
   subscribeVoiceDocumentFill,
   subscribeVoiceDocumentSave,
@@ -332,7 +333,22 @@ export default function InvoiceForm() {
     if (readOnly) return false;
     const text = normalizeVoiceFillText(transcript);
     const customerIntent = /(?:العميل|للعميل|لعميل)\s*/.test(text);
-    const itemIntent = /(?:اضف|ضيف|حط|سجل|كميه|عدد)/.test(text);
+    const fieldCommand = /(?:تاريخ الفاتوره|ملاحظات|ملاحظه|نوع الدفع|طريقه الدفع|الدفع|السداد|نوع الفاتوره)/.test(text);
+    const itemIntent = /(?:اضف|ضيف|حط|سجل|كميه|عدد)/.test(text) && !fieldCommand;
+    const invoiceDate = text.includes('تاريخ الفاتوره') ? parseVoiceDateValue(text) : undefined;
+    const notesMatch = text.match(/(?:ملاحظات|ملاحظه)\s+(?:الفاتوره|المستند)\s*(?::|-|هي|تكون)?\s*(.+)$/);
+    const invoiceNotes = notesMatch?.[1]?.trim();
+    const paymentIntent = /(?:نوع الدفع|طريقه الدفع|الدفع|السداد)/.test(text);
+    const paymentLabels = (user?.company?.paymentMethodLabels ?? {}) as Record<string, string>;
+    const hasPaymentLabel = (key: 'credit' | 'cash' | 'bank') =>
+      typeof paymentLabels[key] === 'string' && !!paymentLabels[key].trim() &&
+      text.includes(normalizeVoiceFillText(paymentLabels[key]));
+    const voicePaymentType = (paymentIntent || /نوع الفاتوره/.test(text))
+      ? /(?:اجل|على الحساب|ائتمان)/.test(text) || hasPaymentLabel('credit') ? 'credit'
+        : /(?:نقد|كاش)/.test(text) || hasPaymentLabel('cash') ? 'cash'
+          : /(?:بنك|بنكي|شبكه|شبكي|بطاقه)/.test(text) || hasPaymentLabel('bank') ? 'bank'
+            : undefined
+      : undefined;
     const matchedCustomer = customerIntent
       ? customers.find((customer: any) => [customer.nameAr, customer.nameEn, customer.name]
           .some((name) => name && normalizeVoiceFillText(String(name)).length > 1 && text.includes(normalizeVoiceFillText(String(name)))))
@@ -343,8 +359,12 @@ export default function InvoiceForm() {
           .sort((a, b) => normalizeVoiceFillText(String(b.nameAr ?? b.nameEn ?? '')).length -
             normalizeVoiceFillText(String(a.nameAr ?? a.nameEn ?? '')).length)[0]
       : null;
-    if (!matchedCustomer && !matchedItem) return false;
+    if (!matchedCustomer && !matchedItem && !invoiceDate && !invoiceNotes && !voicePaymentType) return false;
     if (matchedCustomer) setCustomerId(matchedCustomer.id);
+    if (invoiceDate) setInvoiceDate(invoiceDate);
+    if (invoiceNotes) setNotes(invoiceNotes);
+    if (voicePaymentType) setPaymentType(voicePaymentType);
+    if (invoiceDate || invoiceNotes || voicePaymentType) setTab('basic');
     if (matchedItem) {
       const { quantity, unitPrice } = parseVoiceFillNumbers(transcript);
       const exists = lines.some((line) => line.itemId === matchedItem.id);
@@ -359,7 +379,7 @@ export default function InvoiceForm() {
       setTab('items');
     }
     return true;
-  }), [customers, items, lines, readOnly, addItem]);
+  }), [customers, items, lines, readOnly, addItem, user?.company?.paymentMethodLabels]);
 
   // أسعار حية: عند كل فتح/عودة لهذه الشاشة نعيد جلب الأصناف من السيرفر
   // فتظهر تعديلات الأسعار التي تمت من الويب فوراً دون إعادة تشغيل التطبيق.

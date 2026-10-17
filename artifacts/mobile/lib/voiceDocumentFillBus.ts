@@ -50,3 +50,15 @@ export function parseVoiceFillNumbers(text: string): { quantity?: number; unitPr
     unitPrice: Number.isFinite(unitPrice) && unitPrice! >= 0 ? unitPrice : undefined,
   };
 }
+
+export function parseVoiceDateValue(value: string): string | undefined {
+  const normalized = normalizeVoiceFillText(value);
+  const match = normalized.match(/(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})/);
+  if (!match) return undefined;
+  const parts = match[1].split(/[/-]/).map(Number);
+  const [year, month, day] = parts[0] > 999 ? parts : [parts[2], parts[1], parts[0]];
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) return undefined;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return undefined;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}

@@ -441,6 +441,28 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const dateBounds = fp.dateBounds("date") ?? {};
 
   const [activeTab, setActiveTab]       = useState("basic");
+  function handlePaymentTypeChange(value: string) {
+    setPaymentType(value);
+    if (value === "cash") {
+      if (!cashBoxId) {
+        const active = [...(cashBoxes as any[])].filter((b: any) => b.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+        const preferred = active.find((b: any) => String(b.id) === String(user?.company?.defaultPaymentCashBoxId));
+        if (preferred ?? active[0]) setCashBoxId(String((preferred ?? active[0]).id));
+      }
+      setBankAccountId("");
+    } else if (value === "bank") {
+      if (!bankAccountId) {
+        const active = [...(bankAccounts as any[])].filter((a: any) => a.isActive !== false).sort((a: any, b: any) => a.id - b.id);
+        const preferred = active.find((a: any) => String(a.id) === String(user?.company?.defaultPaymentBankAccountId));
+        if (preferred ?? active[0]) setBankAccountId(String((preferred ?? active[0]).id));
+      }
+      setCashBoxId("");
+    } else {
+      setCashBoxId("");
+      setBankAccountId("");
+    }
+  }
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (!isInvoice || isNew || viewMode || params.get("savedTab") !== "items") return;
@@ -1436,7 +1458,37 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const transcript = String(event.detail?.transcript ?? "");
       const text = norm(transcript);
       const customerIntent = /(?:العميل|للعميل|لعميل)\s*/.test(text);
-      const itemIntent = /(?:اضف|اضيف|ضيف|حط|سجل|كميه|عدد)/.test(text);
+      const fieldCommand = /(?:تاريخ الفاتوره|ملاحظات|ملاحظه|نوع الدفع|طريقه الدفع|الدفع|السداد|نوع الفاتوره)/.test(text);
+      const itemIntent = /(?:اضف|اضيف|ضيف|حط|سجل|كميه|عدد)/.test(text) && !fieldCommand;
+      const dateMatch = isInvoice
+        ? text.match(/تاريخ الفاتوره\s*(?:هو|بتاريخ|:|-)?\s*(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})/)
+        : null;
+      const dateParts = dateMatch?.[1].split(/[/-]/).map(Number);
+      const [year, month, day] = !dateParts ? [0, 0, 0]
+        : dateParts[0] > 999 ? dateParts : [dateParts[2], dateParts[1], dateParts[0]];
+      const dateObject = year && month && day ? new Date(Date.UTC(year, month - 1, day)) : null;
+      const parsedDate = dateObject
+        && dateObject.getUTCFullYear() === year
+        && dateObject.getUTCMonth() === month - 1
+        && dateObject.getUTCDate() === day
+        ? `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+        : "";
+      const headerNotesMatch = text.match(/(?:ملاحظات|ملاحظه)\s+(?:الفاتوره|العرض|عرض السعر|المستند)\s*(?::|-|هي|تكون)?\s*(.+)$/);
+      const lineNotesMatch = text.match(/(?:ملاحظات|ملاحظه)\s+(?:السطر|البند|الصنف)\s*(?::|-|هي|تكون)?\s*(.+)$/);
+      const headerNotes = headerNotesMatch?.[1]?.trim();
+      const lineNotes = lineNotesMatch?.[1]?.trim();
+      const paymentIntent = isInvoice && /(?:نوع الدفع|طريقه الدفع|الدفع|السداد|نوع الفاتوره)/.test(text);
+      const paymentLabels = {
+        credit: paymentMethodLabel(user?.company, "credit", "آجل"),
+        cash: paymentMethodLabel(user?.company, "cash", "نقدي"),
+        bank: paymentMethodLabel(user?.company, "bank", "بنك/شبكة"),
+      } as const;
+      const paymentTypeValue = paymentIntent
+        ? /(?:اجل|على الحساب|ائتمان)/.test(text) || text.includes(norm(paymentLabels.credit)) ? "credit"
+          : /(?:نقد|كاش)/.test(text) || text.includes(norm(paymentLabels.cash)) ? "cash"
+            : /(?:بنك|بنكي|شبكه|شبكي|بطاقه)/.test(text) || text.includes(norm(paymentLabels.bank)) ? "bank"
+              : ""
+        : "";
       const matchedCustomer = customerIntent
         ? (customers as any[]).find((customer) => [customer.nameAr, customer.nameEn, customer.name]
             .some((name) => name && norm(String(name)).length > 1 && text.includes(norm(String(name)))))
@@ -1446,10 +1498,23 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         .sort((a, b) => Math.max(norm(String(b.nameAr ?? "")).length, norm(String(b.nameEn ?? "")).length) -
           Math.max(norm(String(a.nameAr ?? "")).length, norm(String(a.nameEn ?? "")).length))[0];
       const matchedItem = itemIntent ? findItem(inventoryItems as any[]) : null;
-      if (!matchedCustomer && !itemIntent) return;
+      const dateEditable = !!parsedDate && !fp.isReadOnly("date") && !dateBounds.min && fp.isVisible("date");
+      const headerNotesEditable = !!headerNotes && !fp.isReadOnly("notes") && fp.isVisible("notes");
+      const targetLine = lines.find((line) => line._id === focusLineId) ?? (lines.length === 1 ? lines[0] : null);
+      const lineNotesEditable = !!lineNotes && !!targetLine;
+      const paymentEditable = !!paymentTypeValue && !fp.isReadOnly("paymentMethod") && fp.isVisible("paymentMethod");
+      if (!matchedCustomer && !itemIntent && !dateEditable && !headerNotesEditable && !lineNotesEditable && !paymentEditable) return;
       if (viewMode) return;
       event.preventDefault();
       if (matchedCustomer) setCustomerId(String(matchedCustomer.id));
+      if (dateEditable) setDocDate(parsedDate);
+      if (headerNotesEditable) setNotes(headerNotes);
+      if (lineNotesEditable && targetLine) {
+        updateLine(targetLine._id, "notes", lineNotes);
+        setActiveTab("items");
+      }
+      if (paymentEditable) handlePaymentTypeChange(paymentTypeValue);
+      if (dateEditable || headerNotesEditable || paymentEditable) setActiveTab("basic");
       const applyItem = (item: any) => {
         const quantityText = text.match(/(?:كميه|عدد|اضف|اضيف|ضيف|حط|سجل)\s*(\d+)/)
           ?? text.match(/(\d+)\s*(?:من|قطعه|قطع|حبه|حبات)/);
@@ -1489,7 +1554,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     };
     window.addEventListener("voice:document-fill", onVoiceFill);
     return () => window.removeEventListener("voice:document-fill", onVoiceFill);
-  }, [customers, inventoryItems, lines, viewMode]);
+  }, [
+    customers, inventoryItems, lines, viewMode, isInvoice, fp, focusLineId,
+    cashBoxId, cashBoxes, bankAccountId, bankAccounts,
+    user?.company?.paymentMethodLabels,
+    user?.company?.defaultPaymentCashBoxId,
+    user?.company?.defaultPaymentBankAccountId,
+  ]);
 
   // Commit the "إضافة صنف" bar into a new grid line. Appends an empty line,
   // runs the SAME selectItem auto-fill (catalog/currency price, base unit,

@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   emitVoiceDocumentSave,
   normalizeVoiceFillText,
+  parseVoiceDateValue,
   parseVoiceFillNumbers,
   subscribeVoiceDocumentSave,
 } from './voiceDocumentFillBus';
@@ -22,6 +23,11 @@ test('does not invent a quantity or price when they were not spoken', () => {
   const result = parseVoiceFillNumbers('العميل أحمد');
   assert.equal(result.quantity, undefined);
   assert.equal(result.unitPrice, undefined);
+});
+
+test('normalizes explicit Arabic invoice dates and rejects invalid dates', () => {
+  assert.equal(parseVoiceDateValue('تاريخ الفاتورة ١٧/١٠/٢٠٢٦'), '2026-10-17');
+  assert.equal(parseVoiceDateValue('2026-02-30'), undefined);
 });
 
 test('voice save is dispatched only when an active form allows it', () => {

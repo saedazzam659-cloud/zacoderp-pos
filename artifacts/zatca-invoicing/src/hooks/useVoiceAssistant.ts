@@ -53,8 +53,8 @@ function learnAfterSuccess(text: string, parsed: ParsedCommand): void {
 
 function dispatchDocumentFill(text: string): boolean {
   const path = window.location.pathname;
-  if (!/^\/sales\/(?:invoices|quotations)\/new\/?$/.test(path)) return false;
-  if (!/(?:العميل|للعميل|أضف|اضف|اضيف|ضيف|حط|سجل|الكمية|عدد|بسعر)/.test(text)) return false;
+  if (!/^\/sales\/(?:invoices|quotations)(?:\/|$)/.test(path)) return false;
+  if (!/(?:العميل|للعميل|أضف|اضف|اضيف|ضيف|حط|سجل|الكمية|عدد|بسعر|تاريخ|ملاحظ|الدفع|السداد|نوع الفاتور|نقد|آجل|اجل|بنك|شبك)/.test(text)) return false;
   const event = new CustomEvent("voice:document-fill", {
     detail: { transcript: text },
     cancelable: true,

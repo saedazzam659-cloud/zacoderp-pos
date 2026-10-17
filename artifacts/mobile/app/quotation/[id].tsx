@@ -266,7 +266,10 @@ export default function QuotationForm() {
     if (readOnly) return false;
     const text = normalizeVoiceFillText(transcript);
     const customerIntent = /(?:العميل|للعميل|لعميل)\s*/.test(text);
-    const itemIntent = /(?:اضف|ضيف|حط|سجل|كميه|عدد)/.test(text);
+    const fieldCommand = /ملاحظات|ملاحظه/.test(text);
+    const itemIntent = /(?:اضف|ضيف|حط|سجل|كميه|عدد)/.test(text) && !fieldCommand;
+    const notesMatch = text.match(/(?:ملاحظات|ملاحظه)\s+(?:العرض|عرض السعر|المستند)\s*(?::|-|هي|تكون)?\s*(.+)$/);
+    const quotationNotes = notesMatch?.[1]?.trim();
     const matchedCustomer = customerIntent
       ? customers.find((customer: any) => [customer.nameAr, customer.nameEn, customer.name]
           .some((name) => name && normalizeVoiceFillText(String(name)).length > 1 && text.includes(normalizeVoiceFillText(String(name)))))
@@ -277,8 +280,12 @@ export default function QuotationForm() {
           .sort((a, b) => normalizeVoiceFillText(String(b.nameAr ?? b.nameEn ?? '')).length -
             normalizeVoiceFillText(String(a.nameAr ?? a.nameEn ?? '')).length)[0]
       : null;
-    if (!matchedCustomer && !matchedItem) return false;
+    if (!matchedCustomer && !matchedItem && !quotationNotes) return false;
     if (matchedCustomer) setCustomerId(matchedCustomer.id);
+    if (quotationNotes) {
+      setNotes(quotationNotes);
+      setTab('basic');
+    }
     if (matchedItem) {
       const { quantity, unitPrice } = parseVoiceFillNumbers(transcript);
       const exists = lines.some((line) => line.itemId === matchedItem.id);
