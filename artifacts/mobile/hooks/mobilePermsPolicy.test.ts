@@ -9,6 +9,7 @@ const ordinary = 'customer_statement_view';
 const detailed = 'customer_statement_detailed_view';
 const cashExpenseCreate = 'cash_expenses_create';
 const cashExpenseViewAll = 'cash_expenses_view_all';
+const voiceAssistant = 'voice_assistant_use';
 const identity = { id: 7, companyId: 3, role: 'user' };
 
 test('direct and wrapped /me responses both normalize', () => {
@@ -66,4 +67,11 @@ test('cash-expense permissions require an explicit grant, including for administ
   assert.equal(effectiveMobilePermission(identity, legacyAdmin, true, cashExpenseCreate), false);
   assert.equal(effectiveMobilePermission(identity, ordinaryUser, true, cashExpenseViewAll), false);
   assert.equal(effectiveMobilePermission(identity, granted, true, cashExpenseCreate), true);
+});
+
+test('voice-assistant access requires an explicit grant, including for administrators', () => {
+  const admin = normalizeMe({ ...identity, role: 'admin', mobilePermissions: null });
+  const granted = normalizeMe({ ...identity, mobilePermissions: { [voiceAssistant]: true } });
+  assert.equal(effectiveMobilePermission(identity, admin, true, voiceAssistant), false);
+  assert.equal(effectiveMobilePermission(identity, granted, true, voiceAssistant), true);
 });

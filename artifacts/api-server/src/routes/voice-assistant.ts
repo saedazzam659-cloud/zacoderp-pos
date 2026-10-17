@@ -19,10 +19,12 @@ import {
   voiceAssistantSettingsTable,
   voiceCommandLogTable,
   workSessionsTable,
+  usersTable,
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { writeAudit } from "../middleware/permissions.js";
+import { mobilePermAllowed } from "../lib/mobilePerms.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -225,6 +227,9 @@ const ROUTE_CATALOG: Array<{ route: string; label: string; phrases: string[] }> 
   { route: "/sales/invoices",         label: "فواتير المبيعات",           phrases: ["فواتير المبيعات"] },
   { route: "/sales/invoices/new",     label: "فاتورة مبيعات جديدة",       phrases: ["فاتورة مبيعات جديدة", "فاتورة جديدة"] },
   { route: "/sales/quotations",       label: "عروض الأسعار",              phrases: ["عروض الأسعار"] },
+  { route: "/sales/quotations/new",   label: "عرض سعر جديد",              phrases: ["عرض سعر جديد", "أنشئ عرض سعر"] },
+  { route: "/cash-expenses",          label: "مصروفات الصندوق",           phrases: ["مصروفات الصندوق", "مصروف جديد", "سجل مصروف"] },
+  { route: "/cash-transfers",         label: "إيداع وتحويلات الصندوق",    phrases: ["إيداع صندوق", "إيداع نقدي", "تحويل بين الصناديق"] },
   { route: "/sales/returns",          label: "مرتجعات المبيعات",          phrases: ["مرتجعات المبيعات"] },
   { route: "/customers",              label: "العملاء",                   phrases: ["العملاء"] },
   { route: "/purchasing",             label: "المشتريات",                 phrases: ["المشتريات"] },
@@ -329,6 +334,19 @@ router.post("/parse-command", async (req, res) => {
   const cid = getCid(req);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
   const userId = (req as any).authUser.id as number;
+  if (String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile") {
+    const [permissionUser] = await db.select({
+      role: usersTable.role,
+      mobilePermissions: usersTable.mobilePermissions,
+    }).from(usersTable).where(and(
+      eq(usersTable.id, userId),
+      eq(usersTable.companyId, cid),
+    )).limit(1);
+    if (!permissionUser || !mobilePermAllowed(permissionUser, "voice_assistant_use")) {
+      res.status(403).json({ error: "ليس لديك صلاحية استخدام المساعد الصوتي في تطبيق الموبايل" });
+      return;
+    }
+  }
 
   const transcript   = String(req.body?.transcript ?? "").trim();
   const contextRoute = req.body?.contextRoute ? String(req.body.contextRoute).slice(0, 256) : null;

@@ -121,6 +121,7 @@ type PostingPerms = Record<string, { post: boolean; unpost: boolean }>;
 // Keys cover every feature of the Expo companion app.
 // editKey / deleteKey add the تعديل / حذف columns on entity rows.
 const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string; deleteKey?: string; screenKey?: string }> = [
+  { key: "voice_assistant_use", labelKey: "users.mobVoiceAssistant" },
   { key: "invoices_view",      labelKey: "users.mobInvoicesView", editKey: "invoice_edit", deleteKey: "invoice_delete", screenKey: "screen_invoices" },
   { key: "invoice_create",     labelKey: "users.mobInvoiceCreate", screenKey: "screen_new" },
   { key: "invoice_edit_price", labelKey: "users.mobInvoiceEditPrice" },
@@ -199,7 +200,7 @@ const CASH_TRANSFER_PERMISSION_KEYS = new Set([
 ]);
 // Location tracking is sensitive and must always be explicitly enabled,
 // including when an admin uses the "allow all" shortcut.
-const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set(["mobile_tracking", ...CASH_TRANSFER_PERMISSION_KEYS]);
+const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set(["mobile_tracking", "voice_assistant_use", ...CASH_TRANSFER_PERMISSION_KEYS]);
 
 // Legacy permissions retain their allow-by-default behavior; this new module
 // stays denied until an admin explicitly checks each permission.

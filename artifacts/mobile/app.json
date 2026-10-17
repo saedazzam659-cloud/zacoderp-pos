@@ -58,6 +58,13 @@
           "isAndroidForegroundServiceEnabled": true
         }
       ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "يُستخدم الميكروفون لتنفيذ أوامرك الصوتية داخل التطبيق.",
+          "speechRecognitionPermission": "يُستخدم التعرف على الكلام لتحويل أوامرك الصوتية إلى نص."
+        }
+      ],
       "expo-web-browser",
       "expo-updates"
     ],

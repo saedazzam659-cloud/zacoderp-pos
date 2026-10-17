@@ -40,6 +40,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { BottomBar } from '@/components/BottomBar';
+import { MobileVoiceAssistant } from '@/components/MobileVoiceAssistant';
 import { useColors } from '@/hooks/useColors';
 import * as Updates from 'expo-updates';
 import {
@@ -374,6 +375,7 @@ export default function RootLayout() {
                           <RootLayoutNav />
                         </View>
                         <BottomBar />
+                        <MobileVoiceAssistant />
                       </MobileLocationGate>
                     </View>
                   </UpdateGate>

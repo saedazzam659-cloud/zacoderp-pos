@@ -2824,6 +2824,7 @@
     "mobileScreenCol": "Show screen",
     "mobileLiveHint": "Without a permission, the button/screen disappears from the app immediately and the server rejects the action even from an outdated app.",
     "mobInvoicesView": "View sales invoices",
+    "mobVoiceAssistant": "Use the voice assistant",
     "mobInvoiceCreate": "Create sales invoice",
     "mobInvoiceEditPrice": "Edit sale price on invoice",
     "mobInvoiceSaveDraft": "Save invoice as draft",

@@ -8,6 +8,7 @@ export type PermUser = {
 };
 
 const EXPLICIT_OPT_IN_KEYS = new Set([
+  'voice_assistant_use',
   'cash_expenses_create',
   'cash_expenses_view_own',
   'cash_expenses_view_all',

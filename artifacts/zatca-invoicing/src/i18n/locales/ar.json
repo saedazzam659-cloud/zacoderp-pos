@@ -2826,6 +2826,7 @@
     "mobileScreenCol": "إظهار الشاشة",
     "mobileLiveHint": "المستخدم بدون صلاحية: يختفي الزر/الشاشة من التطبيق مباشرة، ويرفض السيرفر العملية حتى لو كان التطبيق قديماً.",
     "mobInvoicesView": "عرض فواتير المبيعات",
+    "mobVoiceAssistant": "استخدام المساعد الصوتي",
     "mobInvoiceCreate": "إنشاء فاتورة مبيعات",
     "mobInvoiceEditPrice": "تعديل سعر البيع في الفاتورة",
     "mobInvoiceSaveDraft": "حفظ الفاتورة كمسودة",
