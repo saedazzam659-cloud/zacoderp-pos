@@ -32,7 +32,7 @@ export type VisitRow = {
   durationMinutes: number | null;
   zoneId: number | null; alertFlags: string | null;
 };
-export type LiveTrailPoint = { lat: number; lng: number; at: string; label: string; kind: "in" | "out" };
+export type LiveTrailPoint = { lat: number; lng: number; at: string; label: string; kind: "in" | "out" | "move" };
 export type DashboardData = {
   totals: { visitCount: number; totalMinutes: number; activeUsers: number; alertCount: number };
   perUser: Array<{ userId: number; userName: string; visitCount: number; completedCount: number; activeCount: number; totalMinutes: number; avgMinutes: number; alertCount: number; distinctPlaces: number }>;

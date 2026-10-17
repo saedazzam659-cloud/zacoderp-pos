@@ -60,6 +60,7 @@
 - [New company defaults](new-company-defaults-boundary.md) — creation-only settings; never reset existing tenants or split shared document-number namespaces.
 - [Party classification](party-classification-boundaries.md) — unset means ordinary customer/supplier; filter new choices only and preserve historical links.
 - [Mobile server sessions](mobile-server-session-boundary.md) — changing domains requires fresh authentication; preserve queued operations and central-only legacy sessions.
+- [Mobile live-location tracking](mobile-live-tracking-boundary.md) — per-user opt-in, OS permission gate, work-session-only tracking, and native-build verification.
 - [Expo source archives](expo-source-archive-contract.md) — direct build uploads require a project/ wrapper; finalize changes before taking the build snapshot.
 - [External DB routing and schema healing](external-db-storage-routing.md) — keep readiness strict by default; one designated request path may tolerate missing tables without weakening other agents.
 - [Test runtime boundary](api-server-ensureschema-lock-hang.md) — do not run the slow/full admin suite without explicit approval; use focused checks.

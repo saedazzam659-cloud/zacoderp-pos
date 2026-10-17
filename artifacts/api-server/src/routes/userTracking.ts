@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { userVisitsTable, trackingZonesTable, trackingZoneUsersTable, usersTable, branchesTable } from "@workspace/db";
+import { userVisitsTable, mobileLocationPointsTable, trackingZonesTable, trackingZoneUsersTable, usersTable, branchesTable } from "@workspace/db";
 import { eq, and, or, desc, sql, gte, lte, isNull, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { extractAuth, resolveCompanyId, branchScopeFilter } from "../middleware/auth.js";
 import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
+import { mobilePermAllowed } from "../lib/mobilePerms.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -308,6 +309,41 @@ router.get("/me-status", async (req: any, res) => {
   });
 });
 
+// Mobile-only continuous tracking endpoints. A manager's user-level checkbox
+// is the explicit opt-in; zone assignments remain optional for map visibility.
+router.get("/mobile/status", async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const uid = req.authUser?.id;
+  if (!uid) { res.status(401).json({ error: "غير مصرح" }); return; }
+  const [u] = await db.select({ role: usersTable.role, mobilePermissions: usersTable.mobilePermissions })
+    .from(usersTable).where(and(eq(usersTable.id, uid), eq(usersTable.companyId, cid))).limit(1);
+  res.json({ enabled: !!u && mobilePermAllowed({ role: u.role, mobilePermissions: u.mobilePermissions }, "mobile_tracking") });
+});
+
+const mobileLocationSchema = z.object({
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+  accuracy: z.coerce.number().nonnegative().optional().nullable(),
+});
+router.post("/mobile/location", async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const uid = req.authUser?.id;
+  if (!uid) { res.status(401).json({ error: "غير مصرح" }); return; }
+  const [u] = await db.select({ role: usersTable.role, mobilePermissions: usersTable.mobilePermissions })
+    .from(usersTable).where(and(eq(usersTable.id, uid), eq(usersTable.companyId, cid))).limit(1);
+  if (!u || !mobilePermAllowed({ role: u.role, mobilePermissions: u.mobilePermissions }, "mobile_tracking")) {
+    res.status(403).json({ error: "تتبع الموقع غير مفعّل لهذا المستخدم" }); return;
+  }
+  const parsed = mobileLocationSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "إحداثيات غير صالحة" }); return; }
+  const point = parsed.data;
+  const [created] = await db.insert(mobileLocationPointsTable).values({
+    companyId: cid, userId: uid, lat: String(point.lat), lng: String(point.lng),
+    accuracy: point.accuracy == null ? null : String(point.accuracy),
+  }).returning({ id: mobileLocationPointsTable.id });
+  res.status(201).json({ ok: true, id: created.id });
+});
+
 // ───────────────── LIVE TRACKING (admin) ───────────────────
 // Returns one row per user that is explicitly assigned to any active zone in
 // the company. Each row carries the user's open visit (if any) with its last
@@ -331,10 +367,21 @@ router.get("/live", ...adminGate, async (req: any, res) => {
     .innerJoin(usersTable, eq(usersTable.id, trackingZoneUsersTable.userId))
     .orderBy(usersTable.username);
 
-  if (trackedUsers.length === 0) { res.json({ users: [] }); return; }
+  const mobileTrackingUsers = await db.select({
+    id: usersTable.id, nameAr: usersTable.nameAr, nameEn: usersTable.nameEn, username: usersTable.username,
+  }).from(usersTable).where(and(
+    eq(usersTable.companyId, cid),
+    eq(usersTable.isActive, true),
+    sql`${usersTable.mobilePermissions}->>'mobile_tracking' = 'true'`,
+  ));
+  const usersById = new Map(trackedUsers.map(u => [u.id, u]));
+  for (const u of mobileTrackingUsers) usersById.set(u.id, u);
+  const allTrackedUsers = [...usersById.values()];
+
+  if (allTrackedUsers.length === 0) { res.json({ users: [] }); return; }
 
   // 2) Active visits for these users.
-  const userIds = trackedUsers.map(u => u.id);
+  const userIds = allTrackedUsers.map(u => u.id);
   const activeVisits = await db.select().from(userVisitsTable).where(and(
     eq(userVisitsTable.companyId, cid),
     eq(userVisitsTable.status, "active"),
@@ -393,7 +440,7 @@ router.get("/live", ...adminGate, async (req: any, res) => {
     gte(userVisitsTable.checkinAt, startOfToday),
   )).orderBy(userVisitsTable.checkinAt);
 
-  type TrailPt = { lat: number; lng: number; at: string; label: string; kind: "in" | "out" };
+  type TrailPt = { lat: number; lng: number; at: string; label: string; kind: "in" | "out" | "move" };
   const trailByUser = new Map<number, TrailPt[]>();
   for (const v of todayVisits) {
     const arr = trailByUser.get(v.userId) ?? [];
@@ -414,9 +461,48 @@ router.get("/live", ...adminGate, async (req: any, res) => {
     trailByUser.set(v.userId, arr);
   }
 
+  // GPS points collected by the mobile app while the user has explicitly
+  // enabled location tracking. Keep the live payload bounded to 300 recent
+  // points per user for today's movement trail.
+  const mobilePoints = await db.select({
+    userId: mobileLocationPointsTable.userId,
+    lat: mobileLocationPointsTable.lat,
+    lng: mobileLocationPointsTable.lng,
+    recordedAt: mobileLocationPointsTable.recordedAt,
+  }).from(mobileLocationPointsTable).where(and(
+    eq(mobileLocationPointsTable.companyId, cid),
+    inArray(mobileLocationPointsTable.userId, userIds),
+    gte(mobileLocationPointsTable.recordedAt, startOfToday),
+  )).orderBy(desc(mobileLocationPointsTable.recordedAt)).limit(6000);
+  const mobilePointsByUser = new Map<number, typeof mobilePoints>();
+  for (const p of mobilePoints) {
+    const arr = mobilePointsByUser.get(p.userId) ?? [];
+    if (arr.length < 300) arr.push(p);
+    mobilePointsByUser.set(p.userId, arr);
+  }
+  for (const [userId, points] of mobilePointsByUser) {
+    const arr = trailByUser.get(userId) ?? [];
+    for (const p of [...points].reverse()) {
+      if (p.lat == null || p.lng == null) continue;
+      arr.push({
+        lat: Number(p.lat), lng: Number(p.lng), at: new Date(p.recordedAt).toISOString(),
+        label: "موقع من تطبيق الموبايل", kind: "move",
+      });
+    }
+    arr.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    trailByUser.set(userId, arr);
+  }
+
   const now = Date.now();
-  const rows = trackedUsers.map(u => {
-    const v = visitByUser.get(u.id) ?? null;
+  const rows = allTrackedUsers.map(u => {
+    const visit = visitByUser.get(u.id) ?? null;
+    const latestPoint = mobilePointsByUser.get(u.id)?.[0] ?? null;
+    const locationFresh = !!latestPoint && now - new Date(latestPoint.recordedAt).getTime() <= 3 * 60_000;
+    const v = visit ?? (locationFresh ? {
+      id: 0, checkinAt: latestPoint!.recordedAt, checkinLat: latestPoint!.lat,
+      checkinLng: latestPoint!.lng, checkinPlace: "موقع مباشر من التطبيق", checkinAddress: null,
+      purpose: null, zoneId: null, alertFlags: null,
+    } : null);
     const elapsedMin = v ? Math.max(0, Math.round((now - new Date(v.checkinAt).getTime()) / 60000)) : null;
     const assigned = zonesByUser.get(u.id) ?? [];
     // Fallback position for offline users (so they still appear on the map at
@@ -425,11 +511,11 @@ router.get("/live", ...adminGate, async (req: any, res) => {
     return {
       userId: u.id,
       userName: u.nameAr || u.nameEn || u.username,
-      isActive: !!v,
+      isActive: !!visit || locationFresh,
       assignedZones: assigned.map(z => ({ id: z.id, name: z.name, isAllowed: z.isAllowed })),
-      fallbackLat: fallbackZone ? fallbackZone.centerLat : null,
-      fallbackLng: fallbackZone ? fallbackZone.centerLng : null,
-      fallbackZoneName: fallbackZone?.name ?? null,
+      fallbackLat: fallbackZone ? fallbackZone.centerLat : latestPoint ? Number(latestPoint.lat) : null,
+      fallbackLng: fallbackZone ? fallbackZone.centerLng : latestPoint ? Number(latestPoint.lng) : null,
+      fallbackZoneName: fallbackZone?.name ?? (latestPoint ? "آخر موقع معروف" : null),
       todayTrail: trailByUser.get(u.id) ?? [],
       visit: v ? {
         id: v.id,

@@ -5534,3 +5534,33 @@ export const ConvertGoodsDeliveryToSalesInvoiceBody = zod.object({
   cashBoxId: zod.number().min(1).nullish(),
   bankAccountId: zod.number().min(1).nullish(),
 });
+
+/**
+ * @summary Check whether mobile location tracking is enabled for the current user
+ */
+export const GetMobileTrackingStatusResponse = zod.object({
+  enabled: zod.boolean(),
+});
+
+/**
+ * @summary Record a GPS location from the authenticated mobile app
+ */
+export const recordMobileLocationBodyLatMin = -90;
+export const recordMobileLocationBodyLatMax = 90;
+
+export const recordMobileLocationBodyLngMin = -180;
+export const recordMobileLocationBodyLngMax = 180;
+
+export const recordMobileLocationBodyAccuracyMin = 0;
+
+export const RecordMobileLocationBody = zod.object({
+  lat: zod
+    .number()
+    .min(recordMobileLocationBodyLatMin)
+    .max(recordMobileLocationBodyLatMax),
+  lng: zod
+    .number()
+    .min(recordMobileLocationBodyLngMin)
+    .max(recordMobileLocationBodyLngMax),
+  accuracy: zod.number().min(recordMobileLocationBodyAccuracyMin).nullish(),
+});

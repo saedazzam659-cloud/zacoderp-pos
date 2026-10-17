@@ -5,6 +5,33 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export interface MobileTrackingStatus {
+  enabled: boolean;
+}
+
+export interface MobileLocationPointInput {
+  /**
+   * @minimum -90
+   * @maximum 90
+   */
+  lat: number;
+  /**
+   * @minimum -180
+   * @maximum 180
+   */
+  lng: number;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  accuracy?: number | null;
+}
+
+export interface MobileLocationPointResult {
+  ok: boolean;
+  id: number;
+}
+
 export interface WhatsAppContact {
   id: number;
   companyId: number;

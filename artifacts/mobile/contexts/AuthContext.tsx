@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, setToken, getToken, getDomain, normalizeDomain, probeDomain, setDomain, sessionGeneration, isCurrentSession, invalidateRequests, registerSessionExpired } from '@/lib/api';
 import { clearAllOfflineData, offlineOperationsBusy, outboxCounts, allOutboxCounts } from '@/lib/offline';
+import { stopMobileLocationTracking } from '@/lib/mobileLocationTracking';
 
 export interface CompanyInfo {
   id: number;
@@ -116,6 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (offlineOperationsBusy() || counts.pending || counts.failed) {
       throw new Error('توجد عمليات أوف لاين غير مزامنة. زامنها أو راجع العمليات الفاشلة قبل تسجيل الخروج.');
     }
+    await stopMobileLocationTracking();
     invalidateRequests();
     setUser(null);
     await setToken(null);

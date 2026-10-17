@@ -30,6 +30,21 @@ import { ensureCrmWhatsAppSchema } from "./crmWhatsAppSchema.js";
 
 async function ensureTaxIntegrationSchema(): Promise<void> {
   await db.execute(sql.raw(`
+    CREATE TABLE IF NOT EXISTS mobile_location_points (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      lat NUMERIC(10,7) NOT NULL,
+      lng NUMERIC(10,7) NOT NULL,
+      accuracy NUMERIC(10,2),
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `));
+  await db.execute(sql.raw(`
+    CREATE INDEX IF NOT EXISTS idx_mobile_location_points_company_user_time
+      ON mobile_location_points(company_id, user_id, recorded_at)
+  `));
+  await db.execute(sql.raw(`
     CREATE TABLE IF NOT EXISTS tax_integration_setups (
       id SERIAL PRIMARY KEY,
       company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,

@@ -66,6 +66,7 @@ export const CASH_EXPENSE_MOBILE_PERMISSION_KEYS = [
 ] as const;
 
 const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set<string>(CASH_EXPENSE_MOBILE_PERMISSION_KEYS);
+EXPLICIT_MOBILE_PERMISSION_KEYS.add("mobile_tracking");
 
 /** Clamp the client payload: coerce values to booleans, cap key length. */
 export function sanitizeMobilePermissions(raw: any): Record<string, boolean> | null {

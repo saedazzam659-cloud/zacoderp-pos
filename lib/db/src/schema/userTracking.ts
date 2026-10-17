@@ -35,6 +35,18 @@ export const userVisitsTable = pgTable("user_visits", {
   byStatus:      index("idx_user_visits_status").on(t.companyId, t.status),
 }));
 
+export const mobileLocationPointsTable = pgTable("mobile_location_points", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  lat: numeric("lat", { precision: 10, scale: 7 }).notNull(),
+  lng: numeric("lng", { precision: 10, scale: 7 }).notNull(),
+  accuracy: numeric("accuracy", { precision: 10, scale: 2 }),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  byCompanyUserTime: index("idx_mobile_location_points_company_user_time").on(t.companyId, t.userId, t.recordedAt),
+}));
+
 export const trackingZonesTable = pgTable("tracking_zones", {
   id: serial("id").primaryKey(),
   companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),

@@ -162,6 +162,7 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "cash_expenses_post", labelKey: "users.mobCashExpensePost" },
   { key: "cash_expenses_cancel", labelKey: "users.mobCashExpenseCancel" },
   { key: "cash_expenses_report", labelKey: "users.mobCashExpenseReport" },
+  { key: "mobile_tracking", labelKey: "users.mobLocationTracking" },
 ];
 
 // Every storable key (feature keys + edit/delete keys) — keep deny-all and
@@ -180,13 +181,16 @@ const CASH_EXPENSE_PERMISSION_KEYS = new Set([
   "cash_expenses_cancel",
   "cash_expenses_report",
 ]);
+// Location tracking is sensitive and must always be explicitly enabled,
+// including when an admin uses the "allow all" shortcut.
+const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set(["mobile_tracking"]);
 
 // Legacy permissions retain their allow-by-default behavior; this new module
 // stays denied until an admin explicitly checks each permission.
 const seedMobilePerms = (stored?: Record<string, boolean> | null, allowNewModule = false): MobilePerms => {
   const out: MobilePerms = {};
   for (const k of ALL_MOBILE_KEYS) {
-    out[k] = stored?.[k] ?? (CASH_EXPENSE_PERMISSION_KEYS.has(k) ? allowNewModule : true);
+    out[k] = stored?.[k] ?? (CASH_EXPENSE_PERMISSION_KEYS.has(k) ? allowNewModule : EXPLICIT_MOBILE_PERMISSION_KEYS.has(k) ? false : true);
   }
   return out;
 };

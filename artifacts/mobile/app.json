@@ -48,6 +48,16 @@
         }
       ],
       "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "يُستخدم موقعك أثناء العمل لعرض تحركاتك في الرقابة المباشرة عند تفعيلها من مديرك.",
+          "locationAlwaysAndWhenInUsePermission": "يُستخدم موقعك أثناء جلسة العمل فقط، حتى عند تشغيل التطبيق في الخلفية.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
       "expo-web-browser",
       "expo-updates"
     ],

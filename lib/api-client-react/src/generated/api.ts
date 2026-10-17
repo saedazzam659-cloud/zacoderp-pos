@@ -112,6 +112,9 @@ import type {
   LookupSalesDeliverySourceDocumentParams,
   LookupSalesOrderSourceDocumentParams,
   ManufacturingDeliveryEvidence,
+  MobileLocationPointInput,
+  MobileLocationPointResult,
+  MobileTrackingStatus,
   MonthlyStat,
   OkResponse,
   PosItemGroup,
@@ -13985,4 +13988,167 @@ export const useConvertGoodsDeliveryToSalesInvoice = <
   return useMutation(
     getConvertGoodsDeliveryToSalesInvoiceMutationOptions(options),
   );
+};
+
+/**
+ * @summary Check whether mobile location tracking is enabled for the current user
+ */
+export const getGetMobileTrackingStatusUrl = () => {
+  return `/api/user-tracking/mobile/status`;
+};
+
+export const getMobileTrackingStatus = async (
+  options?: RequestInit,
+): Promise<MobileTrackingStatus> => {
+  return customFetch<MobileTrackingStatus>(getGetMobileTrackingStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetMobileTrackingStatusQueryKey = () => {
+  return [`/api/user-tracking/mobile/status`] as const;
+};
+
+export const getGetMobileTrackingStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMobileTrackingStatus>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getMobileTrackingStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetMobileTrackingStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMobileTrackingStatus>>
+  > = ({ signal }) => getMobileTrackingStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMobileTrackingStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMobileTrackingStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMobileTrackingStatus>>
+>;
+export type GetMobileTrackingStatusQueryError = ErrorType<void>;
+
+/**
+ * @summary Check whether mobile location tracking is enabled for the current user
+ */
+
+export function useGetMobileTrackingStatus<
+  TData = Awaited<ReturnType<typeof getMobileTrackingStatus>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getMobileTrackingStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMobileTrackingStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Record a GPS location from the authenticated mobile app
+ */
+export const getRecordMobileLocationUrl = () => {
+  return `/api/user-tracking/mobile/location`;
+};
+
+export const recordMobileLocation = async (
+  mobileLocationPointInput: MobileLocationPointInput,
+  options?: RequestInit,
+): Promise<MobileLocationPointResult> => {
+  return customFetch<MobileLocationPointResult>(getRecordMobileLocationUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(mobileLocationPointInput),
+  });
+};
+
+export const getRecordMobileLocationMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recordMobileLocation>>,
+    TError,
+    { data: BodyType<MobileLocationPointInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof recordMobileLocation>>,
+  TError,
+  { data: BodyType<MobileLocationPointInput> },
+  TContext
+> => {
+  const mutationKey = ["recordMobileLocation"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof recordMobileLocation>>,
+    { data: BodyType<MobileLocationPointInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return recordMobileLocation(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RecordMobileLocationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof recordMobileLocation>>
+>;
+export type RecordMobileLocationMutationBody =
+  BodyType<MobileLocationPointInput>;
+export type RecordMobileLocationMutationError = ErrorType<void>;
+
+/**
+ * @summary Record a GPS location from the authenticated mobile app
+ */
+export const useRecordMobileLocation = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recordMobileLocation>>,
+    TError,
+    { data: BodyType<MobileLocationPointInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof recordMobileLocation>>,
+  TError,
+  { data: BodyType<MobileLocationPointInput> },
+  TContext
+> => {
+  return useMutation(getRecordMobileLocationMutationOptions(options));
 };

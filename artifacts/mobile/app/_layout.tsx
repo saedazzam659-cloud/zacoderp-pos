@@ -51,6 +51,8 @@ import {
 } from '@expo-google-fonts/inter';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Location from 'expo-location';
+import { mobileTrackingEnabled, startMobileLocationTracking, stopMobileLocationTracking } from '@/lib/mobileLocationTracking';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -226,6 +228,120 @@ function RootLayoutNav() {
   );
 }
 
+function MobileLocationGate({ children }: { children: React.ReactNode }) {
+  const { user, logout } = useAuth();
+  const colors = useColors();
+  const [serverEnabled, setServerEnabled] = useState<boolean | null>(null);
+  const enabled = serverEnabled === true;
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    if (!user || Platform.OS === 'web') {
+      setServerEnabled(false);
+      if (!user) void stopMobileLocationTracking();
+      return;
+    }
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const next = await mobileTrackingEnabled();
+        if (!alive) return;
+        setServerEnabled(next);
+        if (!next) {
+          await stopMobileLocationTracking();
+          if (alive) setReady(true);
+        }
+      } catch {
+        if (alive) { setServerEnabled(null); setReady(false); setMessage('تعذر التحقق من إعداد الرقابة المباشرة. تحقق من اتصال الإنترنت.'); }
+      }
+    };
+    void refresh();
+    const interval = setInterval(() => void refresh(), 30_000);
+    const sub = AppState.addEventListener('change', state => { if (state === 'active') void refresh(); });
+    return () => { alive = false; clearInterval(interval); sub.remove(); };
+  }, [user?.id]);
+
+  useEffect(() => {
+    let alive = true;
+    if (serverEnabled === null) { setReady(false); return () => { alive = false; }; }
+    if (!enabled || Platform.OS === 'web' || !user) {
+      setReady(true);
+      setMessage('');
+      return () => { alive = false; };
+    }
+    setReady(false);
+    (async () => {
+      try {
+        const fg = await Location.getForegroundPermissionsAsync();
+        const bg = await Location.getBackgroundPermissionsAsync();
+        if (!fg.granted || !bg.granted) {
+          if (alive) {
+            setShowSettings((!fg.granted && !fg.canAskAgain) || (!bg.granted && !bg.canAskAgain));
+            setMessage('تفعيل الرقابة المباشرة يتطلب السماح بموقعك أثناء استخدام التطبيق وفي الخلفية. لن يستمر التتبع بعد تسجيل الخروج.');
+          }
+          return;
+        }
+        await startMobileLocationTracking();
+        if (alive) { setReady(true); setMessage(''); }
+      } catch (e: any) {
+        if (alive) setMessage(e?.message ?? 'تعذر بدء تتبع الموقع.');
+      }
+    })();
+    return () => { alive = false; };
+  }, [enabled, serverEnabled, user?.id]);
+
+  if (!user || Platform.OS === 'web' || serverEnabled === false) return <>{children}</>;
+  if (serverEnabled === null) return (
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28, gap: 14, backgroundColor: colors.background }}>
+      <ActivityIndicator size="large" color={colors.primary} />
+      <Text style={{ color: colors.mutedForeground, textAlign: 'center' }}>{message || 'جارٍ التحقق من إعدادات الرقابة المباشرة…'}</Text>
+      <Pressable onPress={() => void logout().catch((e: any) => setMessage(e?.message ?? 'تعذر تسجيل الخروج'))} style={{ padding: 12 }}>
+        <Text style={{ color: colors.primary, fontWeight: '700' }}>تسجيل الخروج</Text>
+      </Pressable>
+    </View>
+  );
+  if (ready) return <>{children}</>;
+  const requestTracking = async () => {
+    setBusy(true); setMessage('');
+    setShowSettings(false);
+    try {
+      const fg = await Location.requestForegroundPermissionsAsync();
+      if (!fg.granted) {
+        setShowSettings(!fg.canAskAgain);
+        throw new Error('لم يتم منح إذن الموقع أثناء استخدام التطبيق.');
+      }
+      const bg = await Location.requestBackgroundPermissionsAsync();
+      if (!bg.granted) {
+        setShowSettings(!bg.canAskAgain);
+        throw new Error('يلزم اختيار السماح بالموقع طوال الوقت من إعدادات الهاتف.');
+      }
+      await startMobileLocationTracking();
+      setReady(true);
+    } catch (e: any) {
+      setMessage(e?.message ?? 'تعذر تفعيل الموقع. تحقق من إعدادات الهاتف.');
+    } finally { setBusy(false); }
+  };
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', padding: 28, gap: 14, backgroundColor: colors.background }}>
+      <Text style={{ color: colors.foreground, fontSize: 22, fontWeight: '700', textAlign: 'center' }}>تفعيل الرقابة المباشرة</Text>
+      <Text style={{ color: colors.mutedForeground, fontSize: 15, lineHeight: 24, textAlign: 'center' }}>
+        فعّل الموقع للسماح لمديرك بمتابعة تحركات العمل. يعمل التتبع خلال جلسة تسجيل الدخول فقط ويتوقف عند تسجيل الخروج.
+      </Text>
+      {!!message && <Text accessibilityRole="alert" style={{ color: colors.destructive, textAlign: 'center' }}>{message}</Text>}
+      {showSettings && <Pressable onPress={() => void Linking.openSettings()} style={{ padding: 12, alignItems: 'center' }}><Text style={{ color: colors.primary, fontWeight: '700' }}>فتح إعدادات التطبيق</Text></Pressable>}
+      <Pressable onPress={requestTracking} disabled={busy} style={{ backgroundColor: colors.primary, padding: 15, borderRadius: 12, alignItems: 'center' }}>
+        {busy ? <ActivityIndicator color={colors.primaryForeground} /> : <Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>السماح بمتابعة الموقع</Text>}
+      </Pressable>
+      <Pressable onPress={() => void logout().catch((e: any) => setMessage(e?.message ?? 'تعذر تسجيل الخروج'))} style={{ padding: 12, alignItems: 'center' }}>
+        <Text style={{ color: colors.mutedForeground }}>تسجيل الخروج</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
@@ -253,11 +369,12 @@ export default function RootLayout() {
                   <UpdateGate>
                     <DataVersionPoller />
                     <View style={{ flex: 1 }}>
-                      <View style={{ flex: 1 }}>
-                        <RootLayoutNav />
-                      </View>
-                      {/* شريط تنقّل سفلي ثابت في كل الشاشات (نمط فيسبوك) */}
-                      <BottomBar />
+                      <MobileLocationGate>
+                        <View style={{ flex: 1 }}>
+                          <RootLayoutNav />
+                        </View>
+                        <BottomBar />
+                      </MobileLocationGate>
                     </View>
                   </UpdateGate>
                 </ThemeProvider>
