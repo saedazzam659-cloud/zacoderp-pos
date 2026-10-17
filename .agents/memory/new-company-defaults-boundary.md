@@ -44,3 +44,9 @@ Free-quantity visibility is a company-level presentation preference: existing co
 **Why:** The user explicitly requested the new-company default while preserving existing-company behavior and historical quantity data.
 
 **How to apply:** Keep the schema default enabled for existing rows; set the hidden default only during fresh-company initialization. Apply visibility to entry forms, reports, and printed views, but preserve stored values and business calculations.
+
+Fresh companies also receive a main branch, main/default warehouse, main treasury with a same-named posting account, and a general bank with a same-named posting account. Do not backfill existing companies.
+
+**Why:** The user explicitly requested these as creation-time web defaults, with treasury and bank linked into the chart of accounts.
+
+**How to apply:** Run only from fresh company creation after chart and currency initialization; keep each record tenant-scoped and link treasury/bank records to company-owned asset accounts.

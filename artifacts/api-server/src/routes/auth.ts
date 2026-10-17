@@ -1887,6 +1887,14 @@ router.post("/register", async (req, res) => {
     res.status(500).json({ error: "تعذّر إعداد العملة والضريبة الافتراضية للشركة الجديدة", companyId: company.id });
     return;
   }
+  try {
+    const { seedNewCompanyOperationalDefaults } = await import("../lib/newCompanyOperationalDefaults.js");
+    await seedNewCompanyOperationalDefaults(company.id);
+  } catch (err) {
+    req.log?.error?.({ err, companyId: company.id }, "register: operational defaults seed failed");
+    res.status(500).json({ error: "تعذّر إنشاء الفرع والمخزن والخزينة والحساب البنكي الافتراضي للشركة الجديدة", companyId: company.id });
+    return;
+  }
 
   // Create subscription
   const today = new Date().toISOString().split("T")[0];

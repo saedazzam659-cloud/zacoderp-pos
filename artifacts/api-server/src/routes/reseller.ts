@@ -287,6 +287,14 @@ router.post("/clients", requireResellerPermission("add_companies"), async (req, 
       ? err.message : "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
     return;
   }
+  try {
+    const { seedNewCompanyOperationalDefaults } = await import("../lib/newCompanyOperationalDefaults.js");
+    await seedNewCompanyOperationalDefaults(company.id);
+  } catch (err) {
+    logger.error({ err, companyId: company.id }, "reseller add-client: operational defaults failed");
+    res.status(500).json({ error: "تعذّر إنشاء الفرع والمخزن والخزينة والحساب البنكي الافتراضي للشركة الجديدة", companyId: company.id });
+    return;
+  }
 
   // Link the company to this reseller.
   await db.insert(resellerCompaniesTable).values({ resellerId: req.reseller!.id, companyId: company.id });

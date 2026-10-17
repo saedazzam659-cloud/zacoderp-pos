@@ -164,6 +164,14 @@ router.post("/", async (req, res) => {
     res.status(500).json({ error: "تعذّر إكمال إعدادات العملة والضريبة للشركة الجديدة", companyId: company.id });
     return;
   }
+  try {
+    const { seedNewCompanyOperationalDefaults } = await import("../lib/newCompanyOperationalDefaults.js");
+    await seedNewCompanyOperationalDefaults(company.id);
+  } catch (err) {
+    logger.error({ err, companyId: company.id }, "new company operational defaults failed");
+    res.status(500).json({ error: "تعذّر إنشاء الفرع والمخزن والخزينة والحساب البنكي الافتراضي للشركة الجديدة", companyId: company.id });
+    return;
+  }
   const [configured] = await db.select().from(companiesTable).where(eq(companiesTable.id, company.id));
   res.status(201).json({ ...configured, accountingDefaults });
 });
