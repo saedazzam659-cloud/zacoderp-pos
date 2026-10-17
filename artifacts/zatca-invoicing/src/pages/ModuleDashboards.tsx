@@ -24,8 +24,12 @@ type ModuleOverview = {
   contracting: { projects: number; inProgress: number; completed: number; onHold: number; reportUrl: string } | null;
   hr: { employees: number; active: number; inactive: number; reportUrl: string } | null;
   fixedAssets: { assets: number; active: number; inMaintenance: number; reportUrl: string } | null;
+  pos: { sessions: number; openSessions: number; closedSessions: number; reportUrl: string } | null;
+  cash: { cashBoxes: number | null; bankAccounts: number | null; reportUrl: string } | null;
+  maintenance: { orders: number; inProgress: number; scheduled: number; completed: number; reportUrl: string } | null;
+  crm: { leads: number; opportunities: number; reportUrl: string } | null;
 };
-type ModuleKey = "sales" | "purchases" | "accounting" | "inventory" | "production" | "contracting" | "hr" | "fixedAssets";
+type ModuleKey = "sales" | "purchases" | "accounting" | "inventory" | "production" | "contracting" | "hr" | "fixedAssets" | "pos" | "cash" | "maintenance" | "crm";
 type Overview = {
   options: {
     branches: Array<{ id: number; nameAr: string; nameEn: string }>;
@@ -38,7 +42,7 @@ type Overview = {
 const API = import.meta.env.VITE_API_URL ?? "";
 const today = () => new Date().toISOString().slice(0, 10);
 const initialFrom = () => `${new Date().getFullYear()}-01-01`;
-const moduleKeys: ModuleKey[] = ["sales", "purchases", "accounting", "inventory", "production", "contracting", "hr", "fixedAssets"];
+const moduleKeys: ModuleKey[] = ["sales", "purchases", "accounting", "inventory", "production", "contracting", "hr", "fixedAssets", "pos", "cash", "maintenance", "crm"];
 
 function reportHref(reportUrl: string, params: Record<string, string>) {
   if (!reportUrl) return "#";
@@ -69,6 +73,7 @@ export default function ModuleDashboards() {
     allBranches: "كل الفروع المتاحة", allWarehouses: "كل المستودعات المتاحة", refresh: "تحديث",
     sales: "المبيعات", purchases: "المشتريات", accounting: "المحاسبة", inventory: "المخزون",
     production: "الإنتاج", contracting: "المقاولات", hr: "الموارد البشرية", fixedAssets: "الأصول الثابتة",
+    pos: "نقاط البيع", cash: "النقد والبنوك", maintenance: "الصيانة", crm: "إدارة العملاء",
     invoices: "الفواتير", returns: "المرتجعات", count: "العدد", total: "الإجمالي",
     trend: "الحركة خلال الفترة", entries: "القيود المرحلة", debit: "مدين", credit: "دائن",
     items: "الأصناف", warehouses: "المستودعات", stockValue: "قيمة المخزون",
@@ -80,12 +85,16 @@ export default function ModuleDashboards() {
     projects: "المشاريع", inProgress: "قيد التنفيذ", completed: "مكتملة", onHold: "متوقفة",
     employees: "الموظفون", active: "نشط", inactive: "غير نشط", assets: "الأصول",
     inMaintenance: "تحت الصيانة",
+    sessions: "جلسات البيع", openSessions: "مفتوحة", closedSessions: "مغلقة",
+    cashBoxes: "الخزن", bankAccounts: "الحسابات البنكية", maintenanceOrders: "أوامر الصيانة",
+    scheduled: "مجدولة", leads: "العملاء المحتملون", opportunities: "الفرص",
   } : {
     title: "Operational dashboards", subtitle: "A consolidated view of operational activity within your access scope.",
     range: "Date range", from: "From date", to: "To date", branch: "Branch", warehouse: "Warehouse",
     allBranches: "All available branches", allWarehouses: "All available warehouses", refresh: "Refresh",
     sales: "Sales", purchases: "Purchases", accounting: "Accounting", inventory: "Inventory",
     production: "Production", contracting: "Contracting", hr: "Human resources", fixedAssets: "Fixed assets",
+    pos: "Point of sale", cash: "Cash & banks", maintenance: "Maintenance", crm: "CRM",
     invoices: "Invoices", returns: "Returns", count: "Count", total: "Total",
     trend: "Activity over time", entries: "Posted entries", debit: "Debit", credit: "Credit",
     items: "Items", warehouses: "Warehouses", stockValue: "Stock value",
@@ -97,6 +106,9 @@ export default function ModuleDashboards() {
     projects: "Projects", inProgress: "In progress", completed: "Completed", onHold: "On hold",
     employees: "Employees", active: "Active", inactive: "Inactive", assets: "Assets",
     inMaintenance: "In maintenance",
+    sessions: "Sales sessions", openSessions: "Open", closedSessions: "Closed",
+    cashBoxes: "Cash boxes", bankAccounts: "Bank accounts", maintenanceOrders: "Maintenance orders",
+    scheduled: "Scheduled", leads: "Leads", opportunities: "Opportunities",
   };
   const query = useQuery<Overview>({
     queryKey: ["module-dashboards-overview", companyId, fromDate, toDate, branchId, warehouseId],
@@ -124,7 +136,8 @@ export default function ModuleDashboards() {
   const pickName = (nameAr: string, nameEn: string) => ar ? nameAr || nameEn : nameEn || nameAr;
   const money = (value: number) => new Intl.NumberFormat(ar ? "ar-SA" : "en", { maximumFractionDigits: 2 }).format(value);
   const moduleIcon = { sales: ShoppingBag, purchases: Boxes, accounting: Landmark, inventory: Package,
-    production: Factory, contracting: Building2, hr: Users, fixedAssets: Package };
+    production: Factory, contracting: Building2, hr: Users, fixedAssets: Package,
+    pos: ShoppingBag, cash: Landmark, maintenance: Package, crm: Users };
   const moduleLabel = (key: ModuleKey) => labels[key];
 
   const renderCurrencyRows = (rows: CurrencyTotal[]) => rows.length ? (
@@ -174,7 +187,7 @@ export default function ModuleDashboards() {
   const reportLink = (url: string, moduleKey: ModuleKey) => {
     const params = moduleKey === "inventory"
       ? { ...(branchId ? { branchId } : {}), ...(warehouseId ? { warehouseId } : {}) }
-      : ["production", "contracting", "hr", "fixedAssets"].includes(moduleKey)
+      : ["production", "contracting", "hr", "fixedAssets", "pos", "cash", "maintenance", "crm"].includes(moduleKey)
         ? (branchId ? { branchId } : {})
         : filterParams;
     return url ? <a href={appRouteHref(reportHref(url, params))} className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline" data-testid={`report-link-${url}`}>
@@ -244,7 +257,7 @@ export default function ModuleDashboards() {
             <div className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"><Icon className="h-5 w-5" /></span>
             <div><h2 className="text-base font-bold">{moduleLabel(key)}</h2><p className="text-[11px] text-muted-foreground">
-              {["inventory", "production", "contracting", "hr", "fixedAssets"].includes(key)
+              {["inventory", "production", "contracting", "hr", "fixedAssets", "pos", "cash", "maintenance", "crm"].includes(key)
                 ? (key === "inventory" ? (ar ? "الرصيد الحالي" : "Current balance") : labels.snapshot)
                 : `${labels.range}: ${fromDate} — ${toDate}`}
             </p></div>
@@ -326,6 +339,22 @@ export default function ModuleDashboards() {
                   </div>)}
               </div>
             </>}
+            {key === "pos" && <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {[[labels.sessions, module.sessions], [labels.openSessions, module.openSessions], [labels.closedSessions, module.closedSessions]].map(([label, value]) =>
+                <div key={String(label)} className="rounded-xl bg-muted/55 p-3"><p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(Number(value))}</p></div>)}
+            </div>}
+            {key === "cash" && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {module.cashBoxes !== null && <div className="rounded-xl bg-muted/55 p-3"><p className="text-[10px] text-muted-foreground">{labels.cashBoxes}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(module.cashBoxes)}</p></div>}
+              {module.bankAccounts !== null && <div className="rounded-xl bg-muted/55 p-3"><p className="text-[10px] text-muted-foreground">{labels.bankAccounts}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(module.bankAccounts)}</p></div>}
+            </div>}
+            {key === "maintenance" && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[[labels.maintenanceOrders, module.orders], [labels.inProgress, module.inProgress], [labels.scheduled, module.scheduled], [labels.completed, module.completed]].map(([label, value]) =>
+                <div key={String(label)} className="rounded-xl bg-muted/55 p-3"><p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(Number(value))}</p></div>)}
+            </div>}
+            {key === "crm" && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {[[labels.leads, module.leads], [labels.opportunities, module.opportunities]].map(([label, value]) =>
+                <div key={String(label)} className="rounded-xl bg-muted/55 p-3"><p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(Number(value))}</p></div>)}
+            </div>}
           </div>
         </section>;
       })}

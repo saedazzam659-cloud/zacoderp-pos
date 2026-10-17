@@ -2,15 +2,21 @@ import { Router } from "express";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import {
   branchesTable,
+  bankAccountsTable,
+  cashBoxesTable,
   contractingProjectsTable,
+  crmLeadsTable,
+  crmOpportunitiesTable,
   db,
   employeesTable,
   fixedAssetsTable,
   itemsTable,
   journalEntriesTable,
   journalEntryLinesTable,
+  maintenanceOrdersTable,
   purchaseInvoicesTable,
   purchaseReturnsTable,
+  posSessionsTable,
   productionOrdersTable,
   salesInvoicesTable,
   salesReturnsTable,
@@ -79,6 +85,10 @@ router.get("/overview", async (req: any, res): Promise<void> => {
     contracting: canAccessModule(user, "contracting", "view"),
     hr: canAccessModule(user, "hr_employees", "view"),
     fixedAssets: canAccessModule(user, "fixed_assets", "view"),
+    pos: canAccessModule(user, "pos", "view"),
+    cash: canAccessModule(user, "cash_boxes", "view") || canAccessModule(user, "bank_accounts", "view"),
+    maintenance: canAccessModule(user, "maintenance", "view"),
+    crm: canAccessModule(user, "crm", "view"),
   };
   const branchScope = branchScopeSpread(req, branchesTable.id, branchId);
   const branchRows = await db.select({
@@ -347,6 +357,77 @@ router.get("/overview", async (req: any, res): Promise<void> => {
     };
   }
 
+  if (visibleModules.pos) {
+    const sessions = await db.select({
+      status: posSessionsTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(posSessionsTable).where(and(
+      eq(posSessionsTable.companyId, cid),
+      ...branchScopeSpread(req, posSessionsTable.branchId, branchId),
+    )).groupBy(posSessionsTable.status);
+    moduleData.pos = {
+      sessions: sessions.reduce((sum, row) => sum + row.count, 0),
+      openSessions: sessions.find(row => row.status === "open")?.count ?? 0,
+      closedSessions: sessions.filter(row => row.status !== "open").reduce((sum, row) => sum + row.count, 0),
+      reportUrl: "/pos-management",
+    };
+  }
+
+  if (visibleModules.cash) {
+    const canViewCashBoxes = canAccessModule(user, "cash_boxes", "view");
+    const canViewBanks = canAccessModule(user, "bank_accounts", "view");
+    const [boxes, banks] = await Promise.all([
+      canViewCashBoxes ? db.select({ count: sql<number>`count(*)::int` }).from(cashBoxesTable)
+        .where(and(eq(cashBoxesTable.companyId, cid), ...branchScopeSpread(req, cashBoxesTable.branchId, branchId))) : [],
+      canViewBanks ? db.select({ count: sql<number>`count(*)::int` }).from(bankAccountsTable)
+        .where(and(eq(bankAccountsTable.companyId, cid), ...branchScopeSpread(req, bankAccountsTable.branchId, branchId))) : [],
+    ]);
+    moduleData.cash = {
+      cashBoxes: boxes[0]?.count ?? null,
+      bankAccounts: banks[0]?.count ?? null,
+      reportUrl: "/cash",
+    };
+  }
+
+  if (visibleModules.maintenance) {
+    const rows = await db.select({
+      status: maintenanceOrdersTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(maintenanceOrdersTable).where(and(
+      eq(maintenanceOrdersTable.companyId, cid),
+      ...branchScopeSpread(req, maintenanceOrdersTable.branchId, branchId),
+    )).groupBy(maintenanceOrdersTable.status);
+    moduleData.maintenance = {
+      orders: rows.reduce((sum, row) => sum + row.count, 0),
+      inProgress: rows.find(row => row.status === "in_progress")?.count ?? 0,
+      scheduled: rows.find(row => row.status === "scheduled")?.count ?? 0,
+      completed: rows.find(row => row.status === "completed")?.count ?? 0,
+      reportUrl: "/maintenance",
+    };
+  }
+
+  if (visibleModules.crm) {
+    const leadRows = await db.select({
+      status: crmLeadsTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(crmLeadsTable).where(and(
+      eq(crmLeadsTable.companyId, cid),
+      ...branchScopeSpread(req, crmLeadsTable.branchId, branchId),
+    )).groupBy(crmLeadsTable.status);
+    const opportunityRows = await db.select({
+      stage: crmOpportunitiesTable.stage,
+      count: sql<number>`count(*)::int`,
+    }).from(crmOpportunitiesTable).where(and(
+      eq(crmOpportunitiesTable.companyId, cid),
+      ...branchScopeSpread(req, crmOpportunitiesTable.branchId, branchId),
+    )).groupBy(crmOpportunitiesTable.stage);
+    moduleData.crm = {
+      leads: leadRows.reduce((sum, row) => sum + row.count, 0),
+      opportunities: opportunityRows.reduce((sum, row) => sum + row.count, 0),
+      reportUrl: "/crm",
+    };
+  }
+
   res.json({
     filters: { fromDate, toDate, branchId: branchId ?? null, warehouseId: warehouseId ?? null },
     options: {
@@ -363,6 +444,10 @@ router.get("/overview", async (req: any, res): Promise<void> => {
       contracting: moduleData.contracting ?? null,
       hr: moduleData.hr ?? null,
       fixedAssets: moduleData.fixedAssets ?? null,
+      pos: moduleData.pos ?? null,
+      cash: moduleData.cash ?? null,
+      maintenance: moduleData.maintenance ?? null,
+      crm: moduleData.crm ?? null,
     },
   });
 });
