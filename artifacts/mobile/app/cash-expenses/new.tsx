@@ -65,12 +65,6 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
     setRemoveExistingReceipt(false);
   }, [options, existing, existingQuery.data, editId]);
 
-  if (!allowed) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="مصروف نقدي" onBack={() => router.back()} /><View style={{ padding: 18 }}><Card><Text style={{ textAlign: 'right', color: c.mutedForeground, lineHeight: 22 }}>لا تملك الصلاحية اللازمة لإنشاء هذا المصروف أو تعديله.</Text></Card></View></View>;
-  if (optionsQuery.isLoading || (editId > 0 && existingQuery.isLoading)) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title={editId ? 'تعديل المسودة' : 'مصروف جديد'} onBack={() => router.back()} /><LoadingBlock /></View>;
-  if (optionsQuery.isError) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="مصروف جديد" onBack={() => router.back()} /><ErrorBox text={(optionsQuery.error as Error)?.message ?? 'تعذّر تحميل الصناديق والحسابات'} onRetry={() => optionsQuery.refetch()} /></View>;
-  if (editId && (existingQuery.isError || !existing)) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="تعديل المسودة" onBack={() => router.back()} /><ErrorBox text={(existingQuery.error as Error)?.message ?? 'تعذّر تحميل المسودة'} onRetry={() => existingQuery.refetch()} /></View>;
-  if (!options || !Array.isArray(options.cashBoxes) || !Array.isArray(options.expenseAccounts)) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="مصروف جديد" onBack={() => router.back()} /><ErrorBox text="بيانات الصناديق أو حسابات المصروف غير مكتملة. أعد المحاولة." onRetry={() => optionsQuery.refetch()} /></View>;
-
   const cashBox = cashBoxes.find((item) => item.id === cashBoxId);
   const account = expenseAccounts.find((item) => item.id === accountId);
   const busy = saving || createMutation.isPending || updateMutation.isPending || uploadMutation.isPending;
@@ -122,7 +116,7 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
   };
 
   React.useEffect(() => subscribeVoiceDocumentFill((transcript) => {
-    if (pathname !== '/cash-expenses/new') return false;
+    if (!allowed || pathname !== '/cash-expenses/new') return false;
     const text = normalizeVoiceFillText(transcript);
     const dateValue = parseVoiceDateValue(transcript);
     if (dateValue && /(?:التاريخ|تاريخ المصروف)/.test(text)) { setDate(dateValue); return true; }
@@ -141,7 +135,7 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
     const description = text.match(/(?:وصف المصروف|الوصف|سبب المصروف)\s+(.+)/);
     if (description) { setDescription(description[1]); return true; }
     return false;
-  }), [options, pathname]);
+  }), [allowed, cashBoxes, expenseAccounts, pathname]);
   React.useEffect(() => subscribeVoiceDocumentCommand((transcript) => {
     if (pathname !== '/cash-expenses/new') return false;
     if (!/^(?:(?:من فضلك|لو سمحت)\s+)?احفظ المصروف(?:\s+الان)?$/.test(normalizeVoiceFillText(transcript))) return false;
@@ -149,6 +143,12 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
     void save();
     return true;
   }), [allowed, save, pathname]);
+
+  if (!allowed) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="مصروف نقدي" onBack={() => router.back()} /><View style={{ padding: 18 }}><Card><Text style={{ textAlign: 'right', color: c.mutedForeground, lineHeight: 22 }}>لا تملك الصلاحية اللازمة لإنشاء هذا المصروف أو تعديله.</Text></Card></View></View>;
+  if (optionsQuery.isLoading || (editId > 0 && existingQuery.isLoading)) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title={editId ? 'تعديل المسودة' : 'مصروف جديد'} onBack={() => router.back()} /><LoadingBlock /></View>;
+  if (optionsQuery.isError) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="مصروف جديد" onBack={() => router.back()} /><ErrorBox text={(optionsQuery.error as Error)?.message ?? 'تعذّر تحميل الصناديق والحسابات'} onRetry={() => optionsQuery.refetch()} /></View>;
+  if (editId && (existingQuery.isError || !existing)) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="تعديل المسودة" onBack={() => router.back()} /><ErrorBox text={(existingQuery.error as Error)?.message ?? 'تعذّر تحميل المسودة'} onRetry={() => existingQuery.refetch()} /></View>;
+  if (!options || !Array.isArray(options.cashBoxes) || !Array.isArray(options.expenseAccounts)) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="مصروف جديد" onBack={() => router.back()} /><ErrorBox text="بيانات الصناديق أو حسابات المصروف غير مكتملة. أعد المحاولة." onRetry={() => optionsQuery.refetch()} /></View>;
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>

@@ -62,6 +62,7 @@
 - [New company defaults](new-company-defaults-boundary.md) — creation-only settings; never reset existing tenants or split shared document-number namespaces.
 - [Party classification](party-classification-boundaries.md) — unset means ordinary customer/supplier; filter new choices only and preserve historical links.
 - [Mobile server sessions](mobile-server-session-boundary.md) — changing domains requires fresh authentication; preserve queued operations and central-only legacy sessions.
+- [Mobile error recovery](mobile-error-recovery-boundary.md) — retry the current route instead of restarting to the authenticated invoice landing route.
 - [Mobile live-location tracking](mobile-live-tracking-boundary.md) — per-user opt-in, OS permission gate, work-session-only tracking, and native-build verification.
 - [Voice assistant rollout](voice-assistant-rollout.md) — all mobile screens are the long-term target; start with sales, deposits, and expenses, gated by user permissions.
 - [Expo Android release builds](expo-source-archive-contract.md) — wrap complete pnpm sources, verify remote version/signing, and account for delayed status and Hermes UTF-16 strings.

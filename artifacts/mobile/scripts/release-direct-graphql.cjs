@@ -134,16 +134,25 @@ function verifyAab(file, version) {
   ].every(marker => bundleHasText(bundle, marker))) {
     throw new Error('Compiled v21 bundle lacks the latest cash expense/deposit voice features');
   }
+  if (version >= 22 && ![
+    'Please try again to continue.',
+    'بيانات الصناديق أو حسابات المصروف غير مكتملة. أعد المحاولة.',
+  ].every(marker => bundleHasText(bundle, marker))) {
+    throw new Error('Compiled v22 bundle lacks mobile expense recovery safeguards');
+  }
   return { packageName: 'com.zacoderp.mobile', manifestVersionCode: actualVersion,
     certificateSha256: fingerprint, compiledBundleHasDomain: true,
     ...(version >= 15 && { compiledBundleHasCustomerStatements: true }),
     ...(version >= 17 && { compiledBundleHasExpoApplicationDiagnostics: true,
       compiledBundleHasPermissionAndReferenceHelpers: true }),
-    ...(version >= 21 && { compiledBundleHasCashExpenseDepositVoiceFeatures: true }) };
+    ...(version >= 21 && { compiledBundleHasCashExpenseDepositVoiceFeatures: true }),
+    ...(version >= 22 && { compiledBundleHasMobileExpenseRecoverySafeguards: true }) };
 }
 async function start() {
   const previous = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : null;
-  if (previous && (process.argv[4] !== '--retry' || previous.status !== 'ERRORED' || previous.previousBuildId)) {
+  const retryablePrevious = previous && (previous.status === 'ERRORED'
+    || (previous.status === 'CANCELED' && previous.retryAfterSourceUpdate === true));
+  if (previous && (process.argv[4] !== '--retry' || !retryablePrevious || previous.previousBuildId)) {
     throw new Error('Existing direct Expo build state; refusing to start duplicate build');
   }
   const { version, keystore } = await inspect();
@@ -170,6 +179,8 @@ async function start() {
     'artifacts/mobile/app/cash-expenses/[id].tsx',
     'artifacts/mobile/app/cash-transfers/index.tsx',
     'artifacts/mobile/components/MobileVoiceAssistant.tsx',
+    'artifacts/mobile/components/ErrorFallback.tsx',
+    'artifacts/mobile/components/ErrorBoundary.tsx',
     'artifacts/mobile/lib/voiceDocumentFillBus.ts',
     'artifacts/mobile/app/_layout.tsx',
     'artifacts/mobile/app.json',
@@ -258,6 +269,34 @@ async function watch() {
   }
   throw new Error('Timed out polling Expo build after 50 minutes');
 }
+async function cancelV22ForSourceUpdate() {
+  const state = JSON.parse(fs.readFileSync(STATE, 'utf8'));
+  if (state.versionCode !== 22 || !state.buildId) {
+    throw new Error('Source-update cancellation is restricted to the current v22 build');
+  }
+  const queryStatus = async () => {
+    const info = await gql(`query($id:ID!){builds{byId(buildId:$id){id status}}}`, { id: state.buildId });
+    return info.builds.byId.status;
+  };
+  let current = await queryStatus();
+  if (!['FINISHED', 'ERRORED', 'CANCELED', 'PENDING_CANCEL'].includes(current)) {
+    const result = await gql(`mutation($id:ID!){build{cancelBuild(buildId:$id){id status}}}`, { id: state.buildId });
+    current = result.build.cancelBuild.status;
+  }
+  for (let attempt = 0; current === 'PENDING_CANCEL' && attempt < 24; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    current = await queryStatus();
+  }
+  state.status = current;
+  if (!['CANCELED', 'ERRORED'].includes(current)) {
+    publicState(state);
+    throw new Error(`Cannot retry v22 from remote build status ${current}`);
+  }
+  state.retryAfterSourceUpdate = true;
+  publicState(state);
+  console.log(JSON.stringify({ buildId: state.buildId, status: state.status,
+    versionCode: state.versionCode, retryAfterSourceUpdate: true }));
+}
 async function cancelSuperseded() {
   const state = JSON.parse(fs.readFileSync(STATE, 'utf8'));
   if (state.versionCode !== 15) throw new Error('Only v15 is eligible for supersession');
@@ -302,6 +341,7 @@ async function diagnose() {
   else if (process.argv[2] === 'reserve') await reserveTarget();
   else if (process.argv[2] === 'poll') await poll();
   else if (process.argv[2] === 'watch') await watch();
+  else if (process.argv[2] === 'cancel-v22-for-source-update') await cancelV22ForSourceUpdate();
   else if (process.argv[2] === 'cancel-superseded') await cancelSuperseded();
   else if (process.argv[2] === 'diagnose') await diagnose();
   else throw new Error('Use inspect, start, or poll');
