@@ -28,3 +28,15 @@ For an app already published to Play, confirm EAS's remote Android version code 
 **Why:** EAS remote versioning is independent of Play Console and cannot infer an existing store version when the app config omits it.
 
 **How to apply:** Run the read-only remote version query first; if the value is behind the store, synchronize the remote value to the last published version before creating the next AAB.
+
+Expo's Android build status can lag behind its logs: Gradle and artifact-upload phases may finish while the build API still reports `IN_PROGRESS`. Continue polling the same build rather than reserving another version or starting a duplicate build.
+
+**Why:** The build API can take additional time to finalize the uploaded artifact after the worker logs have completed.
+
+**How to apply:** Keep the original build ID and version code, poll until the API reports a terminal state, then download and verify that build's AAB.
+
+Hermes bundles can store non-ASCII literals, including Arabic, as UTF-16LE. A UTF-8-only byte search can falsely report that valid voice commands are missing.
+
+**Why:** The JavaScript bundle is Hermes bytecode, not plain UTF-8 source text.
+
+**How to apply:** When checking literal markers in the compiled bundle, test both UTF-8 and UTF-16LE encodings; also verify ASCII route/test IDs, package, version code, and signing certificate.

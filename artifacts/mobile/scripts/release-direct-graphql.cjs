@@ -88,6 +88,10 @@ function command(bin, args, input) {
   if (result.status !== 0) throw new Error(`${bin} verification failed (${result.status})`);
   return result.stdout;
 }
+function bundleHasText(bundle, text) {
+  return bundle.includes(Buffer.from(text, 'utf8'))
+    || bundle.includes(Buffer.from(text, 'utf16le'));
+}
 function verifyAab(file, version) {
   const names = command('unzip', ['-Z1', file]).toString().split('\n');
   const rsa = names.find(x => /^META-INF\/[^/]+\.(RSA|DSA|EC)$/.test(x));
@@ -121,11 +125,21 @@ function verifyAab(file, version) {
     || !bundle.includes('user-tracking/mobile/location'))) {
     throw new Error('Compiled v20 bundle lacks mobile live-location tracking markers');
   }
+  if (version >= 21 && ![
+    'cash-expense-option-search',
+    'cash-transfer-option-search',
+    'احفظ المصروف',
+    'ارسل الايداع للاعتماد',
+    'رحل المصروف',
+  ].every(marker => bundleHasText(bundle, marker))) {
+    throw new Error('Compiled v21 bundle lacks the latest cash expense/deposit voice features');
+  }
   return { packageName: 'com.zacoderp.mobile', manifestVersionCode: actualVersion,
     certificateSha256: fingerprint, compiledBundleHasDomain: true,
     ...(version >= 15 && { compiledBundleHasCustomerStatements: true }),
     ...(version >= 17 && { compiledBundleHasExpoApplicationDiagnostics: true,
-      compiledBundleHasPermissionAndReferenceHelpers: true }) };
+      compiledBundleHasPermissionAndReferenceHelpers: true }),
+    ...(version >= 21 && { compiledBundleHasCashExpenseDepositVoiceFeatures: true }) };
 }
 async function start() {
   const previous = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : null;
@@ -152,8 +166,14 @@ async function start() {
     'artifacts/mobile/app/invoice/[id].tsx',
     'artifacts/mobile/app/quotation/[id].tsx',
     'artifacts/mobile/app/voucher/new.tsx',
+    'artifacts/mobile/app/cash-expenses/new.tsx',
+    'artifacts/mobile/app/cash-expenses/[id].tsx',
+    'artifacts/mobile/app/cash-transfers/index.tsx',
+    'artifacts/mobile/components/MobileVoiceAssistant.tsx',
+    'artifacts/mobile/lib/voiceDocumentFillBus.ts',
     'artifacts/mobile/app/_layout.tsx',
     'artifacts/mobile/app.json',
+    'artifacts/mobile/eas.json',
     'artifacts/mobile/contexts/AuthContext.tsx',
     'artifacts/mobile/lib/mobileLocationTracking.ts',
     'lib/api-client-react/src/generated/api.ts',
@@ -210,11 +230,13 @@ async function poll() {
   const build = data.builds.byId;
   state.status = build.status;
   if (build.status === 'FINISHED' && !(state.file && state.verification && fs.existsSync(state.file))) {
-    if (!build.artifacts?.buildUrl) throw new Error('Finished build has no artifact URL');
-    const r = await fetch(build.artifacts.buildUrl);
-    if (!r.ok) throw new Error(`AAB download HTTP ${r.status}`);
     const dest = path.join(RELEASES, `zacoderp-google-play-v${state.versionCode}.aab`);
-    fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
+    if (!fs.existsSync(dest)) {
+      if (!build.artifacts?.buildUrl) throw new Error('Finished build has no artifact URL');
+      const r = await fetch(build.artifacts.buildUrl);
+      if (!r.ok) throw new Error(`AAB download HTTP ${r.status}`);
+      fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
+    }
     state.file = dest;
     state.sha256 = crypto.createHash('sha256').update(fs.readFileSync(dest)).digest('hex');
     state.verification = verifyAab(dest, state.versionCode);

@@ -64,7 +64,7 @@
 - [Mobile server sessions](mobile-server-session-boundary.md) — changing domains requires fresh authentication; preserve queued operations and central-only legacy sessions.
 - [Mobile live-location tracking](mobile-live-tracking-boundary.md) — per-user opt-in, OS permission gate, work-session-only tracking, and native-build verification.
 - [Voice assistant rollout](voice-assistant-rollout.md) — all mobile screens are the long-term target; start with sales, deposits, and expenses, gated by user permissions.
-- [Expo source archives](expo-source-archive-contract.md) — direct build uploads require a project/ wrapper; finalize changes before taking the build snapshot.
+- [Expo Android release builds](expo-source-archive-contract.md) — wrap complete pnpm sources, verify remote version/signing, and account for delayed status and Hermes UTF-16 strings.
 - [External DB routing and schema healing](external-db-storage-routing.md) — keep readiness strict by default; one designated request path may tolerate missing tables without weakening other agents.
 - [Test runtime boundary](api-server-ensureschema-lock-hang.md) — do not run the slow/full admin suite without explicit approval; use focused checks.
 - [Simple voucher multi-invoice settlements](voucher-multi-invoice-settlement-boundary.md) — same-party, same-currency invoice allocation must preserve one voucher posting and legacy single-invoice behavior.
