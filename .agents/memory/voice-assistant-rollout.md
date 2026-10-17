@@ -13,6 +13,8 @@ The initial form-filling slice covers customer, item, quantity, and optional uni
 
 For mobile cash expenses and deposits, the user chose explicit voice commands for all existing actions, gated by the same permissions as the UI. Spoken save, submit, approve, reject, post, or cancel must be an intentional command; receipt images still require manual selection.
 
-**Why:** A full-screen-by-screen rollout is broad; a shared command/field registry can be expanded without enabling untested actions everywhere at once. Successful action events are the implicit correctness signal, avoiding prompts and unconfirmed examples.
+Do not expose deletion of a saved cash-transfer draft through voice; the user rejected that because it removes the record rather than cancelling a workflow.
+
+**Why:** A full-screen-by-screen rollout is broad; a shared command/field registry can be expanded without enabling untested actions everywhere at once. Successful action events are the implicit correctness signal, avoiding prompts and unconfirmed examples. Cash-transfer draft deletion is destructive and the user explicitly opted out of voice deletion.
 
 **How to apply:** Keep existing document APIs and authorization as the source of truth; do not invent fields beyond existing form support without clarifying the business meaning. Require review before voice saves, follow company auto-post settings only where the existing invoice flow does, guard mobile actions with matching permissions and validation, preserve per-user draggable-button placement, and keep learning silent and user/company-scoped. For cash records, accept only explicit action phrases and keep receipt attachment manual.
