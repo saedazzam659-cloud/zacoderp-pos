@@ -7,7 +7,7 @@ const { spawnSync } = require('node:child_process');
 const APP = '9a250573-c77d-4f22-a3fd-7e2dbfdd1656';
 const EXPECTED = 'c3245b640eb6afe24557fa5341bb86bed04aa8e6f072ad2f8cfc0a2dd22012d6';
 const RELEASES = path.resolve(__dirname, '../releases');
-const TARGET = Number(process.env.RELEASE_VERSION_CODE || 15);
+const TARGET = Number(process.env.RELEASE_VERSION_CODE || 20);
 if (!Number.isSafeInteger(TARGET) || TARGET < 15) throw new Error('Invalid RELEASE_VERSION_CODE');
 const STATE = path.join(RELEASES, `direct-expo-build-v${TARGET}.json`);
 const token = process.env.EXPO_TOKEN;
@@ -117,6 +117,10 @@ function verifyAab(file, version) {
     || !bundle.includes('effectiveMobilePermission'))) {
     throw new Error('Compiled v17 bundle lacks native version, permission, or reference helper markers');
   }
+  if (version >= 20 && (!bundle.includes('zacod-mobile-live-location-v1')
+    || !bundle.includes('user-tracking/mobile/location'))) {
+    throw new Error('Compiled v20 bundle lacks mobile live-location tracking markers');
+  }
   return { packageName: 'com.zacoderp.mobile', manifestVersionCode: actualVersion,
     certificateSha256: fingerprint, compiledBundleHasDomain: true,
     ...(version >= 15 && { compiledBundleHasCustomerStatements: true }),
@@ -148,6 +152,12 @@ async function start() {
     'artifacts/mobile/app/invoice/[id].tsx',
     'artifacts/mobile/app/quotation/[id].tsx',
     'artifacts/mobile/app/voucher/new.tsx',
+    'artifacts/mobile/app/_layout.tsx',
+    'artifacts/mobile/app.json',
+    'artifacts/mobile/contexts/AuthContext.tsx',
+    'artifacts/mobile/lib/mobileLocationTracking.ts',
+    'lib/api-client-react/src/generated/api.ts',
+    'lib/api-client-react/src/generated/api.schemas.ts',
     'artifacts/mobile/package.json',
     'pnpm-lock.yaml',
   ];
@@ -252,7 +262,7 @@ async function diagnose() {
     const lines = text.split('\n').map(x => {
       try { const item = JSON.parse(x); return `${item.phase || ''} ${item.msg || item.err?.message || ''}`; }
       catch { return ''; }
-    }).filter(x => /error|failed|complete|archive|install|pnpm|extract|unpack|download/i.test(x));
+      }).filter(x => /error|failed|complete|archive|install|pnpm|extract|unpack|download|RUN_GRADLEW|> Task|BUILD/i.test(x));
     for (const line of lines.slice(-65)) {
       // Never emit signed URLs, tokens, keystore contents, or raw request payloads.
       const safe = line.replace(/https?:\/\/\S+/gi, '[URL]')

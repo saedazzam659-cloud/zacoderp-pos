@@ -658,3 +658,17 @@ mtime_ms = 1791678097776
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/e6e7dee4-b740-43fe-adf2-99fa5075dce9/1e2accf3-7fe6-40d3-b8e1-2cfd0f358f4c"
 storage_version_token = "1791678104386005"
 content_type = "text/csv"
+
+[[outputs]]
+id = "V2PY_l2mKkAyzb4jktS6v"
+uri = "file://artifacts/mobile/releases/zacoderp-google-play-v20.aab"
+type = "unspecified"
+title = "تحديث تطبيق Zacode ERP — Android v20"
+description = "ملف Android App Bundle موقّع (AAB) ورقم البناء 20. تحققنا من هوية التطبيق والتوقيع ومحتوى الميزة. الملف جاهز للرفع إلى مسار اختبار Google Play؛ لم يتم نشره إلى المتجر."
+logical_id = "640b20d9-9d5d-4724-97a5-84aab72ed250"
+content_hash = "sha256:48fcb7a1697a59b74af4302f5a39959b438660782778231904bc42864bccff92"
+size = 81026313
+mtime_ms = 1792230699293
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/640b20d9-9d5d-4724-97a5-84aab72ed250/4e871ec0-ea2e-4bd9-bf30-34819d3eda0a"
+storage_version_token = "1792230716660589"
+content_type = "application/octet-stream"
