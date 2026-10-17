@@ -9,7 +9,18 @@ import {
   crmOpportunitiesTable,
   db,
   employeesTable,
+  deliveryReceiptDocumentsTable,
+  fieldServiceTicketsTable,
+  fieldVisitsTable,
   fixedAssetsTable,
+  hospitalAppointmentsTable,
+  hospitalsTable,
+  hotelBookingsTable,
+  hotelRoomsTable,
+  hotelsTable,
+  installmentContractsTable,
+  installmentsTable,
+  internalControlCasesTable,
   itemsTable,
   journalEntriesTable,
   journalEntryLinesTable,
@@ -24,6 +35,7 @@ import {
   schoolEnrollmentsTable,
   safetyIncidentsTable,
   safetyRiskAssessmentsTable,
+  securityEventsTable,
   salesInvoicesTable,
   salesReturnsTable,
   stockBalanceTable,
@@ -97,6 +109,15 @@ router.get("/overview", async (req: any, res): Promise<void> => {
     crm: canAccessModule(user, "crm", "view"),
     school: canAccessModule(user, "school", "view"),
     safety: canAccessModule(user, "safety_incidents", "view") || canAccessModule(user, "safety_risk", "view"),
+    hotel: canAccessModule(user, "hotel", "view"),
+    hospital: canAccessModule(user, "hospital", "view"),
+    fieldService: canAccessModule(user, "field_service_reports", "view"),
+    zatca: canAccessModule(user, "zatca_report", "view"),
+    installments: canAccessModule(user, "installments", "view"),
+    delivery: canAccessModule(user, "delivery_receipt_docs", "view"),
+    security: canAccessModule(user, "security_events", "view"),
+    internalControl: canAccessModule(user, "internal_control", "view")
+      || canAccessModule(user, "internal_control_cases", "view"),
   };
   const branchScope = branchScopeSpread(req, branchesTable.id, branchId);
   const branchRows = await db.select({
@@ -503,6 +524,176 @@ router.get("/overview", async (req: any, res): Promise<void> => {
     };
   }
 
+  if (visibleModules.hotel) {
+    const roomRows = await db.select({
+      status: hotelRoomsTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(hotelRoomsTable)
+      .innerJoin(hotelsTable, and(eq(hotelsTable.id, hotelRoomsTable.hotelId), eq(hotelsTable.companyId, cid)))
+      .where(and(eq(hotelRoomsTable.companyId, cid), ...branchScopeSpread(req, hotelsTable.branchId, branchId)))
+      .groupBy(hotelRoomsTable.status);
+    const bookingRows = await db.select({
+      status: hotelBookingsTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(hotelBookingsTable)
+      .innerJoin(hotelsTable, and(eq(hotelsTable.id, hotelBookingsTable.hotelId), eq(hotelsTable.companyId, cid)))
+      .where(and(eq(hotelBookingsTable.companyId, cid), ...branchScopeSpread(req, hotelsTable.branchId, branchId)))
+      .groupBy(hotelBookingsTable.status);
+    moduleData.hotel = {
+      rooms: roomRows.reduce((sum, row) => sum + row.count, 0),
+      occupiedRooms: roomRows.find(row => row.status === "occupied")?.count ?? 0,
+      bookings: bookingRows.reduce((sum, row) => sum + row.count, 0),
+      checkedIn: bookingRows.find(row => row.status === "checked_in")?.count ?? 0,
+      reportUrl: "/hotel",
+    };
+  }
+
+  if (visibleModules.hospital) {
+    const rows = await db.select({
+      status: hospitalAppointmentsTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(hospitalAppointmentsTable)
+      .leftJoin(hospitalsTable, and(eq(hospitalsTable.id, hospitalAppointmentsTable.hospitalId), eq(hospitalsTable.companyId, cid)))
+      .where(and(
+        eq(hospitalAppointmentsTable.companyId, cid),
+        ...branchScopeSpread(req, hospitalsTable.branchId, branchId),
+      )).groupBy(hospitalAppointmentsTable.status);
+    moduleData.hospital = {
+      appointments: rows.reduce((sum, row) => sum + row.count, 0),
+      scheduled: rows.find(row => row.status === "scheduled")?.count ?? 0,
+      completed: rows.find(row => row.status === "completed")?.count ?? 0,
+      reportUrl: "/hospital/appointments",
+    };
+  }
+
+  if (visibleModules.fieldService) {
+    const [visits, tickets] = await Promise.all([
+      db.select({
+        status: fieldVisitsTable.status,
+        count: sql<number>`count(*)::int`,
+      }).from(fieldVisitsTable).where(and(
+        eq(fieldVisitsTable.companyId, cid),
+        ...branchScopeSpread(req, fieldVisitsTable.branchId, branchId),
+      )).groupBy(fieldVisitsTable.status),
+      db.select({
+        status: fieldServiceTicketsTable.status,
+        count: sql<number>`count(*)::int`,
+      }).from(fieldServiceTicketsTable).where(and(
+        eq(fieldServiceTicketsTable.companyId, cid),
+        ...branchScopeSpread(req, fieldServiceTicketsTable.branchId, branchId),
+      )).groupBy(fieldServiceTicketsTable.status),
+    ]);
+    moduleData.fieldService = {
+      visits: visits.reduce((sum, row) => sum + row.count, 0),
+      openVisits: visits.find(row => row.status === "open")?.count ?? 0,
+      tickets: tickets.reduce((sum, row) => sum + row.count, 0),
+      activeTickets: tickets.filter(row => ["open", "assigned", "in_progress", "on_hold"].includes(row.status)).reduce((sum, row) => sum + row.count, 0),
+      reportUrl: "/hr/field/reports",
+    };
+  }
+
+  if (visibleModules.zatca) {
+    const rows = await db.select({
+      status: salesInvoicesTable.zatcaStatus,
+      count: sql<number>`count(*)::int`,
+    }).from(salesInvoicesTable).where(and(
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.status, "posted"),
+      ...branchScopeSpread(req, salesInvoicesTable.branchId, branchId),
+    )).groupBy(salesInvoicesTable.zatcaStatus);
+    const accepted = new Set(["reported", "cleared", "accepted"]);
+    moduleData.zatca = {
+      postedInvoices: rows.reduce((sum, row) => sum + row.count, 0),
+      pending: rows.filter(row => (row.status ?? "").toLowerCase() === "pending").reduce((sum, row) => sum + row.count, 0),
+      submitted: rows.filter(row => accepted.has((row.status ?? "").toLowerCase())).reduce((sum, row) => sum + row.count, 0),
+      rejected: rows.filter(row => (row.status ?? "").toLowerCase() === "rejected").reduce((sum, row) => sum + row.count, 0),
+      reportUrl: "/zatca-report",
+    };
+  }
+
+  if (visibleModules.installments) {
+    const [contractRows, installmentRows] = await Promise.all([
+      db.select({
+        status: installmentContractsTable.status,
+        count: sql<number>`count(*)::int`,
+      }).from(installmentContractsTable).where(and(
+        eq(installmentContractsTable.companyId, cid),
+        ...branchScopeSpread(req, installmentContractsTable.branchId, branchId),
+      )).groupBy(installmentContractsTable.status),
+      db.select({
+        status: installmentsTable.status,
+        count: sql<number>`count(*)::int`,
+      }).from(installmentsTable)
+        .innerJoin(installmentContractsTable, and(
+          eq(installmentContractsTable.id, installmentsTable.contractId),
+          eq(installmentContractsTable.companyId, cid),
+        ))
+        .where(and(
+          eq(installmentsTable.companyId, cid),
+          ...branchScopeSpread(req, installmentContractsTable.branchId, branchId),
+        )).groupBy(installmentsTable.status),
+    ]);
+    moduleData.installments = {
+      contracts: contractRows.reduce((sum, row) => sum + row.count, 0),
+      activeContracts: contractRows.find(row => row.status === "active")?.count ?? 0,
+      overdue: installmentRows.find(row => row.status === "overdue")?.count ?? 0,
+      pending: installmentRows.find(row => row.status === "pending")?.count ?? 0,
+      reportUrl: "/installments/reports",
+    };
+  }
+
+  if (visibleModules.delivery) {
+    const rows = await db.select({
+      kind: deliveryReceiptDocumentsTable.kind,
+      approved: deliveryReceiptDocumentsTable.isApproved,
+      count: sql<number>`count(*)::int`,
+    }).from(deliveryReceiptDocumentsTable).where(and(
+      eq(deliveryReceiptDocumentsTable.companyId, cid),
+      ...branchScopeSpread(req, deliveryReceiptDocumentsTable.branchId, branchId),
+    )).groupBy(deliveryReceiptDocumentsTable.kind, deliveryReceiptDocumentsTable.isApproved);
+    moduleData.delivery = {
+      documents: rows.reduce((sum, row) => sum + row.count, 0),
+      receipts: rows.filter(row => row.kind === "receipt").reduce((sum, row) => sum + row.count, 0),
+      deliveries: rows.filter(row => row.kind === "delivery").reduce((sum, row) => sum + row.count, 0),
+      awaitingApproval: rows.filter(row => !row.approved).reduce((sum, row) => sum + row.count, 0),
+      reportUrl: "/goods-deliveries",
+    };
+  }
+
+  if (visibleModules.security) {
+    const rows = await db.select({
+      status: securityEventsTable.status,
+      severity: securityEventsTable.severity,
+      count: sql<number>`count(*)::int`,
+    }).from(securityEventsTable).where(and(
+      eq(securityEventsTable.companyId, cid),
+      ...branchScopeSpread(req, securityEventsTable.branchId, branchId),
+    )).groupBy(securityEventsTable.status, securityEventsTable.severity);
+    moduleData.security = {
+      events: rows.reduce((sum, row) => sum + row.count, 0),
+      open: rows.filter(row => row.status === "open" || row.status === "investigating").reduce((sum, row) => sum + row.count, 0),
+      critical: rows.filter(row => row.severity === "critical").reduce((sum, row) => sum + row.count, 0),
+      reportUrl: "/security/reports",
+    };
+  }
+
+  if (visibleModules.internalControl) {
+    const rows = await db.select({
+      status: internalControlCasesTable.status,
+      severity: internalControlCasesTable.severity,
+      count: sql<number>`count(*)::int`,
+    }).from(internalControlCasesTable).where(and(
+      eq(internalControlCasesTable.companyId, cid),
+      ...branchScopeSpread(req, internalControlCasesTable.branchId, branchId),
+    )).groupBy(internalControlCasesTable.status, internalControlCasesTable.severity);
+    moduleData.internalControl = {
+      cases: rows.reduce((sum, row) => sum + row.count, 0),
+      open: rows.filter(row => row.status === "open" || row.status === "in_review").reduce((sum, row) => sum + row.count, 0),
+      highSeverity: rows.filter(row => ["high", "critical"].includes(row.severity)).reduce((sum, row) => sum + row.count, 0),
+      reportUrl: "/internal-control",
+    };
+  }
+
   res.json({
     filters: { fromDate, toDate, branchId: branchId ?? null, warehouseId: warehouseId ?? null },
     options: {
@@ -525,6 +716,14 @@ router.get("/overview", async (req: any, res): Promise<void> => {
       crm: moduleData.crm ?? null,
       school: moduleData.school ?? null,
       safety: moduleData.safety ?? null,
+      hotel: moduleData.hotel ?? null,
+      hospital: moduleData.hospital ?? null,
+      fieldService: moduleData.fieldService ?? null,
+      zatca: moduleData.zatca ?? null,
+      installments: moduleData.installments ?? null,
+      delivery: moduleData.delivery ?? null,
+      security: moduleData.security ?? null,
+      internalControl: moduleData.internalControl ?? null,
     },
   });
 });
