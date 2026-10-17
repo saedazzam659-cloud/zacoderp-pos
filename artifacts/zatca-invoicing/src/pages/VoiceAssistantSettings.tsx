@@ -54,9 +54,14 @@ interface CommandLogRow {
 
 const AI_MODELS = ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-opus-4-7", "claude-opus-4-5"];
 const LANGS = [
-  { code: "ar-SA", labelAr: "العربية (السعودية)", labelEn: "Arabic (Saudi Arabia)" },
-  { code: "ar-EG", labelAr: "العربية (مصر)",      labelEn: "Arabic (Egypt)" },
-  { code: "ar-AE", labelAr: "العربية (الإمارات)", labelEn: "Arabic (UAE)" },
+  { code: "ar",    labelAr: "العربية (عام)",       labelEn: "Arabic (general)" },
+  { code: "ar-EG", labelAr: "العربية المصرية",     labelEn: "Egyptian Arabic" },
+  { code: "ar-SA", labelAr: "الخليجية (السعودية)", labelEn: "Gulf Arabic (Saudi Arabia)" },
+  { code: "ar-AE", labelAr: "الخليجية (الإمارات)", labelEn: "Gulf Arabic (UAE)" },
+  { code: "ar-KW", labelAr: "الخليجية (الكويت)",   labelEn: "Gulf Arabic (Kuwait)" },
+  { code: "ar-QA", labelAr: "الخليجية (قطر)",      labelEn: "Gulf Arabic (Qatar)" },
+  { code: "ar-BH", labelAr: "الخليجية (البحرين)",  labelEn: "Gulf Arabic (Bahrain)" },
+  { code: "ar-OM", labelAr: "الخليجية (عُمان)",    labelEn: "Gulf Arabic (Oman)" },
   { code: "en-US", labelAr: "الإنجليزية (أمريكا)", labelEn: "English (US)" },
   { code: "en-GB", labelAr: "الإنجليزية (بريطانيا)", labelEn: "English (UK)" },
 ];
@@ -210,6 +215,9 @@ export default function VoiceAssistantSettings() {
                 {LANGS.map(l => <SelectItem key={l.code} value={l.code}>{isRtl ? l.labelAr : l.labelEn}</SelectItem>)}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              {isRtl ? "توافر اللهجة ودقتها يعتمدان على خدمة التعرف الصوتي في المتصفح أو الجهاز." : "Dialect availability and accuracy depend on the browser or device speech service."}
+            </p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">{tr("modelLabel")}</label>

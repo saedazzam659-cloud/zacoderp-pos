@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Modal, Platform, Pressable, Text, View } from 'react-native';
+import { Modal, PanResponder, Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '@/lib/api';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
+import { useAuth } from '@/contexts/AuthContext';
 
 type EffectiveSettings = { enabled?: boolean; language?: string };
 type ParsedCommand = {
@@ -28,7 +30,9 @@ export function MobileVoiceAssistant() {
   const c = useColors();
   const router = useRouter();
   const pathname = usePathname();
+  const { user } = useAuth();
   const { mp } = useMobilePerms();
+  const { width, height } = useWindowDimensions();
   const [enabled, setEnabled] = useState(false);
   const [language, setLanguage] = useState('ar-SA');
   const [open, setOpen] = useState(false);
@@ -39,8 +43,59 @@ export function MobileVoiceAssistant() {
   const handledRef = useRef(false);
   const speechRef = useRef<typeof import('expo-speech-recognition') | null>(null);
   const listenersRef = useRef<Array<{ remove: () => void }>>([]);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dragOffsetRef = useRef(dragOffset);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const positionKey = `zacode.voiceAssistantPosition.v1:${user?.id ?? 'guest'}`;
+
+  useEffect(() => { dragOffsetRef.current = dragOffset; }, [dragOffset]);
 
   useEffect(() => {
+    let active = true;
+    dragOffsetRef.current = { x: 0, y: 0 };
+    setDragOffset({ x: 0, y: 0 });
+    AsyncStorage.getItem(positionKey).then((raw) => {
+      if (!active || !raw) return;
+      const saved = JSON.parse(raw);
+      if (!Number.isFinite(saved?.x) || !Number.isFinite(saved?.y)) return;
+      const next = {
+        x: Math.max(90 - width, Math.min(18, saved.x)),
+        y: Math.max(142 - height, Math.min(88, saved.y)),
+      };
+      dragOffsetRef.current = next;
+      setDragOffset(next);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [positionKey, width, height]);
+
+  const panResponder = React.useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) =>
+      Math.abs(gesture.dx) > 5 || Math.abs(gesture.dy) > 5,
+    onPanResponderGrant: () => {
+      dragStartRef.current = dragOffsetRef.current;
+    },
+    onPanResponderMove: (_event, gesture) => {
+      const next = {
+        x: Math.max(90 - width, Math.min(18, dragStartRef.current.x + gesture.dx)),
+        y: Math.max(142 - height, Math.min(88, dragStartRef.current.y + gesture.dy)),
+      };
+      dragOffsetRef.current = next;
+      setDragOffset(next);
+    },
+    onPanResponderRelease: () => {
+      AsyncStorage.setItem(positionKey, JSON.stringify(dragOffsetRef.current)).catch(() => {});
+    },
+    onPanResponderTerminate: () => {
+      AsyncStorage.setItem(positionKey, JSON.stringify(dragOffsetRef.current)).catch(() => {});
+    },
+  }), [height, positionKey, width]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setEnabled(false);
+      return;
+    }
     let active = true;
     api<EffectiveSettings>('/api/voice-assistant/settings/me/effective')
       .then((settings) => {
@@ -52,7 +107,7 @@ export function MobileVoiceAssistant() {
         if (active) setEnabled(false);
       });
     return () => { active = false; };
-  }, []);
+  }, [user?.id]);
 
   const executeTranscript = useCallback(async (text: string) => {
     const command = text.trim();
@@ -140,15 +195,22 @@ export function MobileVoiceAssistant() {
 
   return (
     <>
+      <View
+        {...panResponder.panHandlers}
+        style={{
+          position: 'absolute',
+          right: 18,
+          bottom: 88,
+          transform: [{ translateX: dragOffset.x }, { translateY: dragOffset.y }],
+          zIndex: 20,
+        }}
+      >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="المساعد الصوتي"
         onPress={() => void start()}
         testID="mobile-voice-assistant-button"
         style={{
-          position: 'absolute',
-          right: 18,
-          bottom: 88,
           width: 54,
           height: 54,
           borderRadius: 27,
@@ -156,11 +218,11 @@ export function MobileVoiceAssistant() {
           justifyContent: 'center',
           backgroundColor: c.primary,
           elevation: 6,
-          zIndex: 20,
         }}
       >
         <Feather name="mic" size={22} color={c.primaryForeground ?? '#fff'} />
       </Pressable>
+      </View>
       <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
         <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.45)' }}>
           <View style={{ backgroundColor: c.card, borderRadius: c.radius, padding: 20, gap: 14 }}>

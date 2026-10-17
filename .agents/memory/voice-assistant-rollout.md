@@ -5,6 +5,8 @@ description: User-confirmed scope and rollout order for voice-assisted business 
 
 The user wants the voice assistant to eventually cover every mobile screen, with spoken actions respecting the signed-in user's permissions. The first rollout targets sales invoices and quotations on web and mobile, plus cash deposits and expense entry on mobile. The user accepts a native microphone integration that requires an Android/iOS development build rather than Expo Go.
 
+The user also wants Egyptian and Gulf Arabic recognition options and a microphone button that can be moved and remembers its position on both web and mobile.
+
 **Why:** A full-screen-by-screen rollout is broad; a shared command/field registry can be expanded without enabling untested actions everywhere at once.
 
-**How to apply:** Keep existing document APIs and authorization as the source of truth, require review before financial saves/posts, and add user grants explicitly for mobile voice access.
+**How to apply:** Keep existing document APIs and authorization as the source of truth, require review before financial saves/posts, add user grants explicitly for mobile voice access, and preserve per-user draggable-button placement.

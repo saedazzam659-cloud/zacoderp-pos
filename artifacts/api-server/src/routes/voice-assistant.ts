@@ -49,7 +49,7 @@ const ALLOWED_MODELS = new Set([
   "claude-opus-4-5",
   "claude-opus-4-7",
 ]);
-const ALLOWED_LANGS = new Set(["ar-SA", "ar-EG", "ar-AE", "en-US", "en-GB"]);
+const ALLOWED_LANGS = new Set(["ar", "ar-SA", "ar-EG", "ar-AE", "ar-KW", "ar-QA", "ar-BH", "ar-OM", "en-US", "en-GB"]);
 
 function defaults(companyId: number) {
   return {
@@ -225,11 +225,11 @@ const ROUTE_CATALOG: Array<{ route: string; label: string; phrases: string[] }> 
   { route: "/invoices",               label: "الفواتير الإلكترونية",      phrases: ["الفواتير الإلكترونية"] },
   { route: "/sales",                  label: "المبيعات",                  phrases: ["المبيعات", "شاشة المبيعات"] },
   { route: "/sales/invoices",         label: "فواتير المبيعات",           phrases: ["فواتير المبيعات"] },
-  { route: "/sales/invoices/new",     label: "فاتورة مبيعات جديدة",       phrases: ["فاتورة مبيعات جديدة", "فاتورة جديدة"] },
+  { route: "/sales/invoices/new",     label: "فاتورة مبيعات جديدة",       phrases: ["فاتورة مبيعات جديدة", "فاتورة جديدة", "عايز اعمل فاتورة", "أبغى فاتورة", "أبي فاتورة", "create a sales invoice"] },
   { route: "/sales/quotations",       label: "عروض الأسعار",              phrases: ["عروض الأسعار"] },
-  { route: "/sales/quotations/new",   label: "عرض سعر جديد",              phrases: ["عرض سعر جديد", "أنشئ عرض سعر"] },
-  { route: "/cash-expenses",          label: "مصروفات الصندوق",           phrases: ["مصروفات الصندوق", "مصروف جديد", "سجل مصروف"] },
-  { route: "/cash-transfers",         label: "إيداع وتحويلات الصندوق",    phrases: ["إيداع صندوق", "إيداع نقدي", "تحويل بين الصناديق"] },
+  { route: "/sales/quotations/new",   label: "عرض سعر جديد",              phrases: ["عرض سعر جديد", "أنشئ عرض سعر", "عايز عرض سعر", "أبغى عرض سعر", "create a quotation"] },
+  { route: "/cash-expenses",          label: "مصروفات الصندوق",           phrases: ["مصروفات الصندوق", "مصروف جديد", "سجل مصروف", "سجل مصروفات", "دفع مصروف", "عايز اسجل مصروف"] },
+  { route: "/cash-transfers",         label: "إيداع وتحويلات الصندوق",    phrases: ["إيداع صندوق", "إيداع نقدي", "أودع في الصندوق", "حول بين الصناديق", "أبغى أودع", "ابي اودع"] },
   { route: "/sales/returns",          label: "مرتجعات المبيعات",          phrases: ["مرتجعات المبيعات"] },
   { route: "/customers",              label: "العملاء",                   phrases: ["العملاء"] },
   { route: "/purchasing",             label: "المشتريات",                 phrases: ["المشتريات"] },
@@ -264,11 +264,18 @@ const VERB_CATALOG: Array<{ verb: string; label: string; phrases: string[] }> = 
   { verb: "reload", label: "تحديث",       phrases: ["حدث الصفحة", "تحديث"] },
 ];
 
-function buildPrompt(transcript: string, contextRoute: string | null): string {
+function buildPrompt(
+  transcript: string,
+  contextRoute: string | null,
+  language: string,
+): string {
   const lines: string[] = [];
   lines.push(`أنت مساعد صوتي عربي لنظام محاسبي/فاتورة إلكترونية.`);
   lines.push(`مهمتك: تحويل ما قاله المستخدم إلى أمر منظّم (action) من القائمة أدناه فقط.`);
   lines.push(`لا تخترع مسارات. إذا لم يوجد تطابق واضح، أعد kind="unknown".`);
+  lines.push(`لغة التعرف المختارة: ${language}. قد يكون النص باللهجة المصرية أو الخليجية، فافهم المرادفات دون تغيير المقصود.`);
+  lines.push(`أمثلة لهجية: "عايز/محتاج/أبغى/أبي" تعني أريد؛ "حط/ضيف/أضف/سجل" تعني إنشاء أو إدخال؛ "بضاعة/منتج/صنف" تعني صنف؛ "كاش/نقدي" تعني نقداً.`);
+  lines.push(`التزم بقائمة الأفعال والمسارات. لا تعتبر ذكر "احفظ" إذناً لتجاوز مراجعة المستخدم أو صلاحياته.`);
   lines.push("");
   lines.push("القائمة المتاحة (لكل عنصر اختر أحسن تطابق):");
   lines.push("");
@@ -424,7 +431,7 @@ router.post("/parse-command", async (req, res) => {
     const msg = await client.messages.create({
       model:     settings.aiModel,
       max_tokens: 256,
-      messages:  [{ role: "user", content: buildPrompt(transcript, contextRoute) }],
+      messages:  [{ role: "user", content: buildPrompt(transcript, contextRoute, settings.language) }],
     });
     const text = (msg.content?.[0] as any)?.text ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);

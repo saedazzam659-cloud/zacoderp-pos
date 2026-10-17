@@ -15,17 +15,78 @@
 //
 // Keyboard shortcut: Alt+M toggles listen (push-to-talk style).
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Loader2, AlertTriangle } from "lucide-react";
 import { useVoiceAssistant } from "@/hooks/useVoiceAssistant";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function VoiceAssistantWidget() {
   const v = useVoiceAssistant();
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
+  const { user } = useAuth();
   const isRtl = i18n.dir() === "rtl";
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; startX: number; startY: number; moved: boolean } | null>(null);
+  const skipClickRef = useRef(false);
+  const positionKey = `zacode.voiceAssistantPosition.v1:${user?.id ?? "guest"}`;
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(positionKey);
+      if (!raw) { setPosition(null); return; }
+      const saved = JSON.parse(raw);
+      if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y)) {
+        setPosition({
+          x: Math.max(0, Math.min(window.innerWidth - 56, saved.x)),
+          y: Math.max(0, Math.min(window.innerHeight - 56, saved.y)),
+        });
+      }
+    } catch { setPosition(null); }
+  }, [positionKey]);
+
+  const onDragStart = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      pointerId: e.pointerId,
+      x: rect.left,
+      y: rect.top,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+    };
+  };
+  const onDragMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 5) drag.moved = true;
+    if (!drag.moved) return;
+    setPosition({
+      x: Math.max(0, Math.min(window.innerWidth - 56, drag.x + dx)),
+      y: Math.max(0, Math.min(window.innerHeight - 56, drag.y + dy)),
+    });
+  };
+  const onDragEnd = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    if (!drag.moved) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const next = {
+      x: Math.max(0, Math.min(window.innerWidth - 56, rect.left)),
+      y: Math.max(0, Math.min(window.innerHeight - 56, rect.top)),
+    };
+    setPosition(next);
+    localStorage.setItem(positionKey, JSON.stringify(next));
+    skipClickRef.current = true;
+    window.setTimeout(() => { skipClickRef.current = false; }, 0);
+  };
 
   // Keyboard shortcut Alt+M ----------------------------------------------------
   useEffect(() => {
@@ -66,8 +127,10 @@ export default function VoiceAssistantWidget() {
 
   return (
     <div
-      className="fixed bottom-6 z-50 flex flex-col items-center gap-2 pointer-events-none"
-      style={{ [isRtl ? "right" : "left"]: "1.5rem" } as React.CSSProperties}
+      className="fixed z-50 flex flex-col items-center gap-2 pointer-events-none"
+      style={position
+        ? { left: position.x, top: position.y }
+        : { bottom: "1.5rem", [isRtl ? "right" : "left"]: "1.5rem" } as React.CSSProperties}
       data-testid="voice-assistant-widget"
     >
       {/* Live transcript bubble — only when listening */}
@@ -80,15 +143,22 @@ export default function VoiceAssistantWidget() {
       {/* The FAB itself */}
       <button
         type="button"
-        onClick={() => { if (!isUnsupported) void v.toggle(); }}
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onPointerCancel={onDragEnd}
+        onClick={() => {
+          if (skipClickRef.current) { skipClickRef.current = false; return; }
+          if (!isUnsupported) void v.toggle();
+        }}
         disabled={isUnsupported}
-        title={
+        title={`اسحب لتحريك الميكروفون. ${
           isUnsupported  ? t("voiceAssistant.unsupportedTooltip") :
           isError        ? t("voiceAssistant.errorTooltip") :
           isListening    ? t("voiceAssistant.listeningTooltip") :
           isProcessing   ? t("voiceAssistant.processingTooltip") :
                            t("voiceAssistant.idleTooltip")
-        }
+        }`}
         className={`pointer-events-auto relative flex h-14 w-14 items-center justify-center rounded-full text-white shadow-xl transition-all ${baseColour}`}
         data-testid="voice-assistant-fab"
         aria-label={t("voiceAssistant.toggle")}
