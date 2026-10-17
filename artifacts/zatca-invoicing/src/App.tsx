@@ -15,6 +15,7 @@ import PermRoute from "@/components/PermRoute";
 import { useUnifiedInventoryReports, useUnifiedModuleReports } from "@/lib/agentBranding";
 import { getUnifiedReportModule } from "@/lib/unifiedModuleReports";
 import Dashboard from "@/pages/Dashboard";
+import ModuleDashboards from "@/pages/ModuleDashboards";
 import UserTracking from "@/pages/admin/UserTracking";
 import UserTrackingLive from "@/pages/admin/UserTrackingLive";
 import UserAttendanceReport from "@/pages/admin/UserAttendanceReport";
@@ -997,6 +998,7 @@ function AppRoutes() {
 
             {/* Company user routes */}
             {!isSuperAdmin && <Route path="/" component={Dashboard} />}
+            {!isSuperAdmin && <PermRoute path="/module-dashboards" module="module_dashboards" component={ModuleDashboards} />}
             {!isSuperAdmin && <PermRoute path="/invoices"      module="sales_invoices" component={Invoices} />}
             {!isSuperAdmin && <PermRoute path="/invoices/new"  module="sales_invoices" action="create" component={InvoiceNew} />}
             {!isSuperAdmin && <PermRoute path="/invoices/:id"  module="sales_invoices" component={InvoiceDetails} />}

@@ -770,6 +770,7 @@
     "demoAnalytics": "تحليلات الحسابات التجريبية",
     "infoBoard": "لوحة المعلومات",
     "dashboard": "لوحة التحكم",
+    "moduleDashboards": "لوحات الموديولات",
     "registrationRequests": "طلبات التسجيل",
     "traineeRequests": "طلبات المتدربين",
     "enterCompany": "الدخول إلى شركة",
@@ -2918,6 +2919,7 @@
     "modules": {
       "dashboard": "لوحة التحكم",
       "dashboard_kpis": "المؤشرات الرئيسية",
+      "module_dashboards": "لوحات الموديولات",
       "dashboard_charts": "الرسوم التفاعلية",
       "dashboard_alerts": "تنبيهات وأولويات",
       "dashboard_recent_invoices": "قائمة الفواتير في لوحة التحكم",

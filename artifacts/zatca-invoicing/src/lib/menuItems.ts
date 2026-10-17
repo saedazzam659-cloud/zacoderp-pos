@@ -16,6 +16,7 @@ export interface MenuItem {
 
 export const MENU_ITEMS: MenuItem[] = [
   { key: "dashboard",          label: "لوحة التحكم",                section: "رئيسي" },
+  { key: "module_dashboards",  label: "لوحات الموديولات",           section: "رئيسي" },
 
   { key: "invoices",           label: "الفواتير",                    section: "الأعمال" },
   { key: "customers",          label: "العملاء",                     section: "الأعمال" },

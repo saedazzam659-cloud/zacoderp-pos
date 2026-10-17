@@ -58,6 +58,7 @@ const G = {
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
+  { key: "module_dashboards", label: "perms.modules.module_dashboards", group: G.dashboard, actions: VO },
   { key: "dashboard",            label: "perms.modules.dashboard",            group: G.dashboard,  actions: VO },
   { key: "dashboard_kpis",       label: "perms.modules.dashboard_kpis",       group: G.dashboard,  actions: VO },
   { key: "dashboard_charts",     label: "perms.modules.dashboard_charts",     group: G.dashboard,  actions: VO },

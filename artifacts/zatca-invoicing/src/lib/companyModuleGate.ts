@@ -18,6 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 export const COMPANY_MODULE_GATE: Record<string, string> = {
+  module_dashboards: "module_dashboards",
   // Sales / Customers
   customers: "sales_module",
   sales_reps: "sales_module",
@@ -164,7 +165,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 // of the normal default-on). Keep in sync with permissions.ts (backend) and
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
-  "extensions_platform", "office", "demo_analytics", "simple_manufacturing",
+  "extensions_platform", "office", "demo_analytics", "module_dashboards", "simple_manufacturing",
   "internal_control", "egypt_tax", "jordan_tax", "school", "clothing", "additional_accounting_reports",
   "additional_sales_reports", "additional_purchase_reports",
   "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",

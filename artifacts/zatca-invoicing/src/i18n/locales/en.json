@@ -770,6 +770,7 @@
     "demoAnalytics": "Demo Analytics",
     "infoBoard": "Information Board",
     "dashboard": "Control Panel",
+    "moduleDashboards": "Module dashboards",
     "registrationRequests": "Registration Requests",
     "traineeRequests": "Trainee Requests",
     "enterCompany": "Enter a Company",
@@ -2864,7 +2865,7 @@
   },
   "perms": {
     "groups": {
-      "dashboard": "Dashboard",
+    "dashboard": "Dashboard",
       "sales": "Sales",
       "purchasing": "Purchasing",
       "inventory": "Inventory",
@@ -2916,6 +2917,7 @@
     "modules": {
       "dashboard": "Dashboard",
       "dashboard_kpis": "Key Indicators",
+      "module_dashboards": "Module dashboards",
       "dashboard_charts": "Interactive Charts",
       "dashboard_alerts": "Alerts & Priorities",
       "dashboard_recent_invoices": "Dashboard Invoices List",

@@ -441,6 +441,7 @@ const securitySubNav: NavDef[] = [
 ];
 const SECURITY_GROUP_PERMS = ["security_events"];
 const dashboardSubNav: NavDef[] = [
+  { nameKey: "nav.moduleDashboards", href: "/module-dashboards", icon: BarChart3, permKey: "module_dashboards" },
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin,     permKey: "regions" },
   { nameKey: "nav.branches",        href: "/org/branches",        icon: BranchIcon, permKey: "branches" },
   { nameKey: "nav.generalSettings", href: "/general-settings",    icon: Sliders,    permKey: "general_settings" },

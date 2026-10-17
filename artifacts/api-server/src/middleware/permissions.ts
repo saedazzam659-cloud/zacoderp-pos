@@ -36,6 +36,7 @@ export type PermAction =
 // When a module key is NOT in this map (system settings like "users", "branches",
 // "sequences") no company-level gate applies — only the per-user permission map.
 const COMPANY_MODULE_GATE: Record<string, string> = {
+  module_dashboards: "module_dashboards",
   // Sales / Customers
   customers: "sales_module",
   sales_reps: "sales_module",
@@ -193,7 +194,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // sync with companyModuleGate.ts (frontend) + DEFAULT_OFF_KEYS in
 // MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
-  "extensions_platform", "office", "demo_analytics", "simple_manufacturing", "internal_control",
+  "extensions_platform", "office", "demo_analytics", "module_dashboards", "simple_manufacturing", "internal_control",
   "school", "clothing",
   "additional_accounting_reports",
   "additional_sales_reports",
