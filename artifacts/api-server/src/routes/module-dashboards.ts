@@ -18,6 +18,12 @@ import {
   purchaseReturnsTable,
   posSessionsTable,
   productionOrdersTable,
+  schoolAcademicYearsTable,
+  schoolCampusesTable,
+  schoolClassesTable,
+  schoolEnrollmentsTable,
+  safetyIncidentsTable,
+  safetyRiskAssessmentsTable,
   salesInvoicesTable,
   salesReturnsTable,
   stockBalanceTable,
@@ -89,6 +95,8 @@ router.get("/overview", async (req: any, res): Promise<void> => {
     cash: canAccessModule(user, "cash_boxes", "view") || canAccessModule(user, "bank_accounts", "view"),
     maintenance: canAccessModule(user, "maintenance", "view"),
     crm: canAccessModule(user, "crm", "view"),
+    school: canAccessModule(user, "school", "view"),
+    safety: canAccessModule(user, "safety_incidents", "view") || canAccessModule(user, "safety_risk", "view"),
   };
   const branchScope = branchScopeSpread(req, branchesTable.id, branchId);
   const branchRows = await db.select({
@@ -428,6 +436,73 @@ router.get("/overview", async (req: any, res): Promise<void> => {
     };
   }
 
+  if (visibleModules.school) {
+    const enrollmentRows = await db.select({
+      status: schoolEnrollmentsTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(schoolEnrollmentsTable)
+      .innerJoin(schoolClassesTable, and(
+        eq(schoolClassesTable.id, schoolEnrollmentsTable.classId),
+        eq(schoolClassesTable.companyId, cid),
+      ))
+      .innerJoin(schoolAcademicYearsTable, and(
+        eq(schoolAcademicYearsTable.id, schoolEnrollmentsTable.academicYearId),
+        eq(schoolAcademicYearsTable.companyId, cid),
+        eq(schoolAcademicYearsTable.isCurrent, true),
+      ))
+      .leftJoin(schoolCampusesTable, and(
+        eq(schoolCampusesTable.id, schoolClassesTable.campusId),
+        eq(schoolCampusesTable.companyId, cid),
+      ))
+      .where(and(
+        eq(schoolEnrollmentsTable.companyId, cid),
+        ...branchScopeSpread(req, schoolCampusesTable.branchId, branchId),
+      )).groupBy(schoolEnrollmentsTable.status);
+    const campusWhere = and(
+      eq(schoolCampusesTable.companyId, cid),
+      ...branchScopeSpread(req, schoolCampusesTable.branchId, branchId),
+    );
+    const [campuses] = await db.select({ count: sql<number>`count(*)::int` })
+      .from(schoolCampusesTable).where(campusWhere);
+    moduleData.school = {
+      enrollments: enrollmentRows.reduce((sum, row) => sum + row.count, 0),
+      activeEnrollments: enrollmentRows.find(row => row.status === "active")?.count ?? 0,
+      campuses: campuses?.count ?? 0,
+      reportUrl: "/school",
+    };
+  }
+
+  if (visibleModules.safety) {
+    const canViewIncidents = canAccessModule(user, "safety_incidents", "view");
+    const canViewRisks = canAccessModule(user, "safety_risk", "view");
+    const [incidentRows, riskRows]: [
+      Array<{ status: string; count: number }>,
+      Array<{ status: string; count: number }>,
+    ] = await Promise.all([
+      canViewIncidents ? db.select({
+        status: safetyIncidentsTable.status,
+        count: sql<number>`count(*)::int`,
+      }).from(safetyIncidentsTable).where(and(
+        eq(safetyIncidentsTable.companyId, cid),
+        ...branchScopeSpread(req, safetyIncidentsTable.branchId, branchId),
+      )).groupBy(safetyIncidentsTable.status) : [],
+      canViewRisks ? db.select({
+        status: safetyRiskAssessmentsTable.status,
+        count: sql<number>`count(*)::int`,
+      }).from(safetyRiskAssessmentsTable).where(and(
+        eq(safetyRiskAssessmentsTable.companyId, cid),
+        ...branchScopeSpread(req, safetyRiskAssessmentsTable.branchId, branchId),
+      )).groupBy(safetyRiskAssessmentsTable.status) : [],
+    ]);
+    moduleData.safety = {
+      incidents: canViewIncidents ? incidentRows.reduce((sum, row) => sum + row.count, 0) : null,
+      openIncidents: canViewIncidents ? incidentRows.find(row => row.status === "open")?.count ?? 0 : null,
+      risks: canViewRisks ? riskRows.reduce((sum, row) => sum + row.count, 0) : null,
+      openRisks: canViewRisks ? riskRows.filter(row => row.status === "open" || row.status === "in_progress").reduce((sum, row) => sum + row.count, 0) : null,
+      reportUrl: canViewIncidents ? "/safety/incidents" : "/safety/risk-assessments",
+    };
+  }
+
   res.json({
     filters: { fromDate, toDate, branchId: branchId ?? null, warehouseId: warehouseId ?? null },
     options: {
@@ -448,6 +523,8 @@ router.get("/overview", async (req: any, res): Promise<void> => {
       cash: moduleData.cash ?? null,
       maintenance: moduleData.maintenance ?? null,
       crm: moduleData.crm ?? null,
+      school: moduleData.school ?? null,
+      safety: moduleData.safety ?? null,
     },
   });
 });

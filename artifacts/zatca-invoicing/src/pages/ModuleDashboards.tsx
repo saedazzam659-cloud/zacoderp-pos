@@ -28,8 +28,10 @@ type ModuleOverview = {
   cash: { cashBoxes: number | null; bankAccounts: number | null; reportUrl: string } | null;
   maintenance: { orders: number; inProgress: number; scheduled: number; completed: number; reportUrl: string } | null;
   crm: { leads: number; opportunities: number; reportUrl: string } | null;
+  school: { enrollments: number; activeEnrollments: number; campuses: number; reportUrl: string } | null;
+  safety: { incidents: number | null; openIncidents: number | null; risks: number | null; openRisks: number | null; reportUrl: string } | null;
 };
-type ModuleKey = "sales" | "purchases" | "accounting" | "inventory" | "production" | "contracting" | "hr" | "fixedAssets" | "pos" | "cash" | "maintenance" | "crm";
+type ModuleKey = "sales" | "purchases" | "accounting" | "inventory" | "production" | "contracting" | "hr" | "fixedAssets" | "pos" | "cash" | "maintenance" | "crm" | "school" | "safety";
 type Overview = {
   options: {
     branches: Array<{ id: number; nameAr: string; nameEn: string }>;
@@ -42,7 +44,7 @@ type Overview = {
 const API = import.meta.env.VITE_API_URL ?? "";
 const today = () => new Date().toISOString().slice(0, 10);
 const initialFrom = () => `${new Date().getFullYear()}-01-01`;
-const moduleKeys: ModuleKey[] = ["sales", "purchases", "accounting", "inventory", "production", "contracting", "hr", "fixedAssets", "pos", "cash", "maintenance", "crm"];
+const moduleKeys: ModuleKey[] = ["sales", "purchases", "accounting", "inventory", "production", "contracting", "hr", "fixedAssets", "pos", "cash", "maintenance", "crm", "school", "safety"];
 
 function reportHref(reportUrl: string, params: Record<string, string>) {
   if (!reportUrl) return "#";
@@ -74,6 +76,7 @@ export default function ModuleDashboards() {
     sales: "المبيعات", purchases: "المشتريات", accounting: "المحاسبة", inventory: "المخزون",
     production: "الإنتاج", contracting: "المقاولات", hr: "الموارد البشرية", fixedAssets: "الأصول الثابتة",
     pos: "نقاط البيع", cash: "النقد والبنوك", maintenance: "الصيانة", crm: "إدارة العملاء",
+    school: "المدارس", safety: "السلامة",
     invoices: "الفواتير", returns: "المرتجعات", count: "العدد", total: "الإجمالي",
     trend: "الحركة خلال الفترة", entries: "القيود المرحلة", debit: "مدين", credit: "دائن",
     items: "الأصناف", warehouses: "المستودعات", stockValue: "قيمة المخزون",
@@ -88,6 +91,8 @@ export default function ModuleDashboards() {
     sessions: "جلسات البيع", openSessions: "مفتوحة", closedSessions: "مغلقة",
     cashBoxes: "الخزن", bankAccounts: "الحسابات البنكية", maintenanceOrders: "أوامر الصيانة",
     scheduled: "مجدولة", leads: "العملاء المحتملون", opportunities: "الفرص",
+    enrollments: "التسجيلات للسنة الحالية", activeEnrollments: "تسجيلات نشطة", campuses: "الفروع المدرسية",
+    incidents: "الحوادث", openIncidents: "حوادث مفتوحة", risks: "تقييمات المخاطر", openRisks: "مخاطر مفتوحة",
   } : {
     title: "Operational dashboards", subtitle: "A consolidated view of operational activity within your access scope.",
     range: "Date range", from: "From date", to: "To date", branch: "Branch", warehouse: "Warehouse",
@@ -95,6 +100,7 @@ export default function ModuleDashboards() {
     sales: "Sales", purchases: "Purchases", accounting: "Accounting", inventory: "Inventory",
     production: "Production", contracting: "Contracting", hr: "Human resources", fixedAssets: "Fixed assets",
     pos: "Point of sale", cash: "Cash & banks", maintenance: "Maintenance", crm: "CRM",
+    school: "Schools", safety: "Safety",
     invoices: "Invoices", returns: "Returns", count: "Count", total: "Total",
     trend: "Activity over time", entries: "Posted entries", debit: "Debit", credit: "Credit",
     items: "Items", warehouses: "Warehouses", stockValue: "Stock value",
@@ -109,6 +115,8 @@ export default function ModuleDashboards() {
     sessions: "Sales sessions", openSessions: "Open", closedSessions: "Closed",
     cashBoxes: "Cash boxes", bankAccounts: "Bank accounts", maintenanceOrders: "Maintenance orders",
     scheduled: "Scheduled", leads: "Leads", opportunities: "Opportunities",
+    enrollments: "Current-year enrollments", activeEnrollments: "Active enrollments", campuses: "Campuses",
+    incidents: "Incidents", openIncidents: "Open incidents", risks: "Risk assessments", openRisks: "Open risks",
   };
   const query = useQuery<Overview>({
     queryKey: ["module-dashboards-overview", companyId, fromDate, toDate, branchId, warehouseId],
@@ -137,7 +145,7 @@ export default function ModuleDashboards() {
   const money = (value: number) => new Intl.NumberFormat(ar ? "ar-SA" : "en", { maximumFractionDigits: 2 }).format(value);
   const moduleIcon = { sales: ShoppingBag, purchases: Boxes, accounting: Landmark, inventory: Package,
     production: Factory, contracting: Building2, hr: Users, fixedAssets: Package,
-    pos: ShoppingBag, cash: Landmark, maintenance: Package, crm: Users };
+    pos: ShoppingBag, cash: Landmark, maintenance: Package, crm: Users, school: Building2, safety: CircleAlert };
   const moduleLabel = (key: ModuleKey) => labels[key];
 
   const renderCurrencyRows = (rows: CurrencyTotal[]) => rows.length ? (
@@ -187,7 +195,7 @@ export default function ModuleDashboards() {
   const reportLink = (url: string, moduleKey: ModuleKey) => {
     const params = moduleKey === "inventory"
       ? { ...(branchId ? { branchId } : {}), ...(warehouseId ? { warehouseId } : {}) }
-      : ["production", "contracting", "hr", "fixedAssets", "pos", "cash", "maintenance", "crm"].includes(moduleKey)
+      : ["production", "contracting", "hr", "fixedAssets", "pos", "cash", "maintenance", "crm", "school", "safety"].includes(moduleKey)
         ? (branchId ? { branchId } : {})
         : filterParams;
     return url ? <a href={appRouteHref(reportHref(url, params))} className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline" data-testid={`report-link-${url}`}>
@@ -257,7 +265,7 @@ export default function ModuleDashboards() {
             <div className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"><Icon className="h-5 w-5" /></span>
             <div><h2 className="text-base font-bold">{moduleLabel(key)}</h2><p className="text-[11px] text-muted-foreground">
-              {["inventory", "production", "contracting", "hr", "fixedAssets", "pos", "cash", "maintenance", "crm"].includes(key)
+              {["inventory", "production", "contracting", "hr", "fixedAssets", "pos", "cash", "maintenance", "crm", "school", "safety"].includes(key)
                 ? (key === "inventory" ? (ar ? "الرصيد الحالي" : "Current balance") : labels.snapshot)
                 : `${labels.range}: ${fromDate} — ${toDate}`}
             </p></div>
@@ -354,6 +362,14 @@ export default function ModuleDashboards() {
             {key === "crm" && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {[[labels.leads, module.leads], [labels.opportunities, module.opportunities]].map(([label, value]) =>
                 <div key={String(label)} className="rounded-xl bg-muted/55 p-3"><p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(Number(value))}</p></div>)}
+            </div>}
+            {key === "school" && <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {[[labels.enrollments, module.enrollments], [labels.activeEnrollments, module.activeEnrollments], [labels.campuses, module.campuses]].map(([label, value]) =>
+                <div key={String(label)} className="rounded-xl bg-muted/55 p-3"><p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(Number(value))}</p></div>)}
+            </div>}
+            {key === "safety" && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {module.incidents !== null && <div className="rounded-xl bg-muted/55 p-3"><p className="text-[10px] text-muted-foreground">{labels.incidents}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(module.incidents)}</p><p className="mt-1 text-[10px] text-muted-foreground">{labels.openIncidents}: {money(module.openIncidents ?? 0)}</p></div>}
+              {module.risks !== null && <div className="rounded-xl bg-muted/55 p-3"><p className="text-[10px] text-muted-foreground">{labels.risks}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(module.risks)}</p><p className="mt-1 text-[10px] text-muted-foreground">{labels.openRisks}: {money(module.openRisks ?? 0)}</p></div>}
             </div>}
           </div>
         </section>;
