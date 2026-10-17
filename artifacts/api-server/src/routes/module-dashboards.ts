@@ -2,12 +2,16 @@ import { Router } from "express";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import {
   branchesTable,
+  contractingProjectsTable,
   db,
+  employeesTable,
+  fixedAssetsTable,
   itemsTable,
   journalEntriesTable,
   journalEntryLinesTable,
   purchaseInvoicesTable,
   purchaseReturnsTable,
+  productionOrdersTable,
   salesInvoicesTable,
   salesReturnsTable,
   stockBalanceTable,
@@ -71,6 +75,10 @@ router.get("/overview", async (req: any, res): Promise<void> => {
     purchases: canAccessModule(user, "purchase_invoices", "view"),
     accounting: canAccessModule(user, "accounting_reports", "view"),
     inventory: canAccessModule(user, "inventory_reports", "view"),
+    production: canAccessModule(user, "production", "view"),
+    contracting: canAccessModule(user, "contracting", "view"),
+    hr: canAccessModule(user, "hr_employees", "view"),
+    fixedAssets: canAccessModule(user, "fixed_assets", "view"),
   };
   const branchScope = branchScopeSpread(req, branchesTable.id, branchId);
   const branchRows = await db.select({
@@ -271,6 +279,74 @@ router.get("/overview", async (req: any, res): Promise<void> => {
     };
   }
 
+  if (visibleModules.production) {
+    const rows = await db.select({
+      status: productionOrdersTable.status,
+      count: sql<number>`count(*)::int`,
+      produced: sql<string>`coalesce(sum(${productionOrdersTable.producedQty}::numeric), 0)`,
+      waste: sql<string>`coalesce(sum(${productionOrdersTable.wasteQty}::numeric), 0)`,
+    }).from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.companyId, cid),
+      ...branchScopeSpread(req, productionOrdersTable.branchId, branchId),
+    )).groupBy(productionOrdersTable.status);
+    moduleData.production = {
+      orders: rows.reduce((sum, row) => sum + row.count, 0),
+      produced: rows.reduce((sum, row) => sum + Number(row.produced), 0),
+      waste: rows.reduce((sum, row) => sum + Number(row.waste), 0),
+      byStatus: rows.map(row => ({ status: row.status, count: row.count })),
+      reportUrl: "/production",
+    };
+  }
+
+  if (visibleModules.contracting) {
+    const rows = await db.select({
+      status: contractingProjectsTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(contractingProjectsTable).where(and(
+      eq(contractingProjectsTable.companyId, cid),
+      ...branchScopeSpread(req, contractingProjectsTable.branchId, branchId),
+    )).groupBy(contractingProjectsTable.status);
+    moduleData.contracting = {
+      projects: rows.reduce((sum, row) => sum + row.count, 0),
+      inProgress: rows.find(row => row.status === "in_progress")?.count ?? 0,
+      completed: rows.find(row => row.status === "completed")?.count ?? 0,
+      onHold: rows.find(row => row.status === "on_hold")?.count ?? 0,
+      reportUrl: "/contracting",
+    };
+  }
+
+  if (visibleModules.hr) {
+    const rows = await db.select({
+      status: employeesTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(employeesTable).where(and(
+      eq(employeesTable.companyId, cid),
+      ...branchScopeSpread(req, employeesTable.branchId, branchId),
+    )).groupBy(employeesTable.status);
+    moduleData.hr = {
+      employees: rows.reduce((sum, row) => sum + row.count, 0),
+      active: rows.find(row => row.status === "active")?.count ?? 0,
+      inactive: rows.filter(row => row.status !== "active").reduce((sum, row) => sum + row.count, 0),
+      reportUrl: "/hr/employees",
+    };
+  }
+
+  if (visibleModules.fixedAssets) {
+    const rows = await db.select({
+      status: fixedAssetsTable.status,
+      count: sql<number>`count(*)::int`,
+    }).from(fixedAssetsTable).where(and(
+      eq(fixedAssetsTable.companyId, cid),
+      ...branchScopeSpread(req, fixedAssetsTable.branchId, branchId),
+    )).groupBy(fixedAssetsTable.status);
+    moduleData.fixedAssets = {
+      assets: rows.reduce((sum, row) => sum + row.count, 0),
+      active: rows.find(row => row.status === "active")?.count ?? 0,
+      inMaintenance: rows.find(row => row.status === "in_maintenance")?.count ?? 0,
+      reportUrl: "/fixed-assets",
+    };
+  }
+
   res.json({
     filters: { fromDate, toDate, branchId: branchId ?? null, warehouseId: warehouseId ?? null },
     options: {
@@ -283,6 +359,10 @@ router.get("/overview", async (req: any, res): Promise<void> => {
       purchases: moduleData.purchases ?? null,
       accounting: moduleData.accounting ?? null,
       inventory: moduleData.inventory ?? null,
+      production: moduleData.production ?? null,
+      contracting: moduleData.contracting ?? null,
+      hr: moduleData.hr ?? null,
+      fixedAssets: moduleData.fixedAssets ?? null,
     },
   });
 });

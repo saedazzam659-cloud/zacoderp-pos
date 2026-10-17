@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-  ArrowUpLeft, BarChart3, Boxes, CalendarDays, ChevronDown, CircleAlert,
-  FileText, Landmark, Package, RefreshCw, ShoppingBag, TrendingUp,
+  ArrowUpLeft, BarChart3, Boxes, Building2, CalendarDays, ChevronDown, CircleAlert,
+  Factory, FileText, Landmark, Package, RefreshCw, ShoppingBag, TrendingUp, Users,
 } from "lucide-react";
 import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -20,20 +20,25 @@ type ModuleOverview = {
   purchases: { invoicesByCurrency: CurrencyTotal[]; returnsByCurrency: CurrencyTotal[]; trend: TrendPoint[]; reportUrl: string } | null;
   accounting: { postedEntries: number; totalsByCurrency: Array<{ currencyCode: string; debit: number; credit: number }>; reportUrl: string } | null;
   inventory: { items: number; warehouses: number; stockValue: number; belowReorder: number; byWarehouse: WarehouseStock[]; reportUrl: string } | null;
+  production: { orders: number; produced: number; waste: number; byStatus: Array<{ status: string; count: number }>; reportUrl: string } | null;
+  contracting: { projects: number; inProgress: number; completed: number; onHold: number; reportUrl: string } | null;
+  hr: { employees: number; active: number; inactive: number; reportUrl: string } | null;
+  fixedAssets: { assets: number; active: number; inMaintenance: number; reportUrl: string } | null;
 };
+type ModuleKey = "sales" | "purchases" | "accounting" | "inventory" | "production" | "contracting" | "hr" | "fixedAssets";
 type Overview = {
   options: {
     branches: Array<{ id: number; nameAr: string; nameEn: string }>;
     warehouses: Array<{ id: number; nameAr: string; nameEn: string; branchId: number }>;
   };
   modules: ModuleOverview;
-  visibleModules: { sales: boolean; purchases: boolean; accounting: boolean; inventory: boolean };
+  visibleModules: Record<ModuleKey, boolean>;
 };
 
 const API = import.meta.env.VITE_API_URL ?? "";
 const today = () => new Date().toISOString().slice(0, 10);
 const initialFrom = () => `${new Date().getFullYear()}-01-01`;
-const moduleKeys = ["sales", "purchases", "accounting", "inventory"] as const;
+const moduleKeys: ModuleKey[] = ["sales", "purchases", "accounting", "inventory", "production", "contracting", "hr", "fixedAssets"];
 
 function reportHref(reportUrl: string, params: Record<string, string>) {
   if (!reportUrl) return "#";
@@ -63,6 +68,7 @@ export default function ModuleDashboards() {
     range: "الفترة", from: "من تاريخ", to: "إلى تاريخ", branch: "الفرع", warehouse: "المستودع",
     allBranches: "كل الفروع المتاحة", allWarehouses: "كل المستودعات المتاحة", refresh: "تحديث",
     sales: "المبيعات", purchases: "المشتريات", accounting: "المحاسبة", inventory: "المخزون",
+    production: "الإنتاج", contracting: "المقاولات", hr: "الموارد البشرية", fixedAssets: "الأصول الثابتة",
     invoices: "الفواتير", returns: "المرتجعات", count: "العدد", total: "الإجمالي",
     trend: "الحركة خلال الفترة", entries: "القيود المرحلة", debit: "مدين", credit: "دائن",
     items: "الأصناف", warehouses: "المستودعات", stockValue: "قيمة المخزون",
@@ -70,11 +76,16 @@ export default function ModuleDashboards() {
     quantity: "الكمية", noData: "لا توجد بيانات لهذه الفترة والفلاتر.", noModules: "لا توجد لوحات تشغيل متاحة لحسابك.",
     error: "تعذر تحميل لوحات التشغيل.", retry: "إعادة المحاولة", report: "فتح التقرير", currency: "العملة",
     selectCurrency: "اختر العملة",
+    snapshot: "الحالة الحالية", orders: "أوامر الإنتاج", produced: "الكمية المنتجة", waste: "الهالك",
+    projects: "المشاريع", inProgress: "قيد التنفيذ", completed: "مكتملة", onHold: "متوقفة",
+    employees: "الموظفون", active: "نشط", inactive: "غير نشط", assets: "الأصول",
+    inMaintenance: "تحت الصيانة",
   } : {
     title: "Operational dashboards", subtitle: "A consolidated view of operational activity within your access scope.",
     range: "Date range", from: "From date", to: "To date", branch: "Branch", warehouse: "Warehouse",
     allBranches: "All available branches", allWarehouses: "All available warehouses", refresh: "Refresh",
     sales: "Sales", purchases: "Purchases", accounting: "Accounting", inventory: "Inventory",
+    production: "Production", contracting: "Contracting", hr: "Human resources", fixedAssets: "Fixed assets",
     invoices: "Invoices", returns: "Returns", count: "Count", total: "Total",
     trend: "Activity over time", entries: "Posted entries", debit: "Debit", credit: "Credit",
     items: "Items", warehouses: "Warehouses", stockValue: "Stock value",
@@ -82,6 +93,10 @@ export default function ModuleDashboards() {
     quantity: "Quantity", noData: "No data for this period and filter selection.", noModules: "No operational dashboards are available for your account.",
     error: "Could not load operational dashboards.", retry: "Try again", report: "Open report", currency: "Currency",
     selectCurrency: "Select currency",
+    snapshot: "Current snapshot", orders: "Production orders", produced: "Produced quantity", waste: "Waste",
+    projects: "Projects", inProgress: "In progress", completed: "Completed", onHold: "On hold",
+    employees: "Employees", active: "Active", inactive: "Inactive", assets: "Assets",
+    inMaintenance: "In maintenance",
   };
   const query = useQuery<Overview>({
     queryKey: ["module-dashboards-overview", companyId, fromDate, toDate, branchId, warehouseId],
@@ -108,8 +123,9 @@ export default function ModuleDashboards() {
   const filterParams = { fromDate, toDate, ...(branchId ? { branchId } : {}), ...(warehouseId ? { warehouseId } : {}) };
   const pickName = (nameAr: string, nameEn: string) => ar ? nameAr || nameEn : nameEn || nameAr;
   const money = (value: number) => new Intl.NumberFormat(ar ? "ar-SA" : "en", { maximumFractionDigits: 2 }).format(value);
-  const moduleIcon = { sales: ShoppingBag, purchases: Boxes, accounting: Landmark, inventory: Package };
-  const moduleLabel = (key: typeof moduleKeys[number]) => labels[key];
+  const moduleIcon = { sales: ShoppingBag, purchases: Boxes, accounting: Landmark, inventory: Package,
+    production: Factory, contracting: Building2, hr: Users, fixedAssets: Package };
+  const moduleLabel = (key: ModuleKey) => labels[key];
 
   const renderCurrencyRows = (rows: CurrencyTotal[]) => rows.length ? (
     <div className="overflow-hidden rounded-xl border border-border/70">
@@ -155,10 +171,12 @@ export default function ModuleDashboards() {
     </div> : <p className="rounded-lg bg-muted/40 px-3 py-4 text-center text-xs text-muted-foreground">{labels.noData}</p>;
   };
 
-  const reportLink = (url: string, moduleKey: typeof moduleKeys[number]) => {
+  const reportLink = (url: string, moduleKey: ModuleKey) => {
     const params = moduleKey === "inventory"
       ? { ...(branchId ? { branchId } : {}), ...(warehouseId ? { warehouseId } : {}) }
-      : filterParams;
+      : ["production", "contracting", "hr", "fixedAssets"].includes(moduleKey)
+        ? (branchId ? { branchId } : {})
+        : filterParams;
     return url ? <a href={appRouteHref(reportHref(url, params))} className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline" data-testid={`report-link-${url}`}>
     {labels.report}<ArrowUpLeft className="h-3.5 w-3.5" />
     </a> : null;
@@ -226,7 +244,9 @@ export default function ModuleDashboards() {
             <div className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"><Icon className="h-5 w-5" /></span>
             <div><h2 className="text-base font-bold">{moduleLabel(key)}</h2><p className="text-[11px] text-muted-foreground">
-              {key === "inventory" ? (ar ? "الرصيد الحالي" : "Current balance") : `${labels.range}: ${fromDate} — ${toDate}`}
+              {["inventory", "production", "contracting", "hr", "fixedAssets"].includes(key)
+                ? (key === "inventory" ? (ar ? "الرصيد الحالي" : "Current balance") : labels.snapshot)
+                : `${labels.range}: ${fromDate} — ${toDate}`}
             </p></div>
             </div>
             {reportLink(module.reportUrl, key)}
@@ -272,6 +292,38 @@ export default function ModuleDashboards() {
                   </tr>)}</tbody></table>
                   {module.byWarehouse.length === 0 && <p className="p-4 text-center text-xs text-muted-foreground">{labels.noData}</p>}
                 </div>
+              </div>
+            </>}
+            {key === "production" && <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {[[labels.orders, module.orders], [labels.produced, module.produced], [labels.waste, module.waste]].map(([label, value]) =>
+                  <div key={String(label)} className="rounded-xl bg-muted/55 p-3">
+                    <p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(Number(value))}</p>
+                  </div>)}
+              </div>
+            </>}
+            {key === "contracting" && <>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[[labels.projects, module.projects], [labels.inProgress, module.inProgress], [labels.completed, module.completed], [labels.onHold, module.onHold]].map(([label, value]) =>
+                  <div key={String(label)} className="rounded-xl bg-muted/55 p-3">
+                    <p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(Number(value))}</p>
+                  </div>)}
+              </div>
+            </>}
+            {key === "hr" && <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {[[labels.employees, module.employees], [labels.active, module.active], [labels.inactive, module.inactive]].map(([label, value]) =>
+                  <div key={String(label)} className="rounded-xl bg-muted/55 p-3">
+                    <p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(Number(value))}</p>
+                  </div>)}
+              </div>
+            </>}
+            {key === "fixedAssets" && <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {[[labels.assets, module.assets], [labels.active, module.active], [labels.inMaintenance, module.inMaintenance]].map(([label, value]) =>
+                  <div key={String(label)} className="rounded-xl bg-muted/55 p-3">
+                    <p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1.5 text-lg font-bold tabular-nums">{money(Number(value))}</p>
+                  </div>)}
               </div>
             </>}
           </div>
