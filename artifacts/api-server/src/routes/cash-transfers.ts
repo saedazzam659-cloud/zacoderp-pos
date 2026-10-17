@@ -9,6 +9,14 @@ import { moduleAudit, requireModulePermission } from "../middleware/permissions.
 import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { createJournalEntry } from "./sales.js";
 import { mobilePermAllowed } from "../lib/mobilePerms.js";
+import {
+  cashTransferAlreadyPosted,
+  cashTransferAvailableBalance,
+  cashTransferBranchAllowed,
+  cashTransferHasSufficientBalance,
+  cashTransferNeedsCurrencyRejection,
+  cashTransferPostingAmount,
+} from "../lib/cashTransferPolicy.js";
 import { ObjectStorageService } from "../lib/objectStorage.js";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -40,7 +48,7 @@ async function canAccessTransferBranch(req: any, transfer: { companyId: number; 
   if (!transfer.fromCashBoxId) return false;
   const [box] = await db.select({ branchId: cashBoxesTable.branchId }).from(cashBoxesTable)
     .where(and(eq(cashBoxesTable.id, transfer.fromCashBoxId), eq(cashBoxesTable.companyId, transfer.companyId))).limit(1);
-  return !!box && (box.branchId == null || allowed.includes(box.branchId));
+  return !!box && cashTransferBranchAllowed(box.branchId, allowed);
 }
 
 router.get("/", async (req, res) => {
@@ -312,7 +320,7 @@ router.post("/:id/post", requirePostRight("cashTransfer"), documentMutationLock(
     const [locked] = await tx.select().from(cashTransfersTable)
       .where(and(eq(cashTransfersTable.id, id), eq(cashTransfersTable.companyId, existing.companyId)))
       .for("update");
-    if (!locked || locked.status === "posted" || locked.journalEntryId) {
+    if (!locked || cashTransferAlreadyPosted(locked.status, locked.journalEntryId)) {
       throw Object.assign(new Error("تم ترحيل التحويل مسبقاً"), { status: 409 });
     }
     const from = locked.fromCashBoxId
@@ -331,7 +339,7 @@ router.post("/:id/post", requirePostRight("cashTransfer"), documentMutationLock(
       throw Object.assign(new Error("مصدر أو وجهة التحويل غير صالحة"), { status: 400 });
     }
     const isMobile = (req as any).authUser?.sessionChannel === "mobile";
-    if ((isMobile && from.currencyId !== to.currencyId) || (fromCash && toCash && from.id === to.id)) {
+    if (cashTransferNeedsCurrencyRejection(isMobile, from.currencyId, to.currencyId) || (fromCash && toCash && from.id === to.id)) {
       throw Object.assign(new Error("لا يمكن ترحيل تحويل بعملتين مختلفتين من الموبايل أو إلى الصندوق نفسه"), { status: 400 });
     }
     if ((req as any).authUser?.sessionChannel === "mobile" &&
@@ -339,9 +347,8 @@ router.post("/:id/post", requirePostRight("cashTransfer"), documentMutationLock(
       throw Object.assign(new Error("لا يمكن اعتماد طلبك أو طلب غير مرسل للاعتماد"), { status: 403 });
     }
     if (!from.accountId || !to.accountId) throw Object.assign(new Error("يجب ربط الصندوق أو الحساب البنكي بحساب محاسبي"), { status: 400 });
-    const exchangeRate = Number(locked.exchangeRate || 1);
-    const postingAmount = Number(locked.amount) * exchangeRate;
-    if (!Number.isFinite(postingAmount) || postingAmount <= 0) {
+    const postingAmount = cashTransferPostingAmount(Number(locked.amount), Number(locked.exchangeRate || 1));
+    if (postingAmount === null) {
       throw Object.assign(new Error("سعر الصرف أو مبلغ التحويل غير صالح"), { status: 400 });
     }
     if (fromCash) {
@@ -356,8 +363,8 @@ router.post("/:id/post", requirePostRight("cashTransfer"), documentMutationLock(
         .where(and(eq(cashTransfersTable.companyId, locked.companyId), eq(cashTransfersTable.toCashBoxId, from.id), eq(cashTransfersTable.status, "posted")));
       const [outgoing] = await tx.select({ total: sql<string>`coalesce(sum(${cashTransfersTable.amount}),0)` }).from(cashTransfersTable)
         .where(and(eq(cashTransfersTable.companyId, locked.companyId), eq(cashTransfersTable.fromCashBoxId, from.id), eq(cashTransfersTable.status, "posted")));
-      const balance = Number(received?.total ?? 0) - Number(paid?.total ?? 0) + Number(incoming?.total ?? 0) - Number(outgoing?.total ?? 0);
-      if (Number(locked.amount) > balance) throw Object.assign(new Error(`الرصيد المتاح بالصندوق ${balance.toFixed(2)} أقل من مبلغ التحويل`), { status: 409 });
+      const balance = cashTransferAvailableBalance(Number(received?.total ?? 0), Number(paid?.total ?? 0), Number(incoming?.total ?? 0), Number(outgoing?.total ?? 0));
+       if (!cashTransferHasSufficientBalance(Number(locked.amount), balance)) throw Object.assign(new Error(`الرصيد المتاح بالصندوق ${balance.toFixed(2)} أقل من مبلغ التحويل`), { status: 409 });
     }
     const journalEntryId = await createJournalEntry({
       companyId: locked.companyId,
