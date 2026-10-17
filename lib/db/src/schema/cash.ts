@@ -257,5 +257,15 @@ export const cashTransfersTable = pgTable("cash_transfers", {
   description:     text("description"),
   notes:           text("notes"),
   status:          cashVoucherStatusEnum("status").notNull().default("draft"),
+  // Additive mobile deposit workflow metadata; legacy transfers remain valid.
+  approvalStatus:  text("approval_status").notNull().default("draft"),
+  referenceNumber: text("reference_number"),
+  receiptPath:     text("receipt_path"),
+  createdByUserId: integer("created_by_user_id"),
+  approvedByUserId: integer("approved_by_user_id"),
+  rejectedByUserId: integer("rejected_by_user_id"),
+  rejectionReason: text("rejection_reason"),
+  journalEntryId:  integer("journal_entry_id"),
+  branchId:        integer("branch_id").references(() => branchesTable.id),
   createdAt:       timestamp("created_at").defaultNow().notNull(),
 });

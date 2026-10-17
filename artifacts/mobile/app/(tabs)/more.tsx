@@ -22,6 +22,15 @@ const CASH_EXPENSE_PERMISSION_KEYS = [
   'cash_expenses_cancel',
   'cash_expenses_report',
 ];
+const CASH_TRANSFER_PERMISSION_KEYS = [
+  'cash_transfers_create',
+  'cash_transfers_view_own',
+  'cash_transfers_view_all',
+  'cash_transfers_edit',
+  'cash_transfers_submit',
+  'cash_transfers_approve',
+  'cash_transfers_reject',
+];
 
 export default function More() {
   const { user, logout } = useAuth();
@@ -171,6 +180,12 @@ export default function More() {
           {CASH_EXPENSE_PERMISSION_KEYS.some(mp) ? (
             <>
               <RowItem icon="credit-card" title="مصروفات الصندوق" onPress={() => router.push('/cash-expenses' as any)} testID="row-cash-expenses" />
+              <View style={{ height: 1, backgroundColor: c.border }} />
+            </>
+          ) : null}
+          {CASH_TRANSFER_PERMISSION_KEYS.some(mp) ? (
+            <>
+              <RowItem icon="repeat" title="إيداعات الصناديق" onPress={() => router.push('/cash-transfers' as any)} testID="row-cash-transfers" />
               <View style={{ height: 1, backgroundColor: c.border }} />
             </>
           ) : null}

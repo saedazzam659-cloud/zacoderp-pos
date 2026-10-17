@@ -671,6 +671,7 @@ export async function createJournalEntry(opts: {
   description: string;
   docNumber?: string | null;
   entryType?: string;
+  postingDocType?: "sales" | "cashTransfer";
   exchangeRate?: string | null;
   // Header-level cost-center code applied to every line that doesn't
   // explicitly set its own. Lets a single field on the source document
@@ -733,7 +734,7 @@ export async function createJournalEntry(opts: {
   // tenant has auto-post OFF — otherwise a draft JE would look "posted"
   // in the audit dialog. Callers pass `audit: { req }` (or an old-style
   // pre-baked object); the latter is preserved verbatim for legacy paths.
-  const jeStatus = await resolvePostingStatus(opts.companyId, "sales");
+  const jeStatus = await resolvePostingStatus(opts.companyId, opts.postingDocType ?? "sales");
   const auditFields = opts.audit?.req
     ? fullAuditFor(opts.audit.req as any, jeStatus)
     : (opts.audit ?? {});

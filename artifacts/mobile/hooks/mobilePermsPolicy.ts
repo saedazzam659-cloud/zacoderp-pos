@@ -15,6 +15,13 @@ const EXPLICIT_OPT_IN_KEYS = new Set([
   'cash_expenses_post',
   'cash_expenses_cancel',
   'cash_expenses_report',
+  'cash_transfers_create',
+  'cash_transfers_view_own',
+  'cash_transfers_view_all',
+  'cash_transfers_edit',
+  'cash_transfers_submit',
+  'cash_transfers_approve',
+  'cash_transfers_reject',
 ]);
 
 export function mobilePermsQueryKey(generation: number, user: { id: number; companyId: number | null } | null) {

@@ -162,6 +162,13 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "cash_expenses_post", labelKey: "users.mobCashExpensePost" },
   { key: "cash_expenses_cancel", labelKey: "users.mobCashExpenseCancel" },
   { key: "cash_expenses_report", labelKey: "users.mobCashExpenseReport" },
+  { key: "cash_transfers_create", labelKey: "users.mobCashTransferCreate" },
+  { key: "cash_transfers_view_own", labelKey: "users.mobCashTransferViewOwn" },
+  { key: "cash_transfers_view_all", labelKey: "users.mobCashTransferViewAll" },
+  { key: "cash_transfers_edit", labelKey: "users.mobCashTransferEdit" },
+  { key: "cash_transfers_submit", labelKey: "users.mobCashTransferSubmit" },
+  { key: "cash_transfers_approve", labelKey: "users.mobCashTransferApprove" },
+  { key: "cash_transfers_reject", labelKey: "users.mobCashTransferReject" },
   { key: "mobile_tracking", labelKey: "users.mobLocationTracking" },
 ];
 
@@ -181,16 +188,25 @@ const CASH_EXPENSE_PERMISSION_KEYS = new Set([
   "cash_expenses_cancel",
   "cash_expenses_report",
 ]);
+const CASH_TRANSFER_PERMISSION_KEYS = new Set([
+  "cash_transfers_create",
+  "cash_transfers_view_own",
+  "cash_transfers_view_all",
+  "cash_transfers_edit",
+  "cash_transfers_submit",
+  "cash_transfers_approve",
+  "cash_transfers_reject",
+]);
 // Location tracking is sensitive and must always be explicitly enabled,
 // including when an admin uses the "allow all" shortcut.
-const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set(["mobile_tracking"]);
+const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set(["mobile_tracking", ...CASH_TRANSFER_PERMISSION_KEYS]);
 
 // Legacy permissions retain their allow-by-default behavior; this new module
 // stays denied until an admin explicitly checks each permission.
 const seedMobilePerms = (stored?: Record<string, boolean> | null, allowNewModule = false): MobilePerms => {
   const out: MobilePerms = {};
   for (const k of ALL_MOBILE_KEYS) {
-    out[k] = stored?.[k] ?? (CASH_EXPENSE_PERMISSION_KEYS.has(k) ? allowNewModule : EXPLICIT_MOBILE_PERMISSION_KEYS.has(k) ? false : true);
+     out[k] = stored?.[k] ?? (CASH_EXPENSE_PERMISSION_KEYS.has(k) ? allowNewModule : EXPLICIT_MOBILE_PERMISSION_KEYS.has(k) ? false : true);
   }
   return out;
 };

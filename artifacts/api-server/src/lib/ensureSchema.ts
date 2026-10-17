@@ -356,6 +356,15 @@ const CENTRAL_ONLY_ZATCA_TRANSFER_TABLES = ["zatca_registration_transfers"] as c
 // agent is moving between those package generations.
 const SUPPLIER_METADATA_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS cash_boxes ADD COLUMN IF NOT EXISTS cash_expense_manager_user_id INTEGER`,
+  `ALTER TABLE IF EXISTS cash_transfers ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'draft'`,
+  `ALTER TABLE IF EXISTS cash_transfers ADD COLUMN IF NOT EXISTS reference_number TEXT`,
+  `ALTER TABLE IF EXISTS cash_transfers ADD COLUMN IF NOT EXISTS receipt_path TEXT`,
+  `ALTER TABLE IF EXISTS cash_transfers ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER`,
+  `ALTER TABLE IF EXISTS cash_transfers ADD COLUMN IF NOT EXISTS approved_by_user_id INTEGER`,
+  `ALTER TABLE IF EXISTS cash_transfers ADD COLUMN IF NOT EXISTS rejected_by_user_id INTEGER`,
+  `ALTER TABLE IF EXISTS cash_transfers ADD COLUMN IF NOT EXISTS rejection_reason TEXT`,
+  `ALTER TABLE IF EXISTS cash_transfers ADD COLUMN IF NOT EXISTS journal_entry_id INTEGER`,
+  `ALTER TABLE IF EXISTS cash_transfers ADD COLUMN IF NOT EXISTS branch_id INTEGER`,
   `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS source_type TEXT`,
   `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_created_by_user_id INTEGER`,
   `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_sales_rep_id INTEGER`,

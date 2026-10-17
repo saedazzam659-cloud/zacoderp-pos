@@ -2891,6 +2891,131 @@ paths:
         "404":
           description: Campaign recipient not found
 
+  /cash-transfers:
+    get:
+      operationId: getCashTransfers
+      tags: [cash-transfers]
+      summary: List cash transfers permitted for the current user
+      parameters:
+        - name: companyId
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Visible cash transfers
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CashTransferList" }
+    post:
+      operationId: createCashTransfer
+      tags: [cash-transfers]
+      summary: Save a cash transfer as a draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CashTransferInput" }
+      responses:
+        "201":
+          description: Draft transfer created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CashTransfer" }
+  /cash-transfers/receipt-upload:
+    post:
+      operationId: uploadCashTransferReceipt
+      tags: [cash-transfers]
+      summary: Store a private cash-transfer receipt image
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CashTransferReceiptUploadInput" }
+      responses:
+        "201":
+          description: Receipt image stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CashTransferReceiptUpload" }
+  /cash-transfers/{id}/submit:
+    post:
+      operationId: submitCashTransfer
+      tags: [cash-transfers]
+      summary: Submit a draft transfer for approval
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Transfer submitted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CashTransfer" }
+  /cash-transfers/{id}/post:
+    post:
+      operationId: postCashTransfer
+      tags: [cash-transfers]
+      summary: Approve and post a cash transfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Transfer approved and posted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CashTransfer" }
+  /cash-transfers/{id}/reject:
+    post:
+      operationId: rejectCashTransfer
+      tags: [cash-transfers]
+      summary: Reject a pending cash transfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        "200":
+          description: Transfer rejected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CashTransfer" }
+  /cash-transfers/{id}/receipt:
+    get:
+      operationId: getCashTransferReceipt
+      tags: [cash-transfers]
+      summary: Read a transfer receipt after permission checks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Private receipt image
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+
   /cash-expenses/options:
     get:
       operationId: getCashExpenseOptions
@@ -5971,6 +6096,57 @@ components:
         consentActive: { type: boolean }
         enrolled: { type: boolean }
         enrolledAt: { type: ["string", "null"], format: date-time }
+    CashTransfer:
+      type: object
+      required: [id, companyId, code, date, transferType, amount, status]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        code: { type: string }
+        date: { type: string, format: date }
+        transferType: { type: string, enum: [cash_to_cash, cash_to_bank, bank_to_cash, bank_to_bank] }
+        fromCashBoxId: { type: ["integer", "null"] }
+        fromBankId: { type: ["integer", "null"] }
+        toCashBoxId: { type: ["integer", "null"] }
+        toBankId: { type: ["integer", "null"] }
+        amount: { type: [number, string] }
+        description: { type: ["string", "null"] }
+        notes: { type: ["string", "null"] }
+        status: { type: string, enum: [draft, posted, cancelled] }
+        approvalStatus: { type: ["string", "null"], enum: [draft, pending, approved, rejected, null] }
+        referenceNumber: { type: ["string", "null"] }
+        receiptPath: { type: ["string", "null"] }
+        createdByUserId: { type: ["integer", "null"] }
+        rejectionReason: { type: ["string", "null"] }
+    CashTransferList:
+      type: array
+      items: { $ref: "#/components/schemas/CashTransfer" }
+    CashTransferInput:
+      type: object
+      required: [date, transferType, fromCashBoxId, amount]
+      properties:
+        companyId: { type: integer, minimum: 1 }
+        date: { type: string, format: date }
+        transferType: { type: string, enum: [cash_to_cash, cash_to_bank] }
+        fromCashBoxId: { type: integer, minimum: 1 }
+        toCashBoxId: { type: ["integer", "null"], minimum: 1 }
+        toBankId: { type: ["integer", "null"], minimum: 1 }
+        amount: { type: number, exclusiveMinimum: 0, maximum: 999999999999.99 }
+        description: { type: string, maxLength: 500 }
+        notes: { type: ["string", "null"], maxLength: 1000 }
+        referenceNumber: { type: ["string", "null"], maxLength: 100 }
+        receiptPath: { type: ["string", "null"], maxLength: 300 }
+    CashTransferReceiptUploadInput:
+      type: object
+      required: [mimeType, base64]
+      properties:
+        mimeType: { type: string, enum: [image/jpeg, image/png, image/webp] }
+        base64: { type: string, minLength: 1 }
+    CashTransferReceiptUpload:
+      type: object
+      required: [objectPath]
+      properties:
+        objectPath: { type: string }
     CashExpense:
       type: object
       required: [id, companyId, code, date, branchId, cashBoxId, cashBoxName, currencyCode, expenseAccountId, expenseAccountName, amount, description, status, journalEntryId, createdByUserId, employeeName, salesRepId, salesRepName, receiptAvailable, createdAt, isMine, cancelledAt]

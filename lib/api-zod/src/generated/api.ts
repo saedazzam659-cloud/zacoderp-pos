@@ -4911,6 +4911,240 @@ export const UpdateWhatsAppCampaignRecipientResponse = zod.object({
 });
 
 /**
+ * @summary List cash transfers permitted for the current user
+ */
+
+export const GetCashTransfersQueryParams = zod.object({
+  companyId: zod.coerce.number().min(1).optional(),
+});
+
+export const GetCashTransfersResponseItem = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  date: zod.coerce.date(),
+  transferType: zod.enum([
+    "cash_to_cash",
+    "cash_to_bank",
+    "bank_to_cash",
+    "bank_to_bank",
+  ]),
+  fromCashBoxId: zod.number().nullish(),
+  fromBankId: zod.number().nullish(),
+  toCashBoxId: zod.number().nullish(),
+  toBankId: zod.number().nullish(),
+  amount: zod.union([zod.number(), zod.string()]),
+  description: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  approvalStatus: zod
+    .union([
+      zod.literal("draft"),
+      zod.literal("pending"),
+      zod.literal("approved"),
+      zod.literal("rejected"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  referenceNumber: zod.string().nullish(),
+  receiptPath: zod.string().nullish(),
+  createdByUserId: zod.number().nullish(),
+  rejectionReason: zod.string().nullish(),
+});
+export const GetCashTransfersResponse = zod.array(GetCashTransfersResponseItem);
+
+/**
+ * @summary Save a cash transfer as a draft
+ */
+
+export const createCashTransferBodyAmountExclusiveMin = 0;
+export const createCashTransferBodyAmountMax = 999999999999.99;
+
+export const createCashTransferBodyDescriptionMax = 500;
+
+export const createCashTransferBodyNotesMax = 1000;
+
+export const createCashTransferBodyReferenceNumberMax = 100;
+
+export const createCashTransferBodyReceiptPathMax = 300;
+
+export const CreateCashTransferBody = zod.object({
+  companyId: zod.number().min(1).optional(),
+  date: zod.coerce.date(),
+  transferType: zod.enum(["cash_to_cash", "cash_to_bank"]),
+  fromCashBoxId: zod.number().min(1),
+  toCashBoxId: zod.number().min(1).nullish(),
+  toBankId: zod.number().min(1).nullish(),
+  amount: zod
+    .number()
+    .gt(createCashTransferBodyAmountExclusiveMin)
+    .max(createCashTransferBodyAmountMax),
+  description: zod
+    .string()
+    .max(createCashTransferBodyDescriptionMax)
+    .optional(),
+  notes: zod.string().max(createCashTransferBodyNotesMax).nullish(),
+  referenceNumber: zod
+    .string()
+    .max(createCashTransferBodyReferenceNumberMax)
+    .nullish(),
+  receiptPath: zod.string().max(createCashTransferBodyReceiptPathMax).nullish(),
+});
+
+/**
+ * @summary Store a private cash-transfer receipt image
+ */
+
+export const UploadCashTransferReceiptBody = zod.object({
+  mimeType: zod.enum(["image/jpeg", "image/png", "image/webp"]),
+  base64: zod.string().min(1),
+});
+
+/**
+ * @summary Submit a draft transfer for approval
+ */
+
+export const SubmitCashTransferParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const SubmitCashTransferResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  date: zod.coerce.date(),
+  transferType: zod.enum([
+    "cash_to_cash",
+    "cash_to_bank",
+    "bank_to_cash",
+    "bank_to_bank",
+  ]),
+  fromCashBoxId: zod.number().nullish(),
+  fromBankId: zod.number().nullish(),
+  toCashBoxId: zod.number().nullish(),
+  toBankId: zod.number().nullish(),
+  amount: zod.union([zod.number(), zod.string()]),
+  description: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  approvalStatus: zod
+    .union([
+      zod.literal("draft"),
+      zod.literal("pending"),
+      zod.literal("approved"),
+      zod.literal("rejected"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  referenceNumber: zod.string().nullish(),
+  receiptPath: zod.string().nullish(),
+  createdByUserId: zod.number().nullish(),
+  rejectionReason: zod.string().nullish(),
+});
+
+/**
+ * @summary Approve and post a cash transfer
+ */
+
+export const PostCashTransferParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const PostCashTransferResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  date: zod.coerce.date(),
+  transferType: zod.enum([
+    "cash_to_cash",
+    "cash_to_bank",
+    "bank_to_cash",
+    "bank_to_bank",
+  ]),
+  fromCashBoxId: zod.number().nullish(),
+  fromBankId: zod.number().nullish(),
+  toCashBoxId: zod.number().nullish(),
+  toBankId: zod.number().nullish(),
+  amount: zod.union([zod.number(), zod.string()]),
+  description: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  approvalStatus: zod
+    .union([
+      zod.literal("draft"),
+      zod.literal("pending"),
+      zod.literal("approved"),
+      zod.literal("rejected"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  referenceNumber: zod.string().nullish(),
+  receiptPath: zod.string().nullish(),
+  createdByUserId: zod.number().nullish(),
+  rejectionReason: zod.string().nullish(),
+});
+
+/**
+ * @summary Reject a pending cash transfer
+ */
+
+export const RejectCashTransferParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+export const rejectCashTransferBodyReasonMin = 3;
+export const rejectCashTransferBodyReasonMax = 500;
+
+export const RejectCashTransferBody = zod.object({
+  reason: zod
+    .string()
+    .min(rejectCashTransferBodyReasonMin)
+    .max(rejectCashTransferBodyReasonMax),
+});
+
+export const RejectCashTransferResponse = zod.object({
+  id: zod.number(),
+  companyId: zod.number(),
+  code: zod.string(),
+  date: zod.coerce.date(),
+  transferType: zod.enum([
+    "cash_to_cash",
+    "cash_to_bank",
+    "bank_to_cash",
+    "bank_to_bank",
+  ]),
+  fromCashBoxId: zod.number().nullish(),
+  fromBankId: zod.number().nullish(),
+  toCashBoxId: zod.number().nullish(),
+  toBankId: zod.number().nullish(),
+  amount: zod.union([zod.number(), zod.string()]),
+  description: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  status: zod.enum(["draft", "posted", "cancelled"]),
+  approvalStatus: zod
+    .union([
+      zod.literal("draft"),
+      zod.literal("pending"),
+      zod.literal("approved"),
+      zod.literal("rejected"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  referenceNumber: zod.string().nullish(),
+  receiptPath: zod.string().nullish(),
+  createdByUserId: zod.number().nullish(),
+  rejectionReason: zod.string().nullish(),
+});
+
+/**
+ * @summary Read a transfer receipt after permission checks
+ */
+
+export const GetCashTransferReceiptParams = zod.object({
+  id: zod.coerce.number().min(1),
+});
+
+/**
  * @summary Get cashboxes and expense accounts available to the current mobile user
  */
 export const GetCashExpenseOptionsResponse = zod.object({

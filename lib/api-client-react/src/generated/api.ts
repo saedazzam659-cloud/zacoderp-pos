@@ -32,6 +32,11 @@ import type {
   CashExpenseReceiptUploadInput,
   CashExpenseReport,
   CashExpenseUpdate,
+  CashTransfer,
+  CashTransferInput,
+  CashTransferList,
+  CashTransferReceiptUpload,
+  CashTransferReceiptUploadInput,
   Company,
   ContractingContractorOption,
   ContractingGuaranteeOptions,
@@ -56,6 +61,7 @@ import type {
   GetAdditionalSalesReportParams,
   GetCashExpenseReportParams,
   GetCashExpensesParams,
+  GetCashTransfersParams,
   GetDashboardSummaryParams,
   GetInventoryReportBrandOptionsParams,
   GetMonthlyStatsParams,
@@ -128,6 +134,7 @@ import type {
   PurchaseSourceDocument,
   PurchaseVariantNetByItemResponse,
   PurchaseVariantNetBySupplierResponse,
+  RejectCashTransferBody,
   RiskAssessment,
   RiskControl,
   SafetyKpis,
@@ -11792,6 +11799,622 @@ export const useUpdateWhatsAppCampaignRecipient = <
     getUpdateWhatsAppCampaignRecipientMutationOptions(options),
   );
 };
+
+/**
+ * @summary List cash transfers permitted for the current user
+ */
+export const getGetCashTransfersUrl = (params?: GetCashTransfersParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/cash-transfers?${stringifiedParams}`
+    : `/api/cash-transfers`;
+};
+
+export const getCashTransfers = async (
+  params?: GetCashTransfersParams,
+  options?: RequestInit,
+): Promise<CashTransferList> => {
+  return customFetch<CashTransferList>(getGetCashTransfersUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCashTransfersQueryKey = (
+  params?: GetCashTransfersParams,
+) => {
+  return [`/api/cash-transfers`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetCashTransfersQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCashTransfers>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetCashTransfersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCashTransfers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCashTransfersQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCashTransfers>>
+  > = ({ signal }) => getCashTransfers(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCashTransfers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCashTransfersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCashTransfers>>
+>;
+export type GetCashTransfersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List cash transfers permitted for the current user
+ */
+
+export function useGetCashTransfers<
+  TData = Awaited<ReturnType<typeof getCashTransfers>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetCashTransfersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCashTransfers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCashTransfersQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Save a cash transfer as a draft
+ */
+export const getCreateCashTransferUrl = () => {
+  return `/api/cash-transfers`;
+};
+
+export const createCashTransfer = async (
+  cashTransferInput: CashTransferInput,
+  options?: RequestInit,
+): Promise<CashTransfer> => {
+  return customFetch<CashTransfer>(getCreateCashTransferUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(cashTransferInput),
+  });
+};
+
+export const getCreateCashTransferMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCashTransfer>>,
+    TError,
+    { data: BodyType<CashTransferInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createCashTransfer>>,
+  TError,
+  { data: BodyType<CashTransferInput> },
+  TContext
+> => {
+  const mutationKey = ["createCashTransfer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createCashTransfer>>,
+    { data: BodyType<CashTransferInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createCashTransfer(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateCashTransferMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createCashTransfer>>
+>;
+export type CreateCashTransferMutationBody = BodyType<CashTransferInput>;
+export type CreateCashTransferMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Save a cash transfer as a draft
+ */
+export const useCreateCashTransfer = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCashTransfer>>,
+    TError,
+    { data: BodyType<CashTransferInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createCashTransfer>>,
+  TError,
+  { data: BodyType<CashTransferInput> },
+  TContext
+> => {
+  return useMutation(getCreateCashTransferMutationOptions(options));
+};
+
+/**
+ * @summary Store a private cash-transfer receipt image
+ */
+export const getUploadCashTransferReceiptUrl = () => {
+  return `/api/cash-transfers/receipt-upload`;
+};
+
+export const uploadCashTransferReceipt = async (
+  cashTransferReceiptUploadInput: CashTransferReceiptUploadInput,
+  options?: RequestInit,
+): Promise<CashTransferReceiptUpload> => {
+  return customFetch<CashTransferReceiptUpload>(
+    getUploadCashTransferReceiptUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(cashTransferReceiptUploadInput),
+    },
+  );
+};
+
+export const getUploadCashTransferReceiptMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof uploadCashTransferReceipt>>,
+    TError,
+    { data: BodyType<CashTransferReceiptUploadInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof uploadCashTransferReceipt>>,
+  TError,
+  { data: BodyType<CashTransferReceiptUploadInput> },
+  TContext
+> => {
+  const mutationKey = ["uploadCashTransferReceipt"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof uploadCashTransferReceipt>>,
+    { data: BodyType<CashTransferReceiptUploadInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return uploadCashTransferReceipt(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UploadCashTransferReceiptMutationResult = NonNullable<
+  Awaited<ReturnType<typeof uploadCashTransferReceipt>>
+>;
+export type UploadCashTransferReceiptMutationBody =
+  BodyType<CashTransferReceiptUploadInput>;
+export type UploadCashTransferReceiptMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Store a private cash-transfer receipt image
+ */
+export const useUploadCashTransferReceipt = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof uploadCashTransferReceipt>>,
+    TError,
+    { data: BodyType<CashTransferReceiptUploadInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof uploadCashTransferReceipt>>,
+  TError,
+  { data: BodyType<CashTransferReceiptUploadInput> },
+  TContext
+> => {
+  return useMutation(getUploadCashTransferReceiptMutationOptions(options));
+};
+
+/**
+ * @summary Submit a draft transfer for approval
+ */
+export const getSubmitCashTransferUrl = (id: number) => {
+  return `/api/cash-transfers/${id}/submit`;
+};
+
+export const submitCashTransfer = async (
+  id: number,
+  options?: RequestInit,
+): Promise<CashTransfer> => {
+  return customFetch<CashTransfer>(getSubmitCashTransferUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getSubmitCashTransferMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitCashTransfer>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof submitCashTransfer>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["submitCashTransfer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof submitCashTransfer>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return submitCashTransfer(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SubmitCashTransferMutationResult = NonNullable<
+  Awaited<ReturnType<typeof submitCashTransfer>>
+>;
+
+export type SubmitCashTransferMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Submit a draft transfer for approval
+ */
+export const useSubmitCashTransfer = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitCashTransfer>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof submitCashTransfer>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getSubmitCashTransferMutationOptions(options));
+};
+
+/**
+ * @summary Approve and post a cash transfer
+ */
+export const getPostCashTransferUrl = (id: number) => {
+  return `/api/cash-transfers/${id}/post`;
+};
+
+export const postCashTransfer = async (
+  id: number,
+  options?: RequestInit,
+): Promise<CashTransfer> => {
+  return customFetch<CashTransfer>(getPostCashTransferUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getPostCashTransferMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postCashTransfer>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof postCashTransfer>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["postCashTransfer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postCashTransfer>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return postCashTransfer(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostCashTransferMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postCashTransfer>>
+>;
+
+export type PostCashTransferMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Approve and post a cash transfer
+ */
+export const usePostCashTransfer = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postCashTransfer>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof postCashTransfer>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getPostCashTransferMutationOptions(options));
+};
+
+/**
+ * @summary Reject a pending cash transfer
+ */
+export const getRejectCashTransferUrl = (id: number) => {
+  return `/api/cash-transfers/${id}/reject`;
+};
+
+export const rejectCashTransfer = async (
+  id: number,
+  rejectCashTransferBody: RejectCashTransferBody,
+  options?: RequestInit,
+): Promise<CashTransfer> => {
+  return customFetch<CashTransfer>(getRejectCashTransferUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(rejectCashTransferBody),
+  });
+};
+
+export const getRejectCashTransferMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rejectCashTransfer>>,
+    TError,
+    { id: number; data: BodyType<RejectCashTransferBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rejectCashTransfer>>,
+  TError,
+  { id: number; data: BodyType<RejectCashTransferBody> },
+  TContext
+> => {
+  const mutationKey = ["rejectCashTransfer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rejectCashTransfer>>,
+    { id: number; data: BodyType<RejectCashTransferBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return rejectCashTransfer(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RejectCashTransferMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rejectCashTransfer>>
+>;
+export type RejectCashTransferMutationBody = BodyType<RejectCashTransferBody>;
+export type RejectCashTransferMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Reject a pending cash transfer
+ */
+export const useRejectCashTransfer = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rejectCashTransfer>>,
+    TError,
+    { id: number; data: BodyType<RejectCashTransferBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof rejectCashTransfer>>,
+  TError,
+  { id: number; data: BodyType<RejectCashTransferBody> },
+  TContext
+> => {
+  return useMutation(getRejectCashTransferMutationOptions(options));
+};
+
+/**
+ * @summary Read a transfer receipt after permission checks
+ */
+export const getGetCashTransferReceiptUrl = (id: number) => {
+  return `/api/cash-transfers/${id}/receipt`;
+};
+
+export const getCashTransferReceipt = async (
+  id: number,
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getGetCashTransferReceiptUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCashTransferReceiptQueryKey = (id: number) => {
+  return [`/api/cash-transfers/${id}/receipt`] as const;
+};
+
+export const getGetCashTransferReceiptQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCashTransferReceipt>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCashTransferReceipt>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCashTransferReceiptQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCashTransferReceipt>>
+  > = ({ signal }) => getCashTransferReceipt(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCashTransferReceipt>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCashTransferReceiptQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCashTransferReceipt>>
+>;
+export type GetCashTransferReceiptQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Read a transfer receipt after permission checks
+ */
+
+export function useGetCashTransferReceipt<
+  TData = Awaited<ReturnType<typeof getCashTransferReceipt>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCashTransferReceipt>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCashTransferReceiptQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Get cashboxes and expense accounts available to the current mobile user

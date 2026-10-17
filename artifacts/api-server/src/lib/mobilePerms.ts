@@ -65,7 +65,20 @@ export const CASH_EXPENSE_MOBILE_PERMISSION_KEYS = [
   "cash_expenses_report",
 ] as const;
 
-const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set<string>(CASH_EXPENSE_MOBILE_PERMISSION_KEYS);
+export const CASH_TRANSFER_MOBILE_PERMISSION_KEYS = [
+  "cash_transfers_create",
+  "cash_transfers_view_own",
+  "cash_transfers_view_all",
+  "cash_transfers_edit",
+  "cash_transfers_submit",
+  "cash_transfers_approve",
+  "cash_transfers_reject",
+] as const;
+
+const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set<string>([
+  ...CASH_EXPENSE_MOBILE_PERMISSION_KEYS,
+  ...CASH_TRANSFER_MOBILE_PERMISSION_KEYS,
+]);
 EXPLICIT_MOBILE_PERMISSION_KEYS.add("mobile_tracking");
 
 /** Clamp the client payload: coerce values to booleans, cap key length. */

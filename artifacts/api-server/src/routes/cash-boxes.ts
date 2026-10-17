@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { cashBoxesTable, receiptVouchersTable, paymentVouchersTable, usersTable } from "@workspace/db";
+import { cashBoxesTable, receiptVouchersTable, paymentVouchersTable, cashTransfersTable, usersTable } from "@workspace/db";
 import { eq, and, sql, or, isNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, getAllowedBranchIds, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -58,7 +58,7 @@ router.get("/balances", async (req, res) => {
       ? and(eq(cashBoxesTable.companyId, cid), branchCond)
       : eq(cashBoxesTable.companyId, cid));
 
-  const [recv, paid] = await Promise.all([
+  const [recv, paid, transfersIn, transfersOut] = await Promise.all([
     db.select({
       cashBoxId: receiptVouchersTable.cashBoxId,
       total: sql<string>`coalesce(sum(${receiptVouchersTable.amount}),0)`,
@@ -72,14 +72,30 @@ router.get("/balances", async (req, res) => {
     }).from(paymentVouchersTable)
       .where(and(eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")))
       .groupBy(paymentVouchersTable.cashBoxId),
+
+    db.select({
+      cashBoxId: cashTransfersTable.toCashBoxId,
+      total: sql<string>`coalesce(sum(${cashTransfersTable.amount}),0)`,
+    }).from(cashTransfersTable)
+      .where(and(eq(cashTransfersTable.companyId, cid), eq(cashTransfersTable.status, "posted")))
+      .groupBy(cashTransfersTable.toCashBoxId),
+
+    db.select({
+      cashBoxId: cashTransfersTable.fromCashBoxId,
+      total: sql<string>`coalesce(sum(${cashTransfersTable.amount}),0)`,
+    }).from(cashTransfersTable)
+      .where(and(eq(cashTransfersTable.companyId, cid), eq(cashTransfersTable.status, "posted")))
+      .groupBy(cashTransfersTable.fromCashBoxId),
   ]);
 
   const recvMap = Object.fromEntries(recv.map(r => [r.cashBoxId!, parseFloat(r.total)]));
   const paidMap = Object.fromEntries(paid.map(r => [r.cashBoxId!, parseFloat(r.total)]));
+  const transfersInMap = Object.fromEntries(transfersIn.filter(r => r.cashBoxId != null).map(r => [r.cashBoxId!, parseFloat(r.total)]));
+  const transfersOutMap = Object.fromEntries(transfersOut.filter(r => r.cashBoxId != null).map(r => [r.cashBoxId!, parseFloat(r.total)]));
 
   res.json(boxes.map(b => ({
     cashBoxId: b.id,
-    balance: (recvMap[b.id] ?? 0) - (paidMap[b.id] ?? 0),
+    balance: (recvMap[b.id] ?? 0) - (paidMap[b.id] ?? 0) + (transfersInMap[b.id] ?? 0) - (transfersOutMap[b.id] ?? 0),
   })));
 });
 

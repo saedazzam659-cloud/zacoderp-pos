@@ -2605,6 +2605,141 @@ export interface SchoolStudentFaceEnrollmentStatus {
   enrolledAt: string | null;
 }
 
+export type CashTransferTransferType =
+  (typeof CashTransferTransferType)[keyof typeof CashTransferTransferType];
+
+export const CashTransferTransferType = {
+  cash_to_cash: "cash_to_cash",
+  cash_to_bank: "cash_to_bank",
+  bank_to_cash: "bank_to_cash",
+  bank_to_bank: "bank_to_bank",
+} as const;
+
+export type CashTransferStatus =
+  (typeof CashTransferStatus)[keyof typeof CashTransferStatus];
+
+export const CashTransferStatus = {
+  draft: "draft",
+  posted: "posted",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * @nullable
+ */
+export type CashTransferApprovalStatus =
+  | (typeof CashTransferApprovalStatus)[keyof typeof CashTransferApprovalStatus]
+  | null;
+
+export const CashTransferApprovalStatus = {
+  draft: "draft",
+  pending: "pending",
+  approved: "approved",
+  rejected: "rejected",
+} as const;
+
+export interface CashTransfer {
+  id: number;
+  companyId: number;
+  code: string;
+  date: string;
+  transferType: CashTransferTransferType;
+  /** @nullable */
+  fromCashBoxId?: number | null;
+  /** @nullable */
+  fromBankId?: number | null;
+  /** @nullable */
+  toCashBoxId?: number | null;
+  /** @nullable */
+  toBankId?: number | null;
+  amount: number | string;
+  /** @nullable */
+  description?: string | null;
+  /** @nullable */
+  notes?: string | null;
+  status: CashTransferStatus;
+  /** @nullable */
+  approvalStatus?: CashTransferApprovalStatus;
+  /** @nullable */
+  referenceNumber?: string | null;
+  /** @nullable */
+  receiptPath?: string | null;
+  /** @nullable */
+  createdByUserId?: number | null;
+  /** @nullable */
+  rejectionReason?: string | null;
+}
+
+export type CashTransferList = CashTransfer[];
+
+export type CashTransferInputTransferType =
+  (typeof CashTransferInputTransferType)[keyof typeof CashTransferInputTransferType];
+
+export const CashTransferInputTransferType = {
+  cash_to_cash: "cash_to_cash",
+  cash_to_bank: "cash_to_bank",
+} as const;
+
+export interface CashTransferInput {
+  /** @minimum 1 */
+  companyId?: number;
+  date: string;
+  transferType: CashTransferInputTransferType;
+  /** @minimum 1 */
+  fromCashBoxId: number;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  toCashBoxId?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  toBankId?: number | null;
+  /**
+   * @maximum 999999999999.99
+   * @exclusiveMinimum 0
+   */
+  amount: number;
+  /** @maxLength 500 */
+  description?: string;
+  /**
+   * @maxLength 1000
+   * @nullable
+   */
+  notes?: string | null;
+  /**
+   * @maxLength 100
+   * @nullable
+   */
+  referenceNumber?: string | null;
+  /**
+   * @maxLength 300
+   * @nullable
+   */
+  receiptPath?: string | null;
+}
+
+export type CashTransferReceiptUploadInputMimeType =
+  (typeof CashTransferReceiptUploadInputMimeType)[keyof typeof CashTransferReceiptUploadInputMimeType];
+
+export const CashTransferReceiptUploadInputMimeType = {
+  "image/jpeg": "image/jpeg",
+  "image/png": "image/png",
+  "image/webp": "image/webp",
+} as const;
+
+export interface CashTransferReceiptUploadInput {
+  mimeType: CashTransferReceiptUploadInputMimeType;
+  /** @minLength 1 */
+  base64: string;
+}
+
+export interface CashTransferReceiptUpload {
+  objectPath: string;
+}
+
 export type CashExpenseStatus =
   (typeof CashExpenseStatus)[keyof typeof CashExpenseStatus];
 
@@ -3630,6 +3765,21 @@ export type ListWhatsAppCampaignsParams = {
    * @minimum 1
    */
   companyId: number;
+};
+
+export type GetCashTransfersParams = {
+  /**
+   * @minimum 1
+   */
+  companyId?: number;
+};
+
+export type RejectCashTransferBody = {
+  /**
+   * @minLength 3
+   * @maxLength 500
+   */
+  reason: string;
 };
 
 export type GetCashExpensesParams = {
