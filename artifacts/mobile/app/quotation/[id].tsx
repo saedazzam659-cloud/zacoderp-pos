@@ -27,7 +27,12 @@ import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
 import { NumericEntry } from '@/components/NumericEntry';
 import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
 import { normalizeSearch } from '@/lib/search';
-import { normalizeVoiceFillText, parseVoiceFillNumbers, subscribeVoiceDocumentFill } from '@/lib/voiceDocumentFillBus';
+import {
+  normalizeVoiceFillText,
+  parseVoiceFillNumbers,
+  subscribeVoiceDocumentFill,
+  subscribeVoiceDocumentSave,
+} from '@/lib/voiceDocumentFillBus';
 import { printInvoice, shareInvoicePdf } from '@/lib/print';
 
 interface Item {
@@ -542,6 +547,11 @@ export default function QuotationForm() {
   }
 
   const canEditDoc = isNew ? mp('quotation_create') : mp('quotation_edit');
+  useEffect(() => subscribeVoiceDocumentSave(() => {
+    if (readOnly || !canEditDoc || saving) return false;
+    void save();
+    return true;
+  }), [readOnly, canEditDoc, saving, save]);
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>

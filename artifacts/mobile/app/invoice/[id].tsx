@@ -529,10 +529,27 @@ export default function InvoiceForm() {
   };
 
   useEffect(() => subscribeVoiceDocumentSave(() => {
-    if (readOnly || !mp('invoice_save_draft') || saving || posting) return false;
+    if (readOnly || saving || posting) return false;
+    const company = user?.company;
+    const autoPostingEnabled = company?.autoPostSales == null
+      ? company?.autoPostingEnabled !== false
+      : company.autoPostSales !== false;
+    if (autoPostingEnabled && mp('invoice_save_issue') && mp('invoice_post')) {
+      void save(true);
+      return true;
+    }
+    if (!mp('invoice_save_draft')) return false;
     void save(false);
     return true;
-  }), [readOnly, mp, saving, posting, save]);
+  }), [
+    readOnly,
+    mp,
+    saving,
+    posting,
+    save,
+    user?.company?.autoPostSales,
+    user?.company?.autoPostingEnabled,
+  ]);
 
   // حذف فاتورة (مسودة فقط — السيرفر يرفض المرحّلة/المعتمدة من زاتكا)
   const [deleting, setDeleting] = useState(false);

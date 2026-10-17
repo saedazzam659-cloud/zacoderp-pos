@@ -134,7 +134,7 @@ export function MobileVoiceAssistant() {
     setWorking(true);
     setMessage('');
     const normalizedCommand = normalizeVoiceFillText(command);
-    if (/^(?:(?:من فضلك|لو سمحت)\s+)?احفظ الفاتوره(?:\s+الان)?$/.test(normalizedCommand) &&
+    if (/^(?:(?:من فضلك|لو سمحت)\s+)?(?:احفظ الفاتوره|احفظ عرض السعر)(?:\s+الان)?$/.test(normalizedCommand) &&
         emitVoiceDocumentSave()) {
       setWorking(false);
       return;

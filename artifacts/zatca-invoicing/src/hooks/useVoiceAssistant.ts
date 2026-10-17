@@ -245,12 +245,12 @@ export function useVoiceAssistant(): UseVoiceAssistantApi {
           await logout();
           return { ok: true, kind: "verb", label: "تسجيل الخروج" };
         case "save": {
-          if (/^\/sales\/invoices(?:\/|$)/.test(window.location.pathname)) {
-            const event = new Event("voice:save-invoice-draft", { cancelable: true });
+          if (/^\/sales\/(?:invoices|quotations)(?:\/|$)/.test(window.location.pathname)) {
+            const event = new Event("voice:save-sales-document", { cancelable: true });
             window.dispatchEvent(event);
             return event.defaultPrevented
-              ? { ok: true, kind: "verb", label: "تم طلب حفظ مسودة الفاتورة" }
-              : { ok: false, kind: "verb", label: "تعذّر بدء حفظ مسودة الفاتورة", reason: "no_save" };
+              ? { ok: true, kind: "verb", label: "تم تنفيذ أمر حفظ المستند" }
+              : { ok: false, kind: "verb", label: "تعذّر بدء حفظ المستند", reason: "no_save" };
           }
           const btn = document.querySelector<HTMLElement>('[data-voice="save"], button[type="submit"]');
           if (btn) { btn.click(); return { ok: true, kind: "verb", label: "تم الضغط على حفظ" }; }
