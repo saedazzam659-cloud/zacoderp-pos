@@ -49,27 +49,30 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
   const [saving, setSaving] = useState(false);
   const [pickerSearch, setPickerSearch] = useState('');
   const initialized = React.useRef(false);
+  const options = optionsQuery.data;
+  const cashBoxes = Array.isArray(options?.cashBoxes) ? options.cashBoxes : [];
+  const expenseAccounts = Array.isArray(options?.expenseAccounts) ? options.expenseAccounts : [];
 
   React.useEffect(() => {
-    if (!optionsQuery.data || (editId > 0 && !existingQuery.data) || initialized.current) return;
+    if (!options || (editId > 0 && !existingQuery.data) || initialized.current) return;
     initialized.current = true;
     const seed = existing;
     setDate(seed?.date?.slice(0, 10) ?? dateKey(new Date()));
     setAmount(seed ? String(seed.amount) : '');
     setDescription(seed?.description ?? '');
-    setCashBoxId(seed?.cashBoxId ?? optionsQuery.data.defaultCashBoxId);
+    setCashBoxId(seed?.cashBoxId ?? options.defaultCashBoxId);
     setAccountId(seed?.expenseAccountId ?? null);
     setRemoveExistingReceipt(false);
-  }, [optionsQuery.data, existing, existingQuery.data, editId]);
+  }, [options, existing, existingQuery.data, editId]);
 
   if (!allowed) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="مصروف نقدي" onBack={() => router.back()} /><View style={{ padding: 18 }}><Card><Text style={{ textAlign: 'right', color: c.mutedForeground, lineHeight: 22 }}>لا تملك الصلاحية اللازمة لإنشاء هذا المصروف أو تعديله.</Text></Card></View></View>;
   if (optionsQuery.isLoading || (editId > 0 && existingQuery.isLoading)) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title={editId ? 'تعديل المسودة' : 'مصروف جديد'} onBack={() => router.back()} /><LoadingBlock /></View>;
   if (optionsQuery.isError) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="مصروف جديد" onBack={() => router.back()} /><ErrorBox text={(optionsQuery.error as Error)?.message ?? 'تعذّر تحميل الصناديق والحسابات'} onRetry={() => optionsQuery.refetch()} /></View>;
   if (editId && (existingQuery.isError || !existing)) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="تعديل المسودة" onBack={() => router.back()} /><ErrorBox text={(existingQuery.error as Error)?.message ?? 'تعذّر تحميل المسودة'} onRetry={() => existingQuery.refetch()} /></View>;
+  if (!options || !Array.isArray(options.cashBoxes) || !Array.isArray(options.expenseAccounts)) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="مصروف جديد" onBack={() => router.back()} /><ErrorBox text="بيانات الصناديق أو حسابات المصروف غير مكتملة. أعد المحاولة." onRetry={() => optionsQuery.refetch()} /></View>;
 
-  const options = optionsQuery.data;
-  const cashBox = options?.cashBoxes.find((item) => item.id === cashBoxId);
-  const account = options?.expenseAccounts.find((item) => item.id === accountId);
+  const cashBox = cashBoxes.find((item) => item.id === cashBoxId);
+  const account = expenseAccounts.find((item) => item.id === accountId);
   const busy = saving || createMutation.isPending || updateMutation.isPending || uploadMutation.isPending;
   const chooseReceipt = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, base64: true, quality: 0.82 });
@@ -127,12 +130,12 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
     if (amountValue) { setAmount(amountValue[1].replace(/,/g, '')); return true; }
     const accountQuery = text.match(/(?:حساب المصروف|الحساب)\s+(.+)/);
     if (accountQuery) {
-      const match = options?.expenseAccounts.find((row) => normalizeVoiceFillText(`${row.name} ${row.code}`).includes(accountQuery[1]));
+      const match = expenseAccounts.find((row) => normalizeVoiceFillText(`${row.name} ${row.code}`).includes(accountQuery[1]));
       if (match) { setAccountId(match.id); return true; }
     }
     const boxQuery = text.match(/(?:الصندوق النقدي|صندوق المصروف|الصندوق)\s+(.+)/);
     if (boxQuery) {
-      const match = options?.cashBoxes.find((row) => normalizeVoiceFillText(`${row.name} ${row.code}`).includes(boxQuery[1]));
+      const match = cashBoxes.find((row) => normalizeVoiceFillText(`${row.name} ${row.code}`).includes(boxQuery[1]));
       if (match) { setCashBoxId(match.id); return true; }
     }
     const description = text.match(/(?:وصف المصروف|الوصف|سبب المصروف)\s+(.+)/);
@@ -172,7 +175,7 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
         <View style={{ backgroundColor: c.card, borderRadius: 12, borderWidth: 1, borderColor: c.border, padding: 13, flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}><Feather name="shield" size={16} color={c.primary} /><Text style={{ flex: 1, color: c.mutedForeground, textAlign: 'right', fontSize: 12, lineHeight: 19 }}>سيُسجّل المصروف على {options?.employeeName || 'المستخدم الحالي'} ويظل مسودة حتى ترحيله.</Text></View>
         <Btn title={editId ? 'حفظ التعديلات' : 'حفظ كمسودة'} icon="check" loading={busy} disabled={busy} onPress={save} testID="save-cash-expense" />
       </ScrollView>
-      <OptionModal visible={picker !== null} title={picker === 'cashbox' ? 'اختر الصندوق النقدي' : 'اختر حساب المصروف'} rows={picker === 'cashbox' ? options?.cashBoxes ?? [] : options?.expenseAccounts ?? []} search={pickerSearch} onSearch={setPickerSearch} onClose={() => { setPicker(null); setPickerSearch(''); }} onSelect={(id) => { if (picker === 'cashbox') setCashBoxId(id); else setAccountId(id); setPicker(null); setPickerSearch(''); }} />
+      <OptionModal visible={picker !== null} title={picker === 'cashbox' ? 'اختر الصندوق النقدي' : 'اختر حساب المصروف'} rows={picker === 'cashbox' ? cashBoxes : expenseAccounts} search={pickerSearch} onSearch={setPickerSearch} onClose={() => { setPicker(null); setPickerSearch(''); }} onSelect={(id) => { if (picker === 'cashbox') setCashBoxId(id); else setAccountId(id); setPicker(null); setPickerSearch(''); }} />
     </View>
   );
 }
