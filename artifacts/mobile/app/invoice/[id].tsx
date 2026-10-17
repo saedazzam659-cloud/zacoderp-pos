@@ -29,7 +29,12 @@ import { Btn, Card, Chip, Empty, Field } from '@/components/ui';
 import { NumericEntry } from '@/components/NumericEntry';
 import { calcInvoiceLine, syncLineDiscount } from '@/lib/invoiceLineCalc';
 import { normalizeSearch } from '@/lib/search';
-import { normalizeVoiceFillText, parseVoiceFillNumbers, subscribeVoiceDocumentFill } from '@/lib/voiceDocumentFillBus';
+import {
+  normalizeVoiceFillText,
+  parseVoiceFillNumbers,
+  subscribeVoiceDocumentFill,
+  subscribeVoiceDocumentSave,
+} from '@/lib/voiceDocumentFillBus';
 
 interface Item {
   id: number;
@@ -522,6 +527,12 @@ export default function InvoiceForm() {
       setPosting(false);
     }
   };
+
+  useEffect(() => subscribeVoiceDocumentSave(() => {
+    if (readOnly || !mp('invoice_save_draft') || saving || posting) return false;
+    void save(false);
+    return true;
+  }), [readOnly, mp, saving, posting, save]);
 
   // حذف فاتورة (مسودة فقط — السيرفر يرفض المرحّلة/المعتمدة من زاتكا)
   const [deleting, setDeleting] = useState(false);

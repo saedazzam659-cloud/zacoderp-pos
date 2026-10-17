@@ -7,7 +7,11 @@ import { api } from '@/lib/api';
 import { useMobilePerms } from '@/hooks/useMobilePerms';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/contexts/AuthContext';
-import { emitVoiceDocumentFill } from '@/lib/voiceDocumentFillBus';
+import {
+  emitVoiceDocumentFill,
+  emitVoiceDocumentSave,
+  normalizeVoiceFillText,
+} from '@/lib/voiceDocumentFillBus';
 
 type EffectiveSettings = { enabled?: boolean; language?: string };
 type ParsedCommand = {
@@ -129,6 +133,12 @@ export function MobileVoiceAssistant() {
     setTranscript(command);
     setWorking(true);
     setMessage('');
+    const normalizedCommand = normalizeVoiceFillText(command);
+    if (/^(?:(?:من فضلك|لو سمحت)\s+)?احفظ الفاتوره(?:\s+الان)?$/.test(normalizedCommand) &&
+        emitVoiceDocumentSave()) {
+      setWorking(false);
+      return;
+    }
     if (emitVoiceDocumentFill(command)) {
       setWorking(false);
       return;
@@ -156,7 +166,7 @@ export function MobileVoiceAssistant() {
         router.replace('/(tabs)' as never);
         learnAfterSuccess(command, parsed, pathname);
       } else if (parsed.kind === 'verb' && parsed.verb === 'save') {
-        setMessage('راجع بيانات المستند ثم اضغط حفظ بنفسك.');
+        if (!emitVoiceDocumentSave()) setMessage('راجع بيانات المستند ثم اضغط حفظ بنفسك.');
       } else {
         setMessage(parsed.reason ?? 'لم أتمكن من فهم الأمر.');
       }

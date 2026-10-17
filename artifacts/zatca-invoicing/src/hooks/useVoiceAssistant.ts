@@ -38,6 +38,7 @@ function authHeaders(extra?: Record<string, string>): HeadersInit {
 
 function learnAfterSuccess(text: string, parsed: ParsedCommand): void {
   if (parsed.kind !== "navigate" && parsed.kind !== "verb") return;
+  if (parsed.kind === "verb" && parsed.verb === "save") return;
   void fetch(apiUrl("/api/voice-assistant/learn"), {
     method: "POST",
     credentials: "include",
@@ -244,6 +245,13 @@ export function useVoiceAssistant(): UseVoiceAssistantApi {
           await logout();
           return { ok: true, kind: "verb", label: "تسجيل الخروج" };
         case "save": {
+          if (/^\/sales\/invoices(?:\/|$)/.test(window.location.pathname)) {
+            const event = new Event("voice:save-invoice-draft", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented
+              ? { ok: true, kind: "verb", label: "تم طلب حفظ مسودة الفاتورة" }
+              : { ok: false, kind: "verb", label: "تعذّر بدء حفظ مسودة الفاتورة", reason: "no_save" };
+          }
           const btn = document.querySelector<HTMLElement>('[data-voice="save"], button[type="submit"]');
           if (btn) { btn.click(); return { ok: true, kind: "verb", label: "تم الضغط على حفظ" }; }
           return { ok: false, kind: "verb", label: "لا يوجد زر حفظ في هذه الشاشة", reason: "no_save" };

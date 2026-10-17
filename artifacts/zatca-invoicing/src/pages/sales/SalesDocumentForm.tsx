@@ -1802,7 +1802,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     ((user as any)?.company?.printTemplateSales === "thermal") ? "thermal" : "a4";
 
   const saveMut = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (input: any) => {
+      const data = input?.body ?? input;
+      const voiceDraft = input?.voiceDraft === true && isInvoice;
       // `isNew` remains true until navigation completes. Prefer the id captured
       // from a prior successful POST so retries after a failed post/navigation
       // update that same invoice rather than creating another draft.
@@ -1830,7 +1832,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         lines.some((l) => l.itemId && !l.warehouseId && !isServiceLine(l));
 
       // Auto-post immediately after save for invoices only (not quotations) — only when enabled system-wide
-      if (autoPostingEnabled && isInvoice && !deferDraftNoWarehouse && j?.id && (j.status ?? "draft") === "draft") {
+      if (!voiceDraft && autoPostingEnabled && isInvoice && !deferDraftNoWarehouse && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/sales/${apiPath}/${j.id}/post`, {
           method: "PATCH", headers,
         });
@@ -1838,9 +1840,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         if (!postRes.ok) {
           throw new Error(postJson.error || postRes.statusText);
         }
-        return { ...postJson, __deferredDraft: false };
+        return { ...postJson, __deferredDraft: false, __voiceDraft: false };
       }
-      return { ...j, __deferredDraft: deferDraftNoWarehouse };
+      return { ...j, __deferredDraft: deferDraftNoWarehouse, __voiceDraft: voiceDraft };
     },
     onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : isOrder ? "sales-orders" : "sales-quotations"] });
@@ -1866,6 +1868,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // show a clear "saved as draft — pick a warehouse to post" message and
       // skip the auto-print hand-off (a draft shouldn't auto-print).
       const deferredDraft = !!saved?.__deferredDraft;
+      const voiceDraft = saved?.__voiceDraft === true;
       if (deferredDraft) {
         toast({
           title: "💾 حُفظت كمسودة",
@@ -1876,13 +1879,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         if (saved?.id && matchNew) navigate(`${basePath}/${saved.id}`);
         return;
       }
-      const didPost   = isInvoice && autoPostingEnabled;
-      const didPrint  = autoPrintSalesInvoice && !!saved?.id;
+      const didPost   = isInvoice && autoPostingEnabled && !voiceDraft;
+      const didPrint  = autoPrintSalesInvoice && !!saved?.id && !voiceDraft;
       toast({ title: getSaveToastTitle(t, { posted: didPost, printed: didPrint }) });
       // If auto-print is on for sales invoices, hand the just-saved id
       // and chosen template to the list page via history.state. The
       // list page reads it once on mount and triggers the print modal.
-      if (openPrintAfterSaveSales && saved?.id) {
+      if (openPrintAfterSaveSales && saved?.id && !voiceDraft) {
         // Use sessionStorage instead of window.history.state because
         // `wouter`'s navigate() pushes a fresh history entry whose state
         // would otherwise overwrite ours, causing the auto-print hint
@@ -1951,6 +1954,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   }
 
   function handleSave() {
+    handleSaveWithMode(false);
+  }
+
+  function handleSaveWithMode(voiceDraft: boolean) {
+    if (voiceDraft && !isInvoice) return;
     // React Query's pending state updates on a render; this ref closes the
     // same-tick double-click/Enter window before a second mutation can POST.
     if (saveInFlightRef.current || saveMut.isPending) return;
@@ -2097,8 +2105,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       base.clientRequestId = clientRequestIdRef.current;
     }
     saveInFlightRef.current = true;
-    saveMut.mutate(base);
+    saveMut.mutate({ body: base, voiceDraft });
   }
+
+  useEffect(() => {
+    const onVoiceSaveDraft = (event: Event) => {
+      if (!isInvoice || viewMode) return;
+      event.preventDefault();
+      handleSaveWithMode(true);
+    };
+    window.addEventListener("voice:save-invoice-draft", onVoiceSaveDraft);
+    return () => window.removeEventListener("voice:save-invoice-draft", onVoiceSaveDraft);
+  }, [isInvoice, viewMode, handleSaveWithMode]);
 
   // NOTE: We deliberately do NOT early-return for `loadingEdit` here, even
   // though it would be the natural place. A bunch of hooks (useRef/useMemo/
@@ -3479,7 +3497,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <Printer className="h-4 w-4" /> طباعة
         </Button>
         {!editLock && (
-          <Button size="sm" data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-save-top">
+          <Button size="sm" data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={handleSave} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-save-top">
             <Save className="h-4 w-4" />
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
@@ -4431,7 +4449,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           طباعة
         </Button>
         {!editLock && (
-          <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
+          <Button data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={handleSave} disabled={saveMut.isPending}>
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
         )}
