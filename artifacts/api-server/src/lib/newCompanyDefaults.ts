@@ -12,7 +12,9 @@ const sequenceNamesAr: Record<string, string> = ar.sequences.tx;
  *
  * Variants that issue numbers into the same document table share a counter:
  * an invoice paid cash and one paid by bank cannot both be "00001".
- * Auto-generated JEs likewise share the journal_entry counter.
+ * Auto-generated JEs likewise share the journal_entry counter. Customer
+ * credit and supplier debit notes intentionally keep separate counters, even
+ * though each series starts at the same padded number.
  */
 export function newCompanySequenceGroups(): string[][] {
   const groups = new Map<string, string[]>();
@@ -22,8 +24,6 @@ export function newCompanySequenceGroups(): string[][] {
       "hr_payroll", "hr_loan", "hr_eos", "hr_custody", "contracting_bill_je",
       "opening_balance_je", "stock_transfer_je", "stock_adjustment_je",
     ].includes(type) ? "journal_entry"
-      : (["account_note_customer_credit", "account_note_supplier_debit"] as string[]).includes(type)
-        ? "account_notes"
       : /^(sales_invoice|purchase_invoice|sales_return|purchase_return|receipt_voucher|payment_voucher)_(cash|credit|bank|foreign|mobile)$/.test(type)
         ? type.replace(/_(cash|credit|bank|foreign|mobile)$/, "")
         : type;
