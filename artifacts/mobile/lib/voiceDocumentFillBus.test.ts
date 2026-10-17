@@ -2,14 +2,29 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   emitVoiceDocumentSave,
+  emitVoiceDocumentCommand,
   normalizeVoiceFillText,
   parseVoiceDateValue,
   parseVoiceFillNumbers,
   subscribeVoiceDocumentSave,
+  subscribeVoiceDocumentCommand,
 } from './voiceDocumentFillBus';
 
 test('normalizes Arabic digits and hamza variants for local catalog matching', () => {
   assert.equal(normalizeVoiceFillText('أضف ٣ من السكر'), 'اضف 3 من السكر');
+});
+
+test('voice commands only dispatch to a currently subscribed mobile form', () => {
+  assert.equal(emitVoiceDocumentCommand('احفظ المصروف'), false);
+  let received = '';
+  const unsubscribe = subscribeVoiceDocumentCommand((command) => {
+    received = command;
+    return true;
+  });
+  assert.equal(emitVoiceDocumentCommand('احفظ المصروف'), true);
+  assert.equal(received, 'احفظ المصروف');
+  unsubscribe();
+  assert.equal(emitVoiceDocumentCommand('احفظ المصروف'), false);
 });
 
 test('extracts a requested quantity and price from Arabic speech text', () => {

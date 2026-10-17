@@ -12,6 +12,7 @@ import { useColors } from '@/hooks/useColors';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { Btn, Card } from '@/components/ui';
 import { useCreateCashTransfer, useUploadCashTransferReceipt } from '@workspace/api-client-react';
+import { normalizeVoiceFillText, parseVoiceDateValue, subscribeVoiceDocumentFill, subscribeVoiceDocumentCommand } from '@/lib/voiceDocumentFillBus';
 
 type CashBox = { id: number; code: string; nameAr: string; currencyId: number | null };
 type Bank = { id: number; code: string; nameAr: string; currencyId: number | null };
@@ -43,6 +44,7 @@ export default function CashTransfersScreen() {
   const [referenceNumber, setReferenceNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [picker, setPicker] = useState<'source' | 'cash' | 'bank' | null>(null);
+  const [pickerSearch, setPickerSearch] = useState('');
   const [receipt, setReceipt] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [rejectingId, setRejectingId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -130,6 +132,76 @@ export default function CashTransfersScreen() {
   const canReject = mp('cash_transfers_reject');
   const selectRows = picker === 'source' ? boxes : picker === 'cash' ? boxes : banks;
   const selectTitle = picker === 'source' ? 'اختر صندوق المصدر' : picker === 'cash' ? 'اختر صندوق الوجهة' : 'اختر الحساب البنكي';
+  const filteredSelectRows = selectRows
+    .filter((x) => picker !== 'cash' || x.id !== fromCashBoxId)
+    .filter((x) => normalizeVoiceFillText(`${x.nameAr} ${x.code}`).includes(normalizeVoiceFillText(pickerSearch)));
+
+  React.useEffect(() => subscribeVoiceDocumentFill((transcript) => {
+    if (!showForm) return false;
+    const text = normalizeVoiceFillText(transcript);
+    const dateValue = parseVoiceDateValue(transcript);
+    if (dateValue && /(?:التاريخ|تاريخ الايداع)/.test(text)) { setDate(dateValue); return true; }
+    const amountValue = text.match(/(?:المبلغ|قيمه الايداع)\s*[:：]?\s*([\d,]+(?:\.\d+)?)/);
+    if (amountValue) { setAmount(amountValue[1].replace(/,/g, '')); return true; }
+    const reference = text.match(/(?:رقم المرجع|المرجع)\s+(.+)/);
+    if (reference) { setReferenceNumber(reference[1]); return true; }
+    const notesValue = text.match(/(?:ملاحظات الايداع|الملاحظات|ملاحظات)\s+(.+)/);
+    if (notesValue) { setNotes(notesValue[1]); return true; }
+    const source = text.match(/(?:الصندوق المصدر|صندوق المصدر|من صندوق)\s+(.+)/);
+    if (source) {
+      const match = boxes.find((row) => normalizeVoiceFillText(`${row.nameAr} ${row.code}`).includes(source[1]));
+      if (match) { setFromCashBoxId(match.id); return true; }
+    }
+    const targetCash = text.match(/(?:الصندوق المستهدف|الى صندوق|الي صندوق)\s+(.+)/);
+    const targetBank = text.match(/(?:الحساب البنكي المستهدف|الى بنك|الي بنك)\s+(.+)/);
+    if (targetCash || targetBank) {
+      const isCash = !!targetCash;
+      const targetName = (targetCash ?? targetBank)![1];
+      const candidates = isCash ? boxes.filter((row) => row.id !== fromCashBoxId) : banks;
+      const match = candidates.find((row) => normalizeVoiceFillText(`${row.nameAr} ${row.code}`).includes(targetName));
+      if (match) {
+        if (isCash) { setDestinationType('cash'); setToCashBoxId(match.id); }
+        else setToBankId(match.id);
+        return true;
+      }
+    }
+    if (/^(?:حول الوجهة الى بنك|وجهه بنك|الى بنك)$/.test(text)) { setDestinationType('bank'); setPicker(null); return true; }
+    if (/^(?:حول الوجهة الى صندوق|وجهه صندوق|الى صندوق)$/.test(text)) { setDestinationType('cash'); setPicker(null); return true; }
+    return false;
+  }), [showForm, boxes, banks, destinationType, fromCashBoxId]);
+
+  React.useEffect(() => subscribeVoiceDocumentCommand((transcript) => {
+    const command = normalizeVoiceFillText(transcript);
+    if (!showForm && /^(?:افتح|ابدأ|انشئ) (?:نموذج )?ايداع جديد$/.test(command)) {
+      if (!canCreate) return false;
+      setShowForm(true); return true;
+    }
+    if (showForm) {
+      if (/^(?:من فضلك |لو سمحت )?احفظ الايداع(?: الان)?$/.test(command)) {
+        if (!canCreate) return false;
+        createMutation.mutate(false); return true;
+      }
+      if (/^(?:من فضلك |لو سمحت )?(?:ارسل الايداع للاعتماد|اعتمد ارسال الايداع)(?: الان)?$/.test(command)) {
+        if (!canCreate || !canSubmit) return false;
+        createMutation.mutate(true); return true;
+      }
+      if (/^(?:الغ|الغي|الغاء) نموذج الايداع$/.test(command)) { resetForm(); return true; }
+      return false;
+    }
+    const approve = command.match(/^(?:اعتمد|وافق على) الايداع(?: رقم)? ([a-z0-9-]+)$/);
+    const reject = command.match(/^(?:ارفض) الايداع(?: رقم)? ([a-z0-9-]+)(?: بسبب (.+))$/);
+    if (approve) {
+      const row = (listQ.data ?? []).find((item) => normalizeVoiceFillText(item.code) === approve[1] || String(item.id) === approve[1]);
+      if (!row || !canApprove || row.createdByUserId === user?.id || row.approvalStatus !== 'pending') return false;
+      actionMutation.mutate({ id: row.id, action: 'post' }); return true;
+    }
+    if (reject) {
+      const row = (listQ.data ?? []).find((item) => normalizeVoiceFillText(item.code) === reject[1] || String(item.id) === reject[1]);
+      if (!row || !canReject || row.createdByUserId === user?.id || row.approvalStatus !== 'pending' || reject[2].trim().length < 3) return false;
+      actionMutation.mutate({ id: row.id, action: 'reject', reason: reject[2].trim() }); return true;
+    }
+    return false;
+  }), [showForm, canCreate, canSubmit, canApprove, canReject, createMutation, actionMutation, listQ.data, user?.id]);
 
   return <View style={{ flex: 1, backgroundColor: c.background }}>
     <View style={{ backgroundColor: c.primary, paddingTop: (Platform.OS === 'web' ? Math.max(insets.top, 67) : insets.top) + 10, paddingBottom: 16, paddingHorizontal: 16, flexDirection: 'row-reverse', alignItems: 'center', gap: 12 }}>
@@ -142,25 +214,31 @@ export default function CashTransfersScreen() {
         <Card style={{ gap: 12 }}>
           <Text style={{ color: c.foreground, textAlign: 'right', fontSize: 16, fontFamily: 'Inter_700Bold' }}>إيداع نقدي جديد</Text>
           <Text style={{ color: c.mutedForeground, textAlign: 'right', fontSize: 12 }}>الرصيد المتاح: {available.toFixed(2)} {selectedBox?.nameAr ?? ''}</Text>
-          <Select label="الصندوق المصدر" value={selectedBox?.nameAr ?? ''} onPress={() => setPicker(picker === 'source' ? null : 'source')} />
+          <Select label="الصندوق المصدر" value={selectedBox?.nameAr ?? ''} onPress={() => { setPicker(picker === 'source' ? null : 'source'); setPickerSearch(''); }} />
           <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
-            <Choice label="إلى بنك" selected={destinationType === 'bank'} onPress={() => { setDestinationType('bank'); setPicker(null); }} />
-            <Choice label="إلى صندوق" selected={destinationType === 'cash'} onPress={() => { setDestinationType('cash'); setPicker(null); }} />
+            <Choice label="إلى بنك" selected={destinationType === 'bank'} onPress={() => { setDestinationType('bank'); setPicker(null); setPickerSearch(''); }} />
+            <Choice label="إلى صندوق" selected={destinationType === 'cash'} onPress={() => { setDestinationType('cash'); setPicker(null); setPickerSearch(''); }} />
           </View>
           <Select label={destinationType === 'cash' ? 'الصندوق المستهدف' : 'الحساب البنكي المستهدف'}
             value={destinationType === 'cash' ? boxes.find((x) => x.id === toCashBoxId)?.nameAr ?? '' : banks.find((x) => x.id === toBankId)?.nameAr ?? ''}
-            onPress={() => setPicker(picker === (destinationType === 'cash' ? 'cash' : 'bank') ? null : destinationType === 'cash' ? 'cash' : 'bank')} />
+            onPress={() => { setPicker(picker === (destinationType === 'cash' ? 'cash' : 'bank') ? null : destinationType === 'cash' ? 'cash' : 'bank'); setPickerSearch(''); }} />
           {picker ? <Card style={{ gap: 2, backgroundColor: c.muted }}>
             <Text style={{ color: c.foreground, textAlign: 'right', fontFamily: 'Inter_600SemiBold', paddingVertical: 7 }}>{selectTitle}</Text>
-            {selectRows.filter((x) => picker !== 'cash' || x.id !== fromCashBoxId).map((row: any) => <Pressable key={row.id} onPress={() => {
-              if (picker === 'source') setFromCashBoxId(row.id);
-              else if (picker === 'cash') setToCashBoxId(row.id);
-              else setToBankId(row.id);
-              setPicker(null);
-            }} style={{ paddingVertical: 10, borderTopWidth: 1, borderColor: c.border, flexDirection: 'row-reverse', justifyContent: 'space-between' }}>
-              <Text style={{ color: c.foreground, textAlign: 'right' }}>{row.nameAr}</Text><Text style={{ color: c.mutedForeground }}>{row.code}</Text>
-            </Pressable>)}
-            {!selectRows.length ? <Text style={{ color: c.mutedForeground, textAlign: 'right', paddingVertical: 8 }}>لا توجد خيارات متاحة</Text> : null}
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', borderWidth: 1, borderColor: c.border, borderRadius: 9, paddingHorizontal: 9 }}>
+              <Feather name="search" size={15} color={c.mutedForeground} />
+              <TextInput value={pickerSearch} onChangeText={setPickerSearch} placeholder="بحث بالاسم أو الكود" placeholderTextColor={c.mutedForeground} testID="cash-transfer-option-search" style={{ flex: 1, minHeight: 42, paddingHorizontal: 8, color: c.foreground, textAlign: 'right' }} />
+            </View>
+            <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 220 }}>
+              {filteredSelectRows.map((row: any) => <Pressable key={row.id} onPress={() => {
+                if (picker === 'source') setFromCashBoxId(row.id);
+                else if (picker === 'cash') setToCashBoxId(row.id);
+                else setToBankId(row.id);
+                setPicker(null); setPickerSearch('');
+              }} style={{ paddingVertical: 10, borderTopWidth: 1, borderColor: c.border, flexDirection: 'row-reverse', justifyContent: 'space-between' }}>
+                <Text style={{ color: c.foreground, textAlign: 'right' }}>{row.nameAr}</Text><Text style={{ color: c.mutedForeground }}>{row.code}</Text>
+              </Pressable>)}
+            </ScrollView>
+            {!filteredSelectRows.length ? <Text style={{ color: c.mutedForeground, textAlign: 'right', paddingVertical: 8 }}>لا توجد نتائج</Text> : null}
           </Card> : null}
           <Input label="التاريخ" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
           <Input label="المبلغ" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" />

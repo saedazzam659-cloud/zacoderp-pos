@@ -1,8 +1,10 @@
 type VoiceFillListener = (transcript: string) => boolean;
 type VoiceSaveListener = () => boolean;
+type VoiceCommandListener = (transcript: string) => boolean;
 
 const listeners = new Set<VoiceFillListener>();
 const saveListeners = new Set<VoiceSaveListener>();
+const commandListeners = new Set<VoiceCommandListener>();
 
 export function subscribeVoiceDocumentFill(listener: VoiceFillListener): () => void {
   listeners.add(listener);
@@ -24,6 +26,18 @@ export function subscribeVoiceDocumentSave(listener: VoiceSaveListener): () => v
 export function emitVoiceDocumentSave(): boolean {
   for (const listener of [...saveListeners]) {
     if (listener()) return true;
+  }
+  return false;
+}
+
+export function subscribeVoiceDocumentCommand(listener: VoiceCommandListener): () => void {
+  commandListeners.add(listener);
+  return () => commandListeners.delete(listener);
+}
+
+export function emitVoiceDocumentCommand(transcript: string): boolean {
+  for (const listener of [...commandListeners]) {
+    if (listener(transcript)) return true;
   }
   return false;
 }

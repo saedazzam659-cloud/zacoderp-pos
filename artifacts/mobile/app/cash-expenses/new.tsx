@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Image, Modal, Platform, Pressable, ScrollView, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { ActivityIndicator, Alert, Image, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import { useColors } from '@/hooks/useColors';
 import { Btn, Card, ErrorBox, Field } from '@/components/ui';
 import { useCreateCashExpense, useUpdateCashExpense, useGetCashExpense, useGetCashExpenseOptions, useUploadCashExpenseReceipt, useDeleteCashExpenseReceiptUpload, getGetCashExpenseOptionsQueryKey, getGetCashExpenseQueryKey, getGetCashExpensesQueryKey } from '@workspace/api-client-react';
 import type { CashExpense, CashExpenseCashBoxOption, CashExpenseAccountOption } from '@workspace/api-client-react';
+import { normalizeVoiceFillText, parseVoiceDateValue, subscribeVoiceDocumentFill, subscribeVoiceDocumentCommand } from '@/lib/voiceDocumentFillBus';
 
 function notify(title: string, message: string) {
   if (Platform.OS === 'web') window.alert(`${title}: ${message}`);
@@ -27,6 +28,7 @@ export default function CashExpenseEditor() {
 
 function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
   const router = useRouter();
+  const pathname = usePathname();
   const c = useColors();
   const qc = useQueryClient();
   const optionsQuery = useGetCashExpenseOptions({ query: { queryKey: getGetCashExpenseOptionsQueryKey(), enabled: allowed } });
@@ -45,6 +47,7 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
   const [removeExistingReceipt, setRemoveExistingReceipt] = useState(false);
   const [picker, setPicker] = useState<'cashbox' | 'account' | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pickerSearch, setPickerSearch] = useState('');
   const initialized = React.useRef(false);
 
   React.useEffect(() => {
@@ -115,6 +118,35 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
     } finally { setSaving(false); }
   };
 
+  React.useEffect(() => subscribeVoiceDocumentFill((transcript) => {
+    if (pathname !== '/cash-expenses/new') return false;
+    const text = normalizeVoiceFillText(transcript);
+    const dateValue = parseVoiceDateValue(transcript);
+    if (dateValue && /(?:التاريخ|تاريخ المصروف)/.test(text)) { setDate(dateValue); return true; }
+    const amountValue = text.match(/(?:المبلغ|قيمه المصروف)\s*[:：]?\s*([\d,]+(?:\.\d+)?)/);
+    if (amountValue) { setAmount(amountValue[1].replace(/,/g, '')); return true; }
+    const accountQuery = text.match(/(?:حساب المصروف|الحساب)\s+(.+)/);
+    if (accountQuery) {
+      const match = options?.expenseAccounts.find((row) => normalizeVoiceFillText(`${row.name} ${row.code}`).includes(accountQuery[1]));
+      if (match) { setAccountId(match.id); return true; }
+    }
+    const boxQuery = text.match(/(?:الصندوق النقدي|صندوق المصروف|الصندوق)\s+(.+)/);
+    if (boxQuery) {
+      const match = options?.cashBoxes.find((row) => normalizeVoiceFillText(`${row.name} ${row.code}`).includes(boxQuery[1]));
+      if (match) { setCashBoxId(match.id); return true; }
+    }
+    const description = text.match(/(?:وصف المصروف|الوصف|سبب المصروف)\s+(.+)/);
+    if (description) { setDescription(description[1]); return true; }
+    return false;
+  }), [options, pathname]);
+  React.useEffect(() => subscribeVoiceDocumentCommand((transcript) => {
+    if (pathname !== '/cash-expenses/new') return false;
+    if (!/^(?:(?:من فضلك|لو سمحت)\s+)?احفظ المصروف(?:\s+الان)?$/.test(normalizeVoiceFillText(transcript))) return false;
+    if (!allowed) return false;
+    void save();
+    return true;
+  }), [allowed, save, pathname]);
+
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
       <CashHeader title={editId ? 'تعديل المسودة' : 'مصروف جديد'} onBack={() => router.back()} />
@@ -140,7 +172,7 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
         <View style={{ backgroundColor: c.card, borderRadius: 12, borderWidth: 1, borderColor: c.border, padding: 13, flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}><Feather name="shield" size={16} color={c.primary} /><Text style={{ flex: 1, color: c.mutedForeground, textAlign: 'right', fontSize: 12, lineHeight: 19 }}>سيُسجّل المصروف على {options?.employeeName || 'المستخدم الحالي'} ويظل مسودة حتى ترحيله.</Text></View>
         <Btn title={editId ? 'حفظ التعديلات' : 'حفظ كمسودة'} icon="check" loading={busy} disabled={busy} onPress={save} testID="save-cash-expense" />
       </ScrollView>
-      <OptionModal visible={picker !== null} title={picker === 'cashbox' ? 'اختر الصندوق النقدي' : 'اختر حساب المصروف'} rows={picker === 'cashbox' ? options?.cashBoxes ?? [] : options?.expenseAccounts ?? []} onClose={() => setPicker(null)} onSelect={(id) => { if (picker === 'cashbox') setCashBoxId(id); else setAccountId(id); setPicker(null); }} />
+      <OptionModal visible={picker !== null} title={picker === 'cashbox' ? 'اختر الصندوق النقدي' : 'اختر حساب المصروف'} rows={picker === 'cashbox' ? options?.cashBoxes ?? [] : options?.expenseAccounts ?? []} search={pickerSearch} onSearch={setPickerSearch} onClose={() => { setPicker(null); setPickerSearch(''); }} onSelect={(id) => { if (picker === 'cashbox') setCashBoxId(id); else setAccountId(id); setPicker(null); setPickerSearch(''); }} />
     </View>
   );
 }
@@ -150,14 +182,17 @@ function SelectRow({ label, value, onPress }: { label: string; value: string; on
   return <View style={{ gap: 6 }}><Text style={{ color: c.mutedForeground, fontSize: 13, textAlign: 'right', fontFamily: 'Inter_500Medium' }}>{label}</Text><Pressable onPress={onPress} style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 12, borderWidth: 1.2, borderColor: c.input, borderRadius: 10, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: pressed ? c.muted : c.card })}><Feather name="chevron-down" size={16} color={c.mutedForeground} /><Text numberOfLines={1} style={{ flex: 1, textAlign: 'right', color: value.startsWith('اختر') ? c.mutedForeground : c.foreground, fontSize: 14 }}>{value}</Text></Pressable></View>;
 }
 
-function OptionModal({ visible, title, rows, onClose, onSelect }: { visible: boolean; title: string; rows: Array<CashExpenseCashBoxOption | CashExpenseAccountOption>; onClose: () => void; onSelect: (id: number) => void }) {
+function OptionModal({ visible, title, rows, search, onSearch, onClose, onSelect }: { visible: boolean; title: string; rows: Array<CashExpenseCashBoxOption | CashExpenseAccountOption>; search: string; onSearch: (value: string) => void; onClose: () => void; onSelect: (id: number) => void }) {
   const c = useColors();
+  const filteredRows = rows.filter((row) => normalizeVoiceFillText(`${row.name} ${row.code}`).includes(normalizeVoiceFillText(search)));
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
     <Pressable onPress={onClose} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: '#00000055' }}>
       <Pressable onPress={() => {}} style={{ backgroundColor: c.background, borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingTop: 10, paddingHorizontal: 16, paddingBottom: 30, maxHeight: '78%' }}>
         <View style={{ alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: c.border, marginBottom: 14 }} />
         <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 12 }}><Pressable onPress={onClose} hitSlop={8}><Feather name="x" size={20} color={c.mutedForeground} /></Pressable><Text style={{ color: c.foreground, textAlign: 'right', fontSize: 17, fontFamily: 'Inter_700Bold' }}>{title}</Text></View>
-        <ScrollView>{rows.map((row) => <Pressable key={row.id} onPress={() => onSelect(row.id)} style={({ pressed }) => ({ minHeight: 56, borderTopWidth: 1, borderColor: c.border, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, backgroundColor: pressed ? c.muted : 'transparent' })}><Feather name="chevron-left" size={16} color={c.mutedForeground} /><View style={{ flex: 1, gap: 4 }}><Text style={{ color: c.foreground, textAlign: 'right', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>{row.name}</Text><Text style={{ color: c.mutedForeground, textAlign: 'right', fontSize: 11 }}>{row.code}</Text></View></Pressable>)}</ScrollView>
+        <TextInput value={search} onChangeText={onSearch} placeholder="بحث بالاسم أو الكود" placeholderTextColor={c.mutedForeground} testID="cash-expense-option-search" style={{ minHeight: 44, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 12, color: c.foreground, textAlign: 'right', marginBottom: 8 }} />
+        <ScrollView keyboardShouldPersistTaps="handled">{filteredRows.map((row) => <Pressable key={row.id} onPress={() => onSelect(row.id)} style={({ pressed }) => ({ minHeight: 56, borderTopWidth: 1, borderColor: c.border, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, backgroundColor: pressed ? c.muted : 'transparent' })}><Feather name="chevron-left" size={16} color={c.mutedForeground} /><View style={{ flex: 1, gap: 4 }}><Text style={{ color: c.foreground, textAlign: 'right', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>{row.name}</Text><Text style={{ color: c.mutedForeground, textAlign: 'right', fontSize: 11 }}>{row.code}</Text></View></Pressable>)}
+          {!filteredRows.length ? <Text style={{ color: c.mutedForeground, textAlign: 'center', paddingVertical: 16 }}>لا توجد نتائج</Text> : null}</ScrollView>
       </Pressable>
     </Pressable>
   </Modal>;

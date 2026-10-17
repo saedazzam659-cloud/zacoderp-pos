@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   emitVoiceDocumentFill,
   emitVoiceDocumentSave,
+  emitVoiceDocumentCommand,
   normalizeVoiceFillText,
 } from '@/lib/voiceDocumentFillBus';
 
@@ -29,6 +30,7 @@ const MOBILE_ROUTES: Record<string, string> = {
   '/cash-transfers': '/cash-transfers',
   '/cash/receipts': '/cash-transfers',
   '/cash-expenses': '/cash-expenses',
+  '/cash-expenses/new': '/cash-expenses/new',
 };
 
 function learnAfterSuccess(transcript: string, parsed: ParsedCommand, contextRoute: string): void {
@@ -136,6 +138,15 @@ export function MobileVoiceAssistant() {
     const normalizedCommand = normalizeVoiceFillText(command);
     if (/^(?:(?:من فضلك|لو سمحت)\s+)?(?:احفظ الفاتوره|احفظ عرض السعر)(?:\s+الان)?$/.test(normalizedCommand) &&
         emitVoiceDocumentSave()) {
+      setWorking(false);
+      return;
+    }
+    if (/^(?:(?:من فضلك|لو سمحت)\s+)?(?:احفظ المصروف|احفظ الايداع|ارسل الايداع للاعتماد)(?:\s+الان)?$/.test(normalizedCommand) &&
+        emitVoiceDocumentCommand(command)) {
+      setWorking(false);
+      return;
+    }
+    if (emitVoiceDocumentCommand(command)) {
       setWorking(false);
       return;
     }

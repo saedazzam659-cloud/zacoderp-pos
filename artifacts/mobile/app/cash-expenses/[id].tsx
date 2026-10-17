@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
@@ -10,6 +10,7 @@ import { Btn, Card, ErrorBox } from '@/components/ui';
 import { getDomain, getToken } from '@/lib/api';
 import { useGetCashExpense, usePostCashExpense, useCancelCashExpense, getGetCashExpenseQueryKey, getGetCashExpensesQueryKey, getGetCashExpenseReportQueryKey } from '@workspace/api-client-react';
 import type { CashExpense } from '@workspace/api-client-react';
+import { normalizeVoiceFillText, subscribeVoiceDocumentCommand } from '@/lib/voiceDocumentFillBus';
 
 function notify(title: string, text: string) {
   if (Platform.OS === 'web') window.alert(`${title}: ${text}`);
@@ -26,6 +27,7 @@ export default function CashExpenseDetail() {
 
 function DetailBody({ id, allowed }: { id: number; allowed: boolean }) {
   const router = useRouter();
+  const pathname = usePathname();
   const c = useColors();
   const { mp } = useMobilePerms();
   const qc = useQueryClient();
@@ -79,6 +81,22 @@ function DetailBody({ id, allowed }: { id: number; allowed: boolean }) {
     if (Platform.OS === 'web') { if (window.confirm(`${title}\n${message}`)) void perform(action); return; }
     Alert.alert(title, message, [{ text: 'رجوع', style: 'cancel' }, { text: action === 'post' ? 'ترحيل' : 'إلغاء المصروف', style: action === 'cancel' ? 'destructive' : 'default', onPress: () => void perform(action) }]);
   };
+
+  React.useEffect(() => subscribeVoiceDocumentCommand((transcript) => {
+    if (!allowed || !expense || pathname !== `/cash-expenses/${id}`) return false;
+    const command = normalizeVoiceFillText(transcript);
+    if (/^(?:من فضلك |لو سمحت )?رحل المصروف(?: الان)?$/.test(command)) {
+      if (!canPost || expense?.status !== 'draft') return false;
+      void perform('post');
+      return true;
+    }
+    if (/^(?:من فضلك |لو سمحت )?(?:الغ|الغي|الغاء) المصروف(?: الان)?$/.test(command)) {
+      if (!canCancel || expense?.status === 'cancelled') return false;
+      void perform('cancel');
+      return true;
+    }
+    return false;
+  }), [pathname, id, canPost, canCancel, expense?.status, perform]);
 
   if (!allowed) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="تفاصيل المصروف" onBack={() => router.back()} /><View style={{ padding: 18 }}><Card><Text style={{ color: c.mutedForeground, textAlign: 'right', lineHeight: 22 }}>لا تملك صلاحية عرض المصروفات النقدية.</Text></Card></View></View>;
   if (detail.isLoading) return <View style={{ flex: 1, backgroundColor: c.background }}><CashHeader title="تفاصيل المصروف" onBack={() => router.back()} /><LoadingBlock /></View>;
