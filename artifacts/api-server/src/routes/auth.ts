@@ -1887,15 +1887,6 @@ router.post("/register", async (req, res) => {
     res.status(500).json({ error: "تعذّر إعداد العملة والضريبة الافتراضية للشركة الجديدة", companyId: company.id });
     return;
   }
-  try {
-    const { seedNewCompanyOperationalDefaults } = await import("../lib/newCompanyOperationalDefaults.js");
-    await seedNewCompanyOperationalDefaults(company.id);
-  } catch (err) {
-    req.log?.error?.({ err, companyId: company.id }, "register: operational defaults seed failed");
-    res.status(500).json({ error: "تعذّر إنشاء الفرع والمخزن والخزينة والحساب البنكي الافتراضي للشركة الجديدة", companyId: company.id });
-    return;
-  }
-
   // Create subscription
   const today = new Date().toISOString().split("T")[0];
   await db.insert(subscriptionsTable).values({
@@ -1992,6 +1983,19 @@ router.post("/register", async (req, res) => {
     req.log?.error?.({ err, companyId: company.id }, "register: new company defaults failed");
     res.status(500).json({ error: err instanceof Error && err.message.startsWith("Optional accounting failed")
       ? err.message : "تعذّر إكمال الإعدادات الافتراضية للشركة الجديدة", companyId: company.id });
+    return;
+  }
+
+  // Operational defaults reference the cash/bank parent accounts. Seed them
+  // only after industry/template COA and fresh-company accounting defaults
+  // have completed, otherwise valid template-based companies fail here before
+  // their admin user can be created.
+  try {
+    const { seedNewCompanyOperationalDefaults } = await import("../lib/newCompanyOperationalDefaults.js");
+    await seedNewCompanyOperationalDefaults(company.id);
+  } catch (err) {
+    req.log?.error?.({ err, companyId: company.id }, "register: operational defaults seed failed");
+    res.status(500).json({ error: "تعذّر إنشاء الفرع والمخزن والخزينة والحساب البنكي الافتراضي للشركة الجديدة", companyId: company.id });
     return;
   }
 
