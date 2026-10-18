@@ -1805,6 +1805,13 @@ export default function GeneralSettings() {
             <span className="truncate">{t("pages.generalSettings.printText")}</span>
           </TabsTrigger>
           <TabsTrigger
+            value="printNotes"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md"
+          >
+            <MessageCircle className="h-4 w-4 shrink-0" />
+            <span className="truncate">ملاحظات الطباعة</span>
+          </TabsTrigger>
+          <TabsTrigger
             value="paymentPrefs"
             className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
           >
@@ -3769,6 +3776,10 @@ export default function GeneralSettings() {
           <PrintFooterTab user={user} token={token} setUser={setUser} />
         </TabsContent>
 
+        <TabsContent value="printNotes" className="mt-5 space-y-6">
+          <PrintCustomNotesTab user={user} token={token} setUser={setUser} />
+        </TabsContent>
+
         <TabsContent value="printPrefs" className="mt-5 space-y-6">
           <PrintPreferencesTab user={user} token={token} setUser={setUser} />
         </TabsContent>
@@ -4917,6 +4928,121 @@ function SalesReturnsUserFilterCard({ user, token }: { user: any; token: string 
 }
 
 // ─── Sub-component: Print Footer customization tab ────────────────────────
+function PrintCustomNotesTab({ user, token, setUser }: { user: any; token: string; setUser: any }) {
+  const { i18n } = useTranslation();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const isAr = i18n.language?.startsWith("ar");
+  const company = user?.company ?? {};
+  const companyId = company.id ?? user?.companyId;
+  const [notes, setNotes] = useState<string>(company.printCustomNotes ?? "");
+  const [onSales, setOnSales] = useState<boolean>(company.printCustomNotesOnSales === true);
+  const [onQuotation, setOnQuotation] = useState<boolean>(company.printCustomNotesOnQuotation === true);
+
+  useEffect(() => {
+    setNotes(company.printCustomNotes ?? "");
+    setOnSales(company.printCustomNotesOnSales === true);
+    setOnQuotation(company.printCustomNotesOnQuotation === true);
+  }, [company.printCustomNotes, company.printCustomNotesOnSales, company.printCustomNotesOnQuotation]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`${API}/api/companies/${companyId}/general-settings`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          printCustomNotes: notes,
+          printCustomNotesOnSales: onSales,
+          printCustomNotesOnQuotation: onQuotation,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? (isAr ? "تعذّر حفظ الإعدادات" : "Could not save settings"));
+      return data;
+    },
+    onSuccess: (data) => {
+      setUser?.((current: any) => ({
+        ...current,
+        company: {
+          ...current?.company,
+          printCustomNotes: data.printCustomNotes,
+          printCustomNotesOnSales: data.printCustomNotesOnSales,
+          printCustomNotesOnQuotation: data.printCustomNotesOnQuotation,
+        },
+      }));
+      qc.invalidateQueries({ queryKey: ["auth-me"] });
+      toast({ title: isAr ? "تم حفظ ملاحظات الطباعة" : "Print notes saved" });
+    },
+    onError: (error: any) => toast({
+      title: error.message || (isAr ? "تعذّر حفظ الإعدادات" : "Could not save settings"),
+      variant: "destructive",
+    }),
+  });
+
+  return (
+    <div className="rounded-xl border bg-card p-5 space-y-5">
+      <div className="space-y-1">
+        <h2 className="font-semibold text-base flex items-center gap-2">
+          <MessageCircle className="h-4 w-4 text-muted-foreground" />
+          {isAr ? "ملاحظات الطباعة" : "Print notes"}
+        </h2>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {isAr
+            ? "تظهر في قالب «الأصلي» أسفل بيانات الحساب البنكي دون إزاحتها. اكتب كل ملاحظة في سطر؛ النص والأرقام أمثلة قابلة للتغيير."
+            : "Shown in the Original template below the bank details without moving them. Enter one note per line; all text and numbers are editable examples."}
+        </p>
+      </div>
+
+      <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <Checkbox checked={onSales} onCheckedChange={(checked) => setOnSales(checked === true)} />
+          <span className="space-y-0.5">
+            <span className="block text-sm font-medium">{isAr ? "إظهار في فواتير المبيعات" : "Show on sales invoices"}</span>
+            <span className="block text-xs text-muted-foreground">{isAr ? "يظهر النص في المساحة المحددة أسفل رمز QR وبيانات البنك." : "Displays below the QR and bank details."}</span>
+          </span>
+        </label>
+        <div className="border-t pt-4">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <Checkbox checked={onQuotation} onCheckedChange={(checked) => setOnQuotation(checked === true)} />
+            <span className="space-y-0.5">
+              <span className="block text-sm font-medium">{isAr ? "إظهار في عروض الأسعار" : "Show on quotations"}</span>
+              <span className="block text-xs text-muted-foreground">{isAr ? "اختياري ومستقل عن فواتير المبيعات." : "Optional and independent from sales invoices."}</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="print-custom-notes">{isAr ? "نص الملاحظات" : "Notes text"}</Label>
+        <Textarea
+          id="print-custom-notes"
+          value={notes}
+          maxLength={1200}
+          rows={5}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder={isAr
+            ? "مثال:\nدفعة 70% عند التعميد\nالمتبقي 30% عند الاستلام"
+            : "Example:\n70% deposit upon approval\nRemaining 30% upon delivery"}
+          dir="auto"
+        />
+        <div className="flex justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">
+            {isAr ? "تُطبع الأسطر كما تكتبها، ولا تُعرض عند عدم اختيار أي نوع مستند." : "Lines print as entered and stay hidden unless a document type is selected."}
+          </span>
+          <span className="shrink-0 text-muted-foreground">{notes.length} / 1200</span>
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending || !companyId}>
+          {saveMutation.isPending && <Loader2 className="h-4 w-4 ml-2 animate-spin" />}
+          {isAr ? "حفظ ملاحظات الطباعة" : "Save print notes"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function PrintFooterTab({ user, token, setUser }: { user: any; token: string; setUser: any }) {
   const { t, i18n } = useTranslation();
   const { toast } = useToast();

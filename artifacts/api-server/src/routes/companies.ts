@@ -430,7 +430,8 @@ router.patch("/:id/general-settings", async (req, res) => {
     faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     printQuotationShowQr, printQuotationShowCurrencyName, printQuotationShowCustomerAddress,
-    bankAccountText, printShowItemsSummary,
+    bankAccountText, printCustomNotes, printCustomNotesOnSales, printCustomNotesOnQuotation,
+    printShowItemsSummary,
     printT14ShowEnSubtitle, printT14ShowAccountCode, printT14ShowAuditFooter,
     printEnabledTemplates, printThermalTemplates, printDefaultTemplate,
     printDefaultTemplateQuotation, printDefaultTemplateOrder, printDefaultTemplateReturn,
@@ -500,7 +501,9 @@ router.patch("/:id/general-settings", async (req, res) => {
     printQuotationShowQr?: boolean;
     printQuotationShowCurrencyName?: boolean;
     printQuotationShowCustomerAddress?: boolean;
-    bankAccountText?: string | null; printShowItemsSummary?: boolean;
+    bankAccountText?: string | null; printCustomNotes?: string;
+    printCustomNotesOnSales?: boolean; printCustomNotesOnQuotation?: boolean;
+    printShowItemsSummary?: boolean;
     printT14ShowEnSubtitle?: boolean; printT14ShowAccountCode?: boolean; printT14ShowAuditFooter?: boolean;
     printEnabledTemplates?: number[] | null; printThermalTemplates?: number[] | null; printDefaultTemplate?: number;
     printDefaultTemplateQuotation?: number | null;
@@ -725,6 +728,15 @@ router.patch("/:id/general-settings", async (req, res) => {
     const bt = bankAccountText === null ? "" : String(bankAccountText).trim().slice(0, 500);
     updates.bankAccountText = bt === "" ? null : bt;
   }
+  if (printCustomNotes !== undefined) {
+    const notes = String(printCustomNotes).trim();
+    if (notes.length > 1200) {
+      res.status(400).json({ error: "ملاحظات الطباعة يجب ألا تتجاوز 1200 حرف" }); return;
+    }
+    updates.printCustomNotes = notes;
+  }
+  if (printCustomNotesOnSales !== undefined) updates.printCustomNotesOnSales = !!printCustomNotesOnSales;
+  if (printCustomNotesOnQuotation !== undefined) updates.printCustomNotesOnQuotation = !!printCustomNotesOnQuotation;
   if (printShowItemsSummary !== undefined) updates.printShowItemsSummary = !!printShowItemsSummary;
   // Print template visibility list — accept an array of integer ids
   // (1..15 and 20), de-dup, drop garbage. Pass `null` (or empty array) to

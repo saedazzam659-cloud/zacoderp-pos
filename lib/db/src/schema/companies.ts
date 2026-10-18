@@ -288,6 +288,12 @@ export const companiesTable = pgTable("companies", {
   // Free-text bank account details (account name, bank, IBAN …) printed in the
   // empty area under the QR on the "الأصلي" invoice template. NULL/empty = hide.
   bankAccountText:      text("bank_account_text"),
+  // Optional company-defined payment notes printed below the bank details on
+  // the original sales invoice/quotation template. Each document type opts in
+  // independently; both remain hidden by default.
+  printCustomNotes:             text("print_custom_notes").notNull().default(""),
+  printCustomNotesOnSales:      boolean("print_custom_notes_on_sales").notNull().default(false),
+  printCustomNotesOnQuotation:  boolean("print_custom_notes_on_quotation").notNull().default(false),
   // Toggle for the items/quantities summary box ("blue box") on the printed
   // invoice. Defaults to shown to preserve existing behavior.
   printShowItemsSummary: boolean("print_show_items_summary").notNull().default(true),

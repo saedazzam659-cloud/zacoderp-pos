@@ -2215,7 +2215,16 @@ export function template14(d: PrintData): string {
     : "";
   const showQrInDocument = !isQuot || quotationOptions.showQr;
   const bankText = (company?.bankAccountText ?? "").toString().trim();
-  const showQrColumn = showQrInDocument || !!bankText;
+  const customNotes = (company?.printCustomNotes ?? "").toString().trim();
+  const customNotesEnabled = !contracting && (
+    isQuot
+      ? company?.printCustomNotesOnQuotation === true
+      : d.type === "invoice" && company?.printCustomNotesOnSales === true
+  );
+  const customNotesHtml = customNotesEnabled && customNotes
+    ? `<div class="print-notes-box"><div class="print-notes-title">${tl("ملاحظات", "Notes")}</div><div class="print-notes-body">${escapePrintHtml(customNotes)}</div></div>`
+    : "";
+  const showQrColumn = showQrInDocument || !!bankText || !!customNotesHtml;
   // Footer audit line — only render the "أنشئ بـ" line when we actually have
   // a timestamp; some legacy rows may not carry one.
   const createdAtRaw = doc.createdAt ?? doc.invoiceDate ?? doc.returnDate ?? doc.orderDate ?? doc.quotationDate ?? null;
@@ -2439,6 +2448,13 @@ export function template14(d: PrintData): string {
     }
     .bank-box .bank-title { font-weight:700; color:var(--ink); margin-bottom:5px; font-size:11.5px; }
     .bank-box .bank-body { line-height:1.7; white-space:pre-line; }
+    .print-notes-box {
+      border:1px solid var(--line); border-right:3px solid var(--gold);
+      border-radius:8px; padding:8px 10px; background:#fffdf7;
+      font-size:10.5px; color:#334155; text-align:start;
+    }
+    .print-notes-title { font-weight:700; color:var(--ink); margin-bottom:4px; }
+    .print-notes-body { line-height:1.65; white-space:pre-line; }
     /* English (LTR) mode — flip table + field alignment so the layout
        reads naturally left-to-right while keeping the same structure.
        baseStyles hard-codes body direction:rtl which beats the html
@@ -2689,6 +2705,7 @@ export function template14(d: PrintData): string {
                 <div class="lbl">QR — ZATCA</div>
               </div>` : ""}
               ${bankText ? `<div class="bank-box"><div class="bank-title">${tl("بيانات الحساب البنكي", "Bank Account Details")}</div><div class="bank-body">${escapePrintHtml(bankText)}</div></div>` : ""}
+              ${customNotesHtml}
             </div>` : ""}
           </div>
           ${anchorBottom ? `</div>` : ""}
