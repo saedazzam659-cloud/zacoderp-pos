@@ -652,9 +652,25 @@ export default function AgentServers() {
         method: "POST", headers, body: body ? JSON.stringify(body) : undefined,
       });
       const j = await r.json().catch(() => ({}));
+      if (path === "test-db") invalidate();
       if (!r.ok) throw new Error(j.detail ?? j.error ?? "فشل");
+      if (path === "test-db") {
+        if (j.fingerprintOk !== true) {
+          throw new Error(j.error ?? "اتصال قاعدة البيانات نجح، لكن لم يتم التحقق من بصمة التركيب");
+        }
+        toast({
+          title: "فحص الاتصال والبصمة: تم بنجاح",
+          description: j.version ?? undefined,
+        });
+        return;
+      }
       invalidate();
-      toast({ title: `${label}: تم بنجاح`, description: j.version ?? (j.licenseKey ? `المفتاح: ${j.licenseKey}` : undefined) });
+      toast({
+        title: `${label}: تم بنجاح`,
+        description: path === "init-db" && j.heartbeatVerified
+          ? "تمت مزامنة البصمة وقبول نبضة الوكيل."
+          : j.version ?? (j.licenseKey ? `المفتاح: ${j.licenseKey}` : undefined),
+      });
     } catch (e: any) {
       toast({ title: `${label}: فشل`, description: String(e.message ?? e), variant: "destructive" });
     } finally { setBusy(null); }
@@ -1315,7 +1331,7 @@ export default function AgentServers() {
                       {busy === `test-db-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3 ms-1" />}اختبار
                     </Button>
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.dbUrlSet || busy === `init-db-${a.id}` || a.deployStatus === "deploying"} onClick={() => {
-                      if (confirm("تهيئة قاعدة بيانات الوكيل وزرع بصمة التركيب؟")) action(a.id, "init-db", "التهيئة");
+                      if (confirm("سيتم فحص/استكمال السكيما، وزرع بصمة قاعدة البيانات ومزامنتها مع config.json، ثم إرسال نبضة تحقق. لن يعاد تثبيت البرنامج أو حذف بيانات الشركات، لكن قد تتأثر خدمة Caddy إذا رفضت النبضة. هل تريد المتابعة؟")) action(a.id, "init-db", "التهيئة");
                     }}>
                       {busy === `init-db-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}تهيئة + بصمة
                     </Button>

@@ -1777,15 +1777,26 @@ router.post("/:id/test-db", async (req, res) => {
             fp.rows[0].installation_id === inst.installationId &&
             fp.rows[0].fingerprint === expectedFingerprint(inst.installationId, inst.domain);
         }
-      } catch { fingerprintOk = null; /* not initialized yet */ }
+      } catch (e: any) {
+        if (e?.code !== "42P01") throw e;
+      }
       return { version: String(v.rows[0]?.version ?? "").slice(0, 80), fingerprintOk };
     });
-    if (result.fingerprintOk === false) {
-      await logAgentEvent(id, "db_fingerprint_mismatch", { note: "بصمة قاعدة البيانات لا تطابق هذا التركيب — احتمال نسخ/تلاعب" }, req);
+    if (result.fingerprintOk !== true) {
+      const mismatch = result.fingerprintOk === false;
+      const error = mismatch
+        ? "بصمة قاعدة البيانات لا تطابق تركيب الوكيل"
+        : "قاعدة البيانات متاحة، لكن بصمة التركيب غير موجودة";
+      await logAgentEvent(id, mismatch ? "db_fingerprint_mismatch" : "db_fingerprint_missing", {}, req);
+      await db.update(agentInstancesTable).set({
+        dbStatus: "error", dbLastCheckAt: new Date(), dbLastError: error, updatedAt: new Date(),
+      }).where(eq(agentInstancesTable.id, id));
+      res.status(409).json({ ok: false, version: result.version, fingerprintOk: result.fingerprintOk, error });
+      return;
     }
     await db.update(agentInstancesTable).set({
-      dbStatus: result.fingerprintOk === false ? "error" : (inst.dbStatus === "initialized" ? "initialized" : "ok"),
-      dbLastCheckAt: new Date(), dbLastError: result.fingerprintOk === false ? "بصمة غير مطابقة" : null, updatedAt: new Date(),
+      dbStatus: inst.dbStatus === "initialized" ? "initialized" : "ok",
+      dbLastCheckAt: new Date(), dbLastError: null, updatedAt: new Date(),
     }).where(eq(agentInstancesTable.id, id));
     res.json({ ok: true, ...result });
   } catch (e: any) {
@@ -1928,9 +1939,55 @@ router.post("/:id/init-db", async (req, res) => {
   const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
   if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
   if (!inst.dbUrlEnc) { res.status(400).json({ error: "لم يتم إدخال رابط قاعدة البيانات بعد" }); return; }
+  if (inst.status !== "active" || (inst.licenseExpiresAt && inst.licenseExpiresAt < new Date())) {
+    res.status(409).json({ error: "الترخيص غير نشط أو منتهي؛ لن تُعدّل البصمة قبل استعادة حالة الترخيص" });
+    return;
+  }
+  if (inst.deployStatus === "deploying") {
+    res.status(409).json({ error: "هناك عملية إعداد جارية على الوكيل؛ انتظر انتهائها قبل تهيئة البصمة" });
+    return;
+  }
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) {
+    res.status(400).json({ error: "احفظ بيانات SSH واختبر الوصول أولًا؛ تهيئة البصمة تحتاج مزامنتها إلى config.json على الوكيل" });
+    return;
+  }
   try {
-    await initAgentDatabaseCore(inst);
-    res.json({ ok: true, fingerprintPlanted: true });
+    const fingerprint = await initAgentDatabaseCore(inst);
+    const syncStartedAt = new Date();
+    // Planting the DB fingerprint alone is not enough: the running agent sends
+    // the fingerprint from config.json with every heartbeat. Keep the DB row,
+    // central registry, and on-server config in sync before reporting success.
+    const sync = await sshRunScript(
+      inst,
+      `set -e
+ZFP=${shQ(fingerprint)} python3 -c "import json,os; p='/opt/zacod/config.json'; c=json.load(open(p)); c['fingerprint']=os.environ['ZFP']; json.dump(c,open(p,'w'),indent=2,ensure_ascii=False)"
+/opt/zacod/heartbeat.sh
+if [ -f /opt/zacod/SUSPENDED ]; then echo ZACOD_HEARTBEAT_REJECTED; exit 79; fi
+echo ZACOD_FP_SYNCED`,
+      { timeoutMs: 60_000 },
+    );
+    if (sync.code !== 0 || !sync.out.includes("ZACOD_FP_SYNCED")) {
+      throw new Error(
+        sync.out.includes("ZACOD_HEARTBEAT_REJECTED")
+          ? "تمت مزامنة البصمة، لكن النبضة رفضت تفعيل الوكيل؛ راجع حالة الترخيص/النطاق قبل إعادة المحاولة"
+          : sync.out.slice(-500) || "تعذّرت مزامنة البصمة إلى config.json على الوكيل",
+      );
+    }
+    const [heartbeat] = await db.select({ lastHeartbeatAt: agentInstancesTable.lastHeartbeatAt })
+      .from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+    const heartbeatAt = heartbeat?.lastHeartbeatAt instanceof Date
+      ? heartbeat.lastHeartbeatAt.getTime()
+      : 0;
+    if (heartbeatAt < syncStartedAt.getTime()) {
+      throw new Error("تمت مزامنة البصمة لكن لم تصل نبضة مقبولة من الوكيل؛ لن نعلن اكتمال التهيئة");
+    }
+    await db.update(agentInstancesTable).set({
+      sshStatus: "ok",
+      sshLastCheckAt: new Date(),
+      ...(inst.sshHostKeyFp || !sync.hostKeyFp ? {} : { sshHostKeyFp: sync.hostKeyFp }),
+      updatedAt: new Date(),
+    }).where(eq(agentInstancesTable.id, id));
+    res.json({ ok: true, fingerprintPlanted: true, configSynced: true, heartbeatVerified: true });
   } catch (e: any) {
     const msg = String(e?.message ?? e).slice(0, 500);
     await markInitDbFailed(inst, msg);

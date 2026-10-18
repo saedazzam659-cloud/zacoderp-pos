@@ -50,3 +50,9 @@ If the link-registry transaction commits but the remote shell sync fails, preser
 **Why:** Rolling back or blindly rotating credentials after an ambiguous remote write can desynchronize the source registry from the agent shell.
 
 **How to apply:** Record only a sanitized sync diagnostic, let a matching fresh invite identify the already-committed renewal, and retry synchronization without changing the stored link credentials or signing key.
+
+Standalone agent fingerprint setup is incomplete until the database row, central registry, and the agent's runtime `config.json` agree and a fresh heartbeat is accepted. A database-only check must report connectivity separately from fingerprint validity.
+
+**Why:** The heartbeat reads its fingerprint from the agent's runtime config; planting only the database row can leave the agent sending an old or empty fingerprint while the control panel says initialized.
+
+**How to apply:** After verifying active licensing and saved SSH identity, sync the expected fingerprint to the agent config, let the heartbeat decide whether the suspension marker can clear, and report completion only after a fresh accepted heartbeat. Never equate `SELECT version()` success with fingerprint validation.
