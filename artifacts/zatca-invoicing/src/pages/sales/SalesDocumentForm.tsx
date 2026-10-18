@@ -50,6 +50,7 @@ import InvoicePaymentsTab from "@/pages/sales/InvoicePaymentsTab";
 import { offersApi } from "@/lib/offersApi";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
+import { resolveSalesItemUnitPrice } from "@/lib/salesItemPricing";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { DateField } from "@/components/ui/date-field";
 import SalesDocumentDetails from "@/pages/sales/SalesDocumentDetails";
@@ -1038,7 +1039,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           ?? itemUnits.find((u: any) => u.isBase)
           ?? itemUnits[0];
         const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
-        const v = row?.salePrice ?? item?.sellPrice ?? item?.price;
+        const v = resolveSalesItemUnitPrice(item, row);
         if (v != null) np = String(v);
       } else {
         const cps = await fetchItemCurrencyPrices(l.itemId);
@@ -1401,7 +1402,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
     const chosenUnitId = base?.unitId ?? item.unitId ?? null;
     const chosenUnitName = base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "";
-    const catalogPrice = base?.salePrice ?? item.sellPrice ?? item.price ?? "0";
+    const catalogPrice = resolveSalesItemUnitPrice(item, base);
     let chosenPrice: string = String(catalogPrice);
     if (currencyCode && defaultCurrency && currencyCode !== defaultCurrency.code) {
       const cps = await fetchItemCurrencyPrices(itemId).catch(() => []);
@@ -1603,7 +1604,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // a unit change resets the matching base (the item now has a new
       // catalog price for this unit) and clears any engine ownership /
       // applied offer — it must be re-evaluated next cycle.
-      const newPrice = row?.salePrice != null ? trimTrailingZeros(row.salePrice) : l.unitPrice;
+      const item = inventoryItems.find((candidate: any) => String(candidate.id) === l.itemId);
+      const resolvedPrice = resolveSalesItemUnitPrice(item, row);
+      const newPrice = resolvedPrice !== "" ? trimTrailingZeros(resolvedPrice) : l.unitPrice;
       const updated: DocLine = {
         ...l,
         unitId: newUnitId,
