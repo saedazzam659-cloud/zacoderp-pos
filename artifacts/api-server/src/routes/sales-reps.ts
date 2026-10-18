@@ -16,7 +16,7 @@ import {
   type SalesRepCommissionPlan,
   type SalesRepTargetPeriod,
 } from "@workspace/db";
-import { and, desc, eq, sql, inArray } from "drizzle-orm";
+import { and, desc, eq, sql, inArray, ilike, or } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, hasDemoOperationalPrivilege } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
@@ -245,19 +245,44 @@ router.get("/active", async (req, res) => {
 router.get("/target-items", async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
-    const items = await db.select({
-      id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr,
+    const query = String(req.query.q ?? "").trim().slice(0, 128);
+    const selectedIds = [...new Set(String(req.query.ids ?? "").split(",")
+      .map(value => Number(value.trim()))
+      .filter(value => Number.isSafeInteger(value) && value > 0))].slice(0, 50);
+    const itemSelect = {
+      id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr, nameEn: itemsTable.nameEn,
       baseUnitId: itemsTable.unitId, baseUnitName: unitsTable.nameAr,
-    }).from(itemsTable)
+    };
+    const searchCondition = query
+      ? and(eq(itemsTable.companyId, cid), or(
+          ilike(itemsTable.code, `%${query}%`),
+          ilike(itemsTable.barcode, `%${query}%`),
+          ilike(itemsTable.nameAr, `%${query}%`),
+          ilike(itemsTable.nameEn, `%${query}%`),
+        )!)
+      : eq(itemsTable.companyId, cid);
+    const searchItems = await db.select(itemSelect).from(itemsTable)
       .leftJoin(unitsTable, eq(unitsTable.id, itemsTable.unitId))
-      .where(eq(itemsTable.companyId, cid))
-      .orderBy(itemsTable.nameAr);
-    const prices = await db.select({
+      .where(searchCondition)
+      .orderBy(itemsTable.nameAr)
+      .limit(50);
+    const selectedItems = selectedIds.length
+      ? await db.select(itemSelect).from(itemsTable)
+          .leftJoin(unitsTable, eq(unitsTable.id, itemsTable.unitId))
+          .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, selectedIds)))
+      : [];
+    const items = [...new Map([...searchItems, ...selectedItems].map(item => [item.id, item])).values()];
+    const itemIds = items.map(item => item.id);
+    const prices = itemIds.length ? await db.select({
       itemId: itemUnitPricesTable.itemId, unitId: itemUnitPricesTable.unitId,
       unitName: unitsTable.nameAr, factor: itemUnitPricesTable.conversionFactor,
     }).from(itemUnitPricesTable)
       .innerJoin(unitsTable, eq(unitsTable.id, itemUnitPricesTable.unitId))
-      .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.isActive, true)));
+      .where(and(
+        eq(itemUnitPricesTable.companyId, cid),
+        eq(itemUnitPricesTable.isActive, true),
+        inArray(itemUnitPricesTable.itemId, itemIds),
+      )) : [];
     const byItem = new Map<number, Array<{ unitId: number; unitName: string; conversionFactor: number }>>();
     for (const p of prices) {
       const list = byItem.get(p.itemId) ?? [];

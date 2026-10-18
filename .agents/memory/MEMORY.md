@@ -74,3 +74,4 @@
 - [Item catalog performance](item-catalog-performance.md) — large catalogs need bounded tenant-scoped picker search; preserve full-list behavior for reports.
 - [Company document field controls](company-document-field-controls.md) — keep company controls off by default, SuperAdmin-gated, and company-wide when enabled.
 - [Document visibility scope](document-visibility-scope.md) — per-user own-document visibility is opt-in; company admins retain company-wide access.
+- [Searchable web dropdowns](searchable-web-dropdowns.md) — use the existing searchable combobox pattern for dropdowns added or modified in ERP web forms.

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FormPanel } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -68,10 +69,92 @@ type Rep = {
 };
 
 type TargetItemOption = {
-  id: number; code: string; nameAr: string; baseUnitId: number | null;
+  id: number; code: string; nameAr: string; nameEn?: string | null; baseUnitId: number | null;
   baseUnitName: string | null;
   units: Array<{ unitId: number; unitName: string; conversionFactor: number }>;
 };
+
+function TargetItemPicker({
+  companyId,
+  headers,
+  value,
+  onValueChange,
+  onOptionsLoaded,
+  testId,
+}: {
+  companyId: number;
+  headers: HeadersInit;
+  value: string;
+  onValueChange: (value: string, selected?: TargetItemOption) => void;
+  onOptionsLoaded: (items: TargetItemOption[]) => void;
+  testId: string;
+}) {
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [selectedOption, setSelectedOption] = useState<TargetItemOption | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 180);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const query = useQuery<TargetItemOption[]>({
+    queryKey: ["sales-rep-target-items", companyId, debouncedSearch, value],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        companyId: String(companyId),
+        q: debouncedSearch,
+        ids: value,
+      });
+      const r = await fetch(`${API}/api/sales-reps/target-items?${params}`, { headers });
+      if (!r.ok) throw new Error("تعذر تحميل الأصناف والوحدات");
+      return r.json();
+    },
+    enabled: !!companyId,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (query.data?.length) onOptionsLoaded(query.data);
+  }, [query.data, onOptionsLoaded]);
+
+  const fetchedSelected = query.data?.find(item => String(item.id) === value);
+  useEffect(() => {
+    if (fetchedSelected) setSelectedOption(fetchedSelected);
+  }, [fetchedSelected]);
+  const visibleOptions = [
+    ...(query.data ?? []),
+    ...(selectedOption && !query.data?.some(item => item.id === selectedOption.id) ? [selectedOption] : []),
+  ];
+  const items = visibleOptions.map(item => ({
+    value: String(item.id),
+    label: item.nameAr,
+    labelEn: item.nameEn ?? undefined,
+    code: item.code,
+  }));
+
+  return (
+    <SearchCombobox
+      value={value}
+      onValueChange={nextValue => {
+        const selected = query.data?.find(item => String(item.id) === nextValue);
+        if (selected) {
+          setSelectedOption(selected);
+          onOptionsLoaded([selected]);
+        }
+        onValueChange(nextValue, selected);
+      }}
+      onSearchChange={setSearch}
+      items={items}
+      placeholder="اختر صنفًا"
+      searchPlaceholder="ابحث بالاسم أو الكود..."
+      emptyText="لا توجد أصناف مطابقة"
+      loading={query.isLoading || debouncedSearch !== search.trim()}
+      clearable
+      testId={testId}
+    />
+  );
+}
 
 type CompanyUser = {
   id: number;
@@ -120,6 +203,15 @@ export default function SalesReps() {
   const [targetTo, setTargetTo] = useState("");
   const [targetMode, setTargetMode] = useState<"excess" | "all_after_hit">("excess");
   const [targetRows, setTargetRows] = useState<Array<{ itemId: string; unitId: string; targetQty: string }>>([]);
+  const [targetItemOptions, setTargetItemOptions] = useState<TargetItemOption[]>([]);
+  const rememberTargetItems = useCallback((items: TargetItemOption[]) => {
+    setTargetItemOptions(previous => {
+      const byId = new Map(previous.map(item => [item.id, item]));
+      for (const item of items) byId.set(item.id, item);
+      return [...byId.values()];
+    });
+  }, []);
+  useEffect(() => { setTargetItemOptions([]); }, [cid]);
   const [deleteRep, setDeleteRep] = useState<Rep | null>(null);
   const [aiRep, setAiRep] = useState<Rep | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<string>("");
@@ -177,17 +269,6 @@ export default function SalesReps() {
       return r.json();
     },
     enabled: !!cid,
-    staleTime: 60_000,
-  });
-
-  const { data: targetItemOptions = [] } = useQuery<TargetItemOption[]>({
-    queryKey: ["sales-rep-target-items", cid],
-    enabled: !!cid && showForm,
-    queryFn: async () => {
-      const r = await fetch(`${API}/api/sales-reps/target-items?companyId=${cid}`, { headers });
-      if (!r.ok) throw new Error("تعذر تحميل الأصناف والوحدات");
-      return r.json();
-    },
     staleTime: 60_000,
   });
 
@@ -743,17 +824,19 @@ export default function SalesReps() {
                         <div key={idx} className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-end">
                           <div>
                             <Label className="text-xs">الصنف</Label>
-                            <select className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+                            <TargetItemPicker
+                              companyId={Number(cid)}
+                              headers={headers}
                               value={row.itemId}
-                              onChange={e => {
-                                const selected = targetItemOptions.find(x => x.id === Number(e.target.value));
+                              onOptionsLoaded={rememberTargetItems}
+                              testId={`target-item-${idx}`}
+                              onValueChange={(value, picked) => {
+                                const selected = picked ?? targetItemOptions.find(x => x.id === Number(value));
                                 const unitId = selected?.units[0]?.unitId;
                                 setTargetRows(prev => prev.map((x, i) => i === idx
-                                  ? { ...x, itemId: e.target.value, unitId: unitId ? String(unitId) : "" } : x));
-                              }}>
-                              <option value="">اختر صنفًا</option>
-                              {targetItemOptions.map(x => <option key={x.id} value={x.id}>{x.nameAr} ({x.code})</option>)}
-                            </select>
+                                  ? { ...x, itemId: value, unitId: unitId ? String(unitId) : "" } : x));
+                              }}
+                            />
                           </div>
                           <div>
                             <Label className="text-xs">وحدة التارجت</Label>

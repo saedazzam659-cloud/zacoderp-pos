@@ -140,13 +140,21 @@ function verifyAab(file, version) {
   ].every(marker => bundleHasText(bundle, marker))) {
     throw new Error('Compiled v22 bundle lacks mobile expense recovery safeguards');
   }
+  if (version >= 23 && ![
+    'user-tracking/mobile/manager-report',
+    'mobile_tracking_manage',
+    'tracking-share-whatsapp',
+  ].every(marker => bundle.includes(marker))) {
+    throw new Error('Compiled v23 bundle lacks representative tracking and WhatsApp report features');
+  }
   return { packageName: 'com.zacoderp.mobile', manifestVersionCode: actualVersion,
     certificateSha256: fingerprint, compiledBundleHasDomain: true,
     ...(version >= 15 && { compiledBundleHasCustomerStatements: true }),
     ...(version >= 17 && { compiledBundleHasExpoApplicationDiagnostics: true,
       compiledBundleHasPermissionAndReferenceHelpers: true }),
     ...(version >= 21 && { compiledBundleHasCashExpenseDepositVoiceFeatures: true }),
-    ...(version >= 22 && { compiledBundleHasMobileExpenseRecoverySafeguards: true }) };
+    ...(version >= 22 && { compiledBundleHasMobileExpenseRecoverySafeguards: true }),
+    ...(version >= 23 && { compiledBundleHasRepresentativeTrackingAndWhatsAppReports: true }) };
 }
 async function start() {
   const previous = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : null;
@@ -187,6 +195,7 @@ async function start() {
     'artifacts/mobile/eas.json',
     'artifacts/mobile/contexts/AuthContext.tsx',
     'artifacts/mobile/lib/mobileLocationTracking.ts',
+    'artifacts/mobile/app/user-tracking.tsx',
     'lib/api-client-react/src/generated/api.ts',
     'lib/api-client-react/src/generated/api.schemas.ts',
     'artifacts/mobile/package.json',

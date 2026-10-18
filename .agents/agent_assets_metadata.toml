@@ -672,3 +672,17 @@ mtime_ms = 1792230699293
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/640b20d9-9d5d-4724-97a5-84aab72ed250/cb4b782b-9ff7-4cd5-a462-f7f575767734"
 storage_version_token = "1792231451789826"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "nAkYp-uF9cL3BObhWRnD5"
+uri = "file://artifacts/mobile/releases/zacoderp-google-play-v23.aab"
+type = "unspecified"
+title = "Zacode ERP Mobile — Google Play AAB v23"
+description = "ملف Android App Bundle جاهز للرفع إلى Google Play Console. رقم الإصدار 23، وتم التحقق من اسم الحزمة والتوقيع ومحتوى متابعة المناديب وتقارير واتساب."
+logical_id = "07865f4c-af2d-4cb3-bc06-d0c2eceb84ab"
+content_hash = "sha256:8b441503dc7be1ae98c3d14f5c8e766dfbe7e18bdcb6f953985505279d7be1ae"
+size = 81086026
+mtime_ms = 1792327511550
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/07865f4c-af2d-4cb3-bc06-d0c2eceb84ab/b9f130f5-43f7-451a-a82c-1aeb22bd3a71"
+storage_version_token = "1792327675135801"
+content_type = "application/octet-stream"
