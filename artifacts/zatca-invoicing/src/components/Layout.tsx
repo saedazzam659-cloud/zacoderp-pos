@@ -58,6 +58,104 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { companyAllowsModule, companyAllowsScreen } from "@/lib/companyModuleGate";
+
+function AgentAnnouncementPrompt({ user }: { user: any }) {
+  const announcement = user?.subscriptionNotice?.agentAnnouncement as {
+    message?: string; frequency?: "daily" | "weekly"; repeatsPerDay?: number; updatedAt?: string | null;
+  } | undefined;
+  const [now, setNow] = useState(() => Date.now());
+  const [welcome, setWelcome] = useState(false);
+  const [acceptedKey, setAcceptedKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const dueKey = useMemo(() => {
+    if (!announcement) return null;
+    const message = announcement?.message?.trim();
+    if (!message) return null;
+    const count = Math.max(1, Math.min(10, Math.floor(Number(announcement.repeatsPerDay) || 1)));
+    const today = new Date(now);
+    const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const todayNumber = Math.floor(todayUtc / 86_400_000);
+    const todayText = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    let period: string;
+    if (announcement.frequency === "weekly") {
+      const updatedAt = announcement.updatedAt ? new Date(announcement.updatedAt) : today;
+      const anchor = Date.UTC(updatedAt.getFullYear(), updatedAt.getMonth(), updatedAt.getDate());
+      const dayDelta = todayNumber - Math.floor(anchor / 86_400_000);
+      if (dayDelta < 0 || dayDelta % 7 !== 0) return null;
+      period = `week-${Math.floor(dayDelta / 7)}`;
+    } else {
+      period = `day-${todayText}`;
+    }
+    const minuteOfDay = today.getHours() * 60 + today.getMinutes();
+    const slot = Math.min(count - 1, Math.floor(minuteOfDay * count / 1440));
+    const userKey = `${user?.id ?? user?.username ?? "user"}-${user?.companyId ?? user?.company?.id ?? "company"}`;
+    const version = announcement.updatedAt ?? message;
+    const key = `zacod-agent-announcement:${userKey}:${version}:${period}:${slot}`;
+    if (acceptedKey === key) return null;
+    try { return localStorage.getItem(key) ? null : key; } catch { return key; }
+  }, [acceptedKey, announcement, now, user?.id, user?.username, user?.companyId, user?.company?.id]);
+
+  const accept = () => {
+    if (dueKey) setAcceptedKey(dueKey);
+    if (dueKey) {
+      try { localStorage.setItem(dueKey, "accepted"); } catch { /* keep this session usable if storage is blocked */ }
+    }
+    setWelcome(true);
+    setNow(Date.now());
+    window.setTimeout(() => setWelcome(false), 3000);
+  };
+
+  return (
+    <>
+      {dueKey && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" data-testid="agent-announcement-overlay">
+          <section
+            dir="rtl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="agent-announcement-title"
+            className="w-full max-w-xl overflow-hidden rounded-3xl border border-white/30 bg-white shadow-2xl"
+          >
+            <div className="relative overflow-hidden bg-gradient-to-br from-emerald-700 via-teal-700 to-slate-900 px-7 py-8 text-white">
+              <div className="absolute -left-12 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
+              <div className="relative flex items-center gap-3">
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/30">
+                  <Sparkles className="h-6 w-6" />
+                </span>
+                <div>
+                  <p className="text-xs font-medium tracking-wide text-emerald-100">رسالة من إدارة الوكيل</p>
+                  <h2 id="agent-announcement-title" className="mt-1 text-xl font-bold">مهم لك</h2>
+                </div>
+              </div>
+              <p className="relative mt-6 whitespace-pre-wrap text-sm leading-7 text-white/95" data-testid="agent-announcement-message">
+                {announcement?.message}
+              </p>
+            </div>
+            <div className="flex justify-end bg-slate-50 px-6 py-4">
+              <Button onClick={accept} className="min-w-32 bg-emerald-700 hover:bg-emerald-800" data-testid="button-accept-agent-announcement">
+                موافق
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
+      {welcome && !dueKey && (
+        <div
+          role="status"
+          data-testid="agent-announcement-welcome"
+          className="fixed bottom-6 left-1/2 z-[130] -translate-x-1/2 rounded-2xl border border-emerald-200 bg-white px-5 py-3 text-sm font-semibold text-emerald-800 shadow-xl"
+        >
+          أهلاً بك، سعداء بوجودك معنا
+        </div>
+      )}
+    </>
+  );
+}
 import { LEGACY_DEFAULT_ON_MENU_KEYS } from "@/lib/menuItems";
 import { isAccountNoteVisible } from "@/lib/accountNoteVisibility";
 import { productionSubNav } from "@/lib/productionNavigation";
@@ -4778,6 +4876,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {canManageAgentUpdates && (
         <AgentServerUpdateDialog open={agentUpdateOpen} onOpenChange={setAgentUpdateOpen} />
       )}
+      <AgentAnnouncementPrompt user={user} />
 
       {/* Global AI assistant — floating widget rendered on every authenticated
           screen. The component itself self-hides when the user is not

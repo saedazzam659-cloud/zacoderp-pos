@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -141,6 +142,58 @@ export default function LicenseManagement() {
     onSuccess: () => {
       toast({ title: "✓ تم حفظ إعدادات تنبيه الاشتراك" });
       qc.invalidateQueries({ queryKey: ["admin-subscription-notice"] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const { data: announcementAgents = [] } = useQuery<Array<{ id: number; name: string; domain: string }>>({
+    queryKey: ["subscription-announcement-agents"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/system-settings/subscription-announcement-agents`, { headers });
+      if (!r.ok) throw new Error("تعذر تحميل قائمة الوكلاء");
+      return r.json();
+    },
+  });
+  const [announcementAgentId, setAnnouncementAgentId] = useState("");
+  const [announcementForm, setAnnouncementForm] = useState({
+    message: "", frequency: "daily" as "daily" | "weekly", repeatsPerDay: "1",
+  });
+  const { data: agentAnnouncement, isLoading: isLoadingAgentAnnouncement } = useQuery({
+    queryKey: ["agent-announcement-settings", announcementAgentId],
+    enabled: !!announcementAgentId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/system-settings/agent-announcement?agent=${announcementAgentId}`, { headers });
+      if (!r.ok) throw new Error("تعذر تحميل رسالة الوكيل");
+      return r.json() as Promise<{ message: string; frequency: "daily" | "weekly"; repeatsPerDay: number }>;
+    },
+  });
+  useEffect(() => {
+    if (!announcementAgentId && announcementAgents.length) setAnnouncementAgentId(String(announcementAgents[0].id));
+  }, [announcementAgents, announcementAgentId]);
+  useEffect(() => {
+    if (agentAnnouncement) setAnnouncementForm({
+      message: agentAnnouncement.message ?? "",
+      frequency: agentAnnouncement.frequency === "weekly" ? "weekly" : "daily",
+      repeatsPerDay: String(agentAnnouncement.repeatsPerDay ?? 1),
+    });
+  }, [agentAnnouncement]);
+  const announcementMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/system-settings/agent-announcement?agent=${announcementAgentId}`, {
+        method: "PUT", headers,
+        body: JSON.stringify({
+          message: announcementForm.message,
+          frequency: announcementForm.frequency,
+          repeatsPerDay: Math.max(1, Math.min(10, Math.floor(Number(announcementForm.repeatsPerDay) || 1))),
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? "حدث خطأ");
+      return j;
+    },
+    onSuccess: () => {
+      toast({ title: "تم حفظ رسالة الوكيل" });
+      qc.invalidateQueries({ queryKey: ["agent-announcement-settings", announcementAgentId] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -392,6 +445,94 @@ export default function LicenseManagement() {
               حفظ الإعدادات
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-primary/20">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <h2 className="font-semibold text-sm">رسالة ترحيب وتنبيه خاصة بالوكيل</h2>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            اختر الوكيل واكتب رسالته. ستظل الرسالة أمام المستخدم حتى يضغط «موافق»، ثم تظهر رسالة ترحيب لمدة 3 ثوانٍ.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">الوكيل</Label>
+              <SearchCombobox
+                items={announcementAgents.map(agent => ({
+                  value: String(agent.id), label: agent.name, labelEn: agent.domain,
+                }))}
+                value={announcementAgentId}
+                onValueChange={value => {
+                  setAnnouncementForm({ message: "", frequency: "daily", repeatsPerDay: "1" });
+                  setAnnouncementAgentId(value);
+                }}
+                placeholder="اختر الوكيل"
+                searchPlaceholder="ابحث باسم الوكيل أو النطاق..."
+                className="h-9"
+                testId="select-subscription-announcement-agent"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">تكرار الظهور</Label>
+              <SearchCombobox
+                items={[
+                  { value: "daily", label: "كل يوم" },
+                  { value: "weekly", label: "كل أسبوع" },
+                ]}
+                value={announcementForm.frequency}
+                onValueChange={value => setAnnouncementForm(form => ({
+                  ...form, frequency: value === "weekly" ? "weekly" : "daily",
+                }))}
+                placeholder="اختر التكرار"
+                searchPlaceholder="اختر التكرار..."
+                className="h-9"
+                testId="select-announcement-frequency"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">عدد مرات الظهور في اليوم (1–10)</Label>
+              <Input
+                type="number" min={1} max={10}
+                value={announcementForm.repeatsPerDay}
+                onChange={event => setAnnouncementForm(form => ({ ...form, repeatsPerDay: event.target.value }))}
+                data-testid="input-announcement-repeats-per-day"
+              />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">نص الرسالة</Label>
+            <textarea
+              rows={4}
+              maxLength={3000}
+              value={announcementForm.message}
+              onChange={event => setAnnouncementForm(form => ({ ...form, message: event.target.value }))}
+              placeholder="اكتب رسالة الوكيل للمستخدمين..."
+              className="mt-1 flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              data-testid="textarea-agent-announcement"
+            />
+            <div className="text-left text-[11px] text-muted-foreground">{announcementForm.message.length} / 3000</div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            تُوزّع مرات الظهور بالتساوي خلال اليوم. عند اختيار «كل أسبوع» تتكرر في يوم الحفظ نفسه كل 7 أيام.
+          </p>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              disabled={!announcementAgentId || isLoadingAgentAnnouncement || announcementMutation.isPending}
+              onClick={() => announcementMutation.mutate()}
+              data-testid="button-save-agent-announcement"
+            >
+              {announcementMutation.isPending && <Loader2 className="h-3.5 w-3.5 ml-1 animate-spin" />}
+              <Save className="h-3.5 w-3.5 ml-1" />
+              حفظ رسالة الوكيل
+            </Button>
+          </div>
+          {!announcementAgents.length && (
+            <p className="text-xs text-amber-700">لا توجد وكلاء نشطون بقاعدة بيانات مهيأة.</p>
+          )}
         </CardContent>
       </Card>
 

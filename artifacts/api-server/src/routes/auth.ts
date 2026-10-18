@@ -144,19 +144,36 @@ function loginClientIp(req: any): string | null {
 const SUB_WARNING_KEY = "subscription_warning_days";
 const SUB_GRACE_KEY = "subscription_grace_days";
 const SUB_CONTACT_KEY = "subscription_contact_info";
+const SUB_AGENT_ANNOUNCEMENT_KEY = "subscription_agent_announcement";
 
-async function getSubscriptionNotice(): Promise<{ warningDays: number; graceDays: number; contactInfo: string }> {
+async function getSubscriptionNotice(): Promise<{
+  warningDays: number;
+  graceDays: number;
+  contactInfo: string;
+  agentAnnouncement: { message: string; frequency: "daily" | "weekly"; repeatsPerDay: number; updatedAt: string | null };
+}> {
   const rows = await db.select().from(systemSettingsTable)
-    .where(inArray(systemSettingsTable.key, [SUB_WARNING_KEY, SUB_GRACE_KEY, SUB_CONTACT_KEY]));
+    .where(inArray(systemSettingsTable.key, [SUB_WARNING_KEY, SUB_GRACE_KEY, SUB_CONTACT_KEY, SUB_AGENT_ANNOUNCEMENT_KEY]));
   const map = new Map(rows.map(r => [r.key, r.value]));
   const toInt = (v: string | null | undefined, def: number) => {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : def;
   };
+  let announcement: any = {};
+  try {
+    const raw = map.get(SUB_AGENT_ANNOUNCEMENT_KEY);
+    announcement = raw ? JSON.parse(raw) : {};
+  } catch { announcement = {}; }
   return {
     warningDays: toInt(map.get(SUB_WARNING_KEY), 7),
     graceDays: toInt(map.get(SUB_GRACE_KEY), 0),
     contactInfo: map.get(SUB_CONTACT_KEY) ?? "",
+    agentAnnouncement: {
+      message: String(announcement.message ?? "").slice(0, 3000),
+      frequency: announcement.frequency === "weekly" ? "weekly" : "daily",
+      repeatsPerDay: Math.max(1, Math.min(10, toInt(String(announcement.repeatsPerDay ?? 1), 1))),
+      updatedAt: typeof announcement.updatedAt === "string" ? announcement.updatedAt : null,
+    },
   };
 }
 

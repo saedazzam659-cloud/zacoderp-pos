@@ -49,6 +49,7 @@ import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegis
 import { writeAudit } from "../middleware/permissions.js";
 import { DELETED_RECORDS_RESTORE_KEY } from "../lib/deletedRecordsRestoreFeature.js";
 import { SEQUENCE_PROTECTION_LOCK_NAMESPACE } from "../lib/sequenceProtection.js";
+import { listInitializedAgents } from "../lib/agentScope.js";
 import { ensureCompanyPurgeSchema } from "../lib/companyPurgeSchema.js";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { canManageDemoOperationalSetting } from "../lib/demoOperationalPolicy.js";
@@ -982,6 +983,60 @@ router.put("/system-settings/auto-suspend", requireSuperAdmin, async (req, res) 
 const SUB_WARNING_KEY = "subscription_warning_days";
 const SUB_GRACE_KEY = "subscription_grace_days";
 const SUB_CONTACT_KEY = "subscription_contact_info";
+const SUB_AGENT_ANNOUNCEMENT_KEY = "subscription_agent_announcement";
+
+router.get("/system-settings/subscription-announcement-agents", requireSuperAdmin, async (_req, res): Promise<void> => {
+  const agents = await listInitializedAgents();
+  res.json(agents.map(({ id, name, domain }) => ({ id, name, domain })));
+});
+
+router.get("/system-settings/agent-announcement", requireSuperAdmin, async (req, res): Promise<void> => {
+  if (!req.query.agent) { res.status(400).json({ error: "اختر الوكيل أولاً" }); return; }
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const [row] = await db.select().from(systemSettingsTable)
+      .where(eq(systemSettingsTable.key, SUB_AGENT_ANNOUNCEMENT_KEY));
+    let stored: any = {};
+    try { stored = row?.value ? JSON.parse(row.value) : {}; } catch { stored = {}; }
+    const frequency = stored.frequency === "weekly" ? "weekly" : "daily";
+    const repeatsPerDay = toBoundedInt(stored.repeatsPerDay, 1, 10) ?? 1;
+    res.json({
+      message: String(stored.message ?? ""),
+      frequency,
+      repeatsPerDay,
+      updatedAt: stored.updatedAt ?? null,
+    });
+  });
+});
+
+router.put("/system-settings/agent-announcement", requireSuperAdmin, async (req, res): Promise<void> => {
+  if (!req.query.agent) { res.status(400).json({ error: "اختر الوكيل أولاً" }); return; }
+  const message = String(req.body?.message ?? "").trim().slice(0, 3000);
+  const frequency = req.body?.frequency === "weekly" ? "weekly" : "daily";
+  const repeatsPerDay = toBoundedInt(req.body?.repeatsPerDay, 1, 10) ?? 1;
+  const updatedAt = new Date().toISOString();
+  const config = { message, frequency, repeatsPerDay, updatedAt };
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    await db.execute(sql`
+      INSERT INTO system_settings (key, value, updated_at)
+      VALUES (${SUB_AGENT_ANNOUNCEMENT_KEY}, ${JSON.stringify(config)}, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    `);
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: null,
+      module: "subscriptions",
+      action: "edit",
+      entityType: "system_setting",
+      entityId: SUB_AGENT_ANNOUNCEMENT_KEY,
+      metadata: { agentId: Number(req.query.agent), frequency, repeatsPerDay, hasMessage: !!message },
+    });
+    res.json(config);
+  });
+});
 
 router.get("/system-settings/subscription-notice", requireSuperAdmin, async (_req, res) => {
   const rows = await db.select().from(systemSettingsTable)
