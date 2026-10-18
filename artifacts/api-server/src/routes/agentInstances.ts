@@ -3321,6 +3321,103 @@ async function sshRunScript(
   return { ...result, hostKeyFp: seenHostKeyFp };
 }
 
+/**
+ * Tunnel an agent PostgreSQL connection through its already-configured SSH
+ * server. This keeps port 5432 private while allowing read-only package dumps.
+ */
+async function openAgentDatabaseSshTunnel(
+  inst: typeof agentInstancesTable.$inferSelect,
+  databaseUrl: string,
+): Promise<{ databaseUrl: string; close: () => Promise<void> }> {
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) {
+    throw new Error("تعذّر الوصول المباشر لقاعدة البيانات، وبيانات SSH الخاصة بالوكيل غير مكتملة");
+  }
+  const secret = decryptSecret(inst.sshSecretEnc);
+  if (!secret) throw new Error("تعذّر فك بيانات SSH المشفّرة للوكيل");
+  const dbUrl = new URL(databaseUrl);
+  const isKey = /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(secret);
+  const { Client } = await import("ssh2");
+  const { createHash } = await import("node:crypto");
+  const client = new Client();
+  let hostKeyFp = "";
+  let server: net.Server | null = null;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        client.end();
+        reject(new Error("انتهت مهلة اتصال SSH بخادم الوكيل"));
+      }, 15_000);
+      client.once("ready", () => { clearTimeout(timer); resolve(); });
+      client.once("error", error => { clearTimeout(timer); reject(error); });
+      client.connect({
+        host: inst.sshHost!, port: inst.sshPort ?? 22, username: inst.sshUser!,
+        ...(isKey ? { privateKey: secret } : { password: secret }),
+        readyTimeout: 15_000,
+        keepaliveInterval: 10_000,
+        hostVerifier: (key: Buffer) => {
+          hostKeyFp = `SHA256:${createHash("sha256").update(key).digest("base64")}`;
+          if (!inst.sshHostKeyFp) return true;
+          return inst.sshHostKeyFp === hostKeyFp;
+        },
+      });
+    });
+    if (!inst.sshHostKeyFp && hostKeyFp) {
+      const [pinned] = await db.update(agentInstancesTable)
+        .set({ sshHostKeyFp: hostKeyFp, updatedAt: new Date() })
+        .where(and(eq(agentInstancesTable.id, inst.id),
+          sql`COALESCE(${agentInstancesTable.sshHostKeyFp}, '') = ''`))
+        .returning({ id: agentInstancesTable.id });
+      if (!pinned) {
+        const [current] = await db.select({ fingerprint: agentInstancesTable.sshHostKeyFp })
+          .from(agentInstancesTable).where(eq(agentInstancesTable.id, inst.id)).limit(1);
+        if (current?.fingerprint !== hostKeyFp) throw new Error("بصمة خادم SSH تغيّرت؛ أوقفنا الاتصال للحماية");
+      }
+    }
+    const addresses = async (host: string) => net.isIP(host)
+      ? [host]
+      : (await dnsLookup(host, { all: true })).map(entry => entry.address);
+    const [dbAddresses, sshAddresses] = await Promise.all([
+      addresses(dbUrl.hostname).catch(() => [dbUrl.hostname]),
+      addresses(inst.sshHost).catch(() => [inst.sshHost!]),
+    ]);
+    const sameHost = dbAddresses.some(address => sshAddresses.includes(address));
+    const targetHost = sameHost ? "127.0.0.1" : dbUrl.hostname;
+    const targetPort = Number(dbUrl.port || 5432);
+    server = net.createServer(localSocket => {
+      client.forwardOut("127.0.0.1", 0, targetHost, targetPort, (error, remoteSocket) => {
+        if (error) { localSocket.destroy(error); return; }
+        localSocket.pipe(remoteSocket).pipe(localSocket);
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("تعذّر فتح نفق قاعدة البيانات");
+    dbUrl.hostname = "127.0.0.1";
+    dbUrl.port = String(address.port);
+    // The PostgreSQL traffic is encrypted by SSH; TLS hostname validation
+    // against the local tunnel endpoint would be incorrect.
+    dbUrl.searchParams.set("sslmode", "disable");
+    dbUrl.searchParams.set("connect_timeout", "10");
+    return {
+      databaseUrl: dbUrl.toString(),
+      close: async () => {
+        await new Promise<void>(resolve => {
+          if (!server?.listening) { resolve(); return; }
+          server.close(() => resolve());
+        });
+        client.end();
+      },
+    };
+  } catch (error) {
+    server?.close();
+    client.end();
+    throw error;
+  }
+}
+
 /** Synchronises controller metadata only. It never changes DB credentials or
  * service state; the heartbeat reads this file on its next run, so the caller
  * intentionally does not restart the application service. */
@@ -5768,9 +5865,32 @@ router.post("/:id/external-package/prepare", async (req, res) => {
     const release = await getReleaseInfo({ forceRebuild: true });
     const capturedDist = await extractReleaseSnapshot(release, workDir);
     const frontendPath = await buildFrontendArchive(capturedDist, workDir);
-    const databasePath = databaseSource === "fresh"
-      ? await buildFreshAgentDatabaseSchema(dbUrl, workDir)
-      : await buildAgentDatabaseDump(dbUrl, workDir);
+    let databasePath: string;
+    if (databaseSource === "fresh") {
+      databasePath = await buildFreshAgentDatabaseSchema(dbUrl, workDir);
+    } else {
+      // Try the configured direct connection first. If the DB port is private
+      // or filtered, retry through the agent's pinned SSH host without opening
+      // PostgreSQL to the internet.
+      const directUrl = new URL(dbUrl);
+      directUrl.searchParams.set("connect_timeout", "8");
+      try {
+        databasePath = await buildAgentDatabaseDump(directUrl.toString(), workDir);
+      } catch (directError: any) {
+        try {
+          const databaseTunnel = await openAgentDatabaseSshTunnel(inst, dbUrl);
+          try {
+            databasePath = await buildAgentDatabaseDump(databaseTunnel.databaseUrl, workDir);
+          } finally {
+            await databaseTunnel.close().catch(() => {});
+          }
+        } catch (tunnelError: any) {
+          throw new Error(
+            `تعذّر تصدير قاعدة الوكيل بالاتصال المباشر أو عبر SSH. المباشر: ${String(directError?.message ?? directError).slice(0, 180)}؛ SSH: ${String(tunnelError?.message ?? tunnelError).slice(0, 180)}`,
+          );
+        }
+      }
+    }
     const passphrase = bundlePassphrase(inst);
     const inputs: Record<ExternalPackageKind, { path: string; filename: string }> = {
       backend: { path: release.tarPath, filename: `zacod-backend-${release.version}.tgz` },
