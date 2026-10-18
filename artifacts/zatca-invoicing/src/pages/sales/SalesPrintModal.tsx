@@ -1358,6 +1358,13 @@ function template8(d: PrintData): string {
   const safeLogo = safeLogoSrc(company?.logo);
   const safeBrandLogo = safeLogoSrc(company?.brandLogo);
   const hasLogoPair = !!(safeLogo && safeBrandLogo);
+  const customNotes = String(company?.printCustomNotes ?? "").trim();
+  const customNotesEnabled = d.type === "quotation"
+    ? company?.printCustomNotesOnQuotation === true
+    : d.type === "invoice" && company?.printCustomNotesOnSales === true;
+  const customNotesHtml = customNotesEnabled && customNotes
+    ? `<div class="print-custom-notes"><b>ملاحظات الطباعة / Print Notes</b><div>${escapePrintHtml(customNotes)}</div></div>`
+    : "";
   const printLanguage: PrintLang = (d as any)._lang === "en" ? "en" : "ar";
   // Resolve this directly from the quotation payload. The generic totals
   // calculator can be used without its print context in a few preview paths,
@@ -1396,6 +1403,8 @@ function template8(d: PrintData): string {
     .totals-row > .mono { flex:0 0 auto; margin-inline-start:12px; }
     .totals-row .currency-name { display:inline-block; white-space:nowrap; margin-inline-start:6px; font-size:1em; }
     .totals-row.grand { font-size: 16px; font-weight: 700; color: #0f172a; border-top: 1px solid #e2e8f0; margin-top: 6px; padding-top: 8px; }
+    .print-custom-notes { margin-top:14px; padding:12px 14px; border:1px solid #e2e8f0; border-right:3px solid #d4af37; color:#334155; font-size:11px; line-height:1.6; white-space:pre-line; overflow-wrap:anywhere; break-inside:avoid; page-break-inside:avoid; }
+    .print-custom-notes b { display:block; color:#0f172a; margin-bottom:3px; }
     .footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 9px; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; }
   </style>
   </head><body>
@@ -1443,6 +1452,7 @@ function template8(d: PrintData): string {
     </div>
   </div>
   ${doc.notes ? `<div style="margin-top:18px;padding:12px 14px;background:#f8fafc;border-right:3px solid #d4af37;font-size:11px;"><b>ملاحظات: </b>${doc.notes}</div>` : ""}
+  ${customNotesHtml}
   <div class="footer">
     <span>${company?.vatNumber ? `VAT ${company.vatNumber}` : ""}</span>
     <span>طُبع ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
@@ -2906,6 +2916,13 @@ function template20(d: PrintData): string {
   const lines = d.lines ?? [];
   const t = computeFullTotals(doc, lines, d.type);
   const e = escapePrintHtml;
+  const customNotes = String(company?.printCustomNotes ?? "").trim();
+  const customNotesEnabled = d.type === "quotation"
+    ? company?.printCustomNotesOnQuotation === true
+    : d.type === "invoice" && company?.printCustomNotesOnSales === true;
+  const customNotesHtml = customNotesEnabled && customNotes
+    ? `<div class="print-custom-notes"><b>ملاحظات الطباعة / Print Notes</b><div>${e(customNotes)}</div></div>`
+    : "";
   const safeLogo = safeLogoSrc(company?.logo);
   const number = e(doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`);
   const taxDocument = !isNonPaymentDoc(d.type);
@@ -2981,6 +2998,8 @@ function template20(d: PrintData): string {
     .sumrow.emphasis { background:#e9e9e9; }
     .bank { text-align:right; margin-top:12mm; font-weight:700; white-space:pre-line; overflow-wrap:anywhere; break-inside:avoid; }
     .note { margin-top:5mm; overflow-wrap:anywhere; }
+    .print-custom-notes { margin-top:5mm; padding:7px 9px; border:1px solid #999; border-right:3px solid #333; font-size:10px; line-height:1.55; white-space:pre-line; overflow-wrap:anywhere; break-inside:avoid; page-break-inside:avoid; }
+    .print-custom-notes b { display:block; margin-bottom:2px; }
     @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
   </style></head><body><main class="sheet">
     <header class="top">
@@ -3018,6 +3037,7 @@ function template20(d: PrintData): string {
     </div></div>
     ${doc.notes ? `<div class="note">${e(doc.notes)}</div>` : ""}
     ${company?.bankAccountText ? `<div class="bank">${e(company.bankAccountText)}</div>` : ""}
+    ${customNotesHtml}
   </main></body></html>`;
 }
 

@@ -4988,8 +4988,8 @@ function PrintCustomNotesTab({ user, token, setUser }: { user: any; token: strin
         </h2>
         <p className="text-xs text-muted-foreground leading-relaxed">
           {isAr
-            ? "تظهر في المساحة السفلية من قالبَي «الأصلي» و«كلاسيكي ثنائي اللغة». في قالب «الأصلي» تأتي أسفل بيانات البنك دون تغيير موضعها. اكتب كل ملاحظة في سطر."
-            : "Shown in the lower area of the Original and Classic Bilingual templates. In the Original template, notes follow the bank details without moving them. Enter one note per line."}
+            ? "تظهر في المساحة السفلية من قوالب «الأصلي» و«كلاسيكي ثنائي اللغة» و«كلاسيكي مدمج» و«نقي أنيق». تأتي أسفل بيانات البنك حيث تظهر. اكتب كل ملاحظة في سطر."
+            : "Shown in the lower area of the Original, Classic Bilingual, Compact Classic, and Pure Elegant templates, below bank details where they appear. Enter one note per line."}
         </p>
       </div>
 
