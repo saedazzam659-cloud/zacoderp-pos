@@ -3537,6 +3537,33 @@ paths:
         "400": { description: Invalid coordinates }
         "401": { description: Unauthorized }
         "403": { description: Mobile tracking is not enabled }
+  /user-tracking/mobile/manager-report:
+    get:
+      operationId: getMobileTrackingManagerReport
+      tags: [userTracking]
+      summary: Read consented mobile location samples for authorized mobile managers
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$" }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$" }
+        - name: userId
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Location summaries and recorded points for mobile-tracking users
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MobileTrackingManagerReport" }
+        "400": { description: Invalid report period }
+        "401": { description: Unauthorized }
+        "403": { description: Mobile tracking management is not enabled }
 
 components:
   schemas:
@@ -3558,6 +3585,44 @@ components:
       properties:
         ok: { type: boolean }
         id: { type: integer }
+    MobileTrackingManagerReport:
+      type: object
+      required: [range, users]
+      properties:
+        range:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string }
+            to: { type: string }
+        users:
+          type: array
+          items:
+            type: object
+            required: [id, username, points, summary]
+            properties:
+              id: { type: integer }
+              nameAr: { type: ["string", "null"] }
+              nameEn: { type: ["string", "null"] }
+              username: { type: string }
+              points:
+                type: array
+                items:
+                  type: object
+                  required: [lat, lng, recordedAt]
+                  properties:
+                    lat: { type: number }
+                    lng: { type: number }
+                    accuracy: { type: ["number", "null"] }
+                    recordedAt: { type: string, format: date-time }
+              summary:
+                type: object
+                required: [pointCount, distanceKm, firstAt, lastAt]
+                properties:
+                  pointCount: { type: integer }
+                  distanceKm: { type: number }
+                  firstAt: { type: ["string", "null"], format: date-time }
+                  lastAt: { type: ["string", "null"], format: date-time }
     WhatsAppContact:
       type: object
       required: [id, companyId, name, phone, normalizedPhone, notes, customerId, deletedAt, createdAt, updatedAt]

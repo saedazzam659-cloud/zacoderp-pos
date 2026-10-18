@@ -32,6 +32,44 @@ export interface MobileLocationPointResult {
   id: number;
 }
 
+export type MobileTrackingManagerReportRange = {
+  from: string;
+  to: string;
+};
+
+export type MobileTrackingManagerReportUsersItemPointsItem = {
+  lat: number;
+  lng: number;
+  /** @nullable */
+  accuracy?: number | null;
+  recordedAt: string;
+};
+
+export type MobileTrackingManagerReportUsersItemSummary = {
+  pointCount: number;
+  distanceKm: number;
+  /** @nullable */
+  firstAt: string | null;
+  /** @nullable */
+  lastAt: string | null;
+};
+
+export type MobileTrackingManagerReportUsersItem = {
+  id: number;
+  /** @nullable */
+  nameAr?: string | null;
+  /** @nullable */
+  nameEn?: string | null;
+  username: string;
+  points: MobileTrackingManagerReportUsersItemPointsItem[];
+  summary: MobileTrackingManagerReportUsersItemSummary;
+};
+
+export interface MobileTrackingManagerReport {
+  range: MobileTrackingManagerReportRange;
+  users: MobileTrackingManagerReportUsersItem[];
+}
+
 export interface WhatsAppContact {
   id: number;
   companyId: number;
@@ -3918,4 +3956,19 @@ export type LookupSalesOrderSourceDocumentParams = {
    * @minimum 1
    */
   branchId?: number;
+};
+
+export type GetMobileTrackingManagerReportParams = {
+  /**
+   * @pattern ^\d{4}-\d{2}-\d{2}$
+   */
+  from: string;
+  /**
+   * @pattern ^\d{4}-\d{2}-\d{2}$
+   */
+  to: string;
+  /**
+   * @minimum 1
+   */
+  userId?: number;
 };

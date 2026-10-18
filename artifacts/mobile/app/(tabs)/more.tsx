@@ -171,6 +171,12 @@ export default function More() {
 
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
         <Card style={{ paddingVertical: 4 }}>
+          {mp('mobile_tracking_manage') ? (
+            <>
+              <RowItem icon="map-pin" title="متابعة المناديب" onPress={() => router.push('/user-tracking' as any)} testID="row-mobile-tracking" />
+              <View style={{ height: 1, backgroundColor: c.border }} />
+            </>
+          ) : null}
           {mp('vouchers_view') ? (
             <>
               <RowItem icon="file-text" title="سندات القبض" onPress={() => router.push('/voucher/list' as any)} testID="row-vouchers" />

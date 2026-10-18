@@ -5798,3 +5798,50 @@ export const RecordMobileLocationBody = zod.object({
     .max(recordMobileLocationBodyLngMax),
   accuracy: zod.number().min(recordMobileLocationBodyAccuracyMin).nullish(),
 });
+
+/**
+ * @summary Read consented mobile location samples for authorized mobile managers
+ */
+export const getMobileTrackingManagerReportQueryFromRegExp = new RegExp(
+  "^\\d{4}-\\d{2}-\\d{2}$",
+);
+export const getMobileTrackingManagerReportQueryToRegExp = new RegExp(
+  "^\\d{4}-\\d{2}-\\d{2}$",
+);
+
+export const GetMobileTrackingManagerReportQueryParams = zod.object({
+  from: zod.coerce
+    .string()
+    .regex(getMobileTrackingManagerReportQueryFromRegExp),
+  to: zod.coerce.string().regex(getMobileTrackingManagerReportQueryToRegExp),
+  userId: zod.coerce.number().min(1).optional(),
+});
+
+export const GetMobileTrackingManagerReportResponse = zod.object({
+  range: zod.object({
+    from: zod.string(),
+    to: zod.string(),
+  }),
+  users: zod.array(
+    zod.object({
+      id: zod.number(),
+      nameAr: zod.string().nullish(),
+      nameEn: zod.string().nullish(),
+      username: zod.string(),
+      points: zod.array(
+        zod.object({
+          lat: zod.number(),
+          lng: zod.number(),
+          accuracy: zod.number().nullish(),
+          recordedAt: zod.coerce.date(),
+        }),
+      ),
+      summary: zod.object({
+        pointCount: zod.number(),
+        distanceKm: zod.number(),
+        firstAt: zod.coerce.date().nullable(),
+        lastAt: zod.coerce.date().nullable(),
+      }),
+    }),
+  ),
+});

@@ -64,6 +64,7 @@ import type {
   GetCashTransfersParams,
   GetDashboardSummaryParams,
   GetInventoryReportBrandOptionsParams,
+  GetMobileTrackingManagerReportParams,
   GetMonthlyStatsParams,
   GetPurchaseOrderReceiptOptionsParams,
   GetPurchaseReceiptFollowUpParams,
@@ -120,6 +121,7 @@ import type {
   ManufacturingDeliveryEvidence,
   MobileLocationPointInput,
   MobileLocationPointResult,
+  MobileTrackingManagerReport,
   MobileTrackingStatus,
   MonthlyStat,
   OkResponse,
@@ -14775,3 +14777,112 @@ export const useRecordMobileLocation = <
 > => {
   return useMutation(getRecordMobileLocationMutationOptions(options));
 };
+
+/**
+ * @summary Read consented mobile location samples for authorized mobile managers
+ */
+export const getGetMobileTrackingManagerReportUrl = (
+  params: GetMobileTrackingManagerReportParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/user-tracking/mobile/manager-report?${stringifiedParams}`
+    : `/api/user-tracking/mobile/manager-report`;
+};
+
+export const getMobileTrackingManagerReport = async (
+  params: GetMobileTrackingManagerReportParams,
+  options?: RequestInit,
+): Promise<MobileTrackingManagerReport> => {
+  return customFetch<MobileTrackingManagerReport>(
+    getGetMobileTrackingManagerReportUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetMobileTrackingManagerReportQueryKey = (
+  params?: GetMobileTrackingManagerReportParams,
+) => {
+  return [
+    `/api/user-tracking/mobile/manager-report`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetMobileTrackingManagerReportQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMobileTrackingManagerReport>>,
+  TError = ErrorType<void>,
+>(
+  params: GetMobileTrackingManagerReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMobileTrackingManagerReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetMobileTrackingManagerReportQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMobileTrackingManagerReport>>
+  > = ({ signal }) =>
+    getMobileTrackingManagerReport(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMobileTrackingManagerReport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMobileTrackingManagerReportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMobileTrackingManagerReport>>
+>;
+export type GetMobileTrackingManagerReportQueryError = ErrorType<void>;
+
+/**
+ * @summary Read consented mobile location samples for authorized mobile managers
+ */
+
+export function useGetMobileTrackingManagerReport<
+  TData = Awaited<ReturnType<typeof getMobileTrackingManagerReport>>,
+  TError = ErrorType<void>,
+>(
+  params: GetMobileTrackingManagerReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMobileTrackingManagerReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMobileTrackingManagerReportQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}

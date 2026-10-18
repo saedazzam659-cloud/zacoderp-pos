@@ -81,6 +81,7 @@ const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set<string>([
   "voice_assistant_use",
 ]);
 EXPLICIT_MOBILE_PERMISSION_KEYS.add("mobile_tracking");
+EXPLICIT_MOBILE_PERMISSION_KEYS.add("mobile_tracking_manage");
 
 /** Clamp the client payload: coerce values to booleans, cap key length. */
 export function sanitizeMobilePermissions(raw: any): Record<string, boolean> | null {

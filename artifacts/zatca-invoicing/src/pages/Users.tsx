@@ -171,6 +171,7 @@ const MOBILE_PERM_KEYS: Array<{ key: string; labelKey: string; editKey?: string;
   { key: "cash_transfers_approve", labelKey: "users.mobCashTransferApprove" },
   { key: "cash_transfers_reject", labelKey: "users.mobCashTransferReject" },
   { key: "mobile_tracking", labelKey: "users.mobLocationTracking" },
+  { key: "mobile_tracking_manage", labelKey: "users.mobLocationManagement" },
 ];
 
 // Every storable key (feature keys + edit/delete keys) — keep deny-all and
@@ -200,7 +201,7 @@ const CASH_TRANSFER_PERMISSION_KEYS = new Set([
 ]);
 // Location tracking is sensitive and must always be explicitly enabled,
 // including when an admin uses the "allow all" shortcut.
-const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set(["mobile_tracking", "voice_assistant_use", ...CASH_TRANSFER_PERMISSION_KEYS]);
+const EXPLICIT_MOBILE_PERMISSION_KEYS = new Set(["mobile_tracking", "mobile_tracking_manage", "voice_assistant_use", ...CASH_TRANSFER_PERMISSION_KEYS]);
 
 // Legacy permissions retain their allow-by-default behavior; this new module
 // stays denied until an admin explicitly checks each permission.

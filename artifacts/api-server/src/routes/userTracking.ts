@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { userVisitsTable, mobileLocationPointsTable, trackingZonesTable, trackingZoneUsersTable, usersTable, branchesTable } from "@workspace/db";
-import { eq, and, or, desc, sql, gte, lte, isNull, inArray } from "drizzle-orm";
+import { eq, and, or, desc, sql, gte, lte, lt, asc, isNull, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { extractAuth, resolveCompanyId, branchScopeFilter } from "../middleware/auth.js";
 import { requireModulePermission, moduleAudit } from "../middleware/permissions.js";
-import { mobilePermAllowed } from "../lib/mobilePerms.js";
+import { isMobileChannel, mobilePermAllowed } from "../lib/mobilePerms.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -22,6 +22,20 @@ router.use(extractAuth);
 // /company-users, /geocode admin tool) stay gated by the module
 // permission via the `adminGate` array below.
 const adminGate = [requireModulePermission("user_tracking"), moduleAudit("user_tracking")];
+
+async function requireMobileTrackingManager(req: any, res: any, next: (err?: unknown) => void): Promise<void> {
+  if (!isMobileChannel(req)) { next(); return; }
+  const cid = guard(req, res);
+  if (!cid) return;
+  const uid = req.authUser?.id;
+  const [u] = uid ? await db.select({ role: usersTable.role, mobilePermissions: usersTable.mobilePermissions })
+    .from(usersTable).where(and(eq(usersTable.id, uid), eq(usersTable.companyId, cid))).limit(1) : [];
+  if (!u || !mobilePermAllowed(u, "mobile_tracking_manage")) {
+    res.status(403).json({ error: "متابعة تحركات المستخدمين غير مفعّلة لهذا الحساب في تطبيق الموبايل" });
+    return;
+  }
+  next();
+}
 
 function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
@@ -349,7 +363,7 @@ router.post("/mobile/location", async (req: any, res) => {
 // the company. Each row carries the user's open visit (if any) with its last
 // known position and matched zone. Drives the live tracking map. Polled by
 // the UI every ~10s. Admin-gated below via `adminGate`.
-router.get("/live", ...adminGate, async (req: any, res) => {
+router.get("/live", ...adminGate, requireMobileTrackingManager, async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
 
   // 1) Every user explicitly bound to an active zone in this company (distinct).
@@ -697,6 +711,74 @@ router.get("/attendance", ...adminGate, async (req: any, res) => {
   };
 
   res.json({ days, users: usersOut, overall });
+});
+
+const mobileManagerReportQuery = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  userId: z.coerce.number().int().positive().optional(),
+}).refine(v => v.from <= v.to, { message: "from must be <= to", path: ["from"] });
+
+router.get("/mobile/manager-report", ...adminGate, requireMobileTrackingManager, async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const parsed = mobileManagerReportQuery.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "فترة التقرير غير صالحة" }); return; }
+  const { from, to, userId } = parsed.data;
+  const [fy, fm, fd] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  const start = new Date(fy, fm - 1, fd, 0, 0, 0, 0);
+  const end = new Date(ty, tm - 1, td + 1, 0, 0, 0, 0);
+  if (end.getTime() - start.getTime() > 32 * 24 * 60 * 60 * 1000) {
+    res.status(400).json({ error: "الحد الأقصى لفترة التقرير 31 يوماً" }); return;
+  }
+  const users = await db.select({
+    id: usersTable.id, nameAr: usersTable.nameAr, nameEn: usersTable.nameEn, username: usersTable.username,
+  }).from(usersTable).where(and(
+    eq(usersTable.companyId, cid),
+    eq(usersTable.isActive, true),
+    sql`${usersTable.mobilePermissions}->>'mobile_tracking' = 'true'`,
+    ...(userId ? [eq(usersTable.id, userId)] : []),
+  )).orderBy(usersTable.username);
+  const ids = users.map(u => u.id);
+  if (!ids.length) {
+    res.json({ range: { from, to }, users: [] });
+    return;
+  }
+  const points = await db.select({
+    id: mobileLocationPointsTable.id, userId: mobileLocationPointsTable.userId,
+    lat: mobileLocationPointsTable.lat, lng: mobileLocationPointsTable.lng,
+    accuracy: mobileLocationPointsTable.accuracy, recordedAt: mobileLocationPointsTable.recordedAt,
+  }).from(mobileLocationPointsTable).where(and(
+    eq(mobileLocationPointsTable.companyId, cid),
+    inArray(mobileLocationPointsTable.userId, ids),
+    gte(mobileLocationPointsTable.recordedAt, start),
+    lt(mobileLocationPointsTable.recordedAt, end),
+  )).orderBy(desc(mobileLocationPointsTable.recordedAt)).limit(20_000);
+  const byUser = new Map<number, typeof points>();
+  for (const p of points) {
+    const list = byUser.get(p.userId) ?? [];
+    list.push(p);
+    byUser.set(p.userId, list);
+  }
+  const distanceMeters = (a: typeof points[number], b: typeof points[number]) => {
+    const rad = (n: number) => n * Math.PI / 180;
+    const dLat = rad(Number(b.lat) - Number(a.lat)), dLng = rad(Number(b.lng) - Number(a.lng));
+    const x = Math.sin(dLat / 2) ** 2 + Math.cos(rad(Number(a.lat))) * Math.cos(rad(Number(b.lat))) * Math.sin(dLng / 2) ** 2;
+    return 12_742_000 * Math.asin(Math.sqrt(x));
+  };
+  res.json({
+    range: { from, to },
+    users: users.map(u => {
+      const samples = (byUser.get(u.id) ?? []).reverse();
+      let distance = 0;
+      for (let i = 1; i < samples.length; i++) distance += distanceMeters(samples[i - 1], samples[i]);
+      return {
+        ...u,
+        points: samples.map(p => ({ lat: Number(p.lat), lng: Number(p.lng), accuracy: p.accuracy == null ? null : Number(p.accuracy), recordedAt: p.recordedAt.toISOString() })),
+        summary: { pointCount: samples.length, distanceKm: Math.round(distance / 10) / 100, firstAt: samples[0]?.recordedAt.toISOString() ?? null, lastAt: samples.at(-1)?.recordedAt.toISOString() ?? null },
+      };
+    }),
+  });
 });
 
 // ───────────────── MOVEMENT REPORT (admin) ────────────────
