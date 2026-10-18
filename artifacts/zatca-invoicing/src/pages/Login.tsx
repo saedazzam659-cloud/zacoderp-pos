@@ -389,11 +389,8 @@ export default function Login() {
   // an agent-domain server once returned a giant SQL/permission-keys blob as
   // `error`, which was rendered verbatim here. Anything long or SQL/JSON-like
   // collapses to a short friendly message.
-  // After a publish, agent servers pull the new release and restart; for a
-  // couple of minutes the first login attempt fails with a network error or a
-  // gateway 502/503/504. Showing the generic "فشل تسجيل الدخول" there misleads
-  // users into thinking their credentials are wrong — surface a clear
-  // "server is updating" message instead.
+  // Gateway/network failures can come from several causes (including database
+  // pool saturation); do not claim that an update is in progress.
   const isServerUnreachable = (err: any): boolean => {
     const status = err?.status;
     if (status === 502 || status === 503 || status === 504) return true;
@@ -402,9 +399,9 @@ export default function Login() {
     return err instanceof TypeError ||
       /failed to fetch|load failed|networkerror|network request failed|fetch failed|timeout|timed out|econnrefused/i.test(m);
   };
-  const SERVER_UPDATING_MSG = t(
-    "auth.serverUpdating",
-    "الخادم يتم تحديثه الآن — بياناتك صحيحة، انتظر دقيقة ثم حاول مرة أخرى.",
+  const SERVER_UNAVAILABLE_MSG = t(
+    "auth.serverUnavailable",
+    "الخادم لا يستجيب مؤقتًا. حاول بعد قليل، وإذا استمر العطل تواصل مع مسؤول النظام.",
   );
 
   const friendlyError = (msg: unknown, fallback: string): string => {
@@ -480,7 +477,7 @@ export default function Login() {
     } catch (err: any) {
       setDemoTransferError(
         isServerUnreachable(err)
-          ? SERVER_UPDATING_MSG
+          ? SERVER_UNAVAILABLE_MSG
           : friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")),
       );
     } finally {
@@ -526,7 +523,7 @@ export default function Login() {
       }
       setDemoPhoneError(
         isServerUnreachable(err)
-          ? SERVER_UPDATING_MSG
+          ? SERVER_UNAVAILABLE_MSG
           : friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")),
       );
     } finally {
@@ -603,7 +600,7 @@ export default function Login() {
         if (!isSAHint) {
           setError(
             isServerUnreachable(err)
-              ? SERVER_UPDATING_MSG
+            ? SERVER_UNAVAILABLE_MSG
               : friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")),
           );
           return;
@@ -625,7 +622,7 @@ export default function Login() {
     } catch (err: any) {
       setError(
         isServerUnreachable(err)
-          ? SERVER_UPDATING_MSG
+          ? SERVER_UNAVAILABLE_MSG
           : friendlyError(err?.message, t("auth.loginError", "فشل تسجيل الدخول")),
       );
     } finally {

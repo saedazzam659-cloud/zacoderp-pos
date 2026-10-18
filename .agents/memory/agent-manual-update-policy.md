@@ -7,6 +7,8 @@ Central publishing must only make a full-agent release available. It must never 
 
 Existing legacy agents move to this model once, during a maintenance window approved by that agent's administrator. Until migrated, their old manifest poll receives no version metadata, so it exits before download or restart.
 
+A central API deployment is still a shared availability event: agent domains proxy requests through the central API, so restarting it can briefly interrupt agent-domain logins even though no remote agent package is installed or restarted. Disclose this distinction and get approval before any deployment expected to affect the user's protected agent.
+
 Every approved update is tied to the complete release archive, authenticated without URL credentials, size/hash verified before swap, and health-checked after restart. A failed new release must automatically restore and start the previous release.
 
 The update must also reconcile the managed Caddy SPA fallback and retain exactly one previous generation of native Vite assets. The client may reload once on `vite:preloadError`; a repeated error must reach the visible global error boundary rather than loop.

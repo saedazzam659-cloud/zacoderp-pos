@@ -161,6 +161,9 @@ export default function LicenseManagement() {
   const { data: agentAnnouncement, isLoading: isLoadingAgentAnnouncement } = useQuery({
     queryKey: ["agent-announcement-settings", announcementAgentId],
     enabled: !!announcementAgentId,
+    retry: false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       const r = await fetch(`${API}/api/admin/system-settings/agent-announcement?agent=${announcementAgentId}`, { headers });
       if (!r.ok) throw new Error("تعذر تحميل رسالة الوكيل");

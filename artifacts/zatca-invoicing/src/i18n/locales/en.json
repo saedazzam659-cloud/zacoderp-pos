@@ -764,7 +764,7 @@
       "missionTitle": "Our Mission",
       "missionText": "Advanced AI-driven software solutions that elevate business efficiency and decision accuracy."
     },
-    "serverUpdating": "The server is being updated right now — your credentials are fine, wait a minute and try again."
+    "serverUnavailable": "The server is temporarily unavailable. Try again shortly; if this continues, contact your system administrator."
   },
   "nav": {
     "demoAnalytics": "Demo Analytics",

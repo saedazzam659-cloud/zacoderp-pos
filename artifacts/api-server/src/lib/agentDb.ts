@@ -12,8 +12,9 @@
 import { createExternalDb, type ExternalDbContext } from "@workspace/db";
 import { decryptSecret } from "./encryption.js";
 import { logger } from "./logger.js";
+import { agentDbPoolMax, parseAgentDbPoolOverrides } from "./agentDbPoolConfig.js";
 
-type CacheEntry = { key: string; ctx: ExternalDbContext };
+type CacheEntry = { key: string; ctx: ExternalDbContext; max: number };
 const cache = new Map<number, CacheEntry>();
 
 function positiveInt(value: string | undefined, fallback: number): number {
@@ -22,6 +23,9 @@ function positiveInt(value: string | undefined, fallback: number): number {
 }
 
 const externalPoolMax = positiveInt(process.env.PG_EXTERNAL_POOL_MAX, 10);
+// Optional targeted capacity override: "2=20,7=12". Leave unset until each
+// remote database's own max_connections budget has been checked.
+const externalPoolMaxByAgent = parseAgentDbPoolOverrides(process.env.PG_EXTERNAL_POOL_MAX_BY_AGENT);
 
 // One monitor covers every lazily-created agent pool. It emits only while
 // callers are queued, labels the pool by the non-secret registry id, and never
@@ -36,7 +40,7 @@ if (process.env.PG_EXTERNAL_POOL_LOG !== "0" && process.env.PG_EXTERNAL_POOL_LOG
           waiting: pool.waitingCount,
           total: pool.totalCount,
           idle: pool.idleCount,
-          max: externalPoolMax,
+          max: entry.max,
         }, "Agent database pool saturated");
       }
     }
@@ -45,14 +49,15 @@ if (process.env.PG_EXTERNAL_POOL_LOG !== "0" && process.env.PG_EXTERNAL_POOL_LOG
 }
 
 export function getAgentDbContext(agentId: number, dbUrlEnc: string): ExternalDbContext {
+  const max = agentDbPoolMax(agentId, externalPoolMax, externalPoolMaxByAgent);
   const hit = cache.get(agentId);
-  if (hit && hit.key === dbUrlEnc) return hit.ctx;
+  if (hit && hit.key === dbUrlEnc && hit.max === max) return hit.ctx;
   if (hit) hit.ctx.pool.end().catch(() => {});
   const url = decryptSecret(dbUrlEnc);
   if (!url) throw new Error("agent db url missing");
-  const ctx = createExternalDb(url, { max: externalPoolMax });
-  cache.set(agentId, { key: dbUrlEnc, ctx });
-  logger.info({ agentId, max: externalPoolMax }, "Agent database pool created");
+  const ctx = createExternalDb(url, { max });
+  cache.set(agentId, { key: dbUrlEnc, ctx, max });
+  logger.info({ agentId, max }, "Agent database pool created");
   return ctx;
 }
 
@@ -68,7 +73,7 @@ export function getAgentDbPoolStats(agentId: number): {
     waiting: hit.ctx.pool.waitingCount,
     total: hit.ctx.pool.totalCount,
     idle: hit.ctx.pool.idleCount,
-    max: externalPoolMax,
+    max: hit.max,
   };
 }
 
