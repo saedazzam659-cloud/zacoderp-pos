@@ -60,6 +60,17 @@ type Rep = {
   accountId: number | null;
   notes: string | null;
   userId: number | null;
+  commissionPlan?: { periods: Array<{
+    from: string; to: string; enabled: boolean; status: "open" | "approved";
+    calculationMode: "excess" | "all_after_hit";
+    items: Array<{ itemId: number; itemName: string; itemCode: string | null; unitId: number; unitName: string; conversionFactor: string; targetQty: string }>;
+  }> };
+};
+
+type TargetItemOption = {
+  id: number; code: string; nameAr: string; baseUnitId: number | null;
+  baseUnitName: string | null;
+  units: Array<{ unitId: number; unitName: string; conversionFactor: number }>;
 };
 
 type CompanyUser = {
@@ -104,6 +115,11 @@ export default function SalesReps() {
   const [editing, setEditing] = useState<Rep | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<typeof EMPTY_FORM>(EMPTY_FORM);
+  const [targetEnabled, setTargetEnabled] = useState(false);
+  const [targetFrom, setTargetFrom] = useState("");
+  const [targetTo, setTargetTo] = useState("");
+  const [targetMode, setTargetMode] = useState<"excess" | "all_after_hit">("excess");
+  const [targetRows, setTargetRows] = useState<Array<{ itemId: string; unitId: string; targetQty: string }>>([]);
   const [deleteRep, setDeleteRep] = useState<Rep | null>(null);
   const [aiRep, setAiRep] = useState<Rep | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<string>("");
@@ -161,6 +177,17 @@ export default function SalesReps() {
       return r.json();
     },
     enabled: !!cid,
+    staleTime: 60_000,
+  });
+
+  const { data: targetItemOptions = [] } = useQuery<TargetItemOption[]>({
+    queryKey: ["sales-rep-target-items", cid],
+    enabled: !!cid && showForm,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/sales-reps/target-items?companyId=${cid}`, { headers });
+      if (!r.ok) throw new Error("تعذر تحميل الأصناف والوحدات");
+      return r.json();
+    },
     staleTime: 60_000,
   });
 
@@ -258,6 +285,11 @@ export default function SalesReps() {
   function openNew() {
     setEditing(null);
     setForm(EMPTY_FORM);
+    setTargetEnabled(false);
+    setTargetFrom("");
+    setTargetTo("");
+    setTargetMode("excess");
+    setTargetRows([]);
     setShowForm(true);
   }
 
@@ -280,12 +312,27 @@ export default function SalesReps() {
       notes: r.notes ?? "",
       userId: r.userId ? String(r.userId) : "",
     });
+    const openPeriod = [...(r.commissionPlan?.periods ?? [])].reverse().find(p => p.status === "open");
+    setTargetEnabled(!!openPeriod?.enabled);
+    setTargetFrom(openPeriod?.from ?? "");
+    setTargetTo(openPeriod?.to ?? "");
+    setTargetMode(openPeriod?.calculationMode ?? "excess");
+    setTargetRows(openPeriod?.items.map(x => ({
+      itemId: String(x.itemId), unitId: String(x.unitId), targetQty: String(x.targetQty),
+    })) ?? []);
     setShowForm(true);
   }
 
   const saveMut = useMutation({
     mutationFn: async () => {
       if (!form.nameAr.trim()) throw new Error("اسم المندوب مطلوب");
+      if (targetEnabled && (!targetFrom || !targetTo || targetFrom > targetTo)) {
+        throw new Error("حدد فترة صحيحة لتارجت الأصناف");
+      }
+      if (targetEnabled && !targetRows.length) throw new Error("أضف صنفًا واحدًا على الأقل للتارجت");
+      if (targetEnabled && targetRows.some(row => !row.itemId || !row.unitId || !(Number(row.targetQty) > 0))) {
+        throw new Error("أكمل الصنف والوحدة وكمية التارجت لكل صف");
+      }
       const body: any = {
         companyId: cid,
         code: form.code.trim() || undefined,
@@ -300,6 +347,24 @@ export default function SalesReps() {
         commissionPct: Number(form.commissionPct) || 0,
         commissionType: form.commissionType,
         monthlyTarget: Number(form.monthlyTarget) || 0,
+        ...(targetFrom && targetTo ? {
+          targetPeriod: {
+            from: targetFrom,
+            to: targetTo,
+            enabled: targetEnabled,
+            calculationMode: targetMode,
+            items: targetEnabled ? targetRows.map(row => {
+              const item = targetItemOptions.find(x => x.id === Number(row.itemId));
+              const unit = item?.units.find(x => x.unitId === Number(row.unitId));
+              return {
+                itemId: Number(row.itemId), itemName: item?.nameAr ?? "",
+                itemCode: item?.code ?? null, unitId: Number(row.unitId),
+                unitName: unit?.unitName ?? "", conversionFactor: unit?.conversionFactor ?? 1,
+                targetQty: Number(row.targetQty),
+              };
+            }) : [],
+          },
+        } : {}),
         accountId: form.accountId ? Number(form.accountId) : null,
         notes: form.notes.trim() || null,
         // Either pass a user id OR explicit null to disconnect on edit. The
@@ -326,6 +391,8 @@ export default function SalesReps() {
       setShowForm(false);
       setEditing(null);
       setForm(EMPTY_FORM);
+      setTargetEnabled(false);
+      setTargetRows([]);
     },
     onError: (e: any) => {
       toast({ title: "خطأ", description: e?.message || "فشل الحفظ", variant: "destructive" });
@@ -649,6 +716,76 @@ export default function SalesReps() {
                 onChange={(e) => setForm({ ...form, monthlyTarget: e.target.value })}
                 data-testid="input-monthly-target"
               />
+            </div>
+            <div className="col-span-2 lg:col-span-4 rounded-lg border p-3 space-y-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={targetEnabled} onChange={e => setTargetEnabled(e.target.checked)} />
+                تفعيل تارجت أصناف للفترة
+              </label>
+              {targetEnabled && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div><Label className="text-xs">من تاريخ</Label><Input type="date" value={targetFrom} onChange={e => setTargetFrom(e.target.value)} className="h-9" /></div>
+                    <div><Label className="text-xs">إلى تاريخ</Label><Input type="date" value={targetTo} onChange={e => setTargetTo(e.target.value)} className="h-9" /></div>
+                    <div>
+                      <Label className="text-xs">استحقاق العمولة بعد التارجت</Label>
+                      <select className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+                        value={targetMode} onChange={e => setTargetMode(e.target.value as any)}>
+                        <option value="excess">على الكمية الزائدة فقط</option>
+                        <option value="all_after_hit">على كامل الكمية بعد بلوغ التارجت</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {targetRows.map((row, idx) => {
+                      const item = targetItemOptions.find(x => x.id === Number(row.itemId));
+                      return (
+                        <div key={idx} className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-end">
+                          <div>
+                            <Label className="text-xs">الصنف</Label>
+                            <select className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+                              value={row.itemId}
+                              onChange={e => {
+                                const selected = targetItemOptions.find(x => x.id === Number(e.target.value));
+                                const unitId = selected?.units[0]?.unitId;
+                                setTargetRows(prev => prev.map((x, i) => i === idx
+                                  ? { ...x, itemId: e.target.value, unitId: unitId ? String(unitId) : "" } : x));
+                              }}>
+                              <option value="">اختر صنفًا</option>
+                              {targetItemOptions.map(x => <option key={x.id} value={x.id}>{x.nameAr} ({x.code})</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <Label className="text-xs">وحدة التارجت</Label>
+                            <select className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+                              value={row.unitId}
+                              onChange={e => setTargetRows(prev => prev.map((x, i) => i === idx ? { ...x, unitId: e.target.value } : x))}>
+                              <option value="">الوحدة</option>
+                              {(item?.units ?? []).map(u => <option key={u.unitId} value={u.unitId}>{u.unitName}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <Label className="text-xs">كمية التارجت</Label>
+                            <Input type="number" min="0.0001" step="0.01" value={row.targetQty}
+                              onChange={e => setTargetRows(prev => prev.map((x, i) => i === idx ? { ...x, targetQty: e.target.value } : x))} />
+                          </div>
+                          <Button type="button" variant="ghost" size="icon" aria-label="حذف الصنف"
+                            onClick={() => setTargetRows(prev => prev.filter((_, i) => i !== idx))}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="gap-2"
+                    onClick={() => setTargetRows(prev => [...prev, { itemId: "", unitId: "", targetQty: "" }])}>
+                    <Plus className="h-4 w-4" /> إضافة صنف للتارجت
+                  </Button>
+                  {editing?.commissionPlan?.periods.some(p => p.status === "approved") && (
+                    <p className="text-xs text-amber-700">الفترات المعتمدة محفوظة ولا تتغير. أدخل فترة جديدة لإعداد تارجت لاحق.</p>
+                  )}
+                </>
+              )}
             </div>
             <div>
               <Label className="text-xs">الحساب المحاسبي (اختياري)</Label>

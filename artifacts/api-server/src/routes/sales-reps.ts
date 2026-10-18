@@ -7,6 +7,14 @@ import {
   salesInvoicesTable,
   receiptVouchersTable, // used by delete guard so we don't orphan collection-commission history
   usersTable,
+  itemsTable,
+  unitsTable,
+  itemUnitPricesTable,
+  salesInvoiceLinesTable,
+  salesReturnsTable,
+  salesReturnLinesTable,
+  type SalesRepCommissionPlan,
+  type SalesRepTargetPeriod,
 } from "@workspace/db";
 import { and, desc, eq, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -35,6 +43,146 @@ function requireCid(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, raw);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
   return cid;
+}
+
+async function targetPlanWithPeriod(
+  cid: number,
+  current: SalesRepCommissionPlan | null | undefined,
+  input: any,
+  commissionPct: unknown,
+): Promise<SalesRepCommissionPlan> {
+  const invalid = (message: string) => Object.assign(new Error(message), { status: 400 });
+  const periods = Array.isArray(current?.periods) ? [...current.periods] : [];
+  if (!input || typeof input !== "object") return { periods };
+  const from = String(input.from ?? "");
+  const to = String(input.to ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+    throw invalid("فترة التارجت غير صحيحة");
+  }
+  if (input.enabled === false) {
+    const ix = periods.findIndex((p: SalesRepTargetPeriod) => p.from === from && p.to === to);
+    if (ix >= 0 && periods[ix].status === "approved") throw invalid("الفترة معتمدة ولا يمكن تعديلها");
+    const period: SalesRepTargetPeriod = {
+      from, to, enabled: false, items: [], calculationMode: "excess",
+      status: "open", commissionPct: String(commissionPct ?? 0),
+    };
+    if (ix >= 0) periods[ix] = period; else periods.push(period);
+    return { periods: periods.sort((a, b) => a.from.localeCompare(b.from)) };
+  }
+  const items = Array.isArray(input.items) ? input.items : [];
+  if (!items.length) throw invalid("أضف صنفًا واحدًا على الأقل للتارجت");
+  const normalized = items.map((x: any) => {
+    const itemId = Number(x.itemId);
+    const unitId = Number(x.unitId);
+    const targetQty = Number(x.targetQty);
+    const conversionFactor = Number(x.conversionFactor);
+    if (!Number.isSafeInteger(itemId) || itemId < 1 || !Number.isSafeInteger(unitId) || unitId < 1
+      || !Number.isFinite(targetQty) || targetQty <= 0
+      || !Number.isFinite(conversionFactor) || conversionFactor <= 0) {
+      throw invalid("بيانات صنف التارجت أو وحدته غير صحيحة");
+    }
+    return {
+      itemId,
+      itemName: String(x.itemName ?? "").slice(0, 240),
+      itemCode: x.itemCode == null ? null : String(x.itemCode).slice(0, 100),
+      unitId,
+      unitName: String(x.unitName ?? "").slice(0, 120),
+      conversionFactor: String(conversionFactor),
+      targetQty: String(targetQty),
+    };
+  });
+  if (new Set(normalized.map((x: any) => x.itemId)).size !== normalized.length) {
+    throw invalid("لا يمكن تكرار الصنف في الفترة نفسها");
+  }
+  const itemIds = normalized.map((x: any) => x.itemId as number);
+  const unitIds = normalized.map((x: any) => x.unitId as number);
+  const companyItems = await db.select({
+    id: itemsTable.id, nameAr: itemsTable.nameAr, code: itemsTable.code, unitId: itemsTable.unitId,
+  }).from(itemsTable).where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, itemIds)));
+  const companyUnits = await db.select({ id: unitsTable.id, nameAr: unitsTable.nameAr })
+    .from(unitsTable).where(and(eq(unitsTable.companyId, cid), inArray(unitsTable.id, unitIds)));
+  const unitPrices = await db.select({
+    itemId: itemUnitPricesTable.itemId, unitId: itemUnitPricesTable.unitId,
+    factor: itemUnitPricesTable.conversionFactor,
+  }).from(itemUnitPricesTable).where(and(
+    eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.isActive, true),
+    inArray(itemUnitPricesTable.itemId, itemIds), inArray(itemUnitPricesTable.unitId, unitIds),
+  ));
+  if (companyItems.length !== itemIds.length || companyUnits.length !== new Set(unitIds).size) {
+    throw invalid("الصنف أو الوحدة غير متاحة في هذه الشركة");
+  }
+  const itemById = new Map(companyItems.map(x => [x.id, x]));
+  const unitById = new Map(companyUnits.map(x => [x.id, x]));
+  const priceByPair = new Map(unitPrices.map(x => [`${x.itemId}:${x.unitId}`, Number(x.factor)]));
+  for (const target of normalized) {
+    const item = itemById.get(target.itemId)!;
+    const factor = priceByPair.get(`${target.itemId}:${target.unitId}`);
+    if (factor == null && item.unitId !== target.unitId) {
+      throw invalid("الوحدة المختارة ليست وحدة مسجلة لهذا الصنف");
+    }
+    target.itemName = item.nameAr;
+    target.itemCode = item.code;
+    target.unitName = unitById.get(target.unitId)!.nameAr;
+    target.conversionFactor = String(factor ?? 1);
+  }
+  const existingIndex = periods.findIndex((p: SalesRepTargetPeriod) => p.from === from && p.to === to);
+  if (existingIndex >= 0 && periods[existingIndex].status === "approved") {
+    throw invalid("الفترة معتمدة ولا يمكن تعديل التارجت الخاص بها");
+  }
+  const overlap = periods.find((p: SalesRepTargetPeriod) => p.enabled
+    && !(p.from === from && p.to === to)
+    && p.from <= to && from <= p.to);
+  if (overlap) throw invalid(`تتداخل هذه الفترة مع تارجت محفوظ من ${overlap.from} إلى ${overlap.to}`);
+  const period: SalesRepTargetPeriod = {
+    from, to, enabled: true, items: normalized,
+    calculationMode: input.calculationMode === "all_after_hit" ? "all_after_hit" : "excess",
+    status: "open",
+    commissionPct: String(commissionPct ?? 0),
+  };
+  if (existingIndex >= 0) periods[existingIndex] = period;
+  else periods.push(period);
+  return { periods: periods.sort((a, b) => a.from.localeCompare(b.from)) };
+}
+
+async function originalReturnEligibilityRatio(
+  cid: number,
+  repId: number,
+  plan: SalesRepCommissionPlan | null | undefined,
+  invoiceDate: string,
+  itemId: number | null,
+): Promise<number> {
+  if (!itemId) return 1;
+  const period = [...(plan?.periods ?? [])]
+    .filter(p => p.from <= invoiceDate && invoiceDate <= p.to)
+    .sort((a, b) => b.from.localeCompare(a.from))[0];
+  if (!period?.enabled) return 1;
+  const target = period.items.find(item => item.itemId === itemId);
+  if (!target) return 0;
+  const saved = period.snapshot?.targetProgress.find((x: any) => Number(x.itemId) === itemId);
+  if (saved) {
+    const achieved = Number(saved.achievedQty) || 0;
+    return achieved > 0 ? Math.min(1, (Number(saved.commissionableQty) || 0) / achieved) : 0;
+  }
+  const rows = await db.select({
+    qty: salesInvoiceLinesTable.qty,
+    factor: salesInvoiceLinesTable.conversionFactor,
+  }).from(salesInvoiceLinesTable).innerJoin(
+    salesInvoicesTable, eq(salesInvoicesTable.id, salesInvoiceLinesTable.invoiceId),
+  ).where(and(
+    eq(salesInvoicesTable.companyId, cid),
+    eq(salesInvoicesTable.salesRepId, repId),
+    eq(salesInvoicesTable.status, "posted"),
+    eq(salesInvoiceLinesTable.itemId, itemId),
+    sql`${salesInvoicesTable.invoiceDate} >= ${period.from}`,
+    sql`${salesInvoicesTable.invoiceDate} <= ${period.to}`,
+  ));
+  const achieved = rows.reduce((sum, row) => sum
+    + Number(row.qty ?? 0) * Number(row.factor ?? 1) / Number(target.conversionFactor || 1), 0);
+  const goal = Number(target.targetQty) || 0;
+  const eligible = period.calculationMode === "all_after_hit"
+    ? (achieved >= goal ? achieved : 0)
+    : Math.max(0, achieved - goal);
+  return achieved > 0 ? Math.min(1, eligible / achieved) : 0;
 }
 
 async function nextRepCode(cid: number): Promise<string> {
@@ -94,6 +242,38 @@ router.get("/active", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+router.get("/target-items", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const items = await db.select({
+      id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr,
+      baseUnitId: itemsTable.unitId, baseUnitName: unitsTable.nameAr,
+    }).from(itemsTable)
+      .leftJoin(unitsTable, eq(unitsTable.id, itemsTable.unitId))
+      .where(eq(itemsTable.companyId, cid))
+      .orderBy(itemsTable.nameAr);
+    const prices = await db.select({
+      itemId: itemUnitPricesTable.itemId, unitId: itemUnitPricesTable.unitId,
+      unitName: unitsTable.nameAr, factor: itemUnitPricesTable.conversionFactor,
+    }).from(itemUnitPricesTable)
+      .innerJoin(unitsTable, eq(unitsTable.id, itemUnitPricesTable.unitId))
+      .where(and(eq(itemUnitPricesTable.companyId, cid), eq(itemUnitPricesTable.isActive, true)));
+    const byItem = new Map<number, Array<{ unitId: number; unitName: string; conversionFactor: number }>>();
+    for (const p of prices) {
+      const list = byItem.get(p.itemId) ?? [];
+      list.push({ unitId: p.unitId, unitName: p.unitName, conversionFactor: Number(p.factor) || 1 });
+      byItem.set(p.itemId, list);
+    }
+    res.json(items.map(item => {
+      const options = byItem.get(item.id) ?? [];
+      if (item.baseUnitId && !options.some(x => x.unitId === item.baseUnitId)) {
+        options.unshift({ unitId: item.baseUnitId, unitName: item.baseUnitName ?? "الوحدة الأساسية", conversionFactor: 1 });
+      }
+      return { ...item, units: options };
+    }));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
@@ -133,6 +313,7 @@ router.post("/", async (req, res) => {
       commissionPct:  b.commissionPct != null ? String(b.commissionPct) : "0",
       commissionType: b.commissionType === "collection" ? "collection" : "invoice",
       monthlyTarget:  b.monthlyTarget != null ? String(b.monthlyTarget) : "0",
+      commissionPlan: await targetPlanWithPeriod(cid, { periods: [] }, b.targetPeriod, b.commissionPct),
       accountId:      b.accountId ? Number(b.accountId) : null,
       notes:          b.notes || null,
     }).returning();
@@ -142,7 +323,7 @@ router.post("/", async (req, res) => {
       return res.status(409).json({ error: "هذا المستخدم مرتبط بمندوب آخر بالفعل" });
     if (String(e?.message).includes("duplicate") || e?.code === "23505")
       return res.status(409).json({ error: "كود المندوب مستخدم مسبقاً" });
-    res.status(500).json({ error: e.message });
+    res.status(e.status ?? 500).json({ error: e.message });
   }
 });
 
@@ -151,6 +332,9 @@ router.put("/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const b = req.body ?? {};
+    const [current] = await db.select().from(salesRepsTable)
+      .where(and(eq(salesRepsTable.id, id), eq(salesRepsTable.companyId, cid)));
+    if (!current) { res.status(404).json({ error: "المندوب غير موجود" }); return; }
 
     if (b.accountId) {
       try { await ensureLeafAccounts(cid, [b.accountId]); }
@@ -172,6 +356,9 @@ router.put("/:id", async (req, res) => {
       commissionType: b.commissionType === "collection" ? "collection"
                       : b.commissionType === "invoice" ? "invoice" : undefined,
       monthlyTarget:  b.monthlyTarget != null ? String(b.monthlyTarget) : undefined,
+      commissionPlan: b.targetPeriod !== undefined
+        ? await targetPlanWithPeriod(cid, current.commissionPlan, b.targetPeriod, b.commissionPct ?? current.commissionPct)
+        : undefined,
       accountId:      b.accountId ? Number(b.accountId) : null,
       notes:          b.notes ?? null,
       updatedAt:      new Date(),
@@ -179,7 +366,7 @@ router.put("/:id", async (req, res) => {
 
     if (!row) { res.status(404).json({ error: "المندوب غير موجود" }); return; }
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
 });
 
 router.delete("/:id", async (req, res) => {
@@ -494,9 +681,134 @@ router.get("/:id/commission-detail", async (req, res) => {
     const totalCommission = invoices.reduce((s, i) => s + Number(i.commissionAmount ?? 0), 0);
     const totalCollected  = collections.reduce((s, r) => s + Number(r.amount        ?? 0), 0);
     const repPct = Number(rep.commissionPct ?? 0);
-    const effectiveCommission = rep.commissionType === "collection"
-      ? totalCollected * (repPct / 100)
-      : totalCommission;
+    const period = rep.commissionPlan?.periods?.find(p => p.from === from && p.to === to) ?? null;
+    const targetActive = !!period?.enabled;
+    const targetSalesLines = targetActive ? await db.select({
+      invoiceId: salesInvoiceLinesTable.invoiceId,
+      itemId: salesInvoiceLinesTable.itemId,
+      itemName: salesInvoiceLinesTable.itemName,
+      qty: salesInvoiceLinesTable.qty,
+      factor: salesInvoiceLinesTable.conversionFactor,
+      lineTotal: salesInvoiceLinesTable.lineTotal,
+      invoiceTotal: salesInvoicesTable.totalAmount,
+      commissionPct: salesInvoicesTable.commissionPct,
+    }).from(salesInvoiceLinesTable)
+      .innerJoin(salesInvoicesTable, eq(salesInvoicesTable.id, salesInvoiceLinesTable.invoiceId))
+      .where(and(
+        eq(salesInvoicesTable.companyId, cid),
+        eq(salesInvoicesTable.salesRepId, id),
+        eq(salesInvoicesTable.status, "posted"),
+        ...(from ? [sql`${salesInvoicesTable.invoiceDate} >= ${from}`] : []),
+        ...(to ? [sql`${salesInvoicesTable.invoiceDate} <= ${to}`] : []),
+      )) : [];
+    const targetNetByInvoice = new Map<number, number>();
+    for (const line of targetSalesLines) {
+      targetNetByInvoice.set(line.invoiceId,
+        (targetNetByInvoice.get(line.invoiceId) ?? 0) + Number(line.lineTotal ?? 0));
+    }
+    const commissionBaseForLine = (line: typeof targetSalesLines[number]) => {
+      const netTotal = targetNetByInvoice.get(line.invoiceId) ?? 0;
+      return netTotal > 0
+        ? Number(line.invoiceTotal ?? 0) * Number(line.lineTotal ?? 0) / netTotal
+        : Number(line.lineTotal ?? 0);
+    };
+    const targetProgress = (period?.enabled ? period.items : []).map(target => {
+      const lines = targetSalesLines.filter(line => line.itemId === target.itemId);
+      const soldQty = lines.reduce((sum, line) => sum
+        + Number(line.qty ?? 0) * Number(line.factor ?? 1) / Number(target.conversionFactor || 1), 0);
+      const goal = Number(target.targetQty) || 0;
+      const eligibleQty = period?.calculationMode === "all_after_hit"
+        ? (soldQty >= goal ? soldQty : 0)
+        : Math.max(0, soldQty - goal);
+      const ratio = soldQty > 0 ? Math.min(1, eligibleQty / soldQty) : 0;
+      const eligibleSales = lines.reduce((sum, line) => sum + commissionBaseForLine(line) * ratio, 0);
+      return {
+        itemId: target.itemId, itemName: target.itemName, itemCode: target.itemCode,
+        unitId: target.unitId, unitName: target.unitName,
+        targetQty: goal, achievedQty: Number(soldQty.toFixed(4)),
+        remainingQty: Number(Math.max(0, goal - soldQty).toFixed(4)),
+        achievementPct: goal > 0 ? Number((soldQty / goal * 100).toFixed(1)) : 0,
+        commissionableQty: Number(eligibleQty.toFixed(4)), eligibleSales,
+      };
+    });
+    const targetMap = new Map(targetProgress.map(target => [target.itemId, target]));
+    const targetHit = targetProgress.length > 0 && targetProgress.every(target => target.achievedQty >= target.targetQty);
+    const invoiceCommissionById = new Map<number, number>();
+    for (const line of targetSalesLines) {
+      const target = targetMap.get(line.itemId ?? -1);
+      if (!target) continue;
+      const ratio = Number(line.qty) > 0
+        ? Math.min(1, target.commissionableQty / Math.max(target.achievedQty, 0.000001))
+        : 0;
+      const commission = commissionBaseForLine(line) * ratio * Number(line.commissionPct ?? repPct) / 100;
+      invoiceCommissionById.set(line.invoiceId, (invoiceCommissionById.get(line.invoiceId) ?? 0) + commission);
+    }
+    const invoiceTargetCommission = [...invoiceCommissionById.values()].reduce((sum, x) => sum + x, 0);
+    const targetEligibleSales = targetProgress.reduce((sum, target) => sum + target.eligibleSales, 0);
+    const targetTrackedSales = targetProgress.reduce((sum, target) => sum
+      + targetSalesLines.filter(line => line.itemId === target.itemId)
+        .reduce((lineSum, line) => lineSum + commissionBaseForLine(line), 0), 0);
+    const collectionEligibility = period?.calculationMode === "all_after_hit"
+      ? (targetHit ? 1 : 0)
+      : (targetTrackedSales > 0 ? Math.min(1, targetEligibleSales / targetTrackedSales) : 0);
+    const grossCommission = targetActive
+      ? (rep.commissionType === "collection"
+        ? totalCollected * (Number(period?.commissionPct ?? repPct) / 100) * collectionEligibility
+        : invoiceTargetCommission)
+      : (rep.commissionType === "collection" ? totalCollected * (repPct / 100) : totalCommission);
+    const returnLines = targetActive ? await db.select({
+      returnId: salesReturnsTable.id,
+      returnNumber: salesReturnsTable.docNumber,
+      returnDate: salesReturnsTable.returnDate,
+      invoiceId: salesInvoicesTable.id,
+      invoiceNumber: salesInvoicesTable.docNumber,
+      invoiceDate: salesInvoicesTable.invoiceDate,
+      itemId: salesReturnLinesTable.itemId,
+      itemName: salesReturnLinesTable.itemName,
+      qty: salesReturnLinesTable.qty,
+      unit: salesReturnLinesTable.unit,
+      lineTotal: salesReturnLinesTable.lineTotal,
+      returnTotal: salesReturnsTable.totalAmount,
+      invoicePct: salesInvoicesTable.commissionPct,
+    }).from(salesReturnLinesTable)
+      .innerJoin(salesReturnsTable, eq(salesReturnsTable.id, salesReturnLinesTable.returnId))
+      .innerJoin(salesInvoicesTable, eq(salesInvoicesTable.id, salesReturnsTable.invoiceId))
+      .where(and(
+        eq(salesReturnsTable.companyId, cid),
+        eq(salesReturnsTable.status, "posted"),
+        eq(salesInvoicesTable.salesRepId, id),
+        ...(from ? [sql`${salesReturnsTable.returnDate} >= ${from}`] : []),
+        ...(to ? [sql`${salesReturnsTable.returnDate} <= ${to}`] : []),
+      )) : [];
+    const returnNetById = new Map<number, number>();
+    for (const line of returnLines) returnNetById.set(line.returnId,
+      (returnNetById.get(line.returnId) ?? 0) + Number(line.lineTotal ?? 0));
+    const returnAdjustments = await Promise.all(returnLines.map(async line => {
+      const ratio = await originalReturnEligibilityRatio(cid, id, rep.commissionPlan, line.invoiceDate, line.itemId);
+      const returnNet = returnNetById.get(line.returnId) ?? 0;
+      const commissionBase = returnNet > 0
+        ? Number(line.returnTotal ?? 0) * Number(line.lineTotal ?? 0) / returnNet
+        : Number(line.lineTotal ?? 0);
+      return {
+        returnId: line.returnId, returnNumber: line.returnNumber, returnDate: line.returnDate,
+        invoiceId: line.invoiceId, invoiceNumber: line.invoiceNumber,
+        itemId: line.itemId, itemName: line.itemName, qty: Number(line.qty ?? 0), unit: line.unit,
+        lineTotal: Number(commissionBase.toFixed(2)),
+        commissionDeduction: Number((commissionBase * Number(line.invoicePct ?? repPct) / 100 * ratio).toFixed(2)),
+      };
+    }));
+    const returnDeductions = returnAdjustments.reduce((sum, line) => sum + Number(line.commissionDeduction ?? 0), 0);
+    let effectiveCommission = grossCommission - returnDeductions;
+    let effectiveTargetProgress = targetProgress;
+    if (period?.status === "approved" && period.snapshot) {
+      effectiveCommission = period.snapshot.netCommission;
+      effectiveTargetProgress = period.snapshot.targetProgress as typeof targetProgress;
+    }
+    const frozen = period?.status === "approved" ? period.snapshot : undefined;
+    const summarySales = frozen?.totalSales ?? totalSales;
+    const summaryCollected = frozen?.totalCollected ?? totalCollected;
+    const summaryGross = frozen?.grossCommission ?? grossCommission;
+    const summaryReturns = frozen?.returnDeductions ?? returnDeductions;
     const target = Number(rep.monthlyTarget ?? 0);
 
     res.json({
@@ -513,30 +825,223 @@ router.get("/:id/commission-detail", async (req, res) => {
       },
       window: { from, to },
       summary: {
-        invoiceCount:        invoices.length,
-        totalSales:          Number(totalSales.toFixed(2)),
-        totalCommissionRaw:  Number(totalCommission.toFixed(2)),
-        totalCollected:      Number(totalCollected.toFixed(2)),
+        invoiceCount:        frozen?.invoiceCount ?? invoices.length,
+        totalSales:          Number(summarySales.toFixed(2)),
+        totalCommissionRaw:  Number((frozen?.totalCommissionRaw ?? (targetActive && rep.commissionType === "invoice" ? invoiceTargetCommission : totalCommission)).toFixed(2)),
+        totalCollected:      Number(summaryCollected.toFixed(2)),
+        grossCommission: Number(summaryGross.toFixed(2)),
+        returnDeductions: Number(summaryReturns.toFixed(2)),
         effectiveCommission: Number(effectiveCommission.toFixed(2)),
-        avgInvoiceValue:     invoices.length ? Number((totalSales / invoices.length).toFixed(2)) : 0,
-        targetAchievedPct:   target > 0 ? Math.round((totalSales / target) * 100) : null,
+        avgInvoiceValue:     frozen?.avgInvoiceValue ?? (invoices.length ? Number((summarySales / invoices.length).toFixed(2)) : 0),
+        targetAchievedPct:   frozen?.targetAchievedPct ?? (target > 0 ? Math.round((summarySales / target) * 100) : null),
       },
-      invoices: invoices.map(i => ({
+      invoices: frozen?.invoices ?? invoices.map(i => ({
         id:               i.id,
         invoiceNumber:    i.invoiceNumber,
         invoiceDate:      i.invoiceDate,
         customerName:     i.customerId != null ? (custMap.get(i.customerId) ?? `#${i.customerId}`) : "—",
         totalAmount:      Number(i.totalAmount ?? 0),
         commissionPct:    Number(i.commissionPct ?? 0),
-        commissionAmount: Number(i.commissionAmount ?? 0),
+        commissionAmount: Number(targetActive && rep.commissionType === "invoice"
+          ? (invoiceCommissionById.get(i.id) ?? 0)
+          : (i.commissionAmount ?? 0)),
       })),
-      collections: collections.map(c => ({
+      collections: frozen?.collections ?? collections.map(c => ({
         id:     c.id,
         date:   c.date,
         amount: Number(c.amount ?? 0),
       })),
+      targetPeriod: period ? { from: period.from, to: period.to, enabled: period.enabled, status: period.status, calculationMode: period.calculationMode } : null,
+      targetProgress: effectiveTargetProgress,
+      returnAdjustments: frozen?.returnAdjustments ?? returnAdjustments,
+      returnDeductions: Number(summaryReturns.toFixed(2)),
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/:id/commission-period/approve", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const from = String(req.body?.from ?? "");
+    const to = String(req.body?.to ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+      res.status(400).json({ error: "حدد فترة صحيحة قبل الاعتماد" }); return;
+    }
+    const snapshot = await db.transaction(async tx => {
+      const [rep] = await tx.select().from(salesRepsTable).where(and(
+        eq(salesRepsTable.id, id), eq(salesRepsTable.companyId, cid),
+      )).for("update");
+      if (!rep) throw Object.assign(new Error("المندوب غير موجود"), { status: 404 });
+      const plan = rep.commissionPlan ?? { periods: [] };
+      const ix = plan.periods.findIndex(p => p.from === from && p.to === to);
+      if (ix < 0) throw Object.assign(new Error("لا توجد إعدادات تارجت لهذه الفترة"), { status: 400 });
+      const period = plan.periods[ix];
+      if (period.status === "approved") throw Object.assign(new Error("الفترة معتمدة بالفعل"), { status: 409 });
+
+      const invoices = await tx.select({
+        id: salesInvoicesTable.id,
+        invoiceNumber: salesInvoicesTable.docNumber,
+        invoiceDate: salesInvoicesTable.invoiceDate,
+        customerId: salesInvoicesTable.customerId,
+        totalAmount: salesInvoicesTable.totalAmount,
+        commissionPct: salesInvoicesTable.commissionPct,
+        commissionAmount: salesInvoicesTable.commissionAmount,
+      }).from(salesInvoicesTable).where(and(
+        eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.salesRepId, id),
+        eq(salesInvoicesTable.status, "posted"),
+        sql`${salesInvoicesTable.invoiceDate} >= ${from}`,
+        sql`${salesInvoicesTable.invoiceDate} <= ${to}`,
+      ));
+      const totalSales = invoices.reduce((s, x) => s + Number(x.totalAmount ?? 0), 0);
+      const invoiceCommission = invoices.reduce((s, x) => s + Number(x.commissionAmount ?? 0), 0);
+      const collections = await tx.select({
+        id: receiptVouchersTable.id, date: receiptVouchersTable.date, amount: receiptVouchersTable.amount,
+      }).from(receiptVouchersTable).where(and(
+        eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.salesRepId, id),
+        eq(receiptVouchersTable.status, "posted"),
+        sql`${receiptVouchersTable.date} >= ${from}`, sql`${receiptVouchersTable.date} <= ${to}`,
+      ));
+      const totalCollected = collections.reduce((s, x) => s + Number(x.amount ?? 0), 0);
+      const lines = period.enabled ? await tx.select({
+        invoiceId: salesInvoiceLinesTable.invoiceId,
+        itemId: salesInvoiceLinesTable.itemId, qty: salesInvoiceLinesTable.qty,
+        factor: salesInvoiceLinesTable.conversionFactor, lineTotal: salesInvoiceLinesTable.lineTotal,
+        invoiceTotal: salesInvoicesTable.totalAmount,
+        commissionPct: salesInvoicesTable.commissionPct,
+      }).from(salesInvoiceLinesTable).innerJoin(
+        salesInvoicesTable, eq(salesInvoicesTable.id, salesInvoiceLinesTable.invoiceId),
+      ).where(and(
+        eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.salesRepId, id),
+        eq(salesInvoicesTable.status, "posted"),
+        sql`${salesInvoicesTable.invoiceDate} >= ${from}`, sql`${salesInvoicesTable.invoiceDate} <= ${to}`,
+      )) : [];
+      const lineNetByInvoice = new Map<number, number>();
+      for (const line of lines) lineNetByInvoice.set(line.invoiceId,
+        (lineNetByInvoice.get(line.invoiceId) ?? 0) + Number(line.lineTotal ?? 0));
+      const grossBaseForLine = (line: typeof lines[number]) => {
+        const net = lineNetByInvoice.get(line.invoiceId) ?? 0;
+        return net > 0 ? Number(line.invoiceTotal ?? 0) * Number(line.lineTotal ?? 0) / net
+          : Number(line.lineTotal ?? 0);
+      };
+      const targetProgress = period.enabled ? period.items.map(target => {
+        const targetLines = lines.filter(x => x.itemId === target.itemId);
+        const achievedQty = targetLines.reduce((s, x) => s
+          + Number(x.qty ?? 0) * Number(x.factor ?? 1) / Number(target.conversionFactor || 1), 0);
+        const goal = Number(target.targetQty);
+        const commissionableQty = period.calculationMode === "all_after_hit"
+          ? (achievedQty >= goal ? achievedQty : 0) : Math.max(0, achievedQty - goal);
+        const ratio = achievedQty > 0 ? Math.min(1, commissionableQty / achievedQty) : 0;
+        return {
+          itemId: target.itemId, itemName: target.itemName, unitName: target.unitName,
+          targetQty: goal, achievedQty: Number(achievedQty.toFixed(4)),
+          remainingQty: Number(Math.max(0, goal - achievedQty).toFixed(4)),
+          achievementPct: goal ? Number((achievedQty / goal * 100).toFixed(1)) : 0,
+          commissionableQty: Number(commissionableQty.toFixed(4)),
+          eligibleSales: targetLines.reduce((s, x) => s + grossBaseForLine(x) * ratio, 0),
+        };
+      }) : [];
+      const targetById = new Map(targetProgress.map(x => [x.itemId, x]));
+      const targetSales = targetProgress.reduce((s, x) => s + x.eligibleSales, 0);
+      const trackedSales = lines.filter(x => targetById.has(x.itemId ?? -1))
+        .reduce((s, x) => s + grossBaseForLine(x), 0);
+      const allHit = targetProgress.length > 0 && targetProgress.every(x => x.achievedQty >= x.targetQty);
+      const eligibleRatio = period.calculationMode === "all_after_hit"
+        ? (allHit ? 1 : 0) : (trackedSales ? Math.min(1, targetSales / trackedSales) : 0);
+      const invoiceCommissionById = new Map<number, number>();
+      for (const x of lines) {
+        const target = targetById.get(x.itemId ?? -1);
+        if (!target) continue;
+        const ratio = target.achievedQty ? Math.min(1, target.commissionableQty / target.achievedQty) : 0;
+        const commission = grossBaseForLine(x) * ratio * Number(x.commissionPct ?? period.commissionPct) / 100;
+        invoiceCommissionById.set(x.invoiceId, (invoiceCommissionById.get(x.invoiceId) ?? 0) + commission);
+      }
+      const invoiceTargetCommission = [...invoiceCommissionById.values()].reduce((s, x) => s + x, 0);
+      const grossCommission = period.enabled
+        ? (rep.commissionType === "collection"
+          ? totalCollected * Number(period.commissionPct) / 100 * eligibleRatio
+          : invoiceTargetCommission)
+        : (rep.commissionType === "collection"
+          ? totalCollected * Number(period.commissionPct) / 100 : invoiceCommission);
+      const returns = await tx.select({
+        returnId: salesReturnsTable.id,
+        returnNumber: salesReturnsTable.docNumber,
+        returnDate: salesReturnsTable.returnDate,
+        invoiceId: salesInvoicesTable.id,
+        invoiceNumber: salesInvoicesTable.docNumber,
+        invoiceDate: salesInvoicesTable.invoiceDate,
+        itemId: salesReturnLinesTable.itemId, lineTotal: salesReturnLinesTable.lineTotal,
+        returnTotal: salesReturnsTable.totalAmount,
+        itemName: salesReturnLinesTable.itemName,
+        qty: salesReturnLinesTable.qty, unit: salesReturnLinesTable.unit,
+        invoicePct: salesInvoicesTable.commissionPct,
+      }).from(salesReturnLinesTable).innerJoin(
+        salesReturnsTable, eq(salesReturnsTable.id, salesReturnLinesTable.returnId),
+      ).innerJoin(
+        salesInvoicesTable, eq(salesInvoicesTable.id, salesReturnsTable.invoiceId),
+      ).where(and(
+        eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted"),
+        eq(salesInvoicesTable.salesRepId, id),
+        sql`${salesReturnsTable.returnDate} >= ${from}`, sql`${salesReturnsTable.returnDate} <= ${to}`,
+      ));
+      const returnNetById = new Map<number, number>();
+      for (const line of returns) returnNetById.set(line.returnId,
+        (returnNetById.get(line.returnId) ?? 0) + Number(line.lineTotal ?? 0));
+      const returnAdjustments = period.enabled ? await Promise.all(returns.map(async x => {
+        const ratio = await originalReturnEligibilityRatio(cid, id, rep.commissionPlan, x.invoiceDate, x.itemId);
+        const returnNet = returnNetById.get(x.returnId) ?? 0;
+        const commissionBase = returnNet > 0
+          ? Number(x.returnTotal ?? 0) * Number(x.lineTotal ?? 0) / returnNet
+          : Number(x.lineTotal ?? 0);
+        return {
+          returnId: x.returnId, returnNumber: x.returnNumber, returnDate: x.returnDate,
+          invoiceId: x.invoiceId, invoiceNumber: x.invoiceNumber, itemId: x.itemId,
+          itemName: x.itemName, qty: Number(x.qty ?? 0), unit: x.unit,
+          lineTotal: Number(commissionBase.toFixed(2)),
+          commissionDeduction: Number((commissionBase * Number(x.invoicePct ?? period.commissionPct) / 100 * ratio).toFixed(2)),
+        };
+      })) : [];
+      const returnDeductions = returnAdjustments.reduce((s, x) => s + Number(x.commissionDeduction ?? 0), 0);
+      const customerIds = Array.from(new Set(invoices.map(x => x.customerId).filter((x): x is number => x != null)));
+      const customerRows = customerIds.length ? await tx.select({
+        id: customersTable.id, nameAr: customersTable.nameAr,
+      }).from(customersTable).where(and(eq(customersTable.companyId, cid), inArray(customersTable.id, customerIds))) : [];
+      const customerNames = new Map(customerRows.map(x => [x.id, x.nameAr]));
+      const saved = {
+        invoiceCount: invoices.length,
+        totalSales,
+        totalCommissionRaw: period.enabled && rep.commissionType === "invoice" ? invoiceTargetCommission : invoiceCommission,
+        totalCollected,
+        grossCommission,
+        returnDeductions,
+        netCommission: grossCommission - returnDeductions,
+        avgInvoiceValue: invoices.length ? totalSales / invoices.length : 0,
+        targetAchievedPct: Number(rep.monthlyTarget) > 0 ? Math.round(totalSales / Number(rep.monthlyTarget) * 100) : null,
+        targetProgress,
+        returnAdjustments,
+        invoices: invoices.map(x => ({
+          id: x.id, invoiceNumber: x.invoiceNumber, invoiceDate: x.invoiceDate,
+          customerName: x.customerId != null ? (customerNames.get(x.customerId) ?? `#${x.customerId}`) : "—",
+          totalAmount: Number(x.totalAmount ?? 0), commissionPct: Number(x.commissionPct ?? 0),
+          commissionAmount: period.enabled && rep.commissionType === "invoice"
+            ? (invoiceCommissionById.get(x.id) ?? 0) : Number(x.commissionAmount ?? 0),
+        })),
+        collections: collections.map(x => ({ id: x.id, date: x.date, amount: Number(x.amount ?? 0) })),
+      };
+      const periods = [...plan.periods];
+      periods[ix] = {
+        ...period, status: "approved", approvedAt: new Date().toISOString(),
+        approvedBy: Number((req as any).authUser?.id ?? 0) || null,
+        commissionPct: String(rep.commissionPct), snapshot: saved,
+      };
+      await tx.update(salesRepsTable).set({
+        commissionPlan: { ...plan, periods } as SalesRepCommissionPlan,
+        updatedAt: new Date(),
+      }).where(and(eq(salesRepsTable.id, id), eq(salesRepsTable.companyId, cid)));
+      return saved;
+    });
+    res.json({ ok: true, snapshot });
+  } catch (e: any) { res.status(e.status ?? 500).json({ error: e.message }); }
 });
 
 // ─── AI COMMISSION ANALYSIS (international compensation standards) ───────────

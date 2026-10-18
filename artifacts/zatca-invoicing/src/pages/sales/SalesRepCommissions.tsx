@@ -31,6 +31,7 @@ type Rep = {
   commissionPct: string;
   commissionType: "invoice" | "collection";
   monthlyTarget: string;
+  commissionPlan?: { periods: Array<{ from: string; to: string; status: "open" | "approved"; enabled: boolean }> };
 };
 
 type CommissionDetail = {
@@ -46,6 +47,8 @@ type CommissionDetail = {
     totalSales: number;
     totalCommissionRaw: number;
     totalCollected: number;
+    grossCommission: number;
+    returnDeductions: number;
     effectiveCommission: number;
     avgInvoiceValue: number;
     targetAchievedPct: number | null;
@@ -56,6 +59,19 @@ type CommissionDetail = {
     commissionPct: number; commissionAmount: number;
   }>;
   collections: Array<{ id: number; date: string; amount: number }>;
+  targetPeriod: null | { from: string; to: string; enabled: boolean; status: "open" | "approved"; calculationMode: "excess" | "all_after_hit" };
+  targetProgress: Array<{
+    itemId: number; itemName: string; itemCode?: string | null; unitName: string;
+    targetQty: number; achievedQty: number; remainingQty: number; achievementPct: number;
+    commissionableQty: number; eligibleSales: number;
+  }>;
+  returnAdjustments: Array<{
+    returnId: number; returnNumber: string | null; returnDate: string;
+    invoiceId: number; invoiceNumber: string | null; itemId: number | null;
+    itemName: string; qty: number; unit: string | null; lineTotal: number;
+    commissionDeduction: number;
+  }>;
+  returnDeductions: number;
 };
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -136,6 +152,25 @@ export default function SalesRepCommissions() {
     },
   });
 
+  const approvePeriodMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/sales-reps/${repId}/commission-period/approve?companyId=${cid}`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ from, to }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "تعذر اعتماد الفترة");
+      return j;
+    },
+    onSuccess: () => {
+      void detailQ.refetch();
+      void repsQ.refetch();
+      toast({ title: "تم اعتماد الفترة وحفظ ملخصها" });
+    },
+    onError: (e: any) => toast({ title: e.message || "تعذر اعتماد الفترة", variant: "destructive" }),
+  });
+
   const aiMut = useMutation({
     mutationFn: async () => {
       const qs = new URLSearchParams({ companyId: String(cid) });
@@ -200,6 +235,8 @@ export default function SalesRepCommissions() {
     if (!detail) return null;
     const items: Array<{ label: string; value: string; tone?: "default" | "primary" }> = [
       { label: tr("totalSales"),          value: `${fmtSAR(detail.summary.totalSales)} ${tr("sar")}` },
+      { label: "عمولة قبل خصم المرتجعات", value: `${fmtSAR(detail.summary.grossCommission)} ${tr("sar")}` },
+      { label: "خصم المرتجعات",           value: `-${fmtSAR(detail.summary.returnDeductions)} ${tr("sar")}` },
       { label: tr("effectiveCommission"), value: `${fmtSAR(detail.summary.effectiveCommission)} ${tr("sar")}`, tone: "primary" },
     ];
     if (detail.summary.totalCollected > 0 || detail.rep.commissionType === "collection") {
@@ -247,7 +284,12 @@ export default function SalesRepCommissions() {
         <div className="mt-5 grid grid-cols-1 md:grid-cols-4 gap-3">
           <div className="space-y-1">
             <Label className="text-xs">{tr("selectRep")}</Label>
-            <Select value={repId} onValueChange={setRepId}>
+            <Select value={repId} onValueChange={value => {
+              setRepId(value);
+              const periods = repsQ.data?.find(rep => rep.id === Number(value))?.commissionPlan?.periods ?? [];
+              const period = [...periods].filter(p => p.enabled).sort((a, b) => b.from.localeCompare(a.from))[0];
+              if (period) { setFrom(period.from); setTo(period.to); }
+            }}>
               <SelectTrigger className="h-10 bg-card"><SelectValue placeholder={tr("selectRepPh")} /></SelectTrigger>
               <SelectContent>
                 {repOptions.map(r => (
@@ -327,7 +369,93 @@ export default function SalesRepCommissions() {
                 </div>
               </div>
             </div>
+            {detail.targetPeriod?.enabled && (
+              <div className="flex items-center gap-2">
+                <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium",
+                  detail.targetPeriod.status === "approved" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800")}>
+                  {detail.targetPeriod.status === "approved" ? "فترة معتمدة ومقفلة" : "فترة مفتوحة"}
+                </span>
+                {detail.targetPeriod.status === "open" && (
+                  <Button size="sm" className="gap-2" disabled={approvePeriodMut.isPending}
+                    onClick={() => {
+                      if (window.confirm(`اعتماد الفترة ${from} إلى ${to}؟ سيتم حفظ ملخصها ومنع تعديل إعدادات تارجتها.`)) {
+                        approvePeriodMut.mutate();
+                      }
+                    }}>
+                    {approvePeriodMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
+                    اعتماد الفترة
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
+
+          {detail.targetPeriod?.enabled && (
+            <div className="rounded-xl border bg-card overflow-hidden">
+              <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
+                <div className="font-semibold text-sm">إنجاز تارجت الأصناف</div>
+                <div className="text-xs text-muted-foreground">
+                  {detail.targetPeriod.calculationMode === "excess" ? "العمولة على الكمية الزائدة فقط" : "العمولة على كامل الكمية بعد بلوغ التارجت"}
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-muted/40 text-xs text-muted-foreground">
+                    <th className="text-start p-2">الصنف</th><th className="text-end p-2">التارجت</th>
+                    <th className="text-end p-2">المحقق</th><th className="text-end p-2">المتبقي</th>
+                    <th className="text-end p-2">الإنجاز</th><th className="text-end p-2">كمية العمولة</th>
+                  </tr></thead>
+                  <tbody className="divide-y">
+                    {detail.targetProgress.map(row => (
+                      <tr key={row.itemId}>
+                        <td className="p-2">{row.itemName} {row.itemCode ? <span className="text-xs text-muted-foreground">({row.itemCode})</span> : null}</td>
+                        <td className="p-2 text-end font-mono">{row.targetQty} {row.unitName}</td>
+                        <td className="p-2 text-end font-mono">{row.achievedQty} {row.unitName}</td>
+                        <td className="p-2 text-end font-mono">{row.remainingQty}</td>
+                        <td className="p-2 text-end font-mono">{row.achievementPct}%</td>
+                        <td className="p-2 text-end font-mono font-semibold">{row.commissionableQty} {row.unitName}</td>
+                      </tr>
+                    ))}
+                    {!detail.targetProgress.length && <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">لا توجد أصناف تارجت لهذه الفترة</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {detail.returnAdjustments.length > 0 && (
+            <div className="rounded-xl border border-red-200 bg-card overflow-hidden">
+              <div className="px-4 py-3 border-b bg-red-50/70 flex items-center justify-between">
+                <div className="font-semibold text-sm text-red-800">خصومات المرتجعات المُرحّلة</div>
+                <div className="text-sm font-semibold text-red-700">-{fmtSAR(detail.summary.returnDeductions)} {tr("sar")}</div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-muted/40 text-xs text-muted-foreground">
+                    <th className="text-start p-2">رقم وتاريخ المرتجع</th>
+                    <th className="text-start p-2">الفاتورة الأصلية</th>
+                    <th className="text-start p-2">الصنف</th>
+                    <th className="text-end p-2">قيمة المرتجع</th>
+                    <th className="text-end p-2">خصم العمولة</th>
+                  </tr></thead>
+                  <tbody className="divide-y">
+                    {detail.returnAdjustments.map((row, idx) => (
+                      <tr key={`${row.returnId}-${row.itemId}-${idx}`}>
+                        <td className="p-2">
+                          <span className="font-mono">{row.returnNumber ?? `#${row.returnId}`}</span>
+                          <span className="ms-2 text-xs text-muted-foreground">{row.returnDate}</span>
+                        </td>
+                        <td className="p-2 font-mono">{row.invoiceNumber ?? `#${row.invoiceId}`}</td>
+                        <td className="p-2">{row.itemName} <span className="text-xs text-muted-foreground">{row.qty} {row.unit ?? ""}</span></td>
+                        <td className="p-2 text-end font-mono">{fmtSAR(row.lineTotal)}</td>
+                        <td className="p-2 text-end font-mono font-semibold text-red-700">-{fmtSAR(row.commissionDeduction)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* KPI CARDS */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -362,6 +490,15 @@ export default function SalesRepCommissions() {
                 : detail.summary.targetAchievedPct >= 100 ? "emerald"
                 : detail.summary.targetAchievedPct >= 60 ? "amber" : "red"}
             />
+            {detail.summary.returnDeductions > 0 && (
+              <KpiCard
+                icon={<Receipt className="h-5 w-5" />}
+                label="خصم المرتجعات"
+                value={`-${fmtSAR(detail.summary.returnDeductions)} ${tr("sar")}`}
+                hint="مرتجعات مُرحّلة خلال الفترة"
+                tone="red"
+              />
+            )}
           </div>
 
           {/* COLLECTIONS BAR (only for collection-type or when there are collections) */}

@@ -24,12 +24,28 @@ export type SalesRepTargetItem = {
 export type SalesRepTargetPeriod = {
   from: string;
   to: string;
+  enabled: boolean;
   items: SalesRepTargetItem[];
   calculationMode: "excess" | "all_after_hit";
   status: "open" | "approved";
   commissionPct: string;
   approvedAt?: string;
   approvedBy?: number | null;
+  snapshot?: {
+    invoiceCount: number;
+    totalSales: number;
+    totalCommissionRaw: number;
+    totalCollected: number;
+    grossCommission: number;
+    returnDeductions: number;
+    netCommission: number;
+    avgInvoiceValue: number;
+    targetAchievedPct: number | null;
+    targetProgress: Array<Record<string, unknown>>;
+    returnAdjustments: Array<Record<string, unknown>>;
+    invoices: Array<Record<string, unknown>>;
+    collections: Array<Record<string, unknown>>;
+  };
 };
 
 export type SalesRepCommissionPlan = {
@@ -52,7 +68,9 @@ export const salesRepsTable = pgTable("sales_reps", {
   commissionPct:   numeric("commission_pct", { precision: 6, scale: 3 }).notNull().default("0"),
   commissionType:  commissionTypeEnum("commission_type").notNull().default("invoice"),
   monthlyTarget:   numeric("monthly_target", { precision: 15, scale: 2 }).notNull().default("0"),
-  commissionPlan:  jsonb("commission_plan").$type<SalesRepCommissionPlan>().notNull().default({ periods: [] }),
+  // Nullable for legacy databases during the additive schema transition;
+  // all API writes provide an explicit plan and reads treat null as empty.
+  commissionPlan:  jsonb("commission_plan").$type<SalesRepCommissionPlan>(),
   accountId:       integer("account_id").references(() => accountsTable.id),
   notes:           text("notes"),
   createdAt:       timestamp("created_at").defaultNow().notNull(),

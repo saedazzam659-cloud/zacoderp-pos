@@ -15,7 +15,7 @@
 - [School-year promotion boundary](school-year-promotion-boundary.md) — keep one student identity and immutable yearly enrollments; promotion must not create separate billing flows.
 - [School transport boundary](school-transport-boundary.md) — owned buses use fixed assets; rented buses use supplier leases; student opt-in and summer scope stay separate.
 - [Drizzle schema sync boundary](drizzle-schema-sync-boundary.md) — avoid forced or subset-schema pushes; they can emit destructive changes for unrelated ERP objects.
-- [Drizzle JSONB column defaults](ensure-schema-jsonb-defaults.md) — runtime reconciliation may add JSONB columns without constraints; set defaults, backfill nulls, then enforce NOT NULL.
+- [Drizzle JSONB column defaults](ensure-schema-jsonb-defaults.md) — avoid startup DDL; tolerate legacy nullable JSONB and use the supported schema flow.
 
 - [POS Desktop index](pos-desktop-index.md) — POS Desktop shell, local data, fiscal, inventory, printing, licensing, and offline/ZATCA implementation notes.
 - [Web POS parked carts](web-pos-parked-carts.md) — held drafts stay device-local and scoped by company, cashier, branch, and terminal; checkout alone creates a cloud invoice.
