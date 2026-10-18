@@ -131,13 +131,24 @@ export default function SubscriptionManagement() {
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-  const { data: rows = [], isLoading, refetch } = useQuery({
+  const {
+    data: subscriptionList = { rows: [] as any[], incomplete: false, unavailableAgentIds: [] as number[] },
+    isLoading,
+    refetch,
+  } = useQuery({
     queryKey: ["admin-subscriptions"],
     queryFn: async () => {
       const res = await fetch(`${API}/api/admin/subscriptions`, { headers });
-      return res.json();
+      if (!res.ok) throw new Error(`تعذر تحميل الاشتراكات (HTTP ${res.status})`);
+      return {
+        rows: await res.json(),
+        incomplete: res.headers.get("X-Agent-Data-Incomplete") === "true",
+        unavailableAgentIds: (res.headers.get("X-Agent-Data-Unavailable-Ids") ?? "")
+          .split(",").map((x) => Number(x.trim())).filter((x) => Number.isSafeInteger(x) && x > 0),
+      };
     },
   });
+  const rows = subscriptionList.rows;
 
   const { data: usage = [] } = useQuery({
     queryKey: ["admin-subscriptions-usage"],
@@ -341,6 +352,16 @@ export default function SubscriptionManagement() {
           </Button>
         </div>
       </div>
+
+      {subscriptionList.incomplete && (
+        <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          قائمة الاشتراكات جزئية؛ تعذرت قراءة قاعدة بيانات الوكيل
+          {subscriptionList.unavailableAgentIds.length
+            ? ` رقم ${subscriptionList.unavailableAgentIds.join("، ")}`
+            : ""}.
+          <Button size="sm" variant="outline" className="ms-3" onClick={() => void refetch()}>إعادة المحاولة</Button>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

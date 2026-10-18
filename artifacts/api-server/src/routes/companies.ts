@@ -18,6 +18,7 @@ import { seedNewCompanyDefaults } from "../lib/newCompanyDefaults.js";
 import { registrationCountry, seedRegistrationCountryDefaults } from "../lib/registrationCountry.js";
 
 const router = Router();
+const COMPANY_AGENT_LIST_TIMEOUT_MS = 8_000;
 
 // Hard auth gate — every endpoint here touches tenant-level data, so anonymous
 // callers must be rejected before reaching any handler. Admin / superadmin then
@@ -53,10 +54,12 @@ router.get("/", async (req, res) => {
       const { getAgentDbContext } = await import("../lib/agentDb.js");
       const agents = await listInitializedAgents();
       const merged: any[] = [...companies];
-      for (const agent of agents) {
+      const unavailableAgentIds: number[] = [];
+      await Promise.all(agents.map(async (agent) => {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
           const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
-          const rows = await runWithExternalDb(ctx, async () =>
+          const query = runWithExternalDb(ctx, async () =>
             db.select().from(companiesTable)
               .where(and(
                 isNull(companiesTable.deletedAt),
@@ -64,15 +67,40 @@ router.get("/", async (req, res) => {
               ))
               .orderBy(companiesTable.createdAt),
           );
-          for (const r of rows) merged.push({ ...r, agentInstanceId: agent.id, agentName: agent.name });
+          const rows = await Promise.race([
+            query,
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error(`company list query timed out after ${COMPANY_AGENT_LIST_TIMEOUT_MS}ms`)),
+                COMPANY_AGENT_LIST_TIMEOUT_MS,
+              );
+            }),
+          ]);
+          for (const r of rows) {
+            merged.push({ ...r, agentInstanceId: agent.id, agentName: agent.name });
+          }
         } catch (e: any) {
-          logger.warn({ agentId: agent.id, err: e?.message }, "companies list: agent DB unreachable");
+          unavailableAgentIds.push(agent.id);
+          logger.warn(
+            { agentId: agent.id, agentName: agent.name, err: e?.message },
+            "companies list: agent DB unavailable or timed out",
+          );
+        } finally {
+          if (timeout) clearTimeout(timeout);
         }
-      }
+      }));
+      res.setHeader("X-Company-List-Incomplete", unavailableAgentIds.length > 0 ? "true" : "false");
+      res.setHeader("X-Company-List-Unavailable-Agent-Ids", unavailableAgentIds.join(","));
+      res.setHeader("X-Agent-Data-Incomplete", unavailableAgentIds.length > 0 ? "true" : "false");
+      res.setHeader("X-Agent-Data-Unavailable-Ids", unavailableAgentIds.join(","));
       res.json(merged);
       return;
     } catch (e: any) {
       logger.warn({ err: e?.message }, "companies list: agent merge failed");
+      res.setHeader("X-Company-List-Incomplete", "true");
+      res.setHeader("X-Company-List-Unavailable-Agent-Ids", "");
+      res.setHeader("X-Agent-Data-Incomplete", "true");
+      res.setHeader("X-Agent-Data-Unavailable-Ids", "");
     }
   }
   res.json(companies);

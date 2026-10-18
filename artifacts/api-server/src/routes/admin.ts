@@ -421,17 +421,41 @@ router.get("/subscriptions", requireSuperAdmin, async (_req, res) => {
     const { listInitializedAgents } = await import("../lib/agentScope.js");
     const { runWithExternalDb } = await import("@workspace/db");
     const { getAgentDbContext } = await import("../lib/agentDb.js");
-    for (const agent of await listInitializedAgents()) {
+    const agents = await listInitializedAgents();
+    const unavailableAgentIds: number[] = [];
+    const agentResults = await Promise.all(agents.map(async (agent) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         const ctx = getAgentDbContext(agent.id, agent.dbUrlEnc);
-        const agentRows = await runWithExternalDb(ctx, async () => selectSubs());
-        for (const r of agentRows) rows.push({ ...r, agentInstanceId: agent.id, agentName: agent.name });
+        const query = runWithExternalDb(ctx, async () => selectSubs());
+        return await Promise.race([
+          query,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error("subscription list query timed out after 8000ms")),
+              8_000,
+            );
+          }),
+        ]);
       } catch (e: any) {
-        console.error("[admin/subscriptions] agent DB unreachable:", agent.id, e?.message ?? e);
+        unavailableAgentIds.push(agent.id);
+        console.error("[admin/subscriptions] agent DB unavailable or timed out:", agent.id, e?.message ?? e);
+        return [];
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    }));
+    for (let i = 0; i < agentResults.length; i++) {
+      for (const r of agentResults[i]) {
+        rows.push({ ...r, agentInstanceId: agents[i].id, agentName: agents[i].name });
       }
     }
+    res.setHeader("X-Agent-Data-Incomplete", unavailableAgentIds.length > 0 ? "true" : "false");
+    res.setHeader("X-Agent-Data-Unavailable-Ids", unavailableAgentIds.join(","));
   } catch (e: any) {
     console.error("[admin/subscriptions] agent merge failed:", e?.message ?? e);
+    res.setHeader("X-Agent-Data-Incomplete", "true");
+    res.setHeader("X-Agent-Data-Unavailable-Ids", "");
   }
   res.json(rows);
 });
@@ -1522,19 +1546,40 @@ router.get("/companies/deleted", requireSuperAdmin, async (_req, res) => {
     const { listInitializedAgents } = await import("../lib/agentScope.js");
     const { getAgentDbContext } = await import("../lib/agentDb.js");
     const { runWithExternalDb } = await import("@workspace/db");
-    for (const agent of await listInitializedAgents()) {
+    const agents = await listInitializedAgents();
+    const unavailableAgentIds: number[] = [];
+    const agentResults = await Promise.all(agents.map(async (agent) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
-        const agentRows = await runWithExternalDb(getAgentDbContext(agent.id, agent.dbUrlEnc), async () =>
+        const query = runWithExternalDb(getAgentDbContext(agent.id, agent.dbUrlEnc), async () =>
           db.select().from(companiesTable)
             .where(sql`${companiesTable.deletedAt} IS NOT NULL`)
             .orderBy(desc(companiesTable.deletedAt)));
-        for (const r of agentRows) merged.push({ ...r, agentInstanceId: agent.id, agentName: agent.name });
+        return await Promise.race([
+          query,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("deleted company list timed out after 8000ms")), 8_000);
+          }),
+        ]);
       } catch (e: any) {
-        console.error("[admin/companies/deleted] agent DB unreachable:", agent.id, e?.message ?? e);
+        unavailableAgentIds.push(agent.id);
+        console.error("[admin/companies/deleted] agent DB unavailable or timed out:", agent.id, e?.message ?? e);
+        return [];
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    }));
+    for (let i = 0; i < agentResults.length; i++) {
+      for (const r of agentResults[i]) {
+        merged.push({ ...r, agentInstanceId: agents[i].id, agentName: agents[i].name });
       }
     }
+    res.setHeader("X-Agent-Data-Incomplete", unavailableAgentIds.length > 0 ? "true" : "false");
+    res.setHeader("X-Agent-Data-Unavailable-Ids", unavailableAgentIds.join(","));
   } catch (e: any) {
     console.error("[admin/companies/deleted] agent merge failed:", e?.message ?? e);
+    res.setHeader("X-Agent-Data-Incomplete", "true");
+    res.setHeader("X-Agent-Data-Unavailable-Ids", "");
   }
   res.json(merged);
 });

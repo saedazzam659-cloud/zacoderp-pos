@@ -202,24 +202,37 @@ export default function LicenseManagement() {
   });
 
   // ─── Data ────────────────────────────────────────────────────
-  const { data: companies = [] } = useQuery<Company[]>({
+  const { data: companyList = { companies: [] as Company[], incomplete: false, unavailableAgentIds: [] as number[] } } = useQuery({
     queryKey: ["companies-list"],
     queryFn: async () => {
       const r = await fetch(`${API}/api/companies`, { headers });
-      if (!r.ok) return [];
+      if (!r.ok) return { companies: [], incomplete: false, unavailableAgentIds: [] };
       const d = await r.json();
-      return Array.isArray(d) ? d.map((x: any) => x.company ?? x) : [];
+      const companies = Array.isArray(d) ? d.map((x: any) => x.company ?? x) : [];
+      return {
+        companies,
+        incomplete: r.headers.get("X-Agent-Data-Incomplete") === "true",
+        unavailableAgentIds: (r.headers.get("X-Agent-Data-Unavailable-Ids") ?? "")
+          .split(",").map((x) => Number(x.trim())).filter((x) => Number.isSafeInteger(x) && x > 0),
+      };
     },
   });
 
-  const { data: subs = [], isLoading: subsLoading } = useQuery<SubRow[]>({
+  const { data: subscriptionList = { rows: [] as SubRow[], incomplete: false, unavailableAgentIds: [] as number[] }, isLoading: subsLoading } = useQuery({
     queryKey: ["admin-subscriptions"],
     queryFn: async () => {
       const r = await fetch(`${API}/api/admin/subscriptions`, { headers });
-      if (!r.ok) return [];
-      return r.json();
+      if (!r.ok) return { rows: [], incomplete: false, unavailableAgentIds: [] };
+      return {
+        rows: await r.json(),
+        incomplete: r.headers.get("X-Agent-Data-Incomplete") === "true",
+        unavailableAgentIds: (r.headers.get("X-Agent-Data-Unavailable-Ids") ?? "")
+          .split(",").map((x) => Number(x.trim())).filter((x) => Number.isSafeInteger(x) && x > 0),
+      };
     },
   });
+  const companies = companyList.companies;
+  const subs = subscriptionList.rows;
 
   const subByCompany = useMemo(() => {
     const m = new Map<string, Subscription>();
@@ -387,6 +400,16 @@ export default function LicenseManagement() {
           </p>
         </div>
       </div>
+
+      {(companyList.incomplete || subscriptionList.incomplete) && (
+        <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          تعذر تحميل بيانات بعض الوكلاء
+          {Array.from(new Set([...companyList.unavailableAgentIds, ...subscriptionList.unavailableAgentIds])).length
+            ? ` (المعرّفات: ${Array.from(new Set([...companyList.unavailableAgentIds, ...subscriptionList.unavailableAgentIds])).join("، ")})`
+            : ""}.
+          البيانات الظاهرة جزئية؛ لم يتم نقل أو حذف أي بيانات.
+        </div>
+      )}
 
       {/* ─── Global subscription-notice settings ───────────────── */}
       <Card className="border-amber-200 dark:border-amber-900">

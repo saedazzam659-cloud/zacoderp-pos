@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useListCompanies, useDeleteCompany } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useDeleteCompany } from "@workspace/api-client-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -65,12 +65,39 @@ function StatCard({ label, value, color, border }: any) {
 }
 
 export default function Companies() {
-  const { user, actingCompanyId, setActingCompany } = useAuth() as any;
+  const { user, actingCompanyId, setActingCompany, token } = useAuth() as any;
   const [, setLocation] = useLocation();
   const isSuperAdmin = user?.role === "superadmin";
-  const { data: companies = [], isLoading, refetch } = useListCompanies({
-    query: { queryKey: ["companies"] }
-  }) as any;
+  const {
+    data: companyList = { companies: [], incomplete: false, unavailableAgentIds: [] as number[] },
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ["companies"],
+    queryFn: async ({ signal }) => {
+      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const response = await fetch(`${base}/api/companies`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        signal,
+      });
+      if (!response.ok) {
+        throw new Error(`تعذر تحميل الشركات (HTTP ${response.status})`);
+      }
+      const companies = await response.json();
+      const unavailableAgentIds = (response.headers.get("X-Company-List-Unavailable-Agent-Ids") ?? "")
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isSafeInteger(value) && value > 0);
+      return {
+        companies: Array.isArray(companies) ? companies : [],
+        incomplete: response.headers.get("X-Company-List-Incomplete") === "true",
+        unavailableAgentIds,
+      };
+    },
+  });
+  const companies = companyList.companies;
 
   const { toast }       = useToast();
   const queryClient     = useQueryClient();
@@ -151,8 +178,6 @@ export default function Companies() {
   const invoiceRepairPreviewValid = invoiceRepairPreview?.key === invoiceRepairKey;
   const invoiceRepairBatchEnabled = ["sales_return", "purchase_return"].includes(invoiceRepairKind)
     && invoiceRepairScan?.supportsBatchDraftRenumber === true;
-  const { token } = useAuth() as any;
-
   const openMasterDataCopy = (company: any) => {
     setMasterCopySource(company);
     setMasterCopyTargetId("");
@@ -611,6 +636,31 @@ export default function Companies() {
           </Button>
         </div>
       </div>
+
+      {companyList.incomplete && (
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1">
+            <p className="font-semibold">القائمة غير مكتملة</p>
+            <p>
+              تعذرت قراءة قاعدة بيانات
+              {companyList.unavailableAgentIds.length
+                ? ` الوكيل/الوكلاء: ${companyList.unavailableAgentIds.join("، ")}`
+                : " أحد الوكلاء"}.
+              الشركات الظاهرة متاحة، لكن قد تغيب شركات من القاعدة غير المتاحة.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>إعادة المحاولة</Button>
+        </div>
+      )}
+
+      {isError && (
+        <div role="alert" className="flex items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{error instanceof Error ? error.message : "تعذر تحميل الشركات"}</span>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>إعادة المحاولة</Button>
+        </div>
+      )}
 
       {/* ── Stats ── */}
       <div className="flex gap-3 flex-wrap">
