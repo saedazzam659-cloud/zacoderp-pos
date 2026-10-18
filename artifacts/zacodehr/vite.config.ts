@@ -5,13 +5,9 @@ import { defineConfig } from 'vite';
 
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
-const rawPort = process.env.PORT;
-
-if (!rawPort) {
-  throw new Error(
-    'PORT environment variable is required but was not provided.',
-  );
-}
+// Keep these fallbacks aligned with the service env in artifact.toml. They let
+// workspace-wide builds load this config even when service env is not injected.
+const rawPort = process.env.PORT ?? '23063';
 
 const port = Number(rawPort);
 
@@ -19,13 +15,7 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const basePath = process.env.BASE_PATH;
-
-if (!basePath) {
-  throw new Error(
-    'BASE_PATH environment variable is required but was not provided.',
-  );
-}
+const basePath = process.env.BASE_PATH ?? '/zacodehr/';
 
 export default defineConfig({
   base: basePath,
