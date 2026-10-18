@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, numeric, timestamp, boolean, pgEnum, date,
+  pgTable, serial, text, integer, numeric, timestamp, boolean, pgEnum, date, jsonb,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { customersTable } from "./customers";
@@ -10,6 +10,31 @@ export const commissionTypeEnum = pgEnum("commission_type", [
   "invoice",     // % of invoice grand total when invoice is posted
   "collection",  // % of receipt amount when payment is collected
 ]);
+
+export type SalesRepTargetItem = {
+  itemId: number;
+  itemName: string;
+  itemCode: string | null;
+  unitId: number;
+  unitName: string;
+  conversionFactor: string;
+  targetQty: string;
+};
+
+export type SalesRepTargetPeriod = {
+  from: string;
+  to: string;
+  items: SalesRepTargetItem[];
+  calculationMode: "excess" | "all_after_hit";
+  status: "open" | "approved";
+  commissionPct: string;
+  approvedAt?: string;
+  approvedBy?: number | null;
+};
+
+export type SalesRepCommissionPlan = {
+  periods: SalesRepTargetPeriod[];
+};
 
 export const salesRepsTable = pgTable("sales_reps", {
   id:              serial("id").primaryKey(),
@@ -27,6 +52,7 @@ export const salesRepsTable = pgTable("sales_reps", {
   commissionPct:   numeric("commission_pct", { precision: 6, scale: 3 }).notNull().default("0"),
   commissionType:  commissionTypeEnum("commission_type").notNull().default("invoice"),
   monthlyTarget:   numeric("monthly_target", { precision: 15, scale: 2 }).notNull().default("0"),
+  commissionPlan:  jsonb("commission_plan").$type<SalesRepCommissionPlan>().notNull().default({ periods: [] }),
   accountId:       integer("account_id").references(() => accountsTable.id),
   notes:           text("notes"),
   createdAt:       timestamp("created_at").defaultNow().notNull(),
