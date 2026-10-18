@@ -2736,6 +2736,13 @@ function template15(d: PrintData): string {
   const docNo = doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`;
   const dateStr = docDate(doc, d.type);
   const esc = (v: any) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const customNotes = String(company?.printCustomNotes ?? "").trim();
+  const customNotesEnabled = isQuot
+    ? company?.printCustomNotesOnQuotation === true
+    : d.type === "invoice" && company?.printCustomNotesOnSales === true;
+  const customNotesHtml = customNotesEnabled && customNotes
+    ? `<div class="custom-print-notes"><b>ملاحظات الطباعة / Print Notes</b><div>${esc(customNotes)}</div></div>`
+    : "";
   const printLanguage: "ar" | "en" = (d as any)._lang === "en" ? "en" : "ar";
   const custNo = (customer as any)?.code ?? (customer?.id != null ? String(customer.id).padStart(5, "0") : "—");
   const custVat = customer?.vatNumber ?? doc.buyerVatNumber ?? "—";
@@ -2813,10 +2820,18 @@ function template15(d: PrintData): string {
     .totals .k { background:#f5f5f5; font-weight:700; }
     .totals .g td { background:#efefef; font-weight:800; }
     .bottom { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-top:8px; break-inside:avoid; }
+    .bottom-info { flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:5mm; }
+    .bottom-info.has-notes { width:250px; }
     .words { flex:1; border:1.5px solid #333; border-radius:3px; padding:8px 10px; font-size:11.5px; }
     .foot { margin-top:14px; display:flex; justify-content:space-between; font-size:11px; }
     .sig { text-align:center; min-width:160px; }
     .sig .ln { margin-top:34px; border-top:1px solid #333; padding-top:4px; }
+    .custom-print-notes {
+      width:100%; border:1px solid #999; border-right:3px solid #7c4a12;
+      border-radius:3px; padding:7px 9px; font-size:11px; line-height:1.6;
+      white-space:pre-line; overflow-wrap:anywhere; break-inside:avoid; page-break-inside:avoid;
+    }
+    .custom-print-notes b { display:block; margin-bottom:2px; }
     @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
   </style></head><body>
   <div class="hdr">
@@ -2870,7 +2885,10 @@ function template15(d: PrintData): string {
   </table>
   <div class="bottom">
     <div class="words">المبلغ كتابةً: <b>${esc(totals.amountWords)}</b></div>
-    ${(!isOrder && (!isQuot || quotationOptions.showQr)) ? qrImgHtml(d, { size: 96, border: "1px solid #333" }) : ""}
+    ${(customNotesHtml || (!isOrder && (!isQuot || quotationOptions.showQr))) ? `<div class="bottom-info${customNotesHtml ? " has-notes" : ""}">
+      ${(!isOrder && (!isQuot || quotationOptions.showQr)) ? qrImgHtml(d, { size: 96, border: "1px solid #333" }) : ""}
+      ${customNotesHtml}
+    </div>` : ""}
   </div>
   <div class="foot">
     <div class="sig">المستلم / Receiver<div class="ln">&nbsp;</div></div>
