@@ -2393,6 +2393,34 @@ export default function Items() {
 
                           {expandedTab === "balances" && (
                             <>
+                              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                                <div className="rounded-lg border bg-background p-3">
+                                  <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.items.lastPurchasePrice", { defaultValue: "آخر سعر شراء للوحدة الأساسية" })}</p>
+                                  <p className="mt-1 text-sm font-semibold tabular-nums">
+                                    {itemDetail?.lastPurchase?.unitPrice != null ? fmt(itemDetail.lastPurchase.unitPrice) : "—"}
+                                    {itemDetail?.lastPurchase?.currencyCode ? ` ${itemDetail.lastPurchase.currencyCode}` : ""}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    {itemDetail?.lastPurchase?.date ?? t("inventoryMaster.items.noPostedPurchases", { defaultValue: "لا توجد مشتريات مرحلة" })}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg border bg-background p-3">
+                                  <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.items.currentInventoryCost", { defaultValue: "متوسط تكلفة المخزون الحالي" })}</p>
+                                  <p className="mt-1 text-sm font-semibold tabular-nums">{itemDetail?.costPrice != null ? fmt(itemDetail.costPrice) : "—"}</p>
+                                </div>
+                                <div className="rounded-lg border bg-background p-3">
+                                  <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.items.totalStockQuantity", { defaultValue: "إجمالي رصيد المخزون" })}</p>
+                                  <p className="mt-1 text-sm font-semibold tabular-nums">
+                                    {fmtQty((itemDetail?.balances ?? []).reduce((sum: number, balance: any) => sum + Number(balance.qty || 0), 0))} {itemDetail?.unit?.code ?? ""}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg border bg-background p-3">
+                                  <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.items.totalStockValue", { defaultValue: "قيمة المخزون الحالية" })}</p>
+                                  <p className="mt-1 text-sm font-semibold tabular-nums">
+                                    {fmt((itemDetail?.balances ?? []).reduce((sum: number, balance: any) => sum + Number(balance.qty || 0) * Number(balance.avgCost || 0), 0))}
+                                  </p>
+                                </div>
+                              </div>
                               {!itemDetail?.balances?.length
                                 ? <p className="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-lg"><Warehouse className="h-6 w-6 mx-auto mb-1.5 opacity-30" />{t("pages.items.noBalancesRegistered")}</p>
                                 : (

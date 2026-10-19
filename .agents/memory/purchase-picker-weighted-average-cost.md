@@ -1,10 +1,10 @@
 ---
-name: Purchase picker weighted-average cost
-description: Keep suggested purchase cost aligned with the live inventory valuation basis rather than stale per-unit snapshots.
+name: Purchase picker last-purchase price
+description: Suggested purchase price follows the latest posted supplier purchase; inventory WAC remains a separate valuation measure.
 ---
 
-For purchase invoice defaults in the company's base currency, use the item's current weighted-average cost as the source of truth. Convert it to a selected alternate unit using that unit's base-unit conversion factor. A stored unit cost can be used only when the item has no current catalog cost. Keep currency-specific prices as their own explicit override.
+For purchase invoice defaults, use the latest posted purchase price for the selected currency, normalized to the item's base unit and converted to the chosen unit by its conversion factor. Draft invoices must not affect the suggestion. Keep current weighted-average inventory cost separate and visible as a valuation measure. If there is no posted purchase history, use a positive catalog unit cost; otherwise leave the price blank. Currency-specific item prices remain explicit overrides.
 
-**Why:** The item master is refreshed from posted stock balances after receipts, while per-unit cost snapshots can remain unchanged. Preferring those snapshots makes later purchase forms show an obsolete cost and conflicts with the system's weighted-average valuation.
+**Why:** The user requires purchase-form defaults to represent what was most recently paid to a supplier, not the current carrying value of stock. Treating WAC as the purchase quote obscures supplier price movement.
 
-**How to apply:** When changing purchase-item defaulting or unit selection, source the current item average first, convert by the selected unit's factor, and refresh cached item data after purchase posting. Do not treat a draft invoice as an inventory receipt before it is posted.
+**How to apply:** When changing purchase defaults or unit selection, read only posted purchase lines in the chosen currency, normalize using the historical unit conversion factor, then convert to the selected unit. Do not change the existing WAC recalculation, posting, return, or reversal paths.

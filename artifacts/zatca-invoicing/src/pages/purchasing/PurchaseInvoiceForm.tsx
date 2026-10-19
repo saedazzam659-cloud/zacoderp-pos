@@ -784,16 +784,16 @@ function PurchaseInvoiceFormContent() {
     return String(m.costPrice);
   }
 
-  // items.costPrice is refreshed from posted stock balances using the
-  // company's weighted-average cost. Unit rows can retain an old manual
-  // snapshot, so derive the default purchase cost from the live average and
-  // convert it to the selected unit instead of preferring that stale value.
-  function currentAverageUnitCost(item: any, unit: any): string | null {
-    if (item?.costPrice == null || item.costPrice === "") return null;
-    const averageCost = Number(item.costPrice);
-    const factor = Number(unit?.conversionFactor ?? 1);
-    if (!Number.isFinite(averageCost) || !Number.isFinite(factor) || factor <= 0) return null;
-    return String(averageCost * factor);
+  const lastPurchasePriceCache = useRef(new Map<string, string | null>());
+  async function fetchLastPurchaseUnitPrice(itemId: string, code: string): Promise<string | null> {
+    const key = `${itemId}:${code}`;
+    if (lastPurchasePriceCache.current.has(key)) return lastPurchasePriceCache.current.get(key) ?? null;
+    const r = await fetch(`${API}/api/inventory/items/${itemId}/last-purchase-price?companyId=${cid}&currencyCode=${encodeURIComponent(code)}`, { headers: authH });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const price = data?.baseUnitPrice == null ? null : String(data.baseUnitPrice);
+    lastPurchasePriceCache.current.set(key, price);
+    return price;
   }
 
   async function selectItem(lineId: string, itemId: string, createdItem?: any) {
@@ -802,11 +802,19 @@ function PurchaseInvoiceFormContent() {
     const itemUnits = await fetchItemUnits(itemId);
     const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
-    let chosenPrice: string = currentAverageUnitCost(item, base) ?? String(base?.costPrice ?? "0");
+    const selectedCurrency = currencyCode || defaultCurrency?.code || "";
+    const unitFactor = Number(base?.conversionFactor ?? 1);
+    const catalogPrice = Number(base?.costPrice ?? 0);
+    let chosenPrice = Number.isFinite(catalogPrice) && catalogPrice > 0 ? String(catalogPrice) : "";
+    let hasCurrencyOverride = false;
     if (currencyCode && defaultCurrency && currencyCode !== defaultCurrency.code) {
       const cps = await fetchItemCurrencyPrices(itemId);
       const m = pickCurrencyCost(cps, currencyCode);
-      if (m != null) chosenPrice = m;
+      if (m != null) { chosenPrice = m; hasCurrencyOverride = true; }
+    }
+    if (!hasCurrencyOverride) {
+      const last = selectedCurrency ? await fetchLastPurchaseUnitPrice(itemId, selectedCurrency) : null;
+      if (last != null && Number.isFinite(unitFactor) && unitFactor > 0) chosenPrice = String(Number(last) * unitFactor);
     }
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
@@ -819,7 +827,7 @@ function PurchaseInvoiceFormContent() {
         unitId:    base?.unitId ? String(base.unitId) : (item.unitId ? String(item.unitId) : ""),
         unit:      unitNameOf(base?.unit) || unitNameOf(fallbackUnit) || "",
         conversionFactor: String(base?.conversionFactor ?? "1"),
-        unitPrice: trimTrailingZeros(chosenPrice),
+        unitPrice: chosenPrice ? trimTrailingZeros(chosenPrice) : "",
         vatRate:   (item.vatRate != null && item.vatRate !== "" ? String(item.vatRate) : "15"),
         // Service lines never hit inventory: drop warehouse + batch + expiry.
         warehouseId: isService ? "" : l.warehouseId,
@@ -848,7 +856,7 @@ function PurchaseInvoiceFormContent() {
     await selectItem(l._id, qaItemId);
     // Honor an explicit unit choice from the bar (multi-unit items). Runs
     // BEFORE price/discount below so a manually typed price still wins.
-    if (qaUnitId) changeLineUnit(l._id, qaUnitId);
+    if (qaUnitId) changeLineUnit(l._id, qaUnitId, qaItemId);
     updateLine(l._id, "qty", qaQty || "1");
     if (qaFreeQty && qaFreeQty !== "0") updateLine(l._id, "freeQty", qaFreeQty);
     if (qaPrice.trim() !== "" && qaPrice !== "0") updateLine(l._id, "unitPrice", qaPrice);
@@ -871,13 +879,23 @@ function PurchaseInvoiceFormContent() {
         const itemUnits = await fetchItemUnits(l.itemId);
         const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
           ?? itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
-        const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
-        const v = currentAverageUnitCost(item, row) ?? row?.costPrice ?? item?.costPrice;
-        if (v != null) np = String(v);
+        const last = await fetchLastPurchaseUnitPrice(l.itemId, code);
+        const factor = Number(row?.conversionFactor ?? 1);
+        const catalog = Number(row?.costPrice ?? 0);
+        if (last != null && Number.isFinite(factor) && factor > 0) np = String(Number(last) * factor);
+        else if (Number.isFinite(catalog) && catalog > 0) np = String(catalog);
       } else {
         const cps = await fetchItemCurrencyPrices(l.itemId);
         const m = pickCurrencyCost(cps, code);
         if (m != null) np = m;
+        else {
+          const itemUnits = await fetchItemUnits(l.itemId);
+          const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
+            ?? itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
+          const last = await fetchLastPurchaseUnitPrice(l.itemId, code);
+          const factor = Number(row?.conversionFactor ?? 1);
+          if (last != null && Number.isFinite(factor) && factor > 0) np = String(Number(last) * factor);
+        }
       }
       if (np != null) updates[l._id] = trimTrailingZeros(np);
     }
@@ -892,19 +910,29 @@ function PurchaseInvoiceFormContent() {
     }));
   }
 
-  function changeLineUnit(lineId: string, newUnitId: string) {
+  async function changeLineUnit(lineId: string, newUnitId: string, itemIdHint?: string) {
+    const line = lines.find(candidate => candidate._id === lineId);
+    const itemId = line?.itemId ?? itemIdHint ?? "";
+    const itemUnits = itemId ? (itemUnitsMap[itemId] ?? await fetchItemUnits(itemId)) : [];
+    const row = itemUnits.find((u: any) => String(u.unitId) === newUnitId);
+    const selectedCurrency = currencyCode || defaultCurrency?.code || "";
+    const last = itemId && selectedCurrency
+      ? await fetchLastPurchaseUnitPrice(itemId, selectedCurrency)
+      : null;
+    const factor = Number(row?.conversionFactor ?? 1);
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
-      const itemUnits = itemUnitsMap[l.itemId] ?? [];
-      const row = itemUnits.find((u: any) => String(u.unitId) === newUnitId);
       const globalUnit = units.find((u: any) => String(u.id) === newUnitId);
-      const item = inventoryItems.find((candidate: any) => String(candidate.id) === l.itemId);
+      const catalog = Number(row?.costPrice ?? 0);
+      const defaultCost = Number.isFinite(catalog) && catalog > 0 ? String(catalog) : l.unitPrice;
       const updated: InvoiceLine = {
         ...l,
         unitId: newUnitId,
         unit: unitNameOf(row?.unit) || unitNameOf(globalUnit) || "",
         conversionFactor: String(row?.conversionFactor ?? "1"),
-        unitPrice: trimTrailingZeros(currentAverageUnitCost(item, row) ?? row?.costPrice ?? l.unitPrice),
+        unitPrice: trimTrailingZeros(last != null && Number.isFinite(factor) && factor > 0
+          ? String(Number(last) * factor)
+          : defaultCost),
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };

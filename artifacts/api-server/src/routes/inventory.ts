@@ -1734,7 +1734,68 @@ router.get("/items/:id", async (req, res) => {
     .from(stockBalanceTable)
     .leftJoin(warehousesTable, eq(stockBalanceTable.warehouseId, warehousesTable.id))
     .where(eq(stockBalanceTable.itemId, id));
-  res.json({ ...row.item, group: row.group, unit: row.unit, balances: balances.map(b => ({ ...b.bal, warehouse: b.wh })) });
+  const [lastPurchase] = await db.select({
+    unitPrice: purchaseInvoiceLinesTable.unitPrice,
+    conversionFactor: purchaseInvoiceLinesTable.conversionFactor,
+    date: purchaseInvoicesTable.invoiceDate,
+    currencyCode: purchaseInvoicesTable.currencyCode,
+  }).from(purchaseInvoiceLinesTable)
+    .innerJoin(purchaseInvoicesTable, eq(purchaseInvoiceLinesTable.invoiceId, purchaseInvoicesTable.id))
+    .where(and(
+      eq(purchaseInvoiceLinesTable.companyId, cid),
+      eq(purchaseInvoiceLinesTable.itemId, id),
+      eq(purchaseInvoicesTable.companyId, cid),
+      eq(purchaseInvoicesTable.status, "posted"),
+    ))
+    .orderBy(desc(purchaseInvoicesTable.invoiceDate), desc(purchaseInvoicesTable.id), desc(purchaseInvoiceLinesTable.id))
+    .limit(1);
+  const lastFactor = Number(lastPurchase?.conversionFactor || 1);
+  const lastPrice = Number(lastPurchase?.unitPrice);
+  const lastPurchaseSummary = lastPurchase && lastFactor > 0 && Number.isFinite(lastPrice)
+    ? { unitPrice: String(lastPrice / lastFactor), date: lastPurchase.date, currencyCode: lastPurchase.currencyCode }
+    : null;
+  res.json({
+    ...row.item, group: row.group, unit: row.unit,
+    balances: balances.map(b => ({ ...b.bal, warehouse: b.wh })),
+    lastPurchase: lastPurchaseSummary,
+  });
+});
+
+// Latest posted supplier purchase price, expressed per base inventory unit.
+// Drafts and unposted invoices must never influence the suggested price.
+router.get("/items/:id/last-purchase-price", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف الصنف غير صالح" }); return; }
+  const conditions: any[] = [
+    eq(purchaseInvoiceLinesTable.companyId, cid),
+    eq(purchaseInvoiceLinesTable.itemId, id),
+    eq(purchaseInvoicesTable.companyId, cid),
+    eq(purchaseInvoicesTable.status, "posted"),
+  ];
+  const currencyCode = typeof req.query.currencyCode === "string" ? req.query.currencyCode.trim().toUpperCase() : "";
+  if (currencyCode) conditions.push(eq(purchaseInvoicesTable.currencyCode, currencyCode));
+  const [row] = await db.select({
+    unitPrice: purchaseInvoiceLinesTable.unitPrice,
+    conversionFactor: purchaseInvoiceLinesTable.conversionFactor,
+    currencyCode: purchaseInvoicesTable.currencyCode,
+    date: purchaseInvoicesTable.invoiceDate,
+    docNumber: purchaseInvoicesTable.docNumber,
+  }).from(purchaseInvoiceLinesTable)
+    .innerJoin(purchaseInvoicesTable, eq(purchaseInvoiceLinesTable.invoiceId, purchaseInvoicesTable.id))
+    .where(and(...conditions))
+    .orderBy(desc(purchaseInvoicesTable.invoiceDate), desc(purchaseInvoicesTable.id), desc(purchaseInvoiceLinesTable.id))
+    .limit(1);
+  if (!row) { res.json(null); return; }
+  const factor = Number(row.conversionFactor || 1);
+  const price = Number(row.unitPrice);
+  if (!Number.isFinite(factor) || factor <= 0 || !Number.isFinite(price)) { res.json(null); return; }
+  res.json({
+    baseUnitPrice: String(price / factor),
+    currencyCode: row.currencyCode,
+    date: row.date,
+    docNumber: row.docNumber,
+  });
 });
 
 // ─── ITEM AUDIT HELPERS ──────────────────────────────────────────────────────

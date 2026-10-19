@@ -72,7 +72,7 @@
 - [Company payment labels](company-payment-labels-boundary.md) — payment defaults and display aliases are company-scoped; keep the internal accounting payment keys unchanged.
 - [Sales negative-stock precedence](sales-negative-stock-precedence.md) — company switch is the master; warehouse can block, invoice can override warehouse only.
 - [Item catalog performance](item-catalog-performance.md) — large catalogs need bounded tenant-scoped picker search; preserve full-list behavior for reports.
-- [Purchase picker average cost](purchase-picker-weighted-average-cost.md) — default purchase cost follows live weighted-average item cost, converted by the chosen unit factor.
+- [Purchase picker price priority](purchase-picker-weighted-average-cost.md) — default from latest posted purchase; keep current weighted-average inventory cost separate.
 - [Company document field controls](company-document-field-controls.md) — keep company controls off by default, SuperAdmin-gated, and company-wide when enabled.
 - [Document visibility scope](document-visibility-scope.md) — per-user own-document visibility is opt-in; company admins retain company-wide access.
 - [Searchable web dropdowns](searchable-web-dropdowns.md) — use the existing searchable combobox pattern for dropdowns added or modified in ERP web forms.
