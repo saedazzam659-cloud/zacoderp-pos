@@ -78,9 +78,9 @@ import {
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
-function SalesBranchStock({ itemId, companyId, branchId, headers, enabled }: { itemId: string; companyId: number | string; branchId: string; headers: Record<string, string>; enabled: boolean }) {
+function SalesBranchStock({ itemId, companyId, userId, branchId, warehouseId, headers, enabled }: { itemId: string; companyId: number | string; userId: number | string; branchId: string; warehouseId: string; headers: Record<string, string>; enabled: boolean }) {
   const { data = [], isLoading, isError, refetch } = useQuery<any[]>({
-    queryKey: ["sales-branch-stock", companyId, itemId],
+    queryKey: ["sales-branch-stock", companyId, userId, itemId],
     enabled: enabled && !!itemId && !!companyId,
     queryFn: async () => {
       const r = await fetch(`${API}/api/inventory/items/${itemId}/sales-branch-stock`, { headers });
@@ -90,24 +90,32 @@ function SalesBranchStock({ itemId, companyId, branchId, headers, enabled }: { i
     staleTime: 30_000,
   });
   if (!enabled) return null;
+  const selectedWarehouse = data.find(row => String(row.warehouseId) === String(warehouseId));
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label="عرض أرصدة الفروع المحددة"
-          title="عرض أرصدة الفروع المحددة"
-          data-testid={`sales-branch-stock-${itemId}`}
-          className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-sky-200 bg-white text-sky-700 shadow-sm transition-colors hover:border-sky-400 hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-        >
-          {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isError ? <AlertTriangle className="h-3.5 w-3.5 text-rose-600" /> : <Boxes className="h-3.5 w-3.5" />}
-          {!isLoading && !isError && data.length > 0 && (
-            <span className="absolute -end-1 -top-1 min-w-3.5 rounded-full bg-sky-600 px-0.5 text-center text-[8px] leading-3 text-white">
-              {data.length > 99 ? "99+" : data.length}
-            </span>
-          )}
-        </button>
-      </PopoverTrigger>
+      <div className="flex items-center gap-1">
+        {selectedWarehouse && (
+          <span data-testid={`selected-available-stock-${itemId}`} title="الكمية المتاحة في المخزن المحدد في بيانات الفاتورة" dir="ltr" className="rounded border border-rose-200 bg-rose-50 px-1 py-0.5 font-mono text-[9px] font-semibold leading-none text-rose-700">
+            {Number(selectedWarehouse.qty || 0).toLocaleString("en-US")}
+          </span>
+        )}
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label="عرض أرصدة الفروع المحددة"
+            title="عرض أرصدة الفروع المحددة"
+            data-testid={`sales-branch-stock-${itemId}`}
+            className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-sky-200 bg-white text-sky-700 shadow-sm transition-colors hover:border-sky-400 hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+          >
+            {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isError ? <AlertTriangle className="h-3.5 w-3.5 text-rose-600" /> : <Boxes className="h-3.5 w-3.5" />}
+            {!isLoading && !isError && data.length > 0 && (
+              <span className="absolute -end-1 -top-1 min-w-3.5 rounded-full bg-sky-600 px-0.5 text-center text-[8px] leading-3 text-white">
+                {data.length > 99 ? "99+" : data.length}
+              </span>
+            )}
+          </button>
+        </PopoverTrigger>
+      </div>
       <PopoverContent side="bottom" align="start" sideOffset={5} dir="rtl" className="z-[100] w-72 rounded-xl border border-sky-200 bg-white p-3 shadow-xl">
         <div className="mb-2 flex items-center justify-between gap-3 border-b pb-2">
           <div>
@@ -147,16 +155,22 @@ function SalesBranchStock({ itemId, companyId, branchId, headers, enabled }: { i
 
 type SalesItemPickerWithStockProps = ComponentProps<typeof SearchCombobox> & {
   companyId: number | string;
+  userId: number | string;
   branchId: string;
   warehouseId: string;
   headers: Record<string, string>;
   stockEnabled: boolean;
 };
 
-function SalesItemPickerWithStock({ companyId, branchId, headers, stockEnabled, warehouseId, value, items, ...pickerProps }: SalesItemPickerWithStockProps) {
-  const itemIds = items.map(item => item.value).filter(value => /^\d+$/.test(value)).slice(0, 50);
+function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockEnabled, warehouseId, value, items, ...pickerProps }: SalesItemPickerWithStockProps) {
+  // Put the controlled selection first so it is never clipped by the bounded
+  // lookup when search results contain many rows or only the selected item is
+  // being hydrated after the picker closes.
+  const itemIds = [...new Set([value ?? "", ...items.map(item => item.value)])]
+    .filter(id => /^\d+$/.test(id))
+    .slice(0, 50);
   const { data: stockRows = [] } = useQuery<Array<{ itemId: number; qty: number }>>({
-    queryKey: ["sales-item-picker-stock", companyId, warehouseId, itemIds.join(",")],
+    queryKey: ["sales-item-picker-stock", companyId, userId, warehouseId, itemIds.join(",")],
     queryFn: async () => {
       const params = new URLSearchParams({ warehouseId, itemIds: itemIds.join(",") });
       const response = await fetch(`${API}/api/inventory/items/sales-stock-lookup?${params}`, { headers });
@@ -177,12 +191,7 @@ function SalesItemPickerWithStock({ companyId, branchId, headers, stockEnabled, 
       value={value}
       endAdornment={stockEnabled ? (
         <div className="flex items-center gap-1">
-          {typeof stockByItem.get(value ?? "") === "number" && (
-            <span data-testid={`selected-available-stock-${value}`} title="الكمية المتاحة في المخزن المحدد" dir="ltr" className="rounded border border-rose-200 bg-rose-50 px-1 py-0.5 font-mono text-[9px] font-semibold leading-none text-rose-700">
-              {stockByItem.get(value ?? "")!.toLocaleString("en-US")}
-            </span>
-          )}
-          {value && <SalesBranchStock itemId={value} companyId={companyId} branchId={branchId} headers={headers} enabled />}
+          {value && <SalesBranchStock itemId={value} companyId={companyId} userId={userId} branchId={branchId} warehouseId={warehouseId} headers={headers} enabled />}
         </div>
       ) : undefined}
       renderItem={(item: any, selected: boolean) => (
@@ -2494,6 +2503,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             placeholder={t("salesDocForm.itemPlaceholder")}
             searchPlaceholder="ابحث بالكود أو الاسم..."
             companyId={cid ?? ""}
+            userId={user?.id ?? ""}
             branchId={branchId}
             headers={authH}
             stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true}
@@ -2647,6 +2657,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         searchPlaceholder="ابحث بالكود أو الاسم..."
                         className="h-8 text-xs"
                         companyId={cid ?? ""}
+                        userId={user?.id ?? ""}
                         branchId={branchId}
                         headers={authH}
                         stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true}
@@ -2871,7 +2882,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {user ? (
                         <div className="min-w-0">
-                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." companyId={cid ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
+                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
                         </div>
                       ) : (
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
