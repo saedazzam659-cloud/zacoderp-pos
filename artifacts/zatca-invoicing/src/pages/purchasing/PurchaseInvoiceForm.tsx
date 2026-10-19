@@ -784,13 +784,25 @@ function PurchaseInvoiceFormContent() {
     return String(m.costPrice);
   }
 
+  // items.costPrice is refreshed from posted stock balances using the
+  // company's weighted-average cost. Unit rows can retain an old manual
+  // snapshot, so derive the default purchase cost from the live average and
+  // convert it to the selected unit instead of preferring that stale value.
+  function currentAverageUnitCost(item: any, unit: any): string | null {
+    if (item?.costPrice == null || item.costPrice === "") return null;
+    const averageCost = Number(item.costPrice);
+    const factor = Number(unit?.conversionFactor ?? 1);
+    if (!Number.isFinite(averageCost) || !Number.isFinite(factor) || factor <= 0) return null;
+    return String(averageCost * factor);
+  }
+
   async function selectItem(lineId: string, itemId: string, createdItem?: any) {
     const item = createdItem ?? inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
     const itemUnits = await fetchItemUnits(itemId);
     const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
-    let chosenPrice: string = String(base?.costPrice ?? item.costPrice ?? "0");
+    let chosenPrice: string = currentAverageUnitCost(item, base) ?? String(base?.costPrice ?? "0");
     if (currencyCode && defaultCurrency && currencyCode !== defaultCurrency.code) {
       const cps = await fetchItemCurrencyPrices(itemId);
       const m = pickCurrencyCost(cps, currencyCode);
@@ -860,7 +872,7 @@ function PurchaseInvoiceFormContent() {
         const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
           ?? itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
         const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
-        const v = row?.costPrice ?? item?.costPrice;
+        const v = currentAverageUnitCost(item, row) ?? row?.costPrice ?? item?.costPrice;
         if (v != null) np = String(v);
       } else {
         const cps = await fetchItemCurrencyPrices(l.itemId);
@@ -886,12 +898,13 @@ function PurchaseInvoiceFormContent() {
       const itemUnits = itemUnitsMap[l.itemId] ?? [];
       const row = itemUnits.find((u: any) => String(u.unitId) === newUnitId);
       const globalUnit = units.find((u: any) => String(u.id) === newUnitId);
+      const item = inventoryItems.find((candidate: any) => String(candidate.id) === l.itemId);
       const updated: InvoiceLine = {
         ...l,
         unitId: newUnitId,
         unit: unitNameOf(row?.unit) || unitNameOf(globalUnit) || "",
         conversionFactor: String(row?.conversionFactor ?? "1"),
-        unitPrice: row?.costPrice != null ? trimTrailingZeros(row.costPrice) : l.unitPrice,
+        unitPrice: trimTrailingZeros(currentAverageUnitCost(item, row) ?? row?.costPrice ?? l.unitPrice),
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
@@ -992,6 +1005,10 @@ function PurchaseInvoiceFormContent() {
     },
     onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
+      // Posting updates the weighted-average item cost in the catalog. The
+      // picker cache is shared across new invoice forms, so evict it here or
+      // the next invoice can keep suggesting the pre-posting cost.
+      void qc.invalidateQueries({ queryKey: ["inventory-items", cid] });
       if (isNew && saved?.docNumber) {
         renameArchivedKey(newArchiveKeyRef.current, saved.docNumber);
         fetch(`${API}/api/document-archives/rekey`, {

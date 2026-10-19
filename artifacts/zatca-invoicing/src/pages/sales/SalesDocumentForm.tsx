@@ -42,7 +42,7 @@ import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive, Wallet, Undo2, Boxes, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer, Lock, Receipt, ShieldCheck, Save, Archive, Wallet, Undo2, Boxes, Loader2, AlertTriangle, RefreshCw, Check } from "lucide-react";
 import EmbeddedAccountNotesTab from "@/pages/account-notes/EmbeddedAccountNotesTab";
 import EmbeddedReturnsTab from "@/components/documents/EmbeddedReturnsTab";
 import InvoiceArchiveTab from "@/components/InvoiceArchiveTab";
@@ -148,18 +148,62 @@ function SalesBranchStock({ itemId, companyId, branchId, headers, enabled }: { i
 type SalesItemPickerWithStockProps = ComponentProps<typeof SearchCombobox> & {
   companyId: number | string;
   branchId: string;
+  warehouseId: string;
   headers: Record<string, string>;
   stockEnabled: boolean;
 };
 
-function SalesItemPickerWithStock({ companyId, branchId, headers, stockEnabled, value, ...pickerProps }: SalesItemPickerWithStockProps) {
+function SalesItemPickerWithStock({ companyId, branchId, headers, stockEnabled, warehouseId, value, items, ...pickerProps }: SalesItemPickerWithStockProps) {
+  const itemIds = items.map(item => item.value).filter(value => /^\d+$/.test(value)).slice(0, 50);
+  const { data: stockRows = [] } = useQuery<Array<{ itemId: number; qty: number }>>({
+    queryKey: ["sales-item-picker-stock", companyId, warehouseId, itemIds.join(",")],
+    queryFn: async () => {
+      const params = new URLSearchParams({ warehouseId, itemIds: itemIds.join(",") });
+      const response = await fetch(`${API}/api/inventory/items/sales-stock-lookup?${params}`, { headers });
+      if (!response.ok) throw new Error("تعذر تحميل الكميات المتاحة");
+      return response.json();
+    },
+    enabled: stockEnabled && !!warehouseId && itemIds.length > 0,
+    staleTime: 15_000,
+  });
+  const stockByItem = new Map(stockRows.map(row => [String(row.itemId), row.qty]));
+  const optionsWithStock = stockEnabled && warehouseId
+    ? items.map(item => ({ ...item, stockQty: stockByItem.get(item.value) }))
+    : items;
   return (
     <SearchCombobox
       {...pickerProps}
+      items={optionsWithStock}
       value={value}
-      endAdornment={stockEnabled && value
-        ? <SalesBranchStock itemId={value} companyId={companyId} branchId={branchId} headers={headers} enabled />
-        : undefined}
+      endAdornment={stockEnabled ? (
+        <div className="flex items-center gap-1">
+          {typeof stockByItem.get(value ?? "") === "number" && (
+            <span data-testid={`selected-available-stock-${value}`} title="الكمية المتاحة في المخزن المحدد" dir="ltr" className="rounded border border-rose-200 bg-rose-50 px-1 py-0.5 font-mono text-[9px] font-semibold leading-none text-rose-700">
+              {stockByItem.get(value ?? "")!.toLocaleString("en-US")}
+            </span>
+          )}
+          {value && <SalesBranchStock itemId={value} companyId={companyId} branchId={branchId} headers={headers} enabled />}
+        </div>
+      ) : undefined}
+      renderItem={(item: any, selected: boolean) => (
+        <div className="flex w-full min-w-0 items-start gap-2">
+          <Check className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-primary ${selected ? "opacity-100" : "opacity-0"}`} />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {item.code && <span className="shrink-0 rounded border border-primary/20 bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">{item.code}</span>}
+              {item.badge && <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${item.badgeClass ?? "bg-muted text-muted-foreground"}`}>{item.badge}</span>}
+              <span className="min-w-0 flex-1 text-sm font-medium">{item.label}</span>
+              {typeof item.stockQty === "number" && (
+                <span data-testid={`available-stock-${item.value}`} title="الكمية المتاحة في المخزن المحدد (بالوحدة الأساسية)" dir="ltr" className="shrink-0 rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-rose-700">
+                  {item.stockQty.toLocaleString("en-US")}
+                </span>
+              )}
+            </div>
+            {item.labelEn && <p className="mt-0.5 truncate text-[11px] text-muted-foreground" dir="ltr">{item.labelEn}</p>}
+            {item.description && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{item.description}</p>}
+          </div>
+        </div>
+      )}
     />
   );
 }
@@ -2443,6 +2487,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <SalesItemPickerWithStock
             items={itemComboItems}
             value={qaItemId}
+            warehouseId={qaWarehouseId || headerWarehouseId}
             onValueChange={setQaItemId}
             onSearchChange={setItemSearch}
             loading={isSearchingItems}
@@ -2594,6 +2639,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <SalesItemPickerWithStock
                         items={itemComboItems}
                         value={l.itemId}
+                        warehouseId={l.warehouseId || headerWarehouseId}
                         onValueChange={v => void selectItem(l._id, v)}
                         onSearchChange={setItemSearch}
                         loading={isSearchingItems}
@@ -2825,7 +2871,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {user ? (
                         <div className="min-w-0">
-                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." companyId={cid ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
+                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." companyId={cid ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
                         </div>
                       ) : (
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}

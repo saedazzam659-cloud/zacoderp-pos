@@ -4478,6 +4478,52 @@ router.get("/stock-balance", async (req, res) => {
 
 // Sales/quotation line helper. Branch visibility is explicitly granted per
 // user by the company admin; never accept caller-supplied branch IDs.
+router.get("/items/sales-stock-lookup", async (req, res) => {
+  const cid = getCompanyId(req);
+  const userId = Number((req as any).authUser?.id);
+  const warehouseId = Number(req.query.warehouseId);
+  const itemIds = String(req.query.itemIds ?? "")
+    .split(",")
+    .map(Number)
+    .filter((id, index, all) => Number.isInteger(id) && id > 0 && all.indexOf(id) === index)
+    .slice(0, 50);
+  if (!cid || !userId || !Number.isInteger(warehouseId) || warehouseId <= 0 || !itemIds.length) {
+    res.status(400).json({ error: "طلب غير صالح" }); return;
+  }
+  const [company] = await db.select({ enabled: (companiesTable as any).showSalesBranchStock })
+    .from(companiesTable).where(eq(companiesTable.id, cid));
+  if (!company?.enabled) { res.json([]); return; }
+  const [u] = await db.select({ prefs: usersTable.uiPreferences })
+    .from(usersTable).where(and(eq(usersTable.id, userId), eq(usersTable.companyId, cid)));
+  const branchIds: number[] = Array.isArray((u?.prefs as any)?.salesStockBranchIds)
+    ? [...new Set<number>((u!.prefs as any).salesStockBranchIds.map(Number).filter(Number.isInteger))]
+    : [];
+  if (!branchIds.length) { res.json([]); return; }
+
+  const [warehouse] = await db.select({ id: warehousesTable.id, branchId: warehousesTable.branchId })
+    .from(warehousesTable)
+    .where(and(
+      eq(warehousesTable.id, warehouseId),
+      eq(warehousesTable.companyId, cid),
+      eq(warehousesTable.isActive, true),
+      inArray(warehousesTable.branchId, branchIds),
+    ));
+  // Do not reveal stock for a warehouse outside this user's explicitly
+  // permitted branch list, even if its id was supplied by the browser.
+  if (!warehouse) { res.json([]); return; }
+
+  const balances = await db.select({
+    itemId: stockBalanceTable.itemId,
+    qty: sql<string>`COALESCE(${stockBalanceTable.qty}, 0)`,
+  }).from(stockBalanceTable).where(and(
+    eq(stockBalanceTable.companyId, cid),
+    eq(stockBalanceTable.warehouseId, warehouseId),
+    inArray(stockBalanceTable.itemId, itemIds),
+  ));
+  const byItem = new Map(balances.map(row => [row.itemId, Number(row.qty) || 0]));
+  res.json(itemIds.map(itemId => ({ itemId, qty: byItem.get(itemId) ?? 0 })));
+});
+
 router.get("/items/:itemId/sales-branch-stock", async (req, res) => {
   const cid = getCompanyId(req);
   const userId = Number((req as any).authUser?.id);
