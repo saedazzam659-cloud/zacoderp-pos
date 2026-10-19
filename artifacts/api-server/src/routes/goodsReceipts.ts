@@ -6,6 +6,7 @@ import {
   goodsReceiptsTable, goodsReceiptLinesTable,
   purchaseOrdersTable,
   costCentersTable,
+  auditLogTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
   suppliersTable, accountsTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
@@ -784,6 +785,20 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), documentMutationLock
         throw new Error("إذن الاستلام تم ترحيله بواسطة عملية أخرى");
       }
 
+      const itemCostChanges = new Map<number, { previousCost: number; receivedQty: number; receivedValue: number }>();
+      for (const c of computed) {
+        const change = itemCostChanges.get(c.itemId) ?? { previousCost: 0, receivedQty: 0, receivedValue: 0 };
+        change.receivedQty += c.qtyBase;
+        change.receivedValue += c.goodsNet;
+        itemCostChanges.set(c.itemId, change);
+      }
+      for (const itemId of itemCostChanges.keys()) {
+        const [before] = await tx.select({ costPrice: itemsTable.costPrice }).from(itemsTable)
+          .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
+        const entry = itemCostChanges.get(itemId)!;
+        entry.previousCost = Number(before?.costPrice ?? 0);
+      }
+
       // 2a. Move stock (balance + ledger).
       for (const c of computed) {
         const [existing] = await tx.select().from(stockBalanceTable).where(and(
@@ -830,6 +845,37 @@ router.patch("/:id/post", requirePostRight("goodsReceipt"), documentMutationLock
       // item master so the الأصناف (items) grid shows the latest landed cost.
       for (const itemId of new Set(computed.map((c) => c.itemId))) {
         await refreshItemCost(cid, itemId, tx);
+        const [after] = await tx.select({ costPrice: itemsTable.costPrice }).from(itemsTable)
+          .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
+        const change = itemCostChanges.get(itemId);
+        const newCost = Number(after?.costPrice ?? 0);
+        if (change && Math.abs(newCost - change.previousCost) > 0.0000001) {
+          const user = (req as any).authUser;
+          await tx.insert(auditLogTable).values({
+            userId: user?.id ?? null,
+            username: user?.username ?? null,
+            role: user?.role ?? null,
+            companyId: cid,
+            module: "inventory",
+            action: "cost_change",
+            method: "PATCH",
+            path: req.originalUrl,
+            entityType: "item_cost_change",
+            entityId: String(itemId),
+            statusCode: 200,
+            metadata: {
+              sourceType: "goods_receipt",
+              sourceId: id,
+              documentNumber: gr.docNumber,
+              postedById: user?.id ?? null,
+              previousCost: change.previousCost,
+              newCost,
+              receivedQty: change.receivedQty,
+              receivedValue: change.receivedValue,
+              currencyCode: gr.currencyCode,
+            },
+          });
+        }
       }
 
       // 2b. Insert journal entry + lines inside the same tx.
@@ -965,6 +1011,42 @@ router.patch("/:id/unpost", requireUnpostRight("goodsReceipt"), documentMutation
           eq(stockLedgerTable.refType, "goods_receipt"),
           eq(stockLedgerTable.refId, id),
         ));
+      const reversedByItem = new Map<number, { qty: number; value: number }>();
+      for (const row of ledger) {
+        const reversed = reversedByItem.get(row.itemId) ?? { qty: 0, value: 0 };
+        reversed.qty += Number(row.qty || 0);
+        reversed.value += Number(row.totalCost || 0);
+        reversedByItem.set(row.itemId, reversed);
+      }
+      const unpostingUser = (req as any).authUser;
+      for (const [itemId, reversed] of reversedByItem) {
+        const [item] = await tx.select({ costPrice: itemsTable.costPrice }).from(itemsTable)
+          .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
+        await tx.insert(auditLogTable).values({
+          userId: unpostingUser?.id ?? null,
+          username: unpostingUser?.username ?? null,
+          role: unpostingUser?.role ?? null,
+          companyId: cid,
+          module: "inventory",
+          action: "cost_reversal",
+          method: "PATCH",
+          path: req.originalUrl,
+          entityType: "item_cost_change",
+          entityId: String(itemId),
+          statusCode: 200,
+          metadata: {
+            sourceType: "goods_receipt",
+            sourceId: id,
+            reversalType: "goods_receipt_unpost",
+            documentNumber: gr.docNumber,
+            reversedById: unpostingUser?.id ?? null,
+            reversedQty: reversed.qty,
+            reversedValue: reversed.value,
+            currentItemCost: Number(item?.costPrice ?? 0),
+            currencyCode: gr.currencyCode,
+          },
+        });
+      }
       for (const row of ledger) {
         const qty = Number(row.qty);
         const [bal] = await tx.select().from(stockBalanceTable)

@@ -645,18 +645,38 @@ export default function GoodsReceipts() {
     return rows;
   }
 
-  function changeLineUnit(lineId: string, newUnitId: string) {
+  const lastPurchasePriceCache = useRef(new Map<string, string | null>());
+  async function fetchLastPurchaseUnitPrice(itemId: string, code: string): Promise<string | null> {
+    const key = `${itemId}:${code}`;
+    if (lastPurchasePriceCache.current.has(key)) return lastPurchasePriceCache.current.get(key) ?? null;
+    const r = await fetch(`${API}/api/inventory/items/${itemId}/last-purchase-price?companyId=${cid}&currencyCode=${encodeURIComponent(code)}`, { headers: authH });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const price = data?.baseUnitPrice == null ? null : String(data.baseUnitPrice);
+    lastPurchasePriceCache.current.set(key, price);
+    return price;
+  }
+
+  async function changeLineUnit(lineId: string, newUnitId: string) {
+    const line = lines.find(candidate => candidate._id === lineId);
+    const itemUnits = line ? (itemUnitsMap[line.itemId] ?? await fetchItemUnits(line.itemId)) : [];
+    const row = itemUnits.find((u: any) => String(u.unitId) === newUnitId);
+    const code = form.currencyCode || defaultCurrency?.code || "";
+    const last = line?.itemId && code ? await fetchLastPurchaseUnitPrice(line.itemId, code) : null;
+    const factor = Number(row?.conversionFactor ?? 1);
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
-      const itemUnits = itemUnitsMap[l.itemId] ?? [];
-      const row = itemUnits.find((u: any) => String(u.unitId) === newUnitId);
       const globalUnit = units.find((u: any) => String(u.id) === newUnitId);
+      const catalogCost = Number(row?.costPrice ?? 0);
+      const fallback = Number.isFinite(catalogCost) && catalogCost > 0 ? String(catalogCost) : l.unitPrice;
       const updated: ReceiptLine = {
         ...l,
         unitId: newUnitId,
         unit: unitName(row?.unit) || unitName(globalUnit) || "",
         conversionFactor: String(row?.conversionFactor ?? "1"),
-        unitPrice: row?.costPrice != null ? String(row.costPrice) : l.unitPrice,
+        unitPrice: last != null && Number.isFinite(factor) && factor > 0
+          ? String(Number(last) * factor)
+          : fallback,
       };
       return { ...updated, lineTotal: calcLineTotal(updated, !!form.priceIncludesVat).toFixed(2) };
     }));
@@ -668,6 +688,14 @@ export default function GoodsReceipts() {
     const itemUnits = await fetchItemUnits(itemId);
     const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
+    const code = form.currencyCode || defaultCurrency?.code || "";
+    const factor = Number(base?.conversionFactor ?? 1);
+    const catalogCost = Number(base?.costPrice ?? item.costPrice ?? 0);
+    let unitPrice = Number.isFinite(catalogCost) && catalogCost > 0 ? String(catalogCost) : "";
+    if (code) {
+      const last = await fetchLastPurchaseUnitPrice(itemId, code);
+      if (last != null && Number.isFinite(factor) && factor > 0) unitPrice = String(Number(last) * factor);
+    }
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
       const updated: ReceiptLine = {
@@ -678,7 +706,7 @@ export default function GoodsReceipts() {
         unitId:    base?.unitId ? String(base.unitId) : (item.unitId ? String(item.unitId) : ""),
         unit:      unitName(base?.unit) || unitName(fallbackUnit) || "",
         conversionFactor: String(base?.conversionFactor ?? "1"),
-        unitPrice: String(base?.costPrice ?? item.costPrice ?? "0"),
+        unitPrice,
         vatRate:   (item.vatRate != null && item.vatRate !== "" ? String(item.vatRate) : "15"),
       };
       return { ...updated, lineTotal: calcLineTotal(updated, !!form.priceIncludesVat).toFixed(2) };
