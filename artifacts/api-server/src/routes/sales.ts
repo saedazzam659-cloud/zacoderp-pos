@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { approvalGate } from "./documentApprovals.js";
+import { approvalGate, enforceDraftSaveMode, nextDraftDocumentNumber } from "./documentApprovals.js";
 import {
   LookupSalesOrderSourceDocumentQueryParams,
   LookupSalesOrderSourceDocumentResponse,
@@ -2751,8 +2751,9 @@ router.post("/sales-invoices", async (req, res) => {
   const timing = timingStart.timing;
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await enforceDraftSaveMode(req, res, cid, "sales_invoice"))) return;
     const clientRequestId = parseInvoiceClientRequestId(req.body);
-    const requestWantsInlineIssue = (isMobileChannel(req) || (req as any).resolvedMobileSalesContext === true) &&
+    const requestWantsInlineIssue = req.body?.saveAsDraft !== true && (isMobileChannel(req) || (req as any).resolvedMobileSalesContext === true) &&
       req.body?.mobileSaveMode === "issue";
     // The save-and-issue path performs posting after draft creation and has
     // its own compensation flow. Do not commit a replay claim until that
@@ -2802,7 +2803,7 @@ router.post("/sales-invoices", async (req, res) => {
       res.status(403).json({ error: "ليست لديك صلاحية تفعيل السحب على المكشوف في فواتير المبيعات" });
       return;
     }
-    const issueInline = (isMobileChannel(req) || (req as any).resolvedMobileSalesContext === true) &&
+    const issueInline = req.body?.saveAsDraft !== true && (isMobileChannel(req) || (req as any).resolvedMobileSalesContext === true) &&
       req.body?.mobileSaveMode === "issue";
     if (issueInline && !canPostDoc(req.authUser as any, "sales")) {
       res.status(403).json({ error: "ليس لديك صلاحية ترحيل هذا النوع من المستندات" });
@@ -3047,11 +3048,13 @@ router.post("/sales-invoices", async (req, res) => {
         }
         return allocated;
       };
-      let fromSeq = await allocateSequenceNumber();
+      let fromSeq = req.body?.saveAsDraft === true
+        ? await nextDraftDocumentNumber(cid, "sales_invoice")
+        : await allocateSequenceNumber();
       // Imported companies may carry counters that lag behind their historical
       // documents. Consume stale generated numbers until the first unused one;
       // never make the operator repair an entire restored sequence by hand.
-      for (let skipped = 0; fromSeq != null; skipped += 1) {
+      for (let skipped = 0; req.body?.saveAsDraft !== true && fromSeq != null; skipped += 1) {
         const duplicate = await db.select({ id: salesInvoicesTable.id })
           .from(salesInvoicesTable)
           .where(and(
@@ -3284,6 +3287,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
   const timing = timingStart.timing;
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await enforceDraftSaveMode(req, res, cid, "sales_invoice"))) return;
     // Mobile-app rights — same gate as POST (see enforceMobileSalesRights).
     if (!(await requireMobilePerm(req, res, cid, "invoice_edit", "ليست لديك صلاحية تعديل الفواتير من تطبيق الموبايل"))) return;
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "edit"))) return;
@@ -3740,7 +3744,36 @@ async function postSalesInvoiceHandler(
         res.status(409).json({ error: "تم تعديل بنود الفاتورة أثناء الترحيل — أعد المحاولة" });
         return;
       }
-      inv = lockedInvoice;
+      let effectiveInvoice = lockedInvoice;
+      if (String(lockedInvoice.docNumber ?? "").startsWith("D-SI-")) {
+        let officialNumber = await nextSequenceForPayment(cid, "sales_invoice", lockedInvoice.paymentType || "credit", {
+          userId: req.authUser?.id ?? null,
+          refTable: "sales_invoices",
+          branchId: lockedInvoice.branchId ?? null,
+          docDate: lockedInvoice.invoiceDate,
+        }, false, tx);
+        if (!officialNumber) throw Object.assign(new Error("يجب إعداد مسلسل رسمي لفواتير المبيعات قبل ترحيل المسودة"), { status: 400 });
+        for (let skipped = 0; officialNumber != null && skipped < 1000; skipped += 1) {
+          const [duplicate] = await tx.select({ id: salesInvoicesTable.id }).from(salesInvoicesTable).where(and(
+            eq(salesInvoicesTable.companyId, cid),
+            eq(salesInvoicesTable.docNumber, officialNumber),
+            ne(salesInvoicesTable.id, id),
+          )).limit(1);
+          if (!duplicate) break;
+          officialNumber = await nextSequenceForPayment(cid, "sales_invoice", lockedInvoice.paymentType || "credit", {
+            userId: req.authUser?.id ?? null,
+            refTable: "sales_invoices",
+            branchId: lockedInvoice.branchId ?? null,
+            docDate: lockedInvoice.invoiceDate,
+          }, false, tx);
+        }
+        const [renumbered] = await tx.update(salesInvoicesTable).set({
+          docNumber: officialNumber,
+          updatedAt: new Date(),
+        }).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid))).returning();
+        if (renumbered) effectiveInvoice = renumbered;
+      }
+      inv = effectiveInvoice;
       lines = lockedLines;
       const allowInvoiceOverdraft = !!(lockedInvoice as any).allowNegativeStock;
       const globalOverdraftEnabled = await salesOverdraftEnabled(cid, tx);
@@ -5126,6 +5159,7 @@ async function validateSalesReturnPayload(
 router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await enforceDraftSaveMode(req, res, cid, "sales_return"))) return;
     const { docNumber, returnDate, customerId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId, taxId } = req.body;
@@ -5280,8 +5314,10 @@ router.post("/sales-returns", async (req, res) => {
           branchId: resolvedBranchId,
           docDate: returnDate,
         }, buyerIsForeign, tx);
-        let fromSeq = await allocateReturnNumber();
-        for (let skipped = 0; fromSeq != null; skipped += 1) {
+        let fromSeq = req.body?.saveAsDraft === true
+          ? await nextDraftDocumentNumber(cid, "sales_return", tx)
+          : await allocateReturnNumber();
+        for (let skipped = 0; req.body?.saveAsDraft !== true && fromSeq != null; skipped += 1) {
           const duplicate = await tx.select({ id: salesReturnsTable.id })
             .from(salesReturnsTable)
             .where(and(
@@ -5371,6 +5407,7 @@ router.post("/sales-returns", async (req, res) => {
 router.put("/sales-returns/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await enforceDraftSaveMode(req, res, cid, "sales_return"))) return;
     if (!(await requireMobilePerm(req, res, cid, "return_edit", "ليست لديك صلاحية تعديل المرتجعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
     const [existing] = await db.select().from(salesReturnsTable)
@@ -5499,6 +5536,7 @@ router.put("/sales-returns/:id", async (req, res) => {
 router.patch(
   "/sales-returns/:id/post",
   requirePostRight("sales"),
+  approvalGate("sales_return"),
   documentMutationLock("sales_return", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -5608,6 +5646,36 @@ router.patch(
         throw Object.assign(new Error(
           ret.status === "posted" ? "المرتجع مُرحَّل مسبقاً" : "لا يمكن ترحيل مرتجع ملغى أو غير مسودة",
         ), { status: 400 });
+      if (String(lockedReturn.docNumber ?? "").startsWith("D-SR-")) {
+        let officialNumber = await nextSequenceForPayment(cid, "sales_return", lockedReturn.paymentType || "credit", {
+          userId: req.authUser?.id ?? null,
+          refTable: "sales_returns",
+          branchId: lockedReturn.branchId ?? null,
+          docDate: lockedReturn.returnDate,
+        }, false, tx);
+        if (!officialNumber) throw Object.assign(new Error("يجب إعداد مسلسل رسمي لمرتجعات المبيعات قبل ترحيل المسودة"), { status: 400 });
+        for (let skipped = 0; skipped < 1000; skipped += 1) {
+          const [duplicate] = await tx.select({ id: salesReturnsTable.id }).from(salesReturnsTable).where(and(
+            eq(salesReturnsTable.companyId, cid),
+            eq(salesReturnsTable.docNumber, officialNumber),
+            ne(salesReturnsTable.id, id),
+          )).limit(1);
+          if (!duplicate) break;
+          if (skipped === 999) throw Object.assign(new Error("تعذر الوصول إلى رقم مرتجع مبيعات غير مستخدم"), { status: 409 });
+          officialNumber = await nextSequenceForPayment(cid, "sales_return", lockedReturn.paymentType || "credit", {
+            userId: req.authUser?.id ?? null,
+            refTable: "sales_returns",
+            branchId: lockedReturn.branchId ?? null,
+            docDate: lockedReturn.returnDate,
+          }, false, tx);
+          if (!officialNumber) throw Object.assign(new Error("يجب إعداد مسلسل رسمي لمرتجعات المبيعات قبل ترحيل المسودة"), { status: 400 });
+        }
+        const [renumbered] = await tx.update(salesReturnsTable).set({
+          docNumber: officialNumber,
+          updatedAt: new Date(),
+        }).where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid))).returning();
+        if (renumbered) ret = renumbered;
+      }
       lines = await tx.select().from(salesReturnLinesTable)
         .where(eq(salesReturnLinesTable.returnId, id));
       if (!lines.length)

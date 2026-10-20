@@ -2,10 +2,12 @@ import { Router } from "express";
 import {
   db, approvalLogTable, systemSettingsTable, usersTable,
   salesInvoicesTable, salesQuotationsTable, salesOrdersTable,
+  salesReturnsTable,
   purchaseInvoicesTable, purchaseOrdersTable,
+  purchaseReturnsTable,
   goodsDeliveriesTable, goodsReceiptsTable,
 } from "@workspace/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { branchScopeSpread, extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
@@ -13,18 +15,79 @@ router.use(extractAuth);
 
 export const APPROVAL_TYPES = [
   "sales_quotation", "sales_order", "goods_delivery", "sales_invoice",
-  "purchase_order", "goods_receipt", "purchase_invoice",
+  "sales_return", "purchase_order", "goods_receipt", "purchase_invoice", "purchase_return",
 ] as const;
 export type ApprovalDocumentType = typeof APPROVAL_TYPES[number];
+export const DRAFT_SAVE_TYPES = ["sales_invoice", "sales_return", "purchase_invoice", "purchase_return"] as const;
+export type DraftSaveDocumentType = typeof DRAFT_SAVE_TYPES[number];
+
+export function sanitizeDraftSaveDocumentTypes(value: unknown): DraftSaveDocumentType[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((item): item is DraftSaveDocumentType =>
+    typeof item === "string" && (DRAFT_SAVE_TYPES as readonly string[]).includes(item),
+  ))];
+}
+
+export async function enforceDraftSaveMode(req: any, res: any, cid: number, type: DraftSaveDocumentType): Promise<boolean> {
+  const userId = Number(req.authUser?.id);
+  if (!Number.isInteger(userId) || userId <= 0) return true;
+  const [user] = await db.select({
+    canApprove: usersTable.canApprove,
+    permissions: usersTable.permissions,
+  }).from(usersTable).where(and(eq(usersTable.id, userId), eq(usersTable.companyId, cid))).limit(1);
+  const permissions = (user?.permissions ?? {}) as Record<string, any>;
+  const draftTypes = sanitizeDraftSaveDocumentTypes(permissions.__draftSaveDocumentTypes);
+  const approvalTypes = permissions.__approvalDocumentTypes;
+  const canApproveType = !!user?.canApprove && Array.isArray(approvalTypes) && approvalTypes.includes(type);
+  const draftOnly = draftTypes.includes(type) && !canApproveType;
+  if (req.body?.saveAsDraft === true && !draftTypes.includes(type)) {
+    res.status(403).json({ error: "لا تملك صلاحية حفظ هذا النوع كمسودة", code: "DRAFT_SAVE_NOT_ENABLED" });
+    return false;
+  }
+  if (draftOnly && req.body?.saveAsDraft !== true) {
+    res.status(403).json({ error: "هذا المستخدم مخول بحفظ المسودات فقط لهذا النوع من المستندات", code: "DRAFT_ONLY_USER" });
+    return false;
+  }
+  return true;
+}
+
+const DRAFT_PREFIX: Record<DraftSaveDocumentType, string> = {
+  sales_invoice: "D-SI-",
+  sales_return: "D-SR-",
+  purchase_invoice: "D-PI-",
+  purchase_return: "D-PR-",
+};
+
+export async function nextDraftDocumentNumber(
+  cid: number,
+  type: DraftSaveDocumentType,
+  executor: any = db,
+): Promise<string> {
+  const key = `draft_document_sequence:${cid}:${type}`;
+  const [row] = await executor.insert(systemSettingsTable).values({
+    key, value: "1", updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: systemSettingsTable.key,
+    set: {
+      value: sql`CASE WHEN ${systemSettingsTable.value} ~ '^[0-9]+$' THEN (${systemSettingsTable.value}::bigint + 1)::text ELSE '1' END`,
+      updatedAt: new Date(),
+    },
+  }).returning({ value: systemSettingsTable.value });
+  const number = Number(row?.value);
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error("تعذر إنشاء رقم المسودة");
+  return `${DRAFT_PREFIX[type]}${String(number).padStart(5, "0")}`;
+}
 
 const documentTables: Record<ApprovalDocumentType, any> = {
   sales_quotation: salesQuotationsTable,
   sales_order: salesOrdersTable,
   goods_delivery: goodsDeliveriesTable,
   sales_invoice: salesInvoicesTable,
+  sales_return: salesReturnsTable,
   purchase_order: purchaseOrdersTable,
   goods_receipt: goodsReceiptsTable,
   purchase_invoice: purchaseInvoicesTable,
+  purchase_return: purchaseReturnsTable,
 };
 
 const settingsKey = (companyId: number) => `document_approval_stages:${companyId}`;
@@ -65,6 +128,17 @@ export function approvalGate(
     const cid = resolveCompanyId(req, req.authUser?.companyId);
     const id = Number(req.params.id);
     if (!cid || !Number.isInteger(id) || id <= 0) return next();
+    if ((DRAFT_SAVE_TYPES as readonly string[]).includes(type)) {
+      const [user] = await db.select({ canApprove: usersTable.canApprove, permissions: usersTable.permissions })
+        .from(usersTable).where(and(eq(usersTable.id, Number(req.authUser?.id)), eq(usersTable.companyId, cid))).limit(1);
+      const permissions = (user?.permissions ?? {}) as Record<string, any>;
+      const draftTypes = sanitizeDraftSaveDocumentTypes(permissions.__draftSaveDocumentTypes);
+      const approvalTypes = permissions.__approvalDocumentTypes;
+      const canApproveType = !!user?.canApprove && Array.isArray(approvalTypes) && approvalTypes.includes(type);
+      if (draftTypes.includes(type as DraftSaveDocumentType) && !canApproveType) {
+        return res.status(403).json({ error: "هذا المستخدم مخول بحفظ المسودات فقط لهذا النوع من المستندات", code: "DRAFT_ONLY_USER" });
+      }
+    }
     const table = documentTables[type];
     const [document] = await db.select({ id: table.id }).from(table).where(and(
       eq(table.id, id),

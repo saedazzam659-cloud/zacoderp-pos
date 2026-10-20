@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { approvalGate } from "./documentApprovals.js";
+import { approvalGate, enforceDraftSaveMode, nextDraftDocumentNumber } from "./documentApprovals.js";
 import { normalizeManualPrintPartyName } from "../lib/manualPrintPartyName.js";
 import { capitalizedExpenseShares, expenseJournalLines, installExpenseDocumentTransactions, readExpenseRows, withDocumentExpenseSavepoint } from "../lib/documentExpenses.js";
 import { returnedCostShare } from "../lib/documentExpenseAllocation.js";
@@ -31,7 +31,7 @@ import {
   taxesTable,
   goodsReceiptsTable, goodsReceiptLinesTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, sql, inArray, notInArray, isNull, or, ilike } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray, notInArray, isNull, or, ilike, ne } from "drizzle-orm";
 import {
   extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread,
   multiBranchScopeSpread, effectiveBranchCondition,
@@ -1671,6 +1671,7 @@ router.get("/purchase-invoices/:id/deferred", async (req, res) => {
 router.post("/purchase-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await enforceDraftSaveMode(req, res, cid, "purchase_invoice"))) return;
     const clientRequestId = parseInvoiceClientRequestId(req.body);
     if (clientRequestId) {
       const replayId = await findInvoiceCreateReplay(db, cid, "purchase_invoice", clientRequestId);
@@ -1724,8 +1725,10 @@ router.post("/purchase-invoices", async (req, res) => {
         branchId: branchId ? Number(branchId) : null,
         docDate:  invoiceDate,
       });
-      let fromSeq = await allocateInvoiceNumber();
-      for (let skipped = 0; fromSeq != null; skipped += 1) {
+      let fromSeq = req.body?.saveAsDraft === true
+        ? await nextDraftDocumentNumber(cid, "purchase_invoice")
+        : await allocateInvoiceNumber();
+      for (let skipped = 0; req.body?.saveAsDraft !== true && fromSeq != null; skipped += 1) {
         const duplicate = await db.select({ id: purchaseInvoicesTable.id })
           .from(purchaseInvoicesTable)
           .where(and(
@@ -1853,6 +1856,7 @@ router.post("/purchase-invoices", async (req, res) => {
 router.put("/purchase-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await enforceDraftSaveMode(req, res, cid, "purchase_invoice"))) return;
     const id = Number(req.params.id);
     // POSTED-DOC LOCK — same rule as sales: a posted purchase invoice is
     // immutable until an admin explicitly unposts it.
@@ -2025,11 +2029,42 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
     }
     __postingLocks.add(__lockKey);
 
-    const [inv] = await db.select().from(purchaseInvoicesTable)
+    let [inv] = await db.select().from(purchaseInvoicesTable)
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status === "posted") { res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" }); return; }
     if (inv.status !== "draft") { res.status(400).json({ error: "لا يمكن ترحيل إلا فواتير الشراء المسودة" }); return; }
+    if (String(inv.docNumber ?? "").startsWith("D-PI-")) {
+      let officialNumber = await nextSequenceForPayment(cid, "purchase_invoice", inv.paymentType || "credit", {
+        userId: req.authUser?.id ?? null,
+        refTable: "purchase_invoices",
+        branchId: inv.branchId ?? null,
+        docDate: inv.invoiceDate,
+      });
+      if (!officialNumber) {
+        res.status(400).json({ error: "يجب إعداد مسلسل رسمي لفواتير المشتريات قبل ترحيل المسودة" });
+        return;
+      }
+      for (let skipped = 0; skipped < 1000; skipped += 1) {
+        const [duplicate] = await db.select({ id: purchaseInvoicesTable.id }).from(purchaseInvoicesTable).where(and(
+          eq(purchaseInvoicesTable.companyId, cid),
+          eq(purchaseInvoicesTable.docNumber, officialNumber),
+          ne(purchaseInvoicesTable.id, id),
+        )).limit(1);
+        if (!duplicate) break;
+        if (skipped === 999) { res.status(409).json({ error: "تعذر الوصول إلى رقم فاتورة مشتريات غير مستخدم" }); return; }
+        officialNumber = await nextSequenceForPayment(cid, "purchase_invoice", inv.paymentType || "credit", {
+          userId: req.authUser?.id ?? null, refTable: "purchase_invoices",
+          branchId: inv.branchId ?? null, docDate: inv.invoiceDate,
+        });
+        if (!officialNumber) { res.status(400).json({ error: "يجب إعداد مسلسل رسمي لفواتير المشتريات قبل ترحيل المسودة" }); return; }
+      }
+      const [renumbered] = await db.update(purchaseInvoicesTable).set({
+        docNumber: officialNumber,
+        updatedAt: new Date(),
+      }).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid))).returning();
+      if (renumbered) inv = renumbered;
+    }
 
     const lines = await db.select().from(purchaseInvoiceLinesTable)
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
@@ -3867,7 +3902,7 @@ router.get("/purchase-returns/:id", async (req, res) => {
   try {
     const cid = getCid(req);
     const id = Number(req.params.id);
-    const [ret] = await db.select().from(purchaseReturnsTable)
+    let [ret] = await db.select().from(purchaseReturnsTable)
       .where(and(
         eq(purchaseReturnsTable.id, id),
         cid ? eq(purchaseReturnsTable.companyId, cid) : sql`true`,
@@ -3884,6 +3919,7 @@ router.get("/purchase-returns/:id", async (req, res) => {
 router.post("/purchase-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await enforceDraftSaveMode(req, res, cid, "purchase_return"))) return;
     const { docNumber, supplierInvoiceNumber, returnDate, supplierId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, taxId, postVariance } = req.body;
@@ -3941,8 +3977,10 @@ router.post("/purchase-returns", async (req, res) => {
           branchId: branchId ? Number(branchId) : null,
           docDate:  returnDate,
         }, false, tx);
-        let fromSeq = await allocateReturnNumber();
-        for (let skipped = 0; fromSeq != null; skipped += 1) {
+        let fromSeq = req.body?.saveAsDraft === true
+          ? await nextDraftDocumentNumber(cid, "purchase_return", tx)
+          : await allocateReturnNumber();
+        for (let skipped = 0; req.body?.saveAsDraft !== true && fromSeq != null; skipped += 1) {
           const duplicate = await tx.select({ id: purchaseReturnsTable.id })
             .from(purchaseReturnsTable)
             .where(and(
@@ -4044,6 +4082,7 @@ router.post("/purchase-returns", async (req, res) => {
 router.put("/purchase-returns/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!(await enforceDraftSaveMode(req, res, cid, "purchase_return"))) return;
     const id = Number(req.params.id);
     // docNumber is intentionally not destructured — immutable on edit.
     const { supplierInvoiceNumber, returnDate, supplierId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
@@ -4150,13 +4189,13 @@ router.put("/purchase-returns/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), documentMutationLock("purchase_return", async (req, res) => {
+router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approvalGate("purchase_return"), documentMutationLock("purchase_return", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
 
     // Branch-scope guard: prevent cross-branch posting by ID guess.
-    const [ret] = await db.select().from(purchaseReturnsTable)
+    let [ret] = await db.select().from(purchaseReturnsTable)
       .where(and(
         eq(purchaseReturnsTable.id, id),
         eq(purchaseReturnsTable.companyId, cid),
@@ -4165,6 +4204,37 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), documen
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (ret.status === "posted") { res.status(400).json({ error: "المرتجع مُرحَّل مسبقاً" }); return; }
     if (ret.status !== "draft") { res.status(400).json({ error: "لا يمكن ترحيل إلا مرتجعات الشراء المسودة" }); return; }
+    if (String(ret.docNumber ?? "").startsWith("D-PR-")) {
+      let officialNumber = await nextSequenceForPayment(cid, "purchase_return", ret.paymentType || "credit", {
+        userId: req.authUser?.id ?? null,
+        refTable: "purchase_returns",
+        branchId: ret.branchId ?? null,
+        docDate: ret.returnDate,
+      });
+      if (!officialNumber) {
+        res.status(400).json({ error: "يجب إعداد مسلسل رسمي لمرتجعات المشتريات قبل ترحيل المسودة" });
+        return;
+      }
+      for (let skipped = 0; skipped < 1000; skipped += 1) {
+        const [duplicate] = await db.select({ id: purchaseReturnsTable.id }).from(purchaseReturnsTable).where(and(
+          eq(purchaseReturnsTable.companyId, cid),
+          eq(purchaseReturnsTable.docNumber, officialNumber),
+          ne(purchaseReturnsTable.id, id),
+        )).limit(1);
+        if (!duplicate) break;
+        if (skipped === 999) { res.status(409).json({ error: "تعذر الوصول إلى رقم مرتجع مشتريات غير مستخدم" }); return; }
+        officialNumber = await nextSequenceForPayment(cid, "purchase_return", ret.paymentType || "credit", {
+          userId: req.authUser?.id ?? null, refTable: "purchase_returns",
+          branchId: ret.branchId ?? null, docDate: ret.returnDate,
+        });
+        if (!officialNumber) { res.status(400).json({ error: "يجب إعداد مسلسل رسمي لمرتجعات المشتريات قبل ترحيل المسودة" }); return; }
+      }
+      const [renumbered] = await db.update(purchaseReturnsTable).set({
+        docNumber: officialNumber,
+        updatedAt: new Date(),
+      }).where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid))).returning();
+      if (renumbered) ret = renumbered;
+    }
 
     const sourceHasInternalLandedCosts = ret.invoiceId
       ? (await readExpenseRows(db, cid, "purchase_invoice", ret.invoiceId)).rows.some(r => r.treatment === "capitalized")

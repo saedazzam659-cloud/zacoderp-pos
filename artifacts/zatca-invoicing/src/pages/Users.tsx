@@ -80,6 +80,7 @@ type UserRow = {
   mobilePermissions?: Record<string, boolean> | null;
   canApprove?: boolean;
   approvalDocumentTypes?: string[];
+  draftSaveDocumentTypes?: string[];
   approvalLevel?: number;
   maxApprovalAmount?: string | number | null;
   requireSecondApproval?: boolean;
@@ -119,9 +120,11 @@ const APPROVAL_DOCUMENT_TYPES = [
   { key: "sales_order", label: "أوامر البيع" },
   { key: "goods_delivery", label: "أذون التسليم" },
   { key: "sales_invoice", label: "فواتير المبيعات" },
+  { key: "sales_return", label: "مرتجعات المبيعات" },
   { key: "purchase_order", label: "أوامر الشراء" },
   { key: "goods_receipt", label: "أذون الاستلام" },
   { key: "purchase_invoice", label: "فواتير المشتريات" },
+  { key: "purchase_return", label: "مرتجعات المشتريات" },
 ] as const;
 
 type PostingPerms = Record<string, { post: boolean; unpost: boolean }>;
@@ -275,6 +278,7 @@ const emptyForm = () => ({
   // Approval defaults: off, level 0, no cap, single-signature is fine.
   canApprove: false,
   approvalDocumentTypes: [] as string[],
+  draftSaveDocumentTypes: [] as string[],
   approvalLevel: 0,
   maxApprovalAmount: "0",
   requireSecondApproval: false,
@@ -554,6 +558,7 @@ export default function Users() {
       // <Input type="number"> can render without leading zeros.
       canApprove: !!u.canApprove,
       approvalDocumentTypes: Array.isArray(u.approvalDocumentTypes) ? u.approvalDocumentTypes : [],
+      draftSaveDocumentTypes: Array.isArray(u.draftSaveDocumentTypes) ? u.draftSaveDocumentTypes : [],
       approvalLevel: Number.isFinite(Number(u.approvalLevel)) ? Number(u.approvalLevel) : 0,
       maxApprovalAmount: u.maxApprovalAmount != null ? String(u.maxApprovalAmount) : "0",
       requireSecondApproval: !!u.requireSecondApproval,
@@ -595,6 +600,7 @@ export default function Users() {
         // Approval workflow — server clamps these too as a safety net.
         canApprove: form.canApprove,
         approvalDocumentTypes: form.approvalDocumentTypes,
+        draftSaveDocumentTypes: form.draftSaveDocumentTypes,
         approvalLevel: Number(form.approvalLevel) || 0,
         maxApprovalAmount: String(form.maxApprovalAmount ?? "0"),
         requireSecondApproval: form.requireSecondApproval,
@@ -1622,6 +1628,37 @@ export default function Users() {
                               approvalDocumentTypes: value
                                 ? [...new Set([...(previous.approvalDocumentTypes ?? []), doc.key])]
                                 : (previous.approvalDocumentTypes ?? []).filter((key) => key !== doc.key),
+                            }))}
+                          />
+                          <span>{doc.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900 dark:bg-amber-950/20">
+                  <div>
+                    <div className="font-medium">السماح بحفظ المسودات</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      لا يتغير النظام القديم إلا للأنواع المحددة هنا. إذا لم يكن المستخدم مخولاً بتأكيد النوع، يُسمح له بحفظ المسودة فقط.
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {APPROVAL_DOCUMENT_TYPES.filter((doc) =>
+                      ["sales_invoice", "sales_return", "purchase_invoice", "purchase_return"].includes(doc.key),
+                    ).map((doc) => {
+                      const checked = (form.draftSaveDocumentTypes ?? []).includes(doc.key);
+                      return (
+                        <label key={doc.key} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                          <Checkbox
+                            checked={checked}
+                            data-testid={`checkbox-draft-save-${doc.key}`}
+                            onCheckedChange={(value) => setForm((previous) => ({
+                              ...previous,
+                              draftSaveDocumentTypes: value
+                                ? [...new Set([...(previous.draftSaveDocumentTypes ?? []), doc.key])]
+                                : (previous.draftSaveDocumentTypes ?? []).filter((key) => key !== doc.key),
                             }))}
                           />
                           <span>{doc.label}</span>

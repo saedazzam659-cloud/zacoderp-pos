@@ -130,6 +130,8 @@ export default function PurchaseReturns() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
+  const canSaveDraft = Array.isArray(user?.permissions?.__draftSaveDocumentTypes) && user.permissions.__draftSaveDocumentTypes.includes("purchase_return");
+  const draftOnly = canSaveDraft && !(user?.canApprove && user?.approvalDocumentTypes?.includes("purchase_return"));
   const fieldPolicy = useFieldPolicy("purchase_return");
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -415,6 +417,7 @@ export default function PurchaseReturns() {
         method: isEdit ? "PUT" : "POST", headers, body: JSON.stringify({ ...data, companyId: cid }),
       });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
+      if (data.saveAsDraft === true) return { ...j, __savedAsDraft: true };
       if (!isEdit && j?.id && (j.status ?? "draft") === "draft") {
         guardDocumentExpensesBeforePost("purchase_return", Number(j.id));
         const pr = await fetch(`${API}/api/purchasing/purchase-returns/${j.id}/post`, { method: "PATCH", headers });
@@ -424,13 +427,13 @@ export default function PurchaseReturns() {
       }
       return j;
     },
-    onSuccess: () => {
+    onSuccess: (saved: any) => {
       const wasEdit = !!editingId;
       // «إرجاع كامل + مسودة فاتورة جديدة» — نلتقط القيمة قبل reset()
       // (الـ reset يمسحها حتى لا تسرّب لتنقّل لاحق غير مرتبط).
-      const draftSrcId = !wasEdit ? newDraftInvoiceIdRef.current : null;
+      const draftSrcId = !saved?.__savedAsDraft && !wasEdit ? newDraftInvoiceIdRef.current : null;
       invalidate(); reset();
-      toast({ title: wasEdit ? tr("toasts.edited") : tr("toasts.createdAndPosted") });
+      toast({ title: saved?.__savedAsDraft ? "تم حفظ المرتجع كمسودة" : wasEdit ? tr("toasts.edited") : tr("toasts.createdAndPosted") });
       if (draftSrcId) navigate(`/purchasing/invoices/new?from=${draftSrcId}`);
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
@@ -987,7 +990,7 @@ export default function PurchaseReturns() {
   const docDiscountAmt = Math.max(0, Math.min(grossTotal, Number(form.discountAmount) || 0));
   const totalAmount    = grossTotal - docDiscountAmt;
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent, saveAsDraft = false) {
     e.preventDefault();
     // Credit returns need a supplier; cash/bank returns may use a print-only
     // name instead. All returns still require a branch.
@@ -1012,6 +1015,7 @@ export default function PurchaseReturns() {
     }
     saveMut.mutate({
       ...form,
+      saveAsDraft,
       supplierId: form.supplierId || null,
       invoiceId:  form.invoiceId  || null,
       cashBoxId:  form.paymentType === "cash" ? (form.cashBoxId || null) : null,
@@ -1747,10 +1751,11 @@ ${sections}
             : tr("createSubtitle")}
           width="full"
           onClose={reset}
-          onSave={viewMode ? undefined : () => handleSubmit({ preventDefault() {} } as any)}
+          onSave={viewMode || draftOnly ? undefined : () => handleSubmit({ preventDefault() {} } as any)}
           saving={saveMut.isPending}
-          saveDisabled={!form.returnDate}
+          saveDisabled={!form.returnDate || draftOnly}
           saveLabel={tr("saveLabel")}
+          footer={canSaveDraft && !viewMode ? <Button size="sm" variant="outline" disabled={saveMut.isPending || !form.returnDate} onClick={() => handleSubmit({ preventDefault() {} } as any, true)}>حفظ كمسودة</Button> : undefined}
           cancelLabel={viewMode ? (t("common.close") as string) : undefined}
         >
           <Tabs
@@ -2697,7 +2702,7 @@ ${sections}
                               {r.status === "draft" && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-green-700 hover:bg-green-50"
                                   title={tr("postShort")}
-                                  disabled={postMut.isPending}
+                                  disabled={postMut.isPending || draftOnly}
                                   onClick={(e) => { e.stopPropagation(); postMut.mutate(r.id); }}>
                                   <CheckCircle2 className="h-3.5 w-3.5" />
                                 </Button>

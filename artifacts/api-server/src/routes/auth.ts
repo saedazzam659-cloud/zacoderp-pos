@@ -1070,6 +1070,8 @@ router.get("/me", async (req, res) => {
     nameAr: (user as any).nameAr ?? null,
     nameEn: (user as any).nameEn ?? null,
     permissions: (user as any).permissions ?? {},
+    canApprove: !!(user as any).canApprove,
+    approvalDocumentTypes: (user as any).permissions?.__approvalDocumentTypes ?? [],
     posDefaultScreen: user.role === "cashier"
       ? "/pos"
       : (user as any).permissions?.__posDefaultScreen ?? null,

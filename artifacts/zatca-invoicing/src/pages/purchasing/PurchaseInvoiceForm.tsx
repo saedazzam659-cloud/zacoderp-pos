@@ -156,6 +156,9 @@ function PurchaseInvoiceFormContent() {
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
+  const canSaveDraft = Array.isArray(user?.permissions?.__draftSaveDocumentTypes)
+    && user.permissions.__draftSaveDocumentTypes.includes("purchase_invoice");
+  const draftOnly = canSaveDraft && !(user?.canApprove && user?.approvalDocumentTypes?.includes("purchase_invoice"));
   const fieldPolicy = useFieldPolicy("purchase_invoice");
   const showSupplierCreditNotes = isAccountNoteVisible(user, "showSupplierCreditNotes");
   const { toast } = useToast();
@@ -1019,6 +1022,7 @@ function PurchaseInvoiceFormContent() {
         persistedInvoiceIdRef.current = Number(j.id);
       }
 
+      if (data.saveAsDraft === true) return { ...j, __savedAsDraft: true };
       if (autoPostingEnabled && j?.id && (j.status ?? "draft") === "draft") {
         guardDocumentExpensesBeforePost("purchase_invoice", Number(j.id));
         const postRes = await fetch(`${API}/api/purchasing/purchase-invoices/${j.id}/post`, {
@@ -1050,7 +1054,7 @@ function PurchaseInvoiceFormContent() {
           }),
         }).catch(() => {});
       }
-      toast({ title: autoPostingEnabled
+      toast({ title: saved?.__savedAsDraft ? "تم حفظ الفاتورة كمسودة" : autoPostingEnabled
         ? (isNew ? tr("createdAndPosted") : tr("savedAndPosted"))
         : (isNew ? tr("createdDraft") : tr("savedDraft"))
       });
@@ -1095,7 +1099,8 @@ function PurchaseInvoiceFormContent() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  function handleSave() {
+  function handleSave(saveAsDraft = false) {
+    if (draftOnly && !saveAsDraft) return;
     // State-based disabled buttons are asynchronous; this synchronous lock
     // blocks duplicate click/Enter events in the same render.
     if (saveInFlightRef.current || saveMut.isPending) return;
@@ -1140,6 +1145,7 @@ function PurchaseInvoiceFormContent() {
       totalAmount: (totalAmount + totalExpLoaded).toFixed(2),
       priceIncludesVat,
       notes: notes || null,
+      saveAsDraft,
       // Header-level cost center — when set, the /post handler tags every
       // generated JE line with this code so cost-center reports pick it up.
       costCenter: costCenter || null,
@@ -1282,9 +1288,12 @@ function PurchaseInvoiceFormContent() {
   );
 
   const saveButton = !editLock ? (
-    <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
-      {saveMut.isPending ? tr("saving") : isNew ? tr("saveInvoice") : tr("saveEdit")}
-    </Button>
+    <>
+      {canSaveDraft && <Button variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending}>حفظ كمسودة</Button>}
+      <Button data-enter-submit="true" onClick={() => handleSave(false)} disabled={saveMut.isPending || draftOnly}>
+        {saveMut.isPending ? tr("saving") : isNew ? tr("saveInvoice") : tr("saveEdit")}
+      </Button>
+    </>
   ) : null;
 
   const topActionBar = (
@@ -2652,9 +2661,12 @@ function PurchaseInvoiceFormContent() {
           {isPosted ? tr("back") : tr("cancel")}
         </Button>
         {!isPosted && (
-          <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
+          <>
+          {canSaveDraft && <Button variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending}>حفظ كمسودة</Button>}
+          <Button data-enter-submit="true" onClick={() => handleSave(false)} disabled={saveMut.isPending || draftOnly}>
             {saveMut.isPending ? tr("saving") : isNew ? tr("saveInvoice") : tr("saveEdit")}
           </Button>
+          </>
         )}
       </div>
       )}

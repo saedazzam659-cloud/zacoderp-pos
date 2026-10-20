@@ -8,12 +8,13 @@ import { sanitizeMobilePermissions } from "../lib/mobilePerms.js";
 import { propagateDemoSourcePermissions } from "../lib/demoDeviceIsolation.js";
 import { canManageDemoOperationalSetting } from "../lib/demoOperationalPolicy.js";
 import { emitSessionRefresh, emitSessionRefreshMany } from "../lib/sessionEvents.js";
+import { sanitizeDraftSaveDocumentTypes } from "./documentApprovals.js";
 
 const router = Router();
 
 const APPROVAL_DOCUMENT_TYPES = new Set([
   "sales_quotation", "sales_order", "goods_delivery", "sales_invoice",
-  "purchase_order", "goods_receipt", "purchase_invoice",
+  "sales_return", "purchase_order", "goods_receipt", "purchase_invoice", "purchase_return",
 ]);
 
 function sanitizeApprovalDocumentTypes(value: unknown): string[] {
@@ -166,11 +167,12 @@ router.get("/", async (req, res) => {
 
     res.json(rows.map(r => {
       const permissions = (r.permissions ?? {}) as Record<string, any>;
-      const { __dataVisibility, __approvalDocumentTypes, ...publicPermissions } = permissions;
+      const { __dataVisibility, __approvalDocumentTypes, __draftSaveDocumentTypes, ...publicPermissions } = permissions;
       return {
         ...r,
         permissions: publicPermissions,
         approvalDocumentTypes: sanitizeApprovalDocumentTypes(__approvalDocumentTypes),
+        draftSaveDocumentTypes: sanitizeDraftSaveDocumentTypes(__draftSaveDocumentTypes),
         dataVisibilityPermissions: __dataVisibility ?? {},
         branchIds: byUser.get(r.id) ?? [],
         salesStockBranchIds: Array.isArray((r.uiPreferences as any)?.salesStockBranchIds) ? (r.uiPreferences as any).salesStockBranchIds : [],
@@ -191,11 +193,12 @@ router.get("/:id", async (req, res) => {
     const links = await db.select().from(userBranchesTable).where(eq(userBranchesTable.userId, id));
     const { passwordHash: _ph, sessionToken: _st, sessionId: _si, ...safe } = u as any;
     const storedPermissions = (safe.permissions ?? {}) as Record<string, any>;
-    const { __dataVisibility, __approvalDocumentTypes, ...publicPermissions } = storedPermissions;
+    const { __dataVisibility, __approvalDocumentTypes, __draftSaveDocumentTypes, ...publicPermissions } = storedPermissions;
     res.json({
       ...safe,
       permissions: publicPermissions,
       approvalDocumentTypes: sanitizeApprovalDocumentTypes(__approvalDocumentTypes),
+      draftSaveDocumentTypes: sanitizeDraftSaveDocumentTypes(__draftSaveDocumentTypes),
       dataVisibilityPermissions: sanitizeDataVisibilityPermissions(__dataVisibility),
       branchIds: links.map(l => l.branchId),
     });
@@ -210,7 +213,7 @@ router.post("/", async (req, res) => {
     const {
       username, password, email, role, code, nameAr, nameEn,
       isActive, branchIds, permissions, viewAllBranches,
-      canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval, approvalDocumentTypes,
+      canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval, approvalDocumentTypes, draftSaveDocumentTypes,
       allowWebLogin, allowMobileLogin,
     } = req.body ?? {};
     if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
@@ -277,6 +280,7 @@ router.post("/", async (req, res) => {
         ...(permissions && typeof permissions === "object" ? permissions : {}),
         __dataVisibility: sanitizeDataVisibilityPermissions(req.body?.dataVisibilityPermissions),
         __approvalDocumentTypes: sanitizeApprovalDocumentTypes(approvalDocumentTypes),
+        __draftSaveDocumentTypes: sanitizeDraftSaveDocumentTypes(draftSaveDocumentTypes),
       },
       // Per-user POST/UNPOST rights (صلاحيات الترحيل وفك الترحيل). NULL =
       // all allowed (back-compat); see lib/postingRights.ts.
@@ -321,7 +325,7 @@ router.patch("/:id", async (req, res) => {
     const {
       username, password, email, role, code, nameAr, nameEn,
       isActive, branchIds, permissions, viewAllBranches,
-      canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval, approvalDocumentTypes,
+      canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval, approvalDocumentTypes, draftSaveDocumentTypes,
       allowWebLogin, allowMobileLogin, salesStockBranchIds,
     } = req.body ?? {};
 
@@ -398,7 +402,7 @@ router.patch("/:id", async (req, res) => {
     if (typeof req.body?.scopeOwnCustomersOnly === "boolean") {
       update.scopeOwnCustomersOnly = req.body.scopeOwnCustomersOnly;
     }
-    if (permissions !== undefined || req.body?.dataVisibilityPermissions !== undefined || approvalDocumentTypes !== undefined) {
+    if (permissions !== undefined || req.body?.dataVisibilityPermissions !== undefined || approvalDocumentTypes !== undefined || draftSaveDocumentTypes !== undefined) {
       const currentPermissions = (existing.permissions ?? {}) as Record<string, any>;
       const nextPermissions = permissions !== undefined && permissions && typeof permissions === "object"
         ? { ...permissions }
@@ -411,6 +415,9 @@ router.patch("/:id", async (req, res) => {
       nextPermissions.__approvalDocumentTypes = approvalDocumentTypes === undefined
         ? sanitizeApprovalDocumentTypes(currentPermissions.__approvalDocumentTypes)
         : sanitizeApprovalDocumentTypes(approvalDocumentTypes);
+      nextPermissions.__draftSaveDocumentTypes = draftSaveDocumentTypes === undefined
+        ? sanitizeDraftSaveDocumentTypes(currentPermissions.__draftSaveDocumentTypes)
+        : sanitizeDraftSaveDocumentTypes(draftSaveDocumentTypes);
       update.permissions = nextPermissions;
     }
     if (req.body?.postingPermissions !== undefined) {

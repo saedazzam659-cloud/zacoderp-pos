@@ -417,6 +417,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const usageScreenKey = isInvoice ? "sales_invoices" : isOrder ? "sales_orders" : "sales_quotations";
 
   const { user, token } = useAuth() as any;
+  const canSaveDraft = isInvoice && Array.isArray(user?.permissions?.__draftSaveDocumentTypes)
+    && user.permissions.__draftSaveDocumentTypes.includes("sales_invoice");
+  const draftOnly = canSaveDraft && !(user?.canApprove && user?.approvalDocumentTypes?.includes("sales_invoice"));
   const showCustomerDebitNotes = isAccountNoteVisible(user, "showCustomerDebitNotes");
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -1958,6 +1961,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         lines.some((l) => l.itemId && !l.warehouseId && !isServiceLine(l));
 
       // Auto-post immediately after save for invoices only (not quotations) — only when enabled system-wide
+      if (data.saveAsDraft === true) return { ...j, __savedAsDraft: true };
       if (autoPostingEnabled && isInvoice && !deferDraftNoWarehouse && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/sales/${apiPath}/${j.id}/post`, {
           method: "PATCH", headers,
@@ -1994,6 +1998,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // show a clear "saved as draft — pick a warehouse to post" message and
       // skip the auto-print hand-off (a draft shouldn't auto-print).
       const deferredDraft = !!saved?.__deferredDraft;
+      if (saved?.__savedAsDraft) {
+        toast({ title: "تم حفظ الفاتورة كمسودة" });
+        if (saved?.id && matchNew) navigate(`${basePath}/${saved.id}?savedTab=items`);
+        return;
+      }
       if (deferredDraft) {
         toast({
           title: "💾 حُفظت كمسودة",
@@ -2078,7 +2087,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     return out;
   }
 
-  function handleSave() {
+  function handleSave(saveAsDraft = false) {
+    if (isInvoice && draftOnly && !saveAsDraft) return;
     // React Query's pending state updates on a render; this ref closes the
     // same-tick double-click/Enter window before a second mutation can POST.
     if (saveInFlightRef.current || saveMut.isPending) return;
@@ -2178,6 +2188,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         appliedOfferName: undefined,
       })),
     };
+    if (isInvoice) base.saveAsDraft = saveAsDraft;
     if (isInvoice) {
       base.invoiceDate = docDate;
       base.manualPrintPartyName = !customerId && (paymentType === "cash" || paymentType === "bank")
@@ -3621,10 +3632,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <Printer className="h-4 w-4" /> طباعة
         </Button>
         {!editLock && (
-          <Button size="sm" data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={handleSave} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-save-top">
+          <>
+          {canSaveDraft && <Button size="sm" variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending} data-testid="button-save-draft-top">حفظ كمسودة</Button>}
+          <Button size="sm" data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={() => handleSave(false)} disabled={saveMut.isPending || (isInvoice && draftOnly)} className="gap-1.5" data-testid="button-save-top">
             <Save className="h-4 w-4" />
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
+          </>
         )}
       </div>
     </div>
@@ -4579,9 +4593,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           طباعة
         </Button>
         {!editLock && (
-          <Button data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={handleSave} disabled={saveMut.isPending}>
+          <>
+          {canSaveDraft && <Button variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending} data-testid="button-save-draft">حفظ كمسودة</Button>}
+          <Button data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={() => handleSave(false)} disabled={saveMut.isPending || (isInvoice && draftOnly)}>
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
+          </>
         )}
       </div>
       )}

@@ -48,6 +48,9 @@ export default function PurchaseInvoices() {
   const isRtl = i18n.language === "ar";
   const { fmt } = useFormatters();
   const { user, token } = useAuth() as any;
+  const draftOnly = Array.isArray(user?.permissions?.__draftSaveDocumentTypes)
+    && user.permissions.__draftSaveDocumentTypes.includes("purchase_invoice")
+    && !(user?.canApprove && user?.approvalDocumentTypes?.includes("purchase_invoice"));
   const { toast } = useToast();
   const qc = useQueryClient();
   const [, navigate] = useLocation();
@@ -975,6 +978,7 @@ ${sections}
                               {inv.status === "draft" && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-emerald-700 hover:bg-emerald-50"
                                   title={t("purchasingPages.purchaseInvoices.tooltips.post")}
+                                  disabled={draftOnly || postMut.isPending}
                                   onClick={(e) => { e.stopPropagation(); if (confirm(t("purchasingPages.purchaseInvoices.confirms.post"))) postMut.mutate(inv.id); }}>
                                   <CheckCircle2 className="h-3.5 w-3.5" />
                                 </Button>

@@ -4,6 +4,7 @@
 - [Country tax integration boundary](multi-country-tax-boundary.md) — keep Egypt/Jordan adapters separate; never edit or route them through Saudi ZATCA.
 - [Internal control boundary](internal-control-boundary.md) — monitoring only, evidence limitations, and company activation separate from individual access.
 - [Document approval boundaries](document-approval-boundaries.md) — approval stages are configured per document type; approval remains separate from posting.
+- [Draft-save activation boundary](draft-save-activation-boundary.md) — draft-saving and draft-only behavior must remain off unless explicitly enabled per user and document type in Approval Permissions.
 - [Crawler hardening boundary](crawl-hardening-boundary.md) — advisory indexing controls must preserve ERP workflows; agent gateway rollout is separate from central publication.
 - [Batch reporting boundary](batch-reporting-boundary.md) — reuse ledger attribution; preserve optional tracking and explicitly unknown historical batches.
 - [Contracting accounting boundaries](contracting-accounting-boundaries.md) — optional cost-center snapshots, planning versus posting, and preservation of existing customer/bill data.
