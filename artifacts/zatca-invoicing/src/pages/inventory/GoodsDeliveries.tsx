@@ -35,6 +35,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
+import { DocumentApprovalAction } from "@/components/DocumentApprovalAction";
 import { DiscountRow } from "@/components/DiscountRow";
 import { currencySymbol, fmt2 } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -1220,6 +1221,7 @@ ${sections}
               <span className="inline-flex items-center gap-2 flex-wrap">
                 {editingId ? tr("editTitle") : tr("newTitle")}
                 {currentGdn && <DocStatusBadge status={currentGdn.status} />}
+                {currentGdn && <DocumentApprovalAction documentType="goods_delivery" documentId={currentGdn.id} />}
               </span>
             }
             width="full"

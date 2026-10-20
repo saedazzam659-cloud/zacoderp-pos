@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { approvalGate } from "./documentApprovals.js";
 import { normalizeManualPrintPartyName } from "../lib/manualPrintPartyName.js";
 import { capitalizedExpenseShares, expenseJournalLines, installExpenseDocumentTransactions, readExpenseRows, withDocumentExpenseSavepoint } from "../lib/documentExpenses.js";
 import { returnedCostShare } from "../lib/documentExpenseAllocation.js";
@@ -2011,7 +2012,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
 // status check and duplicate side effects. api-server is a single process,
 // so a process-local lock fully serializes concurrent requests.
 const __postingLocks = new Set<string>();
-router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), documentMutationLock("purchase_invoice", async (req, res) => {
+router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approvalGate("purchase_invoice"), documentMutationLock("purchase_invoice", async (req, res) => {
   let __lockKey: string | null = null;
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -3601,7 +3602,7 @@ router.put("/purchase-orders/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/purchase-orders/:id/status", async (req, res) => {
+router.patch("/purchase-orders/:id/status", approvalGate("purchase_order", req => req.body?.status === "confirmed"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

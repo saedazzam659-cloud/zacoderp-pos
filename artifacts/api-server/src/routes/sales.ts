@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { approvalGate } from "./documentApprovals.js";
 import {
   LookupSalesOrderSourceDocumentQueryParams,
   LookupSalesOrderSourceDocumentResponse,
@@ -4438,6 +4439,7 @@ async function postSalesInvoiceHandler(
 router.patch(
   "/sales-invoices/:id/post",
   requirePostRight("sales"),
+  approvalGate("sales_invoice"),
   documentMutationLock("sales_invoice", (req, res) => postSalesInvoiceHandler(req, res)),
 );
 
@@ -6393,7 +6395,7 @@ router.put("/sales-quotations/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/sales-quotations/:id/status", async (req, res) => {
+router.patch("/sales-quotations/:id/status", approvalGate("sales_quotation", req => req.body?.status === "accepted"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     if (!(await requireMobilePerm(req, res, cid, "quotation_edit", "ليست لديك صلاحية تعديل عروض الأسعار من تطبيق الموبايل"))) return;
@@ -6770,7 +6772,7 @@ router.put("/sales-orders/:id", async (req, res) => {
 
 // Status transitions for sales orders. The "converted" status is set
 // exclusively by /convert — clients cannot transition to it directly.
-router.patch("/sales-orders/:id/status", async (req, res) => {
+router.patch("/sales-orders/:id/status", approvalGate("sales_order", req => req.body?.status === "confirmed"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

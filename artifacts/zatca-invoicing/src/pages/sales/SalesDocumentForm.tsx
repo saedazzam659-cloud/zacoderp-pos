@@ -36,6 +36,7 @@ import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
+import { DocumentApprovalAction } from "@/components/DocumentApprovalAction";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
@@ -3784,6 +3785,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             Status enum varies per mode; <DocStatusBadge> handles them all. */}
         {editId && (existing as any) && (
           <DocStatusBadge status={(existing as any).status} />
+        )}
+        {!!editId && (
+          <DocumentApprovalAction
+            documentType={isInvoice ? "sales_invoice" : isQuotation ? "sales_quotation" : "sales_order"}
+            documentId={editId}
+          />
         )}
         {isInvoice && !!editId && canCreateInvoice && (
           <Button

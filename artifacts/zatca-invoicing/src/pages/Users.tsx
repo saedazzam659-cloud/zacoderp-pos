@@ -336,6 +336,42 @@ export default function Users() {
     },
   });
 
+  const defaultApprovalStages = Object.fromEntries(APPROVAL_DOCUMENT_TYPES.map(d => [d.key, 0]));
+  const { data: approvalStageResponse } = useQuery<{ stages: Record<string, number> }>({
+    queryKey: ["document-approval-stages", cid],
+    enabled: !!cid,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/document-approvals/settings?companyId=${cid}`, { headers: authH });
+      if (!r.ok) throw new Error("تعذر تحميل إعداد مراحل التأكيد");
+      return r.json();
+    },
+  });
+  const [approvalStagesDraft, setApprovalStagesDraft] = useState<Record<string, number>>(defaultApprovalStages);
+  useEffect(() => {
+    if (approvalStageResponse?.stages) setApprovalStagesDraft({
+      ...defaultApprovalStages,
+      ...approvalStageResponse.stages,
+    });
+  }, [cid, approvalStageResponse]);
+  const saveApprovalStages = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/document-approvals/settings?companyId=${cid}`, {
+        method: "PUT",
+        headers: { ...authH, "Content-Type": "application/json" },
+        body: JSON.stringify({ stages: approvalStagesDraft }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "تعذر حفظ إعداد مراحل التأكيد");
+      return data as { stages: Record<string, number> };
+    },
+    onSuccess: (data) => {
+      setApprovalStagesDraft(data.stages);
+      qc.invalidateQueries({ queryKey: ["document-approval-stages", cid] });
+      toast({ title: "تم حفظ مراحل التأكيد" });
+    },
+    onError: (error: Error) => toast({ title: error.message, variant: "destructive" }),
+  });
+
   // Plan-based user quota — refetched on focus and on `subscription_changed`
   // SSE (handled globally by AuthContext via qc.invalidateQueries()) so any
   // SuperAdmin upgrade/downgrade reflects without a re-login.
@@ -1501,6 +1537,43 @@ export default function Users() {
 
               {/* Approval Permissions Tab — controls per-user document-approval workflow */}
               <TabsContent value="approval" className="space-y-4 pt-4" data-testid="approval-tab-content">
+                <div className="rounded-lg border p-4 space-y-3">
+                  <div>
+                    <div className="font-semibold">مراحل التأكيد المطلوبة لكل نوع مستند</div>
+                    <div className="text-xs text-muted-foreground mt-1">الصفر يبقي مسار العمل الحالي دون تغيير. الحد الأقصى 9 مراحل.</div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {APPROVAL_DOCUMENT_TYPES.map((doc) => (
+                      <label key={doc.key} className="flex items-center justify-between gap-3 text-sm">
+                        <span>{doc.label}</span>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={9}
+                          step={1}
+                          className="w-24"
+                          value={approvalStagesDraft[doc.key] ?? 0}
+                          onChange={(e) => setApprovalStagesDraft(current => ({
+                            ...current,
+                            [doc.key]: Math.max(0, Math.min(9, Math.trunc(Number(e.target.value) || 0))),
+                          }))}
+                          data-testid={`input-approval-stages-${doc.key}`}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => saveApprovalStages.mutate()}
+                    disabled={saveApprovalStages.isPending || !cid}
+                    data-testid="button-save-approval-stages"
+                  >
+                    {saveApprovalStages.isPending ? <Loader2 className="h-4 w-4 me-2 animate-spin" /> : <Save className="h-4 w-4 me-2" />}
+                    حفظ مراحل التأكيد
+                  </Button>
+                </div>
+
                 <div className="text-sm text-muted-foreground flex items-start gap-2 p-3 rounded-lg border border-indigo-200 bg-indigo-50/40 dark:bg-indigo-950/20">
                   <ShieldCheck className="h-4 w-4 text-indigo-600 mt-0.5 shrink-0" />
                   <div>

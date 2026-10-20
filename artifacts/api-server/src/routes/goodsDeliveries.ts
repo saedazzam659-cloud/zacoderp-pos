@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { approvalGate } from "./documentApprovals.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { db } from "@workspace/db";
@@ -609,7 +610,7 @@ router.delete("/:id", async (req, res) => {
 // POST (ترحيل) — DECREASE stock + create JE
 // Dr Delivery Clearing / Cr Inventory (per warehouse)
 // ═══════════════════════════════════════════════
-router.patch("/:id/post", requirePostRight("goodsDelivery"), documentMutationLock("goods_delivery", async (req, res) => {
+router.patch("/:id/post", requirePostRight("goodsDelivery"), approvalGate("goods_delivery"), documentMutationLock("goods_delivery", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

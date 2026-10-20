@@ -32,6 +32,7 @@ import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
+import { DocumentApprovalAction } from "@/components/DocumentApprovalAction";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { DiscountRow } from "@/components/DiscountRow";
 import { currencySymbol } from "@/lib/format";
@@ -1476,6 +1477,7 @@ function PurchaseInvoiceFormContent() {
         {!isNew && (existing as any) && (
           <DocStatusBadge status={(existing as any).status} />
         )}
+        {!!editId && <DocumentApprovalAction documentType="purchase_invoice" documentId={editId} />}
         {!!editId && canCreateInvoice && (
           <Button
             type="button"

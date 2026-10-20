@@ -41,6 +41,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
+import { DocumentApprovalAction } from "@/components/DocumentApprovalAction";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { DiscountRow } from "@/components/DiscountRow";
 import { currencySymbol } from "@/lib/format";
@@ -1047,6 +1048,7 @@ export default function PurchaseOrderForm() {
           </div>
         </div>
         {!isNew && <DocStatusBadge status={orderStatus} />}
+        {!!editId && <DocumentApprovalAction documentType="purchase_order" documentId={editId} />}
         {/* Smart prev/next + search navigator across every purchase order
             of the current company. */}
         <DocNavigator
