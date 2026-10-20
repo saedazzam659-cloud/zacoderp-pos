@@ -79,6 +79,7 @@ type UserRow = {
   postingPermissions?: Record<string, { post?: boolean; unpost?: boolean }> | null;
   mobilePermissions?: Record<string, boolean> | null;
   canApprove?: boolean;
+  approvalDocumentTypes?: string[];
   approvalLevel?: number;
   maxApprovalAmount?: string | number | null;
   requireSecondApproval?: boolean;
@@ -112,6 +113,16 @@ const POSTING_DOC_TYPES: Array<{ key: string; labelKey: string }> = [
   { key: "ctgOutgoingBill", labelKey: "users.postDocCtgOutgoingBill" },
   { key: "ctgIncomingBill", labelKey: "users.postDocCtgIncomingBill" },
 ];
+
+const APPROVAL_DOCUMENT_TYPES = [
+  { key: "sales_quotation", label: "عروض الأسعار" },
+  { key: "sales_order", label: "أوامر البيع" },
+  { key: "goods_delivery", label: "أذون التسليم" },
+  { key: "sales_invoice", label: "فواتير المبيعات" },
+  { key: "purchase_order", label: "أوامر الشراء" },
+  { key: "goods_receipt", label: "أذون الاستلام" },
+  { key: "purchase_invoice", label: "فواتير المشتريات" },
+] as const;
 
 type PostingPerms = Record<string, { post: boolean; unpost: boolean }>;
 
@@ -263,6 +274,7 @@ const emptyForm = () => ({
   mobilePermissions: seedMobilePerms(),
   // Approval defaults: off, level 0, no cap, single-signature is fine.
   canApprove: false,
+  approvalDocumentTypes: [] as string[],
   approvalLevel: 0,
   maxApprovalAmount: "0",
   requireSecondApproval: false,
@@ -505,6 +517,7 @@ export default function Users() {
       // Approval workflow fields — coerce numeric-string cap to a string the
       // <Input type="number"> can render without leading zeros.
       canApprove: !!u.canApprove,
+      approvalDocumentTypes: Array.isArray(u.approvalDocumentTypes) ? u.approvalDocumentTypes : [],
       approvalLevel: Number.isFinite(Number(u.approvalLevel)) ? Number(u.approvalLevel) : 0,
       maxApprovalAmount: u.maxApprovalAmount != null ? String(u.maxApprovalAmount) : "0",
       requireSecondApproval: !!u.requireSecondApproval,
@@ -545,6 +558,7 @@ export default function Users() {
         mobilePermissions: form.mobilePermissions,
         // Approval workflow — server clamps these too as a safety net.
         canApprove: form.canApprove,
+        approvalDocumentTypes: form.approvalDocumentTypes,
         approvalLevel: Number(form.approvalLevel) || 0,
         maxApprovalAmount: String(form.maxApprovalAmount ?? "0"),
         requireSecondApproval: form.requireSecondApproval,
@@ -1516,6 +1530,33 @@ export default function Users() {
                     <div className="text-xs text-muted-foreground mt-0.5">{t("users.canApproveHint")}</div>
                   </div>
                 </label>
+
+                <div className={`space-y-2 ${!form.canApprove ? "opacity-50 pointer-events-none" : ""}`}>
+                  <div>
+                    <div className="font-medium">أنواع المستندات المسموح بتأكيدها</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">تُطبّق صلاحية التأكيد فقط على المستندات المحددة لهذا المستخدم.</div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {APPROVAL_DOCUMENT_TYPES.map((doc) => {
+                      const checked = (form.approvalDocumentTypes ?? []).includes(doc.key);
+                      return (
+                        <label key={doc.key} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                          <Checkbox
+                            checked={checked}
+                            data-testid={`checkbox-approval-doc-${doc.key}`}
+                            onCheckedChange={(value) => setForm((previous) => ({
+                              ...previous,
+                              approvalDocumentTypes: value
+                                ? [...new Set([...(previous.approvalDocumentTypes ?? []), doc.key])]
+                                : (previous.approvalDocumentTypes ?? []).filter((key) => key !== doc.key),
+                            }))}
+                          />
+                          <span>{doc.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 {/* 2) Level + cap + 2nd-approval — disabled and dimmed when canApprove is off */}
                 <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${!form.canApprove ? "opacity-50 pointer-events-none" : ""}`}>
