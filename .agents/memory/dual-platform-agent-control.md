@@ -56,3 +56,9 @@ Standalone agent fingerprint setup is incomplete until the database row, central
 **Why:** The heartbeat reads its fingerprint from the agent's runtime config; planting only the database row can leave the agent sending an old or empty fingerprint while the control panel says initialized.
 
 **How to apply:** After verifying active licensing and saved SSH identity, sync the expected fingerprint to the agent config, let the heartbeat decide whether the suspension marker can clear, and report completion only after a fresh accepted heartbeat. Never equate `SELECT version()` success with fingerprint validation.
+
+Full agent `init-db` is a maintenance operation that can take several minutes; while it copies or reconciles the external schema, routed agent-domain API requests may return `AGENT_SCHEMA_PREPARING` and the browser can show a blank app shell.
+
+**Why:** Re-running initialization when the site is already healthy can cause avoidable downtime; a successful completion is distinct from the temporary unavailability during the operation.
+
+**How to apply:** Check the active `init-db` request and fresh domain/API responses before retrying. If initialization has completed successfully, do not run it again just to recover the website; refresh the browser after the schema-ready gate clears.
