@@ -96,10 +96,11 @@ test("simple facade exposes only explicit lifecycle endpoints under simple actio
   assert.match(production, /eq\(productionOrdersTable\.companyId, cid\)/);
 });
 
-test("simple accounting setup exposes active posting asset and expense accounts and preserves existing settings", async () => {
-  const [facade, production] = await Promise.all([
+test("simple accounting setup exposes active posting accounts and filters by role in the wizard", async () => {
+  const [facade, production, wizard] = await Promise.all([
     readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../zatca-invoicing/src/pages/simple-manufacturing/SimpleWizard.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(
     facade,
@@ -108,19 +109,15 @@ test("simple accounting setup exposes active posting asset and expense accounts 
   );
   assert.match(
     facade,
-    /eq\(accountsTable\.isActive, true\)[\s\S]*?eq\(accountsTable\.isPosting, true\)[\s\S]*?eq\(accountsTable\.accountType, "asset"\)/,
-    "catalog must filter eligible asset accounts before applying the limit",
+    /eq\(accountsTable\.isActive, true\)[\s\S]*?eq\(accountsTable\.isPosting, true\)[\s\S]*?\.limit\(2000\)/,
+    "catalog must bound active posting account options",
   );
-  assert.match(
-    facade,
-    /eq\(accountsTable\.accountType, "expense"\)/,
-    "catalog must expose active posting expense accounts for waste",
-  );
-  assert.match(
-    facade,
-    /accounts:\s*\[\.\.\.accounts,\s*\.\.\.wasteAccounts\]/,
-    "the catalog must keep asset and waste account options in one response",
-  );
+  assert.match(wizard, /\.filter\(account => account\.accountType === "asset"\)/,
+    "wizard must show only asset accounts for inventory defaults");
+  assert.match(wizard, /\.filter\(account => account\.accountType === "expense"\)/,
+    "wizard must show only expense accounts for waste");
+  assert.match(wizard, /\.filter\(account => account\.accountType === "liability"\)/,
+    "wizard must show only liability accounts for accrued costs");
   assert.match(facade, /onConflictDoUpdate\(\{/);
   assert.match(facade, /defaultWipAccountId/);
   assert.match(facade, /defaultRawInventoryAccountId/);
@@ -128,13 +125,15 @@ test("simple accounting setup exposes active posting asset and expense accounts 
   assert.match(facade, /defaultWasteAccountId/);
   assert.match(
     facade,
-    /const expectedType = wasteId === id \? "expense" : "asset"/,
+    /values\.defaultWipAccountId,[\s\S]*?values\.defaultFinishedGoodsAccountId/,
     "setup must distinguish the waste expense from the three asset defaults",
   );
+  assert.match(facade, /accountType !== "asset"/,
+    "setup must reject non-asset inventory defaults");
   assert.match(
     facade,
-    /row\?\.accountType !== expectedType/,
-    "setup must reject an account with the wrong category",
+    /values\.defaultWasteAccountId != null &&\s*rows\.find\(\(row\) => row\.id === values\.defaultWasteAccountId\)\?\.accountType !== "expense"/,
+    "setup must reject a non-expense waste account",
   );
   assert.match(
     production,

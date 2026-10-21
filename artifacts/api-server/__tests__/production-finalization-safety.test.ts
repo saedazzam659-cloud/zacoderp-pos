@@ -12,7 +12,8 @@ test("source allocation save uses its transaction and includes unreversed driver
   assert.doesNotMatch(save, /\bq\.select|\brange\.|\ballocationRows\b/);
   assert.match(save, /usedDeltas[\s\S]*?await tx\.select/);
   assert.match(save, /isNull\(productionDriverReconciliationsTable\.reversalJournalEntryId\)/);
-  assert.match(save, /assertAllocationCapacity\(source\.sourceAmount, num\(used\?\.amount\) \+ num\(usedDeltas\?\.amount\), amount\)/);
+  assert.match(save, /pendingUtilityClaims/);
+  assert.match(save, /assertAllocationCapacity\([\s\S]*?num\(used\?\.amount\) \+ num\(usedDeltas\?\.amount\) \+ num\(pendingUtilityClaims\?\.amount\)/);
 });
 
 test("overhead closure counts each active driver delta without mutating planned allocations", async () => {
