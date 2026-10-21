@@ -1433,6 +1433,7 @@
     "newQuotation": "عرض سعر جديد",
     "stockBalance": "رصيد المخزون",
     "stockLedger": "دفتر حركة المخزون",
+    "productionIssues": "إذن صرف خامات التصنيع",
     "itemCard": "كارت الصنف",
     "lowStock": "الأصناف منخفضة المخزون",
     "valuation": "تقييم المخزون حسب المخزن",

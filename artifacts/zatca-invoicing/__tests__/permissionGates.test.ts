@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  companyAllowsAnyModule,
   companyExplicitlyEnablesModule,
   companyAllowsPermissionModule,
 } from "../src/lib/companyModuleGate.ts";
@@ -45,6 +46,24 @@ test("a disabled company module remains the upper permission bound", () => {
   );
   assert.equal(
     companyAllowsPermissionModule({ maintenance: false }, "maintenance"),
+    false,
+  );
+});
+
+test("manufacturing inventory view is available when either manufacturing module is enabled", () => {
+  const modules = ["production", "simple_manufacturing"];
+  assert.equal(
+    companyAllowsAnyModule(
+      { company: { menuPermissions: { production: false, simple_manufacturing: true } } },
+      modules,
+    ),
+    true,
+  );
+  assert.equal(
+    companyAllowsAnyModule(
+      { company: { menuPermissions: { production: false, simple_manufacturing: false } } },
+      modules,
+    ),
     false,
   );
 });

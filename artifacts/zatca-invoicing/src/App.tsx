@@ -330,6 +330,7 @@ import StockAdjustment from "@/pages/inventory/StockAdjustment";
 import StockCounting from "@/pages/inventory/StockCounting";
 import StockLedger from "@/pages/inventory/StockLedger";
 import StockBalance from "@/pages/inventory/StockBalance";
+import ProductionIssues from "@/pages/inventory/ProductionIssues";
 // Inventory Reports
 import InventoryReportsHub  from "@/pages/inventory/reports/InventoryReportsHub";
 import UnifiedInventoryReports from "@/pages/inventory/reports/UnifiedInventoryReports";
@@ -1256,6 +1257,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/counts/new"       module="stock_counts" action="create" component={StockCounting} />}
             {!isSuperAdmin && <PermRoute path="/inventory/ledger"  module="items" component={StockLedger} />}
             {!isSuperAdmin && <PermRoute path="/inventory/balance" module="items" component={StockBalance} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/production-issues" module="items" component={ProductionIssues} />}
             {/* Inventory Reports */}
             {!isSuperAdmin && <Route path="/module-reports/:moduleKey" component={AgentUnifiedModuleReportsRoute} />}
             {!isSuperAdmin && <PermRoute path="/inventory/reports/unified" module="inventory_reports" component={AgentUnifiedInventoryReportsRoute} />}

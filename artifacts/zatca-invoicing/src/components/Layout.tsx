@@ -57,7 +57,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { companyAllowsModule, companyAllowsScreen } from "@/lib/companyModuleGate";
+import { companyAllowsAnyModule, companyAllowsModule, companyAllowsScreen } from "@/lib/companyModuleGate";
 
 function AgentAnnouncementPrompt({ user }: { user: any }) {
   const announcement = user?.subscriptionNotice?.agentAnnouncement as {
@@ -177,6 +177,7 @@ import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
 type NavDef = { nameKey: string; name?: string; href: string; icon: any; exact?: boolean; permKey?: string; companyGateKey?: string;
+  companyGateKeysAny?: string[];
   external?: boolean;
   noteVisibilityKey?: "showCustomerDebitNotes" | "showSupplierCreditNotes";
   /** Country-specific entries are only visible for the matching tenant. */
@@ -217,6 +218,7 @@ function navItemAllowed(item: NavDef, user: any): boolean {
   // Company-level gate — applies to admin AND regular users (not superadmin).
   if (!companyAllowsModule(user, item.permKey)) return false;
   if (item.companyGateKey && !companyAllowsModule(user, item.companyGateKey)) return false;
+  if (item.companyGateKeysAny?.length && !companyAllowsAnyModule(user, item.companyGateKeysAny)) return false;
   // Per-SCREEN visibility overlay (nav:<path>) — also applies to admin AND
   // regular users (not superadmin). Default-on when absent, so existing
   // tenants are unaffected; a SuperAdmin hiding a single screen sets
@@ -745,6 +747,8 @@ const inventorySubNav: NavDef[] = [
   { nameKey: "nav.warehouseGroups",   href: "/inventory/warehouse-groups", icon: Layers,            permKey: "warehouses" },
   { nameKey: "nav.goodsReceipts",     href: "/inventory/goods-receipts",   icon: PackagePlus,       permKey: "warehouses" },
   { nameKey: "nav.goodsDeliveries",   href: "/inventory/goods-deliveries", icon: PackageMinus,      permKey: "warehouses" },
+  { nameKey: "navExtra.productionIssues", href: "/inventory/production-issues", icon: Factory, permKey: "items",
+    companyGateKeysAny: ["production", "simple_manufacturing"] },
   { nameKey: "nav.stockTransfers",    href: "/inventory/transfers",        icon: ArrowRightLeft,    permKey: "stock_transfers" },
   { nameKey: "nav.stockAdjustments",  href: "/inventory/adjustments",      icon: SlidersHorizontal, permKey: "stock_adjustments" },
   { nameKey: "nav.stockCounts",       href: "/inventory/counts",           icon: ClipboardList,     permKey: "stock_counts" },

@@ -203,6 +203,11 @@ export function companyAllowsModule(user: any, permKey?: string): boolean {
   return companyAllowsPermissionModule(user?.company?.menuPermissions, permKey);
 }
 
+/** True when at least one of the listed company modules is available. */
+export function companyAllowsAnyModule(user: any, permKeys: string[]): boolean {
+  return permKeys.some((permKey) => companyAllowsModule(user, permKey));
+}
+
 /** Resolve the only tax setup permission valid for a canonical company country. */
 export function companyTaxPermissionForCountry(country?: string | null): "egypt_tax" | "jordan_tax" | null {
   const normalized = String(country ?? "").toUpperCase();

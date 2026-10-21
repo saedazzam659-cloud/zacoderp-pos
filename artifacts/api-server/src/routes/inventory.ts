@@ -4104,6 +4104,7 @@ router.delete("/stock-counts/:id", async (req, res) => {
 router.get("/stock-ledger", async (req, res) => {
   const {
     itemId, warehouseId, from, to, customerId, txType, costCenter, brandId,
+    productionOrderSearch, manufacturingIssuesOnly,
     paged, page: pageParam, pageSize: pageSizeParam,
   } = req.query as Record<string, string>;
   const wantsPaged = paged === "1";
@@ -4141,6 +4142,30 @@ router.get("/stock-ledger", async (req, res) => {
   if (from)        conditions.push(gte(stockLedgerTable.txDate, from));
   if (to)          conditions.push(lte(stockLedgerTable.txDate, to));
   if (txType)      conditions.push(eq(stockLedgerTable.txType, txType as any));
+  if (manufacturingIssuesOnly === "1") {
+    conditions.push(
+      eq(stockLedgerTable.txType, "production_issue"),
+      eq(stockLedgerTable.refType, "production_order"),
+    );
+  }
+  if (productionOrderSearch?.trim()) {
+    const search = productionOrderSearch.trim();
+    const matchingOrders = await db.select({ id: productionOrdersTable.id })
+      .from(productionOrdersTable)
+      .where(and(
+        eq(productionOrdersTable.companyId, cid),
+        ilike(productionOrdersTable.orderNumber, `%${search}%`),
+      ));
+    const matchingIds = matchingOrders.map((order) => order.id);
+    if (matchingIds.length === 0) {
+      res.json(wantsPaged ? emptyPage : []);
+      return;
+    }
+    conditions.push(
+      eq(stockLedgerTable.refType, "production_order"),
+      inArray(stockLedgerTable.refId, matchingIds),
+    );
+  }
   if (costCenter?.trim()) {
     const pattern = `%${costCenter.trim()}%`;
     conditions.push(sql`(
@@ -4252,6 +4277,10 @@ router.get("/stock-ledger", async (req, res) => {
   const countIds = idsFor("count");
   const receiptIds = idsFor("goods_receipt");
   const deliveryIds = idsFor("goods_delivery");
+  const productionOrderIds = [...new Set([
+    ...idsFor("production_order"),
+    ...idsFor("production_order_reversal"),
+  ])];
 
   const [
     salesDocs, purchaseDocs, salesReturnDocs, purchaseReturnDocs,
@@ -4447,6 +4476,23 @@ router.get("/stock-ledger", async (req, res) => {
       documentPath: "/inventory/goods-deliveries",
       notes: doc.notes,
     });
+  }
+  if (productionOrderIds.length) {
+    const orders = await db.select({
+      id: productionOrdersTable.id,
+      orderNumber: productionOrdersTable.orderNumber,
+    }).from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.companyId, cid),
+      inArray(productionOrdersTable.id, productionOrderIds),
+    ));
+    for (const order of orders) {
+      const source = {
+        documentNumber: order.orderNumber,
+        documentPath: `/production/orders/${order.id}`,
+      };
+      sourceRefs.set(`production_order:${order.id}`, source);
+      sourceRefs.set(`production_order_reversal:${order.id}`, source);
+    }
   }
 
   const transferWarehouseIds = [...new Set(
