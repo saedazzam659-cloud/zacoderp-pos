@@ -585,7 +585,7 @@ ${source.map((r: any, i: number) => `<tr>
                 company: user?.company ?? null,
                 currency: full.currency ?? null,
               }));
-              return renderSalesDocsBundleHtml(datas, user?.company);
+              return renderSalesDocsBundleHtml(datas, user?.company, i18n.language?.toLowerCase().startsWith("en") ? "en" : "ar");
             }}
             fetchFull={async (id) => {
               const res = await fetch(`${API}/api/sales/sales-quotations/${id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });

@@ -248,6 +248,53 @@ function numberToArabicWords(n: number): string {
   return `فقط ${out} ريال سعودي لا غير`;
 }
 
+function numberToEnglishWords(n: number, currencyCode = "SAR"): string {
+  if (!Number.isFinite(n) || n < 0 || n > 999999999.99) return String(n);
+  const ones = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+  const teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+  const tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+  const under1000 = (value: number): string => {
+    const parts: string[] = [];
+    const hundreds = Math.floor(value / 100);
+    const remainder = value % 100;
+    if (hundreds) parts.push(`${ones[hundreds]} hundred`);
+    if (remainder >= 20) parts.push(`${tens[Math.floor(remainder / 10)]}${remainder % 10 ? `-${ones[remainder % 10]}` : ""}`);
+    else if (remainder >= 10) parts.push(teens[remainder - 10]);
+    else if (remainder) parts.push(ones[remainder]);
+    return parts.join(" ");
+  };
+  const words = (value: number): string => {
+    if (!value) return "zero";
+    const groups = [
+      { size: 1_000_000, label: "million" },
+      { size: 1_000, label: "thousand" },
+      { size: 1, label: "" },
+    ];
+    const parts: string[] = [];
+    let remainder = value;
+    for (const group of groups) {
+      const count = Math.floor(remainder / group.size);
+      remainder %= group.size;
+      if (count) parts.push(`${under1000(count)}${group.label ? ` ${group.label}${count > 1 ? "s" : ""}` : ""}`);
+    }
+    return parts.join(" ");
+  };
+  const amountInMinor = Math.round(n * 100);
+  const whole = Math.floor(amountInMinor / 100);
+  const minor = amountInMinor % 100;
+  const currency = ({
+    SAR: ["Saudi Riyal", "Halala"],
+    USD: ["US Dollar", "Cent"],
+    EUR: ["Euro", "Cent"],
+    GBP: ["Pound Sterling", "Penny"],
+    AED: ["UAE Dirham", "Fils"],
+    EGP: ["Egyptian Pound", "Piastre"],
+  } as Record<string, [string, string]>)[currencyCode.toUpperCase()] ?? [currencyCode.toUpperCase(), "Minor unit"];
+  const majorUnit = `${currency[0]}${whole === 1 ? "" : "s"}`;
+  const minorUnit = `${currency[1]}${minor === 1 ? "" : "s"}`;
+  return `Only ${words(whole)} ${majorUnit}${minor ? ` and ${words(minor)} ${minorUnit}` : ""} only`;
+}
+
 // ── Full totals computation ──────────────────────────────────────────────────
 // Derives the 5 standard print totals from lines (so it works even when the
 // server-side aggregates haven't refreshed yet). Combines BOTH percent‑based
@@ -348,7 +395,9 @@ function computeFullTotals(doc: any, lines: any[], printType?: SalesPrintType): 
     subtotalPreDiscount, discountTotal, netPreVat, vatAmount, grandTotal,
     totalQty, totalFreeQty, itemsCount: (lines ?? []).length, currency,
     currencySym: currencySymbol(currency), currencyName,
-    amountWords: numberToArabicWords(grandTotal),
+    amountWords: printLang === "en"
+      ? numberToEnglishWords(grandTotal, currency)
+      : numberToArabicWords(grandTotal),
     exchangeRate, baseCurrency, baseSym: currencySymbol(baseCurrency),
     isForeign, vatAmountBase, grandTotalBase,
     showSarEq: isForeign && isTaxDoc,
@@ -2045,12 +2094,10 @@ function template13(d: PrintData): string {
   </div></body></html>`;
 }
 
-// ── Print i18n (currently honoured by template 14 «الأصلي» only) ────────────
-// Central label dictionary so future templates can opt into bilingual print
-// by threading the same `getPrintLabels(lang)` map. English mode flips the
-// document to LTR and uses English column / field labels; item names are
-// resolved live from the inventory catalogue (Arabic name → English name)
-// by the modal and passed in via `d._enNames`.
+// ── Print i18n ───────────────────────────────────────────────────────────────
+// Template 14 renders native English labels; other templates pass through the
+// shared safe HTML localizer, which protects document values and applies
+// localized master-data names only when an English name exists.
 export type PrintLang = "ar" | "en";
 interface PrintLabels {
   companyInfo: string; vatNumber: string; crNumber: string; phone: string;
@@ -3104,14 +3151,23 @@ export function resolveTemplateIdFor(company: any, type: SalesPrintType): number
  *  «طباعة المحدَّد» flow so it prints the real templates instead of the
  *  legacy report-style layout). Each doc is wrapped in `section.doc` so
  *  the shared one-per-page toggle keeps working. */
-export async function renderSalesDocsBundleHtml(datas: PrintData[], company: any): Promise<string> {
+export async function renderSalesDocsBundleHtml(
+  datas: PrintData[],
+  company: any,
+  language: PrintLang = "ar",
+): Promise<string> {
   const type = datas[0]?.type ?? "quotation";
   const id = resolveTemplateIdFor(company, type);
   const tmpl = TEMPLATES.find(t => t.id === id) ?? TEMPLATES[0];
-  const rendered = await Promise.all(datas.map(async d => {
+  const rendered = await Promise.all(datas.map(async source => {
+    const d: PrintData = {
+      ...source,
+      doc: { ...source.doc },
+      company: { ...(source.company ?? company), _printLanguage: language },
+      _lang: language,
+    } as PrintData;
     (d.doc as any).__printType = d.type;
     (d.doc as any).__pd = d;
-    (d as any)._lang = company?.invoicePrintLanguage === "en" ? "en" : "ar";
     if (shouldShowQr(d)) {
       try {
         const totals = computeFullTotals(d.doc, d.lines, d.type);
@@ -3122,11 +3178,12 @@ export async function renderSalesDocsBundleHtml(datas: PrintData[], company: any
     } else {
       delete (d as any)._qrDataUrl;
     }
-    return withCompanyPrintPrecision(
+    const html = withCompanyPrintPrecision(
       { decimalPlaces: d.company?.decimalPlaces ?? company?.decimalPlaces },
       () =>
       tmpl.fn(withManualSalesPrintPartyName(d))
     );
+    return language === "en" ? localizePrintHtml(html, language, d) : html;
   }));
   if (rendered.length === 1) {
     // Single doc → keep the template's own auto-print behavior intact.
@@ -3140,7 +3197,9 @@ export async function renderSalesDocsBundleHtml(datas: PrintData[], company: any
     const m = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
     return `<section class="doc" style="page-break-after:always;">${m ? m[1] : html}</section>`;
   }).join("\n");
-  return `<!DOCTYPE html><html dir="rtl"><head>${head}<style>section.doc:last-of-type{page-break-after:auto;}</style></head><body>${bodies}<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+  const dir = language === "en" ? "ltr" : "rtl";
+  const lang = language === "en" ? "en" : "ar";
+  return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head>${head}<style>section.doc:last-of-type{page-break-after:auto;}</style></head><body>${bodies}<script>setTimeout(()=>window.print(),300);</script></body></html>`;
 }
 
 const TEMPLATES = [
@@ -3459,8 +3518,8 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
         (data as any)._qrDataUrl = qr;
       }
     } catch { /* fallback to placeholder inside qrImgHtml */ }
-    // Inject the chosen print language + live English item-name map so the
-    // (currently template-14-only) i18n builder can render in English.
+    // Inject the chosen print language + live English item-name map so every
+    // selected template can render its static labels in English.
     // The English name lookup is async (useQuery); if the user prints before
     // it has resolved (e.g. auto-print on open with EN default), await a
     // fetch here so the first print already has English item names instead
