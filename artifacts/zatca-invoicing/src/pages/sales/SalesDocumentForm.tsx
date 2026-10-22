@@ -33,6 +33,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
+import { localizedName } from "@/lib/localizedName";
 import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
@@ -2262,8 +2263,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const customerComboItems = [
     { value: "", label: t("salesDocForm.noCustomer") },
     ...withHistoricalParty(
-      (isInvoice ? eligibleParties(customers, "sales", customerId) : customers).map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` })),
-      customerId, `#${customerId} — العميل المرتبط سابقاً`,
+      (isInvoice ? eligibleParties(customers, "sales", customerId) : customers).map((c: any) => ({
+        value: String(c.id),
+        label: localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en") || `#${c.id}`,
+        labelEn: c.nameEn || undefined,
+      })),
+      customerId, `#${customerId}`,
     ),
   ];
   const salesRepComboItems = repLocked
@@ -2287,13 +2292,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
       code: i.code ?? undefined,
-      label: isRtl ? (i.nameAr ?? i.nameEn ?? `#${i.id}`) : (i.nameEn ?? i.nameAr ?? `#${i.id}`),
-      labelEn: (isRtl ? i.nameEn : i.nameAr) ?? undefined,
+      label: localizedName(i.nameAr, i.nameEn, "ar") || `#${i.id}`,
+      labelEn: i.nameEn || undefined,
     })),
   ], usageModes);
   const unitItems = units
     .filter((u: any) => u.isActive !== false)
-    .map((u: any) => ({ value: String(u.id), label: u.nameAr }));
+    .map((u: any) => ({
+      value: String(u.id),
+      label: localizedName(u.nameAr, u.nameEn, isRtl ? "ar" : "en") || `#${u.id}`,
+    }));
 
   const Icon  = isInvoice ? ShoppingBag : isOrder ? ClipboardList : FileSignature;
   const title = isNew
@@ -2538,7 +2546,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
             const opts = itemUnitsWithHistoricalSelection(iu, qaUnitId).map((u: any) => ({
               value: String(u.unitId),
-              label: `${u.unit?.nameAr ?? ""}${Number(u.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(u.conversionFactor)})` : ""}`,
+              label: `${localizedName(u.unit?.nameAr, u.unit?.nameEn, isRtl ? "ar" : "en")}${Number(u.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(u.conversionFactor)})` : ""}`,
               disabled: u.isActive === false || u.unit?.isActive === false,
             }));
             return (
@@ -2643,14 +2651,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 const unitOpts = itemUnits.length > 0
                   ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
                       value: String(iu.unitId),
-                      label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                      label: `${localizedName(iu.unit?.nameAr, iu.unit?.nameEn, isRtl ? "ar" : "en")}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
                       disabled: iu.isActive === false || iu.unit?.isActive === false,
                     }))
                   : [
                       ...unitItems,
                       ...catalogUnitsWithHistoricalSelection(units, l.unitId)
                         .filter((u: any) => !unitItems.some((x: any) => x.value === String(u.id)))
-                        .map((u: any) => ({ value: String(u.id), label: u.nameAr ?? u.nameEn ?? `#${u.id}`, disabled: u.isActive === false })),
+                .map((u: any) => ({ value: String(u.id), label: localizedName(u.nameAr, u.nameEn, isRtl ? "ar" : "en") || `#${u.id}`, disabled: u.isActive === false })),
                     ];
                 return (
                 <div key={l._id} className="px-3 py-2 text-xs hover:bg-muted/30 transition-colors">

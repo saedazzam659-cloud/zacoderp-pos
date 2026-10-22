@@ -9,6 +9,7 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import { advanceFocusFrom } from "@/hooks/useEnterAdvances";
+import { useTranslation } from "react-i18next";
 
 export interface ComboboxItem {
   value: string;
@@ -74,6 +75,8 @@ export function SearchCombobox({
   loading = false,
   endAdornment,
 }: SearchComboboxProps) {
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.toLowerCase().startsWith("en") ?? false;
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [highlight, setHighlight] = React.useState(0);
@@ -87,6 +90,12 @@ export function SearchCombobox({
     }
   };
 
+  const localizedItem = React.useCallback((item: ComboboxItem): ComboboxItem => ({
+    ...item,
+    label: isEnglish ? (item.labelEn?.trim() || item.label) : item.label,
+    // A selected-language label is shown, not a second-language subtitle.
+    labelEn: undefined,
+  }), [isEnglish]);
   const selectedItem = items.find(i => i.value === value);
 
   // Display value: show search if user is typing/popover open, else just the
@@ -95,7 +104,7 @@ export function SearchCombobox({
   const displayValue = open
     ? search
     : selectedItem
-      ? selectedItem.label
+      ? localizedItem(selectedItem).label
       : "";
 
   React.useEffect(() => {
@@ -112,8 +121,7 @@ export function SearchCombobox({
     // Remote-search callers have already filtered and ranked this bounded list.
     // Filtering it again by the visible label can discard valid server matches
     // (for example, an English query on an Arabic-labeled item).
-    if (onSearchChange) return items;
-    if (!search) return items;
+    if (onSearchChange || !search) return items.map(localizedItem);
     const q = search.toLowerCase();
     return items.filter(
       item =>
@@ -122,8 +130,8 @@ export function SearchCombobox({
         item.labelEn?.toLowerCase().includes(q) ||
         item.description?.toLowerCase().includes(q) ||
         item.value.toLowerCase().includes(q)
-    );
-  }, [items, onSearchChange, search]);
+     ).map(localizedItem);
+  }, [items, localizedItem, onSearchChange, search]);
 
   React.useEffect(() => {
     // Snap highlight onto the first enabled row whenever the filter changes

@@ -29,6 +29,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
+import { localizedName } from "@/lib/localizedName";
 import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
 import { DocStatusBadge } from "@/components/DocStatusBadge";
@@ -149,10 +150,10 @@ function PurchaseInvoiceFormContent() {
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const tr = (k: string, opts?: any): string => t(`purchasingPages.purchaseInvoiceForm.${k}`, opts) as string;
-  const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
-  const itemNameOf = (i: any) => isRtl ? (i?.nameAr ?? i?.nameEn ?? "") : (i?.nameEn ?? i?.nameAr ?? "");
+  const supName = (s: any) => localizedName(s?.nameAr, s?.nameEn, i18n.language);
+  const itemNameOf = (i: any) => localizedName(i?.nameAr, i?.nameEn, i18n.language);
   const branchName = (b: any) => isRtl ? (b?.nameAr ?? b?.nameEn ?? `#${b?.id}`) : (b?.nameEn ?? b?.nameAr ?? `#${b?.id}`);
-  const unitNameOf = (u: any) => isRtl ? (u?.nameAr ?? u?.nameEn ?? "") : (u?.nameEn ?? u?.nameAr ?? "");
+  const unitNameOf = (u: any) => localizedName(u?.nameAr, u?.nameEn, i18n.language);
   const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
 
   const { user, token } = useAuth() as any;
@@ -1201,7 +1202,9 @@ function PurchaseInvoiceFormContent() {
   const supplierItems = [
     { value: "", label: tr("noSupplierOpt") },
     ...withHistoricalParty(
-      eligibleParties(suppliers, "purchase", supplierId).map((s: any) => ({ value: String(s.id), label: supName(s) })),
+      eligibleParties(suppliers, "purchase", supplierId).map((s: any) => ({
+        value: String(s.id), label: supName(s), labelEn: s.nameEn || undefined,
+      })),
       supplierId, `#${supplierId} — المورد المرتبط سابقاً`,
     ),
   ];
@@ -1223,8 +1226,8 @@ function PurchaseInvoiceFormContent() {
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
       code: i.code ?? undefined,
-      label: itemNameOf(i),
-      labelEn: (isRtl ? i.nameEn : i.nameAr) ?? undefined,
+      label: localizedName(i.nameAr, i.nameEn, "ar"),
+      labelEn: i.nameEn || undefined,
     })),
   ], usageModes);
   const unitItems = units
