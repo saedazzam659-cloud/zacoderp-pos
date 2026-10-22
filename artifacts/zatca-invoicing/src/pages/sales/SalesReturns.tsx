@@ -2462,9 +2462,9 @@ ${sections}
                 })}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="credit">{paymentMethodLabel(user?.company, "credit", t("salesReturns.paymentCredit"))}</SelectItem>
-                    <SelectItem value="cash">{paymentMethodLabel(user?.company, "cash", t("salesReturns.paymentCash"))}</SelectItem>
-                    <SelectItem value="bank">{paymentMethodLabel(user?.company, "bank", t("salesReturns.paymentBank"))}</SelectItem>
+                    <SelectItem value="credit">{paymentMethodLabel(user?.company, "credit", t("salesReturns.paymentCredit"), isRtl ? "ar" : "en")}</SelectItem>
+                    <SelectItem value="cash">{paymentMethodLabel(user?.company, "cash", t("salesReturns.paymentCash"), isRtl ? "ar" : "en")}</SelectItem>
+                    <SelectItem value="bank">{paymentMethodLabel(user?.company, "bank", t("salesReturns.paymentBank"), isRtl ? "ar" : "en")}</SelectItem>
                   </SelectContent>
                 </Select>
               </Field></div>
@@ -2474,7 +2474,7 @@ ${sections}
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesReturns.cashBoxPlaceholder")} /></SelectTrigger>
                     <SelectContent>
                       {(cashBoxes as any[]).map((b: any) => (
-                        <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                        <SelectItem key={b.id} value={String(b.id)}>{localizedName(b.nameAr, b.nameEn, isRtl ? "ar" : "en") || `#${b.id}`}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -2486,7 +2486,7 @@ ${sections}
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesReturns.bankAccountPlaceholder")} /></SelectTrigger>
                     <SelectContent>
                       {(bankAccounts as any[]).map((b: any) => (
-                        <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                        <SelectItem key={b.id} value={String(b.id)}>{localizedName(b.nameAr, b.nameEn, isRtl ? "ar" : "en") || `#${b.id}`}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

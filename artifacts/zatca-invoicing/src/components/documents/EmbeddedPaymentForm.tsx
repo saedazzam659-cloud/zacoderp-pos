@@ -14,6 +14,7 @@ import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combob
 import { useToast } from "@/hooks/use-toast";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useFormatters } from "@/lib/format";
+import { localizedName } from "@/lib/localizedName";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -60,7 +61,7 @@ export default function EmbeddedPaymentForm({
   kind, invoiceId, companyId, token, entityId, entityName, docNumber,
   available, exchangeRate = 1, currencyCode, onClose, onSaved,
 }: Props) {
-  const { fmt } = useFormatters();
+  const { fmt, isRtl } = useFormatters();
   const { toast } = useToast();
   const authH = { Authorization: `Bearer ${token}` };
   const isSales = kind === "sales";
@@ -100,12 +101,12 @@ export default function EmbeddedPaymentForm({
 
   const cashItems: ComboboxItem[] = useMemo(
     () => (cashBoxes as any[]).filter((c: any) => c.isActive !== false)
-      .map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.name ?? `#${c.id}` })),
-    [cashBoxes]);
+      .map((c: any) => ({ value: String(c.id), label: localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en") || c.name || `#${c.id}` })),
+    [cashBoxes, isRtl]);
   const bankItems: ComboboxItem[] = useMemo(
     () => (bankAccounts as any[]).filter((b: any) => b.isActive !== false)
-      .map((b: any) => ({ value: String(b.id), label: b.nameAr ?? b.name ?? b.bankName ?? `#${b.id}` })),
-    [bankAccounts]);
+      .map((b: any) => ({ value: String(b.id), label: localizedName(b.nameAr, b.nameEn, isRtl ? "ar" : "en") || b.name || (isRtl ? b.bankName : b.bankNameEn) || b.bankName || `#${b.id}` })),
+    [bankAccounts, isRtl]);
 
   const distributed = lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
   const leftToDistribute = +(available - distributed).toFixed(2);

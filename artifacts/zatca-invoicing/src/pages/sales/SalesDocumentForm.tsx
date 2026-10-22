@@ -1546,9 +1546,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const lineNotes = lineNotesMatch?.[1]?.trim();
       const paymentIntent = isInvoice && /(?:نوع الدفع|طريقه الدفع|الدفع|السداد|نوع الفاتوره)/.test(text);
       const paymentLabels = {
-        credit: paymentMethodLabel(user?.company, "credit", "آجل"),
-        cash: paymentMethodLabel(user?.company, "cash", "نقدي"),
-        bank: paymentMethodLabel(user?.company, "bank", "بنك/شبكة"),
+        credit: paymentMethodLabel(user?.company, "credit", isRtl ? "آجل" : "Credit", isRtl ? "ar" : "en"),
+        cash: paymentMethodLabel(user?.company, "cash", isRtl ? "نقدي" : "Cash", isRtl ? "ar" : "en"),
+        bank: paymentMethodLabel(user?.company, "bank", isRtl ? "بنك/شبكة" : "Bank", isRtl ? "ar" : "en"),
       } as const;
       const paymentTypeValue = paymentIntent
         ? /(?:اجل|على الحساب|ائتمان)/.test(text) || text.includes(norm(paymentLabels.credit)) ? "credit"
@@ -3238,9 +3238,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 label: t("salesDocForm.paymentType"),
                 type: "select",
                 options: [
-                  { value: "credit", label: paymentMethodLabel(user?.company, "credit", isRtl ? "آجل" : "Credit") },
-                  { value: "cash", label: paymentMethodLabel(user?.company, "cash", isRtl ? "نقدي" : "Cash") },
-                  { value: "bank", label: paymentMethodLabel(user?.company, "bank", isRtl ? "بنكي" : "Bank") },
+                  { value: "credit", label: paymentMethodLabel(user?.company, "credit", isRtl ? "آجل" : "Credit", isRtl ? "ar" : "en") },
+                  { value: "cash", label: paymentMethodLabel(user?.company, "cash", isRtl ? "نقدي" : "Cash", isRtl ? "ar" : "en") },
+                  { value: "bank", label: paymentMethodLabel(user?.company, "bank", isRtl ? "بنكي" : "Bank", isRtl ? "ar" : "en") },
                 ],
                 description:
                   isRtl ? "credit = آجل (اعتماد على الذمة)، cash = نقدي (يحتاج cashBoxId)، bank = بنكي (يحتاج bankAccountId)." : "credit = on account, cash = requires cashBoxId, bank = requires bankAccountId.",
@@ -4270,9 +4270,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     }}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="credit">{paymentMethodLabel(user?.company, "credit", t("salesDocForm.paymentCredit"))}</SelectItem>
-                        <SelectItem value="cash">{paymentMethodLabel(user?.company, "cash", t("salesDocForm.paymentCash"))}</SelectItem>
-                        <SelectItem value="bank">{paymentMethodLabel(user?.company, "bank", t("salesDocForm.paymentBank"))}</SelectItem>
+                        <SelectItem value="credit">{paymentMethodLabel(user?.company, "credit", t("salesDocForm.paymentCredit"), isRtl ? "ar" : "en")}</SelectItem>
+                        <SelectItem value="cash">{paymentMethodLabel(user?.company, "cash", t("salesDocForm.paymentCash"), isRtl ? "ar" : "en")}</SelectItem>
+                        <SelectItem value="bank">{paymentMethodLabel(user?.company, "bank", t("salesDocForm.paymentBank"), isRtl ? "ar" : "en")}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

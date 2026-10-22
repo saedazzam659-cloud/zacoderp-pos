@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -116,8 +117,11 @@ function salesPaymentLabel(
   fallbacks: Partial<Record<"cash" | "credit" | "bank", string>> = {},
 ): string {
   const method = paymentType === "cash" ? "cash" : paymentType === "bank" ? "bank" : "credit";
-  const fallback = fallbacks[method] ?? (method === "cash" ? "نقدي" : method === "bank" ? "بنك" : "آجل");
-  return escapePrintHtml(paymentMethodLabel(company, method, fallback));
+  const language = company?._printLanguage === "en" ? "en" : "ar";
+  const fallback = language === "en"
+    ? (method === "cash" ? "Cash" : method === "bank" ? "Bank" : "Credit")
+    : (fallbacks[method] ?? (method === "cash" ? "نقدي" : method === "bank" ? "بنك" : "آجل"));
+  return escapePrintHtml(paymentMethodLabel(company, method, fallback, language));
 }
 
 export function renderInventoryPrintDetailsHtml(
@@ -3210,6 +3214,8 @@ interface Props {
 }
 
 export default function SalesPrintModal({ open, onClose, data, defaultTemplate, autoPrintOnOpen }: Props) {
+  const { i18n } = useTranslation();
+  const activeUiPrintLang: PrintLang = i18n.language?.toLowerCase().startsWith("en") ? "en" : "ar";
     const gate = useDemoActionGate();
   // ── Visibility filter ────────────────────────────────────────────────
   // Honour the per-company `printEnabledTemplates` (jsonb int[]) and
@@ -3265,16 +3271,12 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   const { user, token } = useAuth() as any;
   const showFreeQuantity = companyCfg.showFreeQuantity ?? user?.company?.showFreeQuantity;
 
-  // ── Print language (template 14 «الأصلي» only, for now) ───────────────
-  // Seed from the company default; the user can override per print job via
-  // the toggle in the modal header. Re-syncs when the company default
-  // changes underneath us.
-  const [printLang, setPrintLang] = useState<PrintLang>(
-    () => (companyCfg.invoicePrintLanguage === "en" ? "en" : "ar"),
-  );
+  // Start with the active interface language; the print-dialog toggle can
+  // still override it for an individual print job.
+  const [printLang, setPrintLang] = useState<PrintLang>(() => activeUiPrintLang);
   useEffect(() => {
-    setPrintLang(companyCfg.invoicePrintLanguage === "en" ? "en" : "ar");
-  }, [companyCfg.invoicePrintLanguage]);
+    if (open) setPrintLang(activeUiPrintLang);
+  }, [open, activeUiPrintLang]);
 
   // Live inventory catalogue → English item-name lookup. Only fetched when
   // we're actually printing in English (and the modal is open).
@@ -3463,6 +3465,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // fetch here so the first print already has English item names instead
     // of silently falling back to Arabic.
     (data as any)._lang = printLang;
+    (data as any).company = { ...(data as any).company, _printLanguage: printLang };
     let namesForPrint = enNamesMap;
     let unitsForPrint = enUnitsMap;
     if (printLang === "en" && itemsCompanyId && namesForPrint.size === 0) {
