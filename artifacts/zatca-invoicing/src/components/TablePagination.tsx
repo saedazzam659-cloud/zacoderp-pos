@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { localizeUiText } from "@/lib/localizedUiText";
 
 export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 500, 1000] as const;
 export type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
@@ -126,7 +127,7 @@ export function TablePagination({
             start,
             end,
             total,
-            label: itemLabel ?? t("pagination.itemDefault"),
+            label: localizeUiText(itemLabel ?? t("pagination.itemDefault")),
           })}
         </span>
       </div>

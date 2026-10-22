@@ -2,6 +2,7 @@ import { useState } from "react";
 import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { parseError } from "@/lib/parseError";
@@ -86,11 +87,11 @@ export default function BrandManagement() {
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Bookmark className="h-6 w-6 text-primary" />العلامات التجارية</h1>
-          <p className="text-muted-foreground text-sm mt-1">إدارة العلامات التجارية — الصنف الواحد قد يحمل عدة علامات تجارية بأسعار وباركود وأرقام قطع مختلفة.</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Bookmark className="h-6 w-6 text-primary" />{localizeUiText("العلامات التجارية")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{localizeUiText("إدارة العلامات التجارية — الصنف الواحد قد يحمل عدة علامات تجارية بأسعار وباركود وأرقام قطع مختلفة.")}</p>
         </div>
         <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
-          <Plus className="h-4 w-4" />علامة تجارية جديدة
+          <Plus className="h-4 w-4" />{localizeUiText("علامة تجارية جديدة")}
         </Button>
       </div>
 
@@ -159,17 +160,17 @@ export default function BrandManagement() {
 
       <div className="relative">
         <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
-        <Input className={isRtl ? "pr-9" : "pl-9"} placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
+        <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={localizeUiText("بحث بالكود أو الاسم...")} value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
       <div className="rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
-              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>الكود</th>
-              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>الاسم</th>
-              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>الشركة المصنِّعة</th>
-              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>الحالة</th>
+              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{localizeUiText("الكود")}</th>
+              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{localizeUiText("الاسم")}</th>
+              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{localizeUiText("الشركة المصنِّعة")}</th>
+              <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{localizeUiText("الحالة")}</th>
               <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground w-24`}>{t("inventoryMaster.common.actions") as string}</th>
             </tr>
           </thead>
@@ -177,7 +178,7 @@ export default function BrandManagement() {
             {isLoading
               ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={5} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
               : filtered.length === 0
-              ? <tr><td colSpan={5} className="px-4 py-10 text-center text-muted-foreground"><Bookmark className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد علامات تجارية</td></tr>
+              ? <tr><td colSpan={5} className="px-4 py-10 text-center text-muted-foreground"><Bookmark className="h-8 w-8 mx-auto mb-2 opacity-30" />{localizeUiText("لا توجد علامات تجارية")}</td></tr>
               : pager.pagedItems.map((b: any) => (
                   <tr key={b.id} className="hover:bg-muted/30">
                     <td className="px-4 py-3 font-mono text-xs">{b.code}</td>
@@ -185,7 +186,7 @@ export default function BrandManagement() {
                     <td className="px-4 py-3 text-muted-foreground">{b.manufacturerName ?? "—"}</td>
                     <td className="px-4 py-3">
                       <span className={b.status === "active" ? "text-emerald-600 text-xs" : "text-muted-foreground text-xs"}>
-                        {b.status === "active" ? "نشطة" : "غير نشطة"}
+                        {localizeUiText(b.status === "active" ? "نشطة" : "غير نشطة")}
                       </span>
                     </td>
                     <td className="px-4 py-3">

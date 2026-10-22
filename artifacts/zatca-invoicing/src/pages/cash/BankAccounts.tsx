@@ -15,6 +15,7 @@ import { TablePagination, usePagination } from "@/components/TablePagination";
 import { Landmark, Plus, Pencil, Trash2, Search, CheckCircle2, XCircle, TrendingUp, CreditCard, AlertTriangle, Check, X, ChevronsUpDown, Building2 } from "lucide-react";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { localizeUiText } from "@/lib/localizedUiText";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const EMPTY = { code: "", nameAr: "", nameEn: "", bankName: "", bankNameEn: "", accountNumber: "", iban: "", swiftCode: "", currencyId: "", branchIds: [] as number[], notes: "", isActive: true };
@@ -72,7 +73,7 @@ function BranchMultiSelect({
         >
           <div className="flex flex-wrap items-center gap-1">
             {selectedBranches.length === 0 && (
-              <span className="text-muted-foreground text-sm py-1 px-1">— لم يُحدَّد فرع —</span>
+              <span className="text-muted-foreground text-sm py-1 px-1">{localizeUiText("— لم يُحدَّد فرع —")}</span>
             )}
             {selectedBranches.map((b: any) => (
               <span
@@ -89,7 +90,7 @@ function BranchMultiSelect({
                     type="button"
                     onClick={e => clearOne(b.id, e)}
                     className="ms-0.5 rounded-full hover:bg-primary/20 p-0.5"
-                    aria-label="إزالة"
+                    aria-label={localizeUiText("إزالة")}
                     tabIndex={-1}
                   >
                     <X className="h-3 w-3" />
@@ -116,26 +117,28 @@ function BranchMultiSelect({
               autoFocus
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="ابحث عن فرع..."
+              placeholder={localizeUiText("ابحث عن فرع...")}
               className={`h-8 ${isRtl ? "pr-8" : "pl-8"} text-sm`}
             />
           </div>
           {value.length > 0 && (
             <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>تم اختيار {value.length} فرع</span>
+              <span>{isRtl
+                ? `تم اختيار ${value.length} ${value.length === 1 ? "فرع" : "فروع"}`
+                : `${value.length} branch${value.length === 1 ? "" : "es"} selected`}</span>
               <button
                 type="button"
                 onClick={() => onChange([])}
                 className="text-destructive hover:underline"
               >
-                مسح الكل
+                {localizeUiText("مسح الكل")}
               </button>
             </div>
           )}
         </div>
         <div className="max-h-64 overflow-y-auto py-1">
           {filtered.length === 0 ? (
-            <div className="py-6 text-center text-sm text-muted-foreground">لا توجد نتائج</div>
+            <div className="py-6 text-center text-sm text-muted-foreground">{localizeUiText("لا توجد نتائج")}</div>
           ) : filtered.map((b: any) => {
             const sel = selectedSet.has(b.id);
             return (
@@ -153,7 +156,7 @@ function BranchMultiSelect({
                     <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded border shrink-0">{b.code}</span>
                     <span className="font-medium">{isRtl ? b.nameAr : (b.nameEn || b.nameAr)}</span>
                     {b.isMain && (
-                      <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded">رئيسي</span>
+                      <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded">{localizeUiText("رئيسي")}</span>
                     )}
                   </div>
                   {b.nameEn && isRtl && (
