@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters, fmt2 } from "@/lib/format";
@@ -536,7 +537,7 @@ ${source.map((r: any, i: number) => `<tr>
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filteredQuotations.length} عرض
+            {filteredQuotations.length} {i18n.language?.startsWith("en") ? "quotations" : "عرض"}
             {filteredQuotations.length !== quotations.length && <span className="text-slate-400"> / {quotations.length}</span>}
           </span>
         </div>
@@ -594,13 +595,13 @@ ${source.map((r: any, i: number) => `<tr>
             }}
             onPopupBlocked={() => toast({ title: "تم حظر النافذة المنبثقة", description: "الرجاء السماح بالنوافذ المنبثقة للطباعة", variant: "destructive" })}
             onFetchFailed={(n) => toast({ title: `تعذّر تحميل ${n} عرض سعر بكامل بنوده`, variant: "destructive" })}
-            primaryLabel="طباعة"
+            primaryLabel={i18n.language?.startsWith("en") ? "Print" : "طباعة"}
           />
           <Button type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-blue-600 hover:bg-blue-500 text-white"
             onClick={bulkSend}
             disabled={bulkBusy || selectedSendable.length === 0}
-            title={selectedSendable.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `إرسال ${selectedSendable.length} عرض`}>
+            title={localizeUiText(selectedSendable.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : "إرسال العروض المحددة")}>
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             إرسال ({selectedSendable.length})
           </Button>
@@ -608,7 +609,7 @@ ${source.map((r: any, i: number) => `<tr>
             className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
             onClick={bulkAccept}
             disabled={bulkBusy || selectedAcceptable.length === 0}
-            title={selectedAcceptable.length === 0 ? "لا توجد عروض قابلة للقبول" : `قبول ${selectedAcceptable.length} عرض`}>
+            title={localizeUiText(selectedAcceptable.length === 0 ? "لا توجد عروض قابلة للقبول" : "قبول العروض المحددة")}>
             <CheckCircle className="h-3.5 w-3.5" />
             قبول ({selectedAcceptable.length})
           </Button>
@@ -616,9 +617,9 @@ ${source.map((r: any, i: number) => `<tr>
             className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
             onClick={bulkDelete}
             disabled={bulkBusy || selectedDeletable.length === 0}
-            title={selectedDeletable.length === 0
+            title={localizeUiText(selectedDeletable.length === 0
               ? "لا يمكن حذف العروض المحوَّلة"
-              : `حذف ${selectedDeletable.length} عرض`}>
+              : "حذف العروض المحددة")}>
             <Trash2 className="h-3.5 w-3.5" />
             حذف ({selectedDeletable.length})
           </Button>
@@ -645,7 +646,7 @@ ${source.map((r: any, i: number) => `<tr>
             <div className="p-12 text-center text-muted-foreground text-sm">{t("common.loading")}</div>
           ) : filteredQuotations.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground text-sm">
-              {quotations.length === 0 ? t("salesQuotations.noQuotations") : "لا توجد عروض ضمن التصفية الحالية"}
+              {quotations.length === 0 ? t("salesQuotations.noQuotations") : localizeUiText("لا توجد عروض ضمن التصفية الحالية")}
             </div>
           ) : (
             <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>

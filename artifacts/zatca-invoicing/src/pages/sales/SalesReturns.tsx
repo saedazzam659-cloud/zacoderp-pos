@@ -10,6 +10,7 @@ import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { companyPaymentDefault, paymentMethodLabel } from "@/lib/paymentMethodLabels";
@@ -180,7 +181,7 @@ export default function SalesReturns() {
     enabled: contractingModuleEnabled && !!token,
   });
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { fmt, isRtl } = useFormatters();
   const qc = useQueryClient();
   const [location, navigate] = useLocation();
@@ -3061,7 +3062,7 @@ ${sections}
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filteredReturns.length} مرتجع
+            {filteredReturns.length} {i18n.language?.startsWith("en") ? "returns" : "مرتجع"}
             {filteredReturns.length !== returns_.length && <span className="text-slate-400"> / {returns_.length}</span>}
           </span>
         </div>
@@ -3086,7 +3087,7 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
             onClick={bulkPost}
             disabled={bulkBusy || selectedDrafts.length === 0}
-            title={selectedDrafts.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedDrafts.length} مرتجع`}
+            title={localizeUiText(selectedDrafts.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : "ترحيل مرتجعات المبيعات المحددة")}
           >
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             ترحيل ({selectedDrafts.length})
@@ -3099,7 +3100,7 @@ ${sections}
               editReturn(Number(selectedReturns[0].id));
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "فتح/تعديل المرتجع المحدَّد" : "حدِّد مرتجعًا واحدًا فقط"}
+            title={localizeUiText(layout.selected.size === 1 ? "فتح/تعديل المرتجع المحدَّد" : "حدِّد مرتجعًا واحدًا فقط")}
           >
             <Pencil className="h-3.5 w-3.5" />
             تعديل
@@ -3112,7 +3113,7 @@ ${sections}
               duplicateReturn(Number(selectedReturns[0].id));
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من المرتجع المحدَّد" : "حدِّد مرتجعًا واحدًا فقط"}
+            title={localizeUiText(layout.selected.size === 1 ? "إنشاء نسخة مماثلة من المرتجع المحدَّد" : "حدِّد مرتجعًا واحدًا فقط")}
           >
             <Copy className="h-3.5 w-3.5" />
             نسخة مماثلة
@@ -3122,11 +3123,11 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
             onClick={bulkUnpost}
             disabled={bulkBusy || selectedPosted.length === 0 || !isAdmin}
-            title={!isAdmin
+            title={localizeUiText(!isAdmin
               ? "فك الترحيل متاح للمدير فقط"
               : selectedPosted.length === 0
                 ? "لا توجد مرتجعات مرحَّلة ضمن المحدَّد"
-                : `فك ترحيل ${selectedPosted.length} مرتجع`}
+                : "فك ترحيل المرتجعات المحددة")}
           >
             <Undo2 className="h-3.5 w-3.5" />
             فك الترحيل ({selectedPosted.length})
@@ -3136,9 +3137,9 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
             onClick={bulkDelete}
             disabled={bulkBusy || selectedDeletable.length === 0}
-            title={selectedDeletable.length === 0
+            title={localizeUiText(selectedDeletable.length === 0
               ? "لا يمكن حذف المرتجعات المرحَّلة. فك الترحيل أولاً."
-              : `حذف ${selectedDeletable.length} مرتجع (مسوّدة فقط)`}
+              : "حذف مسودات المرتجعات المحددة")}
           >
             <Trash2 className="h-3.5 w-3.5" />
             حذف ({selectedDeletable.length})
@@ -3163,7 +3164,7 @@ ${sections}
             <div className="p-12 text-center text-muted-foreground text-sm">{t("common.loading")}</div>
           ) : filteredReturns.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground text-sm">
-              {returns_.length === 0 ? t("salesReturns.noReturns") : "لا توجد مرتجعات ضمن التصفية الحالية"}
+              {returns_.length === 0 ? t("salesReturns.noReturns") : localizeUiText("لا توجد مرتجعات ضمن التصفية الحالية")}
             </div>
           ) : (
             <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>

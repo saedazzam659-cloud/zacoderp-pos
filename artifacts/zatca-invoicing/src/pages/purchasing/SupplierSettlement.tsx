@@ -387,12 +387,14 @@ export default function SupplierSettlement() {
             )}
             <div className="flex-1" />
             <span className="text-slate-700 font-medium">
-              {filtered.length} تسوية
+              {filtered.length} {i18n.language?.startsWith("en") ? "settlements" : "تسوية"}
               {filtered.length !== settlements.length && <span className="text-slate-400"> / {settlements.length}</span>}
             </span>
           </div>
           <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
-            <span className="text-emerald-800">تم تحديد {layout.selected.size} تسوية</span>
+            <span className="text-emerald-800">
+              {i18n.language?.startsWith("en") ? `Selected ${layout.selected.size} supplier settlements` : `تم تحديد ${layout.selected.size} تسوية`}
+            </span>
           </AuditGridBulkBar>
         </div>
 

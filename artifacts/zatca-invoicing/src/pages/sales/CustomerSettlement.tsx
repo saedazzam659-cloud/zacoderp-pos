@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { getSaveToastTitle } from "@/lib/saveToast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -705,7 +706,7 @@ ${sections}
         {/* Filter strip */}
         <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
           <Input
-            placeholder="بحث (مستند، عميل، حساب، ملاحظات)…"
+            placeholder={localizeUiText("بحث (مستند، عميل، حساب، ملاحظات)…")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="h-7 text-xs w-56"
@@ -723,7 +724,7 @@ ${sections}
                     : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
                 )}
               >
-                {s === "all" ? "الكل" : s === "draft" ? "مسودة" : "مرحّلة"}
+                {localizeUiText(s === "all" ? "الكل" : s === "draft" ? "مسودة" : "مرحّلة")}
               </button>
             ))}
           </div>
@@ -737,7 +738,7 @@ ${sections}
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filtered.length} سند
+            {filtered.length} {i18n.language?.startsWith("en") ? "receipts" : "سند"}
             {filtered.length !== settlements.length && <span className="text-slate-400"> / {settlements.length}</span>}
           </span>
         </div>
@@ -752,7 +753,7 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-blue-700 hover:bg-blue-600 text-white"
             onClick={handleBulkPrint}
             disabled={layout.selected.size === 0 || bulkPrintBusy}
-            title={`طباعة (${layout.selected.size})`}
+            title={i18n.language?.startsWith("en") ? `Print (${layout.selected.size})` : `طباعة (${layout.selected.size})`}
           >
             {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
             طباعة ({layout.selected.size})
@@ -762,7 +763,9 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
             onClick={bulkPost}
             disabled={bulkBusy || selectedDrafts.length === 0}
-            title={selectedDrafts.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedDrafts.length} تحصيل`}
+            title={i18n.language?.startsWith("en")
+              ? selectedDrafts.length === 0 ? "No drafts selected" : `Post ${selectedDrafts.length} customer receipts`
+              : selectedDrafts.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedDrafts.length} تحصيل`}
           >
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             ترحيل ({selectedDrafts.length})
@@ -772,9 +775,13 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
             onClick={bulkDelete}
             disabled={bulkBusy || selectedDeletable.length === 0}
-            title={selectedDeletable.length === 0
-              ? "لا يمكن حذف التحصيلات المرحَّلة. التراجع غير مدعوم لهذه الشاشة."
-              : `حذف ${selectedDeletable.length} تحصيل (مسوّدة فقط)`}
+            title={i18n.language?.startsWith("en")
+              ? selectedDeletable.length === 0
+                ? "Posted receipts cannot be deleted."
+                : `Delete ${selectedDeletable.length} customer receipt drafts`
+              : selectedDeletable.length === 0
+                ? "لا يمكن حذف التحصيلات المرحَّلة. التراجع غير مدعوم لهذه الشاشة."
+                : `حذف ${selectedDeletable.length} تحصيل (مسوّدة فقط)`}
           >
             <Trash2 className="h-3.5 w-3.5" />
             حذف ({selectedDeletable.length})
@@ -797,7 +804,7 @@ ${sections}
           {isLoading ? (
             <div className="p-12 text-center text-muted-foreground text-sm">جاري التحميل…</div>
           ) : filtered.length === 0 ? (
-            <div className="p-12 text-center text-muted-foreground text-sm">لا توجد تحصيلات ضمن التصفية الحالية</div>
+            <div className="p-12 text-center text-muted-foreground text-sm">{localizeUiText("لا توجد تحصيلات ضمن التصفية الحالية")}</div>
           ) : (
             <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
               <colgroup>
@@ -834,7 +841,7 @@ ${sections}
                         style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
                         className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
                       >
-                        <span className="inline-flex items-center justify-center gap-1"><span>{col.label}</span>{col.type !== "none" && (<AdvFilterPopover colLabel={col.label || col.key} colType={col.type} value={colAdv[col.key]} active={isAdvActive(colAdv[col.key])} onApply={v => setColAdv(prev => ({ ...prev, [col.key]: v }))} onClear={() => clearColAdv(col.key)} />)}</span>
+                        <span className="inline-flex items-center justify-center gap-1"><span>{localizeUiText(col.label)}</span>{col.type !== "none" && (<AdvFilterPopover colLabel={localizeUiText(col.label) || col.key} colType={col.type} value={colAdv[col.key]} active={isAdvActive(colAdv[col.key])} onApply={v => setColAdv(prev => ({ ...prev, [col.key]: v }))} onClear={() => clearColAdv(col.key)} />)}</span>
                         <span
                           {...gripProps(col.key, idx)}
                           className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"

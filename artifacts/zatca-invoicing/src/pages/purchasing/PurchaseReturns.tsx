@@ -10,6 +10,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { usePermission } from "@/hooks/usePermission";
@@ -2489,7 +2490,7 @@ ${sections}
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filteredReturns.length} مردود
+            {filteredReturns.length} {i18n.language?.startsWith("en") ? "returns" : "مردود"}
             {filteredReturns.length !== returns_.length && <span className="text-slate-400"> / {returns_.length}</span>}
           </span>
         </div>
@@ -2506,7 +2507,7 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
             onClick={bulkPost}
             disabled={bulkBusy || selectedPostable.length === 0}
-            title={selectedPostable.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedPostable.length} مردود`}>
+            title={localizeUiText(selectedPostable.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : "ترحيل مردودات الشراء المحددة")}>
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
             ترحيل ({selectedPostable.length})
           </Button>
@@ -2517,7 +2518,7 @@ ${sections}
               startEdit(Number(Array.from(layout.selected)[0]));
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "فتح/تعديل المردود المحدَّد" : "حدِّد مردودًا واحدًا فقط"}>
+            title={localizeUiText(layout.selected.size === 1 ? "فتح/تعديل المردود المحدَّد" : "حدِّد مردودًا واحدًا فقط")}>
             <Pencil className="h-3.5 w-3.5" />
             تعديل
           </Button>
@@ -2528,7 +2529,7 @@ ${sections}
               duplicateReturn(Number(Array.from(layout.selected)[0]));
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من المردود المحدَّد" : "حدِّد مردودًا واحدًا فقط"}>
+            title={localizeUiText(layout.selected.size === 1 ? "إنشاء نسخة مماثلة من المردود المحدَّد" : "حدِّد مردودًا واحدًا فقط")}>
             <Copy className="h-3.5 w-3.5" />
             نسخة مماثلة
           </Button>
@@ -2536,7 +2537,7 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
             onClick={bulkUnpost}
             disabled={bulkBusy || selectedUnpostable.length === 0}
-            title={selectedUnpostable.length === 0 ? "لا توجد مردودات مرحَّلة ضمن المحدَّد" : `إلغاء ترحيل ${selectedUnpostable.length} مردود`}>
+            title={localizeUiText(selectedUnpostable.length === 0 ? "لا توجد مردودات مرحَّلة ضمن المحدَّد" : "إلغاء ترحيل المردودات المحددة")}>
             <Undo2 className="h-3.5 w-3.5" />
             إلغاء الترحيل ({selectedUnpostable.length})
           </Button>
@@ -2544,9 +2545,9 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
             onClick={bulkDelete}
             disabled={bulkBusy || selectedDeletable.length === 0}
-            title={selectedDeletable.length === 0
+            title={localizeUiText(selectedDeletable.length === 0
               ? "لا يمكن حذف المردودات المرحَّلة"
-              : `حذف ${selectedDeletable.length} مردود`}>
+              : "حذف مسودات المردودات المحددة")}>
             <Trash2 className="h-3.5 w-3.5" />
             حذف ({selectedDeletable.length})
           </Button>
@@ -2569,7 +2570,7 @@ ${sections}
             <div className="p-12 text-center text-muted-foreground text-sm">{tr("loading")}</div>
           ) : filteredReturns.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground text-sm">
-              {returns_.length === 0 ? tr("noReturns") : "لا توجد مردودات ضمن التصفية الحالية"}
+              {returns_.length === 0 ? tr("noReturns") : localizeUiText("لا توجد مردودات ضمن التصفية الحالية")}
             </div>
           ) : (
             <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>

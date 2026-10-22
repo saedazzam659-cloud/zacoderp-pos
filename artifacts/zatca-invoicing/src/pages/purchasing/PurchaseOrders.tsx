@@ -3,6 +3,7 @@ import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters, fmt2 } from "@/lib/format";
@@ -611,7 +612,7 @@ ${sections}
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filteredOrders.length} أمر
+            {filteredOrders.length} {i18n.language?.startsWith("en") ? "orders" : "أمر"}
             {filteredOrders.length !== orders.length && <span className="text-slate-400"> / {orders.length}</span>}
           </span>
         </div>
@@ -656,13 +657,13 @@ ${sections}
             }}
             onPopupBlocked={() => toast({ title: "تم حظر النافذة المنبثقة", description: "الرجاء السماح بالنوافذ المنبثقة للطباعة", variant: "destructive" })}
             onFetchFailed={(n) => toast({ title: `تعذّر تحميل ${n} أمر شراء بكامل بنوده`, variant: "destructive" })}
-            primaryLabel="طباعة"
+            primaryLabel={i18n.language?.startsWith("en") ? "Print" : "طباعة"}
           />
           <Button type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
             onClick={bulkConfirm}
             disabled={bulkBusy || selectedConfirmable.length === 0}
-            title={selectedConfirmable.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `تأكيد ${selectedConfirmable.length} أمر`}>
+            title={localizeUiText(selectedConfirmable.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : "تأكيد أوامر الشراء المحددة")}>
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
             تأكيد ({selectedConfirmable.length})
           </Button>
@@ -681,7 +682,7 @@ ${sections}
               navigate(`/purchasing/orders/${Array.from(layout.selected)[0]}`);
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "فتح/تعديل الأمر المحدَّد" : "حدِّد أمرًا واحدًا فقط"}>
+            title={localizeUiText(layout.selected.size === 1 ? "فتح/تعديل الأمر المحدَّد" : "حدِّد أمرًا واحدًا فقط")}>
             <Pencil className="h-3.5 w-3.5" />
             تعديل
           </Button>
@@ -692,7 +693,7 @@ ${sections}
               navigate(`/purchasing/orders/new?from=${Array.from(layout.selected)[0]}`);
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الأمر المحدَّد" : "حدِّد أمرًا واحدًا فقط"}>
+            title={localizeUiText(layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الأمر المحدَّد" : "حدِّد أمرًا واحدًا فقط")}>
             <Copy className="h-3.5 w-3.5" />
             نسخة مماثلة
           </Button>
@@ -700,7 +701,7 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
             onClick={bulkCancel}
             disabled={bulkBusy || selectedCancellable.length === 0}
-            title={selectedCancellable.length === 0 ? "الإلغاء متاح للمسوّدات فقط" : `إلغاء ${selectedCancellable.length} أمر`}>
+            title={localizeUiText(selectedCancellable.length === 0 ? "الإلغاء متاح للمسوّدات فقط" : "إلغاء أوامر الشراء المحددة")}>
             <XCircle className="h-3.5 w-3.5" />
             إلغاء ({selectedCancellable.length})
           </Button>
@@ -708,9 +709,9 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
             onClick={bulkDelete}
             disabled={bulkBusy || selectedDeletable.length === 0}
-            title={selectedDeletable.length === 0
+            title={localizeUiText(selectedDeletable.length === 0
               ? "لا يمكن حذف الأوامر المحوّلة أو الملغاة"
-              : `حذف ${selectedDeletable.length} أمر`}>
+              : "حذف أوامر الشراء المحددة")}>
             <Trash2 className="h-3.5 w-3.5" />
             حذف ({selectedDeletable.length})
           </Button>
@@ -733,7 +734,7 @@ ${sections}
             <div className="p-12 text-center text-muted-foreground text-sm">{t("common.loading")}</div>
           ) : filteredOrders.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground text-sm">
-              {orders.length === 0 ? t("purchasingPages.purchaseOrders.noOrders") : "لا توجد أوامر ضمن التصفية الحالية"}
+              {orders.length === 0 ? t("purchasingPages.purchaseOrders.noOrders") : localizeUiText("لا توجد أوامر ضمن التصفية الحالية")}
             </div>
           ) : (
             <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>

@@ -27,6 +27,7 @@
  */
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { localizeUiText } from "@/lib/localizedUiText";
 
 /* ───────────────────────── Status tone descriptor ─────────────────────── */
 
@@ -377,6 +378,7 @@ export function DocColorLegend({
 }: DocColorLegendProps): ReactNode {
   if (items.length === 0) return null;
   const sepSet = new Set(separatorAfter);
+  const localizedCaption = localizeUiText(caption);
   return (
     <div
       data-testid="row-color-legend"
@@ -385,11 +387,11 @@ export function DocColorLegend({
         className,
       )}
     >
-      <span className="text-[10.5px] font-semibold text-slate-500 me-1">{caption}</span>
+      <span className="text-[10.5px] font-semibold text-slate-500 me-1">{localizedCaption}</span>
       {items.map((item, idx) => {
         const tone = lookupTone(item.kind);
-        const label = item.labelOverride ?? tone.label;
-        const hint = item.hintOverride ?? tone.hint;
+        const label = localizeUiText(item.labelOverride ?? tone.label);
+        const hint = localizeUiText(item.hintOverride ?? tone.hint);
         return (
           <span key={`${item.kind}-${idx}`} className="contents">
             <button

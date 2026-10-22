@@ -4,6 +4,7 @@ import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters, fmt2 } from "@/lib/format";
@@ -661,7 +662,7 @@ ${sections}
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filteredInvoices.length} فاتورة
+            {filteredInvoices.length} {i18n.language?.startsWith("en") ? "invoices" : "فاتورة"}
             {filteredInvoices.length !== invoices.length && <span className="text-slate-400"> / {invoices.length}</span>}
           </span>
         </div>
@@ -715,13 +716,13 @@ ${sections}
             }}
             onPopupBlocked={() => toast({ title: "تم حظر النافذة المنبثقة", description: "الرجاء السماح بالنوافذ المنبثقة للطباعة", variant: "destructive" })}
             onFetchFailed={(n) => toast({ title: `تعذّر تحميل ${n} فاتورة بكامل بنودها`, variant: "destructive" })}
-            primaryLabel="طباعة"
+            primaryLabel={i18n.language?.startsWith("en") ? "Print" : "طباعة"}
           />
           <Button type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
             onClick={bulkPost}
             disabled={bulkBusy || selectedDrafts.length === 0}
-            title={selectedDrafts.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedDrafts.length} فاتورة`}>
+            title={localizeUiText(selectedDrafts.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : "ترحيل فواتير الشراء المحددة")}>
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             ترحيل ({selectedDrafts.length})
           </Button>
@@ -732,7 +733,7 @@ ${sections}
               navigate(`/purchasing/invoices/${selectedRows[0].id}`);
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "فتح/تعديل الفاتورة المحدَّدة" : "حدِّد فاتورة واحدة فقط"}>
+            title={localizeUiText(layout.selected.size === 1 ? "فتح/تعديل الفاتورة المحدَّدة" : "حدِّد فاتورة واحدة فقط")}>
             <Pencil className="h-3.5 w-3.5" />
             تعديل
           </Button>
@@ -743,7 +744,7 @@ ${sections}
               navigate(`/purchasing/invoices/new?from=${selectedRows[0].id}`);
             }}
             disabled={bulkBusy || layout.selected.size !== 1}
-            title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الفاتورة المحدَّدة" : "حدِّد فاتورة واحدة فقط"}>
+            title={localizeUiText(layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الفاتورة المحدَّدة" : "حدِّد فاتورة واحدة فقط")}>
             <Copy className="h-3.5 w-3.5" />
             نسخة مماثلة
           </Button>
@@ -751,11 +752,11 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
             onClick={bulkUnpost}
             disabled={bulkBusy || selectedPosted.length === 0 || !isAdmin}
-            title={!isAdmin
+            title={localizeUiText(!isAdmin
               ? "فك الترحيل متاح للمدير فقط"
               : selectedPosted.length === 0
                 ? "لا توجد فواتير مرحَّلة ضمن المحدَّد"
-                : `فك ترحيل ${selectedPosted.length} فاتورة`}>
+                : "فك ترحيل الفواتير المحددة")}>
             <Undo2 className="h-3.5 w-3.5" />
             فك الترحيل ({selectedPosted.length})
           </Button>
@@ -763,9 +764,9 @@ ${sections}
             className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
             onClick={bulkDelete}
             disabled={bulkBusy || selectedDeletable.length === 0}
-            title={selectedDeletable.length === 0
+            title={localizeUiText(selectedDeletable.length === 0
               ? "لا يمكن حذف الفواتير المرحَّلة. فك الترحيل أولاً."
-              : `حذف ${selectedDeletable.length} فاتورة (مسوّدة فقط)`}>
+              : "حذف مسودات الفواتير المحددة")}>
             <Trash2 className="h-3.5 w-3.5" />
             حذف ({selectedDeletable.length})
           </Button>
@@ -789,7 +790,7 @@ ${sections}
             <div className="p-12 text-center text-muted-foreground text-sm">{t("common.loading")}</div>
           ) : filteredInvoices.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground text-sm">
-              {invoices.length === 0 ? t("purchasingPages.purchaseInvoices.noInvoices") : "لا توجد فواتير ضمن التصفية الحالية"}
+              {invoices.length === 0 ? t("purchasingPages.purchaseInvoices.noInvoices") : localizeUiText("لا توجد فواتير ضمن التصفية الحالية")}
             </div>
           ) : (
             <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
