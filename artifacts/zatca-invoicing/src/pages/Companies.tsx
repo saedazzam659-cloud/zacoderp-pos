@@ -64,6 +64,13 @@ function StatCard({ label, value, color, border }: any) {
   );
 }
 
+// Company IDs are only unique inside their database. The SuperAdmin list
+// merges the central database with agent databases, so React row identity
+// must include the database scope as well as the numeric company ID.
+function companyRowKey(company: { id: number; agentInstanceId?: number | null }): string {
+  return `${company.agentInstanceId ?? "central"}:${company.id}`;
+}
+
 export default function Companies() {
   const { user, actingCompanyId, setActingCompany, token } = useAuth() as any;
   const [, setLocation] = useLocation();
@@ -105,7 +112,7 @@ export default function Companies() {
 
   const [search, setSearch]             = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
-  const [expandedRow, setExpandedRow]   = useState<number | null>(null);
+  const [expandedRow, setExpandedRow]   = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string; agent?: number } | null>(null);
   const [editTarget, setEditTarget]     = useState<{ id: number; name: string; agent?: number } | null>(null);
   const [editName, setEditName]         = useState("");
@@ -765,16 +772,17 @@ export default function Companies() {
             const StatusIcon = status.icon;
             const zatcaKey = company.zatcaPcsid ? "full" : company.zatcaCsid ? "half" : "none";
             const zatca    = ZATCA_CONFIG[zatcaKey];
-            const isExpanded = expandedRow === company.id;
+            const rowKey = companyRowKey(company);
+            const isExpanded = expandedRow === rowKey;
 
             return (
-              <div key={company.id} className={cn("transition-colors", status.rowBg)}>
+              <div key={rowKey} className={cn("transition-colors", status.rowBg)}>
 
                 {/* Main row */}
                 <div
                   className="grid items-center gap-4 px-4 py-3.5 cursor-pointer"
                   style={{ gridTemplateColumns: "2fr 0.5fr 0.8fr 1.2fr 0.85fr 0.9fr 0.9fr 0.9fr 0.9fr 0.8fr auto" }}
-                  onClick={() => setExpandedRow(isExpanded ? null : company.id)}
+                  onClick={() => setExpandedRow(isExpanded ? null : rowKey)}
                 >
                   {/* Company name */}
                   <div className="flex items-center gap-3 min-w-0">
@@ -868,7 +876,7 @@ export default function Companies() {
                   {/* Expand */}
                   <button
                     className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground"
-                    onClick={e => { e.stopPropagation(); setExpandedRow(isExpanded ? null : company.id); }}
+                    onClick={e => { e.stopPropagation(); setExpandedRow(isExpanded ? null : rowKey); }}
                   >
                     {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                   </button>
