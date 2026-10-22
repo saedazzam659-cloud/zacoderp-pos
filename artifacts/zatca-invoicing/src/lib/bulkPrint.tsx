@@ -53,6 +53,20 @@ export const escapeHtml = (s: any) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!),
   );
 
+function fmtCompanyAmount(value: number, company: CompanyInfo | null | undefined): string {
+  const rawPrecision = (company as any)?.decimalPlaces;
+  const configured = rawPrecision == null || String(rawPrecision).trim() === ""
+    ? Number.NaN
+    : Number(rawPrecision);
+  const dp = Number.isFinite(configured)
+    ? Math.max(0, Math.min(6, Math.trunc(configured)))
+    : 2;
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: dp,
+    maximumFractionDigits: dp,
+  }).format(Number(value || 0));
+}
+
 export function openPrintWindow(html: string, onBlocked?: () => void) {
   const w = window.open("", "_blank", "width=1100,height=800");
   if (!w) {
@@ -159,9 +173,9 @@ export function buildProfessionalDocsHtml<T>(
           <td class="num center">${i + 1}</td>
           <td>${escapeHtml(l.name)}</td>
           <td class="num end">${fmt2(l.qty)}${l.unit ? ` <span style="color:#64748b;font-size:9pt;">${escapeHtml(l.unit)}</span>` : ""}</td>
-          <td class="num end">${fmt2(l.unitPrice)}</td>
-          <td class="num end">${fmt2(l.vatAmount)}</td>
-          <td class="num end">${fmt2(l.total)}</td>
+          <td class="num end">${fmtCompanyAmount(l.unitPrice, company)}</td>
+          <td class="num end">${fmtCompanyAmount(l.vatAmount, company)}</td>
+          <td class="num end">${fmtCompanyAmount(l.total, company)}</td>
         </tr>`).join("");
 
     return `<section class="doc">
@@ -192,10 +206,10 @@ export function buildProfessionalDocsHtml<T>(
         </thead>
         <tbody>${linesHtml}</tbody>
         <tfoot>
-          ${tot.discount && tot.discount > 0 ? `<tr><td colspan="5" class="end">الخصم</td><td class="num end">${fmt2(tot.discount)}</td></tr>` : ""}
-          <tr><td colspan="5" class="end">المجموع قبل الضريبة</td><td class="num end">${fmt2(tot.subtotal)}</td></tr>
-          <tr><td colspan="5" class="end">إجمالي الضريبة</td><td class="num end">${fmt2(tot.vat)}</td></tr>
-          <tr><td colspan="5" class="end"><b>الإجمالي النهائي</b></td><td class="num end"><b>${fmt2(tot.total)}</b></td></tr>
+          ${tot.discount && tot.discount > 0 ? `<tr><td colspan="5" class="end">الخصم</td><td class="num end">${fmtCompanyAmount(tot.discount, company)}</td></tr>` : ""}
+          <tr><td colspan="5" class="end">المجموع قبل الضريبة</td><td class="num end">${fmtCompanyAmount(tot.subtotal, company)}</td></tr>
+          <tr><td colspan="5" class="end">إجمالي الضريبة</td><td class="num end">${fmtCompanyAmount(tot.vat, company)}</td></tr>
+          <tr><td colspan="5" class="end"><b>الإجمالي النهائي</b></td><td class="num end"><b>${fmtCompanyAmount(tot.total, company)}</b></td></tr>
         </tfoot>
       </table>
       <div class="signs">
@@ -274,9 +288,9 @@ export function buildCompactDocsHtml<T>(
         ${h.currency ? `<span><b>العملة:</b> ${escapeHtml(h.currency)}</span>` : ""}
       </div>
       <div class="row3">
-        <span>المجموع: <b>${fmt2(t.subtotal)}</b></span>
-        <span>الضريبة: <b>${fmt2(t.vat)}</b></span>
-        <span class="g">الإجمالي: <b>${fmt2(t.total)}</b></span>
+        <span>المجموع: <b>${fmtCompanyAmount(t.subtotal, company)}</b></span>
+        <span>الضريبة: <b>${fmtCompanyAmount(t.vat, company)}</b></span>
+        <span class="g">الإجمالي: <b>${fmtCompanyAmount(t.total, company)}</b></span>
       </div>
     </div>`;
   }).join("");
@@ -300,9 +314,9 @@ ${letterheadCss({ accent: "navy", size: "md" })}
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة</button>
 ${wrapWithLetterhead(letterhead, `<div class="grand">
-  <span>إجمالي المجموع: <b>${fmt2(grand.sub)}</b></span>
-  <span>إجمالي الضريبة: <b>${fmt2(grand.vat)}</b></span>
-  <span>الإجمالي العام: <b>${fmt2(grand.tot)}</b></span>
+  <span>إجمالي المجموع: <b>${fmtCompanyAmount(grand.sub, company)}</b></span>
+  <span>إجمالي الضريبة: <b>${fmtCompanyAmount(grand.vat, company)}</b></span>
+  <span>الإجمالي العام: <b>${fmtCompanyAmount(grand.tot, company)}</b></span>
 </div>
 ${cards}`)}
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;

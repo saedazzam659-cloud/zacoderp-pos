@@ -10,7 +10,7 @@
 //   - "thermal": narrow 80 mm receipt suitable for thermal printers
 
 import { safeLogoSrc } from "./export";
-import { currencySymbol, fmt2 } from "./format";
+import { currencySymbol } from "./format";
 import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "./printLetterhead";
 
 export type VoucherKind = "receipt" | "payment";
@@ -19,6 +19,7 @@ export type VoucherTemplate = "a4" | "thermal";
 export interface VoucherCompany {
   nameAr?: string | null;
   nameEn?: string | null;
+  decimalPlaces?: number | null;
   vatNumber?: string | null;
   crNumber?: string | null;
   phone?: string | null;
@@ -68,7 +69,16 @@ const escapeHtml = (s: any): string =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!),
   );
 
-const fmtMoney = (n: any): string => fmt2(n);
+const fmtMoney = (n: any, decimalPlaces?: number | null): string => {
+  const configured = decimalPlaces == null || String(decimalPlaces).trim() === ""
+    ? Number.NaN
+    : Number(decimalPlaces);
+  const dp = Number.isFinite(configured) ? Math.max(0, Math.min(6, Math.trunc(configured))) : 2;
+  return Number(n ?? 0).toLocaleString("en-US", {
+    minimumFractionDigits: dp,
+    maximumFractionDigits: dp,
+  });
+};
 
 function paymentMethodLabel(m?: string | null): string {
   if (m === "cash")  return "نقدي";
@@ -201,7 +211,7 @@ ${wrapWithLetterhead(letterhead, `<div class="title-bar">
   ${counterpartyVat ? `<div style="font-size:11px;color:#6b7280;margin-top:4px;">الرقم الضريبي: ${counterpartyVat}</div>` : ""}
 </div>
 <div class="amount-box">
-  <div class="digits">${fmtMoney(amountNumber)} ${escapeHtml(currencySym)}</div>
+  <div class="digits">${fmtMoney(amountNumber, company?.decimalPlaces)} ${escapeHtml(currencySym)}</div>
   <div class="words">${escapeHtml(amountInWords)}</div>
 </div>
 ${doc.notes ? `<div class="notes-box"><span class="lbl">ملاحظات</span>${escapeHtml(doc.notes)}</div>` : ""}
@@ -262,7 +272,7 @@ ${company?.phone ? `<div class="center" style="font-size:10px;">جوال: ${esca
 <div class="row"><span class="lbl">${escapeHtml(partyLabel)}</span><span class="val">${counterpartyName}</span></div>
 <div class="row"><span class="lbl">طريقة الدفع</span><span class="val">${escapeHtml(paymentMethodLabel(doc.paymentMethod))}</span></div>
 <div class="row"><span class="lbl">الحساب</span><span class="val" style="font-size:10px;">${accountLabel}</span></div>
-<div class="amount">${fmtMoney(amountNumber)} ${escapeHtml(currencySym)}</div>
+<div class="amount">${fmtMoney(amountNumber, company?.decimalPlaces)} ${escapeHtml(currencySym)}</div>
 ${doc.notes ? `<div class="notes"><span class="bold">ملاحظات: </span>${escapeHtml(doc.notes)}</div>` : ""}
 <div class="footer">شكراً لتعاملكم</div>
 <script>setTimeout(()=>window.print(),300);</script>

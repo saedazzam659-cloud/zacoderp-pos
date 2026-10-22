@@ -23,8 +23,16 @@ function esc(s: any): string {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 }
 
-const fmtMoney = (n: any): string =>
-  Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtMoney = (n: any, decimalPlaces?: number | null): string => {
+  const configured = decimalPlaces == null || String(decimalPlaces).trim() === ""
+    ? Number.NaN
+    : Number(decimalPlaces);
+  const dp = Number.isFinite(configured) ? Math.max(0, Math.min(6, Math.trunc(configured))) : 2;
+  return Number(n || 0).toLocaleString("en-US", {
+    minimumFractionDigits: dp,
+    maximumFractionDigits: dp,
+  });
+};
 
 // ── Arabic number-to-words (tafqeet) → "فقط … ريال سعودي لا غير".
 function numberToArabicWords(n: number): string {
@@ -73,6 +81,7 @@ function numberToArabicWords(n: number): string {
 export interface CashVoucherCompany {
   nameAr?: string | null;
   nameEn?: string | null;
+  decimalPlaces?: number | null;
   crNumber?: string | null;
   vatNumber?: string | null;
   phone?: string | null;
@@ -154,16 +163,16 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
       <td class="num">${esc(l.code ?? "")}</td>
       <td>${esc(l.name ?? "—")}</td>
       <td>${esc(l.description ?? "")}</td>
-      ${showNetCol ? `<td class="num">${fmtMoney(net)}</td>` : ""}
-      <td class="num">${fmtMoney(net + tax)}</td>
+      ${showNetCol ? `<td class="num">${fmtMoney(net, company?.decimalPlaces)}</td>` : ""}
+      <td class="num">${fmtMoney(net + tax, company?.decimalPlaces)}</td>
     </tr>`;
       }).join("\n")
     : `    <tr>
       <td class="num">${esc(account?.code ?? "")}</td>
       <td>${esc(account?.name ?? "—")}</td>
       <td>${esc(desc || "")}</td>
-      ${showNetCol ? `<td class="num">${fmtMoney(amount)}</td>` : ""}
-      <td class="num">${fmtMoney(amount)}</td>
+      ${showNetCol ? `<td class="num">${fmtMoney(amount, company?.decimalPlaces)}</td>` : ""}
+      <td class="num">${fmtMoney(amount, company?.decimalPlaces)}</td>
     </tr>`;
   const footNet = hasLines
     ? lines!.reduce((s, l) => s + Number(l.amount || 0), 0)
@@ -272,8 +281,8 @@ ${bodyRows}
   <tfoot>
     <tr>
       <td colspan="3" style="text-align:left;">الإجمالي</td>
-      ${showNetCol ? `<td class="num">${fmtMoney(footNet)}</td>` : ""}
-      <td class="num">${fmtMoney(footTotal)}</td>
+      ${showNetCol ? `<td class="num">${fmtMoney(footNet, company?.decimalPlaces)}</td>` : ""}
+      <td class="num">${fmtMoney(footTotal, company?.decimalPlaces)}</td>
     </tr>
   </tfoot>
 </table>

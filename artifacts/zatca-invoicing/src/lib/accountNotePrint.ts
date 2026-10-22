@@ -18,9 +18,17 @@ import type { AccountNote, AccountNoteType } from "@/lib/accountNotesApi";
 // Number formatter mirroring SalesPrintModal: Arabic-Indic digits with all
 // invisible BiDi control codepoints stripped so Windows fonts never render a
 // stray ".notdef" vertical-stroke next to the totals.
-const NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const STRIP_INVISIBLE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
-const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+const fmt = (n: any, decimalPlaces = 2) => {
+  const raw = decimalPlaces == null || String(decimalPlaces).trim() === ""
+    ? Number.NaN
+    : Number(decimalPlaces);
+  const dp = Number.isFinite(raw) ? Math.max(0, Math.min(6, Math.trunc(raw))) : 2;
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: dp,
+    maximumFractionDigits: dp,
+  }).format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+};
 
 function esc(s: any): string {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -179,9 +187,9 @@ export async function printAccountNote(opts: PrintAccountNoteOpts): Promise<void
     : `<div style="width:110px;height:110px;border:1.5px dashed #999;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#999;font-size:10px;text-align:center;background:#fafafa;">QR<br/>ZATCA</div>`;
 
   const totalsRows = `
-    <div class="trow"><span style="color:#666">المبلغ قبل الضريبة — Amount</span><span class="mono">${fmt(amount)} ${sym}</span></div>
-    ${note.vatEnabled ? `<div class="trow"><span style="color:#666">ضريبة القيمة المضافة (${fmt(note.vatRate)}%) — VAT</span><span class="mono" style="color:#b45309;">${fmt(vat)} ${sym}</span></div>` : ""}
-    <div class="trow grand"><span>الإجمالي شامل الضريبة — Total</span><span class="mono">${fmt(total)} ${sym}</span></div>`;
+    <div class="trow"><span style="color:#666">المبلغ قبل الضريبة — Amount</span><span class="mono">${fmt(amount, company?.decimalPlaces)} ${sym}</span></div>
+    ${note.vatEnabled ? `<div class="trow"><span style="color:#666">ضريبة القيمة المضافة (${fmt(note.vatRate)}%) — VAT</span><span class="mono" style="color:#b45309;">${fmt(vat, company?.decimalPlaces)} ${sym}</span></div>` : ""}
+    <div class="trow grand"><span>الإجمالي شامل الضريبة — Total</span><span class="mono">${fmt(total, company?.decimalPlaces)} ${sym}</span></div>`;
 
   const docMetaRows = `
     <div class="row"><span class="k">رقم الإشعار</span><span class="v">${esc(note.noteNumber ?? String(note.id))}</span></div>

@@ -40,6 +40,7 @@
 - [Replit-hosted latency observation](replit-hosting-latency.md) — user reports branch, warehouse, and item-loading delays only on the Replit-hosted deployment.
 - [Controller-link state integrity](dual-platform-agent-control.md) — preserve exact concurrency checks and use idempotent recovery after remote shell-sync failures.
 - [Web and shared UI index](web-shared-index.md) — browser forms, shared UI, dates, catalog, reports, and cross-cutting web behavior.
+- [Company print decimal precision](company-print-decimal-precision.md) — visible monetary print values follow company precision; keep quantities and fiscal payload rules separate.
 - [Compact sales branch stock](sales-branch-stock-compact-ui.md) — show branch balances without changing invoice item-field width or line height.
 - [Item import requirements](item-import-requirements.md) — imports require code, Arabic name, and a valid company unit; reject the whole file before writes when required data is incomplete.
 - [Company master-data transfer boundary](master-data-transfer-boundary.md) — transfer only setup data; exclude transactions and balances, and remap relationships by company-local codes.
