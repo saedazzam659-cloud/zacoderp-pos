@@ -24,6 +24,7 @@ interface Provider {
 interface Connection {
   id: number; provider: string; displayName: string; status: string;
   lastSyncAt: string | null; lastSyncStatus: string | null; totalSyncs: number;
+  storeName?: string | null; storeId?: string | null;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -202,7 +203,8 @@ export default function IntegrationsMarketplace() {
             {zidConnection?.status === "connected" && (
               <Badge className="mt-2 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
                 <CheckCircle2 className="w-3 h-3 ml-1" />
-                متصل{zidConnection.displayName ? ` — ${zidConnection.displayName}` : ""}
+                متصل — متجر {zidConnection.storeName || zidConnection.displayName}
+                {zidConnection.storeId ? ` (المعرّف: ${zidConnection.storeId})` : ""}
               </Badge>
             )}
           </div>
@@ -241,9 +243,10 @@ export default function IntegrationsMarketplace() {
                   <Card key={c.id} className="p-4 flex items-center gap-3">
                     <div className="w-12 h-12 rounded-lg bg-emerald-50 flex items-center justify-center text-lg font-bold text-emerald-700">Z</div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold truncate">{c.displayName}</div>
+                      <div className="font-semibold truncate">{c.storeName || c.displayName}</div>
                       <div className="text-xs text-slate-500 mt-0.5">
-                        {c.status === "connected" ? "متصل" : "بانتظار التفويض"}
+                        {c.status === "connected" ? "متصل" : c.status === "awaiting_confirmation" ? "بانتظار تأكيد المتجر" : "بانتظار التفويض"}
+                        {c.status === "connected" && c.storeId ? ` · معرّف المتجر: ${c.storeId}` : ""}
                       </div>
                     </div>
                     <Button variant="outline" size="sm" onClick={loadZidOrders}>عرض الطلبات</Button>

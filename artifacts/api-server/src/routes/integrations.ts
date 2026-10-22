@@ -18,8 +18,8 @@
  */
 import { Router } from "express";
 import { db, companiesTable, integrationConnectionsTable, integrationSyncRunsTable } from "@workspace/db";
-import { eq, and, desc, sql } from "drizzle-orm";
-import { createHash, randomBytes } from "crypto";
+import { eq, and, desc, sql, ne } from "drizzle-orm";
+import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { encryptSecret, decryptSecret } from "../lib/encryption.js";
 import { PROVIDERS, findProvider } from "../lib/integrations/catalog.js";
 import { getAdapter } from "../lib/integrations/adapters.js";
@@ -105,6 +105,8 @@ router.get("/zid/oauth/callback", async (req, res) => {
     res.status(400).send("انتهت صلاحية طلب الربط أو أنه غير صالح. أعد المحاولة."); return;
   }
   const [company] = await db.select({
+    nameAr: companiesTable.nameAr,
+    nameEn: companiesTable.nameEn,
     menuPermissions: companiesTable.menuPermissions,
   }).from(companiesTable).where(eq(companiesTable.id, connection.companyId)).limit(1);
   let permissions: Record<string, unknown> = {};
@@ -171,20 +173,24 @@ router.get("/zid/oauth/callback", async (req, res) => {
       refreshToken: tokens.refresh_token,
       expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
     }));
+    const confirmationToken = randomBytes(32).toString("hex");
     await db.update(integrationConnectionsTable).set({
-      status: "connected",
+      status: "awaiting_confirmation",
       credentialsEnc: encrypted,
       config: {
         invoiceSource: config.invoiceSource === "erp" ? "erp" : "zid",
         storeId: String(storeId).slice(0, 120),
         storeName: String(store.name ?? store.title ?? "").slice(0, 160),
-        connectedAt: new Date().toISOString(),
+        confirmationTokenHash: createHash("sha256").update(confirmationToken).digest("hex"),
+        confirmationExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
       },
       updatedAt: new Date(),
     }).where(eq(integrationConnectionsTable.id, connection.id));
-    res.status(200).type("html").send(
-      "<!doctype html><meta charset=utf-8><title>Zid</title><p dir=rtl>تم ربط متجر Zid بنجاح. يمكنك العودة إلى النظام.</p>",
-    );
+    const storeName = String(store.name ?? store.title ?? "متجر Zid").slice(0, 160);
+    res.status(200).type("html").send(renderZidStoreConfirmation(
+      connection.id, confirmationToken, storeName, String(storeId).slice(0, 120),
+      String(company?.nameAr ?? company?.nameEn ?? `شركة ERP ${connection.companyId}`),
+    ));
   } catch (error) {
     req.log?.error?.({ error, connectionId: connection.id }, "Zid OAuth callback failed");
     await db.update(integrationConnectionsTable).set({
@@ -194,6 +200,132 @@ router.get("/zid/oauth/callback", async (req, res) => {
     }).where(eq(integrationConnectionsTable.id, connection.id));
     res.status(502).send("لم يكتمل الربط مع Zid. أعد بدء التفويض من النظام.");
   }
+});
+
+router.post("/zid/oauth/confirm", async (req, res) => {
+  const connectionId = Number(req.body?.connectionId);
+  const token = typeof req.body?.confirmationToken === "string" ? req.body.confirmationToken : "";
+  if (!Number.isInteger(connectionId) || connectionId < 1 || !/^[a-f0-9]{64}$/.test(token)) {
+    res.status(400).json({ error: "بيانات تأكيد متجر Zid غير صالحة" }); return;
+  }
+  const outcome = await db.transaction(async tx => {
+    const [connection] = await tx.select().from(integrationConnectionsTable).where(and(
+      eq(integrationConnectionsTable.id, connectionId),
+      eq(integrationConnectionsTable.provider, "zid"),
+      eq(integrationConnectionsTable.status, "awaiting_confirmation"),
+    )).limit(1);
+    const config = connection?.config ?? {};
+    const expectedHash = String(config.confirmationTokenHash ?? "");
+    const providedHash = createHash("sha256").update(token).digest("hex");
+    if (!connection || !/^[a-f0-9]{64}$/.test(expectedHash) ||
+        !timingSafeEqual(Buffer.from(expectedHash), Buffer.from(providedHash)) ||
+        !Number.isFinite(Date.parse(String(config.confirmationExpiresAt ?? ""))) ||
+        Date.parse(String(config.confirmationExpiresAt)) < Date.now()) {
+      return { ok: false as const, status: 410, error: "انتهت صلاحية تأكيد المتجر. أعد بدء الربط." };
+    }
+    const storeId = String(config.storeId ?? "");
+    const storeName = String(config.storeName ?? "");
+    if (!storeId) return { ok: false as const, status: 409, error: "لم يتمكن Zid من تحديد المتجر" };
+
+    const [company] = await tx.select({
+      nameAr: companiesTable.nameAr,
+      nameEn: companiesTable.nameEn,
+      menuPermissions: companiesTable.menuPermissions,
+    })
+      .from(companiesTable).where(eq(companiesTable.id, connection.companyId)).limit(1);
+    let permissions: Record<string, unknown> = {};
+    try { permissions = JSON.parse(company?.menuPermissions ?? "{}"); } catch { /* fail closed */ }
+    const erpSource = permissions.zid_invoice_source_erp === true;
+    const zidSource = permissions.zid_invoice_source_zid === true;
+    const currentSource = erpSource === zidSource ? null : (erpSource ? "erp" : "zid");
+    if (permissions.zid_integration !== true || currentSource !== config.invoiceSource) {
+      return { ok: false as const, status: 409, error: "تغيّرت صلاحيات Zid أو مصدر الفاتورة؛ أعد ضبطهما وابدأ الربط من جديد." };
+    }
+
+    // Serialize both store and company claims. This prevents the same Zid
+    // store being claimed by two ERP companies, and prevents one ERP company
+    // from confirming two different stores at the same time.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"zid-store:" + storeId}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"zid-company:" + connection.companyId}))`);
+    const [otherCompany] = await tx.select({ id: integrationConnectionsTable.id })
+      .from(integrationConnectionsTable).where(and(
+        eq(integrationConnectionsTable.provider, "zid"),
+        eq(integrationConnectionsTable.status, "connected"),
+        ne(integrationConnectionsTable.companyId, connection.companyId),
+        sql`${integrationConnectionsTable.config}->>'storeId' = ${storeId}`,
+      )).limit(1);
+    if (otherCompany) {
+      return { ok: false as const, status: 409, error: "هذا متجر Zid مرتبط بالفعل بشركة ERP أخرى. لم يتم تفعيل الربط." };
+    }
+    const [otherStore] = await tx.select({ id: integrationConnectionsTable.id })
+      .from(integrationConnectionsTable).where(and(
+        eq(integrationConnectionsTable.provider, "zid"),
+        eq(integrationConnectionsTable.status, "connected"),
+        eq(integrationConnectionsTable.companyId, connection.companyId),
+        ne(integrationConnectionsTable.id, connection.id),
+        sql`${integrationConnectionsTable.config}->>'storeId' <> ${storeId}`,
+      )).limit(1);
+    if (otherStore) {
+      return { ok: false as const, status: 409, error: "هذه الشركة مرتبطة بمتجر Zid مختلف. افصل الربط الحالي قبل اختيار متجر آخر." };
+    }
+
+    await tx.update(integrationConnectionsTable).set({
+      status: "disconnected",
+      updatedAt: new Date(),
+    }).where(and(
+      eq(integrationConnectionsTable.provider, "zid"),
+      eq(integrationConnectionsTable.status, "connected"),
+      eq(integrationConnectionsTable.companyId, connection.companyId),
+      sql`${integrationConnectionsTable.config}->>'storeId' = ${storeId}`,
+    ));
+    await tx.update(integrationConnectionsTable).set({
+      status: "connected",
+      displayName: storeName || "Zid",
+      config: {
+        invoiceSource: config.invoiceSource,
+        storeId,
+        storeName,
+        connectedAt: new Date().toISOString(),
+      },
+      updatedAt: new Date(),
+    }).where(eq(integrationConnectionsTable.id, connection.id));
+    return {
+      ok: true as const,
+      storeName,
+      storeId,
+      companyName: String(company?.nameAr ?? company?.nameEn ?? `شركة ERP ${connection.companyId}`),
+    };
+  });
+  if (!outcome.ok) {
+    res.status(outcome.status).type("html").send(renderZidConfirmationResult(outcome.error, false)); return;
+  }
+  res.type("html").send(renderZidConfirmationResult(
+    `تم ربط متجر ${outcome.storeName || outcome.storeId} بشركة ERP ${outcome.companyName}.`, true,
+  ));
+});
+
+router.post("/zid/oauth/cancel", async (req, res) => {
+  const connectionId = Number(req.body?.connectionId);
+  const token = typeof req.body?.confirmationToken === "string" ? req.body.confirmationToken : "";
+  if (!Number.isInteger(connectionId) || connectionId < 1 || !/^[a-f0-9]{64}$/.test(token)) {
+    res.status(400).json({ error: "بيانات إلغاء ربط Zid غير صالحة" }); return;
+  }
+  const [connection] = await db.select().from(integrationConnectionsTable).where(and(
+    eq(integrationConnectionsTable.id, connectionId),
+    eq(integrationConnectionsTable.provider, "zid"),
+    eq(integrationConnectionsTable.status, "awaiting_confirmation"),
+  )).limit(1);
+  const expectedHash = String(connection?.config?.confirmationTokenHash ?? "");
+  const providedHash = createHash("sha256").update(token).digest("hex");
+  if (!connection || !/^[a-f0-9]{64}$/.test(expectedHash) ||
+      !timingSafeEqual(Buffer.from(expectedHash), Buffer.from(providedHash))) {
+    res.status(410).type("html").send(renderZidConfirmationResult("انتهت صلاحية تأكيد المتجر أو أنه غير صالح", false)); return;
+  }
+  await db.delete(integrationConnectionsTable).where(and(
+    eq(integrationConnectionsTable.id, connectionId),
+    eq(integrationConnectionsTable.status, "awaiting_confirmation"),
+  ));
+  res.type("html").send(renderZidConfirmationResult("تم إلغاء الربط، ولم يتم تفعيل المتجر.", false));
 });
 
 // ─── Catalog (no auth needed beyond the global authMiddleware) ──────────
@@ -226,11 +358,16 @@ router.get("/connections", async (req, res) => {
       lastSyncError: integrationConnectionsTable.lastSyncError,
       totalSyncs: integrationConnectionsTable.totalSyncs,
       createdAt: integrationConnectionsTable.createdAt,
+      config: integrationConnectionsTable.config,
     })
     .from(integrationConnectionsTable)
     .where(eq(integrationConnectionsTable.companyId, companyId))
     .orderBy(desc(integrationConnectionsTable.createdAt));
-  res.json({ connections: rows });
+  res.json({ connections: rows.map(({ config, ...row }) => ({
+    ...row,
+    storeName: row.provider === "zid" && row.status === "connected" ? String(config.storeName ?? "") || null : null,
+    storeId: row.provider === "zid" && row.status === "connected" ? String(config.storeId ?? "") || null : null,
+  })) });
 });
 
 router.get("/zid/orders", async (req, res) => {
@@ -320,12 +457,57 @@ router.get("/zid/orders/:orderId/erp-invoice", async (req, res) => {
   res.json({ invoiceId: Number(rows[0].id), docNumber: rows[0].docNumber ?? null });
 });
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+  }[char]!));
+}
+
+function renderZidStoreConfirmation(connectionId: number, confirmationToken: string, storeName: string, storeId: string, companyName: string): string {
+  const hiddenFields = `<input type="hidden" name="connectionId" value="${connectionId}">
+    <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">`;
+  return `<!doctype html><html lang="ar"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>تأكيد متجر Zid</title>
+    <body style="font-family:system-ui,sans-serif;max-width:560px;margin:10vh auto;padding:24px;color:#172033" dir="rtl">
+      <h1 style="font-size:22px">تأكيد المتجر والشركة قبل إتمام الربط</h1>
+      <p>لن يتفعّل الربط حتى تتأكد أن المتجر يتبع شركة ERP المحددة.</p>
+      <section style="border:1px solid #cbd5e1;border-radius:12px;padding:16px;margin:20px 0">
+        <div style="font-size:12px;color:#64748b">شركة ERP التي بدأت الربط</div><strong>${escapeHtml(companyName)}</strong>
+      </section>
+      <section style="border:1px solid #cbd5e1;border-radius:12px;padding:16px;margin:20px 0">
+        <div style="font-size:12px;color:#64748b">اسم المتجر</div><strong>${escapeHtml(storeName || "متجر Zid")}</strong>
+        <div style="font-size:12px;color:#64748b;margin-top:12px">معرّف المتجر</div><code dir="ltr">${escapeHtml(storeId)}</code>
+      </section>
+      <div style="display:flex;gap:10px">
+        <form action="/api/integrations/zid/oauth/confirm" method="post">${hiddenFields}
+          <button style="background:#047857;color:white;border:0;border-radius:8px;padding:10px 16px;cursor:pointer">نعم، اربط هذا المتجر</button>
+        </form>
+        <form action="/api/integrations/zid/oauth/cancel" method="post">${hiddenFields}
+          <button style="background:white;border:1px solid #cbd5e1;border-radius:8px;padding:10px 16px;cursor:pointer">إلغاء</button>
+        </form>
+      </div>
+    </body></html>`;
+}
+
+function renderZidConfirmationResult(message: string, success: boolean): string {
+  const color = success ? "#047857" : "#b91c1c";
+  return `<!doctype html><html lang="ar"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>حالة ربط Zid</title>
+    <body style="font-family:system-ui,sans-serif;max-width:560px;margin:10vh auto;padding:24px;color:#172033" dir="rtl">
+      <h1 style="font-size:22px;color:${color}">${escapeHtml(message)}</h1>
+      <p>يمكنك إغلاق هذه الصفحة والعودة إلى النظام.</p>
+    </body></html>`;
+}
+
 router.post("/connections", async (req, res) => {
   const companyId = (req as { user?: { companyId?: number; id?: number } }).user?.companyId;
   const userId    = (req as { user?: { id?: number } }).user?.id;
   if (!companyId) { res.status(401).json({ error: "غير مخوّل" }); return; }
 
   const provider = String(req.body?.provider ?? "");
+  if (provider === "zid") {
+    res.status(400).json({ error: "اربط Zid عبر تفويض OAuth الرسمي، وليس من نموذج الاتصال العام" }); return;
+  }
   const info = findProvider(provider);
   if (!info)                       { res.status(400).json({ error: "مزوّد غير معروف" }); return; }
   if (info.status === "coming_soon") { res.status(400).json({ error: `${info.nameAr} متاح قريباً — لم يكتمل التطوير بعد` }); return; }
@@ -382,6 +564,9 @@ router.get("/connections/:id", async (req, res) => {
 router.patch("/connections/:id", async (req, res) => {
   const conn = await loadConn(req, res);
   if (!conn) return;
+  if (conn.provider === "zid") {
+    res.status(400).json({ error: "تغييرات ربط Zid تتم عبر التفويض الرسمي فقط" }); return;
+  }
   const upd: Record<string, unknown> = { updatedAt: new Date() };
   if (typeof req.body?.displayName === "string") upd.displayName = req.body.displayName.trim().slice(0, 120);
   if (typeof req.body?.baseUrl === "string")     upd.baseUrl = req.body.baseUrl.trim() || null;
@@ -409,6 +594,9 @@ router.delete("/connections/:id", async (req, res) => {
 router.post("/connections/:id/test", async (req, res) => {
   const conn = await loadConn(req, res);
   if (!conn) return;
+  if (conn.provider === "zid") {
+    res.status(400).json({ error: "يتم اختبار ربط Zid من خلال تفويض OAuth الرسمي" }); return;
+  }
   const adapter = getAdapter(conn.provider);
   if (!adapter) { res.status(400).json({ error: "لا يوجد محوّل لهذا المزوّد" }); return; }
   try {
@@ -430,6 +618,9 @@ router.post("/connections/:id/test", async (req, res) => {
 router.post("/connections/:id/sync", async (req, res) => {
   const conn = await loadConn(req, res);
   if (!conn) return;
+  if (conn.provider === "zid") {
+    res.status(400).json({ error: "مزامنة Zid تستخدم مسارات الطلبات المخصصة" }); return;
+  }
   const result = await runSync(conn, "manual");
   res.status(result.status === "failed" ? 502 : 200).json(result);
 });
