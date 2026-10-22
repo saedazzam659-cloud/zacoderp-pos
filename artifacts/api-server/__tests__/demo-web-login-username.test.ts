@@ -12,13 +12,14 @@ const source = (username: string, demoDeviceIsolation: boolean, hasHistory = fal
   hasHistory,
 });
 
-test("only four ASCII demo letters qualify, in any casing", () => {
-  assert.equal(ASCII_DEMO_USERNAME_VARIANTS.length, 16);
+test("only known ASCII demo usernames qualify, in any casing", () => {
+  assert.equal(ASCII_DEMO_USERNAME_VARIANTS.length, 80);
   for (const variant of ASCII_DEMO_USERNAME_VARIANTS) {
     assert.equal(isAsciiDemoUsername(variant), true);
-    assert.equal(selectDemoWebUsernameFallback(variant, [source("demo", true)])?.user.username, "demo");
+    const canonical = variant.toLowerCase();
+    assert.equal(selectDemoWebUsernameFallback(variant, [source(canonical, true)])?.user.username, canonical);
   }
-  for (const value of [" demos", "demo ", "dëmo", "demо", "admin", "demo_1", 123]) {
+  for (const value of [" demos", "demo ", "dëmo", "demо", "admin", "demo_1", "tafrah1", "tаfrah", 123]) {
     assert.equal(isAsciiDemoUsername(value), false);
     assert.equal(selectDemoWebUsernameFallback(value, [source("demo", true)]), null);
   }
@@ -28,6 +29,8 @@ test("requires existing isolated source or sticky workspace history", () => {
   assert.equal(selectDemoWebUsernameFallback("DEMO", [source("demo", false)]), null);
   assert.equal(selectDemoWebUsernameFallback("DeMo", [source("demo", false, true)])?.user.username, "demo");
   assert.equal(selectDemoWebUsernameFallback("DEMO", [source("Demo", true)])?.user.username, "Demo");
+  assert.equal(selectDemoWebUsernameFallback("TAFRAH", [source("tafrah", true)])?.user.username, "tafrah");
+  assert.equal(selectDemoWebUsernameFallback("tAfRaH", [source("Tafrah", false, true)])?.user.username, "Tafrah");
   assert.equal(selectDemoWebUsernameFallback("DEMO", [{
     user: { ...source("demo", true).user, isDemoShadow: true },
     hasHistory: true,
@@ -46,7 +49,7 @@ test("case-colliding demo sources never select an arbitrary account", () => {
 
 test("fallback is restricted to ERP web demo preflight or phone login", () => {
   const web = {
-    username: "DEMO", appChannel: undefined, surface: undefined,
+    username: "TAFRAH", appChannel: undefined, surface: undefined,
     agentDomainHit: false, isLocalAgent: false,
     intent: "check_demo_preparation", demoPhone: undefined,
   };
