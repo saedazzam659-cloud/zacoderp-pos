@@ -474,6 +474,6 @@ export function buildToneTooltip(input: {
   if (input.zatcaStatus === "approved") reasons.push("مؤكَّدة من زاتكا ✓");
   if (input.zatcaStatus === "rejected") reasons.push("مرفوضة من زاتكا ✗");
   return reasons.length
-    ? `${reasons.join(" · ")} — اضغط للتحديد، مرتين للفتح`
-    : "اضغط لتحديد الصف، أو مرتين للفتح";
+    ? `${reasons.map(localizeUiText).join(" · ")} — ${localizeUiText("اضغط للتحديد، مرتين للفتح")}`
+    : localizeUiText("اضغط لتحديد الصف، أو مرتين للفتح");
 }

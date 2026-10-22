@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -190,6 +191,7 @@ export default function SalesReps() {
     const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
+  const { i18n } = useTranslation();
   const qc = useQueryClient();
   const headers = { Authorization: `Bearer ${token}` };
   const cid = user?.companyId;
@@ -342,7 +344,7 @@ export default function SalesReps() {
   }, [layout.dataOrder, layout.hiddenSet, COLUMNS]);
   const reorderableCols = useMemo(() => layout.dataOrder
     .map(k => COLUMNS.find(c => c.key === k)!)
-    .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
+    .map(c => ({ key: c.key, label: localizeUiText(c.label) })), [layout.dataOrder, COLUMNS, i18n.language]);
   const allFilteredIds = useMemo(() => filtered.map(r => r.id), [filtered]);
 
   async function exportCsv() {
@@ -603,7 +605,7 @@ export default function SalesReps() {
           <div className="relative">
             <Search className="absolute end-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
-              placeholder="بحث بالاسم، الكود، الهاتف، المنطقة…"
+              placeholder={localizeUiText("بحث بالاسم، الكود، الهاتف، المنطقة…")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pe-7 h-7 text-xs w-64"
@@ -619,18 +621,20 @@ export default function SalesReps() {
               onClick={clearAllColFilters}
             >
               <X className="h-3.5 w-3.5 me-1" />
-              مسح فلاتر الأعمدة
+              {localizeUiText("مسح فلاتر الأعمدة")}
             </Button>
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {filtered.length} مندوب
+            {filtered.length} {i18n.language?.startsWith("en") ? "sales reps" : "مندوب"}
             {filtered.length !== reps.length && <span className="text-slate-400"> / {reps.length}</span>}
           </span>
         </div>
         <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
           <span className="text-emerald-800">
-            تم تحديد {layout.selected.size} مندوب
+            {i18n.language?.startsWith("en")
+              ? `Selected ${layout.selected.size} sales reps`
+              : `تم تحديد ${layout.selected.size} مندوب`}
           </span>
         </AuditGridBulkBar>
       </div>
@@ -1131,7 +1135,7 @@ export default function SalesReps() {
                         disabled={allFilteredIds.length === 0}
                       />
                     ) : (
-                      <span className="inline-flex items-center gap-1"><span className="inline-block truncate">{col.label}</span>{col.type !== "none" && (<AdvFilterPopover colLabel={col.label || col.key} colType={col.type} value={colAdv[col.key]} active={isAdvActive(colAdv[col.key])} onApply={v => setColAdv(prev => ({ ...prev, [col.key]: v }))} onClear={() => clearColAdv(col.key)} />)}</span>
+                      <span className="inline-flex items-center gap-1"><span className="inline-block truncate">{localizeUiText(col.label)}</span>{col.type !== "none" && (<AdvFilterPopover colLabel={localizeUiText(col.label) || col.key} colType={col.type} value={colAdv[col.key]} active={isAdvActive(colAdv[col.key])} onApply={v => setColAdv(prev => ({ ...prev, [col.key]: v }))} onClear={() => clearColAdv(col.key)} />)}</span>
                     )}
                     {col.key !== "_sel" && (
                       <span
@@ -1155,9 +1159,9 @@ export default function SalesReps() {
               ) : paged.length === 0 ? (
                 <tr>
                   <td colSpan={visibleColumns.length} className="px-3 py-12 text-center text-muted-foreground">
-                    {reps.length === 0
+                    {localizeUiText(reps.length === 0
                       ? "لا يوجد مناديب بعد. اضغط على «مندوب جديد» للإضافة."
-                      : "لا توجد نتائج مطابقة لبحثك."}
+                      : "لا توجد نتائج مطابقة لبحثك.")}
                   </td>
                 </tr>
               ) : (
@@ -1182,7 +1186,9 @@ export default function SalesReps() {
                               <RowSelectCheckbox
                                 checked={sel}
                                 onToggle={() => toggleRow(r.id)}
-                                ariaLabel={`تحديد ${r.nameAr}`}
+                                ariaLabel={i18n.language?.startsWith("en")
+                                  ? `Select ${r.nameEn || r.nameAr}`
+                                  : `تحديد ${r.nameAr}`}
                               />
                             </td>
                           );
@@ -1234,7 +1240,9 @@ export default function SalesReps() {
                                 <span className="font-medium">{Number(r.commissionPct).toFixed(2)}%</span>
                               </div>
                               <div className="text-[10px] text-muted-foreground">
-                                {r.commissionType === "collection" ? "على التحصيل" : "على الفاتورة"}
+                                {i18n.language?.startsWith("en")
+                                  ? r.commissionType === "collection" ? "On collection" : "On invoice"
+                                  : r.commissionType === "collection" ? "على التحصيل" : "على الفاتورة"}
                               </div>
                             </td>
                           );
@@ -1244,7 +1252,7 @@ export default function SalesReps() {
                             <td key={col.key} className="px-2 py-1 tabular-nums text-end border-e border-slate-200/60">
                               <span className="inline-flex items-center gap-1">
                                 <Target className="h-3 w-3 text-muted-foreground" />
-                                {Number(r.monthlyTarget).toLocaleString("en-US", { maximumFractionDigits: 2 })} ر.س
+                                {Number(r.monthlyTarget).toLocaleString("en-US", { maximumFractionDigits: 2 })} {i18n.language?.startsWith("en") ? "SAR" : "ر.س"}
                               </span>
                             </td>
                           );
@@ -1254,11 +1262,11 @@ export default function SalesReps() {
                             <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">
                               {r.isActive ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-green-50 text-green-700 border border-green-200">
-                                  <UserCheck className="h-3 w-3" />نشط
+                                  <UserCheck className="h-3 w-3" />{i18n.language?.startsWith("en") ? "Active" : "نشط"}
                                 </span>
                               ) : (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-gray-100 text-gray-600 border border-gray-200">
-                                  <UserX className="h-3 w-3" />متوقف
+                                  <UserX className="h-3 w-3" />{i18n.language?.startsWith("en") ? "Inactive" : "متوقف"}
                                 </span>
                               )}
                             </td>
@@ -1273,7 +1281,7 @@ export default function SalesReps() {
                                   size="icon"
                                   className="h-7 w-7 text-violet-600 hover:text-violet-700"
                                   onClick={() => runAiAnalysis(r)}
-                                  title="تحليل الأداء بالذكاء الاصطناعي"
+                                  title={localizeUiText("تحليل الأداء بالذكاء الاصطناعي")}
                                   data-testid={`btn-ai-${r.id}`}
                                 >
                                   <Sparkles className="h-3.5 w-3.5" />
@@ -1287,7 +1295,7 @@ export default function SalesReps() {
                                   )}
                                   disabled={!r.userId || onboardMut.isPending}
                                   onClick={() => r.userId && onboardMut.mutate(r.id)}
-                                  title={r.userId ? "تجهيز كامل للمندوب (تفعيل العزل + منح الصلاحيات الأساسية)" : "اربط المندوب بمستخدم أولاً"}
+                                  title={localizeUiText(r.userId ? "تجهيز كامل للمندوب (تفعيل العزل + منح الصلاحيات الأساسية)" : "اربط المندوب بمستخدم أولاً")}
                                   data-testid={`btn-onboard-${r.id}`}
                                 >
                                   {onboardMut.isPending && onboardMut.variables === r.id
@@ -1331,7 +1339,7 @@ export default function SalesReps() {
           pageStart={pageStart}
           pageEnd={pageEnd}
           totalPages={totalPages}
-          unitLabel="مندوب"
+          unitLabel={i18n.language?.startsWith("en") ? "sales reps" : "مندوب"}
         />
       </div>
         </TabsContent>
