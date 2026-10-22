@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -35,7 +36,7 @@ export default function ItemCard() {
   const { fmt, fmtQty } = useFmt();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const txLabel = (tx: string) => t(`inventoryReports.itemCard.txType.${tx}`, { defaultValue: tx });
 

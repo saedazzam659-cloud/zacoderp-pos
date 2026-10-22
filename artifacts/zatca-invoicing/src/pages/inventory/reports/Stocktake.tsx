@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -35,7 +36,7 @@ export default function Stocktake() {
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const brandOptions = useInventoryReportBrandOptions(cid);
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const [warehouseId, setWarehouseId] = useState("");
   const [brandId, setBrandId] = useState("");

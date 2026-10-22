@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { salesAnalyticsApi } from "@/lib/salesAnalyticsApi";
@@ -17,7 +18,7 @@ export default function TopCustomers() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`salesReports.topCustomers.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);

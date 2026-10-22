@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,7 +14,7 @@ import { InventoryBrandFilter, filterRowsForInventoryBrand, useInventoryReportBr
 export default function ValuationByWarehouse() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const { fmt, fmtQty, fmtVal } = useFmt();
   const { user } = useAuth();
   const [brandId, setBrandId] = useState("");

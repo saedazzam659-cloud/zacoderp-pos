@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useFormatters, fmt2 } from "@/lib/format";
+import { localizedName } from "@/lib/localizedName";
 import { safeLogoSrc } from "@/lib/export";
 import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "@/lib/printLetterhead";
 import {
@@ -822,7 +823,7 @@ ${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEnt
         const acc = acctMap.get(Number(ln.accountId));
         return {
           accountLabel: acc
-            ? `${acc.code ?? ""} — ${acc.nameAr ?? acc.nameEn ?? ""}`
+            ? `${acc.code ?? ""} — ${localizedName(acc.nameAr, acc.nameEn, isRtl ? "ar" : "en")}`
             : `#${ln.accountId}`,
           description: ln.description ?? null,
           debit:  Number(ln.debit  ?? 0),
@@ -914,7 +915,7 @@ ${wrapWithLetterhead(letterhead, `<table><thead><tr>${cols.map(c => `<th>${escap
         ? `<div class="empty">— لا توجد أطراف —</div>`
         : lines.map((ln) => {
             const acc = acctMap.get(Number(ln.accountId));
-            const accLabel = acc ? `${acc.code ?? ""} ${acc.nameAr ?? acc.nameEn ?? ""}`.trim() : `#${ln.accountId}`;
+            const accLabel = acc ? `${acc.code ?? ""} ${localizedName(acc.nameAr, acc.nameEn, isRtl ? "ar" : "en")}`.trim() : `#${ln.accountId}`;
             const amt = Number(ln.debit) > 0 ? `مدين ${fmt2(ln.debit)}` : `دائن ${fmt2(ln.credit)}`;
             return `<div class="ln"><div class="acc">${escapeHtml(accLabel)}</div><div class="amt">${escapeHtml(amt)}</div>${ln.description ? `<div class="dsc">${escapeHtml(ln.description)}</div>` : ""}</div>`;
           }).join("");
@@ -995,7 +996,7 @@ ${sections}
         ? `<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:12px;">لا توجد أطراف لهذا القيد</td></tr>`
         : lines.map((ln, i) => {
             const acc = acctMap.get(Number(ln.accountId));
-            const accLabel = acc ? `${escapeHtml(acc.code ?? "")} — ${escapeHtml(acc.nameAr ?? acc.nameEn ?? "")}` : `#${escapeHtml(ln.accountId)}`;
+            const accLabel = acc ? `${escapeHtml(acc.code ?? "")} — ${escapeHtml(localizedName(acc.nameAr, acc.nameEn, isRtl ? "ar" : "en"))}` : `#${escapeHtml(ln.accountId)}`;
             return `<tr>
               <td class="num center">${i + 1}</td>
               <td>${accLabel}</td>

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Calculator, Sparkles, Loader2, ScrollText, Printer, Banknote, CheckCircle2 } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { fmt2 } from "@/lib/format";
+import { localizedName } from "@/lib/localizedName";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,7 +30,7 @@ export default function EndOfService() {
   const companyNameAr: string = user?.company?.nameAr ?? "";
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.endOfService.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const [empId, setEmpId] = useState<number | "">("");
   const [reason, setReason] = useState<"resignation" | "termination">("resignation");

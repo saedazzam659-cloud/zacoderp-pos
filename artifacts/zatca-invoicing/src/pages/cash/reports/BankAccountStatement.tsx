@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
@@ -31,7 +32,7 @@ export default function BankAccountStatement() {
   const tr = (k: string, opts?: any) => t(`cashReports.bankStatement.${k}`, opts) as string;
   const trc = (k: string, opts?: any) => t(`cashReports.common.${k}`, opts) as string;
   const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined) =>
-    !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));
+    !r ? "" : localizedName(r.nameAr, r.nameEn, isRtl ? "ar" : "en");
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);

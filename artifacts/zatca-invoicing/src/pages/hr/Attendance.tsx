@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
 import { fmtNum } from "@/lib/format";
+import { localizedName } from "@/lib/localizedName";
 import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ export default function Attendance() {
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.attendance.${k}`, opts) as string;
   const trp = (k: string, opts?: any) => t(`hrPages.attendancePlus.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const STATUS: Record<string, { label: string; cls: string; icon: any }> = {
     present:  { label: tr("statusPresent"), cls: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle2 },

@@ -23,6 +23,7 @@ import { useTranslation } from "react-i18next";
 import { DateField } from "@/components/ui/date-field";
 import { HijriDateField } from "@/components/ui/hijri-date-field";
 import { HrFormCheck } from "@/lib/hrFormValidate";
+import { localizedName } from "@/lib/localizedName";
 
 const EMPTY: any = {
   code: "", nameAr: "", nameEn: "", idType: "iqama", idNumber: "",
@@ -71,7 +72,7 @@ export default function Employees() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.employees.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, i18n.language);
 
   const STATUS: Record<string, { label: string; cls: string }> = {
     active:    { label: tr("statusActive"),     cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -497,7 +498,6 @@ export default function Employees() {
                           <td className="px-3 py-2.5 font-mono text-xs" dir="ltr">{e.code}</td>
                           <td className="px-3 py-2.5">
                             <div className="font-medium">{pickName(e.nameAr, e.nameEn)}</div>
-                            {(isRtl ? e.nameEn : e.nameAr) && <div className="text-xs text-muted-foreground" dir={isRtl ? "ltr" : "rtl"}>{isRtl ? e.nameEn : e.nameAr}</div>}
                           </td>
                           <td className="px-3 py-2.5 text-xs">
                             <div>{e.jobTitle || "—"}</div>

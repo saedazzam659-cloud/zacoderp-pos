@@ -1,4 +1,5 @@
 import { useState, Fragment, useEffect, useMemo, useRef } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useListPosItemGroups } from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -800,7 +801,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
   const canDeleteUnit = usePermission("items", "delete");
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user, actingCompanyId } = useAuth();
@@ -1351,7 +1352,7 @@ export default function Items() {
     const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const { user, actingCompanyId } = useAuth();
   const { fmt, fmtQty } = useFmt();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;

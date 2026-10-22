@@ -1,4 +1,5 @@
 import { useState, useEffect, Fragment, useRef } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -67,7 +68,7 @@ const newLine = () => ({ itemId: "", unitId: "", qty: "0", costPrice: "0", notes
 export default function StockAdjustment() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const reasonLabel = (r: string) =>
     r === BUNDLE_ASSEMBLY_REASON
       ? (isRtl ? "تجميع مخزني لصنف مركب" : "Inventory bundle assembly")

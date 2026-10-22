@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -127,7 +128,7 @@ export default function PurchaseOrders() {
     return { ok, failed };
   }
 
-  const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
+  const supName = (s: any) => localizedName(s?.nameAr, s?.nameEn, isRtl ? "ar" : "en");
   const supMap: Record<number, string> = useMemo(
     () => Object.fromEntries((suppliers as any[]).map((s: any) => [s.id, supName(s)])),
     [suppliers, isRtl],

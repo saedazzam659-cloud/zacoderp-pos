@@ -21,6 +21,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { employeesApi } from "@/lib/employeesApi";
 import DepreciationScheduleTimeline from "./DepreciationScheduleTimeline";
 import { fmt2 } from "@/lib/format";
+import { localizedName } from "@/lib/localizedName";
 import { getDaysRemaining } from "@/lib/dateUtils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -87,6 +88,8 @@ const EMPTY = {
 
 export default function FixedAssets() {
   const { t, i18n } = useTranslation();
+  const assetName = (asset: Pick<Asset, "nameAr" | "nameEn">) =>
+    localizedName(asset.nameAr, asset.nameEn, i18n.language);
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -187,7 +190,7 @@ export default function FixedAssets() {
   const acctName = (id:number|null) => {
     if (id == null) return "—";
     const a = accounts.find((x:any)=>String(x.id)===String(id));
-    return a ? `${a.code ? a.code+" · " : ""}${a.nameAr ?? a.nameEn ?? "#"+id}` : `#${id}`;
+    return a ? `${a.code ? a.code+" · " : ""}${localizedName(a.nameAr, a.nameEn, i18n.language) || "#"+id}` : `#${id}`;
   };
 
   const filtered = rows.filter(a => !search.trim() ||
@@ -555,7 +558,7 @@ export default function FixedAssets() {
 
       {showForm && (
         <FormPanel icon={editing?Pencil:Plus}
-          title={editing?`تعديل: ${editing.nameAr}`:"أصل جديد"}
+          title={editing?`تعديل: ${assetName(editing)}`:"أصل جديد"}
           subtitle={editing?`الكود: ${editing.code}`:"الكود يُولَّد تلقائياً (AST0001)"}
           width="6xl"
           onClose={()=>{ setShowForm(false); setEditing(null); resetImport(); }}
@@ -625,14 +628,14 @@ export default function FixedAssets() {
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.categoryId} onChange={(e)=>selectCategory(e.target.value)}>
                     <option value="">— بدون —</option>
-                    {cats.map(c => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+                    {cats.map(c => <option key={c.id} value={c.id}>{localizedName(c.nameAr, (c as any).nameEn, i18n.language)}</option>)}
                   </select>
                   <p className="text-[11px] text-muted-foreground mt-1">اختيار الفئة يملأ بيانات الإهلاك (العمر / الطريقة / الخردة) تلقائياً في تبويب «الإهلاك».</p></div>
                 <div><Label>المجموعة</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.groupId} onChange={(e)=>setForm({...form,groupId:e.target.value})}>
                     <option value="">— بدون —</option>
-                    {groups.filter(g=>g.isActive!==false).map(g => <option key={g.id} value={g.id}>{g.nameAr}</option>)}
+                    {groups.filter(g=>g.isActive!==false).map(g => <option key={g.id} value={g.id}>{localizedName(g.nameAr, (g as any).nameEn, i18n.language)}</option>)}
                   </select>
                   <p className="text-[11px] text-muted-foreground mt-1">تصنيف تنظيمي هرمي للأصل (يُدار من شاشة «مجموعات الأصول»).</p></div>
                 <div><Label>الحالة</Label>
@@ -646,7 +649,7 @@ export default function FixedAssets() {
                     data-testid="select-branch">
                     <option value="">— بدون —</option>
                     {branches.filter((b:any)=>b.isActive!==false).map((b:any) =>
-                      <option key={b.id} value={b.id}>{b.code ? `${b.code} — ${b.nameAr || b.name}` : (b.nameAr || b.name)}</option>)}
+                      <option key={b.id} value={b.id}>{b.code ? `${b.code} — ${localizedName(b.nameAr, b.nameEn ?? b.name, i18n.language)}` : localizedName(b.nameAr, b.nameEn ?? b.name, i18n.language)}</option>)}
                   </select>
                   <p className="text-[11px] text-muted-foreground mt-1">الفرع التابع له الأصل (يُستخدم في تخصيص الأصل وقيوده على الفرع).</p></div>
                 <div><Label>مركز التكلفة</Label>
@@ -655,7 +658,7 @@ export default function FixedAssets() {
                     data-testid="select-cost-center">
                     <option value="">— بدون —</option>
                     {costCenters.filter((c:any)=>c.isActive!==false).map((c:any) =>
-                      <option key={c.id} value={c.id}>{c.code ? `${c.code} — ${c.nameAr}` : c.nameAr}</option>)}
+                      <option key={c.id} value={c.id}>{c.code ? `${c.code} — ${localizedName(c.nameAr, c.nameEn, i18n.language)}` : localizedName(c.nameAr, c.nameEn, i18n.language)}</option>)}
                   </select>
                   <p className="text-[11px] text-muted-foreground mt-1">يُستخدم في توزيع مصروف الإهلاك على مراكز التكلفة.</p></div>
                 <div><Label>الموقع</Label>
@@ -710,7 +713,7 @@ export default function FixedAssets() {
                     <p className="text-xs font-bold text-emerald-700 mb-1">فاتورة مشتريات #{impInvoice.docNumber ?? impInvoice.id}</p>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-1 text-[11px] text-slate-600">
                       <div>التاريخ: <span className="font-mono">{impInvoice.invoiceDate ?? "—"}</span></div>
-                      <div>المورد: {suppliers.find((s:any)=>String(s.id)===String(impInvoice.supplierId))?.nameAr ?? impInvoice.supplierId ?? "—"}</div>
+                      <div>المورد: {(() => { const supplier = suppliers.find((s:any)=>String(s.id)===String(impInvoice.supplierId)); return supplier ? localizedName(supplier.nameAr, supplier.nameEn, i18n.language) : impInvoice.supplierId ?? "—"; })()}</div>
                       <div>الصافي: <span className="font-mono">{fmt2(impInvoice.subtotal ?? 0)}</span></div>
                       <div>الضريبة: <span className="font-mono">{fmt2(impInvoice.vatAmount ?? 0)}</span></div>
                       <div>الإجمالي: <span className="font-mono">{fmt2(impInvoice.totalAmount ?? 0)}</span></div>
@@ -824,7 +827,7 @@ export default function FixedAssets() {
                     data-testid="select-supplier">
                     <option value="">— بدون / مورد عابر —</option>
                     {suppliers.map((s:any)=>(
-                      <option key={s.id} value={s.id}>{s.nameAr ?? s.nameEn ?? `#${s.id}`}</option>
+                      <option key={s.id} value={s.id}>{localizedName(s.nameAr, s.nameEn, i18n.language) || `#${s.id}`}</option>
                     ))}
                   </select></div>
                 <div><Label>رقم الفاتورة{form.isOpeningBalance ? " (اختياري)" : ""}</Label>
@@ -1183,7 +1186,7 @@ export default function FixedAssets() {
                       { value: "", label: "بدون مسؤول" },
                       ...employees.map((e:any)=>({
                         value: String(e.id), code: e.code,
-                        label: e.nameAr || e.nameEn || `موظف #${e.id}`,
+                        label: localizedName(e.nameAr, e.nameEn, i18n.language) || `#${e.id}`,
                         description: [e.jobTitle, e.department].filter(Boolean).join(" — ") || undefined,
                       })),
                     ]}
@@ -1215,7 +1218,7 @@ export default function FixedAssets() {
               <div className="flex items-start gap-2">
                 <div className="h-10 w-10 rounded-lg bg-teal-100 grid place-items-center text-teal-700 shrink-0"><Package className="h-5 w-5" /></div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-bold text-sm truncate">{a.nameAr}</p>
+                  <p className="font-bold text-sm truncate">{assetName(a)}</p>
                   <p className="text-[11px] text-muted-foreground truncate">{[a.brand, a.model].filter(Boolean).join(" — ") || "—"}</p>
                 </div>
                 {a.riskLevel && (
@@ -1270,7 +1273,7 @@ export default function FixedAssets() {
               {filtered.map(a => (
                 <tr key={a.id} className="hover:bg-emerald-50/40" data-testid={`row-asset-${a.id}`}>
                   <td className="px-3 py-2 font-mono">{a.code}</td>
-                  <td className="px-3 py-2 font-semibold">{a.nameAr}</td>
+                  <td className="px-3 py-2 font-semibold">{assetName(a)}</td>
                   <td className="px-3 py-2">{[a.brand, a.model].filter(Boolean).join(" — ")}</td>
                   <td className="px-3 py-2 font-mono">{a.plateNumber || "—"}</td>
                   <td className="px-3 py-2 font-mono">{fmt2(a.purchaseValue)}</td>
@@ -1312,7 +1315,7 @@ export default function FixedAssets() {
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle>حذف الأصل</AlertDialogTitle>
-            <AlertDialogDescription>هل تريد حذف «{del?.nameAr}» نهائياً؟ سيتم حذف كل سجلات الصيانة والنقل والتخلص المرتبطة.</AlertDialogDescription>
+            <AlertDialogDescription>هل تريد حذف «{del ? assetName(del) : ""}» نهائياً؟ سيتم حذف كل سجلات الصيانة والنقل والتخلص المرتبطة.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>إلغاء</AlertDialogCancel>
@@ -1326,7 +1329,7 @@ export default function FixedAssets() {
           <AlertDialogHeader>
             <AlertDialogTitle>QR Code للأصل</AlertDialogTitle>
             <AlertDialogDescription>
-              يحتوي الكود على بيانات الأصل ({showQr?.code} — {showQr?.nameAr}).
+              يحتوي الكود على بيانات الأصل ({showQr?.code} — {showQr ? assetName(showQr) : ""}).
             </AlertDialogDescription>
           </AlertDialogHeader>
           {showQr && (
@@ -1349,7 +1352,7 @@ export default function FixedAssets() {
           <AlertDialogHeader>
             <AlertDialogTitle>جدول الإهلاك</AlertDialogTitle>
             <AlertDialogDescription>
-              الجدول الزمني للإهلاك (المُرحَّل والمتبقّي) للأصل {showSchedule?.code} — {showSchedule?.nameAr}.
+              الجدول الزمني للإهلاك (المُرحَّل والمتبقّي) للأصل {showSchedule?.code} — {showSchedule ? assetName(showSchedule) : ""}.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {showSchedule && (

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
+import { localizedName } from "@/lib/localizedName";
 import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ export default function HRSettings() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.settings.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const { data, isLoading } = useQuery<any>({ queryKey: ["hr-settings"], queryFn: () => employeesApi.hrSettings() });
   const [mapping, setMapping] = useState<any>({});

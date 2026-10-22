@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { DateField } from "@/components/ui/date-field";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmt2 } from "@/lib/format";
+import { localizedName } from "@/lib/localizedName";
 import { printLoanVoucher, downloadLoanVoucherPdf, type LoanVoucherDoc } from "@/lib/loanVoucherPrint";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
 import { HrFormCheck } from "@/lib/hrFormValidate";
@@ -50,7 +51,7 @@ export default function EmployeeLoans() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.loans.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const TYPES: Record<string, string> = {
     loan: tr("typeLoan"),

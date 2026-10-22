@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBranches } from "@/hooks/useBranches";
@@ -23,7 +24,7 @@ const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", branchId: "", cit
 export default function Warehouses() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -31,7 +32,7 @@ export default function LcExpenseEntry() {
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`purchasingPages.lcExpenseEntry.${k}`, opts) as string;
   const trLc = (k: string, opts?: any) => t(`purchasingPages.lettersOfCredit.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
   const numLocale = isRtl ? "ar-SA-u-ca-gregory-nu-latn" : "en-US";
   const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;

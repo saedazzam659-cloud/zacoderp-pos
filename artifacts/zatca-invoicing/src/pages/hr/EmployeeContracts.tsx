@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import { employeesApi } from "@/lib/employeesApi";
 import { fmt2 } from "@/lib/format";
+import { localizedName } from "@/lib/localizedName";
 import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,7 @@ export default function EmployeeContracts() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.contracts.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const STATUS_CFG: Record<string, { label: string; cls: string }> = {
     active:  { label: tr("stActive"),  cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },

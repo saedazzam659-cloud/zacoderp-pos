@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -38,8 +39,8 @@ export default function SupplierSettlement() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
-  const accName = (a: any) => isRtl ? (a?.nameAr ?? a?.nameEn ?? "") : (a?.nameEn ?? a?.nameAr ?? "");
+  const supName = (s: any) => localizedName(s?.nameAr, s?.nameEn, isRtl ? "ar" : "en");
+  const accName = (a: any) => localizedName(a?.nameAr, a?.nameEn, isRtl ? "ar" : "en");
 
   const { user, token } = useAuth() as any;
   const { toast } = useToast();

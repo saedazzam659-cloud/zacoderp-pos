@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { localizedName } from "@/lib/localizedName";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -173,7 +174,7 @@ export default function PurchaseInvoices() {
     setPrintData({ type: "invoice", doc: full, lines: full.lines ?? [], supplier, company: user?.company ?? null });
   }
 
-  const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
+  const supName = (s: any) => localizedName(s?.nameAr, s?.nameEn, isRtl ? "ar" : "en");
   const supMap: Record<number, string> = useMemo(
     () => Object.fromEntries((suppliers as any[]).map((s: any) => [s.id, supName(s)])),
     [suppliers, isRtl],

@@ -15,6 +15,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { attendancePlusApi } from "@/lib/attendancePlusApi";
 import { employeesApi } from "@/lib/employeesApi";
 import { fmtNum } from "@/lib/format";
+import { localizedName } from "@/lib/localizedName";
 import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,7 @@ function useTr() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.attendancePlus.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => (isRtl ? (ar ?? en ?? "") : (en ?? ar ?? ""));
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
   return { tr, isRtl, pickName };
 }
 

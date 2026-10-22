@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -249,8 +250,8 @@ export default function FinancialTransactionForm() {
 
     const findCash = (id: string) => (cashBoxes as any[]).find(c => String(c.id) === id);
     const findBank = (id: string) => (bankAccounts as any[]).find(b => String(b.id) === id);
-    const cashName = (c: any) => c ? (isRtl ? c.nameAr : (c.nameEn || c.nameAr)) : "";
-    const bankName = (b: any) => b ? (isRtl ? b.nameAr : (b.nameEn || b.nameAr)) : "";
+    const cashName = (c: any) => c ? localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en") : "";
+    const bankName = (b: any) => b ? localizedName(b.nameAr, b.nameEn, isRtl ? "ar" : "en") : "";
 
     const fromName = fromIsCash
       ? cashName(findCash(form.fromCashBoxId))

@@ -1,4 +1,5 @@
 import { useState, useEffect, Fragment } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -52,7 +53,7 @@ const newLine = () => ({ itemId: "", unitId: "", qty: "1", costPrice: "0", conve
 export default function StockTransfer() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const { fmt, fmtQty } = useFmt();
   const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;

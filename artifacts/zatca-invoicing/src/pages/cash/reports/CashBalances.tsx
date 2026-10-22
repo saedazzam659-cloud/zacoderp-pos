@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { cashAnalyticsApi } from "@/lib/cashAnalyticsApi";
@@ -29,7 +30,7 @@ export default function CashBalances() {
     { key: "totalOut", header: t("cashReports.common.totalOut"),     width: 16 },
     { key: "balance",  header: t("cashReports.common.balance"),      width: 16 },
   ];
-  const pickName = (r: any) => isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? "");
+  const pickName = (r: any) => localizedName(r.nameAr, r.nameEn, isRtl ? "ar" : "en");
 
   const { data = [], isLoading } = useQuery({
     queryKey: ["cash-balances", cid, asOf, branchId],

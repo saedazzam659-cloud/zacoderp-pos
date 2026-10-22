@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -16,7 +17,7 @@ import { clothingVariantItemIds } from "@/lib/clothingStockReport";
 export default function LowStockReport({ clothingOnly = false }: { clothingOnly?: boolean }) {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const { fmtQty } = useFmt();
   const { user } = useAuth();
   const [brandId, setBrandId] = useState("");

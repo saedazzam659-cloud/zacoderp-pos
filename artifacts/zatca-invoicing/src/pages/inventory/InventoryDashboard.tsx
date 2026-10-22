@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { localizedName } from "@/lib/localizedName";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -49,7 +50,7 @@ export default function InventoryDashboard() {
   const { t, i18n } = useTranslation();
   const moduleShortcutIcons = useAgentModuleShortcutIcons() === true;
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const { fmtQty, fmtVal } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;

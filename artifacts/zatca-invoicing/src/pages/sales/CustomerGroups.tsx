@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -21,7 +22,7 @@ export default function CustomerGroups() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`salesPages.customerGroups.${k}`, opts) as string;
-  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 

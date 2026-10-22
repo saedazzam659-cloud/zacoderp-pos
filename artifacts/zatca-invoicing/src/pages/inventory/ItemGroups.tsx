@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,7 +29,7 @@ export default function ItemGroups() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`inventoryMaster.itemGroups.${k}`, opts) as string;
-  const pickName = (ar?: string | null, en?: string | null) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -32,7 +33,7 @@ const STATUS_CONFIG: Record<string, { labelKey: string; color: string }> = {
 export default function StockCounting() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const tr = (k: string, opts?: any): string => t(`stockCountingPage.${k}`, opts) as string;
   const { fmt, fmtQty } = useFmt();
   const { user } = useAuth();
