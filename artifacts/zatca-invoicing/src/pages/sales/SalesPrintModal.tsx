@@ -34,6 +34,7 @@ import {
 } from "@/lib/quotationPrintOptions";
 import QRCode from "qrcode";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { localizePrintHtml } from "@/lib/localizedUiText";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -3516,9 +3517,12 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
           .replaceAll("إجمالي الكميات (مع المجاني):", "إجمالي الكميات:")
           .replaceAll("Total quantity (including free):", "Total quantity:")
       : renderedHtml;
-    const paperSizedHtml = selectedIsThermal && !tmpl.thermal
-      ? forceThermalPaperSize(freeSafeHtml)
+    const englishSafeHtml = printLang === "en"
+      ? localizePrintHtml(freeSafeHtml, printLang, printData)
       : freeSafeHtml;
+    const paperSizedHtml = selectedIsThermal && !tmpl.thermal
+      ? forceThermalPaperSize(englishSafeHtml)
+      : englishSafeHtml;
     const scaledHtml = selectedIsThermal
       ? applyThermalContentScale(paperSizedHtml, thermalScale)
       : paperSizedHtml;
