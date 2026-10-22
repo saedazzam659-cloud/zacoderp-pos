@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 export default function IntegrationsMarketplace() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string>("all");
   const [connectingTo, setConnectingTo] = useState<Provider | null>(null);
@@ -110,6 +111,60 @@ export default function IntegrationsMarketplace() {
       });
     } finally {
       setCreditNotesLoading(false);
+    }
+  };
+
+  const openZidDraft = (order: any, fallbackId: string) => {
+    const products = order.products ?? order.items ?? order.line_items;
+    if (!Array.isArray(products) || products.length === 0) {
+      toast({ title: "لا يحتوي الطلب على أصناف قابلة للاستيراد", variant: "destructive" });
+      return;
+    }
+    const orderId = String(order.id ?? order.order_id ?? order.uuid ?? fallbackId);
+    const orderNumber = String(order.code ?? order.order_number ?? orderId);
+    try {
+      sessionStorage.setItem("zid-draft-import", JSON.stringify({
+        orderId,
+        orderNumber,
+        createdAt: order.created_at ?? order.createdAt ?? null,
+        customer: order.customer ?? null,
+        clientRequestId: `zid-${zidConnection?.id ?? "store"}-${orderId}`,
+        products,
+      }));
+      setZidOrdersOpen(false);
+      navigate("/sales/invoices/new?fromZid=1");
+    } catch {
+      toast({ title: "تعذر تجهيز بيانات الطلب للمسودة", variant: "destructive" });
+    }
+  };
+
+  const openZidReturn = async (orderId: string, note: any) => {
+    const creditNoteId = String(note.id ?? note.credit_note_id ?? note.number ?? note.credit_note_number ?? "").trim();
+    if (!creditNoteId) {
+      toast({ title: "إشعار Zid لا يحتوي على معرّف صالح", variant: "destructive" });
+      return;
+    }
+    try {
+      const response = await fetch(`/api/integrations/zid/orders/${encodeURIComponent(orderId)}/erp-invoice`);
+      const invoice = await response.json();
+      if (!response.ok) throw new Error(invoice.error ?? "لم يتم العثور على فاتورة ERP مرتبطة بهذا الطلب");
+      const seed = `${zidConnection?.id ?? 0}:${orderId}:${creditNoteId}`;
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed));
+      const clientRequestId = `zid-cn-${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`;
+      sessionStorage.setItem("zid-return-import", JSON.stringify({
+        orderId,
+        invoiceId: invoice.invoiceId,
+        creditNoteId,
+        creditNoteNumber: note.number ?? note.credit_note_number ?? creditNoteId,
+        clientRequestId,
+      }));
+      setZidOrdersOpen(false);
+      navigate("/sales/returns?fromZid=1");
+    } catch (error) {
+      toast({
+        title: error instanceof Error ? error.message : "تعذر تجهيز مرتجع Zid",
+        variant: "destructive",
+      });
     }
   };
 
@@ -278,7 +333,7 @@ export default function IntegrationsMarketplace() {
           <DialogHeader>
             <DialogTitle>طلبات متجر Zid</DialogTitle>
             <DialogDescription>
-              هذه معاينة للطلبات وإشعاراتها. إنشاء مسودات ERP سيستخدم تسلسل النظام بعد اكتمال ربط العملاء والأصناف.
+              افتح الطلب كمسودة في نموذج ERP. راجع العميل والفرع، واربط كل صنف بكتالوج ERP قبل الحفظ؛ الترحيل والإرسال الضريبي يظلان عبر دورة ERP المعتادة.
             </DialogDescription>
           </DialogHeader>
           {zidOrdersLoading ? (
@@ -309,18 +364,28 @@ export default function IntegrationsMarketplace() {
                       </div>
                     </div>
                     <div className="mt-3">
+                      <div className="flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => openZidDraft(order, orderId)}>
+                        فتح كمسودة ERP
+                      </Button>
                       <Button size="sm" variant="outline" onClick={() => loadCreditNotes(orderId)}>
                         عرض إشعارات الطلب
                       </Button>
+                      </div>
                     </div>
                     {creditNotesFor === orderId && (
                       <div className="mt-3 rounded-md bg-slate-50 p-3 text-sm">
                         {creditNotesLoading ? "جارٍ تحميل الإشعارات..." : creditNotes.length === 0
                           ? "لا توجد إشعارات دائن لهذا الطلب."
                           : creditNotes.map((note, noteIndex) => (
-                            <div key={String(note.id ?? note.credit_note_number ?? noteIndex)} className="border-b last:border-0 py-2">
-                              <span className="font-medium">{note.number ?? note.credit_note_number ?? note.id ?? "إشعار دائن"}</span>
-                              <span className="text-slate-500 mr-2">{note.total ?? note.amount ?? ""}</span>
+                            <div key={String(note.id ?? note.credit_note_number ?? noteIndex)} className="border-b last:border-0 py-2 flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <span className="font-medium">{note.number ?? note.credit_note_number ?? note.id ?? "إشعار دائن"}</span>
+                                <span className="text-slate-500 mr-2">{note.total ?? note.amount ?? ""}</span>
+                              </div>
+                              <Button size="sm" variant="outline" onClick={() => openZidReturn(orderId, note)}>
+                                إعداد مرتجع ERP
+                              </Button>
                             </div>
                           ))}
                       </div>

@@ -297,6 +297,18 @@ function newLine(): DocLine {
   };
 }
 
+function readPendingZidDraft(): any | null {
+  try {
+    if (new URLSearchParams(window.location.search).get("fromZid") !== "1") return null;
+    const raw = sessionStorage.getItem("zid-draft-import");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Per-line Brand picker (العلامة التجارية) ──────────────────────────────────
 // Renders ONLY when the chosen item has at least one linked brand. Fully
 // optional: the default is "بدون علامة تجارية". Picking a brand snapshots its
@@ -464,11 +476,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const saveInFlightRef = useRef(false);
   const newInvoiceRouteRef = useRef<string | null>(null);
   const clientRequestIdRef = useRef<string | null>(null);
+  const zidImportDraftRef = useRef<any | null>(null);
+  const zidImportProcessedRef = useRef(false);
   const newInvoiceRoute = isInvoice && isNew ? `${basePath}/new` : null;
   if (newInvoiceRoute !== newInvoiceRouteRef.current) {
     newInvoiceRouteRef.current = newInvoiceRoute;
     persistedInvoiceIdRef.current = null;
-    clientRequestIdRef.current = newInvoiceRoute ? crypto.randomUUID() : null;
+    zidImportDraftRef.current = newInvoiceRoute ? readPendingZidDraft() : null;
+    zidImportProcessedRef.current = false;
+    clientRequestIdRef.current = newInvoiceRoute
+      ? (typeof zidImportDraftRef.current?.clientRequestId === "string" ? zidImportDraftRef.current.clientRequestId : crypto.randomUUID())
+      : null;
   }
   // View-only open (double-click from the audit grid): `?view=1` locks every
   // editable field and lands the user on the التفاصيل tab. The details tab is
@@ -575,7 +593,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   }, [isNew, isInvoice, user?.company?.defaultSalesPaymentType]);
   const [currencyCode,setCurrencyCode]  = useState("");
   const [exchangeRate,setExchangeRate]  = useState("1");
-  const [notes,     setNotes]           = useState("");
+  const [notes,     setNotes]           = useState(() => {
+    const draft = zidImportDraftRef.current;
+    return draft?.orderId
+      ? `طلب مستورد من Zid رقم ${String(draft.orderNumber ?? draft.orderId)}`
+      : "";
+  });
   const [costCenter, setCostCenter]     = useState("");
   const [projectId, setProjectId] = useState("");
   const [salesRepId, setSalesRepId]     = useState("");
@@ -614,9 +637,34 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const documentOfferIdRef = useRef<number | null>(null);
   useEffect(() => { documentOfferIdRef.current = documentOfferId; }, [documentOfferId]);
   const [lines,     setLines]           = useState<DocLine[]>(() => {
+    const draft = zidImportDraftRef.current;
+    const products = Array.isArray(draft?.products) ? draft.products : [];
+    if (products.length) {
+      return products.slice(0, 200).map((product: any) => {
+        const line = newLine();
+        const item = product?.product && typeof product.product === "object" ? product.product : product;
+        const qty = Number(product?.quantity ?? product?.qty ?? 1);
+        const price = Number(product?.unit_price ?? product?.price ?? item?.price ?? 0);
+        const vat = Number(product?.tax?.percentage ?? product?.vat_rate ?? item?.vat_rate ?? 15);
+        line.itemName = String(item?.name ?? item?.name_ar ?? item?.title ?? "صنف Zid").slice(0, 500);
+        line.itemCode = String(item?.sku ?? item?.barcode ?? product?.sku ?? "").slice(0, 120);
+        line.qty = Number.isFinite(qty) && qty > 0 ? String(qty) : "1";
+        line.unitPrice = Number.isFinite(price) && price >= 0 ? String(price) : "0";
+        line.vatRate = Number.isFinite(vat) && vat >= 0 ? String(vat) : "15";
+        line.lineTotal = String((Number(line.qty) * Number(line.unitPrice)).toFixed(2));
+        return line;
+      });
+    }
     const l = newLine();
     return [l];
   });
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!isInvoice || !isNew || url.searchParams.get("fromZid") !== "1") return;
+    sessionStorage.removeItem("zid-draft-import");
+    url.searchParams.delete("fromZid");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [isInvoice, isNew]);
   const [focusLineId, setFocusLineId] = useState<string>(() => lines[0]?._id ?? "");
   const addLine = () => {
     const l = newLine();
@@ -689,11 +737,66 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   }, [salesAccountId, cogsAccountId, inventoryAccountId, taxAccountId, discountAccountId]);
 
   // Lookups
-  const { data: customers = [] } = useQuery<any[]>({
+  const { data: customers = [], isFetched: customersFetched } = useQuery<any[]>({
     queryKey: ["customers", cid],
     queryFn: () => fetchJsonArray(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, authH),
     enabled: !!user,
   });
+
+  useEffect(() => {
+    const draft = zidImportDraftRef.current;
+    if (!isInvoice || !isNew || !draft || zidImportProcessedRef.current || !customersFetched) return;
+    zidImportProcessedRef.current = true;
+    const importedCustomer = draft.customer && typeof draft.customer === "object" ? draft.customer : {};
+    const email = String(importedCustomer.email ?? "").trim().toLowerCase();
+    const phone = String(importedCustomer.phone ?? "").replace(/\D/g, "");
+    const customerMatches = (customers as any[]).filter(customer => {
+      const emailMatches = email && String(customer.email ?? "").trim().toLowerCase() === email;
+      const phoneMatches = phone && String(customer.phone ?? "").replace(/\D/g, "") === phone;
+      return emailMatches || phoneMatches;
+    });
+    if (!customerId && customerMatches.length === 1) setCustomerId(String(customerMatches[0].id));
+
+    const importedDate = String(draft.createdAt ?? draft.orderDate ?? "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(importedDate)) setDocDate(importedDate);
+
+    const skuLines = (lines as DocLine[]).filter(line => !line.itemId && line.itemCode.trim());
+    const distinctCodes = [...new Set(skuLines.map(line => line.itemCode.trim()))].slice(0, 50);
+    void Promise.all(distinctCodes.map(async code => {
+      try {
+        const response = await fetch(
+          `${API}/api/inventory/items/search?q=${encodeURIComponent(code)}&limit=5&includeHidden=1`,
+          { headers: authH },
+        );
+        if (!response.ok) return [code, null] as const;
+        const candidates = await response.json() as any[];
+        const exact = candidates.filter(item =>
+          String(item.code ?? "").trim().toLowerCase() === code.toLowerCase() ||
+          String(item.barcode ?? "").trim().toLowerCase() === code.toLowerCase(),
+        );
+        const unique = [...new Map(exact.map(item => [Number(item.id), item])).values()];
+        return [code, unique.length === 1 ? unique[0] : null] as const;
+      } catch {
+        return [code, null] as const;
+      }
+    })).then(matches => {
+      const byCode = new Map(matches.filter((entry): entry is readonly [string, any] => !!entry[1]));
+      if (!byCode.size) return;
+      setLines(previous => previous.map(line => {
+        const item = byCode.get(line.itemCode.trim());
+        if (!item || line.itemId) return line;
+        return {
+          ...line,
+          itemId: String(item.id),
+          itemName: String(item.nameAr ?? line.itemName),
+          itemCode: String(item.code ?? line.itemCode),
+          unitId: item.unitId ? String(item.unitId) : line.unitId,
+          unit: String(item.unit?.nameAr ?? item.unit?.name ?? line.unit),
+          vatRate: line.vatRate || String(item.vatRate ?? "15"),
+        };
+      }));
+    });
+  }, [customers, customersFetched, customerId, isInvoice, isNew, lines, authH]);
 
   // ── Auto-detect نوع الفاتورة من العميل ─────────────────────────────────
   // عند اختيار عميل لديه رقم ضريبي → نرفع تلقائيًا إلى "ضريبية" (standard).

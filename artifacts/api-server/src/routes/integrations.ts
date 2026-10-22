@@ -293,6 +293,33 @@ router.get("/zid/orders/:orderId/credit-notes", async (req, res) => {
   }
 });
 
+router.get("/zid/orders/:orderId/erp-invoice", async (req, res) => {
+  const zid = await loadAuthorizedZid(req, res);
+  if (!zid) return;
+  const orderId = String(req.params.orderId ?? "").trim();
+  if (!orderId || orderId.length > 120 || !/^[\w-]+$/.test(orderId)) {
+    res.status(400).json({ error: "معرّف طلب Zid غير صالح" }); return;
+  }
+  const clientRequestId = `zid-${zid.connection.id}-${orderId}`;
+  const result: any = await db.execute(sql`
+    SELECT invoice.id, invoice.doc_number AS "docNumber"
+      FROM invoice_create_idempotency replay
+      JOIN sales_invoices invoice
+        ON invoice.id = replay.sales_invoice_id
+       AND invoice.company_id = replay.company_id
+     WHERE replay.company_id = ${zid.connection.companyId}
+       AND replay.invoice_kind = 'sales_invoice'
+       AND replay.client_request_id = ${clientRequestId}
+     LIMIT 1
+  `);
+  const rows = Array.isArray(result) ? result : result?.rows ?? [];
+  if (!rows.length) {
+    res.status(404).json({ error: "أنشئ مسودة فاتورة ERP لهذا الطلب أولاً قبل استيراد مرتجعه" });
+    return;
+  }
+  res.json({ invoiceId: Number(rows[0].id), docNumber: rows[0].docNumber ?? null });
+});
+
 router.post("/connections", async (req, res) => {
   const companyId = (req as { user?: { companyId?: number; id?: number } }).user?.companyId;
   const userId    = (req as { user?: { id?: number } }).user?.id;

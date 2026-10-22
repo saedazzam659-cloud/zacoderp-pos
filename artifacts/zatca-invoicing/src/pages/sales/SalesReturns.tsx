@@ -141,6 +141,18 @@ function newLine(): ReturnLine {
   };
 }
 
+function readPendingZidReturnDraft(): any | null {
+  try {
+    if (new URLSearchParams(window.location.search).get("fromZid") !== "1") return null;
+    const raw = sessionStorage.getItem("zid-return-import");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 const EMPTY = {
   docNumber: "", returnDate: today(), customerId: "", manualPrintPartyName: "", branchId: "", invoiceId: "", projectId: "",
   paymentType: "credit", cashBoxId: "", bankAccountId: "",
@@ -196,6 +208,12 @@ export default function SalesReturns() {
     }
   }, [showForm, editingId, user?.company?.defaultSalesReturnPaymentType]);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
+  const zidReturnDraftRef = useRef<any | null>(readPendingZidReturnDraft());
+  const newReturnRequestIdRef = useRef<string>(
+    typeof zidReturnDraftRef.current?.clientRequestId === "string"
+      ? zidReturnDraftRef.current.clientRequestId
+      : crypto.randomUUID(),
+  );
 
   // SAP-style tabbed layout (default) vs classic single-page (per-company opt-out).
   // viewMode = read-only inspection (opened via grid double-click), forces tabbed
@@ -502,7 +520,11 @@ export default function SalesReturns() {
       const res = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
         headers,
-        body: JSON.stringify({ ...data, companyId: cid }),
+        body: JSON.stringify({
+          ...data,
+          companyId: cid,
+          ...(!isEdit ? { clientRequestId: newReturnRequestIdRef.current } : {}),
+        }),
       });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
       if (data.saveAsDraft === true) return { ...j, __savedAsDraft: true };
@@ -521,6 +543,7 @@ export default function SalesReturns() {
       // (الـ reset يمسحها حتى لا تسرّب لتنقّل لاحق غير مرتبط).
       const draftSrcId = !saved?.__savedAsDraft && !wasEdit ? newDraftInvoiceIdRef.current : null;
       reset();
+      newReturnRequestIdRef.current = crypto.randomUUID();
       toast({ title: saved?.__savedAsDraft ? "تم حفظ المرتجع كمسودة" : wasEdit ? t("salesReturns.toastReturnEdited") : t("salesReturns.toastReturnCreated") });
       const nextDraftPath = draftSrcId ? `/sales/invoices/new?from=${draftSrcId}` : null;
       const previewAfterSave = !saved?.__savedAsDraft && !!user?.company?.printPreviewAfterSaveSales;
@@ -979,6 +1002,24 @@ export default function SalesReturns() {
     } catch (_) { /* silent */ }
   }
 
+  useEffect(() => {
+    const draft = zidReturnDraftRef.current;
+    const url = new URL(window.location.href);
+    if (!draft || url.searchParams.get("fromZid") !== "1" || !user || !token) return;
+    zidReturnDraftRef.current = null;
+    sessionStorage.removeItem("zid-return-import");
+    url.searchParams.delete("fromZid");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    void (async () => {
+      await loadInvoiceIntoForm(draft.invoiceId, { openForm: true });
+      setForm((previous: any) => ({
+        ...previous,
+        zidImportDraft: true,
+        notes: `مرتجع مرتبط بإشعار Zid رقم ${String(draft.creditNoteNumber ?? draft.creditNoteId ?? "")}`.trim(),
+      }));
+    })();
+  }, [user, token]);
+
   // Apply the picker selection: replace the form's lines with ONLY the
   // ticked rows, using their (capped) return qty. Each line's full source
   // metadata (unit, price, vat, discount, warehouse, …) is preserved.
@@ -1297,6 +1338,9 @@ export default function SalesReturns() {
 
   function handleSubmit(e: React.FormEvent, saveAsDraft = false) {
     e.preventDefault();
+    // External Zid credit notes always enter ERP as drafts for review. Posting
+    // and any ERP-side fiscal submission remain an explicit user action.
+    if (form.zidImportDraft === true) saveAsDraft = true;
     // Credit returns need a customer; cash/bank returns may use a print-only
     // name instead. All returns still require a branch.
     // Surfaced as a destructive Arabic toast BEFORE the network round-trip
