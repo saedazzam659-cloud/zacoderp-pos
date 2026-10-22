@@ -15,6 +15,7 @@ import { useCostCenters } from "@/hooks/useCostCenters";
 import { DateField } from "@/components/ui/date-field";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmt2 } from "@/lib/format";
+import { useContractingModule } from "@/hooks/useContractingModule";
 
 interface Props {
   partyType: AccountNotePartyType;
@@ -61,6 +62,7 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth() as any;
+  const { enabled: contractingModuleEnabled, actingCompanyId } = useContractingModule();
   const qc = useQueryClient();
   const key = `${partyType}.${noteType}`;
   const base = ROUTE_BASE[key];
@@ -93,7 +95,8 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
   const { data: parties = [] } = useQuery<any[]>({ queryKey: [partiesPath], queryFn: () => fetchJson(partiesPath) });
   const { data: costCenters = [] } = useCostCenters();
   const { data: projects = [] } = useQuery<any[]>({
-    queryKey: ["/api/contracting/projects"],
+    queryKey: ["/api/contracting/projects", user?.company?.id, actingCompanyId],
+    enabled: contractingModuleEnabled,
     queryFn: () => fetchJson("/api/contracting/projects"),
   });
   // Invoices of the SELECTED party — powers the invoice-number picker so the
@@ -428,7 +431,7 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
           </div>
         </label>
 
-        <label className="flex flex-col gap-1"><span className="text-sm font-medium">المشروع</span>
+        {contractingModuleEnabled && <label className="flex flex-col gap-1"><span className="text-sm font-medium">المشروع</span>
           <div data-testid="select-project">
             <SearchCombobox
               items={projectItems}
@@ -438,7 +441,7 @@ export default function AccountNoteForm({ partyType, noteType }: Props) {
               searchPlaceholder="ابحث…"
             />
           </div>
-        </label>
+        </label>}
 
         <label className="flex items-center gap-2 mt-2 md:col-start-1">
           <Checkbox checked={form.vatEnabled}

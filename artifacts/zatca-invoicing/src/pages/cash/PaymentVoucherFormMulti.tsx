@@ -35,6 +35,7 @@ import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import { VoucherContractingAllocation, positiveId, validateRetentionReleaseLines, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
+import { useContractingModule } from "@/hooks/useContractingModule";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -270,10 +271,11 @@ export default function PaymentVoucherForm() {
 
   const NS = "paymentVouchers";
   const cid = user?.companyId;
+  const { enabled: contractingModuleEnabled, actingCompanyId } = useContractingModule();
   const { data: projectOptions } = useQuery({
-    queryKey: contractingOptionsKey(user?.id, cid ?? undefined, undefined, token ?? undefined),
-    queryFn: () => fetchContractingProjectOptions(token!),
-    enabled: !!token && !!cid,
+    queryKey: contractingOptionsKey(user?.id, cid ?? undefined, actingCompanyId ?? undefined, token ?? undefined),
+    queryFn: () => fetchContractingProjectOptions(token!, actingCompanyId ?? undefined),
+    enabled: contractingModuleEnabled && !!token && (!!cid || !!actingCompanyId),
   });
   const h = { Authorization: `Bearer ${token}` };
 
@@ -1221,10 +1223,10 @@ export default function PaymentVoucherForm() {
                       );
                     })()}
                   </div>
-                  <label className="flex items-center gap-2 self-end h-9 text-sm font-medium cursor-pointer">
+                  {contractingModuleEnabled && <label className="flex items-center gap-2 self-end h-9 text-sm font-medium cursor-pointer">
                     <Checkbox checked={contractingEnabled} onCheckedChange={value => toggleContracting(value === true)} data-testid="pv-contracting-toggle" />
                     توزيع مقاولات
-                  </label>
+                  </label>}
                 </div>
               </CardContent>
             </Card>
@@ -1417,7 +1419,7 @@ export default function PaymentVoucherForm() {
                                   <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>
                                 ))}
                             </select>
-                            {(l.opType === "direct" || l.opType === "prepaid") && !l.contractingAllocation && !l.purchaseInvoiceId && (
+                            {contractingModuleEnabled && (l.opType === "direct" || l.opType === "prepaid") && !l.contractingAllocation && !l.purchaseInvoiceId && (
                               <select
                                 value={l.projectId}
                                 onChange={e => updateLine(l.key, { projectId: e.target.value })}
@@ -1797,7 +1799,7 @@ export default function PaymentVoucherForm() {
                                   <option value="employee_custody">{t(`${NS}.opEmployeeCustody`, "عهدة موظف")}</option>
                                 </select>
                               ) : null}
-                              {contractingEnabled && <VoucherContractingAllocation direction="payment" entityId={form.entityId}
+                              {contractingModuleEnabled && contractingEnabled && <VoucherContractingAllocation direction="payment" entityId={form.entityId}
                                 value={l.contractingAllocation} lineAmount={l.amount} disabled={isLockedSourceEntry}
                                 onAmountSuggested={amount => updateLine(l.key, { amount })}
                                 onAddRemainingBills={rows => setForm(p => {

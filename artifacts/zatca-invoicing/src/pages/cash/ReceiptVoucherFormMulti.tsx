@@ -29,6 +29,7 @@ import { DateField } from "@/components/ui/date-field";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { useContractingModule } from "@/hooks/useContractingModule";
 import { VoucherContractingAllocation, positiveId, validateRetentionReleaseLines, validateTaxableAdvanceLines, type ContractingAllocation } from "@/components/VoucherContractingAllocation";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -118,6 +119,7 @@ function bankMatchesBranch(b: any, bid: string): boolean {
 export default function ReceiptVoucherFormMulti() {
     const gate = useDemoActionGate();
   const { user, token } = useAuth();
+  const { enabled: contractingModuleEnabled } = useContractingModule();
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
   const { toast } = useToast();
@@ -1034,10 +1036,10 @@ export default function ReceiptVoucherFormMulti() {
                     })()}
                   </div>
                   )}
-                  <label className="flex items-center gap-2 self-end h-9 text-sm font-medium cursor-pointer">
+                  {contractingModuleEnabled && <label className="flex items-center gap-2 self-end h-9 text-sm font-medium cursor-pointer">
                     <Checkbox checked={contractingEnabled} onCheckedChange={value => toggleContracting(value === true)} data-testid="rv-contracting-toggle" />
                     توزيع مقاولات
-                  </label>
+                  </label>}
                 </div>
               </CardContent>
             </Card>
@@ -1239,7 +1241,7 @@ export default function ReceiptVoucherFormMulti() {
                         </div>
                         )}
                       </div>
-                      {contractingEnabled && <VoucherContractingAllocation direction="receipt" entityId={form.entityId}
+                      {contractingModuleEnabled && contractingEnabled && <VoucherContractingAllocation direction="receipt" entityId={form.entityId}
                         value={l.contractingAllocation} lineAmount={l.amount}
                         onAmountSuggested={amount => updateLine(l.key, { amount })}
                         onAddRemainingBills={rows => setForm(p => {

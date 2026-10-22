@@ -14,6 +14,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { usePermission } from "@/hooks/usePermission";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
+import { useContractingModule } from "@/hooks/useContractingModule";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
@@ -131,6 +132,7 @@ export default function PurchaseReturns() {
   const warehouseName = (w: any) => localizedName(w?.nameAr, w?.nameEn, i18n.language);
 
   const { user, token } = useAuth() as any;
+  const { enabled: contractingModuleEnabled, actingCompanyId } = useContractingModule();
   const canSaveDraft = Array.isArray(user?.permissions?.__draftSaveDocumentTypes) && user.permissions.__draftSaveDocumentTypes.includes("purchase_return");
   const draftOnly = canSaveDraft && !(user?.canApprove && user?.approvalDocumentTypes?.includes("purchase_return"));
   const fieldPolicy = useFieldPolicy("purchase_return");
@@ -141,9 +143,9 @@ export default function PurchaseReturns() {
   const canCreateCatalogItems = usePermission("items", "create");
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const { data: projectOptions } = useQuery({
-    queryKey: contractingOptionsKey(user?.id, cid, undefined, token),
-    queryFn: () => fetchContractingProjectOptions(token),
-    enabled: !!token,
+    queryKey: contractingOptionsKey(user?.id, cid, actingCompanyId ?? undefined, token),
+    queryFn: () => fetchContractingProjectOptions(token, actingCompanyId ?? undefined),
+    enabled: contractingModuleEnabled && !!token,
   });
   const usageModes = useScreenItemModes("purchase_returns");
   const authH   = { Authorization: `Bearer ${token}` };
@@ -1831,7 +1833,7 @@ ${sections}
                   </SelectContent>
                 </Select>
               </Field></div>
-              <Field label="المشروع (اختياري)">
+              {contractingModuleEnabled && <Field label="المشروع (اختياري)">
                 <select aria-label="مشروع مرتجع الشراء" value={form.projectId ?? ""}
                   onChange={e => setForm((p: any) => ({ ...p, projectId: e.target.value }))}
                   className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
@@ -1839,7 +1841,7 @@ ${sections}
                   {(projectOptions?.projects ?? []).filter(p => !form.branchId || p.branchId == null || String(p.branchId) === form.branchId)
                     .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
                 </select>
-              </Field>
+              </Field>}
               <div hidden={!fieldPolicy.isVisible("warehouse")} className={fieldPolicy.isReadOnly("warehouse") ? "pointer-events-none opacity-70" : ""}><Field label="المستودع">
                 <SearchCombobox
                   items={(warehouses as any[]).map((w: any) => ({
@@ -1850,7 +1852,7 @@ ${sections}
                   onValueChange={applyHeaderWarehouse}
                   placeholder="اختر المستودع"
                 />
-              </Field></div>
+              </Field></div>}
               {taxCatalog.length > 0 && (
                 <Field label="الضريبة">
                   <SearchCombobox

@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
+import { useContractingModule } from "@/hooks/useContractingModule";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
@@ -126,6 +127,7 @@ export default function GoodsDeliveries() {
   const warehouseName = (w: any) => localizedName(w?.nameAr, w?.nameEn, i18n.language);
 
   const { user, token } = useAuth() as any;
+  const { enabled: contractingModuleEnabled, actingCompanyId } = useContractingModule();
   const fieldPolicy = useFieldPolicy("delivery_note");
   const hideQuickAddBar = !!user?.company?.hideQuickAddBar;
   const { toast } = useToast();
@@ -133,9 +135,9 @@ export default function GoodsDeliveries() {
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const { data: projectOptions } = useQuery({
-    queryKey: contractingOptionsKey(user?.id, cid, undefined, token),
-    queryFn: () => fetchContractingProjectOptions(token),
-    enabled: !!token,
+    queryKey: contractingOptionsKey(user?.id, cid, actingCompanyId ?? undefined, token),
+    queryFn: () => fetchContractingProjectOptions(token, actingCompanyId ?? undefined),
+    enabled: contractingModuleEnabled && !!token,
   });
   const usageModes = useScreenItemModes("stock_out");
   const authH   = { Authorization: `Bearer ${token}` };
@@ -1276,7 +1278,7 @@ ${sections}
                       </SelectContent>
                     </Select>
                   </Field></div>
-                  <Field label="المشروع (اختياري)">
+                  {contractingModuleEnabled && <Field label="المشروع (اختياري)">
                     <select aria-label="مشروع إذن التسليم" value={form.projectId ?? ""}
                       onChange={e => setForm((p: any) => ({ ...p, projectId: e.target.value }))}
                       className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
@@ -1284,7 +1286,7 @@ ${sections}
                       {(projectOptions?.projects ?? []).filter(p => !form.branchId || p.branchId == null || String(p.branchId) === form.branchId)
                         .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
                     </select>
-                  </Field>
+                  </Field>}
                   <div hidden={!fieldPolicy.isVisible("warehouse")} className={fieldPolicy.isReadOnly("warehouse") ? "pointer-events-none opacity-70" : ""}><Field label={tr("warehouse")}>
                     <SearchCombobox
                       items={(warehouses as any[]).map((w: any) => ({

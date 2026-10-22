@@ -12,6 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { companyPaymentDefault, paymentMethodLabel } from "@/lib/paymentMethodLabels";
 import { isAccountNoteVisible } from "@/lib/accountNoteVisibility";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
+import { useContractingModule } from "@/hooks/useContractingModule";
 import { usePermission } from "@/hooks/usePermission";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
 import { renameArchivedKey } from "@/lib/localArchive";
@@ -435,10 +436,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const { enabled: contractingModuleEnabled, actingCompanyId } = useContractingModule();
   const { data: projectOptions } = useQuery({
-    queryKey: contractingOptionsKey(user?.id, cid, undefined, token),
-    queryFn: () => fetchContractingProjectOptions(token),
-    enabled: isInvoice && !!token,
+    queryKey: contractingOptionsKey(user?.id, cid, actingCompanyId ?? undefined, token),
+    queryFn: () => fetchContractingProjectOptions(token, actingCompanyId ?? undefined),
+    enabled: isInvoice && contractingModuleEnabled && !!token,
   });
   const usageModes = useScreenItemModes(usageScreenKey);
   const authH   = { Authorization: `Bearer ${token}` };
@@ -4382,7 +4384,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <p className="text-[10px] text-muted-foreground">{t("salesDocForm.costCenterPostingHint")}</p>
                   </div>
                 )}
-                {isInvoice && (
+                {isInvoice && contractingModuleEnabled && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.projectOptional")}</Label>
                     <select aria-label={t("salesDocForm.salesInvoiceProject")} value={projectId} onChange={e => setProjectId(e.target.value)}
