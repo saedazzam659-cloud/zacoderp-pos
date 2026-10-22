@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { useFormatters, currencySymbol, fmt2 } from "@/lib/format";
+import { localizedName } from "@/lib/localizedName";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1200,7 +1201,7 @@ export default function SalesReturns() {
         itemName:  item.nameAr ?? "",
         itemCode:  item.code   ?? "",
         unitId:    base?.unitId ? String(base.unitId) : (item.unitId ? String(item.unitId) : ""),
-        unit:      base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "",
+        unit:      localizedName(base?.unit?.nameAr ?? fallbackUnit?.nameAr, base?.unit?.nameEn ?? fallbackUnit?.nameEn, isRtl ? "ar" : "en"),
         conversionFactor: String(base?.conversionFactor ?? "1"),
         unitPrice: chosenPrice,
         vatRate:   String(item.vatRate ?? "15"),
@@ -1251,7 +1252,7 @@ export default function SalesReturns() {
       const updated: ReturnLine = {
         ...l,
         unitId: newUnitId,
-        unit: row?.unit?.nameAr ?? globalUnit?.nameAr ?? "",
+        unit: localizedName(row?.unit?.nameAr ?? globalUnit?.nameAr, row?.unit?.nameEn ?? globalUnit?.nameEn, isRtl ? "ar" : "en"),
         conversionFactor: String(row?.conversionFactor ?? "1"),
         unitPrice: row?.salePrice != null ? String(row.salePrice) : l.unitPrice,
       };
@@ -1352,7 +1353,10 @@ export default function SalesReturns() {
     });
   }
 
-  const customerItems = [{ value: "", label: t("salesReturns.noCustomer") }, ...customers.map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` }))];
+  const customerItems = [{ value: "", label: t("salesReturns.noCustomer") }, ...customers.map((c: any) => ({
+    value: String(c.id), label: localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en") || `#${c.id}`,
+    labelEn: c.nameEn || undefined,
+  }))];
   const invoiceItems  = [
     { value: "", label: t("salesReturns.noInvoice") },
     ...invoices
@@ -1365,11 +1369,15 @@ export default function SalesReturns() {
       .filter((r: any) => r.isActive !== false)
       .map((r: any) => ({
         value: String(r.id),
-        label: r.code ? `${r.code} — ${r.nameAr ?? r.nameEn ?? `#${r.id}`}` : (r.nameAr ?? r.nameEn ?? `#${r.id}`),
+        label: r.code ? `${r.code} — ${localizedName(r.nameAr, r.nameEn, isRtl ? "ar" : "en") || `#${r.id}`}` : (localizedName(r.nameAr, r.nameEn, isRtl ? "ar" : "en") || `#${r.id}`),
+        labelEn: r.nameEn || undefined,
       })),
   ];
   const usageModes = useScreenItemModes("sales_returns");
-  const itemComboItems = annotateItemCombo([{ value: "", label: t("salesReturns.selectItem") }, ...inventoryItems.map((i: any) => ({ value: String(i.id), code: i.code ?? undefined, label: i.nameAr ?? i.nameEn ?? `#${i.id}` }))], usageModes);
+  const itemComboItems = annotateItemCombo([{ value: "", label: t("salesReturns.selectItem") }, ...inventoryItems.map((i: any) => ({
+    value: String(i.id), code: i.code ?? undefined, label: localizedName(i.nameAr, i.nameEn, isRtl ? "ar" : "en") || `#${i.id}`,
+    labelEn: i.nameEn || undefined,
+  }))], usageModes);
 
   // Gate the items tab until the mandatory header fields are filled — mirrors
   // SalesDocumentForm's basicFieldsValid. Existing docs (edit/view) already
@@ -1449,7 +1457,7 @@ export default function SalesReturns() {
             onSearchChange={setItemSearch}
             loading={isSearchingItems}
             placeholder={t("salesReturns.itemPlaceholder")}
-            searchPlaceholder="ابحث بالكود أو الاسم..."
+            searchPlaceholder={t("common.searchByCodeOrName")}
           />
         </div>
         <div className="space-y-1">
@@ -1459,7 +1467,7 @@ export default function SalesReturns() {
             value={qaWarehouseId}
             onValueChange={setQaWarehouseId}
             placeholder={t("salesReturns.warehousePlaceholder")}
-            searchPlaceholder="ابحث بالكود أو الاسم..."
+            searchPlaceholder={t("common.searchByCodeOrName")}
             className="h-9 text-xs"
           />
         </div>
@@ -1469,7 +1477,7 @@ export default function SalesReturns() {
             const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
             const opts = itemUnitsWithHistoricalSelection(iu, qaUnitId).map((u: any) => ({
               value: String(u.unitId),
-              label: `${u.unit?.nameAr ?? ""}${Number(u.conversionFactor) !== 1 ? ` (×${u.conversionFactor})` : ""}`,
+              label: `${localizedName(u.unit?.nameAr, u.unit?.nameEn, isRtl ? "ar" : "en")}${Number(u.conversionFactor) !== 1 ? ` (×${u.conversionFactor})` : ""}`,
               disabled: u.isActive === false || u.unit?.isActive === false,
             }));
             return (
@@ -1520,7 +1528,7 @@ export default function SalesReturns() {
     </div>
   );
 
-  const cusMap = Object.fromEntries(customers.map((c: any) => [c.id, c.nameAr ?? c.nameEn]));
+  const cusMap = Object.fromEntries(customers.map((c: any) => [c.id, localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en")]));
   const invMap = useMemo(
     () => Object.fromEntries((invoices as any[]).map((i: any) => [i.id, i.docNumber ?? `SI-${i.id}`])),
     [invoices],
@@ -1945,7 +1953,7 @@ ${source.map((r: any, i: number) => {
         : lines.map((l: any, i: number) => {
             const it   = itemsMap[Number(l.itemId)];
             const itemLabel = it
-              ? (it.code ? `${it.code} — ${it.nameAr ?? it.nameEn ?? ""}` : (it.nameAr ?? it.nameEn ?? `#${it.id}`))
+              ? (it.code ? `${it.code} — ${localizedName(it.nameAr, it.nameEn, isRtl ? "ar" : "en")}` : (localizedName(it.nameAr, it.nameEn, isRtl ? "ar" : "en") || `#${it.id}`))
               : (l.description ?? `#${l.itemId ?? ""}`);
             const qty  = Number(l.quantity ?? 0);
             const up   = Number(l.unitPrice ?? 0);
@@ -2251,7 +2259,7 @@ ${sections}
           : null;
         const customerNameById = (id: any) => {
           const c = (customers as any[]).find((c: any) => Number(c.id) === Number(id));
-          return c ? (c.nameAr ?? c.nameEn ?? `#${c.id}`) : "—";
+          return c ? (localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en") || `#${c.id}`) : "—";
         };
         return (
         <>
@@ -2639,7 +2647,7 @@ ${sections}
                     <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                       onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                     {user ? (
-                      <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesReturns.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." />
+                      <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesReturns.itemPlaceholder")} searchPlaceholder={t("common.searchByCodeOrName")} />
                     ) : (
                       <Input className="h-8 text-xs" placeholder={t("salesReturns.itemNamePlaceholder")} value={l.itemName}
                         onChange={e => updateLine(l._id, "itemName", e.target.value)} />
@@ -2651,7 +2659,7 @@ ${sections}
                           value={l.warehouseId}
                           onValueChange={v => updateLine(l._id, "warehouseId", v)}
                           placeholder={t("salesReturns.warehousePlaceholder")}
-                          searchPlaceholder="ابحث بالكود أو الاسم..."
+                          searchPlaceholder={t("common.searchByCodeOrName")}
                           className="h-8 text-xs"
                         />
                       </div>
@@ -2663,11 +2671,11 @@ ${sections}
                       const opts = itemUnits.length > 0
                         ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
                             value: String(iu.unitId),
-                            label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
+                              label: `${localizedName(iu.unit?.nameAr, iu.unit?.nameEn, isRtl ? "ar" : "en")}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
                             disabled: iu.isActive === false || iu.unit?.isActive === false,
                           }))
                         : catalogUnitsWithHistoricalSelection(units as any[], l.unitId)
-                          .map((u: any) => ({ value: String(u.id), label: u.nameAr ?? u.nameEn ?? `#${u.id}`, disabled: u.isActive === false }));
+                          .map((u: any) => ({ value: String(u.id), label: localizedName(u.nameAr, u.nameEn, isRtl ? "ar" : "en") || `#${u.id}`, disabled: u.isActive === false }));
                       return units.length > 0 ? (
                         <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
                           <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t("salesReturns.colUnit")} /></SelectTrigger>

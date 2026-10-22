@@ -59,9 +59,9 @@ export function SearchCombobox({
   value,
   onValueChange,
   id,
-  placeholder = "اختر...",
+  placeholder,
   searchPlaceholder,
-  emptyText = "لا توجد نتائج",
+  emptyText,
   className,
   disabled,
   clearable = false,
@@ -77,6 +77,8 @@ export function SearchCombobox({
 }: SearchComboboxProps) {
   const { i18n } = useTranslation();
   const isEnglish = i18n.language?.toLowerCase().startsWith("en") ?? false;
+  const defaultSearchPlaceholder = isEnglish ? "Search..." : "ابحث...";
+  const defaultEmptyText = isEnglish ? "No results" : "لا توجد نتائج";
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [highlight, setHighlight] = React.useState(0);
@@ -264,7 +266,7 @@ export function SearchCombobox({
             data-testid={testId}
             disabled={disabled}
             value={displayValue}
-            placeholder={selectedItem ? "" : (searchPlaceholder ?? placeholder)}
+            placeholder={selectedItem ? "" : (searchPlaceholder ?? placeholder ?? defaultSearchPlaceholder)}
             onFocus={() => { if (openOnFocus) setOpen(true); }}
             onClick={() => setOpen(true)}
             onChange={e => {
@@ -290,7 +292,7 @@ export function SearchCombobox({
             <button
               type="button"
               tabIndex={-1}
-              aria-label="مسح الاختيار"
+              aria-label={isEnglish ? "Clear selection" : "مسح الاختيار"}
               data-testid={testId ? `${testId}-clear` : undefined}
               className="pointer-events-auto rounded-sm p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
               onMouseDown={e => {
@@ -319,9 +321,9 @@ export function SearchCombobox({
       >
         <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
           {loading ? (
-            <div className="py-6 text-center text-sm text-muted-foreground">جارٍ البحث عن الأصناف...</div>
+            <div className="py-6 text-center text-sm text-muted-foreground">{isEnglish ? "Searching..." : "جارٍ البحث عن الأصناف..."}</div>
           ) : flatList.length === 0 ? (
-            <div className="py-6 text-center text-sm text-muted-foreground">{emptyText}</div>
+            <div className="py-6 text-center text-sm text-muted-foreground">{emptyText ?? defaultEmptyText}</div>
           ) : grouped && groups ? (
             Array.from(groups.entries()).map(([groupName, groupItems], gi) => (
               <div key={groupName}>
@@ -337,7 +339,7 @@ export function SearchCombobox({
                     <div
                       key={item.value}
                       data-idx={idx}
-                      title={dis ? (item.disabledReason ?? "غير قابل للاختيار") : undefined}
+                      title={dis ? (item.disabledReason ?? (isEnglish ? "Not selectable" : "غير قابل للاختيار")) : undefined}
                       onMouseDown={e => { e.preventDefault(); if (!dis) handleSelect(item.value); }}
                       onMouseEnter={() => { if (!dis) setHighlight(idx); }}
                       aria-disabled={dis}
@@ -364,7 +366,7 @@ export function SearchCombobox({
                 <div
                   key={item.value}
                   data-idx={idx}
-                  title={dis ? (item.disabledReason ?? "غير قابل للاختيار") : undefined}
+                  title={dis ? (item.disabledReason ?? (isEnglish ? "Not selectable" : "غير قابل للاختيار")) : undefined}
                   onMouseDown={e => { e.preventDefault(); if (!dis) handleSelect(item.value); }}
                   onMouseEnter={() => { if (!dis) setHighlight(idx); }}
                   aria-disabled={dis}

@@ -1382,7 +1382,7 @@ function PurchaseInvoiceFormContent() {
             onSearchChange={setItemSearch}
             loading={isSearchingItems}
             placeholder={tr("itemSearchPh")}
-            searchPlaceholder="ابحث بالكود أو الاسم..."
+            searchPlaceholder={t("common.searchByCodeOrName")}
           />
         </div>
         <div className="space-y-1">
@@ -1392,7 +1392,7 @@ function PurchaseInvoiceFormContent() {
             value={qaWarehouseId}
             onValueChange={setQaWarehouseId}
             placeholder={tr("lineCols.warehouse")}
-            searchPlaceholder="ابحث بالكود أو الاسم..."
+            searchPlaceholder={t("common.searchByCodeOrName")}
             className="h-9 text-xs"
           />
         </div>
@@ -2157,7 +2157,7 @@ function PurchaseInvoiceFormContent() {
                           onSearchChange={setItemSearch}
                           loading={isSearchingItems}
                           placeholder={tr("itemSearchPh")}
-                          searchPlaceholder="ابحث بالكود أو الاسم..."
+                          searchPlaceholder={t("common.searchByCodeOrName")}
                         />
                       ) : (
                         <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
@@ -2189,7 +2189,7 @@ function PurchaseInvoiceFormContent() {
                             value={l.warehouseId}
                             onValueChange={v => updateLine(l._id, "warehouseId", v)}
                             placeholder={tr("lineCols.warehouse")}
-                            searchPlaceholder="ابحث بالكود أو الاسم..."
+                            searchPlaceholder={t("common.searchByCodeOrName")}
                             className="h-8 text-xs"
                           />
                         </div>

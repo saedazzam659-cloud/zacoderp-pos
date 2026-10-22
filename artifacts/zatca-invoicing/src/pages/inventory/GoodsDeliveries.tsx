@@ -52,6 +52,7 @@ import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
+import { localizedName } from "@/lib/localizedName";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import {
@@ -115,14 +116,14 @@ export default function GoodsDeliveries() {
     const gate = useDemoActionGate();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const pickName = (ar?: string | null, en?: string | null) => (isRtl ? (ar ?? en) : (en ?? ar)) ?? "";
+  const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, i18n.language);
   const fmt = (n: any) => fmt2(n);
   const tr = (k: string, opts?: any): string => t(`warehousePages.goodsDeliveries.${k}`, opts) as string;
-  const custName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
-  const itemName = (i: any) => isRtl ? (i?.nameAr ?? i?.nameEn ?? "") : (i?.nameEn ?? i?.nameAr ?? "");
-  const branchName = (b: any) => isRtl ? (b?.nameAr ?? b?.nameEn ?? `#${b?.id}`) : (b?.nameEn ?? b?.nameAr ?? `#${b?.id}`);
-  const unitName = (u: any) => isRtl ? (u?.nameAr ?? u?.nameEn ?? "") : (u?.nameEn ?? u?.nameAr ?? "");
-  const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
+  const custName = (s: any) => localizedName(s?.nameAr, s?.nameEn, i18n.language);
+  const itemName = (i: any) => localizedName(i?.nameAr, i?.nameEn, i18n.language);
+  const branchName = (b: any) => localizedName(b?.nameAr, b?.nameEn, i18n.language) || `#${b?.id}`;
+  const unitName = (u: any) => localizedName(u?.nameAr, u?.nameEn, i18n.language);
+  const warehouseName = (w: any) => localizedName(w?.nameAr, w?.nameEn, i18n.language);
 
   const { user, token } = useAuth() as any;
   const fieldPolicy = useFieldPolicy("delivery_note");

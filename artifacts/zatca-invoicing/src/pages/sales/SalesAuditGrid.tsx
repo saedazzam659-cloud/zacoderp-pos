@@ -15,6 +15,7 @@ import { saveBlob } from "@/lib/saveFile";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { saveUiPrefs } from "@/lib/uiPrefsApi";
 import { useToast } from "@/hooks/use-toast";
@@ -731,6 +732,7 @@ function buildBulkPrintHtml(invoices: any[], maps: LookupMaps): string {
 
 export default function SalesAuditGrid({ source = "manual", titleOverride }: { source?: "manual" | "pos" | "all"; titleOverride?: string } = {}) {
     const gate = useDemoActionGate();
+  const { t } = useTranslation();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const { fmt, isRtl } = useFormatters();
@@ -2549,7 +2551,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                   value={warehouseFilter}
                   onValueChange={setWarehouseFilter}
                   placeholder="كل المخازن"
-                  searchPlaceholder="ابحث بالكود أو الاسم..."
+                  searchPlaceholder={t("common.searchByCodeOrName")}
                   className="h-7 text-xs"
                 />
               </div>

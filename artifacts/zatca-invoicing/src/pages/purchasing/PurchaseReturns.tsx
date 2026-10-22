@@ -56,6 +56,7 @@ import {
   rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
+import { localizedName } from "@/lib/localizedName";
 import PurchasePrintModal from "./PurchasePrintModal";
 import QuickAddCatalogItemDialog from "../sales/QuotationQuickAddItemDialog";
 import { DateField } from "@/components/ui/date-field";
@@ -123,11 +124,11 @@ export default function PurchaseReturns() {
   const isRtl = i18n.language === "ar";
   const fmt = (n: any) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const tr = (k: string, opts?: any): string => t(`purchasingPages.purchaseReturns.${k}`, opts) as string;
-  const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
-  const itemName = (i: any) => isRtl ? (i?.nameAr ?? i?.nameEn ?? "") : (i?.nameEn ?? i?.nameAr ?? "");
-  const branchName = (b: any) => isRtl ? (b?.nameAr ?? b?.nameEn ?? `#${b?.id}`) : (b?.nameEn ?? b?.nameAr ?? `#${b?.id}`);
-  const unitName = (u: any) => isRtl ? (u?.nameAr ?? u?.nameEn ?? "") : (u?.nameEn ?? u?.nameAr ?? "");
-  const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
+  const supName = (s: any) => localizedName(s?.nameAr, s?.nameEn, i18n.language);
+  const itemName = (i: any) => localizedName(i?.nameAr, i?.nameEn, i18n.language);
+  const branchName = (b: any) => localizedName(b?.nameAr, b?.nameEn, i18n.language) || `#${b?.id}`;
+  const unitName = (u: any) => localizedName(u?.nameAr, u?.nameEn, i18n.language);
+  const warehouseName = (w: any) => localizedName(w?.nameAr, w?.nameEn, i18n.language);
 
   const { user, token } = useAuth() as any;
   const canSaveDraft = Array.isArray(user?.permissions?.__draftSaveDocumentTypes) && user.permissions.__draftSaveDocumentTypes.includes("purchase_return");
@@ -1161,7 +1162,7 @@ export default function PurchaseReturns() {
             onSearchChange={setItemSearch}
             loading={isSearchingItems}
             placeholder={tr("selectItemCombo")}
-            searchPlaceholder="ابحث بالكود أو الاسم..."
+            searchPlaceholder={t("common.searchByCodeOrName")}
           />
         </div>
         <div className="space-y-1">
@@ -1171,7 +1172,7 @@ export default function PurchaseReturns() {
             value={qaWarehouseId}
             onValueChange={setQaWarehouseId}
             placeholder={tr("lineCols.warehouse")}
-            searchPlaceholder="ابحث بالكود أو الاسم..."
+            searchPlaceholder={t("common.searchByCodeOrName")}
             className="h-9 text-xs"
           />
         </div>
@@ -2177,7 +2178,7 @@ ${sections}
                         onSearchChange={setItemSearch}
                         loading={isSearchingItems}
                         placeholder={tr("selectItemCombo")}
-                        searchPlaceholder="ابحث بالكود أو الاسم..."
+                        searchPlaceholder={t("common.searchByCodeOrName")}
                       />
                     ) : (
                       <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
@@ -2190,7 +2191,7 @@ ${sections}
                           value={l.warehouseId}
                           onValueChange={v => updateLine(l._id, "warehouseId", v)}
                           placeholder={tr("lineCols.warehouse")}
-                          searchPlaceholder="ابحث بالكود أو الاسم..."
+                          searchPlaceholder={t("common.searchByCodeOrName")}
                           className="h-8 text-xs"
                         />
                       </div>

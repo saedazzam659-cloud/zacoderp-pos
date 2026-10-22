@@ -1459,7 +1459,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
     const chosenUnitId = base?.unitId ?? item.unitId ?? null;
-    const chosenUnitName = base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "";
+    const chosenUnitName = localizedName(base?.unit?.nameAr ?? fallbackUnit?.nameAr, base?.unit?.nameEn ?? fallbackUnit?.nameEn, isRtl ? "ar" : "en");
     const catalogPrice = resolveSalesItemUnitPrice(item, base);
     let chosenPrice: string = String(catalogPrice);
     if (currencyCode && defaultCurrency && currencyCode !== defaultCurrency.code) {
@@ -1668,7 +1668,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const updated: DocLine = {
         ...l,
         unitId: newUnitId,
-        unit: row?.unit?.nameAr ?? globalUnit?.nameAr ?? "",
+        unit: localizedName(row?.unit?.nameAr ?? globalUnit?.nameAr, row?.unit?.nameEn ?? globalUnit?.nameEn, isRtl ? "ar" : "en"),
         conversionFactor: String(row?.conversionFactor ?? "1"),
         unitPrice: newPrice,
         baseUnitPrice: newPrice,
@@ -2276,7 +2276,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // combobox visually communicates "this is you, can't change it".
     ? [{
         value: String(myRep.id),
-        label: myRep.code ? `${myRep.code} — ${myRep.nameAr ?? myRep.nameEn ?? `#${myRep.id}`}` : (myRep.nameAr ?? myRep.nameEn ?? `#${myRep.id}`),
+        label: myRep.code ? `${myRep.code} — ${localizedName(myRep.nameAr, myRep.nameEn, isRtl ? "ar" : "en") || `#${myRep.id}`}` : (localizedName(myRep.nameAr, myRep.nameEn, isRtl ? "ar" : "en") || `#${myRep.id}`),
+        labelEn: myRep.nameEn || undefined,
       }]
     : [
         { value: "", label: t("salesDocForm.noSalesRep") },
@@ -2284,7 +2285,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           .filter((r: any) => r.isActive !== false)
           .map((r: any) => ({
             value: String(r.id),
-            label: r.code ? `${r.code} — ${r.nameAr ?? r.nameEn ?? `#${r.id}`}` : (r.nameAr ?? r.nameEn ?? `#${r.id}`),
+            label: r.code ? `${r.code} — ${localizedName(r.nameAr, r.nameEn, isRtl ? "ar" : "en") || `#${r.id}`}` : (localizedName(r.nameAr, r.nameEn, isRtl ? "ar" : "en") || `#${r.id}`),
+            labelEn: r.nameEn || undefined,
           })),
       ];
   const itemComboItems = annotateItemCombo([
@@ -2483,7 +2485,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-semibold text-primary">
           <Plus className="h-4 w-4" />
-          <span>إضافة صنف</span>
+          <span>{t("salesDocForm.addItemAction")}</span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {priceInclToggle}
@@ -2498,7 +2500,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       >
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
-            <label className="text-[11px] text-muted-foreground">الصنف</label>
+            <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colItem")}</label>
             {(isInvoice || isQuotation || isOrder) && canCreateCatalogItems && (
               <Button
                 type="button"
@@ -2509,7 +2511,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 onClick={() => setQuickItemDialogOpen(true)}
               >
                 <Plus className="h-3 w-3" />
-                صنف جديد
+                {t("salesDocForm.newItemAction")}
               </Button>
             )}
           </div>
@@ -2521,7 +2523,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             onSearchChange={setItemSearch}
             loading={isSearchingItems}
             placeholder={t("salesDocForm.itemPlaceholder")}
-            searchPlaceholder="ابحث بالكود أو الاسم..."
+            searchPlaceholder={t("salesDocForm.searchItemPlaceholder")}
             companyId={cid ?? ""}
             userId={user?.id ?? ""}
             branchId={branchId}
@@ -2536,7 +2538,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             value={qaWarehouseId}
             onValueChange={setQaWarehouseId}
             placeholder={t("salesDocForm.warehousePlaceholder")}
-            searchPlaceholder="ابحث بالكود أو الاسم..."
+            searchPlaceholder={t("salesDocForm.searchItemPlaceholder")}
             className="h-9 text-xs"
           />
         </div>
@@ -2674,7 +2676,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         onSearchChange={setItemSearch}
                         loading={isSearchingItems}
                         placeholder={t("salesDocForm.itemPlaceholder")}
-                        searchPlaceholder="ابحث بالكود أو الاسم..."
+                        searchPlaceholder={t("salesDocForm.searchItemPlaceholder")}
                         className="h-8 text-xs"
                         companyId={cid ?? ""}
                         userId={user?.id ?? ""}
@@ -2794,7 +2796,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 data-testid="button-open-create-quotation-item-from-grid"
               >
                 <Plus className="h-4 w-4" />
-                إنشاء صنف جديد
+                {t("salesDocForm.createNewItem")}
               </Button>
             )}
             <Button type="button" variant="outline" size="sm" className="gap-2 h-8" onClick={addGridLine} data-testid="button-add-grid-line">
@@ -2902,7 +2904,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {user ? (
                         <div className="min-w-0">
-                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder="ابحث بالكود أو الاسم..." companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
+                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
                         </div>
                       ) : (
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
@@ -2919,7 +2921,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                             value={l.warehouseId}
                             onValueChange={v => updateLine(l._id, "warehouseId", v)}
                             placeholder={t("salesDocForm.warehousePlaceholder")}
-                            searchPlaceholder="ابحث بالكود أو الاسم..."
+                            searchPlaceholder={t("salesDocForm.searchItemPlaceholder")}
                             disabled={fp.isReadOnly("warehouse")}
                             className="h-8 text-xs"
                           />
@@ -2932,14 +2934,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     const opts = itemUnits.length > 0
                           ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
                               value: String(iu.unitId),
-                              label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                              label: `${localizedName(iu.unit?.nameAr, iu.unit?.nameEn, isRtl ? "ar" : "en")}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
                               disabled: iu.isActive === false || iu.unit?.isActive === false,
                             }))
                           : [
                               ...unitItems,
                               ...catalogUnitsWithHistoricalSelection(units, l.unitId)
                                 .filter((u: any) => !unitItems.some((x: any) => x.value === String(u.id)))
-                                .map((u: any) => ({ value: String(u.id), label: u.nameAr ?? u.nameEn ?? `#${u.id}`, disabled: u.isActive === false })),
+                                .map((u: any) => ({ value: String(u.id), label: localizedName(u.nameAr, u.nameEn, isRtl ? "ar" : "en") || `#${u.id}`, disabled: u.isActive === false })),
                             ];
                         return units.length > 0 ? (
                           <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
@@ -3059,7 +3061,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   data-testid="button-open-create-sales-item-classic"
                 >
                   <Plus className="h-4 w-4" />
-                  إنشاء صنف جديد
+                  {t("salesDocForm.createNewItem")}
                 </Button>
               )}
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
@@ -3077,7 +3079,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // The date column differs per mode (invoiceDate / orderDate / quotationDate).
   const customerNameById = (id: any) => {
     const c = (customers as any[]).find((c: any) => Number(c.id) === Number(id));
-    return c ? (c.nameAr ?? c.nameEn ?? `#${c.id}`) : "—";
+    return c ? (localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en") || `#${c.id}`) : "—";
   };
   const navDateField = isInvoice ? "invoiceDate" : isOrder ? "orderDate" : "quotationDate";
   const navFallbackPrefix = isInvoice ? "INV-" : isOrder ? "SO-" : "SQ-";
@@ -3176,12 +3178,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       return {
         _id: crypto.randomUUID(),
         itemId: String(item.id),
-        itemName: item.nameAr ?? item.nameEn ?? "",
+        itemName: localizedName(item.nameAr, item.nameEn, isRtl ? "ar" : "en"),
         itemCode: String(item.code ?? ""),
         brandId: null,
         brandName: "",
         unitId: item.unitId ? String(item.unitId) : "",
-        unit: item.unit?.nameAr ?? item.unit?.code ?? "",
+        unit: localizedName(item.unit?.nameAr, item.unit?.nameEn, isRtl ? "ar" : "en") || item.unit?.code || "",
         conversionFactor: "1",
         warehouseId: "",
         qty: String(qty ?? 1),
@@ -3323,7 +3325,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             code: it.code,
             salePrice: it.salePrice,
             vatRate: it.vatRate,
-            unit: it.unit?.nameAr ?? it.unit?.code ?? null,
+            unit: localizedName(it.unit?.nameAr, it.unit?.nameEn, isRtl ? "ar" : "en") || it.unit?.code || null,
           },
         })),
         ...(usesOps
@@ -3561,8 +3563,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // basics are incomplete explains EXACTLY which fields are missing.
   const explainMissingBasics = () => {
     toast({
-      title: "أكمل البيانات الأساسية أولاً",
-      description: `الحقول الناقصة: ${missingBasicFields.join("، ")}`,
+      title: t("salesDocForm.completeBasicDataTitle"),
+      description: t("salesDocForm.missingFieldsDescription", { fields: missingBasicFields.join("، ") }),
       variant: "destructive",
     });
   };
@@ -3606,8 +3608,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     <div className="border-t pt-4 mt-2 flex items-center justify-between gap-3">
       <p className="text-[11px] text-muted-foreground">
         {basicFieldsValid
-          ? "اكتملت البيانات الأساسية — انتقل إلى الأصناف."
-          : `أكمل الحقول الناقصة للمتابعة: ${missingBasicFields.join("، ")}.`}
+          ? t("salesDocForm.basicDataComplete")
+          : t("salesDocForm.missingFieldsDescription", { fields: missingBasicFields.join("، ") })}
       </p>
       <Button
         type="button"
@@ -3615,7 +3617,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         className="gap-1.5"
         data-testid="button-next-to-items"
       >
-        الأصناف
+        {t("salesDocForm.tabItemsShort")}
         {isRtl ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
       </Button>
     </div>
@@ -3633,15 +3635,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         data-testid="button-back-to-basic"
       >
         {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
-        البيانات الأساسية
+        {t("salesDocForm.tabBasicInfo")}
       </Button>
       <div className="flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={handlePrintOnly} disabled={saveMut.isPending} className="gap-1.5" data-testid="button-print-top">
-          <Printer className="h-4 w-4" /> طباعة
+          <Printer className="h-4 w-4" /> {t("salesDocForm.printAction")}
         </Button>
         {!editLock && (
           <>
-          {canSaveDraft && <Button size="sm" variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending} data-testid="button-save-draft-top">حفظ كمسودة</Button>}
+          {canSaveDraft && <Button size="sm" variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending} data-testid="button-save-draft-top">{t("salesDocForm.saveDraftAction")}</Button>}
           <Button size="sm" data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={() => handleSave(false)} disabled={saveMut.isPending || (isInvoice && draftOnly)} className="gap-1.5" data-testid="button-save-top">
             <Save className="h-4 w-4" />
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
@@ -3973,40 +3975,40 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               {useTabbedLayout ? (
                 <TabsList className={cn("h-8 bg-background border gap-1 shrink-0", colorInvoiceTabs && COLORFUL_INVOICE_TAB_LIST_CLASS)}>
                   <TabsTrigger value="basic" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("basic", colorInvoiceTabs))}>
-                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
+                    <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabBasicInfo")}
                   </TabsTrigger>
                   <TabsTrigger value="items" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("items", colorInvoiceTabs), !basicFieldsValid && "opacity-50")}>
-                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                    <ListOrdered className="h-3.5 w-3.5" />{t("salesDocForm.tabItemsShort")}
                   </TabsTrigger>
                   {/* Linked-ops tabs stay VISIBLE on a new invoice but disabled
                       until it is saved (they need a persisted invoice id). */}
                   {isInvoice && showCustomerDebitNotes && (
                     <TabsTrigger value="debitNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("debitNote", colorInvoiceTabs))}>
-                      <FileText className="h-3.5 w-3.5" />إشعار مدين
+                      <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabDebitNote")}
                     </TabsTrigger>
                   )}
                   {isInvoice && (
                     <TabsTrigger value="creditNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("creditNote", colorInvoiceTabs))}>
-                      <FileText className="h-3.5 w-3.5" />إشعار دائن
+                      <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabCreditNote")}
                     </TabsTrigger>
                   )}
                   {isInvoice && (
                     <TabsTrigger value="payments" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("payments", colorInvoiceTabs))}>
-                      <Wallet className="h-3.5 w-3.5" />المدفوعات
+                      <Wallet className="h-3.5 w-3.5" />{t("salesDocForm.tabPayments")}
                     </TabsTrigger>
                   )}
                   {isInvoice && (
                     <TabsTrigger value="returns" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("returns", colorInvoiceTabs))}>
-                      <Undo2 className="h-3.5 w-3.5" />الإرجاع
+                      <Undo2 className="h-3.5 w-3.5" />{t("salesDocForm.tabReturns")}
                     </TabsTrigger>
                   )}
                   {isInvoice && (
                     <TabsTrigger value="archive" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("archive", colorInvoiceTabs))}>
-                      <Archive className="h-3.5 w-3.5" />أرشفة
+                      <Archive className="h-3.5 w-3.5" />{t("salesDocForm.tabArchive")}
                     </TabsTrigger>
                   )}
                   <TabsTrigger value="details" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("details", colorInvoiceTabs))}>
-                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
+                    <ClipboardList className="h-3.5 w-3.5" />{t("salesDocForm.tabDetails")}
                   </TabsTrigger>
                 </TabsList>
               ) : (
@@ -4139,7 +4141,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         { value: "", label: t("salesDocForm.basedOnQuotationNone") },
                         ...eligibleQuotationsForLink.map((q: any) => {
                           const cust = (customers as any[]).find((c: any) => Number(c.id) === Number(q.customerId));
-                          const custName = cust ? (cust.nameAr ?? cust.nameEn ?? `#${cust.id}`) : t("salesDocForm.noCustomer");
+                          const custName = cust ? (localizedName(cust.nameAr, cust.nameEn, isRtl ? "ar" : "en") || `#${cust.id}`) : t("salesDocForm.noCustomer");
                           const num = q.docNumber ?? `SQ-${q.id}`;
                           return {
                             value: String(q.id),
@@ -4494,7 +4496,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         partyType="customer"
                         noteType="debit"
                         partyId={customerId ? Number(customerId) : null}
-                        partyName={cust ? (cust.nameAr ?? cust.nameEn ?? null) : null}
+                        partyName={cust ? (localizedName(cust.nameAr, cust.nameEn, isRtl ? "ar" : "en") || null) : null}
                         partyVatNumber={cust?.vatNumber ?? null}
                         partyAccountId={cust?.accountId ?? null}
                         invoiceDocNumber={(existing as any)?.docNumber ?? docNumber ?? null}
@@ -4512,7 +4514,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         partyType="customer"
                         noteType="credit"
                         partyId={customerId ? Number(customerId) : null}
-                        partyName={cust ? (cust.nameAr ?? cust.nameEn ?? null) : null}
+                        partyName={cust ? (localizedName(cust.nameAr, cust.nameEn, isRtl ? "ar" : "en") || null) : null}
                         partyVatNumber={cust?.vatNumber ?? null}
                         partyAccountId={cust?.accountId ?? null}
                         invoiceDocNumber={(existing as any)?.docNumber ?? docNumber ?? null}

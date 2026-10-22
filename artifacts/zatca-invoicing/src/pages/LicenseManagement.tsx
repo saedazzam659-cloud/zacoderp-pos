@@ -488,7 +488,7 @@ export default function LicenseManagement() {
               <Label className="text-xs">الوكيل</Label>
               <SearchCombobox
                 items={announcementAgents.map(agent => ({
-                  value: String(agent.id), label: agent.name, labelEn: agent.domain,
+                  value: String(agent.id), label: agent.name, description: agent.domain,
                 }))}
                 value={announcementAgentId}
                 onValueChange={value => {
