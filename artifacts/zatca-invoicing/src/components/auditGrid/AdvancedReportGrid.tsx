@@ -26,12 +26,14 @@
  *   `${slug}.condFormat.v1.c${cid|anon}`       — conditional formatting rules
  */
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Search, Layers, Sparkles, RotateCcw, X, ArrowUp, ArrowDown, ArrowUpDown, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { localizeUiText } from "@/lib/localizedUiText";
 import {
   useAuditGridLayout,
   useColumnResize,
@@ -212,10 +214,10 @@ function CondFormatPopover<R>({ columns, rules, setRules }: CondFormatPopoverPro
           size="sm"
           variant="ghost"
           className="h-7 px-2 text-xs gap-1 text-slate-700 hover:bg-slate-100"
-          title="تنسيق شرطي"
+          title={localizeUiText("تنسيق شرطي")}
         >
           <Sparkles className="h-3.5 w-3.5" />
-          التنسيق الشرطي
+          {localizeUiText("التنسيق الشرطي")}
           {rules.length > 0 && (
             <span className="ms-1 inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full bg-purple-500 text-white text-[10px] font-bold">
               {rules.length}
@@ -227,22 +229,22 @@ function CondFormatPopover<R>({ columns, rules, setRules }: CondFormatPopoverPro
         <div className="px-3 py-2 border-b bg-gradient-to-l from-purple-50 to-pink-50 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-slate-800 font-semibold text-xs">
             <Sparkles className="h-3.5 w-3.5 text-purple-600" />
-            قواعد التنسيق الشرطي
+            {localizeUiText("قواعد التنسيق الشرطي")}
           </div>
           {rules.length > 0 && (
             <Button type="button" size="sm" variant="ghost"
               className="h-6 px-2 text-[11px] text-slate-600 gap-1"
               onClick={() => setRules([])}
-              title="مسح كل القواعد">
+              title={localizeUiText("مسح كل القواعد")}>
               <RotateCcw className="h-3 w-3" />
-              مسح
+              {localizeUiText("مسح")}
             </Button>
           )}
         </div>
         <div className="p-2 max-h-80 overflow-y-auto space-y-2">
           {rules.length === 0 && (
             <p className="text-[11px] text-slate-500 text-center py-6 px-2">
-              لا توجد قواعد. أضف قاعدة لتلوين الخلايا التي تطابق شرطاً معيناً (مثلاً: الرصيد &gt; 1000 → أحمر).
+              {localizeUiText("لا توجد قواعد. أضف قاعدة لتلوين الخلايا التي تطابق شرطاً معيناً (مثلاً: الرصيد > 1000 → أحمر).")}
             </p>
           )}
           {rules.map(r => {
@@ -264,12 +266,12 @@ function CondFormatPopover<R>({ columns, rules, setRules }: CondFormatPopoverPro
                     onChange={e => updateRule(r.id, { op: e.target.value as CondOp })}
                     className="h-7 text-[11px] px-1.5 rounded border border-slate-300 bg-white text-slate-800"
                   >
-                    {COND_OPS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    {COND_OPS.map(o => <option key={o.value} value={o.value}>{localizeUiText(o.label)}</option>)}
                   </select>
                   <Button type="button" size="icon" variant="ghost"
                     className="h-7 w-7 text-rose-700 hover:bg-rose-100"
                     onClick={() => removeRule(r.id)}
-                    title="حذف القاعدة">
+                    title={localizeUiText("حذف القاعدة")}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
@@ -278,24 +280,24 @@ function CondFormatPopover<R>({ columns, rules, setRules }: CondFormatPopoverPro
                     type={isNum ? "number" : "text"}
                     value={r.v1}
                     onChange={e => updateRule(r.id, { v1: e.target.value })}
-                    placeholder="القيمة"
+                    placeholder={localizeUiText("القيمة")}
                     className="h-7 text-[11px] flex-1 bg-white"
                   />
                   {opMeta?.needsV2 && (
                     <>
-                      <span className="text-[11px] text-slate-600">إلى</span>
+                      <span className="text-[11px] text-slate-600">{localizeUiText("إلى")}</span>
                       <Input
                         type={isNum ? "number" : "text"}
                         value={r.v2 ?? ""}
                         onChange={e => updateRule(r.id, { v2: e.target.value })}
-                        placeholder="القيمة الثانية"
+                        placeholder={localizeUiText("القيمة الثانية")}
                         className="h-7 text-[11px] flex-1 bg-white"
                       />
                     </>
                   )}
                 </div>
                 <div className="flex items-center gap-1 flex-wrap pt-1 border-t border-white/60">
-                  <span className="text-[10px] text-slate-700">اللون:</span>
+                  <span className="text-[10px] text-slate-700">{localizeUiText("اللون:")}</span>
                   {COND_PALETTE.map(p => (
                     <button
                       type="button"
@@ -306,9 +308,9 @@ function CondFormatPopover<R>({ columns, rules, setRules }: CondFormatPopoverPro
                         p.bg,
                         r.bg === p.bg ? "ring-2 ring-slate-700 ring-offset-1" : "opacity-70 hover:opacity-100",
                       )}
-                      title={p.label}
+                      title={localizeUiText(p.label)}
                     >
-                      {p.label}
+                      {localizeUiText(p.label)}
                     </button>
                   ))}
                 </div>
@@ -317,11 +319,11 @@ function CondFormatPopover<R>({ columns, rules, setRules }: CondFormatPopoverPro
           })}
         </div>
         <div className="px-3 py-2 border-t bg-slate-50 flex items-center justify-between">
-          <span className="text-[10px] text-slate-500">يحفظ تلقائياً لكل شركة</span>
+          <span className="text-[10px] text-slate-500">{localizeUiText("يحفظ تلقائياً لكل شركة")}</span>
           <Button type="button" size="sm" onClick={addRule}
             className="h-7 px-2 text-[11px] bg-purple-600 hover:bg-purple-500 text-white gap-1">
             <Plus className="h-3 w-3" />
-            إضافة قاعدة
+            {localizeUiText("إضافة قاعدة")}
           </Button>
         </div>
       </PopoverContent>
@@ -339,13 +341,13 @@ function GroupBySelect<R>({ columns, value, onChange }: GroupByProps<R>) {
   return (
     <div className="flex items-center gap-1.5 text-xs">
       <Layers className="h-3.5 w-3.5 text-slate-500" />
-      <span className="text-slate-600 font-medium hidden sm:inline">تجميع حسب:</span>
+      <span className="text-slate-600 font-medium hidden sm:inline">{localizeUiText("تجميع حسب:")}</span>
       <select
         value={value}
         onChange={e => onChange(e.target.value as string | "")}
         className="h-7 text-xs px-2 rounded border border-slate-300 bg-white text-slate-700 cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
       >
-        <option value="">— بدون تجميع —</option>
+        <option value="">{localizeUiText("— بدون تجميع —")}</option>
         {columns.filter(c => c.type !== "none").map(c => (
           <option key={c.key} value={c.key}>{c.label}</option>
         ))}
@@ -355,7 +357,7 @@ function GroupBySelect<R>({ columns, value, onChange }: GroupByProps<R>) {
           type="button" size="icon" variant="ghost"
           className="h-6 w-6 text-slate-400 hover:text-slate-700"
           onClick={() => onChange("")}
-          title="إلغاء التجميع"
+          title={localizeUiText("إلغاء التجميع")}
         >
           <X className="h-3.5 w-3.5" />
         </Button>
@@ -423,6 +425,7 @@ export default function AdvancedReportGrid<R>({
   rowTitle,
   paginate = true,
 }: AdvancedReportGridProps<R>) {
+  const { i18n } = useTranslation();
   /* ── Layout (order / colors / page-size) ─────────────────────────────── */
   const allKeys = useMemo(() => columns.map(c => c.key), [columns]);
   const layout = useAuditGridLayout({
@@ -574,9 +577,9 @@ export default function AdvancedReportGrid<R>({
           <Input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="بحث في جميع الأعمدة…"
+            placeholder={i18n.language?.startsWith("en") ? "Search all columns…" : "بحث في جميع الأعمدة…"}
             className="h-7 text-xs pe-7 bg-white text-slate-800 placeholder:text-slate-400 border-slate-300"
-            aria-label="بحث"
+            aria-label={i18n.language?.startsWith("en") ? "Search" : "بحث"}
           />
         </div>
 
@@ -597,11 +600,11 @@ export default function AdvancedReportGrid<R>({
       {/* ─── Active-filter chip strip ────────────────────────────────── */}
       {(Object.keys(colAdv).some(k => isAdvActive(colAdv[k])) || search) && (
         <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900 flex items-center gap-2 flex-wrap print:hidden">
-          <span className="font-semibold">فلاتر نشطة:</span>
+          <span className="font-semibold">{i18n.language?.startsWith("en") ? "Active filters:" : "فلاتر نشطة:"}</span>
           {search && (
             <span className="px-2 py-0.5 rounded-full bg-white border border-amber-300 inline-flex items-center gap-1">
-              بحث: {search}
-              <button onClick={() => setSearch("")} className="text-amber-600 hover:text-amber-900" aria-label="مسح البحث">
+              {i18n.language?.startsWith("en") ? "Search: " : "بحث: "}{search}
+              <button onClick={() => setSearch("")} className="text-amber-600 hover:text-amber-900" aria-label={i18n.language?.startsWith("en") ? "Clear search" : "مسح البحث"}>
                 <X className="h-3 w-3" />
               </button>
             </span>
@@ -611,11 +614,11 @@ export default function AdvancedReportGrid<R>({
             if (!isAdvActive(a)) return null;
             return (
               <span key={c.key} className="px-2 py-0.5 rounded-full bg-white border border-amber-300 inline-flex items-center gap-1">
-                {c.label}: {describeAdv(a, c.type)}
+                {c.label}: {describeAdv(a, c.type, i18n.language)}
                 <button
                   onClick={() => setColAdv(p => { const n = { ...p }; delete n[c.key]; return n; })}
                   className="text-amber-600 hover:text-amber-900"
-                  aria-label={`مسح فلتر ${c.label}`}
+                  aria-label={i18n.language?.startsWith("en") ? `Clear filter ${c.label}` : `مسح فلتر ${c.label}`}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -626,7 +629,7 @@ export default function AdvancedReportGrid<R>({
             onClick={() => { setSearch(""); setColAdv({}); }}
             className="ms-auto text-amber-700 underline text-[11px] hover:text-amber-900"
           >
-            مسح الكل
+            {i18n.language?.startsWith("en") ? "Clear all" : "مسح الكل"}
           </button>
         </div>
       )}
@@ -677,7 +680,7 @@ export default function AdvancedReportGrid<R>({
                            type="button"
                            onClick={() => c.sortable !== false && setSort(p => cycleSort(p, c.key))}
                            className={cn("flex items-center gap-1 min-w-0", c.sortable !== false && "hover:underline cursor-pointer")}
-                           title={`ترتيب حسب ${c.label}`}
+                           title={i18n.language?.startsWith("en") ? `Sort by ${c.label}` : `ترتيب حسب ${c.label}`}
                          >
                            <span className="whitespace-normal break-words leading-4">{c.label}</span>
                            {c.sortable !== false && sortIconFor(c.key)}
@@ -725,7 +728,7 @@ export default function AdvancedReportGrid<R>({
               ? (pagedGroups.length === 0 ? (
                   <tr>
                     <td colSpan={Math.max(1, visibleCount)} className="py-10 text-center text-slate-400 italic">
-                      {emptyMessage}
+                      {localizeUiText(emptyMessage)}
                     </td>
                   </tr>
                 ) : pagedGroups.map(g => {
@@ -747,7 +750,7 @@ export default function AdvancedReportGrid<R>({
               : (pagedRows.length === 0 ? (
                   <tr>
                     <td colSpan={Math.max(1, visibleCount)} className="py-10 text-center text-slate-400 italic">
-                      {emptyMessage}
+                      {localizeUiText(emptyMessage)}
                     </td>
                   </tr>
                 ) : (
@@ -881,7 +884,7 @@ function GroupBlock<R>({ group, orderedColumns, subtotals, rowKey, rowClassName,
             c.className,
           )}>
             {idx === 0
-              ? `إجمالي ${group.label}`
+              ? `${localizeUiText("إجمالي")} ${group.label}`
               : subtotals[c.key] != null
                 ? fmt(subtotals[c.key])
                 : ""}

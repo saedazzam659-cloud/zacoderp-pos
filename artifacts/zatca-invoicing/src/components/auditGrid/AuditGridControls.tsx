@@ -13,6 +13,7 @@ import { ArrowDown, ArrowUp, Check, CheckCircle2, Eye, EyeOff, Palette, RotateCw
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { localizeUiText } from "@/lib/localizedUiText";
 import {
   DEFAULT_FOOTER_COLOR, DEFAULT_HEADER_COLOR,
   FOOTER_COLOR_KEYS, FOOTER_THEMES, HEADER_COLOR_KEYS, HEADER_THEMES,
@@ -40,11 +41,11 @@ export function HeaderColorPicker({ layout, isRtl }: CommonProps) {
           size="sm"
           variant="ghost"
           className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
-          title={`لون الرأس الحالي: ${theme.label}`}
-          aria-label="تغيير لون رأس الجدول"
+          title={`${localizeUiText("لون الرأس الحالي:")} ${localizeUiText(theme.label)}`}
+          aria-label={localizeUiText("تغيير لون رأس الجدول")}
         >
           <Palette className="h-3.5 w-3.5" />
-          لون الرأس
+          {localizeUiText("لون الرأس")}
           <span className={cn("ms-1 inline-block h-3 w-3 rounded-full", theme.swatch)} />
         </Button>
       </PopoverTrigger>
@@ -52,7 +53,7 @@ export function HeaderColorPicker({ layout, isRtl }: CommonProps) {
         <div className="flex items-center justify-between mb-2 pb-2 border-b">
           <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
             <Palette className="h-3.5 w-3.5 text-blue-600" />
-            لون رأس الجدول
+            {localizeUiText("لون رأس الجدول")}
           </div>
           {headerColor !== DEFAULT_HEADER_COLOR && (
             <Button
@@ -61,15 +62,15 @@ export function HeaderColorPicker({ layout, isRtl }: CommonProps) {
               variant="ghost"
               className="h-6 px-2 text-[11px] text-slate-600 gap-1"
               onClick={() => setHeaderColor(DEFAULT_HEADER_COLOR)}
-              title="إعادة لون الرأس الافتراضي (أبيض)"
+              title={localizeUiText("إعادة لون الرأس الافتراضي (أبيض)")}
             >
               <RotateCw className="h-3 w-3" />
-              افتراضي
+              {localizeUiText("افتراضي")}
             </Button>
           )}
         </div>
         <div className="text-[10.5px] text-slate-500 mb-2 leading-relaxed">
-          اختر لوناً لرأس شاشة الجرد. يُحفظ لكل شركة على حدة.
+          {localizeUiText("اختر لوناً لرأس شاشة الجرد. يُحفظ لكل شركة على حدة.")}
         </div>
         <div className="grid grid-cols-4 gap-1.5">
           {HEADER_COLOR_KEYS.map((c) => {
@@ -87,7 +88,7 @@ export function HeaderColorPicker({ layout, isRtl }: CommonProps) {
                     ? "border-blue-500 bg-blue-50 ring-1 ring-blue-300"
                     : "border-slate-200 hover:border-slate-400 hover:bg-slate-50",
                 )}
-                aria-label={`اختر اللون ${t.label}`}
+                aria-label={`${localizeUiText("اختر اللون")} ${localizeUiText(t.label)}`}
                 aria-pressed={active}
                 title={t.label}
               >
@@ -121,11 +122,11 @@ export function FooterColorPicker({ layout, isRtl }: CommonProps) {
           size="sm"
           variant="ghost"
           className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
-          title={`لون القدم الحالي: ${footerTheme.label}`}
-          aria-label="تغيير لون قدم الجدول (الإجمالي)"
+          title={`${localizeUiText("لون القدم الحالي:")} ${localizeUiText(footerTheme.label)}`}
+          aria-label={localizeUiText("تغيير لون قدم الجدول (الإجمالي)")}
         >
           <Palette className="h-3.5 w-3.5" />
-          لون القدم
+          {localizeUiText("لون القدم")}
           <span className={cn("ms-1 inline-block h-3 w-3 rounded-full", footerTheme.swatch)} />
         </Button>
       </PopoverTrigger>
@@ -133,7 +134,7 @@ export function FooterColorPicker({ layout, isRtl }: CommonProps) {
         <div className="flex items-center justify-between mb-2 pb-2 border-b">
           <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
             <Palette className="h-3.5 w-3.5 text-emerald-600" />
-            لون قدم الجدول (الإجمالي)
+            {localizeUiText("لون قدم الجدول (الإجمالي)")}
           </div>
           {footerColor !== DEFAULT_FOOTER_COLOR && (
             <Button
@@ -142,15 +143,15 @@ export function FooterColorPicker({ layout, isRtl }: CommonProps) {
               variant="ghost"
               className="h-6 px-2 text-[11px] text-slate-600 gap-1"
               onClick={() => setFooterColor(DEFAULT_FOOTER_COLOR)}
-              title="إعادة لون القدم الافتراضي (أبيض)"
+              title={localizeUiText("إعادة لون القدم الافتراضي (أبيض)")}
             >
               <RotateCw className="h-3 w-3" />
-              افتراضي
+              {localizeUiText("افتراضي")}
             </Button>
           )}
         </div>
         <div className="text-[10.5px] text-slate-500 mb-2 leading-relaxed">
-          اختر لوناً لقدم شاشة الجرد (سطر الإجماليات). يُحفظ لكل شركة على حدة.
+          {localizeUiText("اختر لوناً لقدم شاشة الجرد (سطر الإجماليات). يُحفظ لكل شركة على حدة.")}
         </div>
         <div className="grid grid-cols-4 gap-1.5">
           {FOOTER_COLOR_KEYS.map((c) => {
@@ -168,7 +169,7 @@ export function FooterColorPicker({ layout, isRtl }: CommonProps) {
                     ? "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-300"
                     : "border-slate-200 hover:border-slate-400 hover:bg-slate-50",
                 )}
-                aria-label={`اختر اللون ${t.label}`}
+                aria-label={`${localizeUiText("اختر اللون")} ${localizeUiText(t.label)}`}
                 aria-pressed={active}
                 title={t.label}
               >
@@ -211,18 +212,18 @@ export function ColumnReorderPopover({ layout, isRtl, columns }: ColumnReorderPr
             theme.btn,
             hasCustomLayout && (headerColor === "white" ? "bg-blue-50 ring-1 ring-blue-200" : "bg-white/20"),
           )}
-          title="إعادة ترتيب الأعمدة"
+          title={localizeUiText("إعادة ترتيب الأعمدة")}
         >
           <Settings2 className="h-3.5 w-3.5" />
-          ترتيب الأعمدة
-          {hasCustomLayout && <span className="ms-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400" title="تخصيص محفوظ" />}
+          {localizeUiText("ترتيب الأعمدة")}
+          {hasCustomLayout && <span className="ms-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400" title={localizeUiText("تخصيص محفوظ")} />}
         </Button>
       </PopoverTrigger>
       <PopoverContent side="bottom" align="end" className="w-72 p-2" dir={isRtl ? "rtl" : "ltr"}>
         <div className="flex items-center justify-between mb-2 pb-2 border-b">
           <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
             <Settings2 className="h-3.5 w-3.5 text-blue-600" />
-            ترتيب الأعمدة
+            {localizeUiText("ترتيب الأعمدة")}
           </div>
           {hasCustomLayout && (
             <Button
@@ -231,19 +232,19 @@ export function ColumnReorderPopover({ layout, isRtl, columns }: ColumnReorderPr
               variant="ghost"
               className="h-6 px-2 text-[11px] text-slate-600 gap-1"
               onClick={resetLayout}
-              title="إعادة الترتيب الافتراضي"
+              title={localizeUiText("إعادة الترتيب الافتراضي")}
             >
               <RotateCw className="h-3 w-3" />
-              إعادة تعيين
+              {localizeUiText("إعادة تعيين")}
             </Button>
           )}
         </div>
         <div className="text-[10.5px] text-slate-500 mb-2 leading-relaxed">
-          استخدم الأسهم لتغيير ترتيب الأعمدة، وأيقونة العين لإخفاء/إظهار العمود.
+          {localizeUiText("استخدم الأسهم لتغيير ترتيب الأعمدة، وأيقونة العين لإخفاء/إظهار العمود.")}
           {hiddenCols.length > 0 && (
-            <span className="text-amber-700 font-medium"> — مخفي: {hiddenCols.length}</span>
+            <span className="text-amber-700 font-medium"> — {localizeUiText("مخفي:")} {hiddenCols.length}</span>
           )}
-          {" "}التعديلات تُحفظ تلقائياً.
+          {" "}{localizeUiText("التعديلات تُحفظ تلقائياً.")}
         </div>
         <div className="max-h-72 overflow-y-auto space-y-0.5">
           {dataOrder.map((key, i) => {
@@ -266,8 +267,8 @@ export function ColumnReorderPopover({ layout, isRtl, columns }: ColumnReorderPr
                   variant="ghost"
                   className={cn("h-5 w-5", isHidden ? "text-amber-600" : "text-slate-500")}
                   onClick={() => toggleColHidden(key)}
-                  title={isHidden ? "إظهار العمود" : "إخفاء العمود"}
-                  aria-label={isHidden ? `إظهار العمود ${col.label}` : `إخفاء العمود ${col.label}`}
+                  title={localizeUiText(isHidden ? "إظهار العمود" : "إخفاء العمود")}
+                  aria-label={`${localizeUiText(isHidden ? "إظهار العمود" : "إخفاء العمود")} ${localizeUiText(col.label)}`}
                   aria-pressed={isHidden}
                 >
                   {isHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
@@ -279,8 +280,8 @@ export function ColumnReorderPopover({ layout, isRtl, columns }: ColumnReorderPr
                   className="h-5 w-5"
                   onClick={() => moveCol(key, -1)}
                   disabled={i === 0}
-                  title="نقل لأعلى"
-                  aria-label={`نقل العمود ${col.label} للأعلى`}
+                  title={localizeUiText("نقل لأعلى")}
+                  aria-label={`${localizeUiText("نقل العمود")} ${localizeUiText(col.label)} ${localizeUiText("للأعلى")}`}
                 >
                   <ArrowUp className="h-3 w-3" />
                 </Button>
@@ -291,8 +292,8 @@ export function ColumnReorderPopover({ layout, isRtl, columns }: ColumnReorderPr
                   className="h-5 w-5"
                   onClick={() => moveCol(key, +1)}
                   disabled={i === dataOrder.length - 1}
-                  title="نقل لأسفل"
-                  aria-label={`نقل العمود ${col.label} للأسفل`}
+                  title={localizeUiText("نقل لأسفل")}
+                  aria-label={`${localizeUiText("نقل العمود")} ${localizeUiText(col.label)} ${localizeUiText("للأسفل")}`}
                 >
                   <ArrowDown className="h-3 w-3" />
                 </Button>
@@ -303,7 +304,7 @@ export function ColumnReorderPopover({ layout, isRtl, columns }: ColumnReorderPr
         {hasCustomLayout && (
           <div className="mt-2 pt-2 border-t text-[10.5px] text-blue-700 bg-blue-50 -mx-2 -mb-2 px-2 py-1.5 rounded-b flex items-center gap-1">
             <CheckCircle2 className="h-3 w-3" />
-            تم حفظ ترتيبك. سيُعرض هكذا في المرة القادمة.
+            {localizeUiText("تم حفظ ترتيبك. سيُعرض هكذا في المرة القادمة.")}
           </div>
         )}
       </PopoverContent>
@@ -341,12 +342,12 @@ export function AuditGridPagination({
   return (
     <div className="bg-slate-50 border-t border-slate-200 px-3 py-1.5 flex items-center gap-2 flex-wrap text-xs print:hidden">
       <div className="flex items-center gap-1.5">
-        <label className="text-slate-600 font-medium">عدد الأسطر:</label>
+        <label className="text-slate-600 font-medium">{localizeUiText("عدد الأسطر:")}</label>
         <select
           value={displayedPageSize}
           onChange={(e) => setPageSize(sanitizePageSize(Number(e.target.value)))}
           className="h-7 text-xs px-2 rounded border border-slate-300 bg-white text-slate-700 font-mono cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
-          aria-label="عدد الأسطر المعروضة في كل صفحة"
+          aria-label={localizeUiText("عدد الأسطر المعروضة في كل صفحة")}
         >
           {effectivePageSizeOptions.map((n) => (
             <option key={n} value={n}>{n}</option>
@@ -354,14 +355,14 @@ export function AuditGridPagination({
         </select>
       </div>
       <div className="text-slate-600 font-mono">
-        {totalRows === 0 ? "لا يوجد بيانات" : (
+        {totalRows === 0 ? localizeUiText("لا يوجد بيانات") : (
           <>
             <span className="text-slate-900 font-bold">{pageStart}</span>
             <span className="text-slate-400 mx-1">–</span>
             <span className="text-slate-900 font-bold">{pageEnd}</span>
-            <span className="text-slate-500 mx-1">من</span>
+            <span className="text-slate-500 mx-1">{localizeUiText("من")}</span>
             <span className="text-slate-900 font-bold">{totalRows}</span>
-            <span className="text-slate-500 ms-1">{unitLabel}</span>
+            <span className="text-slate-500 ms-1">{localizeUiText(unitLabel)}</span>
           </>
         )}
       </div>
@@ -369,18 +370,18 @@ export function AuditGridPagination({
       {totalPages > 1 && (
         <div className="flex items-center gap-1">
           <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
-            onClick={() => setPage(1)} disabled={page === 1} aria-label="أول صفحة" title="أول صفحة">«</Button>
+            onClick={() => setPage(1)} disabled={page === 1} aria-label={localizeUiText("أول صفحة")} title={localizeUiText("أول صفحة")}>«</Button>
           <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
-            onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} aria-label="الصفحة السابقة">السابق</Button>
+            onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} aria-label={localizeUiText("الصفحة السابقة")}>{localizeUiText("السابق")}</Button>
           <span className="text-slate-700 font-mono px-1.5">
-            صفحة <span className="font-bold text-slate-900">{page}</span>
+            {localizeUiText("صفحة")} <span className="font-bold text-slate-900">{page}</span>
             <span className="text-slate-400 mx-1">/</span>
             <span className="font-bold text-slate-900">{totalPages}</span>
           </span>
           <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} aria-label="الصفحة التالية">التالي</Button>
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} aria-label={localizeUiText("الصفحة التالية")}>{localizeUiText("التالي")}</Button>
           <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
-            onClick={() => setPage(totalPages)} disabled={page >= totalPages} aria-label="آخر صفحة" title="آخر صفحة">»</Button>
+            onClick={() => setPage(totalPages)} disabled={page >= totalPages} aria-label={localizeUiText("آخر صفحة")} title={localizeUiText("آخر صفحة")}>»</Button>
         </div>
       )}
     </div>
@@ -438,8 +439,8 @@ export function HeaderSelectCheckbox({
       onClick={(e) => e.stopPropagation()}
       disabled={disabled}
       className="cursor-pointer h-3.5 w-3.5 accent-rose-600"
-      aria-label={ariaLabel}
-      title={allSelected ? "إلغاء تحديد الكل" : "تحديد الكل"}
+      aria-label={localizeUiText(ariaLabel)}
+      title={localizeUiText(allSelected ? "إلغاء تحديد الكل" : "تحديد الكل")}
     />
   );
 }
@@ -467,7 +468,7 @@ export function AuditGridBulkBar({ count, children, onClear, busy }: BulkBarProp
     >
       <span className="font-bold text-emerald-900 flex items-center gap-1.5">
         <CheckCircle2 className="h-4 w-4" />
-        {count} محدَّد
+        {count} {localizeUiText("محدَّد")}
       </span>
       <div className="h-5 w-px bg-emerald-300 mx-1" />
       {children}
@@ -481,7 +482,7 @@ export function AuditGridBulkBar({ count, children, onClear, busy }: BulkBarProp
         disabled={busy}
       >
         <X className="h-3.5 w-3.5 me-1" />
-        إلغاء التحديد
+        {localizeUiText("إلغاء التحديد")}
       </Button>
     </div>
   );

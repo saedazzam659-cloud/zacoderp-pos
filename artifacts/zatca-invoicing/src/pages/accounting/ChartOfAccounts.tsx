@@ -17,6 +17,7 @@ import { TablePagination, usePagination } from "@/components/TablePagination";
 import { Plus, Pencil, Trash2, Copy, CopyPlus, BookOpen, Search, ChevronLeft, ChevronRight, Printer, LayoutGrid, ListTree, ChevronDown, FolderTree, CheckCircle2, XCircle, ExternalLink, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { printChartOfAccountsExternal, type CoaPrintAccount, type CoaPrintTypeMeta } from "@/lib/export";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -37,7 +38,7 @@ const EMPTY: any = {
 
 export default function ChartOfAccounts() {
   const { user, token, actingCompanyId } = useAuth() as any;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { fmt, isRtl } = useFormatters();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -554,7 +555,7 @@ export default function ChartOfAccounts() {
                 "px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors",
                 viewMode === "tree" ? "bg-emerald-600 text-white" : "bg-background text-muted-foreground hover:bg-muted"
               )}
-              title="عرض شجري"
+              title={localizeUiText("عرض شجري")}
             >
               <ListTree className="h-3.5 w-3.5" />
               شجري
@@ -851,12 +852,16 @@ export default function ChartOfAccounts() {
             <div className="bg-gradient-to-l from-emerald-700 to-green-600 text-white px-4 py-2.5 flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <FolderTree className="h-4 w-4" />
-                <span>عرض شجري للحسابات</span>
-                <span className="text-[11px] opacity-90 font-normal">({filtered.length} حساب{filtered.length !== accounts.length ? ` من ${accounts.length}` : ""} — {treeRoots.length} حساب رئيسي)</span>
+                <span>{localizeUiText("عرض شجري للحسابات")}</span>
+                <span className="text-[11px] opacity-90 font-normal">
+                  ({i18n.language?.startsWith("en")
+                    ? `${filtered.length} accounts${filtered.length !== accounts.length ? ` of ${accounts.length}` : ""} — ${treeRoots.length} root accounts`
+                    : `${filtered.length} حساب${filtered.length !== accounts.length ? ` من ${accounts.length}` : ""} — ${treeRoots.length} حساب رئيسي`})
+                </span>
               </div>
               <div className="flex gap-1.5">
-                <button onClick={expandAll} className="text-[11px] bg-white/15 hover:bg-white/25 px-2.5 py-1 rounded font-medium transition-colors">توسيع الكل</button>
-                <button onClick={collapseAll} className="text-[11px] bg-white/15 hover:bg-white/25 px-2.5 py-1 rounded font-medium transition-colors">طي الكل</button>
+                <button onClick={expandAll} className="text-[11px] bg-white/15 hover:bg-white/25 px-2.5 py-1 rounded font-medium transition-colors">{localizeUiText("توسيع الكل")}</button>
+                <button onClick={collapseAll} className="text-[11px] bg-white/15 hover:bg-white/25 px-2.5 py-1 rounded font-medium transition-colors">{localizeUiText("طي الكل")}</button>
               </div>
             </div>
             <div className="p-3 space-y-1 max-h-[70vh] overflow-y-auto">
@@ -880,7 +885,7 @@ export default function ChartOfAccounts() {
                 total={treePager.total}
                 onPageChange={treePager.setPage}
                 onPageSizeChange={treePager.setPageSize}
-                itemLabel="حساب رئيسي"
+                itemLabel={localizeUiText("حساب رئيسي")}
               />
             )}
           </div>

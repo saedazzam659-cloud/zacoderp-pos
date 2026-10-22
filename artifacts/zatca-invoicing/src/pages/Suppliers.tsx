@@ -151,7 +151,7 @@ export default function Suppliers() {
   const { user, token } = useAuth();
   const contractingEnabled = companyExplicitlyEnablesModule(user, "contracting");
   const { data: allowedBranches = [] } = useBranches();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
   const SUPPLIER_EXPORT_COLS = buildSupplierExportCols(t);
@@ -1055,12 +1055,16 @@ export default function Suppliers() {
             )}
             <div className="flex-1" />
             <span className="text-slate-700 font-medium">
-              {filtered.length} {t("pages.suppliers.itemLabel", { defaultValue: "مورد" })}
+              {filtered.length} {i18n.language?.startsWith("en") ? (filtered.length === 1 ? "supplier" : "suppliers") : "مورد"}
               {filtered.length !== suppliers.length && <span className="text-slate-400"> / {suppliers.length}</span>}
             </span>
           </div>
           <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
-            <span className="text-emerald-800">تم تحديد {layout.selected.size} مورد</span>
+            <span className="text-emerald-800">
+              {i18n.language?.startsWith("en")
+                ? `Selected ${layout.selected.size} ${layout.selected.size === 1 ? "supplier" : "suppliers"}`
+                : `تم تحديد ${layout.selected.size} مورد`}
+            </span>
           </AuditGridBulkBar>
         </div>
 
@@ -1121,7 +1125,11 @@ export default function Suppliers() {
                 <tr>
                   <td colSpan={visibleColumns.length} className="py-16 text-center text-muted-foreground">
                     <Truck className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                    <p className="text-sm">{search ? t("common.noResults") : t("pages.suppliers.noSuppliersYet")}</p>
+                    <p className="text-sm">
+                      {search
+                        ? t("common.noResults")
+                        : i18n.language?.startsWith("en") ? "No suppliers yet" : t("pages.suppliers.noSuppliersYet")}
+                    </p>
                     {!search && (
                       <Button onClick={openCreate} variant="outline" size="sm" className="mt-4 gap-2">
                         <Plus className="h-3.5 w-3.5" />{t("common.add")} {t("pages.suppliers.supplier")}

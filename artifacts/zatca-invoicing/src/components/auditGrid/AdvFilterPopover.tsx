@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { localizeUiText } from "@/lib/localizedUiText";
 import type { ColType } from "@/lib/auditGridLayout";
 import {
   type AdvCond, type AdvFilter, type AdvOp, type OpMeta,
@@ -56,18 +57,18 @@ export function AdvFilterPopover(props: AdvFilterPopoverProps) {
       return (
         <div className="flex items-center gap-1.5">
           <Input value={cond.v} onChange={e => update({ v: e.target.value })}
-            placeholder="من" type={colType === "num" ? "number" : "text"}
+            placeholder={localizeUiText("من")} type={colType === "num" ? "number" : "text"}
             className="h-8 text-xs flex-1" />
           <span className="text-slate-400 text-xs">-</span>
           <Input value={cond.v2 ?? ""} onChange={e => update({ v2: e.target.value })}
-            placeholder="إلى" type={colType === "num" ? "number" : "text"}
+            placeholder={localizeUiText("إلى")} type={colType === "num" ? "number" : "text"}
             className="h-8 text-xs flex-1" />
         </div>
       );
     }
     return (
       <Input value={cond.v} onChange={e => update({ v: e.target.value })}
-        placeholder="القيمة…" type={colType === "num" ? "number" : "text"}
+        placeholder={localizeUiText("القيمة…")} type={colType === "num" ? "number" : "text"}
         className="h-8 text-xs" />
     );
   };
@@ -78,8 +79,8 @@ export function AdvFilterPopover(props: AdvFilterPopoverProps) {
         <button
           type="button"
           onClick={e => e.stopPropagation()}
-          aria-label={`فلتر العمود: ${colLabel}`}
-          title={active ? `فلتر مفعل` : "فتح فلتر العمود"}
+          aria-label={`${localizeUiText("فلتر العمود:")} ${localizeUiText(colLabel)}`}
+          title={localizeUiText(active ? "فلتر مفعل" : "فتح فلتر العمود")}
           className={cn(
             "ms-0.5 inline-flex items-center justify-center w-5 h-5 rounded-md border transition-all",
             active
@@ -97,9 +98,9 @@ export function AdvFilterPopover(props: AdvFilterPopoverProps) {
         <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-l from-rose-50 to-amber-50 border-b border-slate-200">
           <div className="flex items-center gap-1.5 text-slate-800 font-semibold text-xs">
             <FilterIcon className="h-3.5 w-3.5 text-rose-600" />
-            <span>فلتر: {colLabel}</span>
+            <span>{localizeUiText("فلتر:")} {localizeUiText(colLabel)}</span>
           </div>
-          <button type="button" onClick={() => setOpen(false)} aria-label="إغلاق"
+          <button type="button" onClick={() => setOpen(false)} aria-label={localizeUiText("إغلاق")}
             className="text-slate-400 hover:text-slate-700 transition-colors">
             <X className="h-4 w-4" />
           </button>
@@ -108,11 +109,11 @@ export function AdvFilterPopover(props: AdvFilterPopoverProps) {
         {/* Body */}
         <div className="p-3 space-y-3 bg-white">
           <div className="space-y-1.5">
-            <Label className="text-[10.5px] text-slate-500 font-normal">شرط 1</Label>
+            <Label className="text-[10.5px] text-slate-500 font-normal">{localizeUiText("شرط 1")}</Label>
             <select value={draft.c1.op}
               onChange={e => updateC1({ op: e.target.value as AdvOp, v: "", v2: "" })}
               className="w-full h-8 text-xs px-2 rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-rose-200 focus:border-rose-400">
-              {ops.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {ops.map(o => <option key={o.value} value={o.value}>{localizeUiText(o.label)}</option>)}
             </select>
             {renderCondInputs(draft.c1, cond1Meta, updateC1)}
           </div>
@@ -127,18 +128,18 @@ export function AdvFilterPopover(props: AdvFilterPopoverProps) {
                   ? "bg-amber-50 text-amber-800 border-amber-300"
                   : "bg-emerald-50 text-emerald-800 border-emerald-300",
               )}>
-              <option value="and">و</option>
-              <option value="or">أو</option>
+              <option value="and">{localizeUiText("و")}</option>
+              <option value="or">{localizeUiText("أو")}</option>
             </select>
             <div className="flex-1 h-px bg-slate-200" />
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-[10.5px] text-slate-500 font-normal">شرط 2</Label>
+            <Label className="text-[10.5px] text-slate-500 font-normal">{localizeUiText("شرط 2")}</Label>
             <select value={draft.c2.op}
               onChange={e => updateC2({ op: e.target.value as AdvOp, v: "", v2: "" })}
               className="w-full h-8 text-xs px-2 rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-rose-200 focus:border-rose-400">
-              {ops.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {ops.map(o => <option key={o.value} value={o.value}>{localizeUiText(o.label)}</option>)}
             </select>
             {renderCondInputs(draft.c2, cond2Meta, updateC2)}
           </div>
@@ -149,17 +150,17 @@ export function AdvFilterPopover(props: AdvFilterPopoverProps) {
           <Button type="button" size="sm" variant="ghost"
             className="h-8 px-3 text-xs text-slate-600 hover:bg-slate-200"
             onClick={() => { onClear(); setOpen(false); }}>
-            مسح
+            {localizeUiText("مسح")}
           </Button>
           <div className="flex items-center gap-1.5">
             <Button type="button" size="sm" variant="outline" className="h-8 px-3 text-xs"
               onClick={() => setOpen(false)}>
-              إغلاق
+              {localizeUiText("إغلاق")}
             </Button>
             <Button type="button" size="sm"
               className="h-8 px-4 text-xs bg-rose-600 hover:bg-rose-500 text-white"
               onClick={() => { onApply(draft); setOpen(false); }}>
-              تطبيق
+              {localizeUiText("تطبيق")}
             </Button>
           </div>
         </div>

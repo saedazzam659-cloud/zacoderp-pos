@@ -77,7 +77,7 @@ interface Ctx { entryTypes: Record<string, string>; statusLabels: Record<string,
 export default function JournalEntries() {
     const gate = useDemoActionGate();
   const { user } = useAuth() as any;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { fmt, isRtl } = useFormatters();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const [, navigate] = useLocation();
@@ -854,6 +854,13 @@ ${wrapWithLetterhead(`${letterhead}<div class="h"><h1>${escapeHtml(t("journalEnt
     { id: "thermal",      label: "حراري 80mm",          desc: "إيصال طابعة حرارية — قيد لكل إيصال",     icon: Receipt,    needsLines: true  },
     { id: "professional", label: "احترافي مع التوقيعات", desc: "تنسيق رسمي مع خانات للتوقيعات والاعتماد", icon: Award,      needsLines: true  },
   ];
+  const PRINT_TEMPLATE_ENGLISH: Record<PrintTemplateId, { label: string; desc: string }> = {
+    summary: { label: "Landscape summary A4", desc: "One row per entry — suitable for a quick overview" },
+    detailed: { label: "Detailed with parties", desc: "One page per entry with all debit and credit lines" },
+    compact: { label: "Compact (small font)", desc: "Compact table — fit more entries per page" },
+    thermal: { label: "80 mm thermal", desc: "Thermal receipt — one entry per receipt" },
+    professional: { label: "Professional with signatures", desc: "Formal layout with signature and approval fields" },
+  };
 
   // Compact summary: same data as buildPrintHtml but smaller font + tighter
   // rows so the user can fit ~50% more entries per A4 page.
@@ -1326,9 +1333,9 @@ ${wrapWithLetterhead(letterhead, sections)}
           {(Object.values(colFilters).some((v) => v) || Object.values(colAdv).some(isAdvActive)) && (
             <Button type="button" size="sm" variant="ghost"
               className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
-              onClick={clearAllColFilters} title="مسح فلاتر الأعمدة">
+              onClick={clearAllColFilters} title={i18n.language?.startsWith("en") ? "Clear column filters" : "مسح فلاتر الأعمدة"}>
               <X className="h-3.5 w-3.5 me-1" />
-              مسح فلاتر الأعمدة
+              {i18n.language?.startsWith("en") ? "Clear column filters" : "مسح فلاتر الأعمدة"}
             </Button>
           )}
           {/* ── Date-range filter ─────────────────────────────────────────
@@ -1387,7 +1394,7 @@ ${wrapWithLetterhead(letterhead, sections)}
                 type="button"
                 onClick={clearDateRange}
                 className="flex items-center justify-center h-5 w-5 rounded text-rose-600 hover:bg-rose-100 transition-colors"
-                title="مسح فلتر التاريخ"
+                title={i18n.language?.startsWith("en") ? "Clear date filter" : "مسح فلتر التاريخ"}
                 data-testid="filter-date-clear"
               >
                 <X className="h-3 w-3" />
@@ -1396,7 +1403,7 @@ ${wrapWithLetterhead(letterhead, sections)}
           </div>
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {serverTotal} {t("journalEntries.itemLabel", { defaultValue: "قيد" })}
+            {serverTotal} {i18n.language?.startsWith("en") ? "journal entries" : t("journalEntries.itemLabel", { defaultValue: "قيد" })}
             {hasAdvancedFilters && filtered.length !== entries.length && <span className="text-slate-400"> / {entries.length}</span>}
           </span>
         </div>
@@ -1417,7 +1424,7 @@ ${wrapWithLetterhead(letterhead, sections)}
                 className="h-7 px-3 text-xs gap-1 rounded-none bg-blue-700 hover:bg-blue-600 text-white"
                 onClick={handleBulkPrint}
                 disabled={selectedIds.length === 0 || bulkPrintBusy}
-                title={`${t("accountingReports.print")} (${selectedIds.length}) — تفصيلي مع الأطراف`}
+                title={`${t("accountingReports.print")} (${selectedIds.length}) — ${i18n.language?.startsWith("en") ? "Detailed with parties" : "تفصيلي مع الأطراف"}`}
                 data-testid="bulk-print"
               >
                 {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
@@ -1428,8 +1435,8 @@ ${wrapWithLetterhead(letterhead, sections)}
                   type="button" size="sm"
                   className="h-7 px-1.5 text-xs rounded-none bg-blue-800 hover:bg-blue-700 text-white border-r border-blue-900/30"
                   disabled={selectedIds.length === 0 || bulkPrintBusy}
-                  title="اختر قالب الطباعة"
-                  aria-label="اختر قالب الطباعة"
+                  title={i18n.language?.startsWith("en") ? "Choose print template" : "اختر قالب الطباعة"}
+                  aria-label={i18n.language?.startsWith("en") ? "Choose print template" : "اختر قالب الطباعة"}
                   data-testid="bulk-print-template"
                 >
                   <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1438,7 +1445,7 @@ ${wrapWithLetterhead(letterhead, sections)}
             </div>
             <DropdownMenuContent align="end" className="w-72">
               <DropdownMenuLabel className="text-xs text-slate-500 font-normal">
-                قوالب الطباعة — للقيود المحددة ({selectedIds.length})
+                {i18n.language?.startsWith("en") ? "Print templates for selected journal entries" : "قوالب الطباعة — للقيود المحددة"} ({selectedIds.length})
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               {/* Page-layout toggle — applies to "تفصيلي" and "احترافي"
@@ -1458,15 +1465,16 @@ ${wrapWithLetterhead(letterhead, sections)}
                   data-testid="toggle-one-entry-per-page"
                 />
                 <div className="flex flex-col">
-                  <span className="text-[12px] font-medium text-amber-900">كل قيد في صفحة منفصلة</span>
+                  <span className="text-[12px] font-medium text-amber-900">{i18n.language?.startsWith("en") ? "One journal entry per page" : "كل قيد في صفحة منفصلة"}</span>
                   <span className="text-[10px] text-amber-700 leading-tight">
-                    يطبق على القوالب التفصيلية والاحترافية فقط
+                    {i18n.language?.startsWith("en") ? "Applies to detailed and professional templates only" : "يطبق على القوالب التفصيلية والاحترافية فقط"}
                   </span>
                 </div>
               </label>
               <DropdownMenuSeparator />
               {PRINT_TEMPLATES.map((tpl) => {
                 const Icon = tpl.icon;
+                const copy = i18n.language?.startsWith("en") ? PRINT_TEMPLATE_ENGLISH[tpl.id] : tpl;
                 return (
                   <DropdownMenuItem
                     key={tpl.id}
@@ -1476,8 +1484,8 @@ ${wrapWithLetterhead(letterhead, sections)}
                   >
                     <Icon className="h-4 w-4 mt-0.5 text-blue-700 shrink-0" />
                     <div className="flex flex-col">
-                      <span className="text-sm font-medium text-slate-900">{tpl.label}</span>
-                      <span className="text-[11px] text-slate-500 leading-tight">{tpl.desc}</span>
+                      <span className="text-sm font-medium text-slate-900">{copy.label}</span>
+                      <span className="text-[11px] text-slate-500 leading-tight">{copy.desc}</span>
                     </div>
                   </DropdownMenuItem>
                 );
@@ -1491,7 +1499,7 @@ ${wrapWithLetterhead(letterhead, sections)}
             className="h-7 px-3 text-xs gap-1 bg-green-700 hover:bg-green-600 text-white"
             onClick={handleBulkExportExcel}
             disabled={selectedIds.length === 0}
-            title={`تصدير المحدد إلى Excel (${selectedIds.length})`}
+            title={`${i18n.language?.startsWith("en") ? "Export selected to Excel" : "تصدير المحدد إلى Excel"} (${selectedIds.length})`}
             data-testid="bulk-export-excel"
           >
             <FileSpreadsheet className="h-3.5 w-3.5" />
@@ -1502,7 +1510,7 @@ ${wrapWithLetterhead(letterhead, sections)}
             className="h-7 px-3 text-xs gap-1 bg-red-700 hover:bg-red-600 text-white"
             onClick={handleBulkExportPDF}
             disabled={selectedIds.length === 0}
-            title={`تصدير المحدد إلى PDF (${selectedIds.length})`}
+            title={`${i18n.language?.startsWith("en") ? "Export selected to PDF" : "تصدير المحدد إلى PDF"} (${selectedIds.length})`}
             data-testid="bulk-export-pdf"
           >
             <FileDown className="h-3.5 w-3.5" />
@@ -1518,13 +1526,13 @@ ${wrapWithLetterhead(letterhead, sections)}
             disabled={bulkBusy || draftSelectedIds.length === 0}
             title={
               draftSelectedIds.length === 0
-                ? "لا توجد قيود مسودة في التحديد لترحيلها"
-                : `ترحيل (${draftSelectedIds.length})`
+                ? i18n.language?.startsWith("en") ? "No selected draft entries to post" : "لا توجد قيود مسودة في التحديد لترحيلها"
+                : `${i18n.language?.startsWith("en") ? "Post" : "ترحيل"} (${draftSelectedIds.length})`
             }
             data-testid="bulk-post"
           >
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-            ترحيل ({draftSelectedIds.length})
+            {i18n.language?.startsWith("en") ? "Post" : "ترحيل"} ({draftSelectedIds.length})
           </Button>
           {/* Unpost (فك الترحيل) — only enabled when at least one selected row
               is posted. Server guards reject locked source-doc / FA-linked /
@@ -1536,13 +1544,13 @@ ${wrapWithLetterhead(letterhead, sections)}
             disabled={bulkBusy || postedSelectedIds.length === 0}
             title={
               postedSelectedIds.length === 0
-                ? "لا توجد قيود مرحّلة في التحديد لفك ترحيلها"
-                : `فك الترحيل (${postedSelectedIds.length})`
+                ? i18n.language?.startsWith("en") ? "No selected posted entries to unpost" : "لا توجد قيود مرحّلة في التحديد لفك ترحيلها"
+                : `${i18n.language?.startsWith("en") ? "Unpost" : "فك الترحيل"} (${postedSelectedIds.length})`
             }
             data-testid="bulk-unpost"
           >
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-            فك الترحيل ({postedSelectedIds.length})
+            {i18n.language?.startsWith("en") ? "Unpost" : "فك الترحيل"} ({postedSelectedIds.length})
           </Button>
           {/* Edit / Duplicate — single-row actions promoted from the row "_act"
               column into the bulk bar. They route to the form page for the one
@@ -1555,9 +1563,9 @@ ${wrapWithLetterhead(letterhead, sections)}
             disabled={selectedIds.length !== 1}
             title={
               selectedIds.length === 0
-                ? "حدّد قيداً واحداً أولاً"
+                ? i18n.language?.startsWith("en") ? "Select one journal entry first" : "حدّد قيداً واحداً أولاً"
                 : selectedIds.length > 1
-                  ? "هذا الإجراء يعمل على قيد واحد فقط — قلّل التحديد"
+                  ? i18n.language?.startsWith("en") ? "This action works on one entry only — reduce the selection" : "هذا الإجراء يعمل على قيد واحد فقط — قلّل التحديد"
                   : t("journalEntries.actions", { defaultValue: "تعديل (خصائص)" })
             }
             data-testid="bulk-edit"
@@ -1572,15 +1580,15 @@ ${wrapWithLetterhead(letterhead, sections)}
             disabled={selectedIds.length !== 1}
             title={
               selectedIds.length === 0
-                ? "حدّد قيداً واحداً أولاً"
+                ? i18n.language?.startsWith("en") ? "Select one journal entry first" : "حدّد قيداً واحداً أولاً"
                 : selectedIds.length > 1
-                  ? "هذا الإجراء يعمل على قيد واحد فقط — قلّل التحديد"
-                  : "نسخة مماثلة"
+                  ? i18n.language?.startsWith("en") ? "This action works on one entry only — reduce the selection" : "هذا الإجراء يعمل على قيد واحد فقط — قلّل التحديد"
+                  : i18n.language?.startsWith("en") ? "Duplicate" : "نسخة مماثلة"
             }
             data-testid="bulk-duplicate"
           >
             <Copy className="h-3.5 w-3.5" />
-            نسخة مماثلة
+            {i18n.language?.startsWith("en") ? "Duplicate" : "نسخة مماثلة"}
           </Button>
           <Button
             type="button" size="sm"
@@ -1589,13 +1597,13 @@ ${wrapWithLetterhead(letterhead, sections)}
             disabled={!canReverseSelectedEntry || reverseBusy || bulkBusy}
             title={
               canReverseSelectedEntry
-                ? "إنشاء قيد عكسي كمسودة دون تعديل القيد الأصلي"
-                : "يتاح لقيد يدوي مرحّل واحد غير مرتبط بمستند أو تسوية أو أصل ثابت ولم يسبق عكسه"
+                ? i18n.language?.startsWith("en") ? "Create a reversing journal entry as a draft without changing the original" : "إنشاء قيد عكسي كمسودة دون تعديل القيد الأصلي"
+                : i18n.language?.startsWith("en") ? "Available for one posted manual entry not linked to a document, settlement, or fixed asset, and not previously reversed" : "يتاح لقيد يدوي مرحّل واحد غير مرتبط بمستند أو تسوية أو أصل ثابت ولم يسبق عكسه"
             }
             data-testid="bulk-reverse"
           >
             {reverseBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowLeftRight className="h-3.5 w-3.5" />}
-            إنشاء قيد عكسي
+            {i18n.language?.startsWith("en") ? "Create reversing entry" : "إنشاء قيد عكسي"}
           </Button>
           <Button
             type="button" size="sm"

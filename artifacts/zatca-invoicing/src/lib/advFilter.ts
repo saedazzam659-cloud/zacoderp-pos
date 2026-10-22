@@ -120,18 +120,36 @@ export function matchAdv(raw: unknown, adv: AdvFilter | undefined, type: ColType
 
 // Build a one-line human summary, used as a header tooltip when a filter
 // is active so the user can recall what they set without re-opening.
-export function describeCond(c: AdvCond, type: ColType): string {
+const EN_ADV_OP_LABELS: Record<AdvOp, string> = {
+  contains: "contains",
+  ncontains: "does not contain",
+  eq: "equals",
+  neq: "does not equal",
+  starts: "starts with",
+  ends: "ends with",
+  empty: "is empty",
+  nempty: "is not empty",
+  gt: "greater than",
+  gte: "greater than or equal to",
+  lt: "less than",
+  lte: "less than or equal to",
+  between: "between",
+};
+
+export function describeCond(c: AdvCond, type: ColType, language = "ar"): string {
   const ops = OPS_FOR(type);
-  const lbl = ops.find(o => o.value === c.op)?.label ?? c.op;
+  const lbl = language.startsWith("en")
+    ? EN_ADV_OP_LABELS[c.op] ?? c.op
+    : ops.find(o => o.value === c.op)?.label ?? c.op;
   if (c.op === "empty" || c.op === "nempty") return lbl;
   if (c.op === "between") return `${lbl} ${c.v} - ${c.v2 ?? ""}`;
   return `${lbl} "${c.v}"`;
 }
 
-export function describeAdv(adv: AdvFilter | undefined, type: ColType): string {
+export function describeAdv(adv: AdvFilter | undefined, type: ColType, language = "ar"): string {
   if (!isAdvActive(adv)) return "";
-  const a1 = isCondActive(adv!.c1) ? describeCond(adv!.c1, type) : "";
-  const a2 = isCondActive(adv!.c2) ? describeCond(adv!.c2, type) : "";
-  if (a1 && a2) return `${a1}  ${adv!.conn === "or" ? "أو" : "و"}  ${a2}`;
+  const a1 = isCondActive(adv!.c1) ? describeCond(adv!.c1, type, language) : "";
+  const a2 = isCondActive(adv!.c2) ? describeCond(adv!.c2, type, language) : "";
+  if (a1 && a2) return `${a1}  ${language.startsWith("en") ? (adv!.conn === "or" ? "or" : "and") : (adv!.conn === "or" ? "أو" : "و")}  ${a2}`;
   return a1 || a2;
 }

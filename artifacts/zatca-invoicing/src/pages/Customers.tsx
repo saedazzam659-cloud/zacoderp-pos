@@ -19,6 +19,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { Trans } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { fmt2 } from "@/lib/format";
@@ -384,7 +385,7 @@ export default function Customers() {
           {!isLoading && filtered.length === 0 && (
             <div className="text-center py-10 text-muted-foreground bg-white rounded-xl border">
               <Users className="h-10 w-10 mx-auto mb-2 opacity-30" />
-              لا يوجد عملاء
+              {localizeUiText("لا يوجد عملاء")}
             </div>
           )}
           {!isLoading && paged.map((customer: any) => {
@@ -502,7 +503,11 @@ export default function Customers() {
             </span>
           </div>
           <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
-            <span className="text-emerald-800">تم تحديد {layout.selected.size} عميل</span>
+            <span className="text-emerald-800">
+              {i18n.language?.startsWith("en")
+                ? `Selected ${layout.selected.size} ${layout.selected.size === 1 ? "customer" : "customers"}`
+                : `تم تحديد ${layout.selected.size} عميل`}
+            </span>
           </AuditGridBulkBar>
         </div>
 
