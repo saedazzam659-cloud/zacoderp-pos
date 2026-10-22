@@ -3,6 +3,8 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 import { isZeroValue, shouldBlankNumericValue } from "@/lib/inputDisplay"
 import { AuthContext } from "@/contexts/AuthContext"
+import { useTranslation } from "react-i18next"
+import { localizeUiText } from "@/lib/localizedUiText"
 
 // Display-only "hide zeros" behavior for numeric inputs.
 // When the active company's `showZeros` setting is OFF (the default), a numeric
@@ -42,7 +44,8 @@ function groupDigits(value: React.ComponentProps<"input">["value"]): React.Compo
 }
 
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  ({ className, type, value, placeholder, onFocus, onBlur, ...props }, ref) => {
+  ({ className, type, value, placeholder, title, "aria-label": ariaLabel, onFocus, onBlur, ...props }, ref) => {
+    useTranslation()
     const auth = React.useContext(AuthContext);
     const showZeros = (auth?.user as any)?.company?.showZeros === true;
     const innerRef = React.useRef<HTMLInputElement | null>(null);
@@ -149,7 +152,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
       <input
         type={type}
         value={displayValue}
-        placeholder={displayPlaceholder}
+        placeholder={displayPlaceholder ? localizeUiText(displayPlaceholder) : displayPlaceholder}
         className={cn(
           "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
           className
@@ -158,6 +161,8 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
         onFocus={(e) => { setFocused(true); setTypedSinceFocus(false); onFocus?.(e); }}
         onBlur={(e) => { setFocused(false); onBlur?.(e); }}
         {...props}
+        title={title ? localizeUiText(title) : title}
+        aria-label={ariaLabel ? localizeUiText(ariaLabel) : ariaLabel}
         onChange={handleChange}
       />
     )

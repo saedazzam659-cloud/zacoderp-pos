@@ -13,6 +13,7 @@ import {
 } from "@/lib/agentBranding";
 import { AGENT_MODULE_SCREEN_TILE_OPTIONS } from "@/lib/agentUiSettings";
 import { appRouteHref } from "@/lib/appRouteHref";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { isLocalSuperadminScreenAllowed } from "@/lib/localSuperadminScreens";
 import AgentServerUpdateDialog from "@/components/AgentServerUpdateDialog";
 import {
@@ -1104,7 +1105,7 @@ const NavItem = React.memo(function NavItem({
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
-  const label = item.name ?? t(item.nameKey);
+  const label = localizeUiText(item.name ?? t(item.nameKey));
   // Per-user permission filter — hide entirely when the user lacks .view perm
   // for this screen. Admins/superadmins always see everything (handled inside
   // navItemAllowed).
@@ -2092,7 +2093,7 @@ function InternalControlNavGroup({
                 ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
                 : "text-sidebar-foreground/75 hover:bg-sidebar-accent/60"}`}>
             <item.icon className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{labels[item.nameKey]}</span>
+            <span className="truncate">{localizeUiText(labels[item.nameKey])}</span>
           </Link>
         ))}
       </div>
@@ -2781,7 +2782,7 @@ function TopNavDropdown({
               : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
           )}
         >
-          <span>{label}</span>
+          <span>{localizeUiText(label)}</span>
           <ChevronDown className="h-3.5 w-3.5 opacity-60" />
         </button>
       </DropdownMenuTrigger>

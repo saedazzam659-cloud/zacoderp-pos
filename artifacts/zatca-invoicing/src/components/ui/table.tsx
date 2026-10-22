@@ -1,6 +1,8 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { useTranslation } from "react-i18next"
+import { localizeUiChildren } from "@/lib/localizedUiText"
 
 const Table = React.forwardRef<
   HTMLTableElement,
@@ -69,16 +71,21 @@ TableRow.displayName = "TableRow"
 const TableHead = React.forwardRef<
   HTMLTableCellElement,
   React.ThHTMLAttributes<HTMLTableCellElement>
->(({ className, ...props }, ref) => (
-  <th
-    ref={ref}
-    className={cn(
-      "h-10 px-2 text-start align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pe-0 [&>[role=checkbox]]:translate-y-[2px]",
-      className
-    )}
-    {...props}
-  />
-))
+>(({ className, children, ...props }, ref) => {
+  useTranslation()
+  return (
+    <th
+      ref={ref}
+      className={cn(
+        "h-10 px-2 text-start align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pe-0 [&>[role=checkbox]]:translate-y-[2px]",
+        className
+      )}
+      {...props}
+    >
+      {localizeUiChildren(children)}
+    </th>
+  )
+})
 TableHead.displayName = "TableHead"
 
 const TableCell = React.forwardRef<

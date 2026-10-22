@@ -1,11 +1,14 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { useTranslation } from "react-i18next"
+import { localizeUiText } from "@/lib/localizedUiText"
 
 const Textarea = React.forwardRef<
   HTMLTextAreaElement,
   React.ComponentProps<"textarea">
->(({ className, ...props }, ref) => {
+>(({ className, placeholder, title, "aria-label": ariaLabel, ...props }, ref) => {
+  useTranslation()
   return (
     <textarea
       className={cn(
@@ -14,6 +17,9 @@ const Textarea = React.forwardRef<
       )}
       ref={ref}
       {...props}
+      placeholder={placeholder ? localizeUiText(placeholder) : placeholder}
+      title={title ? localizeUiText(title) : title}
+      aria-label={ariaLabel ? localizeUiText(ariaLabel) : ariaLabel}
     />
   )
 })

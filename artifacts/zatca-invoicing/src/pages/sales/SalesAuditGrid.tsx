@@ -20,6 +20,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { saveUiPrefs } from "@/lib/uiPrefsApi";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters } from "@/lib/format";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { normalizeZatcaStatus } from "@/lib/zatca-status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -2368,7 +2369,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                         className={`flex items-center gap-1 px-1.5 py-1 rounded hover:bg-slate-50 border border-transparent hover:border-slate-200 ${isHidden ? "opacity-50" : ""}`}
                       >
                         <span className="text-[10px] text-slate-400 font-mono w-5 text-center">{i + 1}</span>
-                        <span className="flex-1 text-xs text-slate-700 truncate">{col.label}</span>
+                        <span className="flex-1 text-xs text-slate-700 truncate">{localizeUiText(col.label)}</span>
                         <Button
                           type="button"
                           size="icon"
@@ -2376,7 +2377,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                           className={`h-5 w-5 ${isHidden ? "text-amber-600" : "text-slate-500"}`}
                           onClick={() => toggleColVisibility(key)}
                           title={isHidden ? "إظهار العمود" : "إخفاء العمود"}
-                          aria-label={isHidden ? `إظهار العمود ${col.label}` : `إخفاء العمود ${col.label}`}
+                          aria-label={localizeUiText(isHidden ? `إظهار العمود ${col.label}` : `إخفاء العمود ${col.label}`)}
                           aria-pressed={isHidden}
                         >
                           {isHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
@@ -2389,7 +2390,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                           onClick={() => moveCol(key, -1)}
                           disabled={i === 0}
                           title="نقل لأعلى"
-                          aria-label={`نقل العمود ${col.label} للأعلى`}
+                          aria-label={localizeUiText(`نقل العمود ${col.label} للأعلى`)}
                         >
                           <ArrowUp className="h-3 w-3" />
                         </Button>
@@ -2401,7 +2402,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                           onClick={() => moveCol(key, +1)}
                           disabled={i === dataOrder.length - 1}
                           title="نقل لأسفل"
-                          aria-label={`نقل العمود ${col.label} للأسفل`}
+                          aria-label={localizeUiText(`نقل العمود ${col.label} للأسفل`)}
                         >
                           <ArrowDown className="h-3 w-3" />
                         </Button>
@@ -2847,7 +2848,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                         />
                       ) : (
                         <span className="inline-flex items-center justify-center gap-1">
-                          <span>{col.label}</span>
+                          <span>{localizeUiText(col.label)}</span>
                           {isSortable && (
                             isSorted ? (
                               sort!.dir === "asc"
@@ -2863,7 +2864,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                           {isFilterable && (
                             <AdvFilterPopover
                               colKey={col.key}
-                              colLabel={col.label || col.key}
+                              colLabel={localizeUiText(col.label || col.key)}
                               colType={col.type}
                               value={advValue}
                               active={isFiltered}
@@ -2881,7 +2882,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                       <span
                         role="separator"
                         aria-orientation="vertical"
-                        aria-label={`تغيير عرض العمود: ${col.label || col.key}`}
+                        aria-label={localizeUiText(`تغيير عرض العمود: ${col.label || col.key}`)}
                         title="اسحب لتغيير العرض، أو ضغطة مزدوجة للضبط التلقائي"
                         data-testid={`col-resize-${col.key}`}
                         onPointerDown={e => startColResize(e, col.key)}
